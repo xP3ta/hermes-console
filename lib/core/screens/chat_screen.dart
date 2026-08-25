@@ -2049,16 +2049,6 @@ class _ChatScreenState extends State<ChatScreen>
   void _onComposerChanged() {
     final text = _textController.text;
     if (_isRecording || _transcribing) {
-      if (!_applyingDictationPreview && text != _dictationPreviewText) {
-        _applyingDictationPreview = true;
-        _textController.value = TextEditingValue(
-          text: _dictationPreviewText,
-          selection: TextSelection.collapsed(
-            offset: _dictationPreviewText.length,
-          ),
-        );
-        _applyingDictationPreview = false;
-      }
       return;
     }
     if (_roomTaskMutationLocked) {
@@ -8714,8 +8704,6 @@ class _ChatScreenState extends State<ChatScreen>
   String _dictationPartial = '';
   String _dictationBase = '';
   String _dictationOriginal = '';
-  String _dictationPreviewText = '';
-  bool _applyingDictationPreview = false;
   bool _dictationSendInFlight = false;
   Completer<void>? _dictationCompletion;
 
@@ -8785,7 +8773,6 @@ class _ChatScreenState extends State<ChatScreen>
     // debe cerrarlo ni abrirlo por sorpresa.
     _dictationOriginal = _textController.text;
     _dictationBase = _textController.text.trimRight();
-    _dictationPreviewText = _textController.text;
     _dictationCompletion = Completer<void>();
     setState(() {
       _isRecording = true;
@@ -8809,9 +8796,6 @@ class _ChatScreenState extends State<ChatScreen>
         .listen(
           (r) {
             if (!mounted) return;
-            // El parcial se proyecta al controller para que Stop y Enviar no
-            // pierdan texto, pero el TextField permanece visualmente cubierto
-            // por el historial de onda mientras escucha.
             if (!r.isFinal) {
               var partial = r.text.trim();
               if (VoiceResponsePolicy.isLikelySttHallucination(partial)) {
@@ -8819,7 +8803,6 @@ class _ChatScreenState extends State<ChatScreen>
               }
               if (partial != _dictationPartial) {
                 setState(() => _dictationPartial = partial);
-                _setDictationPreview(_joinDictation(_dictationBase, partial));
               }
               return;
             }
@@ -8832,12 +8815,13 @@ class _ChatScreenState extends State<ChatScreen>
               if (t.isNotEmpty) {
                 _dictationBase = _joinDictation(_dictationBase, t);
               }
-              _setDictationPreview(_dictationBase);
             });
           },
           onError: (e) {
             if (mounted) {
               _commitPendingDictationPartial();
+              _resetDictation();
+              _materializeDictation();
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
@@ -8846,7 +8830,7 @@ class _ChatScreenState extends State<ChatScreen>
                 ),
               );
             }
-            _resetDictation();
+            if (!mounted) _resetDictation();
           },
           onDone: _onDictationSegmentDone,
         );
@@ -8859,8 +8843,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// (_dictationBase = texto actual al arrancar). Así el micro no "sigue
   /// escribiendo" solo con alucinaciones del STT sobre ruido/silencio.
   void _onDictationSegmentDone() {
+    if (!_isRecording && !_transcribing) return;
     _commitPendingDictationPartial();
     _resetDictation();
+    _materializeDictation();
   }
 
   String _joinDictation(String base, String segment) {
@@ -8876,12 +8862,7 @@ class _ChatScreenState extends State<ChatScreen>
     _textController.selection = TextSelection.collapsed(offset: text.length);
   }
 
-  void _setDictationPreview(String text) {
-    _dictationPreviewText = text;
-    _applyingDictationPreview = true;
-    _setComposerText(text);
-    _applyingDictationPreview = false;
-  }
+  void _materializeDictation() => _setComposerText(_dictationBase);
 
   /// Si el motor cierra sin emitir un resultado final, usa el último parcial
   /// retenido en memoria. El usuario solo lo ve después de parar.
@@ -8892,7 +8873,6 @@ class _ChatScreenState extends State<ChatScreen>
       _dictationBase = _joinDictation(_dictationBase, partial);
     }
     _dictationPartial = '';
-    _setDictationPreview(_dictationBase);
   }
 
   /// El usuario pulsa "parar": con Whisper esto dispara la transcripción (el
@@ -8903,7 +8883,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (_transcribing) return;
     final hasPendingText =
         _dictationPartial.trim().isNotEmpty ||
-        _textController.text.trimRight() != _dictationBase.trimRight();
+        _dictationOriginal.trimRight() != _dictationBase.trimRight();
     final perf = Stopwatch()..start();
     debugPrint(
       '[VOICE-PERF] dictation.stop.request '
@@ -8917,10 +8897,11 @@ class _ChatScreenState extends State<ChatScreen>
     _stopFallback = Timer(const Duration(seconds: 4), () {
       if (mounted && (_isRecording || _transcribing)) {
         _commitPendingDictationPartial();
+        _resetDictation();
+        _materializeDictation();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).chaVoiceNotRecognized)),
         );
-        _resetDictation();
       }
     });
     await voice.stopDictation();
@@ -8936,8 +8917,8 @@ class _ChatScreenState extends State<ChatScreen>
     final subscription = _sttSub;
     _sttSub = null;
     if (subscription != null) unawaited(subscription.cancel());
-    _setDictationPreview(_dictationOriginal);
     _resetDictation();
+    _setComposerText(_dictationOriginal);
     // Cancel descarta el tramo y vuelve a reposo en el mismo frame. El teardown
     // acústico puede terminar después sin reescribir el borrador restaurado.
     await _voice?.cancelDictation();
@@ -8963,6 +8944,7 @@ class _ChatScreenState extends State<ChatScreen>
             if (mounted && (_isRecording || _transcribing)) {
               _commitPendingDictationPartial();
               _resetDictation();
+              _materializeDictation();
             }
           },
         );
@@ -8988,6 +8970,7 @@ class _ChatScreenState extends State<ChatScreen>
     _sttSub = null;
     unawaited(_voice?.stopDictation());
     _resetDictation();
+    _materializeDictation();
   }
 
   void _resetDictation() {
@@ -9743,7 +9726,9 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildDictationSendAction(HermesThemeColors colors) {
     final enabled =
-        !_dictationSendInFlight && _dictationPreviewText.trim().isNotEmpty;
+        !_dictationSendInFlight &&
+        (_dictationBase.trim().isNotEmpty ||
+            _dictationPartial.trim().isNotEmpty);
     return SizedBox.square(
       key: const ValueKey('dictation-send'),
       dimension: 48,
@@ -9994,56 +9979,60 @@ class _ChatScreenState extends State<ChatScreen>
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        TextField(
-                          controller: _textController,
-                          focusNode: _textFocusNode,
-                          decoration: InputDecoration(
-                            hintText: _attachmentSubmitting
-                                ? Strings.of(context).chaUploadingAttachment
-                                : _sending
-                                ? Strings.of(context).chaHintResponding
-                                : _pendingAttachments.isNotEmpty
-                                ? Strings.of(context).chaHintSystem
-                                : widget.missionRoom != null
-                                ? (Localizations.localeOf(
-                                            context,
-                                          ).languageCode ==
-                                          'en'
-                                      ? 'Message the team…'
-                                      : 'Escribe al equipo…')
-                                : Strings.of(context).chaHintUser,
-                            hintStyle: TextStyle(
-                              color: colors.textSecondary,
-                              fontSize: 14,
+                        ExcludeSemantics(
+                          excluding: _isRecording,
+                          child: Opacity(
+                            opacity: _isRecording ? 0 : 1,
+                            child: TextField(
+                              controller: _textController,
+                              focusNode: _textFocusNode,
+                              decoration: InputDecoration(
+                                hintText: _attachmentSubmitting
+                                    ? Strings.of(context).chaUploadingAttachment
+                                    : _pendingAttachments.isNotEmpty
+                                    ? Strings.of(context).chaHintSystem
+                                    : widget.missionRoom != null
+                                    ? (Localizations.localeOf(
+                                                context,
+                                              ).languageCode ==
+                                              'en'
+                                          ? 'Message the team…'
+                                          : 'Escribe al equipo…')
+                                    : Strings.of(context).chaHintUser,
+                                hintStyle: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 14,
+                                ),
+                                filled: false,
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                disabledBorder: InputBorder.none,
+                                contentPadding: EdgeInsets.fromLTRB(
+                                  4,
+                                  compactIme ? 10 : 12,
+                                  4,
+                                  _isRecording
+                                      ? _dictationWaveHeight + 8
+                                      : (compactIme ? 10 : 12),
+                                ),
+                                isDense: true,
+                              ),
+                              minLines: 1,
+                              maxLines: compactIme ? 2 : 4,
+                              textCapitalization: TextCapitalization.sentences,
+                              keyboardType: TextInputType.multiline,
+                              textInputAction: TextInputAction.send,
+                              enabled:
+                                  !_loading &&
+                                  !_roomTaskMutationLocked &&
+                                  !_attachmentSubmitting &&
+                                  !_compressingSession,
+                              onSubmitted: (_) => _isRecording
+                                  ? unawaited(_sendDictation())
+                                  : _sendMessage(),
                             ),
-                            filled: false,
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            disabledBorder: InputBorder.none,
-                            contentPadding: EdgeInsets.fromLTRB(
-                              4,
-                              compactIme ? 10 : 12,
-                              4,
-                              _isRecording
-                                  ? _dictationWaveHeight + 8
-                                  : (compactIme ? 10 : 12),
-                            ),
-                            isDense: true,
                           ),
-                          minLines: 1,
-                          maxLines: compactIme ? 2 : 4,
-                          textCapitalization: TextCapitalization.sentences,
-                          keyboardType: TextInputType.multiline,
-                          textInputAction: TextInputAction.send,
-                          enabled:
-                              !_loading &&
-                              !_roomTaskMutationLocked &&
-                              !_attachmentSubmitting &&
-                              !_compressingSession,
-                          onSubmitted: (_) => _isRecording
-                              ? unawaited(_sendDictation())
-                              : _sendMessage(),
                         ),
                         if (_isRecording && _voice != null)
                           Positioned(

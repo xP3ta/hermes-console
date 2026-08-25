@@ -4305,6 +4305,25 @@ void main() {
   });
 
   testWidgets(
+    'el composer conserva el placeholder normal mientras Hermes ejecuta',
+    (tester) async {
+      await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        messages: const [
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'trabaja'},
+        ],
+      );
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.decoration?.hintText, 'Pregunta a Hermes…');
+      expect(field.decoration?.hintText, isNot('Hermes está respondiendo…'));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'un turno activo pipeline false vacío proyecta Thinking sin cabecera huérfana',
     (tester) async {
       await pumpChat(
@@ -7226,7 +7245,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('dictado conserva historial y muestra los parciales en el campo', (
+  testWidgets('dictado conserva el transcript fuera del controller hasta parar', (
     tester,
   ) async {
     final stt = _PartialSttEngine();
@@ -7267,21 +7286,17 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('dictation-live-preview')), findsNothing);
     expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
-    expect(find.text('hola'), findsOneWidget);
-    final fieldOpacity = tester.widgetList<Opacity>(
-      find.ancestor(of: find.byType(TextField), matching: find.byType(Opacity)),
-    );
-    expect(fieldOpacity.any((widget) => widget.opacity == 0), isFalse);
+    expect(find.text('hola'), findsNothing);
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'hola',
+      isEmpty,
     );
 
     stt.results.add(const SttResult('hola mundo', false));
     await tester.pump();
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'hola mundo',
+      isEmpty,
     );
     expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
 
@@ -7296,7 +7311,7 @@ void main() {
   });
 
   testWidgets(
-    'dictado mantiene la onda acotada con composers de 60 y 300 px',
+    'dictado mantiene fija la altura ante un parcial largo',
     (tester) async {
       final stt = _PartialSttEngine();
       await pumpChat(tester, stt: stt);
@@ -7309,21 +7324,18 @@ void main() {
       final composer = find
           .ancestor(of: visualizer, matching: find.byType(Stack))
           .last;
-      final composerBox = tester.renderObject<RenderBox>(composer);
-      final composerWidth = composerBox.size.width;
+      final initialComposerHeight = tester.getSize(composer).height;
+      final initialVisualizerHeight = tester.getSize(visualizer).height;
 
-      for (final composerHeight in <double>[60, 300]) {
-        composerBox.layout(
-          BoxConstraints.tightFor(
-            width: composerWidth,
-            height: composerHeight,
-          ),
-        );
+      stt.results.add(
+        SttResult('${List.filled(80, 'parcial muy largo ').join()}fin', false),
+      );
+      await tester.pump();
 
-        expect(tester.getSize(composer).height, composerHeight);
-        expect(tester.getSize(visualizer).height, lessThanOrEqualTo(32));
-        expect(tester.getSize(bars).height, lessThanOrEqualTo(28));
-      }
+      expect(tester.getSize(composer).height, initialComposerHeight);
+      expect(tester.getSize(visualizer).height, initialVisualizerHeight);
+      expect(tester.getSize(visualizer).height, lessThanOrEqualTo(32));
+      expect(tester.getSize(bars).height, lessThanOrEqualTo(28));
     },
   );
 
@@ -7371,7 +7383,7 @@ void main() {
     await tester.pump();
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Borrador intacto texto que descarto',
+      'Borrador intacto',
     );
 
     await tester.tap(find.byKey(const ValueKey('dictation-cancel')));
@@ -7404,6 +7416,10 @@ void main() {
       await tester.pump();
       stt.results.add(const SttResult('resultado pobre', false));
       await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Inicio',
+      );
 
       await tester.tap(find.byKey(const ValueKey('dictation-send')));
       await tester.pump();
@@ -7480,7 +7496,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 40));
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
-        'parcial oculto',
+        isEmpty,
       );
       final enabledSendAction = tester.widget<HermesTactileAction>(
         find.descendant(of: send, matching: find.byType(HermesTactileAction)),
@@ -7552,7 +7568,7 @@ void main() {
       expect(samples.value, orderedEquals(initialSamples));
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
-        'texto pendiente',
+        isEmpty,
       );
       expect(tester.takeException(), isNull);
 
@@ -7676,7 +7692,7 @@ void main() {
     },
   );
 
-  testWidgets('dictado proyecta el parcial oculto y continúa al reanudar', (
+  testWidgets('dictado materializa cada tramo solo al parar y continúa al reanudar', (
     tester,
   ) async {
     final stt = _PartialSttEngine();
@@ -7690,7 +7706,7 @@ void main() {
     await tester.pump();
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Inicio uno',
+      'Inicio',
     );
     expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
 
@@ -7709,7 +7725,7 @@ void main() {
     await tester.pump();
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Inicio uno dos',
+      'Inicio uno',
     );
     expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
 
@@ -7745,7 +7761,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('parar antes del primer parcial conserva el final tardío', (
+  testWidgets('Stop materializa el resultado final una sola vez', (
     tester,
   ) async {
     final stt = _PartialSttEngine(
@@ -7756,6 +7772,15 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mic')));
     await tester.pump();
     expect(find.byKey(const ValueKey('recording')), findsOneWidget);
+
+    stt.results.add(
+      const SttResult('Mañana tengo una cita a las cinco y media', false),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      isEmpty,
+    );
 
     await tester.tap(find.byKey(const ValueKey('recording')));
     await tester.pump();
@@ -7794,7 +7819,7 @@ void main() {
     expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'para y responde esto',
+      isEmpty,
     );
     expect(tester.takeException(), isNull);
   });
