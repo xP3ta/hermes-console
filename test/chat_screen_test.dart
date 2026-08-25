@@ -7296,28 +7296,56 @@ void main() {
   });
 
   testWidgets(
-    'dictado mantiene la onda acotada y deja tocar el campo de texto',
+    'dictado mantiene la onda acotada con composers de 60 y 300 px',
     (tester) async {
       final stt = _PartialSttEngine();
       await pumpChat(tester, stt: stt);
-
-      final fieldFinder = find.byType(TextField);
-      final field = tester.widget<TextField>(fieldFinder);
 
       await tester.tap(find.byKey(const ValueKey('mic')));
       await tester.pump();
 
       final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
-      expect(tester.getSize(visualizer).height, 28);
+      final bars = find.byKey(const ValueKey('dictation-bars'));
+      final composer = find
+          .ancestor(of: visualizer, matching: find.byType(Stack))
+          .last;
+      final composerBox = tester.renderObject<RenderBox>(composer);
+      final composerWidth = composerBox.size.width;
 
-      field.focusNode!.unfocus();
-      await tester.pump();
-      await tester.tapAt(tester.getCenter(visualizer));
-      await tester.pump();
+      for (final composerHeight in <double>[60, 300]) {
+        composerBox.layout(
+          BoxConstraints.tightFor(
+            width: composerWidth,
+            height: composerHeight,
+          ),
+        );
 
-      expect(field.focusNode!.hasFocus, isTrue);
+        expect(tester.getSize(composer).height, composerHeight);
+        expect(tester.getSize(visualizer).height, lessThanOrEqualTo(32));
+        expect(tester.getSize(bars).height, lessThanOrEqualTo(28));
+      }
     },
   );
+
+  testWidgets('dictado deja tocar el campo a través de la onda', (tester) async {
+    final stt = _PartialSttEngine();
+    await pumpChat(tester, stt: stt);
+
+    final fieldFinder = find.byType(TextField);
+    final field = tester.widget<TextField>(fieldFinder);
+
+    await tester.tap(find.byKey(const ValueKey('mic')));
+    await tester.pump();
+
+    field.focusNode!.unfocus();
+    await tester.pump();
+    await tester.tapAt(
+      tester.getCenter(find.byKey(const ValueKey('dictation-visualizer'))),
+    );
+    await tester.pump();
+
+    expect(field.focusNode!.hasFocus, isTrue);
+  });
 
   testWidgets('dictado conserva foco IME y Cancel restaura el borrador', (
     tester,

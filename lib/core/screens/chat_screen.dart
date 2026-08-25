@@ -15614,9 +15614,9 @@ MarkdownStyleSheet _assistantSheet(ThemeData theme, HermesThemeColors colors) {
 
 const double _dictationWaveHeight = 28;
 
-/// Visualizador compacto del dictado. Los parciales no compiten con la onda:
-/// permanecen fuera de la UI hasta parar o recibir el resultado final. No
-/// graba ni procesa audio; solo observa [VoiceService.micLevel].
+/// Visualizador compacto del dictado. La onda ocupa una franja reservada bajo
+/// los parciales visibles en el campo. No graba ni procesa audio; solo observa
+/// [VoiceService.micLevel].
 class _DictationVisualizer extends StatefulWidget {
   const _DictationVisualizer({
     required this.level,
