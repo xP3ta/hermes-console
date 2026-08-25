@@ -9994,79 +9994,77 @@ class _ChatScreenState extends State<ChatScreen>
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        ExcludeSemantics(
-                          excluding: _isRecording,
-                          child: IgnorePointer(
-                            ignoring: _isRecording,
-                            child: Opacity(
-                              opacity: _isRecording ? 0 : 1,
-                              child: TextField(
-                                controller: _textController,
-                                focusNode: _textFocusNode,
-                                decoration: InputDecoration(
-                                  hintText: _attachmentSubmitting
-                                      ? Strings.of(
-                                          context,
-                                        ).chaUploadingAttachment
-                                      : _sending
-                                      ? Strings.of(context).chaHintResponding
-                                      : _pendingAttachments.isNotEmpty
-                                      ? Strings.of(context).chaHintSystem
-                                      : widget.missionRoom != null
-                                      ? (Localizations.localeOf(
-                                                  context,
-                                                ).languageCode ==
-                                                'en'
-                                            ? 'Message the team…'
-                                            : 'Escribe al equipo…')
-                                      : Strings.of(context).chaHintUser,
-                                  hintStyle: TextStyle(
-                                    color: colors.textSecondary,
-                                    fontSize: 14,
-                                  ),
-                                  filled: false,
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  disabledBorder: InputBorder.none,
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: compactIme ? 10 : 12,
-                                  ),
-                                  isDense: true,
-                                ),
-                                minLines: 1,
-                                maxLines: compactIme ? 2 : 4,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                keyboardType: TextInputType.multiline,
-                                textInputAction: TextInputAction.send,
-                                enabled:
-                                    !_loading &&
-                                    !_roomTaskMutationLocked &&
-                                    !_attachmentSubmitting &&
-                                    !_compressingSession,
-                                onSubmitted: (_) => _isRecording
-                                    ? unawaited(_sendDictation())
-                                    : _sendMessage(),
-                              ),
+                        TextField(
+                          controller: _textController,
+                          focusNode: _textFocusNode,
+                          decoration: InputDecoration(
+                            hintText: _attachmentSubmitting
+                                ? Strings.of(context).chaUploadingAttachment
+                                : _sending
+                                ? Strings.of(context).chaHintResponding
+                                : _pendingAttachments.isNotEmpty
+                                ? Strings.of(context).chaHintSystem
+                                : widget.missionRoom != null
+                                ? (Localizations.localeOf(
+                                            context,
+                                          ).languageCode ==
+                                          'en'
+                                      ? 'Message the team…'
+                                      : 'Escribe al equipo…')
+                                : Strings.of(context).chaHintUser,
+                            hintStyle: TextStyle(
+                              color: colors.textSecondary,
+                              fontSize: 14,
                             ),
+                            filled: false,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            disabledBorder: InputBorder.none,
+                            contentPadding: EdgeInsets.fromLTRB(
+                              4,
+                              compactIme ? 10 : 12,
+                              4,
+                              _isRecording
+                                  ? _dictationWaveHeight + 8
+                                  : (compactIme ? 10 : 12),
+                            ),
+                            isDense: true,
                           ),
+                          minLines: 1,
+                          maxLines: compactIme ? 2 : 4,
+                          textCapitalization: TextCapitalization.sentences,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.send,
+                          enabled:
+                              !_loading &&
+                              !_roomTaskMutationLocked &&
+                              !_attachmentSubmitting &&
+                              !_compressingSession,
+                          onSubmitted: (_) => _isRecording
+                              ? unawaited(_sendDictation())
+                              : _sendMessage(),
                         ),
                         if (_isRecording && _voice != null)
-                          Positioned.fill(
-                            child: _DictationVisualizer(
-                              key: const ValueKey('dictation-visualizer'),
-                              level: _voice!.micLevel,
-                              color: colors.textSecondary,
-                              mutedColor: colors.textDisabled,
-                              transcribing: _transcribing,
-                              listeningLabel: Strings.of(
-                                context,
-                              ).chaVoiceListeningLabel,
-                              transcribingLabel: Strings.of(
-                                context,
-                              ).chaVoiceTranscribingLabel,
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 4,
+                            height: _dictationWaveHeight,
+                            child: IgnorePointer(
+                              child: _DictationVisualizer(
+                                key: const ValueKey('dictation-visualizer'),
+                                level: _voice!.micLevel,
+                                color: colors.textSecondary,
+                                mutedColor: colors.textDisabled,
+                                transcribing: _transcribing,
+                                listeningLabel: Strings.of(
+                                  context,
+                                ).chaVoiceListeningLabel,
+                                transcribingLabel: Strings.of(
+                                  context,
+                                ).chaVoiceTranscribingLabel,
+                              ),
                             ),
                           ),
                       ],
@@ -15614,6 +15612,8 @@ MarkdownStyleSheet _assistantSheet(ThemeData theme, HermesThemeColors colors) {
   );
 }
 
+const double _dictationWaveHeight = 28;
+
 /// Visualizador compacto del dictado. Los parciales no compiten con la onda:
 /// permanecen fuera de la UI hasta parar o recibir el resultado final. No
 /// graba ni procesa audio; solo observa [VoiceService.micLevel].
@@ -15726,7 +15726,7 @@ class _DictationVisualizerState extends State<_DictationVisualizer>
         child: SizedBox(
           key: const ValueKey('dictation-wave-history'),
           width: double.infinity,
-          height: 30,
+          height: _dictationWaveHeight,
           child: SizedBox(
             key: const ValueKey('dictation-bars'),
             child: RepaintBoundary(
@@ -15770,14 +15770,14 @@ class _DictationBarsPainter extends CustomPainter {
     final paint = Paint();
     for (var index = 0; index < barCount; index++) {
       final sample = history[index].clamp(0.0, 1.0).toDouble();
-      final barHeight = 3.2 + sample * (size.height - 3.2);
+      final barHeight = 3.2 + sample * (_dictationWaveHeight - 3.2);
       final recency = index / math.max(1, barCount - 1);
       paint.color = transcribing
           ? mutedColor.withValues(alpha: 0.32)
           : color.withValues(alpha: 0.5 + recency * 0.4);
       final rect = Rect.fromLTWH(
         slotWidth * (index + 0.5) - barWidth / 2,
-        (size.height - barHeight) / 2,
+        (_dictationWaveHeight - barHeight) / 2,
         barWidth,
         barHeight,
       );

@@ -7226,7 +7226,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('dictado conserva historial y oculta visualmente los parciales', (
+  testWidgets('dictado conserva historial y muestra los parciales en el campo', (
     tester,
   ) async {
     final stt = _PartialSttEngine();
@@ -7271,7 +7271,7 @@ void main() {
     final fieldOpacity = tester.widgetList<Opacity>(
       find.ancestor(of: find.byType(TextField), matching: find.byType(Opacity)),
     );
-    expect(fieldOpacity.any((widget) => widget.opacity == 0), isTrue);
+    expect(fieldOpacity.any((widget) => widget.opacity == 0), isFalse);
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
       'hola',
@@ -7294,6 +7294,30 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'dictado mantiene la onda acotada y deja tocar el campo de texto',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      await pumpChat(tester, stt: stt);
+
+      final fieldFinder = find.byType(TextField);
+      final field = tester.widget<TextField>(fieldFinder);
+
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+
+      final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
+      expect(tester.getSize(visualizer).height, 28);
+
+      field.focusNode!.unfocus();
+      await tester.pump();
+      await tester.tapAt(tester.getCenter(visualizer));
+      await tester.pump();
+
+      expect(field.focusNode!.hasFocus, isTrue);
+    },
+  );
 
   testWidgets('dictado conserva foco IME y Cancel restaura el borrador', (
     tester,
