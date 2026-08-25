@@ -9976,16 +9976,22 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                   if (_isRecording) _buildDictationCancelAction(colors),
                   Expanded(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        ExcludeSemantics(
-                          excluding: _isRecording,
-                          child: Opacity(
-                            opacity: _isRecording ? 0 : 1,
+                    child: SizedBox(
+                      height: _isRecording ? _dictationComposerHeight : null,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          ExcludeSemantics(
+                            excluding: _isRecording,
                             child: TextField(
                               controller: _textController,
                               focusNode: _textFocusNode,
+                              style: _isRecording
+                                  ? const TextStyle(color: Colors.transparent)
+                                  : null,
+                              cursorColor: _isRecording
+                                  ? Colors.transparent
+                                  : null,
                               decoration: InputDecoration(
                                 hintText: _attachmentSubmitting
                                     ? Strings.of(context).chaUploadingAttachment
@@ -10000,7 +10006,9 @@ class _ChatScreenState extends State<ChatScreen>
                                           : 'Escribe al equipo…')
                                     : Strings.of(context).chaHintUser,
                                 hintStyle: TextStyle(
-                                  color: colors.textSecondary,
+                                  color: _isRecording
+                                      ? Colors.transparent
+                                      : colors.textSecondary,
                                   fontSize: 14,
                                 ),
                                 filled: false,
@@ -10033,30 +10041,30 @@ class _ChatScreenState extends State<ChatScreen>
                                   : _sendMessage(),
                             ),
                           ),
-                        ),
-                        if (_isRecording && _voice != null)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 4,
-                            height: _dictationWaveHeight,
-                            child: IgnorePointer(
-                              child: _DictationVisualizer(
-                                key: const ValueKey('dictation-visualizer'),
-                                level: _voice!.micLevel,
-                                color: colors.textSecondary,
-                                mutedColor: colors.textDisabled,
-                                transcribing: _transcribing,
-                                listeningLabel: Strings.of(
-                                  context,
-                                ).chaVoiceListeningLabel,
-                                transcribingLabel: Strings.of(
-                                  context,
-                                ).chaVoiceTranscribingLabel,
+                          if (_isRecording && _voice != null)
+                            SizedBox(
+                              key: const ValueKey('dictation-recording-area'),
+                              height: _dictationComposerHeight,
+                              child: Center(
+                                child: IgnorePointer(
+                                  child: _DictationVisualizer(
+                                    key: const ValueKey('dictation-visualizer'),
+                                    level: _voice!.micLevel,
+                                    color: colors.textSecondary,
+                                    mutedColor: colors.textDisabled,
+                                    transcribing: _transcribing,
+                                    listeningLabel: Strings.of(
+                                      context,
+                                    ).chaVoiceListeningLabel,
+                                    transcribingLabel: Strings.of(
+                                      context,
+                                    ).chaVoiceTranscribingLabel,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                   _buildComposerDictationAction(
@@ -15601,6 +15609,7 @@ MarkdownStyleSheet _assistantSheet(ThemeData theme, HermesThemeColors colors) {
   );
 }
 
+const double _dictationComposerHeight = 48;
 const double _dictationWaveHeight = 28;
 
 /// Visualizador compacto del dictado. La onda ocupa una franja reservada bajo

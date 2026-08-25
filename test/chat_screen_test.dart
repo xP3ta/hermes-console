@@ -7311,7 +7311,7 @@ void main() {
   });
 
   testWidgets(
-    'dictado mantiene fija la altura ante un parcial largo',
+    'segundo dictado conserva altura y onda centrada tras materializar texto largo',
     (tester) async {
       final stt = _PartialSttEngine();
       await pumpChat(tester, stt: stt);
@@ -7319,23 +7319,71 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('mic')));
       await tester.pump();
 
-      final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
-      final bars = find.byKey(const ValueKey('dictation-bars'));
-      final composer = find
-          .ancestor(of: visualizer, matching: find.byType(Stack))
-          .last;
-      final initialComposerHeight = tester.getSize(composer).height;
-      final initialVisualizerHeight = tester.getSize(visualizer).height;
+      Finder recordingArea() => find
+          .ancestor(
+            of: find.byKey(const ValueKey('dictation-visualizer')),
+            matching: find.byType(Stack),
+          )
+          .first;
+      final firstHeight = tester.getSize(recordingArea()).height;
 
-      stt.results.add(
-        SttResult('${List.filled(80, 'parcial muy largo ').join()}fin', false),
+      await stt.emitFinalAndClose(
+        List.filled(40, 'transcripción extensa').join(' '),
       );
       await tester.pump();
+      expect(find.byKey(const ValueKey('recording')), findsNothing);
 
-      expect(tester.getSize(composer).height, initialComposerHeight);
-      expect(tester.getSize(visualizer).height, initialVisualizerHeight);
-      expect(tester.getSize(visualizer).height, lessThanOrEqualTo(32));
-      expect(tester.getSize(bars).height, lessThanOrEqualTo(28));
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+
+      final secondArea = recordingArea();
+      final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
+      expect(tester.getSize(secondArea).height, firstHeight);
+      expect(tester.getSize(secondArea).height, 48);
+      expect(
+        tester.getCenter(visualizer).dy,
+        closeTo(tester.getCenter(secondArea).dy, 0.01),
+      );
+      expect(tester.getSize(visualizer).height, 28);
+    },
+  );
+
+  testWidgets(
+    'borrador multilinea no cambia altura ni centrado del dictado',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      await pumpChat(tester, stt: stt);
+
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      final firstVisualizer = find.byKey(
+        const ValueKey('dictation-visualizer'),
+      );
+      final firstArea = find
+          .ancestor(of: firstVisualizer, matching: find.byType(Stack))
+          .first;
+      final firstHeight = tester.getSize(firstArea).height;
+
+      await stt.emitFinalAndClose('');
+      await tester.pump();
+      await tester.enterText(
+        find.byType(TextField),
+        'línea uno\nlínea dos\nlínea tres\nlínea cuatro',
+      );
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+
+      final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
+      final recordingArea = find
+          .ancestor(of: visualizer, matching: find.byType(Stack))
+          .first;
+      expect(tester.getSize(recordingArea).height, firstHeight);
+      expect(tester.getSize(recordingArea).height, 48);
+      expect(
+        tester.getCenter(visualizer).dy,
+        closeTo(tester.getCenter(recordingArea).dy, 0.01),
+      );
+      expect(tester.getSize(visualizer).height, 28);
     },
   );
 
