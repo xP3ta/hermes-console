@@ -38,6 +38,8 @@ class _SlashGateway
       StreamController<TuiGatewayEvent>.broadcast();
   final List<String> submissions = [];
   final List<String> slashCalls = [];
+  Completer<SlashCompletionBatch>? slashCompletion;
+  int slashCompletionCalls = 0;
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -106,8 +108,11 @@ class _SlashGateway
       DesktopCommandCatalog.fromJson(const {'commands': <Object>[]});
 
   @override
-  Future<SlashCompletionBatch> completeSlash(String text) async =>
-      SlashCompletionBatch.fromJson(const {'items': <Object>[]}, input: text);
+  Future<SlashCompletionBatch> completeSlash(String text) async {
+    slashCompletionCalls++;
+    return slashCompletion?.future ??
+        SlashCompletionBatch.fromJson(const {'items': <Object>[]}, input: text);
+  }
 
   @override
   Future<DesktopCommandRpcResult> slashExec(
@@ -460,15 +465,25 @@ void main() {
       tester,
     ) async {
       final gateway = _SlashGateway();
+      final completion = Completer<SlashCompletionBatch>();
+      gateway.slashCompletion = completion;
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
 
       await tester.enterText(composer, '/he');
       await tester.pump(const Duration(milliseconds: 250));
+      expect(gateway.slashCompletionCalls, 1);
       final help = find.byKey(const ValueKey('chat-slash-command-help'));
       expect(help, findsOneWidget);
 
       await tester.tap(help);
+      completion.complete(
+        SlashCompletionBatch.fromJson(const {
+          'items': <Object>[
+            {'replacement': '/remote-late', 'meta': 'late'},
+          ],
+        }, input: '/he'),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
 
@@ -477,6 +492,133 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.slashCalls, isEmpty);
+
+      Navigator.of(
+        tester.element(find.byKey(const ValueKey('chat-slash-help-dialog'))),
+      ).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+
+      final field = tester.widget<TextField>(composer);
+      expect(field.controller?.text, isEmpty);
+      expect(field.focusNode?.hasFocus, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      '/model clears composer and restores focus after selector closes',
+      (tester) async {
+        final gateway = _SlashGateway();
+        await _pumpSlashChat(tester, gateway);
+        final composer = find.byType(TextField).last;
+
+        await tester.tap(composer);
+        await tester.enterText(composer, '/model ');
+        await tester.pump(const Duration(milliseconds: 250));
+        final fieldBeforeSubmit = tester.widget<TextField>(composer);
+        expect(fieldBeforeSubmit.controller?.text, '/model ');
+        final sendAction = find.descendant(
+          of: find.byKey(const ValueKey('send')),
+          matching: find.byType(HermesTactileAction),
+        );
+        final onPressed = tester
+            .widget<HermesTactileAction>(sendAction)
+            .onPressed;
+        expect(onPressed, isNotNull);
+        onPressed!();
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+        expect(fieldBeforeSubmit.controller?.text, isEmpty);
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+        expect(fieldBeforeSubmit.controller?.text, isEmpty);
+        expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+        expect(gateway.submissions, isEmpty);
+        expect(gateway.slashCalls, isEmpty);
+        Navigator.of(
+          tester.element(find.byKey(const ValueKey('chat-model-dialog'))),
+        ).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+
+        expect(fieldBeforeSubmit.controller?.text, isEmpty);
+        expect(fieldBeforeSubmit.focusNode?.hasFocus, isTrue);
+        expect(gateway.submissions, isEmpty);
+        expect(gateway.slashCalls, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      '/model with an unmatched argument restores focus after lookup',
+      (tester) async {
+        final gateway = _SlashGateway();
+        await _pumpSlashChat(tester, gateway);
+        final composer = find.byType(TextField).last;
+
+        await tester.tap(composer);
+        await tester.enterText(composer, '/model definitely-not-a-model');
+        await tester.pump(const Duration(milliseconds: 250));
+        final field = tester.widget<TextField>(composer);
+        final sendAction = find.descendant(
+          of: find.byKey(const ValueKey('send')),
+          matching: find.byType(HermesTactileAction),
+        );
+        final onPressed = tester
+            .widget<HermesTactileAction>(sendAction)
+            .onPressed;
+        expect(onPressed, isNotNull);
+
+        onPressed!();
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+
+        expect(field.controller?.text, isEmpty);
+        expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+        expect(gateway.submissions, isEmpty);
+        expect(gateway.slashCalls, isEmpty);
+
+        Navigator.of(
+          tester.element(find.byKey(const ValueKey('chat-model-dialog'))),
+        ).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+
+        expect(field.focusNode?.hasFocus, isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('a local slash without navigation keeps composer focus', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.enterText(composer, '/compact');
+      await tester.pump(const Duration(milliseconds: 250));
+      final field = tester.widget<TextField>(composer);
+      final sendAction = find.descendant(
+        of: find.byKey(const ValueKey('send')),
+        matching: find.byType(HermesTactileAction),
+      );
+      final onPressed = tester
+          .widget<HermesTactileAction>(sendAction)
+          .onPressed;
+      expect(onPressed, isNotNull);
+
+      onPressed!();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+
+      expect(field.controller?.text, isEmpty);
+      expect(field.focusNode?.hasFocus, isTrue);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
       expect(tester.takeException(), isNull);

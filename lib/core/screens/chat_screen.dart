@@ -5841,7 +5841,9 @@ class _ChatScreenState extends State<ChatScreen>
     _executeSlash(cmd, '');
   }
 
-  /// Ejecuta un comando slash conocido (acción de la app) y limpia el compositor.
+  /// Ejecuta un comando slash conocido y limpia el compositor sin decidir el
+  /// foco globalmente. Las rutas y superficies modales gestionan su propio foco;
+  /// las acciones locales sin navegación conservan el teclado del composer.
   Future<void> _executeSlash(SlashCommand cmd, String arg) async {
     if (cmd.action == SlashAction.remote) {
       await _executeRemoteSlash(cmd, arg);
@@ -5849,7 +5851,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
     _textController.clear();
     setState(() => _slashSuggestions = const []);
-    FocusScope.of(context).unfocus();
     switch (cmd.action) {
       case SlashAction.help:
         _showSlashHelp();
