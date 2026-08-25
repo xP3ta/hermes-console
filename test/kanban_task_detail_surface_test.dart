@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/kanban.dart';
@@ -48,6 +50,153 @@ void main() {
     );
     await tester.pump();
   }
+
+  Future<void> expand(WidgetTester tester, String key) async {
+    final section = find.byKey(ValueKey(key));
+    await tester.ensureVisible(section);
+    await tester.tap(section);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('tarjeta larga oculta contenido secundario hasta expandirlo', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final pendingComment = Completer<void>();
+    final detail = KanbanTaskDetail.fromJson({
+      'task': {
+        'id': 'long',
+        'title': 'Tarjeta larga',
+        'body': 'Objetivo completo que ocupa muchas líneas',
+        'status': 'blocked',
+        'assignee': 'luna',
+        'block_reason': 'Falta decisión humana',
+        'result': 'Evidencia final reservada',
+        'diagnostics': [
+          {
+            'kind': 'stuck',
+            'title': 'Atascada',
+            'detail': 'Detalle diagnóstico',
+          },
+        ],
+      },
+      'comments': [
+        {'id': 1, 'author': 'qa', 'body': 'Comentario reservado'},
+      ],
+      'attachments': [
+        {'id': 2, 'filename': 'evidence.txt', 'size': 12},
+      ],
+      'runs': [
+        {'id': 3, 'status': 'failed', 'summary': 'Resumen ejecución'},
+      ],
+      'events': [
+        for (var index = 0; index < 23; index++)
+          {'id': index, 'kind': 'event_$index'},
+      ],
+      'links': {
+        'parents': ['parent-private'],
+      },
+      'child_results': [
+        {'id': 'child', 'title': 'Subtarea reservada', 'status': 'done'},
+      ],
+    });
+
+    await pumpSurface(
+      tester,
+      detail: detail,
+      physicalSize: const Size(390, 844),
+      onAddComment: (_) => pendingComment.future,
+    );
+
+    expect(find.text('Tarjeta larga'), findsOneWidget);
+    expect(find.text('Falta decisión humana'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('kanban-task-detail-body-summary')),
+      findsOneWidget,
+    );
+    final blockY = tester.getTopLeft(find.text('Falta decisión humana')).dy;
+    final summaryY = tester
+        .getTopLeft(
+          find.byKey(const ValueKey('kanban-task-detail-body-summary')),
+        )
+        .dy;
+    expect(blockY, lessThan(summaryY));
+    for (final hidden in [
+      'Evidencia final reservada',
+      'Detalle diagnóstico',
+      'parent-private',
+      'Subtarea reservada',
+      'Comentario reservado',
+      'evidence.txt',
+      'Resumen ejecución',
+      'event 6',
+    ]) {
+      expect(find.text(hidden), findsNothing, reason: hidden);
+    }
+
+    final sections = {
+      'kanban-detail-result': 'Evidencia final reservada',
+      'kanban-detail-diagnostics': 'Detalle diagnóstico',
+      'kanban-detail-links': 'parent-private',
+      'kanban-detail-children': 'Subtarea reservada',
+      'kanban-detail-comments': 'Comentario reservado',
+      'kanban-detail-attachments': 'evidence.txt',
+      'kanban-detail-runs': 'Resumen ejecución',
+      'kanban-detail-events': 'event 22',
+    };
+    await expand(tester, 'kanban-detail-objective');
+    expect(
+      find.byKey(const ValueKey('kanban-task-detail-body')),
+      findsOneWidget,
+    );
+    for (final entry in sections.entries) {
+      await expand(tester, entry.key);
+      expect(find.text(entry.value), findsOneWidget, reason: entry.key);
+    }
+    expect(find.text('event 1'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('kanban-events-show-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('event 0'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('kanban-comment-field')),
+      'borrador anterior',
+    );
+    await tester.tap(find.byKey(const ValueKey('kanban-comment-send')));
+    await tester.pump();
+
+    await pumpSurface(
+      tester,
+      detail: KanbanTaskDetail.fromJson({
+        'task': {'id': 'next', 'title': 'Siguiente', 'status': 'todo'},
+        'events': [
+          for (var index = 0; index < 7; index++)
+            {'id': index, 'kind': 'next_$index'},
+        ],
+        'comments': [],
+      }),
+      physicalSize: const Size(390, 844),
+      onAddComment: (_) async {},
+    );
+    expect(find.text('next 1'), findsNothing);
+    final nextComments = find.byKey(const ValueKey('kanban-detail-comments'));
+    await tester.ensureVisible(nextComments);
+    await tester.tap(nextComments);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(
+      find.byKey(const ValueKey('kanban-comment-field')),
+      'borrador nuevo',
+    );
+    pendingComment.complete();
+    await tester.pump();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('kanban-comment-field')))
+          .controller!
+          .text,
+      'borrador nuevo',
+    );
+  });
 
   testWidgets('detalle 0.20 muestra secciones ricas y envía comentario', (
     tester,
@@ -101,6 +250,19 @@ void main() {
       onAddComment: (body) async => submitted = body,
     );
 
+    for (final key in [
+      'kanban-detail-diagnostics',
+      'kanban-detail-links',
+      'kanban-detail-children',
+      'kanban-detail-comments',
+      'kanban-detail-attachments',
+      'kanban-detail-runs',
+      'kanban-detail-events',
+      'kanban-detail-operations',
+    ]) {
+      await expand(tester, key);
+    }
+
     expect(
       find.byKey(const ValueKey('kanban-detail-diagnostics')),
       findsOneWidget,
@@ -152,6 +314,9 @@ void main() {
     });
 
     await pumpSurface(tester, detail: detail, readOnly: true);
+
+    await expand(tester, 'kanban-detail-runs');
+    await expand(tester, 'kanban-detail-operations');
 
     expect(
       find.byKey(const ValueKey('kanban-detail-read-only')),
@@ -209,6 +374,8 @@ void main() {
       detail: detail,
       physicalSize: const Size(320, 1200),
     );
+
+    await expand(tester, 'kanban-detail-attachments');
 
     expect(find.text('trace.txt'), findsOneWidget);
     expect(find.textContaining('/srv/hermes'), findsNothing);

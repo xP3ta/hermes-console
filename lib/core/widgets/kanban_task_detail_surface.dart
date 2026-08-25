@@ -66,11 +66,21 @@ class KanbanTaskDetailSurface extends StatefulWidget {
 class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   final TextEditingController _commentController = TextEditingController();
   String? _busyAction;
+  bool _showAllEvents = false;
 
   @override
   void dispose() {
     _commentController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant KanbanTaskDetailSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.detail.task.id != widget.detail.task.id) {
+      _showAllEvents = false;
+      _commentController.clear();
+    }
   }
 
   Future<void> _run(String action, KanbanTaskAction callback) async {
@@ -86,11 +96,16 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   Future<void> _submitComment() async {
     final callback = widget.onAddComment;
     final body = _commentController.text.trim();
+    final taskId = widget.detail.task.id;
     if (callback == null || body.isEmpty || _busyAction != null) return;
     setState(() => _busyAction = 'comment');
     try {
       await callback(body);
-      _commentController.clear();
+      if (mounted &&
+          widget.detail.task.id == taskId &&
+          _commentController.text.trim() == body) {
+        _commentController.clear();
+      }
     } finally {
       if (mounted) setState(() => _busyAction = null);
     }
@@ -107,6 +122,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       key: const ValueKey('kanban-task-detail-rich'),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
       child: Column(
+        key: ValueKey('kanban-task-detail-${task.id}'),
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -155,6 +171,30 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                 ),
             ],
           ),
+          if (task.blockReason?.isNotEmpty == true) ...[
+            const SizedBox(height: 14),
+            _Notice(
+              colors: colors,
+              icon: Icons.warning_amber_rounded,
+              text: task.blockReason!,
+              error: true,
+            ),
+          ] else if (detail.diagnostics.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _Notice(
+              colors: colors,
+              icon: Icons.info_outline_rounded,
+              text:
+                  '${detail.diagnostics.first.title}: ${detail.diagnostics.first.detail}',
+            ),
+          ] else if (task.latestSummary?.isNotEmpty == true) ...[
+            const SizedBox(height: 14),
+            _Notice(
+              colors: colors,
+              icon: Icons.summarize_outlined,
+              text: task.latestSummary!,
+            ),
+          ],
           if (widget.readOnly) ...[
             const SizedBox(height: 14),
             _Notice(
@@ -166,28 +206,32 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
           ],
           if (task.body.isNotEmpty) ...[
             const SizedBox(height: 16),
-            SelectableText(
-              task.body,
-              key: const ValueKey('kanban-task-detail-body'),
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.45,
-                color: colors.textSecondary,
-              ),
-            ),
-          ],
-          if (task.blockReason?.isNotEmpty == true) ...[
-            const SizedBox(height: 14),
-            _Notice(
+            _DetailSection(
+              key: const ValueKey('kanban-detail-objective'),
               colors: colors,
-              icon: Icons.warning_amber_rounded,
-              text: task.blockReason!,
-              error: true,
+              title: copy.objective,
+              summary: Text(
+                task.body,
+                key: const ValueKey('kanban-task-detail-body-summary'),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              ),
+              child: SelectableText(
+                task.body,
+                key: const ValueKey('kanban-task-detail-body'),
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: colors.textSecondary,
+                ),
+              ),
             ),
           ],
           if (task.result?.isNotEmpty == true) ...[
             const SizedBox(height: 18),
             _DetailSection(
+              key: const ValueKey('kanban-detail-result'),
               colors: colors,
               title: copy.result,
               child: SelectableText(
@@ -618,7 +662,8 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       title: '${copy.activity} · ${events.length}',
       child: Column(
         children: [
-          for (final event in events.reversed.take(20))
+          for (final event
+              in (_showAllEvents ? events.reversed : events.reversed.take(5)))
             Padding(
               padding: const EdgeInsets.only(bottom: 7),
               child: Row(
@@ -638,6 +683,12 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                   ),
                 ],
               ),
+            ),
+          if (events.length > 5)
+            TextButton(
+              key: const ValueKey('kanban-events-show-all'),
+              onPressed: () => setState(() => _showAllEvents = !_showAllEvents),
+              child: Text(_showAllEvents ? copy.showLess : copy.showAll),
             ),
         ],
       ),
@@ -834,12 +885,14 @@ class _DetailSection extends StatelessWidget {
   final String title;
   final Widget child;
   final Widget? action;
+  final Widget? summary;
 
   const _DetailSection({
     required this.colors,
     required this.title,
     required this.child,
     this.action,
+    this.summary,
     super.key,
   });
 
@@ -855,30 +908,28 @@ class _DetailSection extends StatelessWidget {
           side: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
         ),
         clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.all(13),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 13),
+          childrenPadding: const EdgeInsets.fromLTRB(13, 0, 13, 13),
+          title: Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: colors.textPrimary,
-                      ),
-                    ),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textPrimary,
                   ),
-                  ?action,
-                ],
+                ),
               ),
-              const SizedBox(height: 9),
-              child,
+              ?action,
             ],
           ),
+          subtitle: summary,
+          shape: const Border(),
+          collapsedShape: const Border(),
+          children: [child],
         ),
       ),
     );
@@ -1016,6 +1067,8 @@ class _KanbanDetailCopy {
   String get readOnly => spanish
       ? 'Esta instancia está en modo solo lectura.'
       : 'This instance is read-only.';
+  String get objective =>
+      spanish ? 'Objetivo · leer completo' : 'Objective · read all';
   String get result => spanish ? 'Resultado' : 'Result';
   String get latestSummary => spanish ? 'Último resumen' : 'Latest summary';
   String get diagnostics => spanish ? 'Diagnósticos' : 'Diagnostics';
@@ -1046,6 +1099,8 @@ class _KanbanDetailCopy {
   String get terminate => spanish ? 'Terminar ejecución' : 'Terminate run';
   String get log => spanish ? 'Log' : 'Log';
   String get activity => spanish ? 'Actividad' : 'Activity';
+  String get showAll => spanish ? 'Mostrar toda' : 'Show all';
+  String get showLess => spanish ? 'Mostrar menos' : 'Show less';
   String get operations => spanish ? 'Operaciones' : 'Operations';
   String get model => spanish ? 'Modelo de esta tarea' : 'Task model';
   String get inheritModel =>
