@@ -32,6 +32,7 @@ class PreparedTurn {
   final String profile;
   final PreparedTurnTransport transport;
   final PreparedTurnState state;
+  final bool restoresComposer;
 
   const PreparedTurn({
     required this.connectionId,
@@ -45,6 +46,7 @@ class PreparedTurn {
     required this.profile,
     this.transport = PreparedTurnTransport.unknown,
     this.state = PreparedTurnState.prepared,
+    this.restoresComposer = true,
   });
 
   String get storageId =>
@@ -87,6 +89,7 @@ class PreparedTurn {
     List<AttachmentDraft>? attachments,
     PreparedTurnTransport? transport,
     PreparedTurnState? state,
+    bool? restoresComposer,
   }) => PreparedTurn(
     connectionId: connectionId,
     sessionId: sessionId,
@@ -99,6 +102,7 @@ class PreparedTurn {
     profile: profile ?? this.profile,
     transport: transport ?? this.transport,
     state: state ?? this.state,
+    restoresComposer: restoresComposer ?? this.restoresComposer,
   );
 
   Map<String, dynamic> toJson() => {
@@ -114,6 +118,7 @@ class PreparedTurn {
     'profile': profile,
     'transport': transport.name,
     'state': state.name,
+    'restores_composer': restoresComposer,
   };
 
   factory PreparedTurn.fromJson(Map<String, dynamic> json) {
@@ -188,6 +193,7 @@ class PreparedTurn {
         'state',
         PreparedTurnState.ambiguous,
       ),
+      restoresComposer: json['restores_composer'] as bool? ?? true,
     );
   }
 }

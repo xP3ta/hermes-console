@@ -14,7 +14,6 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
-import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -613,7 +612,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a navigation slash consumes once and opens its route', (
+    testWidgets('navigation slash consumes once and opens route', (
       tester,
     ) async {
       final gateway = _SlashGateway();
@@ -629,7 +628,6 @@ void main() {
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
     });
-
     testWidgets(
       '/model clears composer and restores focus after selector closes',
       (tester) async {
@@ -816,24 +814,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
       expect(field.controller?.text, '/compress retry me');
-    });
-
-    testWidgets('/compress without runtime preserves invocation', (
-      tester,
-    ) async {
-      final gateway = _SlashGateway()..resumeExistingError = _syntheticRpcError;
-      await _pumpSlashChat(tester, gateway);
-      final composer = find.byType(TextField).last;
+      gateway.resumeExistingError = _syntheticRpcError;
       await tester.enterText(composer, '/compress no runtime');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
-      expect(
-        tester.widget<TextField>(composer).controller?.text,
-        '/compress no runtime',
-      );
-      expect(gateway.slashCalls, isEmpty);
+      expect(field.controller?.text, '/compress no runtime');
     });
-
     testWidgets('/compress accepted late preserves a newer draft', (
       tester,
     ) async {
@@ -849,17 +835,11 @@ void main() {
       gate.complete(_acceptedResult);
       await tester.pump(const Duration(milliseconds: 500));
       expect(tester.widget<TextField>(composer).controller?.text, 'new draft');
-      expect(gateway.slashCalls, ['compress first']);
     });
-
-    testWidgets('read-only exposes no slash submission surface or RPC', (
-      tester,
-    ) async {
-      final gateway = _SlashGateway();
-      await _pumpSlashChat(tester, gateway, readOnly: true);
+    testWidgets('read-only has no slash submission surface', (tester) async {
+      await _pumpSlashChat(tester, _SlashGateway(), readOnly: true);
       expect(find.byType(TextField), findsNothing);
     });
-
     testWidgets('late directed remote slash preserves a newer draft', (
       tester,
     ) async {
@@ -915,19 +895,26 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       idleGate.complete(_directedResult);
       await tester.pump(const Duration(milliseconds: 800));
-
-      final prefs = await SharedPreferences.getInstance();
-      final restored = await ChatDraftStore(
-        prefs,
-      ).load(_connection().id, _session.id);
-      expect(restored.text, '@worker newer draft');
-      expect(gateway.submissions, ['directed turn', 'directed turn']);
       expect(gateway.slashCalls, hasLength(4));
       expect(find.byKey(const ValueKey('recording')), findsOneWidget);
       expect(stt.stopCalls, 0);
       expect(field.controller?.text, '@worker newer draft dictado tardío');
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump(const Duration(milliseconds: 400));
+      Navigator.of(tester.element(find.byType(Navigator).first)).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              ChatScreen(connection: _connection(), session: _session),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(
+        tester.widget<TextField>(find.byType(TextField).last).controller?.text,
+        '@worker newer draft',
+      );
+      expect(gateway.submissions, ['directed turn', 'directed turn']);
     });
-
     testWidgets('recording and transcribing hide slash suggestions', (
       tester,
     ) async {

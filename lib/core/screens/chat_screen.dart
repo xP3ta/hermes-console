@@ -1621,6 +1621,10 @@ class _ChatScreenState extends State<ChatScreen>
       _observeAttachmentDelivery(reconciledDelivery);
     }
     _preparedTurn = prepared;
+    if (!prepared.restoresComposer) {
+      _showHiddenRecoveredTurn(prepared);
+      return;
+    }
     final recoverPrepared = liveOwnsRestoredDraft
         ? false
         : switch (prepared.state) {
@@ -1710,7 +1714,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _showHiddenRecoveredTurn(PreparedTurn prepared) {
-    if (!mounted) return;
+    if (!mounted || prepared.state == PreparedTurnState.terminal) return;
     final preserveRoomDraft =
         widget.missionRoom != null && _selectedRoomMentions.isNotEmpty;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5410,6 +5414,7 @@ class _ChatScreenState extends State<ChatScreen>
       model: selectedModel,
       profile: profile,
       state: PreparedTurnState.prepared,
+      restoresComposer: usesComposerState,
     );
     final outbox = await _outboxStore();
     if (!await _persistPreparedTurn(outbox, prepared)) {
