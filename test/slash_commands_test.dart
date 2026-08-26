@@ -821,12 +821,7 @@ void main() {
     testWidgets('/compress without runtime preserves invocation', (
       tester,
     ) async {
-      final gateway = _SlashGateway()
-        ..resumeExistingError = const TuiGatewayRpcError(
-          'session.resume',
-          'missing runtime',
-          code: 4007,
-        );
+      final gateway = _SlashGateway()..resumeExistingError = _syntheticRpcError;
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
       await tester.enterText(composer, '/compress no runtime');
@@ -862,7 +857,6 @@ void main() {
     ) async {
       final gateway = _SlashGateway();
       await _pumpSlashChat(tester, gateway, readOnly: true);
-
       expect(find.byType(TextField), findsNothing);
     });
 
@@ -871,9 +865,9 @@ void main() {
     ) async {
       final gate = Completer<DesktopCommandRpcResult>();
       final gateway = _SlashGateway()..slashGate = gate;
-      final chat = await _pumpSlashChat(tester, gateway);
+      final stt = _OpenSttEngine();
+      final chat = await _pumpSlashChat(tester, gateway, stt: stt);
       final composer = find.byType(TextField).last;
-
       await tester.enterText(composer, '/goal first');
       await tester.pump(const Duration(milliseconds: 250));
       final sendAction = _sendAction(tester);
@@ -881,17 +875,14 @@ void main() {
       sendAction.onPressed!();
       await tester.pump();
       expect(gateway.slashCalls, ['goal first']);
-
       await tester.enterText(composer, 'new draft');
       chat.state = ChatPipelineState.streaming;
       await tester.pump();
       gate.complete(_directedResult);
       await tester.pump(const Duration(milliseconds: 500));
-
       final field = tester.widget<TextField>(composer);
       expect(field.controller?.text, 'new draft');
       expect(field.focusNode?.hasFocus, isTrue);
-
       gateway
         ..slashGate = null
         ..slashResult = _rejectedResult;
@@ -899,13 +890,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
       expect(field.controller?.text, '/goal rejected');
-
       gateway.slashError = _syntheticRpcError;
       await tester.enterText(composer, '/goal errors');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
       expect(field.controller?.text, '/goal errors');
-
       final idleGate = Completer<DesktopCommandRpcResult>();
       gateway
         ..slashError = null
@@ -918,6 +907,12 @@ void main() {
       await tester.pump();
       await tester.enterText(composer, '@worker newer draft');
       await tester.pump(const Duration(milliseconds: 400));
+      tester
+          .widget<HermesTactileAction>(find.byKey(const ValueKey('mic')))
+          .onPressed!();
+      await tester.pump();
+      stt._results.add(const SttResult('dictado tardío', false));
+      await tester.pump(const Duration(milliseconds: 400));
       idleGate.complete(_directedResult);
       await tester.pump(const Duration(milliseconds: 800));
 
@@ -928,6 +923,9 @@ void main() {
       expect(restored.text, '@worker newer draft');
       expect(gateway.submissions, ['directed turn', 'directed turn']);
       expect(gateway.slashCalls, hasLength(4));
+      expect(find.byKey(const ValueKey('recording')), findsOneWidget);
+      expect(stt.stopCalls, 0);
+      expect(field.controller?.text, '@worker newer draft dictado tardío');
     });
 
     testWidgets('recording and transcribing hide slash suggestions', (

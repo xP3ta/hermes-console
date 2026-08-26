@@ -5213,7 +5213,7 @@ class _ChatScreenState extends State<ChatScreen>
     // y descartamos lo que llegue después: enviar = "ya terminé este texto". Sin
     // esto, el dictado continuo seguía vivo y volvía a rellenar el composer con
     // lo ya enviado (texto duplicado).
-    _finishDictationForSend();
+    if (usesComposerState) _finishDictationForSend();
 
     // Build final message. El marcador `[📎 …]` se muestra como tarjeta; el
     // texto del usuario va visible; el payload tras el sentinel ⟦adjunto⟧ es
