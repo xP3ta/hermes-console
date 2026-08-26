@@ -181,6 +181,17 @@ void main() {
         ),
         isFalse,
       );
+      expect(
+        copied
+            .copyWith(restoresComposer: false)
+            .matchesBatch(
+              text: original.text,
+              attachments: [attachment()],
+              model: original.model,
+              profile: original.profile,
+            ),
+        isFalse,
+      );
     },
   );
 

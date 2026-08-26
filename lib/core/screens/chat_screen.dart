@@ -5399,6 +5399,7 @@ class _ChatScreenState extends State<ChatScreen>
           attachments: attachments,
           model: selectedModel,
           profile: profile,
+          restoresComposer: usesComposerState,
         ) ??
         false;
     final prepared = PreparedTurn(

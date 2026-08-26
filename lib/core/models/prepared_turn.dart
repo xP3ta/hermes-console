@@ -66,7 +66,9 @@ class PreparedTurn {
     required List<AttachmentDraft> attachments,
     required String model,
     required String profile,
+    bool restoresComposer = true,
   }) {
+    if (this.restoresComposer != restoresComposer) return false;
     if (this.text != text || this.model != model || this.profile != profile) {
       return false;
     }

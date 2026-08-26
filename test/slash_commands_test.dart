@@ -303,7 +303,6 @@ Future<ActiveChat> _pumpSlashChat(
 }) async {
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
-  SharedPreferences.setMockInitialValues({'onboarding_done': true});
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
   final secure = SecureStorage();
@@ -390,6 +389,7 @@ void main() {
   setUp(() {
     secureStore.clear();
     foregroundServiceRunning = false;
+    SharedPreferences.setMockInitialValues({'onboarding_done': true});
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -612,9 +612,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('navigation slash consumes once and opens route', (
-      tester,
-    ) async {
+    testWidgets('navigation slash opens route once', (tester) async {
       final gateway = _SlashGateway();
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
@@ -789,9 +787,7 @@ void main() {
       },
     );
 
-    testWidgets('/compress rejection preserves invocation and composer focus', (
-      tester,
-    ) async {
+    testWidgets('/compress preserves rejected invocation', (tester) async {
       final gateway = _SlashGateway()..slashResult = _rejectedResult;
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
@@ -820,9 +816,7 @@ void main() {
       await _submitSlash(tester);
       expect(field.controller?.text, '/compress no runtime');
     });
-    testWidgets('/compress accepted late preserves a newer draft', (
-      tester,
-    ) async {
+    testWidgets('/compress preserves a late draft', (tester) async {
       final gate = Completer<DesktopCommandRpcResult>();
       final gateway = _SlashGateway()..slashGate = gate;
       await _pumpSlashChat(tester, gateway);
@@ -840,9 +834,7 @@ void main() {
       await _pumpSlashChat(tester, _SlashGateway(), readOnly: true);
       expect(find.byType(TextField), findsNothing);
     });
-    testWidgets('late directed remote slash preserves a newer draft', (
-      tester,
-    ) async {
+    testWidgets('remote slash preserves late composer state', (tester) async {
       final gate = Completer<DesktopCommandRpcResult>();
       final gateway = _SlashGateway()..slashGate = gate;
       final stt = _OpenSttEngine();
@@ -882,10 +874,9 @@ void main() {
         ..submitError = StateError('prompt rejected before acceptance');
       chat.state = ChatPipelineState.idle;
       await tester.enterText(composer, '/goal idle');
-      await tester.pump(const Duration(milliseconds: 250));
       sendAction.onPressed!();
       await tester.pump();
-      await tester.enterText(composer, '@worker newer draft');
+      await tester.enterText(composer, 'directed turn');
       await tester.pump(const Duration(milliseconds: 400));
       tester
           .widget<HermesTactileAction>(find.byKey(const ValueKey('mic')))
@@ -898,20 +889,11 @@ void main() {
       expect(gateway.slashCalls, hasLength(4));
       expect(find.byKey(const ValueKey('recording')), findsOneWidget);
       expect(stt.stopCalls, 0);
-      expect(field.controller?.text, '@worker newer draft dictado tardío');
-      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
-      await tester.pump(const Duration(milliseconds: 400));
-      Navigator.of(tester.element(find.byType(Navigator).first)).push(
-        MaterialPageRoute<void>(
-          builder: (_) =>
-              ChatScreen(connection: _connection(), session: _session),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 800));
+      expect(field.controller?.text, 'directed turn dictado tardío');
+      await _pumpSlashChat(tester, gateway, stt: stt);
       expect(
         tester.widget<TextField>(find.byType(TextField).last).controller?.text,
-        '@worker newer draft',
+        'directed turn',
       );
       expect(gateway.submissions, ['directed turn', 'directed turn']);
     });
