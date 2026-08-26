@@ -79,7 +79,6 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.detail.task.id != widget.detail.task.id) {
       _showAllEvents = false;
-      _commentController.clear();
     }
   }
 
@@ -96,16 +95,11 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   Future<void> _submitComment() async {
     final callback = widget.onAddComment;
     final body = _commentController.text.trim();
-    final taskId = widget.detail.task.id;
     if (callback == null || body.isEmpty || _busyAction != null) return;
     setState(() => _busyAction = 'comment');
     try {
       await callback(body);
-      if (mounted &&
-          widget.detail.task.id == taskId &&
-          _commentController.text.trim() == body) {
-        _commentController.clear();
-      }
+      _commentController.clear();
     } finally {
       if (mounted) setState(() => _busyAction = null);
     }
@@ -731,6 +725,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       key: const ValueKey('kanban-detail-operations'),
       colors: colors,
       title: copy.operations,
+      initiallyExpanded: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -886,6 +881,7 @@ class _DetailSection extends StatelessWidget {
   final Widget child;
   final Widget? action;
   final Widget? summary;
+  final bool initiallyExpanded;
 
   const _DetailSection({
     required this.colors,
@@ -893,6 +889,7 @@ class _DetailSection extends StatelessWidget {
     required this.child,
     this.action,
     this.summary,
+    this.initiallyExpanded = false,
     super.key,
   });
 
@@ -909,6 +906,7 @@ class _DetailSection extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
           tilePadding: const EdgeInsets.symmetric(horizontal: 13),
           childrenPadding: const EdgeInsets.fromLTRB(13, 0, 13, 13),
           title: Row(

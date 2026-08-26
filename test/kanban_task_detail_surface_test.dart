@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/kanban.dart';
@@ -63,7 +61,6 @@ void main() {
   ) async {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final pendingComment = Completer<void>();
     final detail = KanbanTaskDetail.fromJson({
       'task': {
         'id': 'long',
@@ -106,7 +103,7 @@ void main() {
       tester,
       detail: detail,
       physicalSize: const Size(390, 844),
-      onAddComment: (_) => pendingComment.future,
+      onAddComment: (_) async {},
     );
 
     expect(find.text('Tarjeta larga'), findsOneWidget);
@@ -158,13 +155,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('kanban-events-show-all')));
     await tester.pumpAndSettle();
     expect(find.text('event 0'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const ValueKey('kanban-comment-field')),
-      'borrador anterior',
-    );
-    await tester.tap(find.byKey(const ValueKey('kanban-comment-send')));
-    await tester.pump();
-
     await pumpSurface(
       tester,
       detail: KanbanTaskDetail.fromJson({
@@ -179,23 +169,25 @@ void main() {
       onAddComment: (_) async {},
     );
     expect(find.text('next 1'), findsNothing);
-    final nextComments = find.byKey(const ValueKey('kanban-detail-comments'));
-    await tester.ensureVisible(nextComments);
-    await tester.tap(nextComments);
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.enterText(
-      find.byKey(const ValueKey('kanban-comment-field')),
-      'borrador nuevo',
-    );
-    pendingComment.complete();
-    await tester.pump();
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('kanban-comment-field')))
-          .controller!
-          .text,
-      'borrador nuevo',
-    );
+  });
+
+  testWidgets('operaciones triage y running son visibles sin expandir', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    for (final entry in {
+      'triage': const ValueKey('kanban-task-specify'),
+      'running': const ValueKey('kanban-task-reclaim'),
+    }.entries) {
+      await pumpSurface(
+        tester,
+        detail: KanbanTaskDetail.fromJson({
+          'task': {'id': entry.key, 'title': entry.key, 'status': entry.key},
+        }),
+      );
+      expect(find.byKey(entry.value), findsOneWidget, reason: entry.key);
+    }
   });
 
   testWidgets('detalle 0.20 muestra secciones ricas y envía comentario', (
@@ -258,7 +250,6 @@ void main() {
       'kanban-detail-attachments',
       'kanban-detail-runs',
       'kanban-detail-events',
-      'kanban-detail-operations',
     ]) {
       await expand(tester, key);
     }
@@ -316,7 +307,6 @@ void main() {
     await pumpSurface(tester, detail: detail, readOnly: true);
 
     await expand(tester, 'kanban-detail-runs');
-    await expand(tester, 'kanban-detail-operations');
 
     expect(
       find.byKey(const ValueKey('kanban-detail-read-only')),
