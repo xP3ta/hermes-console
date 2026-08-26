@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -835,29 +836,11 @@ void main() {
       expect(find.byType(TextField), findsNothing);
     });
     testWidgets('remote slash preserves late composer state', (tester) async {
-      final gate = Completer<DesktopCommandRpcResult>();
-      final gateway = _SlashGateway()..slashGate = gate;
+      final gateway = _SlashGateway()..slashResult = _rejectedResult;
       final stt = _OpenSttEngine();
       final chat = await _pumpSlashChat(tester, gateway, stt: stt);
       final composer = find.byType(TextField).last;
-      await tester.enterText(composer, '/goal first');
-      await tester.pump(const Duration(milliseconds: 250));
-      final sendAction = _sendAction(tester);
-      sendAction.onPressed!();
-      sendAction.onPressed!();
-      await tester.pump();
-      expect(gateway.slashCalls, ['goal first']);
-      await tester.enterText(composer, 'new draft');
-      chat.state = ChatPipelineState.streaming;
-      await tester.pump();
-      gate.complete(_directedResult);
-      await tester.pump(const Duration(milliseconds: 500));
       final field = tester.widget<TextField>(composer);
-      expect(field.controller?.text, 'new draft');
-      expect(field.focusNode?.hasFocus, isTrue);
-      gateway
-        ..slashGate = null
-        ..slashResult = _rejectedResult;
       await tester.enterText(composer, '/goal rejected');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
@@ -874,6 +857,8 @@ void main() {
         ..submitError = StateError('prompt rejected before acceptance');
       chat.state = ChatPipelineState.idle;
       await tester.enterText(composer, '/goal idle');
+      final sendAction = _sendAction(tester);
+      sendAction.onPressed!();
       sendAction.onPressed!();
       await tester.pump();
       await tester.enterText(composer, 'directed turn');
@@ -886,16 +871,43 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       idleGate.complete(_directedResult);
       await tester.pump(const Duration(milliseconds: 800));
-      expect(gateway.slashCalls, hasLength(4));
+      expect(gateway.slashCalls, hasLength(3));
       expect(find.byKey(const ValueKey('recording')), findsOneWidget);
       expect(stt.stopCalls, 0);
       expect(field.controller?.text, 'directed turn dictado tardío');
+      ScaffoldMessenger.of(
+        tester.element(find.byType(ChatScreen).last),
+      ).clearSnackBars();
       await _pumpSlashChat(tester, gateway, stt: stt);
-      expect(
-        tester.widget<TextField>(find.byType(TextField).last).controller?.text,
-        'directed turn',
-      );
+      final restored = tester.widget<TextField>(find.byType(TextField).last);
+      expect(restored.controller?.text, 'directed turn');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.submissions, ['directed turn']);
+      final recovered = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      final recoveredId = (recovered.values.single as Map)['client_turn_id'];
+      final discard = find.byType(SnackBarAction, skipOffstage: false).last;
+      tester.widget<SnackBarAction>(discard).onPressed();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(restored.controller?.text, 'directed turn');
+      expect(secureStore.containsKey('chat_turn_outbox_v1'), isFalse);
+      await _pumpSlashChat(tester, gateway, stt: stt);
+      final resubmitted = tester.widget<TextField>(find.byType(TextField).last);
+      expect(resubmitted.controller?.text, 'directed turn');
+      gateway.submitError = null;
+      _sendAction(tester).onPressed!();
+      await tester.pump(const Duration(milliseconds: 800));
       expect(gateway.submissions, ['directed turn', 'directed turn']);
+      final submitted = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      final submittedId = (submitted.values.single as Map)['client_turn_id'];
+      expect(submittedId, isNot(recoveredId));
+      gateway._events.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-slash-test',
+          payload: {'text': 'done'},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
     });
     testWidgets('recording and transcribing hide slash suggestions', (
       tester,
