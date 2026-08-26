@@ -247,6 +247,7 @@ class _UiRewindGateway
   Completer<void>? rewindGate;
   Object? slashError;
   Object? dispatchError;
+  Object? rewindError;
   Object? resumeExistingError;
   bool _compressionAccepted = false;
   int contextBreakdownCalls = 0;
@@ -395,6 +396,8 @@ class _UiRewindGateway
   ) async {
     rewinds.add((text: text, ordinal: truncateBeforeUserOrdinal));
     await rewindGate?.future;
+    final error = rewindError;
+    if (error != null) throw error;
   }
 
   @override
@@ -1117,6 +1120,7 @@ void main() {
     KanbanClient Function(SavedConnection connection)?
     missionRoomKanbanClientFactory,
     Future<bool> Function()? turnIdempotencyCapability,
+    StoredSessionMessageLoader? storedMessageLoader,
     String? initialStoredSessionId,
     AgentProfile? missionBotProfile,
     Map<String, AgentProfile> missionRoomProfiles = const {},
@@ -1158,6 +1162,7 @@ void main() {
         initialStoredSessionId: initialStoredSessionId,
         api: api ?? _safeApi(),
         desktopGateway: desktopGateway,
+        storedMessageLoader: storedMessageLoader,
         turnIdempotencyCapability: turnIdempotencyCapability,
         disableForegroundKeepAlive: desktopGateway != null,
       );
@@ -4805,12 +4810,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 700));
 
     expect(gateway.rewinds, [(text: 'pregunta corregida', ordinal: 0)]);
-    expect(find.textContaining('pregunta corregida'), findsOneWidget);
+    expect(find.textContaining('pregunta original'), findsOneWidget);
     expect(tester.takeException(), isNull);
     gateway.emit('message.complete', {'text': 'Respuesta corregida'});
     for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
       await tester.pump(const Duration(milliseconds: 33));
     }
+    expect(find.textContaining('pregunta corregida'), findsOneWidget);
     expect(chat.isStreaming, isFalse);
   });
 
@@ -4859,45 +4865,137 @@ void main() {
     },
   );
 
-  testWidgets('un ACK tardío conserva el snapshot y después repinta la respuesta', (
-    tester,
-  ) async {
-    final gate = Completer<void>();
-    final gateway = _UiRewindGateway()..rewindGate = gate;
+  Finder transcript(String text) => find.descendant(
+    of: chatListFinder(),
+    matching: find.textContaining(text),
+  );
+
+  Future<({ActiveChat chat, _UiRewindGateway gateway})> openRewriteEditor(
+    WidgetTester tester,
+    String connectionId, {
+    _UiRewindGateway? gateway,
+    StoredSessionMessageLoader? storedMessageLoader,
+  }) async {
+    gateway ??= _UiRewindGateway();
     final chat = await pumpChat(
       tester,
       desktopGateway: gateway,
-      connection: _remoteConn('conn-delayed-rewrite'),
-      messages: [
+      connection: _remoteConn(connectionId),
+      storedMessageLoader: storedMessageLoader,
+      messages: const [
         {'role': 'assistant', 'content': 'Respuesta original'},
         {'role': 'user', 'content': 'pregunta original'},
       ],
     );
-
     await tester.tap(find.byIcon(Icons.edit_outlined));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('edit-message-composer')),
-      'pregunta con ACK tardío',
-    );
-    await tester.tap(find.text('Guardar y enviar'));
-    await tester.pump(const Duration(milliseconds: 100));
+    return (chat: chat, gateway: gateway);
+  }
 
-    expect(gateway.rewinds, [
-      (text: 'pregunta con ACK tardío', ordinal: 0),
+  Future<void> submitEdit(WidgetTester tester, [String? text]) async {
+    if (text != null) {
+      await tester.enterText(
+        find.byKey(const ValueKey('edit-message-composer')),
+        text,
+      );
+    }
+    await tester.tap(find.text('Guardar y enviar'));
+  }
+
+  testWidgets('editar a texto vacío no rebobina ni altera el turno', (
+    tester,
+  ) async {
+    final (:chat, :gateway) = await openRewriteEditor(tester, 'conn-empty');
+    await submitEdit(tester, '   ');
+    await tester.pumpAndSettle();
+    expect(gateway.rewinds, isEmpty);
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(chat.state, ChatPipelineState.idle);
+    expect(find.byIcon(Icons.edit_outlined).hitTestable(), findsOneWidget);
+  });
+
+  testWidgets('guardar texto idéntico no rebobina ni altera el turno', (
+    tester,
+  ) async {
+    final (:chat, :gateway) = await openRewriteEditor(tester, 'conn-same');
+    await submitEdit(tester);
+    await tester.pumpAndSettle();
+    expect(gateway.rewinds, isEmpty);
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(chat.state, ChatPipelineState.idle);
+    expect(find.byIcon(Icons.edit_outlined).hitTestable(), findsOneWidget);
+  });
+
+  testWidgets('fallo RPC restaura transcript y vuelve a habilitar editar', (
+    tester,
+  ) async {
+    final failing = _UiRewindGateway()
+      ..rewindError = const TuiGatewayRpcError(
+        'prompt.submit',
+        'synthetic rewind failure',
+        code: 5005,
+      );
+    final (:chat, gateway: _) = await openRewriteEditor(
+      tester,
+      'conn-failed',
+      gateway: failing,
+    );
+    await submitEdit(tester, 'pregunta rechazada');
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(failing.rewinds, [(text: 'pregunta rechazada', ordinal: 0)]);
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(transcript('pregunta rechazada'), findsNothing);
+    expect(chat.state, ChatPipelineState.idle);
+    expect(
+      find.text(
+        'No se pudo editar el mensaje. La conversación original sigue disponible.',
+      ),
+      findsOneWidget,
+    );
+    final edit = find.byIcon(Icons.edit_outlined).hitTestable();
+    expect(edit, findsOneWidget);
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('chat-edit-message-dialog')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('rewind conserva snapshot hasta terminal e hidratación tardíos', (
+    tester,
+  ) async {
+    final restGate = Completer<List<Map<String, dynamic>>>();
+    final (:chat, :gateway) = await openRewriteEditor(
+      tester,
+      'conn-hydrated',
+      storedMessageLoader: (_, _) => restGate.future,
+    );
+    await submitEdit(tester, 'pregunta hidratada');
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(gateway.rewinds, [(text: 'pregunta hidratada', ordinal: 0)]);
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(transcript('pregunta hidratada'), findsNothing);
+    gateway.emit('message.complete', {'text': 'Respuesta hidratada'});
+    await tester.pump();
+    expect(chat.isStreaming, isTrue);
+    expect(transcript('pregunta original'), findsOneWidget);
+    restGate.complete(const [
+      {'role': 'user', 'content': 'pregunta hidratada'},
+      {'role': 'assistant', 'content': 'Respuesta hidratada'},
     ]);
-    expect(find.textContaining('pregunta original'), findsOneWidget);
-    gate.complete();
-    await tester.pump(const Duration(milliseconds: 350));
-    gateway.emit('message.complete', {'text': 'Respuesta tras ACK tardío'});
     for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
       await tester.pump(const Duration(milliseconds: 33));
     }
-
-    expect(find.textContaining('pregunta con ACK tardío'), findsOneWidget);
-    expect(find.text('Respuesta tras ACK tardío'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(transcript('pregunta original'), findsNothing);
+    expect(transcript('pregunta hidratada'), findsOneWidget);
+    expect(find.text('Respuesta hidratada'), findsOneWidget);
+    expect(
+      chat.messages.where((m) => m['content'] == 'Respuesta hidratada'),
+      hasLength(1),
+    );
     expect(chat.isStreaming, isFalse);
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('regenerar ignora el pseudo-turno de cambio de modelo', (

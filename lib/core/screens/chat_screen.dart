@@ -912,6 +912,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool _disposed = false;
 
   bool _editingUserMessage = false;
+  bool _editingRewriteSubmitted = false;
   List<Map<String, dynamic>>? _editingMessagesSnapshot;
   ChatPipelineState? _editingPipelineSnapshot;
 
@@ -3406,6 +3407,16 @@ class _ChatScreenState extends State<ChatScreen>
   /// controlador de conversación, suscrito al mismo chat por su cuenta.
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    if (_editingRewriteSubmitted &&
+        (event == ActiveChatEvent.done ||
+            event == ActiveChatEvent.error ||
+            event == ActiveChatEvent.cancelled ||
+            event == ActiveChatEvent.messagesHydrated)) {
+      _editingUserMessage = false;
+      _editingRewriteSubmitted = false;
+      _editingMessagesSnapshot = null;
+      _editingPipelineSnapshot = null;
+    }
     final delivery = _attachmentDelivery;
     if (delivery != null) _preparedTurn = delivery.current;
     if ((event == ActiveChatEvent.done ||
@@ -5663,6 +5674,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (parsed.text.trim().isEmpty || parsed.attachments.isNotEmpty) return;
     setState(() {
       _editingUserMessage = true;
+      _editingRewriteSubmitted = false;
       _editingMessagesSnapshot = _chat.messages
           .map((entry) => Map<String, dynamic>.from(entry))
           .toList();
@@ -5678,6 +5690,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
     if (!mounted) {
       _editingUserMessage = false;
+      _editingRewriteSubmitted = false;
       _editingMessagesSnapshot = null;
       _editingPipelineSnapshot = null;
       return;
@@ -5685,6 +5698,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (edited == null || edited.isEmpty || edited == parsed.text.trim()) {
       setState(() {
         _editingUserMessage = false;
+        _editingRewriteSubmitted = false;
         _editingMessagesSnapshot = null;
         _editingPipelineSnapshot = null;
       });
@@ -5692,6 +5706,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     var failed = false;
+    _editingRewriteSubmitted = true;
     try {
       await _chat.rewrite(
         userOrdinal: ordinal,
@@ -5711,9 +5726,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (!mounted) return;
     setState(() {
-      _editingUserMessage = false;
-      _editingMessagesSnapshot = null;
-      _editingPipelineSnapshot = null;
+      if (failed || _editingMessagesSnapshot == null) {
+        _editingUserMessage = false;
+        _editingRewriteSubmitted = false;
+        _editingMessagesSnapshot = null;
+        _editingPipelineSnapshot = null;
+      }
     });
     if (failed) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -10951,78 +10969,81 @@ class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              IconButton(
-                onPressed: () => _close(),
-                icon: const Icon(Icons.close_rounded),
-                tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+    final body = SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => _close(),
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    strings.chaEditTitle,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: colors.surfaceVariant.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: colors.divider.withValues(alpha: 0.42),
+                ),
               ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  strings.chaEditTitle,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: colors.textPrimary,
-                    fontWeight: FontWeight.w700,
+              child: TextField(
+                key: const ValueKey('edit-message-composer'),
+                controller: _controller,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 8,
+                decoration: InputDecoration(
+                  hintText: strings.chaEditHint,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 15,
                   ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Flexible(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colors.surfaceVariant.withValues(alpha: 0.72),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: colors.divider.withValues(alpha: 0.42),
-                      ),
-                    ),
-                    child: TextField(
-                      key: const ValueKey('edit-message-composer'),
-                      controller: _controller,
-                      autofocus: true,
-                      minLines: 2,
-                      maxLines: 8,
-                      decoration: InputDecoration(
-                        hintText: strings.chaEditHint,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 15,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    strings.chaEditRewindWarning,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              strings.chaEditRewindWarning,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.4,
+                color: colors.textSecondary,
               ),
             ),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
+            const SizedBox(height: 74),
+          ],
+        ),
+      ),
+    );
+    return Stack(
+      children: [
+        body,
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 18,
+          child: Wrap(
             alignment: WrapAlignment.end,
             spacing: 8,
             runSpacing: 8,
@@ -11043,8 +11064,8 @@ class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
               ),
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
