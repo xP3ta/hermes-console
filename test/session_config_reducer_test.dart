@@ -5,11 +5,15 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 
 SessionConfigScope _scope({
   String connection = 'connection-a',
+  String stored = 'stored-a',
   String runtime = 'runtime-a',
+  String profile = 'default',
   int sessionEpoch = 1,
 }) => SessionConfigScope(
   connectionId: connection,
+  storedSessionId: stored,
   runtimeSessionId: runtime,
+  profileName: profile,
   sessionEpoch: sessionEpoch,
 );
 
@@ -310,7 +314,10 @@ void main() {
       state,
       scope,
       infoEpoch: 1,
-      observedRequestEpoch: 1,
+      // Gateways antiguos no correlacionan session.info con config.set. Al
+      // recibirse después de B, el adaptador solo conoce el epoch vigente (2),
+      // aunque este payload todavía sea la aplicación tardía de A.
+      observedRequestEpoch: 2,
       model: 'model-b',
       provider: 'provider-b',
     );
@@ -350,10 +357,12 @@ void main() {
     );
   });
 
-  test('connection, runtime y sessionEpoch aíslan estados homónimos', () {
+  test('connection, stored, runtime, perfil y epoch aíslan homónimos', () {
     final a = _scope();
     final otherConnection = _scope(connection: 'connection-b');
+    final otherStored = _scope(stored: 'stored-b');
     final otherRuntime = _scope(runtime: 'runtime-b');
+    final otherProfile = _scope(profile: 'work');
     final nextSessionEpoch = _scope(sessionEpoch: 2);
     var state = const SessionConfigReducerState.empty();
     state = _observe(
@@ -372,10 +381,24 @@ void main() {
     );
     state = _observe(
       state,
+      otherStored,
+      infoEpoch: 0,
+      observedRequestEpoch: 0,
+      reasoning: 'xhigh',
+    );
+    state = _observe(
+      state,
       otherRuntime,
       infoEpoch: 0,
       observedRequestEpoch: 0,
       reasoning: 'minimal',
+    );
+    state = _observe(
+      state,
+      otherProfile,
+      infoEpoch: 0,
+      observedRequestEpoch: 0,
+      reasoning: 'medium',
     );
     state = _observe(
       state,
@@ -405,7 +428,9 @@ void main() {
       SessionConfigChangeStatus.superseded,
     );
     expect(state[otherConnection]!.effective.reasoningEffort, 'low');
+    expect(state[otherStored]!.effective.reasoningEffort, 'xhigh');
     expect(state[otherRuntime]!.effective.reasoningEffort, 'minimal');
+    expect(state[otherProfile]!.effective.reasoningEffort, 'medium');
     expect(state[nextSessionEpoch]!.effective.reasoningEffort, 'ultra');
     expect(
       state.changeFor(otherConnection, DesktopSessionConfigKey.reasoning),

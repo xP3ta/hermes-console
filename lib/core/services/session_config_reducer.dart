@@ -35,28 +35,39 @@ extension SessionConfigChangeLifecycle on SessionConfigChangeStatus {
 
 final class SessionConfigScope {
   final String connectionId;
+  final String storedSessionId;
   final String runtimeSessionId;
+  final String profileName;
   final int sessionEpoch;
 
   factory SessionConfigScope({
     required String connectionId,
+    required String storedSessionId,
     required String runtimeSessionId,
+    required String profileName,
     required int sessionEpoch,
   }) {
-    if (!_isOpaqueId(connectionId) || !_isOpaqueId(runtimeSessionId)) {
+    if (!_isOpaqueId(connectionId) ||
+        !_isOpaqueId(storedSessionId) ||
+        !_isOpaqueId(runtimeSessionId) ||
+        !_isOpaqueId(profileName)) {
       throw const FormatException('Invalid session config scope');
     }
     _validateEpoch(sessionEpoch, 'session');
     return SessionConfigScope._(
       connectionId: connectionId,
+      storedSessionId: storedSessionId,
       runtimeSessionId: runtimeSessionId,
+      profileName: profileName,
       sessionEpoch: sessionEpoch,
     );
   }
 
   const SessionConfigScope._({
     required this.connectionId,
+    required this.storedSessionId,
     required this.runtimeSessionId,
+    required this.profileName,
     required this.sessionEpoch,
   });
 
@@ -65,11 +76,19 @@ final class SessionConfigScope {
       identical(this, other) ||
       other is SessionConfigScope &&
           connectionId == other.connectionId &&
+          storedSessionId == other.storedSessionId &&
           runtimeSessionId == other.runtimeSessionId &&
+          profileName == other.profileName &&
           sessionEpoch == other.sessionEpoch;
 
   @override
-  int get hashCode => Object.hash(connectionId, runtimeSessionId, sessionEpoch);
+  int get hashCode => Object.hash(
+    connectionId,
+    storedSessionId,
+    runtimeSessionId,
+    profileName,
+    sessionEpoch,
+  );
 
   @override
   String toString() => 'SessionConfigScope(epoch: $sessionEpoch)';
@@ -213,6 +232,20 @@ final class SessionConfigAuthoritativeInfo {
     DesktopSessionConfigKey.reasoning => reasoningEffort != null,
     DesktopSessionConfigKey.fast => fast != null,
   };
+
+  SessionConfigValue? valueFor(DesktopSessionConfigKey key) => switch (key) {
+    DesktopSessionConfigKey.model when model != null =>
+      SessionModelConfigValue.effective(
+        modelId: model!,
+        providerSlug: provider,
+      ),
+    DesktopSessionConfigKey.reasoning when reasoningEffort != null =>
+      SessionReasoningConfigValue.effective(reasoningEffort!),
+    DesktopSessionConfigKey.fast when fast != null => SessionFastConfigValue(
+      fast!,
+    ),
+    _ => null,
+  };
 }
 
 final class SessionEffectiveConfig {
@@ -283,8 +316,9 @@ final class PendingSessionConfigChange {
   final String? warning;
   final String? confirmMessage;
   final SessionConfigValue? authoritativeValue;
+  final Set<SessionConfigValue> supersededRequestedValues;
 
-  const PendingSessionConfigChange._({
+  PendingSessionConfigChange._({
     required this.scope,
     required this.key,
     required this.requestedValue,
@@ -295,7 +329,8 @@ final class PendingSessionConfigChange {
     this.warning,
     this.confirmMessage,
     this.authoritativeValue,
-  });
+    Set<SessionConfigValue> supersededRequestedValues = const {},
+  }) : supersededRequestedValues = Set.unmodifiable(supersededRequestedValues);
 
   SessionConfigValue? get displayValue => switch (status) {
     SessionConfigChangeStatus.sending ||
@@ -330,6 +365,7 @@ final class PendingSessionConfigChange {
     warning: warning,
     confirmMessage: confirmMessage,
     authoritativeValue: authoritativeValue,
+    supersededRequestedValues: supersededRequestedValues,
   );
 
   @override
@@ -603,6 +639,10 @@ abstract final class SessionConfigReducer {
       ),
       requestEpoch: event.requestEpoch,
       status: SessionConfigChangeStatus.sending,
+      supersededRequestedValues: {
+        ...?current?.supersededRequestedValues,
+        if (current?.status.canBeSuperseded == true) current!.requestedValue,
+      },
     );
     final changes = Map<DesktopSessionConfigKey, PendingSessionConfigChange>.of(
       session.changes,
@@ -751,9 +791,19 @@ abstract final class SessionConfigReducer {
 
     bool accepts(DesktopSessionConfigKey key) {
       final change = session[key];
-      return change == null ||
-          !change.status.awaitsAuthoritativeInfo ||
-          event.observedRequestEpoch >= change.requestEpoch;
+      if (change == null || !change.status.awaitsAuthoritativeInfo) return true;
+      if (event.observedRequestEpoch < change.requestEpoch) return false;
+      final reported = event.info.valueFor(key);
+      if (reported == null ||
+          _sameReportedValue(reported, change.requestedValue)) {
+        return true;
+      }
+      if (change.previousEffectiveValue case final previous?) {
+        if (_sameReportedValue(reported, previous)) return false;
+      }
+      return !change.supersededRequestedValues.any(
+        (value) => _sameReportedValue(reported, value),
+      );
     }
 
     final acceptModel = accepts(DesktopSessionConfigKey.model);
@@ -773,7 +823,7 @@ abstract final class SessionConfigReducer {
       final current = changes[key];
       if (current == null ||
           !current.status.awaitsAuthoritativeInfo ||
-          event.observedRequestEpoch < current.requestEpoch ||
+          !accepts(key) ||
           !event.info.reports(key)) {
         continue;
       }
@@ -847,4 +897,13 @@ String? _optionalInfoValue(String? value, int maxLength) {
     return null;
   }
   return trimmed;
+}
+
+bool _sameReportedValue(SessionConfigValue reported, SessionConfigValue value) {
+  if (reported is SessionModelConfigValue && value is SessionModelConfigValue) {
+    return reported.modelId == value.modelId &&
+        (reported.providerSlug == null ||
+            reported.providerSlug == value.providerSlug);
+  }
+  return reported == value;
 }

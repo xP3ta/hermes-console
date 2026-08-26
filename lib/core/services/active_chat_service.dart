@@ -1873,7 +1873,11 @@ class ActiveChat {
       _sessionInfoEpoch = 0;
       _sessionConfigScope = SessionConfigScope(
         connectionId: connection.id,
+        storedSessionId: serverSessionId,
         runtimeSessionId: runtimeId,
+        profileName: _storedSessionProfile.isEmpty
+            ? 'default'
+            : _storedSessionProfile,
         sessionEpoch: _desktopSessionEpoch,
       );
     }

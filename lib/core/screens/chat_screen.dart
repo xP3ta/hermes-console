@@ -2289,14 +2289,23 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    final legacyModel = prefs.getString(_legacySessionModelKey);
+    final defaultProfile = _sessionPreferenceProfile == 'default';
+    final legacyModel = defaultProfile
+        ? prefs.getString(_legacyConnectionSessionModelKey) ??
+              prefs.getString(_legacySessionModelKey)
+        : null;
     final scopedModel = prefs.getString(_sessionModelKey);
     final model =
         scopedModel ??
         legacyModel ??
-        prefs.getString('selected_model') ??
+        (defaultProfile ? prefs.getString('selected_model') : null) ??
         'hermes-agent';
-    final provider = prefs.getString(_sessionProviderKey) ?? '';
+    final provider =
+        prefs.getString(_sessionProviderKey) ??
+        (defaultProfile
+            ? prefs.getString(_legacyConnectionSessionProviderKey)
+            : null) ??
+        '';
     final rawReasoning = prefs.getString(_sessionReasoningKey);
     final rawFast = prefs.getString(_sessionFastKey);
     DesktopReasoningEffort? reasoning;
@@ -2317,7 +2326,10 @@ class _ChatScreenState extends State<ChatScreen>
       _selectedFastMode = fastMode;
     });
     if (scopedModel == null && legacyModel != null) {
-      await prefs.setString(_sessionModelKey, legacyModel);
+      await Future.wait([
+        prefs.setString(_sessionModelKey, legacyModel),
+        if (provider.isNotEmpty) prefs.setString(_sessionProviderKey, provider),
+      ]);
     }
     if (_chatBound) {
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
@@ -2329,10 +2341,18 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  String get _sessionPreferenceScope =>
+  String get _sessionPreferenceProfile =>
+      Session.profileOwner(widget.session.profile);
+  String get _legacyConnectionSessionScope =>
       '${widget.connection.id}_${widget.session.id}';
+  String get _sessionPreferenceScope =>
+      '${widget.connection.id}_${_sessionPreferenceProfile}_${widget.session.id}';
   String get _sessionModelKey => 'selected_model_$_sessionPreferenceScope';
   String get _legacySessionModelKey => 'selected_model_${widget.session.id}';
+  String get _legacyConnectionSessionModelKey =>
+      'selected_model_$_legacyConnectionSessionScope';
+  String get _legacyConnectionSessionProviderKey =>
+      'selected_provider_$_legacyConnectionSessionScope';
   String get _sessionProviderKey =>
       'selected_provider_$_sessionPreferenceScope';
   String get _sessionReasoningKey =>
@@ -2412,30 +2432,15 @@ class _ChatScreenState extends State<ChatScreen>
   /// Modelo que debe pintar esta sesión mientras haya una elección del usuario
   /// registrada en el reducer de config.
   ///
-  /// Hermes Desktop pinta el pick de forma optimista en cuanto el `config.set`
-  /// es aceptado y solo lo revierte ante un rechazo real del RPC. Un
-  /// `session.info` emitido antes de que el servidor aplique el cambio (p.ej.
-  /// un switch diferido a mitad de turno) sigue reportando el modelo anterior,
-  /// así que una confirmación cuyo valor autoritativo coincide con el efectivo
-  /// previo se trata como obsoleta y NO repinta la cabecera. Si el info
-  /// reporta un modelo distinto tanto del pedido como del previo, es un cambio
-  /// efectivo en el servidor y sí reconcilia.
+  /// El reducer conserva el pick vigente mientras `session.info` siga
+  /// reportando el efectivo previo o una petición ya sustituida.
   SessionModelConfigValue? get _displayedSessionModel {
     if (!_chatBound) return null;
     final pending = _chat.pendingSessionConfigChange(
       DesktopSessionConfigKey.model,
     );
     if (pending == null) return null;
-    final value = switch (pending.status) {
-      SessionConfigChangeStatus.sending ||
-      SessionConfigChangeStatus.accepted => pending.requestedValue,
-      SessionConfigChangeStatus.confirmed =>
-        pending.requestedWasApplied == false &&
-                pending.authoritativeValue == pending.previousEffectiveValue
-            ? pending.requestedValue
-            : pending.displayValue,
-      _ => pending.displayValue,
-    };
+    final value = pending.displayValue;
     return value is SessionModelConfigValue ? value : null;
   }
 
@@ -3348,11 +3353,20 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _refreshSelectedModelFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
+    final defaultProfile = _sessionPreferenceProfile == 'default';
     final next =
         prefs.getString(_sessionModelKey) ??
-        prefs.getString('selected_model') ??
+        (defaultProfile
+            ? prefs.getString(_legacyConnectionSessionModelKey) ??
+                  prefs.getString('selected_model')
+            : null) ??
         'hermes-agent';
-    final provider = prefs.getString(_sessionProviderKey) ?? '';
+    final provider =
+        prefs.getString(_sessionProviderKey) ??
+        (defaultProfile
+            ? prefs.getString(_legacyConnectionSessionProviderKey)
+            : null) ??
+        '';
     if (next != _selectedModel || provider != _selectedProvider) {
       setState(() {
         _selectedModel = next;

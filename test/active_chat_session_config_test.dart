@@ -528,4 +528,51 @@ void main() {
     expect(chat.effectiveSessionConfig.fast, isFalse);
     expect(chat.hasDesktopRuntime, isTrue);
   });
+
+  test(
+    'info previo no confirma un modelo aceptado hasta que se aplica',
+    () async {
+      final gateway = _ConfiguredCreateGateway();
+      final chat = _chat(gateway);
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'hola',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final previous = chat.effectiveSessionConfig.model;
+      final selection = DesktopModelSelection(
+        modelId: 'openai/gpt-5.6-codex',
+        providerSlug: 'openai-codex',
+      );
+
+      final accepted = await chat.setSessionModel(
+        selection,
+        confirmExpensiveModel: true,
+      );
+      expect(accepted.status, SessionConfigChangeStatus.accepted);
+
+      gateway.emitSessionInfo({'model': previous, 'provider': 'openai-codex'});
+      await Future<void>.delayed(Duration.zero);
+
+      var pending = chat.pendingSessionConfigChange(
+        DesktopSessionConfigKey.model,
+      )!;
+      expect(pending.status, SessionConfigChangeStatus.accepted);
+      expect(
+        (pending.displayValue as SessionModelConfigValue).modelId,
+        selection.modelId,
+      );
+      expect(chat.effectiveSessionConfig.model, previous);
+
+      gateway.emitSessionInfo({
+        'model': selection.modelId,
+        'provider': selection.providerSlug,
+      });
+      await Future<void>.delayed(Duration.zero);
+      pending = chat.pendingSessionConfigChange(DesktopSessionConfigKey.model)!;
+      expect(pending.status, SessionConfigChangeStatus.confirmed);
+      expect(chat.effectiveSessionConfig.model, selection.modelId);
+    },
+  );
 }

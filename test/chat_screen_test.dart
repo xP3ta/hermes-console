@@ -59,6 +59,7 @@ import 'package:hermes_android/core/services/mission_bot_chat_store.dart';
 import 'package:hermes_android/core/services/mission_room_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
+import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
@@ -4663,6 +4664,49 @@ void main() {
     },
   );
 
+  testWidgets('un draft de otro perfil no hereda su modelo de sesión', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()
+      ..resumeExistingError = const TuiGatewayRpcError(
+        'session.resume',
+        'not found',
+        code: 4007,
+      );
+    const connectionId = 'conn-profile-model';
+    const sessionId = 'mob-shared-model';
+    await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn(connectionId),
+      session: const Session(
+        id: sessionId,
+        title: 'Draft work',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        startedAt: 0,
+        profile: 'work',
+      ),
+      initialPreferences: const {
+        'selected_model_${connectionId}_$sessionId': 'leaked-model',
+        'selected_provider_${connectionId}_$sessionId': 'provider-a',
+      },
+    );
+
+    await tester.enterText(find.byType(TextField), 'primer turno');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(gateway.createConfigs.single.model, isNull);
+    expect(gateway.submissions, ['primer turno']);
+    gateway.emit('message.complete', const {'text': 'hecho'});
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
   testWidgets(
     'un session.info con el modelo previo no revierte una elección aceptada',
     (tester) async {
@@ -4706,6 +4750,10 @@ void main() {
         },
       });
       await tester.pump();
+      expect(
+        chat.pendingSessionConfigChange(DesktopSessionConfigKey.model)?.status,
+        SessionConfigChangeStatus.accepted,
+      );
       expect(
         find.byKey(const ValueKey('new-model')),
         findsOneWidget,
