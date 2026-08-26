@@ -688,6 +688,7 @@ abstract final class MissionProjector {
       return MissionAgentStatus.approvalRequired;
     }
     if (chat?.phase == MissionLivePhase.error) return MissionAgentStatus.error;
+    if (worker != null) return MissionAgentStatus.working;
     if (task?.status == 'blocked') return MissionAgentStatus.blocked;
     if (chat != null) {
       switch (chat.phase) {
@@ -704,7 +705,6 @@ abstract final class MissionProjector {
       }
     }
     if (task?.status == 'running') return MissionAgentStatus.working;
-    if (worker != null) return MissionAgentStatus.working;
     return MissionAgentStatus.idle;
   }
 
@@ -719,9 +719,10 @@ abstract final class MissionProjector {
     MissionAgentStatus.error => 'chat.failed:${chat?.sessionId ?? ''}',
     MissionAgentStatus.blocked => 'kanban.blocked:${task?.id ?? ''}',
     MissionAgentStatus.thinking => 'chat.thinking:${chat?.sessionId ?? ''}',
-    MissionAgentStatus.working when chat != null =>
-      'chat.tool:${chat.sessionId}',
-    MissionAgentStatus.working when task != null => 'kanban.running:${task.id}',
+    MissionAgentStatus.working when chat?.phase == MissionLivePhase.working =>
+      'chat.tool:${chat!.sessionId}',
+    MissionAgentStatus.working when task?.status == 'running' =>
+      'kanban.running:${task!.id}',
     MissionAgentStatus.working =>
       'worker.${worker?.source ?? 'unknown'}:${worker?.id ?? ''}',
     MissionAgentStatus.responding => 'chat.responding:${chat?.sessionId ?? ''}',
@@ -802,8 +803,8 @@ abstract final class MissionProjector {
   };
 
   static int _taskPriority(String status) => switch (status) {
-    'blocked' => 0,
-    'running' => 1,
+    'running' => 0,
+    'blocked' => 1,
     'review' => 2,
     'ready' => 3,
     'scheduled' => 4,

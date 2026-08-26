@@ -192,6 +192,133 @@ void main() {
   });
 
   group('MissionProjector', () {
+    test('prefers running work regardless of blocked task age', () {
+      MissionAgent project(List<KanbanTask> tasks) => MissionProjector.build(
+        snapshot: _snapshot(tasks: tasks),
+      ).agents.firstWhere((agent) => agent.profile.name == 'infra');
+
+      final newerRunning = project(const [
+        KanbanTask(
+          id: 'blocked-old',
+          title: 'Historical blocker',
+          body: '',
+          status: 'blocked',
+          assignee: 'infra',
+          createdAt: 10,
+        ),
+        KanbanTask(
+          id: 'running-new',
+          title: 'Live work',
+          body: '',
+          status: 'running',
+          assignee: 'infra',
+          createdAt: 20,
+          startedAt: 30,
+        ),
+      ]);
+
+      expect(newerRunning.status, MissionAgentStatus.working);
+      expect(newerRunning.statusEvidence, 'kanban.running:running-new');
+      expect(newerRunning.currentTask?.id, 'running-new');
+
+      final olderRunning = project(const [
+        KanbanTask(
+          id: 'running-old',
+          title: 'Live work',
+          body: '',
+          status: 'running',
+          assignee: 'infra',
+          startedAt: 10,
+        ),
+        KanbanTask(
+          id: 'blocked-new',
+          title: 'New blocker',
+          body: '',
+          status: 'blocked',
+          assignee: 'infra',
+          createdAt: 30,
+        ),
+      ]);
+
+      expect(olderRunning.status, MissionAgentStatus.working);
+      expect(olderRunning.statusEvidence, 'kanban.running:running-old');
+      expect(olderRunning.currentTask?.id, 'running-old');
+    });
+
+    test('fresh official worker outranks a blocked task', () {
+      final snapshot = MissionBackendSnapshot(
+        profiles: const [
+          AgentProfile(
+            name: 'infra',
+            workerSession: AgentProfileWorkerSession(
+              id: 'worker-kanban-42',
+              source: 'kanban',
+              title: 'Live worker',
+              lastActive: 100,
+            ),
+          ),
+        ],
+        board: const KanbanBoard(
+          columns: [
+            KanbanColumn(
+              name: 'blocked',
+              tasks: [
+                KanbanTask(
+                  id: 'blocked-1',
+                  title: 'Historical blocker',
+                  body: '',
+                  status: 'blocked',
+                  assignee: 'infra',
+                ),
+              ],
+            ),
+          ],
+        ),
+        loadedAt: DateTime.fromMillisecondsSinceEpoch(100000),
+      );
+      final agent = MissionProjector.build(
+        snapshot: snapshot,
+        liveChats: const [
+          MissionLiveChat(
+            profileName: 'infra',
+            sessionId: 'idle-chat',
+            title: 'Idle chat',
+            phase: MissionLivePhase.idle,
+          ),
+        ],
+        now: DateTime.fromMillisecondsSinceEpoch(200000),
+      ).agents.single;
+
+      expect(agent.status, MissionAgentStatus.working);
+      expect(agent.statusEvidence, 'worker.kanban:worker-kanban-42');
+
+      final stale = MissionProjector.build(
+        snapshot: snapshot,
+        now: DateTime.fromMillisecondsSinceEpoch(251000),
+      ).agents.single;
+      expect(stale.status, MissionAgentStatus.blocked);
+      expect(stale.statusEvidence, 'kanban.blocked:blocked-1');
+    });
+
+    test('never promotes ready work without live evidence', () {
+      final agent = MissionProjector.build(
+        snapshot: _snapshot(
+          tasks: const [
+            KanbanTask(
+              id: 'ready-1',
+              title: 'Queued work',
+              body: '',
+              status: 'ready',
+              assignee: 'infra',
+            ),
+          ],
+        ),
+      ).agents.firstWhere((agent) => agent.profile.name == 'infra');
+
+      expect(agent.status, MissionAgentStatus.idle);
+      expect(agent.statusEvidence, 'no-live-evidence');
+    });
+
     test(
       'uses strict status precedence and never treats an open session as work',
       () {
