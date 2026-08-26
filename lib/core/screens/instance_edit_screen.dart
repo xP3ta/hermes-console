@@ -129,8 +129,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
 
   // Un pairing puede llegar dos veces (initial link + stream de app_links, o un
   // rebuild mientras se resuelve el primer frame). La huella evita repetir los
-  // probes y, sobre todo, rotar dos veces la contraseña del Dashboard. No se
-  // persiste ni se registra: solo vive durante esta pantalla.
+  // probes durante esta pantalla.
   int? _automatedPairingFingerprint;
   Future<void>? _pairingAutomationFuture;
   bool _externalPairingPromptOpen = false;
@@ -404,19 +403,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     if (_automatedPairingFingerprint == fingerprint) return;
     _automatedPairingFingerprint = fingerprint;
 
-    // La configuración del Dashboard debe terminar ANTES del diagnóstico. Si
-    // ambas operaciones corren en paralelo, la sonda puede informar auth
-    // inválida mientras el Bridge está reiniciando el Dashboard. Guardar espera
-    // también esta secuencia: nunca persistimos una instancia justo después de
-    // rotar la contraseña pero antes de conservarla en Keystore.
     final automation = () async {
-      // Onboarding "funciona solo": tras una acción de confianza del usuario
-      // (QR/pegar, o confirmación del deep link externo), provisiona el
-      // Dashboard sin pedirle que entienda puertos/bridge. El botón manual
-      // mantiene su confirmación fuerte al editar una instancia ya guardada.
-      if (widget.initial == null && _dashPassCtrl.text.trim().isEmpty) {
-        await _autoConfigureDashboard(silent: true);
-      }
       if (!mounted) return;
       await _runProbe(
         gateway: true,
@@ -1013,9 +1000,8 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       _error = null;
     });
     try {
-      // Un QR puede estar terminando de configurar/reiniciar el Dashboard. No
-      // guardar hasta que esa contraseña ya esté en los controladores que se
-      // copiarán al Keystore y las sondas hayan terminado de usar la pantalla.
+      // Esperar las sondas evita persistir mientras la pantalla todavía procesa
+      // el mismo enlace de pairing.
       await _pairingAutomationFuture;
       if (!mounted) return;
       await _bridgeConfigLoad;

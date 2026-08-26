@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -270,14 +269,9 @@ void main() {
   });
 
   testWidgets(
-    'Guardar espera a que el QR configure Dashboard y persiste su contraseña',
+    'QR y reapertura no cambian credenciales Dashboard automáticamente',
     (tester) async {
-      final allowDashboardUpdate = Completer<void>();
-      final dashboardUpdateSeen = Completer<void>();
-      String generatedPassword = '';
-      addTearDown(() {
-        if (!allowDashboardUpdate.isCompleted) allowDashboardUpdate.complete();
-      });
+      var dashboardCredentialWrites = 0;
       Future<http.Response> bridgeResponder(http.Request request) async {
         switch ((request.method, request.url.path)) {
           case ('GET', '/bridge/health'):
@@ -309,13 +303,7 @@ void main() {
               200,
             );
           case ('POST', '/bridge/dashboard/credentials'):
-            generatedPassword =
-                (jsonDecode(request.body) as Map<String, dynamic>)['password']
-                    as String;
-            if (!dashboardUpdateSeen.isCompleted) {
-              dashboardUpdateSeen.complete();
-            }
-            await allowDashboardUpdate.future;
+            dashboardCredentialWrites++;
             return http.Response(
               jsonEncode(<String, Object?>{'ok': true, 'username': 'admin'}),
               200,
@@ -377,23 +365,29 @@ void main() {
               httpClient: MockClient(bridgeResponder),
             ),
       );
-      await tester.pump();
-      await dashboardUpdateSeen.future.timeout(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
 
-      final save = find.byKey(const ValueKey('instance-save')).last;
-      await tester.ensureVisible(save);
-      await tester.tap(save);
-      await tester.pump();
-      expect(manager.getConnections(), isEmpty);
+      expect(dashboardCredentialWrites, 0);
+      expect(
+        find.text('Autoconfigurar dashboard (vía bridge)'),
+        findsOneWidget,
+      );
 
-      allowDashboardUpdate.complete();
-      await tester.pumpAndSettle(const Duration(milliseconds: 50));
+      await pumpEditor(
+        tester,
+        manager,
+        initialLink: link,
+        diagnostics: diagnostics,
+        bridgeClientFactory: ({required baseUrl, required token}) =>
+            BridgeClient(
+              baseUrl: baseUrl,
+              token: token,
+              httpClient: MockClient(bridgeResponder),
+            ),
+      );
+      await tester.pumpAndSettle();
 
-      final saved = manager.getConnections().single;
-      expect(generatedPassword, isNotEmpty);
-      expect(secureStore['dash_user_${saved.id}'], 'admin');
-      expect(secureStore['dash_pass_${saved.id}'], generatedPassword);
-      expect((await manager.getBridgeConfig(saved.id)).token, 'bridge-token');
+      expect(dashboardCredentialWrites, 0);
     },
   );
 

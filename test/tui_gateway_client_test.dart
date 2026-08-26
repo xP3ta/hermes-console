@@ -703,62 +703,52 @@ void main() {
     expect(client.isConnected, isFalse);
   });
 
-  test('reintenta el socket con la autenticación reparada', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(server.close);
-    final socketReady = Completer<WebSocket>();
-    String? receivedTicket;
-    server.listen((request) async {
-      receivedTicket = request.uri.queryParameters['ticket'];
-      final socket = await WebSocketTransformer.upgrade(request);
-      if (!socketReady.isCompleted) socketReady.complete(socket);
-    });
+  test(
+    'reintentos de loginRequired conservan el error sin reparación',
+    () async {
+      final gatewaySource = File(
+        'lib/core/services/tui_gateway_client.dart',
+      ).readAsStringSync();
+      expect(gatewaySource, isNot(contains('.setDashboardCredentials(')));
 
-    final dashboard = DashboardClient(
-      host: '127.0.0.1',
-      port: 1,
-      httpClientOverride: MockClient((request) async {
-        if (request.url.path == '/') {
-          return http.Response('<form id="provider-form"></form>', 200);
-        }
-        return http.Response('not found', 404);
-      }),
-    );
-    addTearDown(dashboard.close);
-    Object? repairError;
-    final client = TuiGatewayClient(
-      SavedConnection(
-        id: 'conn-repair',
-        label: 'Repair',
+      final dashboard = DashboardClient(
         host: '127.0.0.1',
-        port: 8642,
-        apiKey: 'gateway-key',
-        dashboardUrl: 'http://127.0.0.1:${server.port}',
-      ),
-      dashboard: dashboard,
-      dashboardAuthRepair: (error) async {
-        repairError = error;
-        return const DashboardWebSocketAuth(
-          queryName: 'ticket',
-          credential: 'ticket-repaired',
+        port: 1,
+        httpClientOverride: MockClient((request) async {
+          if (request.url.path == '/') {
+            return http.Response('<form id="provider-form"></form>', 200);
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+      addTearDown(dashboard.close);
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'conn-no-repair',
+          label: 'No repair',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: '',
+          dashboardUrl: 'http://127.0.0.1:1',
+        ),
+        dashboard: dashboard,
+      );
+      addTearDown(client.close);
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await expectLater(
+          client.connect(),
+          throwsA(
+            isA<DashboardAuthException>().having(
+              (error) => error.code,
+              'code',
+              DashboardAuthFailureCode.loginRequired,
+            ),
+          ),
         );
-      },
-    );
-    addTearDown(client.close);
-
-    await client.connect();
-    final socket = await socketReady.future.timeout(const Duration(seconds: 2));
-
-    expect(repairError, isA<DashboardAuthException>());
-    expect(
-      (repairError! as DashboardAuthException).code,
-      DashboardAuthFailureCode.loginRequired,
-    );
-    expect(receivedTicket, 'ticket-repaired');
-
-    await client.close();
-    await socket.close();
-  });
+      }
+    },
+  );
 
   test('envía rewind y adjuntos por los RPC nativos de Desktop', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

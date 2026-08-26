@@ -7,7 +7,6 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
@@ -27,12 +26,10 @@ import '../models/desktop_session_config.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/profile_pet.dart';
-import 'bridge_client.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
-import 'secure_storage.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -698,8 +695,6 @@ class TuiGatewayClient
   final DashboardClient _dashboard;
   final WebSocketChannel Function(Uri uri, Map<String, dynamic> headers)?
   _channelFactory;
-  final Future<DashboardWebSocketAuth?> Function(Object error)?
-  _dashboardAuthRepair;
   final DesktopGatewayCapabilityCache _capabilityCache;
   static const CapabilityPayloadSanitizer _payloadSanitizer =
       CapabilityPayloadSanitizer();
@@ -722,11 +717,9 @@ class TuiGatewayClient
     DashboardClient? dashboard,
     WebSocketChannel Function(Uri uri, Map<String, dynamic> headers)?
     channelFactory,
-    Future<DashboardWebSocketAuth?> Function(Object error)? dashboardAuthRepair,
     DesktopGatewayCapabilityCache? capabilityCache,
   }) : _dashboard = dashboard ?? DashboardClient.lazy(_connection),
        _channelFactory = channelFactory,
-       _dashboardAuthRepair = dashboardAuthRepair,
        _capabilityCache = capabilityCache ?? DesktopGatewayCapabilityCache();
 
   @override
@@ -774,14 +767,7 @@ class TuiGatewayClient
         '[tui-gateway] Dashboard auth unavailable '
         '(${_safeFailureKind(error)})',
       );
-      final repaired =
-          await _dashboardAuthRepair?.call(error) ??
-          await _repairDashboardAuth(error);
-      if (repaired == null) {
-        debugPrint('[tui-gateway] Dashboard auth repair unavailable');
-        Error.throwWithStackTrace(error, stackTrace);
-      }
-      auth = repaired;
+      Error.throwWithStackTrace(error, stackTrace);
     }
     if (_closed || generation != _socketGeneration) {
       throw StateError('Hermes Desktop connection was cancelled');
@@ -846,103 +832,6 @@ class TuiGatewayClient
     if (text.contains('refused')) return 'connection_refused';
     if (text.contains('handshake')) return 'websocket_handshake';
     return error.runtimeType.toString();
-  }
-
-  bool _isMissingDashboardLogin(Object error) {
-    return error is DashboardAuthException &&
-        error.code == DashboardAuthFailureCode.loginRequired;
-  }
-
-  String _newDashboardPassword() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-    final random = Random.secure();
-    return List.generate(24, (_) => chars[random.nextInt(chars.length)]).join();
-  }
-
-  /// Repara una conexión creada antes de que el emparejado guardase también
-  /// las credenciales del Dashboard. El Gateway key ya confiado canjea un token
-  /// del Mobile Bridge; el Bridge rota la contraseña, y la app la conserva solo
-  /// en Android Keystore. No instala ni modifica Hermes Agent.
-  Future<DashboardWebSocketAuth?> _repairDashboardAuth(Object error) async {
-    if (!_isMissingDashboardLogin(error)) {
-      debugPrint('[tui-gateway] repair skipped (not a login failure)');
-      return null;
-    }
-    if (_connection.apiKey.trim().isEmpty) {
-      debugPrint('[tui-gateway] repair skipped (gateway key unavailable)');
-      return null;
-    }
-    if (_connection.derivedBridgeUrl.isEmpty) {
-      debugPrint('[tui-gateway] repair skipped (Mobile Bridge unavailable)');
-      return null;
-    }
-
-    BridgeClient? bridge;
-    try {
-      debugPrint('[tui-gateway] Dashboard auth repair started');
-      final bridgeToken = await BridgeClient.provision(
-        _connection.derivedBridgeUrl,
-        _connection.apiKey.trim(),
-      );
-      if (bridgeToken == null || bridgeToken.isEmpty) {
-        debugPrint('[tui-gateway] Mobile Bridge provisioning unavailable');
-        return null;
-      }
-      debugPrint('[tui-gateway] Mobile Bridge provisioned');
-      bridge = BridgeClient(
-        baseUrl: _connection.derivedBridgeUrl,
-        token: bridgeToken,
-      );
-      final current = await bridge.getDashboardCredentials();
-      final existingUser = (current['username'] ?? '').toString().trim();
-      final username = existingUser.isEmpty ? 'admin' : existingUser;
-      final password = _newDashboardPassword();
-      final result = await bridge.setDashboardCredentials(
-        username: username,
-        password: password,
-      );
-      if (result['ok'] != true) {
-        debugPrint('[tui-gateway] Dashboard credential update rejected');
-        return null;
-      }
-      final finalUser = (result['username'] ?? username).toString().trim();
-      if (finalUser.isEmpty) {
-        debugPrint('[tui-gateway] Dashboard credential update incomplete');
-        return null;
-      }
-
-      final secure = SecureStorage();
-      await secure.writeDashboardSecret(_connection.id, 'user', finalUser);
-      await secure.writeDashboardSecret(_connection.id, 'pass', password);
-      _dashboard.usePasswordCredentials(finalUser, password);
-
-      // El endpoint reinicia el Dashboard. Reintenta durante su breve ventana
-      // de arranque y devuelve ya el ticket de un solo uso para este socket.
-      for (var attempt = 0; attempt < 12; attempt++) {
-        if (attempt > 0) {
-          await Future<void>.delayed(const Duration(milliseconds: 500));
-        }
-        try {
-          final auth = await _dashboard.webSocketAuth();
-          debugPrint(
-            '[tui-gateway] Dashboard auth repaired through Mobile Bridge',
-          );
-          return auth;
-        } catch (_) {
-          // El servicio todavía está reiniciándose.
-        }
-      }
-      debugPrint('[tui-gateway] Dashboard auth retry exhausted');
-    } catch (error) {
-      debugPrint(
-        '[tui-gateway] Dashboard auth repair failed '
-        '(${_safeFailureKind(error)})',
-      );
-      // Cualquier Bridge antiguo/sin scope config mantiene el fallback REST.
-    } finally {
-      bridge?.close();
-    }
-    return null;
   }
 
   void _handleFrame(int generation, dynamic raw) {
