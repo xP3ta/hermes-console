@@ -997,6 +997,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void>? _hiddenCanonicalBotFlight;
   TurnOutboxStore? _turnOutbox;
   PreparedTurn? _preparedTurn;
+  final Completer<void> _initialOutboxRead = Completer<void>();
   ActiveTurnDelivery? _attachmentDelivery;
   late final ValueChanged<List<AttachmentDraft>> _attachmentListener;
   Timer? _draftTimer;
@@ -1373,7 +1374,14 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _restoreDraftAndRunInitialAction() async {
-    await _restoreDraft();
+    try {
+      await _restoreDraft();
+    } finally {
+      // Un error/retorno temprano no puede dejar el composer bloqueado para
+      // siempre. En el flujo normal la barrera se libera antes, justo después
+      // de publicar en memoria el owner recuperado desde Keystore.
+      if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete();
+    }
     if (!mounted) return;
 
     if (widget.initialVoiceMode || widget.initialDictation) {
@@ -1609,6 +1617,8 @@ class _ChatScreenState extends State<ChatScreen>
           profile: _recoveryProfile,
         );
     if (!mounted || loaded == null) return;
+    _preparedTurn = loaded;
+    if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete();
     var prepared = loaded;
     if (liveDelivery == null &&
         (prepared.state == PreparedTurnState.ambiguous ||
@@ -5103,6 +5113,7 @@ class _ChatScreenState extends State<ChatScreen>
     bool includeComposerAttachments = true,
   }) async {
     await _profileReady;
+    await _initialOutboxRead.future;
     if (!mounted || _roomTaskSubmitting) return false;
     final str = Strings.of(context);
     final composerTextAtSubmit = _textController.text;

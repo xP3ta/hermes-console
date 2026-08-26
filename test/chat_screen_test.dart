@@ -2679,6 +2679,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('un submit espera la outbox inicial antes de tomar ownership', (
+    tester,
+  ) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final recovered = PreparedTurn(
+      connectionId: 'conn-test',
+      sessionId: 'sess-test',
+      clientTurnId: 'startup-recovered-turn',
+      createdAtMs: now,
+      updatedAtMs: now,
+      text: 'turno dirigido pendiente',
+      attachments: const [],
+      model: 'hermes-agent',
+      profile: '',
+      state: PreparedTurnState.failedBeforeAcceptance,
+      restoresComposer: false,
+    );
+    secureStore['chat_turn_outbox_v1'] = jsonEncode({
+      recovered.storageId: recovered.toJson(),
+    });
+    final outboxGate = Completer<String?>();
+    delayedOutboxRead = outboxGate;
+    final gateway = _SubmissionGateway();
+
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-test'),
+      desktopGateway: gateway,
+    );
+    await tester.enterText(find.byType(TextField).last, 'turno nuevo');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(gateway.submissions, isEmpty);
+
+    delayedOutboxRead = null;
+    outboxGate.complete(secureStore['chat_turn_outbox_v1']);
+    for (var frame = 0; frame < 40; frame++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(gateway.submissions, isEmpty);
+    final stored = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+    expect(stored, hasLength(1));
+    expect(
+      (stored.values.single as Map)['client_turn_id'],
+      'startup-recovered-turn',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('el foco ensancha el composer del chat sin perder el borrador', (
     tester,
   ) async {
