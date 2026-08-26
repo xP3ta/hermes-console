@@ -158,6 +158,7 @@ class _PartialSttEngine implements SttEngine {
   final Completer<void>? stopGate;
   final String? finalOnStop;
   final bool closeOnStop;
+  int availableCalls = 0;
   int stopCalls = 0;
   bool _disposed = false;
   StreamController<SttResult> _results =
@@ -167,6 +168,7 @@ class _PartialSttEngine implements SttEngine {
 
   @override
   Future<bool> available() async {
+    availableCalls++;
     if (_disposed) return false;
     return availabilityGate?.future ?? true;
   }
@@ -1103,6 +1105,7 @@ void main() {
     Session? session,
     bool messagesLoaded = true,
     String? initialPrompt,
+    bool initialVoiceMode = false,
     bool requestComposerFocus = false,
     bool? legacyConversationEnabled,
     ChatPerformanceProbe? performanceProbe,
@@ -1218,6 +1221,7 @@ void main() {
           connection: targetConnection,
           session: targetSession,
           initialPrompt: initialPrompt,
+          initialVoiceMode: initialVoiceMode,
           requestComposerFocus: requestComposerFocus,
           performanceProbe: performanceProbe,
           attachmentMaterializer: attachmentMaterializer,
@@ -2727,6 +2731,66 @@ void main() {
       (stored.values.single as Map)['client_turn_id'],
       'startup-recovered-turn',
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('un fallo de lectura outbox bloquea transporte y conserva draft', (
+    tester,
+  ) async {
+    final outboxGate = Completer<String?>();
+    delayedOutboxRead = outboxGate;
+    final gateway = _SubmissionGateway();
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-test'),
+      desktopGateway: gateway,
+    );
+    final field = find.byType(TextField).last;
+    await tester.enterText(field, 'draft retenido');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+
+    delayedOutboxRead = null;
+    outboxGate.completeError(PlatformException(code: 'keystore_unavailable'));
+    for (var frame = 0; frame < 20; frame++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(gateway.submissions, isEmpty);
+    expect(tester.widget<TextField>(field).controller?.text, 'draft retenido');
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('un fallo outbox impide iniciar transporte de Voz', (
+    tester,
+  ) async {
+    final outboxGate = Completer<String?>();
+    delayedOutboxRead = outboxGate;
+    final stt = _PartialSttEngine();
+    await pumpChat(
+      tester,
+      stt: stt,
+      initialVoiceMode: true,
+      initialPreferences: const {
+        'voice_conversation_disclosure_accepted_v1': true,
+        'voice_conversation_enabled': true,
+      },
+    );
+
+    delayedOutboxRead = null;
+    outboxGate.completeError(PlatformException(code: 'keystore_unavailable'));
+    for (var frame = 0; frame < 40; frame++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(stt.availableCalls, 0);
+    expect(
+      find.byKey(const ValueKey('voice-conversation-surface')),
+      findsNothing,
+    );
+    expect(find.byType(SnackBar), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

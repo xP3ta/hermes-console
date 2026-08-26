@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
+import 'package:hermes_android/core/models/desktop_compression_result.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -18,6 +20,7 @@ class _ConfiguredCreateGateway
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopSessionConfigGateway,
+        HermesDesktopCompressionGateway,
         HermesDesktopRewindGateway,
         HermesDesktopSessionActivityGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -39,6 +42,7 @@ class _ConfiguredCreateGateway
   bool resumeExistingSucceeds = false;
   bool connected = true;
   int activationCalls = 0;
+  late DesktopCompressionResult compressionResult;
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -227,6 +231,12 @@ class _ConfiguredCreateGateway
     );
   }
 
+  @override
+  Future<DesktopCompressionResult> compressSession(
+    String runtimeSessionId, {
+    String focusTopic = '',
+  }) async => compressionResult;
+
   void emitSessionInfo(Map<String, dynamic> info) {
     _events.add(
       TuiGatewayEvent(
@@ -365,6 +375,51 @@ void main() {
     expect(chat.serverSessionId, 'stored-from-info');
     expect(chat.storedSessionId, 'stored-from-info');
     expect(chat.pendingSessionConfigChange(key), isNull);
+    expect(chat.effectiveSessionConfig.model, 'openai/gpt-5.7-codex');
+    expect(chat.effectiveSessionConfig.provider, 'openai-codex');
+    expect(chat.effectiveSessionConfig.fast, isFalse);
+  });
+
+  test('compresión nativa rota el scope al stored id autoritativo', () async {
+    final gateway = _ConfiguredCreateGateway()
+      ..resumeExistingSucceeds = true
+      ..compressionResult = DesktopCompressionResult.fromJson({
+        'status': 'compressed',
+        'removed': 2,
+        'before_messages': 4,
+        'after_messages': 2,
+        'before_tokens': 8000,
+        'after_tokens': 2000,
+        'summary': {'noop': false},
+        'info': {
+          'stored_session_id': 'stored-after-compression',
+          'model': 'openai/gpt-5.7-codex',
+          'provider': 'openai-codex',
+          'fast': false,
+        },
+        'messages': [
+          {'role': 'user', 'content': 'Resumen durable'},
+          {'role': 'assistant', 'content': 'Contexto nuevo'},
+        ],
+      });
+    final chat = _chat(gateway);
+    addTearDown(chat.dispose);
+
+    expect(await chat.ensureDesktopRuntime(), isTrue);
+    await chat.setSessionFastMode(DesktopFastMode.fast);
+    expect(
+      chat.pendingSessionConfigChange(DesktopSessionConfigKey.fast),
+      isNotNull,
+    );
+
+    final result = await chat.compressDesktopSession();
+
+    expect(result.accepted, DesktopCommandAcceptance.accepted);
+    expect(chat.storedSessionId, 'stored-after-compression');
+    expect(
+      chat.pendingSessionConfigChange(DesktopSessionConfigKey.fast),
+      isNull,
+    );
     expect(chat.effectiveSessionConfig.model, 'openai/gpt-5.7-codex');
     expect(chat.effectiveSessionConfig.provider, 'openai-codex');
     expect(chat.effectiveSessionConfig.fast, isFalse);

@@ -997,7 +997,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void>? _hiddenCanonicalBotFlight;
   TurnOutboxStore? _turnOutbox;
   PreparedTurn? _preparedTurn;
-  final Completer<void> _initialOutboxRead = Completer<void>();
+  final Completer<bool> _initialOutboxRead = Completer<bool>();
   ActiveTurnDelivery? _attachmentDelivery;
   late final ValueChanged<List<AttachmentDraft>> _attachmentListener;
   Timer? _draftTimer;
@@ -1376,11 +1376,12 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _restoreDraftAndRunInitialAction() async {
     try {
       await _restoreDraft();
-    } finally {
-      // Un error/retorno temprano no puede dejar el composer bloqueado para
-      // siempre. En el flujo normal la barrera se libera antes, justo después
-      // de publicar en memoria el owner recuperado desde Keystore.
-      if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete();
+      if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(true);
+    } catch (error) {
+      // La lectura segura forma parte del ownership del turno. Fallar abierto
+      // permitiría crear otra entrada y duplicar una entrega todavía oculta.
+      debugPrint('[turn-outbox] secure recovery failed (${error.runtimeType})');
+      if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(false);
     }
     if (!mounted) return;
 
@@ -1618,7 +1619,7 @@ class _ChatScreenState extends State<ChatScreen>
         );
     if (!mounted || loaded == null) return;
     _preparedTurn = loaded;
-    if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete();
+    if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(true);
     var prepared = loaded;
     if (liveDelivery == null &&
         (prepared.state == PreparedTurnState.ambiguous ||
@@ -5113,8 +5114,12 @@ class _ChatScreenState extends State<ChatScreen>
     bool includeComposerAttachments = true,
   }) async {
     await _profileReady;
-    await _initialOutboxRead.future;
+    final outboxRecoveryAvailable = await _initialOutboxRead.future;
     if (!mounted || _roomTaskSubmitting) return false;
+    if (!outboxRecoveryAvailable) {
+      _showOutboxUnavailable();
+      return false;
+    }
     final str = Strings.of(context);
     final composerTextAtSubmit = _textController.text;
     final usesComposerState =
@@ -9364,7 +9369,12 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _enterVoiceMode() async {
     if (!kVoiceRuntimeEnabled) return;
     await _profileReady;
+    final outboxRecoveryAvailable = await _initialOutboxRead.future;
     if (!mounted) return;
+    if (!outboxRecoveryAvailable) {
+      _showOutboxUnavailable();
+      return;
+    }
     final perf = Stopwatch()..start();
     debugPrint('[VOICE-PERF] voice.button.tap');
     if (widget.connection.readOnly) {

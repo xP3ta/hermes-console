@@ -3307,7 +3307,10 @@ class ActiveChat {
     _messageLoadEpoch += 1;
     final compressedStoredId = compression.info.storedSessionId?.trim();
     if (compressedStoredId != null && compressedStoredId.isNotEmpty) {
+      final storedIdentityChanged =
+          compressedStoredId != _desktopStoredSessionId;
       _desktopStoredSessionId = compressedStoredId;
+      if (storedIdentityChanged) _adoptDesktopRuntime(runtimeId);
     }
     _captureArtifactMessages(
       compression.messages,
