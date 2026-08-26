@@ -5077,6 +5077,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted || _roomTaskSubmitting) return false;
     final str = Strings.of(context);
     final composerTextAtSubmit = _textController.text;
+    final usesComposerState =
+        textOverride == null || includeComposerAttachments;
     final rawComposerText = (textOverride ?? _textController.text).trim();
     if (!skipSlashRouting && rawComposerText.startsWith('/')) {
       final invocation = parseSlashInvocation(rawComposerText);
@@ -5135,10 +5137,9 @@ class _ChatScreenState extends State<ChatScreen>
     final selectedModel = _selectedModel;
     final firstSubmitConfig = _firstSubmitConfig;
     if (text.isEmpty && attachments.isEmpty) return false;
-    final roomRouting = await _routeSelectedRoomMention(
-      text: text,
-      attachments: attachments,
-    );
+    final roomRouting = usesComposerState
+        ? await _routeSelectedRoomMention(text: text, attachments: attachments)
+        : null;
     if (!mounted) return false;
     if (roomRouting != null) return roomRouting;
     if (widget.missionRoom != null && !_chat.canBindDurableMissionSession) {
@@ -5376,7 +5377,8 @@ class _ChatScreenState extends State<ChatScreen>
     // Quitar un chip sigue disponible mientras se prepara el lote. Si cambió
     // antes de tocar la outbox, abortamos este intento y conservamos el draft
     // visible en vez de enviar una copia obsoleta.
-    if (!_sameAttachmentDrafts(_pendingAttachments, attachments)) {
+    if (usesComposerState &&
+        !_sameAttachmentDrafts(_pendingAttachments, attachments)) {
       _scheduleDraftSave();
       return false;
     }
@@ -5411,7 +5413,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
     final outbox = await _outboxStore();
     if (!await _persistPreparedTurn(outbox, prepared)) {
-      await _saveDraftSnapshot(text, attachments);
+      if (usesComposerState) await _saveDraftSnapshot(text, attachments);
       _showOutboxUnavailable();
       return false;
     }
@@ -5421,7 +5423,8 @@ class _ChatScreenState extends State<ChatScreen>
     // Última fence local: entre la escritura segura y ActiveChat.send todavía
     // puede llegar un remove. No se entrega al transporte un lote distinto del
     // que la pantalla sigue mostrando.
-    if (!_sameAttachmentDrafts(_pendingAttachments, attachments)) {
+    if (usesComposerState &&
+        !_sameAttachmentDrafts(_pendingAttachments, attachments)) {
       final currentPrepared = _attachmentDelivery?.current ?? prepared;
       try {
         await outbox.delete(currentPrepared);
@@ -5514,7 +5517,7 @@ class _ChatScreenState extends State<ChatScreen>
         });
         _restoringDraft = false;
       }
-      await _saveDraftSnapshot(text, attachments);
+      if (usesComposerState) await _saveDraftSnapshot(text, attachments);
       if (delivery.persistenceFailed && !delivery.transportStarted) {
         _showOutboxUnavailable();
       }

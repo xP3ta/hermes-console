@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
+import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -50,11 +51,9 @@ class _SlashGateway
   Object? dispatchError;
   Object? resumeExistingError;
   Object? modelError;
+  Object? submitError;
   final List<DesktopModelSelection> modelSelections = [];
-  DesktopCommandRpcResult slashResult = const DesktopCommandRpcResult(
-    kind: DesktopCommandDispatchKind.none,
-    accepted: DesktopCommandAcceptance.accepted,
-  );
+  DesktopCommandRpcResult slashResult = _acceptedResult;
 
   final DesktopModelCatalog modelCatalog = DesktopModelCatalog.fromJson(const {
     'model': 'old-model',
@@ -120,6 +119,7 @@ class _SlashGateway
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     submissions.add(text);
+    if (submitError case final error?) throw error;
   }
 
   @override
@@ -167,10 +167,7 @@ class _SlashGateway
     String arg = '',
   }) async {
     if (dispatchError case final error?) throw error;
-    return const DesktopCommandRpcResult(
-      kind: DesktopCommandDispatchKind.none,
-      accepted: DesktopCommandAcceptance.accepted,
-    );
+    return _acceptedResult;
   }
 
   @override
@@ -274,6 +271,25 @@ const _session = Session(
   startedAt: 0,
 );
 
+const _acceptedResult = DesktopCommandRpcResult(
+  kind: DesktopCommandDispatchKind.none,
+  accepted: DesktopCommandAcceptance.accepted,
+);
+const _rejectedResult = DesktopCommandRpcResult(
+  kind: DesktopCommandDispatchKind.none,
+  accepted: DesktopCommandAcceptance.rejected,
+);
+const _directedResult = DesktopCommandRpcResult(
+  kind: DesktopCommandDispatchKind.send,
+  accepted: DesktopCommandAcceptance.accepted,
+  message: 'directed turn',
+);
+const _syntheticRpcError = TuiGatewayRpcError(
+  'slash.exec',
+  'synthetic failure',
+  code: 5005,
+);
+
 ApiClient _safeApi() => ApiClient(
   baseUrl: 'http://127.0.0.1:8642',
   apiKey: 'test-only',
@@ -349,12 +365,16 @@ Future<ActiveChat> _pumpSlashChat(
   return chat;
 }
 
+HermesTactileAction _sendAction(WidgetTester tester) =>
+    tester.widget<HermesTactileAction>(
+      find.descendant(
+        of: find.byKey(const ValueKey('send')),
+        matching: find.byType(HermesTactileAction),
+      ),
+    );
+
 Future<void> _submitSlash(WidgetTester tester) async {
-  final sendAction = find.descendant(
-    of: find.byKey(const ValueKey('send')),
-    matching: find.byType(HermesTactileAction),
-  );
-  tester.widget<HermesTactileAction>(sendAction).onPressed!();
+  _sendAction(tester).onPressed!();
   await tester.pump(const Duration(milliseconds: 500));
 }
 
@@ -602,10 +622,8 @@ void main() {
       final controller = tester.widget<TextField>(composer).controller!;
       await tester.enterText(composer, '/ski');
       await tester.pump(const Duration(milliseconds: 250));
-
       await tester.tap(find.byKey(const ValueKey('chat-slash-command-skills')));
       await tester.pumpAndSettle();
-
       expect(find.byType(SkillsScreen), findsOneWidget);
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
@@ -776,43 +794,24 @@ void main() {
     testWidgets('/compress rejection preserves invocation and composer focus', (
       tester,
     ) async {
-      final gateway = _SlashGateway()
-        ..slashResult = const DesktopCommandRpcResult(
-          kind: DesktopCommandDispatchKind.none,
-          accepted: DesktopCommandAcceptance.rejected,
-        );
+      final gateway = _SlashGateway()..slashResult = _rejectedResult;
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
-
       await tester.tap(composer);
       await tester.enterText(composer, '/compress release decisions');
       await tester.pump(const Duration(milliseconds: 250));
       final field = tester.widget<TextField>(composer);
       await _submitSlash(tester);
-
       expect(gateway.slashCalls, ['compress release decisions']);
       expect(field.controller?.text, '/compress release decisions');
       expect(field.focusNode?.hasFocus, isTrue);
-
-      gateway.slashResult = const DesktopCommandRpcResult(
-        kind: DesktopCommandDispatchKind.none,
-        accepted: DesktopCommandAcceptance.accepted,
-      );
+      gateway.slashResult = _acceptedResult;
       await _submitSlash(tester);
       expect(gateway.slashCalls, hasLength(2));
       expect(field.controller?.text, isEmpty);
-
       gateway
-        ..slashError = const TuiGatewayRpcError(
-          'slash.exec',
-          'synthetic failure',
-          code: 5005,
-        )
-        ..dispatchError = const TuiGatewayRpcError(
-          'command.dispatch',
-          'synthetic failure',
-          code: 5005,
-        );
+        ..slashError = _syntheticRpcError
+        ..dispatchError = _syntheticRpcError;
       await tester.enterText(composer, '/compress retry me');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
@@ -830,11 +829,9 @@ void main() {
         );
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
-
       await tester.enterText(composer, '/compress no runtime');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
-
       expect(
         tester.widget<TextField>(composer).controller?.text,
         '/compress no runtime',
@@ -849,24 +846,13 @@ void main() {
       final gateway = _SlashGateway()..slashGate = gate;
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
-
       await tester.enterText(composer, '/compress first');
       await tester.pump(const Duration(milliseconds: 250));
-      final sendAction = find.descendant(
-        of: find.byKey(const ValueKey('send')),
-        matching: find.byType(HermesTactileAction),
-      );
-      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      _sendAction(tester).onPressed!();
       await tester.pump();
       tester.widget<TextField>(composer).controller!.text = 'new draft';
-      gate.complete(
-        const DesktopCommandRpcResult(
-          kind: DesktopCommandDispatchKind.none,
-          accepted: DesktopCommandAcceptance.accepted,
-        ),
-      );
+      gate.complete(_acceptedResult);
       await tester.pump(const Duration(milliseconds: 500));
-
       expect(tester.widget<TextField>(composer).controller?.text, 'new draft');
       expect(gateway.slashCalls, ['compress first']);
     });
@@ -890,25 +876,16 @@ void main() {
 
       await tester.enterText(composer, '/goal first');
       await tester.pump(const Duration(milliseconds: 250));
-      final sendAction = find.descendant(
-        of: find.byKey(const ValueKey('send')),
-        matching: find.byType(HermesTactileAction),
-      );
-      tester.widget<HermesTactileAction>(sendAction).onPressed!();
-      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      final sendAction = _sendAction(tester);
+      sendAction.onPressed!();
+      sendAction.onPressed!();
       await tester.pump();
       expect(gateway.slashCalls, ['goal first']);
 
       await tester.enterText(composer, 'new draft');
       chat.state = ChatPipelineState.streaming;
       await tester.pump();
-      gate.complete(
-        const DesktopCommandRpcResult(
-          kind: DesktopCommandDispatchKind.send,
-          accepted: DesktopCommandAcceptance.accepted,
-          message: 'directed turn',
-        ),
-      );
+      gate.complete(_directedResult);
       await tester.pump(const Duration(milliseconds: 500));
 
       final field = tester.widget<TextField>(composer);
@@ -917,35 +894,39 @@ void main() {
 
       gateway
         ..slashGate = null
-        ..slashResult = const DesktopCommandRpcResult(
-          kind: DesktopCommandDispatchKind.none,
-          accepted: DesktopCommandAcceptance.rejected,
-        );
+        ..slashResult = _rejectedResult;
       await tester.enterText(composer, '/goal rejected');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
       expect(field.controller?.text, '/goal rejected');
 
-      gateway.slashError = const TuiGatewayRpcError(
-        'slash.exec',
-        'synthetic failure',
-        code: 5005,
-      );
+      gateway.slashError = _syntheticRpcError;
       await tester.enterText(composer, '/goal errors');
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
       expect(field.controller?.text, '/goal errors');
 
+      final idleGate = Completer<DesktopCommandRpcResult>();
       gateway
         ..slashError = null
-        ..slashResult = const DesktopCommandRpcResult(
-          kind: DesktopCommandDispatchKind.send,
-          accepted: DesktopCommandAcceptance.accepted,
-          message: 'directed turn',
-        );
-      await _submitSlash(tester);
-      expect(field.controller?.text, isEmpty);
-      expect(gateway.submissions, isEmpty);
+        ..slashGate = idleGate
+        ..submitError = StateError('prompt rejected before acceptance');
+      chat.state = ChatPipelineState.idle;
+      await tester.enterText(composer, '/goal idle');
+      await tester.pump(const Duration(milliseconds: 250));
+      sendAction.onPressed!();
+      await tester.pump();
+      await tester.enterText(composer, '@worker newer draft');
+      await tester.pump(const Duration(milliseconds: 400));
+      idleGate.complete(_directedResult);
+      await tester.pump(const Duration(milliseconds: 800));
+
+      final prefs = await SharedPreferences.getInstance();
+      final restored = await ChatDraftStore(
+        prefs,
+      ).load(_connection().id, _session.id);
+      expect(restored.text, '@worker newer draft');
+      expect(gateway.submissions, ['directed turn', 'directed turn']);
       expect(gateway.slashCalls, hasLength(4));
     });
 
