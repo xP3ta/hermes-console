@@ -2300,13 +2300,16 @@ class VoiceService {
     onLevel: (v) => micLevel.value = v,
   );
 
-  SttEngine _sttEngine() {
+  SttEngine _sttEngine({bool forComposerDictation = false}) {
     final lang = _recycleSttIfLangChanged();
-    final effectiveEngine = effectiveConversationSttEngine;
+    final effectiveEngine = forComposerDictation
+        ? _settings.sttEngine
+        : effectiveConversationSttEngine;
     // Modo nativo Desktop (spec 048/US5): la escucha usa el clip-engine con
     // transcripción en el servidor, independientemente del motor configurado.
+    // El dictado del compositor mantiene su ruta independiente por perfil.
     // La inyección de tests conserva prioridad.
-    if (nativeVoiceActive && debugSttFactory == null) {
+    if (!forComposerDictation && nativeVoiceActive && debugSttFactory == null) {
       if (_stt != null && _sttNativeVoice) return _stt!;
       final previous = _stt;
       if (previous != null) {
@@ -2321,9 +2324,11 @@ class VoiceService {
       _sttNativeVoice = true;
       return _stt!;
     }
-    if (_stt != null && _sttNativeVoice && !nativeVoiceActive) {
-      // La ruta nativa se desactivó explícitamente: recicla su engine antes de
-      // volver a los ajustes independientes o de abrir otra conversación.
+    if (_stt != null &&
+        _sttNativeVoice &&
+        (forComposerDictation || !nativeVoiceActive)) {
+      // La ruta nativa se desactivó explícitamente o el compositor necesita su
+      // motor independiente: recicla el engine antes de resolver la otra ruta.
       final previous = _stt;
       _stt = null;
       _sttKind = null;
@@ -2359,22 +2364,22 @@ class VoiceService {
   /// reconocedor de voz, p.ej. GrapheneOS o emuladores— cae automáticamente a
   /// Whisper on-device cuando el modelo ya está descargado. Devuelve un estado
   /// accionable para que la UI guíe al usuario en vez de fallar en silencio.
-  Future<SttCheck> checkStt() async {
+  Future<SttCheck> checkStt({bool forComposerDictation = false}) async {
     _cancelHeavyModelIdleRelease();
     try {
-      return await _checkStt();
+      return await _checkStt(forComposerDictation: forComposerDictation);
     } finally {
       _scheduleHeavyModelIdleRelease();
     }
   }
 
-  Future<SttCheck> _checkStt() async {
+  Future<SttCheck> _checkStt({bool forComposerDictation = false}) async {
     // Spec 031: si el idioma de la app cambió, el motor cacheado dicta en el
     // idioma anterior — reciclarlo ANTES de decidir si es reutilizable.
     _recycleSttIfLangChanged();
     // Modo nativo Desktop (spec 048/US5): solo requiere micrófono; el modelo
     // vive en el servidor. El engine se resuelve/reutiliza en _sttEngine().
-    if (nativeVoiceActive && debugSttFactory == null) {
+    if (!forComposerDictation && nativeVoiceActive && debugSttFactory == null) {
       try {
         final ready = await _sttEngine().available();
         return SttCheck(
@@ -2389,7 +2394,9 @@ class VoiceService {
         );
       }
     }
-    final effectiveEngine = effectiveConversationSttEngine;
+    final effectiveEngine = forComposerDictation
+        ? _settings.sttEngine
+        : effectiveConversationSttEngine;
     // FIX-1 (TASK-022): reutiliza el motor STT ya resuelto en vez de destruirlo
     // y reconstruirlo en CADA turno. saveSettings() ya pone _stt=null cuando
     // cambia el motor o el modelo Whisper, así que un _stt no nulo aquí ya es del
@@ -2568,13 +2575,14 @@ class VoiceService {
     void Function()? onSpeechEnd,
     void Function()? onCaptureReady,
     bool continuous = false,
+    bool forComposerDictation = false,
   }) {
     _cancelHeavyModelIdleRelease();
     _setDictationActive(true);
     final epoch = ++_dictationEpoch;
     late final Stream<SttResult> source;
     try {
-      source = _sttEngine().listen(
+      source = _sttEngine(forComposerDictation: forComposerDictation).listen(
         onSpeechEnd: onSpeechEnd,
         onCaptureReady: onCaptureReady,
         continuous: continuous,

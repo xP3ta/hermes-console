@@ -230,6 +230,60 @@ void main() {
     },
   );
 
+  test(
+    'dictado del composer no reutiliza la ruta de conversación nativa',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final hermesVoice = VoiceService(
+        prefs,
+        SecureStorage(),
+        initialSettings: const VoiceSettings(
+          sttEngine: SttEngineKind.hermesServer,
+        ),
+      );
+      final engines = <_FakeStt>[];
+      hermesVoice.debugSttFactory = () {
+        final engine = _FakeStt();
+        engines.add(engine);
+        return engine;
+      };
+      expect(
+        hermesVoice.enableNativeVoice(
+          speak: (text) async => {'ok': true},
+          transcribe: (dataUrl, mimeType) async => {
+            'ok': true,
+            'transcript': 'ruta conversación',
+          },
+        ),
+        isTrue,
+      );
+      final owner = Object();
+      final preparation = hermesVoice.beginHermesServerDictationPreparation(
+        owner: owner,
+      );
+      expect(
+        hermesVoice.enableHermesServerDictation(
+          owner: owner,
+          preparation: preparation,
+          transcribe: (dataUrl, mimeType) async => {
+            'ok': true,
+            'transcript': 'ruta composer',
+          },
+        ),
+        isTrue,
+      );
+
+      final check = await hermesVoice.checkStt(forComposerDictation: true);
+      expect(check.engine, SttEngineKind.hermesServer);
+      await hermesVoice
+          .startDictation(continuous: true, forComposerDictation: true)
+          .drain<void>();
+      expect(engines, hasLength(1));
+
+      await hermesVoice.dispose();
+    },
+  );
+
   test('rebind Hermes libera A solo después de disponer su motor', () async {
     final gate = Completer<void>();
     final engine = _FakeStt(disposeGate: gate);

@@ -8758,7 +8758,7 @@ class _ChatScreenState extends State<ChatScreen>
     } else {
       voice.disableHermesServerDictation(owner: this);
     }
-    final check = await voice.checkStt();
+    final check = await voice.checkStt(forComposerDictation: true);
     debugPrint(
       '[VOICE-PERF] dictation.stt_check.ready_ms=${perf.elapsedMilliseconds} '
       'status=${check.status.name}',
@@ -8792,7 +8792,7 @@ class _ChatScreenState extends State<ChatScreen>
     final voice = _voice;
     if (voice == null) return;
     _sttSub = voice
-        .startDictation(continuous: true)
+        .startDictation(continuous: true, forComposerDictation: true)
         .listen(
           (r) {
             if (!mounted) return;

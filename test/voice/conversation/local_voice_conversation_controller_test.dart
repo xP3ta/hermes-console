@@ -51,7 +51,7 @@ class _FakeVoice extends VoiceService {
   Completer<void> _speechDone = Completer<void>()..complete();
 
   @override
-  Future<SttCheck> checkStt() async =>
+  Future<SttCheck> checkStt({bool forComposerDictation = false}) async =>
       const SttCheck(SttStatus.ready, SttEngineKind.sherpaLive);
 
   @override
@@ -62,6 +62,7 @@ class _FakeVoice extends VoiceService {
     void Function()? onSpeechEnd,
     void Function()? onCaptureReady,
     bool continuous = false,
+    bool forComposerDictation = false,
   }) {
     final capture = StreamController<SttResult>.broadcast();
     captures.add(capture);
