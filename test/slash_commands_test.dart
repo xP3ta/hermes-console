@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
+import 'package:hermes_android/core/models/desktop_model_catalog.dart';
+import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -33,13 +35,31 @@ class _SlashGateway
         HermesDesktopGateway,
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopCommandGateway,
-        HermesDesktopContextUsageGateway {
+        HermesDesktopContextUsageGateway,
+        HermesDesktopSessionConfigGateway,
+        HermesDesktopModelCatalogGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
   final List<String> submissions = [];
   final List<String> slashCalls = [];
   Completer<SlashCompletionBatch>? slashCompletion;
   int slashCompletionCalls = 0;
+  Object? modelError;
+  final List<DesktopModelSelection> modelSelections = [];
+
+  final DesktopModelCatalog modelCatalog = DesktopModelCatalog.fromJson(const {
+    'model': 'old-model',
+    'provider': 'provider-a',
+    'providers': [
+      {
+        'slug': 'provider-a',
+        'name': 'Provider A',
+        'is_current': true,
+        'authenticated': true,
+        'models': ['old-model', 'bad-model'],
+      },
+    ],
+  });
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -134,6 +154,44 @@ class _SlashGateway
   }) async => const DesktopCommandRpcResult(
     kind: DesktopCommandDispatchKind.none,
     accepted: DesktopCommandAcceptance.accepted,
+  );
+
+  @override
+  Future<DesktopModelCatalog> modelOptions(
+    String runtimeSessionId, {
+    bool refresh = false,
+  }) async => modelCatalog;
+
+  @override
+  Future<DesktopConfigSetResult> setSessionModel(
+    String runtimeSessionId,
+    DesktopModelSelection selection, {
+    bool confirmExpensiveModel = false,
+  }) async {
+    modelSelections.add(selection);
+    if (modelError case final error?) throw error;
+    return DesktopConfigSetResult(
+      key: DesktopSessionConfigKey.model,
+      value: selection.sessionWireValue,
+    );
+  }
+
+  @override
+  Future<DesktopConfigSetResult> setSessionReasoning(
+    String runtimeSessionId,
+    DesktopReasoningEffort effort,
+  ) async => DesktopConfigSetResult(
+    key: DesktopSessionConfigKey.reasoning,
+    value: effort.wire,
+  );
+
+  @override
+  Future<DesktopConfigSetResult> setSessionFastMode(
+    String runtimeSessionId,
+    DesktopFastMode mode,
+  ) async => DesktopConfigSetResult(
+    key: DesktopSessionConfigKey.fast,
+    value: mode.wire,
   );
 
   @override
@@ -593,36 +651,80 @@ void main() {
       },
     );
 
-    testWidgets('a local slash without navigation keeps composer focus', (
+    testWidgets('/model preserves rejection and accepted retry clears once', (
       tester,
     ) async {
-      final gateway = _SlashGateway();
+      final gateway = _SlashGateway()
+        ..modelError = const TuiGatewayRpcError(
+          'config.set',
+          'rejected',
+          code: 5001,
+        );
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
 
       await tester.tap(composer);
-      await tester.enterText(composer, '/compact');
+      await tester.enterText(composer, '/model bad-model');
       await tester.pump(const Duration(milliseconds: 250));
       final field = tester.widget<TextField>(composer);
+      var composerChanges = 0;
+      field.controller!.addListener(() => composerChanges++);
       final sendAction = find.descendant(
         of: find.byKey(const ValueKey('send')),
         matching: find.byType(HermesTactileAction),
       );
-      final onPressed = tester
-          .widget<HermesTactileAction>(sendAction)
-          .onPressed;
-      expect(onPressed, isNotNull);
 
-      onPressed!();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 240));
+      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 400));
 
-      expect(field.controller?.text, isEmpty);
+      expect(gateway.modelSelections.single.modelId, 'bad-model');
+      expect(field.controller?.text, '/model bad-model');
       expect(field.focusNode?.hasFocus, isTrue);
+      expect(composerChanges, 0);
       expect(gateway.submissions, isEmpty);
-      expect(gateway.slashCalls, isEmpty);
+
+      gateway.modelError = null;
+      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(gateway.modelSelections, hasLength(2));
+      expect(field.controller?.text, isEmpty);
+      expect(composerChanges, 1);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'an unavailable slash preserves invocation and composer focus',
+      (tester) async {
+        final gateway = _SlashGateway();
+        await _pumpSlashChat(tester, gateway);
+        final composer = find.byType(TextField).last;
+
+        await tester.tap(composer);
+        await tester.enterText(composer, '/compact');
+        await tester.pump(const Duration(milliseconds: 250));
+        final field = tester.widget<TextField>(composer);
+        final sendAction = find.descendant(
+          of: find.byKey(const ValueKey('send')),
+          matching: find.byType(HermesTactileAction),
+        );
+        final onPressed = tester
+            .widget<HermesTactileAction>(sendAction)
+            .onPressed;
+        expect(onPressed, isNotNull);
+
+        onPressed!();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+
+        expect(field.controller?.text, '/compact');
+        expect(field.focusNode?.hasFocus, isTrue);
+        expect(gateway.submissions, isEmpty);
+        expect(gateway.slashCalls, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('recording and transcribing hide slash suggestions', (
       tester,

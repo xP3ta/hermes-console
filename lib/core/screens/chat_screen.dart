@@ -5841,12 +5841,29 @@ class _ChatScreenState extends State<ChatScreen>
     _executeSlash(cmd, '');
   }
 
-  /// Ejecuta un comando slash conocido y limpia el compositor sin decidir el
-  /// foco globalmente. Las rutas y superficies modales gestionan su propio foco;
-  /// las acciones locales sin navegación conservan el teclado del composer.
+  /// Ejecuta un comando slash conocido sin decidir el foco globalmente. Las
+  /// rutas y superficies modales gestionan su propio foco; los errores conservan
+  /// la invocación y las acciones aceptadas consumen el composer.
   Future<void> _executeSlash(SlashCommand cmd, String arg) async {
     if (cmd.action == SlashAction.remote) {
       await _executeRemoteSlash(cmd, arg);
+      return;
+    }
+    if (cmd.action == SlashAction.unavailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Strings.of(context).chaCompactUnavailable),
+          duration: const Duration(seconds: 7),
+        ),
+      );
+      return;
+    }
+    if (cmd.action == SlashAction.model && arg.trim().isNotEmpty) {
+      final invocation = _textController.text;
+      final consumed = await _setModelByName(arg.trim());
+      if (!mounted || !consumed || _textController.text != invocation) return;
+      _textController.clear();
+      setState(() => _slashSuggestions = const []);
       return;
     }
     _textController.clear();
@@ -5877,12 +5894,7 @@ class _ChatScreenState extends State<ChatScreen>
       case SlashAction.kanban:
         _pushScreen(TasksScreen(connection: widget.connection));
       case SlashAction.unavailable:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaCompactUnavailable),
-            duration: const Duration(seconds: 7),
-          ),
-        );
+        return;
       case SlashAction.remote:
         // Se maneja antes de limpiar el compositor para conservarlo si falla.
         return;
@@ -6023,7 +6035,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// `/model <nombre>`: busca el modelo por nombre en las opciones reales. Si hay
   /// exactamente una coincidencia lo aplica; si hay 0 o varias, abre el selector.
-  Future<void> _setModelByName(String arg) async {
+  Future<bool> _setModelByName(String arg) async {
     final q = arg.toLowerCase();
     try {
       final (_, providers) = await _loadModelOptions();
@@ -6037,7 +6049,7 @@ class _ChatScreenState extends State<ChatScreen>
         }
       }
       if (matches.length == 1) {
-        await _applyModelDirect(matches.first.$1, matches.first.$2);
+        return await _applyModelDirect(matches.first.$1, matches.first.$2);
       } else if (mounted) {
         if (matches.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -6045,10 +6057,15 @@ class _ChatScreenState extends State<ChatScreen>
           );
         }
         _showModelSheet();
+        return true;
       }
     } catch (_) {
-      if (mounted) _showModelSheet();
+      if (mounted) {
+        _showModelSheet();
+        return true;
+      }
     }
+    return false;
   }
 
   Future<bool> _applySessionModelSelection(
@@ -6304,9 +6321,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Aplica un modelo activo directamente (desde `/model <nombre>`), con la misma
   /// salvaguarda de solo-lectura y confirmación que el selector.
-  Future<void> _applyModelDirect(ModelProvider provider, String modelId) async {
-    await _applySessionModelSelection(provider, modelId);
-  }
+  Future<bool> _applyModelDirect(ModelProvider provider, String modelId) =>
+      _applySessionModelSelection(provider, modelId);
 
   void _showSlashHelp() {
     final colors = Theme.of(context).hermes;
