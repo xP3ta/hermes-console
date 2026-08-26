@@ -8561,7 +8561,7 @@ class _ChatScreenState extends State<ChatScreen>
     final desktopOption = desktopProvider?.optionFor(modelId);
     final isUsable =
         _modelSource != _ModelSource.desktop ||
-        (desktopProvider?.isModelUsable(modelId) ?? false);
+        (desktopOption != null && !desktopOption.unavailable);
     final unavailableLabel = Strings.of(sheetCtx).chaModelUnavailable;
     return ListTile(
       dense: true,
@@ -10015,6 +10015,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Composer premium (referencia live-chat): contenedor con borde sutil,
     // campo sin marco y fila inferior de acciones con send cuadrado ámbar.
     return Container(
+      key: const ValueKey('chat-composer-host'),
       padding: compactIme
           ? const EdgeInsets.fromLTRB(12, 2, 12, 3)
           : const EdgeInsets.fromLTRB(14, 4, 14, 10),
@@ -11255,14 +11256,71 @@ class _BotChatAppBarTitle extends StatelessWidget {
 }
 
 extension _ComposerPalettePlacement on Widget {
-  Widget _withComposerPalette(Widget? palette) {
-    if (palette == null) return this;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(fit: FlexFit.loose, child: palette),
-        this,
-      ],
+  Widget _withComposerPalette(Widget? palette) =>
+      _ComposerPaletteOverlay(palette: palette, child: this);
+}
+
+class _ComposerPaletteOverlay extends StatefulWidget {
+  final Widget child;
+  final Widget? palette;
+
+  const _ComposerPaletteOverlay({required this.child, required this.palette});
+
+  @override
+  State<_ComposerPaletteOverlay> createState() =>
+      _ComposerPaletteOverlayState();
+}
+
+class _ComposerPaletteOverlayState extends State<_ComposerPaletteOverlay> {
+  final _controller = OverlayPortalController();
+  final _link = LayerLink();
+  final _targetKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    // Mantener el portal montado evita un frame intermedio al abrir la paleta y,
+    // sobre todo, no reemplaza el TextField que conserva el ownership del IME.
+    _controller.show();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final targetRenderObject = _targetKey.currentContext?.findRenderObject();
+    final targetTop =
+        targetRenderObject is RenderBox &&
+            targetRenderObject.hasSize &&
+            targetRenderObject.attached
+        ? targetRenderObject.localToGlobal(Offset.zero).dy
+        : MediaQuery.sizeOf(context).height;
+    final paletteMaxHeight = math.max(0.0, targetTop - 8);
+    return LayoutBuilder(
+      builder: (context, constraints) => OverlayPortal(
+        controller: _controller,
+        overlayChildBuilder: (context) => Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            targetAnchor: Alignment.topCenter,
+            followerAnchor: Alignment.bottomCenter,
+            child: SizedBox(
+              width: constraints.maxWidth,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: paletteMaxHeight),
+                child: widget.palette ?? const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+        child: CompositedTransformTarget(
+          key: _targetKey,
+          link: _link,
+          child: widget.child,
+        ),
+      ),
     );
   }
 }

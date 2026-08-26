@@ -2801,11 +2801,9 @@ class TuiGatewayClient
 
   @override
   Future<ProjectNode?> projectSessions(String projectId) async {
-    final result = await _controlRequest(
-      'projects.project_sessions',
-      {'project_id': _validatedControlValue(projectId, maxLength: 2048)},
-      capability: DesktopGatewayCapability.projectsCenter,
-    );
+    final result = await _controlRequest('projects.project_sessions', {
+      'project_id': _validatedControlValue(projectId, maxLength: 2048),
+    }, capability: DesktopGatewayCapability.projectsCenter);
     final rawProject = result['project'];
     if (rawProject == null) return null;
     if (rawProject is! Map) {
@@ -2904,6 +2902,7 @@ class TuiGatewayClient
       'session_id': runtimeSessionId,
       'text': text,
       'truncate_before_user_ordinal': truncateBeforeUserOrdinal,
+      'confirm_truncate': true,
       if (truncateBeforeUserOrdinal == 0) 'confirm_empty_truncate': true,
     });
   }

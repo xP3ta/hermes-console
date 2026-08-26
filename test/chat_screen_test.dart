@@ -531,7 +531,6 @@ class _ModelConfigGateway extends _UiRewindGateway
         'slug': 'provider-a',
         'name': 'Proveedor A',
         'is_current': true,
-        'authenticated': true,
         'models': ['old-model', 'new-model', 'bad-model', 'server-model'],
       },
     ],
@@ -2805,14 +2804,11 @@ void main() {
     );
     final textField = tester.widget<TextField>(field);
     final composer = find.byType(HermesComposerSurface);
-    final safeArea = find
-        .ancestor(of: composer, matching: find.byType(SafeArea))
-        .first;
-    expect(textField.controller.runtimeType, TextEditingController);
     expect(
-      tester.widget<SafeArea>(safeArea).child,
-      isA<HermesComposerSurface>(),
+      find.ancestor(of: composer, matching: find.byType(SafeArea)),
+      findsOneWidget,
     );
+    expect(textField.controller.runtimeType, TextEditingController);
     final resting = tester.getRect(surface);
 
     await tester.enterText(field, 'borrador conservado');

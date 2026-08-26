@@ -529,7 +529,12 @@ void main() {
         final gateway = _SlashGateway();
         await _pumpSlashChat(tester, gateway);
         final composer = find.byType(TextField).last;
+        final host = find.byKey(const ValueKey('chat-composer-host'));
 
+        await tester.tap(composer);
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
+        final heightBeforePalette = tester.getSize(host).height;
         await tester.enterText(composer, '/comp');
         await tester.pump(const Duration(milliseconds: 250));
 
@@ -539,6 +544,8 @@ void main() {
         );
         expect(palette, findsOneWidget);
         expect(command, findsOneWidget);
+        expect(tester.getSize(host).height, closeTo(heightBeforePalette, 1));
+        expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
         expect(
           find.ancestor(
             of: palette,

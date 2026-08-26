@@ -834,11 +834,13 @@ void main() {
       'session_id': 'runtime-native',
       'text': 'corregido',
       'truncate_before_user_ordinal': 2,
+      'confirm_truncate': true,
     });
     expect(requests[5]['params'], {
       'session_id': 'runtime-native',
       'text': 'primer turno',
       'truncate_before_user_ordinal': 0,
+      'confirm_truncate': true,
       'confirm_empty_truncate': true,
     });
   });
