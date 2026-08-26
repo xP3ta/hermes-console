@@ -229,4 +229,61 @@ void main() {
       expect(created, hasLength(2));
     },
   );
+
+  test('rebind Hermes libera A solo después de disponer su motor', () async {
+    final gate = Completer<void>();
+    final engine = _FakeStt(disposeGate: gate);
+    final prefs = await SharedPreferences.getInstance();
+    final hermesVoice = VoiceService(
+      prefs,
+      SecureStorage(),
+      initialSettings: const VoiceSettings(
+        sttEngine: SttEngineKind.hermesServer,
+      ),
+    );
+    hermesVoice.debugSttFactory = () => engine;
+    final ownerA = Object();
+    final ownerB = Object();
+    var releasesA = 0;
+    var releasesB = 0;
+    final preparationA = hermesVoice.beginHermesServerDictationPreparation(
+      owner: ownerA,
+    );
+    expect(
+      hermesVoice.enableHermesServerDictation(
+        owner: ownerA,
+        preparation: preparationA,
+        transcribe: (dataUrl, mimeType) async => {'ok': true},
+        onDispose: () => releasesA++,
+      ),
+      isTrue,
+    );
+    await hermesVoice.checkStt();
+
+    final preparationB = hermesVoice.beginHermesServerDictationPreparation(
+      owner: ownerB,
+    );
+    await engine.disposeStarted.future;
+    expect(releasesA, 0);
+    expect(
+      hermesVoice.enableHermesServerDictation(
+        owner: ownerB,
+        preparation: preparationB,
+        transcribe: (dataUrl, mimeType) async => {'ok': true},
+        onDispose: () => releasesB++,
+      ),
+      isTrue,
+    );
+    expect(hermesVoice.hermesServerDictationReady, isTrue);
+
+    gate.complete();
+    await hermesVoice.disposeSttForVoiceExit();
+    expect(releasesA, 1);
+    expect(releasesB, 0);
+    expect(hermesVoice.disableHermesServerDictation(owner: ownerB), isTrue);
+    expect(releasesB, 1);
+    expect(hermesVoice.disableHermesServerDictation(owner: ownerB), isFalse);
+    expect(releasesB, 1);
+    await hermesVoice.dispose();
+  });
 }

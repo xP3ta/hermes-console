@@ -575,8 +575,10 @@ class VoiceService {
     _hermesDictationOwner = owner;
     _hermesDictationTranscribe = transcribe;
     _hermesDictationOnDispose = onDispose;
-    _invalidateHermesDictationEngine(reason: 'hermes_dictation_rebind');
-    _releaseNativeVoiceResource(previousDispose);
+    final disposal = _invalidateHermesDictationEngine(
+      reason: 'hermes_dictation_rebind',
+    );
+    _releaseHermesDictationResource(previousDispose, after: disposal);
     return true;
   }
 
@@ -602,20 +604,34 @@ class VoiceService {
     _hermesDictationOwner = null;
     _hermesDictationTranscribe = null;
     _hermesDictationOnDispose = null;
-    _invalidateHermesDictationEngine(reason: 'hermes_dictation_off');
-    _releaseNativeVoiceResource(release);
+    final disposal = _invalidateHermesDictationEngine(
+      reason: 'hermes_dictation_off',
+    );
+    _releaseHermesDictationResource(release, after: disposal);
     return true;
   }
 
-  void _invalidateHermesDictationEngine({required String reason}) {
-    if (_sttKind != SttEngineKind.hermesServer) return;
+  Future<void>? _invalidateHermesDictationEngine({required String reason}) {
+    if (_sttKind != SttEngineKind.hermesServer) return null;
     final previous = _stt;
     _stt = null;
     _sttKind = null;
     _sttNativeVoice = false;
-    if (previous != null) {
-      unawaited(_disposeSttEngine(previous, reason: reason));
+    if (previous == null) return null;
+    return _disposeSttEngine(previous, reason: reason);
+  }
+
+  void _releaseHermesDictationResource(
+    VoidCallback? release, {
+    required Future<void>? after,
+  }) {
+    if (after == null) {
+      _releaseNativeVoiceResource(release);
+      return;
     }
+    unawaited(
+      after.whenComplete(() => _releaseNativeVoiceResource(release)),
+    );
   }
 
   Future<Map<String, dynamic>> _guardedHermesDictationTranscribe(
