@@ -890,6 +890,24 @@ void main() {
       // que el usuario lo descarte explícitamente; enviar otro lote no puede
       // reemplazarlo ni crear una segunda entrega potencialmente duplicada.
       gateway.submitError = null;
+
+      await tester.enterText(
+        find.byType(TextField).last,
+        '/goal second directed turn',
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      expect(gateway.submissions, ['directed turn']);
+      final afterBlockedSlash =
+          jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      expect(afterBlockedSlash, hasLength(1));
+      expect(
+        (afterBlockedSlash.values.single as Map)['client_turn_id'],
+        recoveredId,
+      );
+
+      await tester.enterText(find.byType(TextField).last, 'directed turn');
+      await tester.pump(const Duration(milliseconds: 250));
       _sendAction(tester).onPressed!();
       await tester.pump(const Duration(milliseconds: 800));
       expect(gateway.submissions, ['directed turn']);

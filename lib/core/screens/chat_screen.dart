@@ -5404,8 +5404,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     final unresolvedHiddenTurn = _preparedTurn;
-    if (usesComposerState &&
-        unresolvedHiddenTurn != null &&
+    if (unresolvedHiddenTurn != null &&
         !unresolvedHiddenTurn.restoresComposer &&
         unresolvedHiddenTurn.state != PreparedTurnState.terminal) {
       _showHiddenRecoveredTurn(unresolvedHiddenTurn);
