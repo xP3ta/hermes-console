@@ -874,7 +874,7 @@ void main() {
       expect(gateway.slashCalls, hasLength(3));
       expect(find.byKey(const ValueKey('recording')), findsOneWidget);
       expect(stt.stopCalls, 0);
-      expect(field.controller?.text, 'directed turn dictado tardío');
+      expect(field.controller?.text, 'directed turn');
       ScaffoldMessenger.of(
         tester.element(find.byType(ChatScreen).last),
       ).clearSnackBars();
