@@ -2427,8 +2427,14 @@ class _ChatScreenState extends State<ChatScreen>
   /// Modelo que debe pintar esta sesión mientras haya una elección del usuario
   /// registrada en el reducer de config.
   ///
-  /// El reducer conserva el pick vigente mientras `session.info` siga
-  /// reportando el efectivo previo o una petición ya sustituida.
+  /// Hermes Desktop pinta el pick de forma optimista en cuanto el `config.set`
+  /// es aceptado y solo lo revierte ante un rechazo real del RPC. Un
+  /// `session.info` emitido antes de que el servidor aplique el cambio (p.ej.
+  /// un switch diferido a mitad de turno) sigue reportando el modelo anterior,
+  /// así que una confirmación cuyo valor autoritativo coincide con el efectivo
+  /// previo se trata como obsoleta y NO repinta la cabecera. Si el info
+  /// reporta un modelo distinto tanto del pedido como del previo, es un cambio
+  /// efectivo en el servidor y sí reconcilia.
   SessionModelConfigValue? get _displayedSessionModel {
     if (!_chatBound) return null;
     final pending = _chat.pendingSessionConfigChange(

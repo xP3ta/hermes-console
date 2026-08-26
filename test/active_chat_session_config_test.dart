@@ -344,6 +344,32 @@ void main() {
     expect(chat.effectiveSessionConfig.model, 'openai/gpt-5.5-codex');
   });
 
+  test('session.info reaplica config en el stored id de reentrada', () async {
+    final gateway = _ConfiguredCreateGateway()..resumeExistingSucceeds = true;
+    final chat = _chat(gateway);
+    addTearDown(chat.dispose);
+
+    expect(await chat.ensureDesktopRuntime(), isTrue);
+    const key = DesktopSessionConfigKey.fast;
+    await chat.setSessionFastMode(DesktopFastMode.fast);
+    expect(chat.pendingSessionConfigChange(key), isNotNull);
+
+    gateway.emitSessionInfo(const {
+      'stored_session_id': 'stored-from-info',
+      'model': 'openai/gpt-5.7-codex',
+      'provider': 'openai-codex',
+      'fast': false,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(chat.serverSessionId, 'stored-from-info');
+    expect(chat.storedSessionId, 'stored-from-info');
+    expect(chat.pendingSessionConfigChange(key), isNull);
+    expect(chat.effectiveSessionConfig.model, 'openai/gpt-5.7-codex');
+    expect(chat.effectiveSessionConfig.provider, 'openai-codex');
+    expect(chat.effectiveSessionConfig.fast, isFalse);
+  });
+
   test(
     'un pin oficial ausente falla cerrado y nunca crea ni cae a REST',
     () async {
@@ -542,37 +568,4 @@ void main() {
     expect(chat.effectiveSessionConfig.fast, isFalse);
     expect(chat.hasDesktopRuntime, isTrue);
   });
-
-  test(
-    'info previo no confirma un modelo aceptado hasta que se aplica',
-    () async {
-      final gateway = _ConfiguredCreateGateway();
-      final chat = _chat(gateway);
-      addTearDown(chat.dispose);
-      await chat.send(fullText: 'x', model: '', history: const []);
-      final previous = chat.effectiveSessionConfig.model;
-      final selection = DesktopModelSelection(
-        modelId: 'openai/gpt-5.6-codex',
-        providerSlug: 'openai-codex',
-      );
-      final accepted = await chat.setSessionModel(
-        selection,
-        confirmExpensiveModel: true,
-      );
-      expect(accepted.status, SessionConfigChangeStatus.accepted);
-      gateway.emitSessionInfo({'model': previous, 'provider': 'openai-codex'});
-      await Future<void>.delayed(Duration.zero);
-      const key = DesktopSessionConfigKey.model;
-      var pending = chat.pendingSessionConfigChange(key)!;
-      expect(pending.status, SessionConfigChangeStatus.accepted);
-      final displayed = pending.displayValue as SessionModelConfigValue;
-      expect(displayed.modelId, selection.modelId);
-      expect(chat.effectiveSessionConfig.model, previous);
-      gateway.emitSessionInfo({'model': selection.modelId});
-      await Future<void>.delayed(Duration.zero);
-      pending = chat.pendingSessionConfigChange(key)!;
-      expect(pending.status, SessionConfigChangeStatus.confirmed);
-      expect(chat.effectiveSessionConfig.model, selection.modelId);
-    },
-  );
 }

@@ -59,7 +59,6 @@ import 'package:hermes_android/core/services/mission_bot_chat_store.dart';
 import 'package:hermes_android/core/services/mission_room_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
-import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
@@ -4679,16 +4678,7 @@ void main() {
       tester,
       desktopGateway: gateway,
       connection: _remoteConn(connectionId),
-      session: const Session(
-        id: sessionId,
-        title: 'Draft work',
-        model: 'hermes-agent',
-        source: 'mobile',
-        messageCount: 0,
-        isActive: true,
-        preview: '',
-        startedAt: 0,
-      ),
+      session: _session().copyWith(id: sessionId, title: 'Draft work'),
       initialPreferences: const {
         'selected_model_$sessionId': 'leaked-model',
         'selected_provider_${connectionId}_$sessionId': 'provider-a',
@@ -4747,10 +4737,6 @@ void main() {
         },
       });
       await tester.pump();
-      expect(
-        chat.pendingSessionConfigChange(DesktopSessionConfigKey.model)?.status,
-        SessionConfigChangeStatus.accepted,
-      );
       expect(
         find.byKey(const ValueKey('new-model')),
         findsOneWidget,

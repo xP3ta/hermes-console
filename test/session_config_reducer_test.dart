@@ -314,9 +314,7 @@ void main() {
       state,
       scope,
       infoEpoch: 1,
-      // Gateways antiguos no correlacionan session.info con config.set. Al
-      // recibirse después de B, el adaptador solo conoce el epoch vigente (2),
-      // aunque este payload todavía sea la aplicación tardía de A.
+      // El payload tardío de A se recibe cuando B ya es el epoch vigente.
       observedRequestEpoch: 2,
       model: 'model-b',
       provider: 'provider-b',
