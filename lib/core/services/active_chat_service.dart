@@ -1866,7 +1866,14 @@ class ActiveChat {
         'Hermes returned an empty runtime session identity',
       );
     }
-    if (_desktopRuntimeSessionId != runtimeId || _sessionConfigScope == null) {
+    final scope = _sessionConfigScope;
+    final profile = _storedSessionProfile.isEmpty
+        ? 'default'
+        : _storedSessionProfile;
+    if (_desktopRuntimeSessionId != runtimeId ||
+        scope == null ||
+        scope.storedSessionId != serverSessionId ||
+        scope.profileName != profile) {
       _retireDesktopRuntime();
       _desktopRuntimeSessionId = runtimeId;
       _desktopSessionEpoch += 1;
@@ -1875,9 +1882,7 @@ class ActiveChat {
         connectionId: connection.id,
         storedSessionId: serverSessionId,
         runtimeSessionId: runtimeId,
-        profileName: _storedSessionProfile.isEmpty
-            ? 'default'
-            : _storedSessionProfile,
+        profileName: profile,
         sessionEpoch: _desktopSessionEpoch,
       );
     }
@@ -2063,8 +2068,8 @@ class ActiveChat {
         if (projected.isNotEmpty || !expectsTranscript) {
           publishMessages(projected);
         }
-        _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
         _desktopStoredSessionId = snapshot.storedSessionId;
+        _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
         _desktopStoredSessionKnownMissing = false;
         _desktopRuntimeInfo = snapshot.info;
         _rememberDesktopLiveStatus(
@@ -2987,8 +2992,8 @@ class ActiveChat {
         );
       }
       final infoChanged = snapshot.info != _desktopRuntimeInfo;
-      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopStoredSessionId = snapshot.storedSessionId;
+      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopStoredSessionKnownMissing = false;
       _desktopRuntimeInfo = snapshot.info;
       _rememberDesktopLiveStatus(snapshot.status, running: snapshot.running);
@@ -3364,8 +3369,8 @@ class ActiveChat {
         _steerRecords.clear();
         messagesLoaded = true;
       }
-      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopStoredSessionId = snapshot.storedSessionId;
+      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopRuntimeInfo = snapshot.info;
       _rememberDesktopLiveStatus(snapshot.status, running: snapshot.running);
       _desktopTurnStartedAt = null;
@@ -3617,8 +3622,8 @@ class ActiveChat {
       }
       if (localState == PreparedTurnState.accepted ||
           localState == PreparedTurnState.running) {
-        _adoptDesktopRuntime(binding.runtimeSessionId, info: binding.info);
         _desktopStoredSessionId = binding.storedSessionId;
+        _adoptDesktopRuntime(binding.runtimeSessionId, info: binding.info);
         _usingDesktopGateway = true;
         _runTerminal = false;
         _activeTurnDelivery = ActiveTurnDelivery(
@@ -4260,11 +4265,11 @@ class ActiveChat {
           if (!status.known || status.state == null) continue;
           switch (status.state!) {
             case DesktopTurnState.accepted:
+              _desktopStoredSessionId = binding.storedSessionId;
               _adoptDesktopRuntime(
                 binding.runtimeSessionId,
                 info: binding.info,
               );
-              _desktopStoredSessionId = binding.storedSessionId;
               _usingDesktopGateway = true;
               state = ChatPipelineState.waiting;
               _armFirstTokenTimer();
@@ -4273,11 +4278,11 @@ class ActiveChat {
             case DesktopTurnState.running:
               await delivery.markRunning();
               if (!_canRecoverTurn(turnEpoch)) return;
+              _desktopStoredSessionId = binding.storedSessionId;
               _adoptDesktopRuntime(
                 binding.runtimeSessionId,
                 info: binding.info,
               );
-              _desktopStoredSessionId = binding.storedSessionId;
               _usingDesktopGateway = true;
               state = ChatPipelineState.executing;
               _armFirstTokenTimer();
@@ -6724,8 +6729,8 @@ class ActiveChat {
               currentDurableId != durableId) {
             throw StateError('voice_barge_interrupt_target_changed');
           }
-          _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
           _desktopStoredSessionId = snapshot.storedSessionId;
+          _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
           _desktopStoredSessionKnownMissing = false;
           await interruptOnce(snapshot.runtimeSessionId);
         }
@@ -6946,8 +6951,8 @@ class ActiveChat {
             omitMessages: true,
           );
       if (_disposed || !isStreaming) throw StateError('run_not_active');
-      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopStoredSessionId = snapshot.storedSessionId;
+      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopStoredSessionKnownMissing = false;
       result = await redirectOnce(snapshot.runtimeSessionId);
     }

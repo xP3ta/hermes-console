@@ -63,11 +63,13 @@ class _ConfiguredCreateGateway
     resumeExistingCalls += 1;
     observedResumeProfiles.add(profile);
     if (resumeExistingSucceeds) {
-      return const DesktopSessionSnapshot(
+      return DesktopSessionSnapshot(
         runtimeSessionId: 'runtime-configured',
-        storedSessionId: 'stored-configured',
+        storedSessionId: resumeExistingCalls > 1
+            ? 'stored-reentered'
+            : 'stored-configured',
         created: false,
-        info: DesktopSessionRuntimeInfo(
+        info: const DesktopSessionRuntimeInfo(
           model: 'openai/gpt-5.5-codex',
           provider: 'openai-codex',
           fast: false,
@@ -305,12 +307,21 @@ void main() {
     expect(existing.hasDesktopRuntime, isTrue);
   });
 
-  test('reconexión activa runtime vivo y 4007 cae solo a resume', () async {
+  test('draft persistido reentra aislado del scope anterior', () async {
     final gateway = _ConfiguredCreateGateway()..resumeExistingSucceeds = true;
     final chat = _chat(gateway);
     addTearDown(chat.dispose);
 
     expect(await chat.ensureDesktopRuntime(), isTrue);
+    const key = DesktopSessionConfigKey.model;
+    await chat.setSessionModel(
+      DesktopModelSelection(
+        modelId: 'openai/gpt-5.6-codex',
+        providerSlug: 'openai-codex',
+      ),
+      confirmExpensiveModel: true,
+    );
+    expect(chat.pendingSessionConfigChange(key), isNotNull);
     gateway.disconnectForTest();
     expect(await chat.ensureDesktopRuntime(), isTrue);
     expect(gateway.activationCalls, 1);
@@ -328,6 +339,9 @@ void main() {
     expect(gateway.resumeExistingCalls, 2);
     expect(gateway.configuredCreateCalls, 0);
     expect(gateway.legacyCreateCalls, 0);
+    expect(chat.serverSessionId, 'stored-reentered');
+    expect(chat.pendingSessionConfigChange(key), isNull);
+    expect(chat.effectiveSessionConfig.model, 'openai/gpt-5.5-codex');
   });
 
   test(
@@ -535,42 +549,28 @@ void main() {
       final gateway = _ConfiguredCreateGateway();
       final chat = _chat(gateway);
       addTearDown(chat.dispose);
-      await chat.send(
-        fullText: 'hola',
-        model: 'hermes-agent',
-        history: const [],
-      );
+      await chat.send(fullText: 'x', model: '', history: const []);
       final previous = chat.effectiveSessionConfig.model;
       final selection = DesktopModelSelection(
         modelId: 'openai/gpt-5.6-codex',
         providerSlug: 'openai-codex',
       );
-
       final accepted = await chat.setSessionModel(
         selection,
         confirmExpensiveModel: true,
       );
       expect(accepted.status, SessionConfigChangeStatus.accepted);
-
       gateway.emitSessionInfo({'model': previous, 'provider': 'openai-codex'});
       await Future<void>.delayed(Duration.zero);
-
-      var pending = chat.pendingSessionConfigChange(
-        DesktopSessionConfigKey.model,
-      )!;
+      const key = DesktopSessionConfigKey.model;
+      var pending = chat.pendingSessionConfigChange(key)!;
       expect(pending.status, SessionConfigChangeStatus.accepted);
-      expect(
-        (pending.displayValue as SessionModelConfigValue).modelId,
-        selection.modelId,
-      );
+      final displayed = pending.displayValue as SessionModelConfigValue;
+      expect(displayed.modelId, selection.modelId);
       expect(chat.effectiveSessionConfig.model, previous);
-
-      gateway.emitSessionInfo({
-        'model': selection.modelId,
-        'provider': selection.providerSlug,
-      });
+      gateway.emitSessionInfo({'model': selection.modelId});
       await Future<void>.delayed(Duration.zero);
-      pending = chat.pendingSessionConfigChange(DesktopSessionConfigKey.model)!;
+      pending = chat.pendingSessionConfigChange(key)!;
       expect(pending.status, SessionConfigChangeStatus.confirmed);
       expect(chat.effectiveSessionConfig.model, selection.modelId);
     },

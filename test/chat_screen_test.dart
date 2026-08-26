@@ -4664,7 +4664,7 @@ void main() {
     },
   );
 
-  testWidgets('un draft de otro perfil no hereda su modelo de sesión', (
+  testWidgets('dos conexiones homónimas no comparten preferencia legacy', (
     tester,
   ) async {
     final gateway = _UiRewindGateway()
@@ -4688,19 +4688,16 @@ void main() {
         isActive: true,
         preview: '',
         startedAt: 0,
-        profile: 'work',
       ),
       initialPreferences: const {
-        'selected_model_${connectionId}_$sessionId': 'leaked-model',
+        'selected_model_$sessionId': 'leaked-model',
         'selected_provider_${connectionId}_$sessionId': 'provider-a',
       },
     );
-
     await tester.enterText(find.byType(TextField), 'primer turno');
     await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump(const Duration(milliseconds: 300));
-
     expect(gateway.createConfigs.single.model, isNull);
     expect(gateway.submissions, ['primer turno']);
     gateway.emit('message.complete', const {'text': 'hecho'});

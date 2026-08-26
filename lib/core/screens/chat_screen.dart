@@ -2291,15 +2291,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted) return;
     final defaultProfile = _sessionPreferenceProfile == 'default';
     final legacyModel = defaultProfile
-        ? prefs.getString(_legacyConnectionSessionModelKey) ??
-              prefs.getString(_legacySessionModelKey)
+        ? prefs.getString(_legacyConnectionSessionModelKey)
         : null;
     final scopedModel = prefs.getString(_sessionModelKey);
-    final model =
-        scopedModel ??
-        legacyModel ??
-        (defaultProfile ? prefs.getString('selected_model') : null) ??
-        'hermes-agent';
+    final model = scopedModel ?? legacyModel ?? 'hermes-agent';
     final provider =
         prefs.getString(_sessionProviderKey) ??
         (defaultProfile
@@ -2348,7 +2343,7 @@ class _ChatScreenState extends State<ChatScreen>
   String get _sessionPreferenceScope =>
       '${widget.connection.id}_${_sessionPreferenceProfile}_${widget.session.id}';
   String get _sessionModelKey => 'selected_model_$_sessionPreferenceScope';
-  String get _legacySessionModelKey => 'selected_model_${widget.session.id}';
+
   String get _legacyConnectionSessionModelKey =>
       'selected_model_$_legacyConnectionSessionScope';
   String get _legacyConnectionSessionProviderKey =>
@@ -3357,8 +3352,7 @@ class _ChatScreenState extends State<ChatScreen>
     final next =
         prefs.getString(_sessionModelKey) ??
         (defaultProfile
-            ? prefs.getString(_legacyConnectionSessionModelKey) ??
-                  prefs.getString('selected_model')
+            ? prefs.getString(_legacyConnectionSessionModelKey)
             : null) ??
         'hermes-agent';
     final provider =
