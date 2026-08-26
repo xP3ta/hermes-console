@@ -244,6 +244,7 @@ class _UiRewindGateway
   int idleDisconnects = 0;
   Completer<DesktopCommandRpcResult>? compressionGate;
   Completer<void>? submitGate;
+  Completer<void>? rewindGate;
   Object? slashError;
   Object? dispatchError;
   Object? resumeExistingError;
@@ -391,7 +392,10 @@ class _UiRewindGateway
     String runtimeSessionId,
     String text,
     int truncateBeforeUserOrdinal,
-  ) async => rewinds.add((text: text, ordinal: truncateBeforeUserOrdinal));
+  ) async {
+    rewinds.add((text: text, ordinal: truncateBeforeUserOrdinal));
+    await rewindGate?.future;
+  }
 
   @override
   Future<void> steer(String runtimeSessionId, String text) async {
@@ -4808,6 +4812,92 @@ void main() {
       await tester.pump(const Duration(milliseconds: 33));
     }
     expect(chat.isStreaming, isFalse);
+  });
+
+  testWidgets(
+    'guardar edición sigue siendo táctil con teclado Android compacto',
+    (tester) async {
+      tester.view
+        ..physicalSize = const Size(360, 640)
+        ..devicePixelRatio = 1
+        ..viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.reset);
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-compact-rewrite'),
+        messages: [
+          {'role': 'assistant', 'content': 'Respuesta original'},
+          {'role': 'user', 'content': 'pregunta original'},
+        ],
+      );
+
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('edit-message-composer')),
+        'pregunta corregida desde Android',
+      );
+
+      final apply = find.text('Guardar y enviar');
+      expect(apply, findsOneWidget);
+      expect(apply.hitTestable(), findsOneWidget);
+      await tester.tap(apply);
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(gateway.rewinds, [
+        (text: 'pregunta corregida desde Android', ordinal: 0),
+      ]);
+      gateway.emit('message.complete', {'text': 'Respuesta corregida Android'});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(find.text('Respuesta corregida Android'), findsOneWidget);
+      expect(chat.isStreaming, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('un ACK tardío conserva el snapshot y después repinta la respuesta', (
+    tester,
+  ) async {
+    final gate = Completer<void>();
+    final gateway = _UiRewindGateway()..rewindGate = gate;
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-delayed-rewrite'),
+      messages: [
+        {'role': 'assistant', 'content': 'Respuesta original'},
+        {'role': 'user', 'content': 'pregunta original'},
+      ],
+    );
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('edit-message-composer')),
+      'pregunta con ACK tardío',
+    );
+    await tester.tap(find.text('Guardar y enviar'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(gateway.rewinds, [
+      (text: 'pregunta con ACK tardío', ordinal: 0),
+    ]);
+    expect(find.textContaining('pregunta original'), findsOneWidget);
+    gate.complete();
+    await tester.pump(const Duration(milliseconds: 350));
+    gateway.emit('message.complete', {'text': 'Respuesta tras ACK tardío'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+
+    expect(find.textContaining('pregunta con ACK tardío'), findsOneWidget);
+    expect(find.text('Respuesta tras ACK tardío'), findsOneWidget);
+    expect(chat.isStreaming, isFalse);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('regenerar ignora el pseudo-turno de cambio de modelo', (

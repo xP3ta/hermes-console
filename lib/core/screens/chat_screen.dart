@@ -5672,6 +5672,7 @@ class _ChatScreenState extends State<ChatScreen>
       context: context,
       surfaceKey: const ValueKey('chat-edit-message-dialog'),
       maxWidth: 560,
+      maxHeightFactor: 1,
       builder: (dialogContext) =>
           _EditUserMessageSheet(initialText: parsed.text.trim()),
     );
@@ -10950,91 +10951,99 @@ class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                IconButton(
-                  onPressed: () => _close(),
-                  icon: const Icon(Icons.close_rounded),
-                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => _close(),
+                icon: const Icon(Icons.close_rounded),
+                tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  strings.chaEditTitle,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    strings.chaEditTitle,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: colors.textPrimary,
-                      fontWeight: FontWeight.w700,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surfaceVariant.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: colors.divider.withValues(alpha: 0.42),
+                      ),
+                    ),
+                    child: TextField(
+                      key: const ValueKey('edit-message-composer'),
+                      controller: _controller,
+                      autofocus: true,
+                      minLines: 2,
+                      maxLines: 8,
+                      decoration: InputDecoration(
+                        hintText: strings.chaEditHint,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 15,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: colors.divider.withValues(alpha: 0.42),
-                ),
-              ),
-              child: TextField(
-                key: const ValueKey('edit-message-composer'),
-                controller: _controller,
-                autofocus: true,
-                minLines: 2,
-                maxLines: 8,
-                decoration: InputDecoration(
-                  hintText: strings.chaEditHint,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 15,
+                  const SizedBox(height: 12),
+                  Text(
+                    strings.chaEditRewindWarning,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: colors.textSecondary,
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              strings.chaEditRewindWarning,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.4,
-                color: colors.textSecondary,
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              TextButton(
+                onPressed: () => _close(),
+                child: Text(
+                  MaterialLocalizations.of(context).cancelButtonLabel,
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => _close(),
-                  child: Text(
-                    MaterialLocalizations.of(context).cancelButtonLabel,
-                  ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  shape: const StadiumBorder(),
+                  minimumSize: const Size(0, 46),
                 ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    shape: const StadiumBorder(),
-                    minimumSize: const Size(0, 46),
-                  ),
-                  onPressed: () => _close(_controller.text.trim()),
-                  child: Text(strings.chaEditApply),
-                ),
-              ],
-            ),
-          ],
-        ),
+                onPressed: () => _close(_controller.text.trim()),
+                child: Text(strings.chaEditApply),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
