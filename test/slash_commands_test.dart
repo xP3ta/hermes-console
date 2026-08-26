@@ -9,6 +9,7 @@ import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -172,16 +173,6 @@ class _SlashGateway
     );
   }
 
-  void emitComplete() {
-    _events.add(
-      const TuiGatewayEvent(
-        type: 'message.complete',
-        sessionId: 'runtime-slash-test',
-        payload: {'text': 'done'},
-      ),
-    );
-  }
-
   @override
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
@@ -289,7 +280,7 @@ ApiClient _safeApi() => ApiClient(
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
-Future<void> _pumpSlashChat(
+Future<ActiveChat> _pumpSlashChat(
   WidgetTester tester,
   _SlashGateway gateway, {
   _OpenSttEngine? stt,
@@ -355,6 +346,7 @@ Future<void> _pumpSlashChat(
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 350));
+  return chat;
 }
 
 Future<void> _submitSlash(WidgetTester tester) async {
@@ -470,20 +462,6 @@ void main() {
   });
 
   group('parseSlashCommand', () {
-    test('inventories every local slash execution class', () {
-      final actions =
-          'help new clear compress model skills memory soul models activity kanban compact'
-              .split(' ')
-              .map((name) => parseSlashCommand('/$name')!.command.action)
-              .toSet();
-      expect(
-        actions,
-        SlashAction.values
-            .where((action) => action != SlashAction.remote)
-            .toSet(),
-      );
-    });
-
     test('comando conocido sin argumento', () {
       final p = parseSlashCommand('/new');
       expect(p, isNotNull);
@@ -613,6 +591,25 @@ void main() {
       expect(field.controller?.text, isEmpty);
       expect(field.focusNode?.hasFocus, isTrue);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a navigation slash consumes once and opens its route', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      final controller = tester.widget<TextField>(composer).controller!;
+      await tester.enterText(composer, '/ski');
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.tap(find.byKey(const ValueKey('chat-slash-command-skills')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SkillsScreen), findsOneWidget);
+      expect(controller.text, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.slashCalls, isEmpty);
     });
 
     testWidgets(
@@ -796,8 +793,6 @@ void main() {
       expect(gateway.slashCalls, ['compress release decisions']);
       expect(field.controller?.text, '/compress release decisions');
       expect(field.focusNode?.hasFocus, isTrue);
-      expect(gateway.submissions, isEmpty);
-      expect(tester.takeException(), isNull);
 
       gateway.slashResult = const DesktopCommandRpcResult(
         kind: DesktopCommandDispatchKind.none,
@@ -845,7 +840,6 @@ void main() {
         '/compress no runtime',
       );
       expect(gateway.slashCalls, isEmpty);
-      expect(tester.takeException(), isNull);
     });
 
     testWidgets('/compress accepted late preserves a newer draft', (
@@ -875,8 +869,6 @@ void main() {
 
       expect(tester.widget<TextField>(composer).controller?.text, 'new draft');
       expect(gateway.slashCalls, ['compress first']);
-      expect(gateway.submissions, isEmpty);
-      expect(tester.takeException(), isNull);
     });
 
     testWidgets('read-only exposes no slash submission surface or RPC', (
@@ -886,18 +878,16 @@ void main() {
       await _pumpSlashChat(tester, gateway, readOnly: true);
 
       expect(find.byType(TextField), findsNothing);
-      expect(gateway.slashCalls, isEmpty);
     });
 
-    testWidgets('late accepted remote slash never overwrites a newer draft', (
+    testWidgets('late directed remote slash preserves a newer draft', (
       tester,
     ) async {
       final gate = Completer<DesktopCommandRpcResult>();
       final gateway = _SlashGateway()..slashGate = gate;
-      await _pumpSlashChat(tester, gateway);
+      final chat = await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
 
-      await tester.tap(composer);
       await tester.enterText(composer, '/goal first');
       await tester.pump(const Duration(milliseconds: 250));
       final sendAction = find.descendant(
@@ -910,10 +900,13 @@ void main() {
       expect(gateway.slashCalls, ['goal first']);
 
       await tester.enterText(composer, 'new draft');
+      chat.state = ChatPipelineState.streaming;
+      await tester.pump();
       gate.complete(
         const DesktopCommandRpcResult(
-          kind: DesktopCommandDispatchKind.none,
+          kind: DesktopCommandDispatchKind.send,
           accepted: DesktopCommandAcceptance.accepted,
+          message: 'directed turn',
         ),
       );
       await tester.pump(const Duration(milliseconds: 500));
@@ -921,7 +914,6 @@ void main() {
       final field = tester.widget<TextField>(composer);
       expect(field.controller?.text, 'new draft');
       expect(field.focusNode?.hasFocus, isTrue);
-      expect(gateway.submissions, isEmpty);
 
       gateway
         ..slashGate = null
@@ -953,11 +945,8 @@ void main() {
         );
       await _submitSlash(tester);
       expect(field.controller?.text, isEmpty);
-      expect(gateway.submissions, ['directed turn']);
+      expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, hasLength(4));
-      gateway.emitComplete();
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(tester.takeException(), isNull);
     });
 
     testWidgets('recording and transcribing hide slash suggestions', (

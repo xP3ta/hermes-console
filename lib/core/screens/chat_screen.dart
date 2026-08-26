@@ -5329,9 +5329,14 @@ class _ChatScreenState extends State<ChatScreen>
     // local queda únicamente como degradación cuando el transporte confirma
     // que no dispone de steering.
     if (_sending) {
+      bool ownsComposerBatch() =>
+          textOverride == null &&
+          _textController.text == composerTextAtSubmit &&
+          _sameAttachmentDrafts(_pendingAttachments, attachments);
+
       try {
         await _chat.steer(fullText);
-        _textController.clear();
+        if (ownsComposerBatch()) _textController.clear();
         if (!mounted) return true;
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
@@ -5350,7 +5355,7 @@ class _ChatScreenState extends State<ChatScreen>
                     error.code == 4009));
         if (safeToQueue) {
           _chat.enqueue(fullText);
-          _textController.clear();
+          if (ownsComposerBatch()) _textController.clear();
           if (!mounted) return true;
           ScaffoldMessenger.of(context)
             ..hideCurrentSnackBar()
