@@ -5071,6 +5071,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _sendMessageOnce({
     bool skipSlashRouting = false,
     String? textOverride,
+    bool includeComposerAttachments = true,
   }) async {
     await _profileReady;
     if (!mounted || _roomTaskSubmitting) return false;
@@ -5128,7 +5129,9 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
     final text = (textOverride ?? _textController.text).trim();
-    final attachments = List<AttachmentDraft>.of(_pendingAttachments);
+    final attachments = includeComposerAttachments
+        ? List<AttachmentDraft>.of(_pendingAttachments)
+        : const <AttachmentDraft>[];
     final selectedModel = _selectedModel;
     final firstSubmitConfig = _firstSubmitConfig;
     if (text.isEmpty && attachments.isEmpty) return false;
@@ -5841,6 +5844,12 @@ class _ChatScreenState extends State<ChatScreen>
     _executeSlash(cmd, '');
   }
 
+  void _consumeSlashInvocation(String invocation) {
+    if (_textController.text != invocation) return;
+    _textController.clear();
+    setState(() => _slashSuggestions = const []);
+  }
+
   /// Ejecuta un comando slash conocido sin decidir el foco globalmente. Las
   /// rutas y superficies modales gestionan su propio foco; los errores conservan
   /// la invocación y las acciones aceptadas consumen el composer.
@@ -5861,9 +5870,15 @@ class _ChatScreenState extends State<ChatScreen>
     if (cmd.action == SlashAction.model && arg.trim().isNotEmpty) {
       final invocation = _textController.text;
       final consumed = await _setModelByName(arg.trim());
-      if (!mounted || !consumed || _textController.text != invocation) return;
-      _textController.clear();
-      setState(() => _slashSuggestions = const []);
+      if (!mounted || !consumed) return;
+      _consumeSlashInvocation(invocation);
+      return;
+    }
+    if (cmd.action == SlashAction.compress) {
+      final invocation = _textController.text;
+      final consumed = await _compressDesktopSession(arg);
+      if (!mounted || !consumed) return;
+      _consumeSlashInvocation(invocation);
       return;
     }
     _textController.clear();
@@ -5874,7 +5889,7 @@ class _ChatScreenState extends State<ChatScreen>
       case SlashAction.newChat:
         _newChat();
       case SlashAction.compress:
-        await _compressDesktopSession(arg);
+        return;
       case SlashAction.model:
         if (arg.trim().isEmpty) {
           _showModelSheet();
@@ -5906,6 +5921,7 @@ class _ChatScreenState extends State<ChatScreen>
       showReadOnlyNotice(context);
       return;
     }
+    final invocation = _textController.text;
     try {
       final result = await _chat.executeDesktopSlash(cmd.name, arg: arg);
       if (!mounted) return;
@@ -5921,8 +5937,7 @@ class _ChatScreenState extends State<ChatScreen>
           directedMessage.isNotEmpty &&
           (result.kind == DesktopCommandDispatchKind.send ||
               result.kind == DesktopCommandDispatchKind.skill);
-      _textController.clear();
-      setState(() => _slashSuggestions = const []);
+      _consumeSlashInvocation(invocation);
 
       final notice = result.notice?.trim();
       final output = result.output?.trim();
@@ -5936,8 +5951,11 @@ class _ChatScreenState extends State<ChatScreen>
       );
 
       if (submitsDirectedTurn) {
-        _setComposerText(directedMessage);
-        await _sendMessageOnce(skipSlashRouting: true);
+        await _sendMessageOnce(
+          skipSlashRouting: true,
+          textOverride: directedMessage,
+          includeComposerAttachments: false,
+        );
       }
     } on TuiGatewayRpcError catch (error) {
       if (!mounted) return;

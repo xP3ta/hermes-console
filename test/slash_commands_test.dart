@@ -43,9 +43,17 @@ class _SlashGateway
   final List<String> submissions = [];
   final List<String> slashCalls = [];
   Completer<SlashCompletionBatch>? slashCompletion;
+  Completer<DesktopCommandRpcResult>? slashGate;
   int slashCompletionCalls = 0;
+  Object? slashError;
+  Object? dispatchError;
+  Object? resumeExistingError;
   Object? modelError;
   final List<DesktopModelSelection> modelSelections = [];
+  DesktopCommandRpcResult slashResult = const DesktopCommandRpcResult(
+    kind: DesktopCommandDispatchKind.none,
+    accepted: DesktopCommandAcceptance.accepted,
+  );
 
   final DesktopModelCatalog modelCatalog = DesktopModelCatalog.fromJson(const {
     'model': 'old-model',
@@ -88,11 +96,14 @@ class _SlashGateway
     String profile = '',
     bool omitMessages = false,
     bool deferHistory = false,
-  }) async => DesktopSessionSnapshot(
-    runtimeSessionId: 'runtime-slash-test',
-    storedSessionId: storedSessionId,
-    created: false,
-  );
+  }) async {
+    if (resumeExistingError case final error?) throw error;
+    return DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-slash-test',
+      storedSessionId: storedSessionId,
+      created: false,
+    );
+  }
 
   @override
   Future<DesktopSessionSnapshot> createForFirstSubmit({
@@ -125,7 +136,11 @@ class _SlashGateway
 
   @override
   Future<DesktopCommandCatalog> commandsCatalog() async =>
-      DesktopCommandCatalog.fromJson(const {'commands': <Object>[]});
+      DesktopCommandCatalog.fromJson(const {
+        'pairs': [
+          ['/goal', 'Run a goal'],
+        ],
+      });
 
   @override
   Future<SlashCompletionBatch> completeSlash(String text) async {
@@ -140,10 +155,8 @@ class _SlashGateway
     String command,
   ) async {
     slashCalls.add(command);
-    return const DesktopCommandRpcResult(
-      kind: DesktopCommandDispatchKind.none,
-      accepted: DesktopCommandAcceptance.accepted,
-    );
+    if (slashError case final error?) throw error;
+    return slashGate?.future ?? slashResult;
   }
 
   @override
@@ -151,10 +164,23 @@ class _SlashGateway
     String runtimeSessionId, {
     required String name,
     String arg = '',
-  }) async => const DesktopCommandRpcResult(
-    kind: DesktopCommandDispatchKind.none,
-    accepted: DesktopCommandAcceptance.accepted,
-  );
+  }) async {
+    if (dispatchError case final error?) throw error;
+    return const DesktopCommandRpcResult(
+      kind: DesktopCommandDispatchKind.none,
+      accepted: DesktopCommandAcceptance.accepted,
+    );
+  }
+
+  void emitComplete() {
+    _events.add(
+      const TuiGatewayEvent(
+        type: 'message.complete',
+        sessionId: 'runtime-slash-test',
+        payload: {'text': 'done'},
+      ),
+    );
+  }
 
   @override
   Future<DesktopModelCatalog> modelOptions(
@@ -267,6 +293,7 @@ Future<void> _pumpSlashChat(
   WidgetTester tester,
   _SlashGateway gateway, {
   _OpenSttEngine? stt,
+  bool readOnly = false,
 }) async {
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -275,7 +302,7 @@ Future<void> _pumpSlashChat(
   final manager = await ConnectionManager.create(prefs);
   final secure = SecureStorage();
   final activeChats = ActiveChatService();
-  final connection = _connection();
+  final connection = _connection().copyWith(readOnly: readOnly);
   final chat = activeChats.attach(
     connection: connection,
     sessionId: _session.id,
@@ -328,6 +355,15 @@ Future<void> _pumpSlashChat(
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 350));
+}
+
+Future<void> _submitSlash(WidgetTester tester) async {
+  final sendAction = find.descendant(
+    of: find.byKey(const ValueKey('send')),
+    matching: find.byType(HermesTactileAction),
+  );
+  tester.widget<HermesTactileAction>(sendAction).onPressed!();
+  await tester.pump(const Duration(milliseconds: 500));
 }
 
 void main() {
@@ -434,6 +470,20 @@ void main() {
   });
 
   group('parseSlashCommand', () {
+    test('inventories every local slash execution class', () {
+      final actions =
+          'help new clear compress model skills memory soul models activity kanban compact'
+              .split(' ')
+              .map((name) => parseSlashCommand('/$name')!.command.action)
+              .toSet();
+      expect(
+        actions,
+        SlashAction.values
+            .where((action) => action != SlashAction.remote)
+            .toSet(),
+      );
+    });
+
     test('comando conocido sin argumento', () {
       final p = parseSlashCommand('/new');
       expect(p, isNotNull);
@@ -725,6 +775,190 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('/compress rejection preserves invocation and composer focus', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashResult = const DesktopCommandRpcResult(
+          kind: DesktopCommandDispatchKind.none,
+          accepted: DesktopCommandAcceptance.rejected,
+        );
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.enterText(composer, '/compress release decisions');
+      await tester.pump(const Duration(milliseconds: 250));
+      final field = tester.widget<TextField>(composer);
+      await _submitSlash(tester);
+
+      expect(gateway.slashCalls, ['compress release decisions']);
+      expect(field.controller?.text, '/compress release decisions');
+      expect(field.focusNode?.hasFocus, isTrue);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+
+      gateway.slashResult = const DesktopCommandRpcResult(
+        kind: DesktopCommandDispatchKind.none,
+        accepted: DesktopCommandAcceptance.accepted,
+      );
+      await _submitSlash(tester);
+      expect(gateway.slashCalls, hasLength(2));
+      expect(field.controller?.text, isEmpty);
+
+      gateway
+        ..slashError = const TuiGatewayRpcError(
+          'slash.exec',
+          'synthetic failure',
+          code: 5005,
+        )
+        ..dispatchError = const TuiGatewayRpcError(
+          'command.dispatch',
+          'synthetic failure',
+          code: 5005,
+        );
+      await tester.enterText(composer, '/compress retry me');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      expect(field.controller?.text, '/compress retry me');
+    });
+
+    testWidgets('/compress without runtime preserves invocation', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'missing runtime',
+          code: 4007,
+        );
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.enterText(composer, '/compress no runtime');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+
+      expect(
+        tester.widget<TextField>(composer).controller?.text,
+        '/compress no runtime',
+      );
+      expect(gateway.slashCalls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('/compress accepted late preserves a newer draft', (
+      tester,
+    ) async {
+      final gate = Completer<DesktopCommandRpcResult>();
+      final gateway = _SlashGateway()..slashGate = gate;
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.enterText(composer, '/compress first');
+      await tester.pump(const Duration(milliseconds: 250));
+      final sendAction = find.descendant(
+        of: find.byKey(const ValueKey('send')),
+        matching: find.byType(HermesTactileAction),
+      );
+      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      await tester.pump();
+      tester.widget<TextField>(composer).controller!.text = 'new draft';
+      gate.complete(
+        const DesktopCommandRpcResult(
+          kind: DesktopCommandDispatchKind.none,
+          accepted: DesktopCommandAcceptance.accepted,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(tester.widget<TextField>(composer).controller?.text, 'new draft');
+      expect(gateway.slashCalls, ['compress first']);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('read-only exposes no slash submission surface or RPC', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway, readOnly: true);
+
+      expect(find.byType(TextField), findsNothing);
+      expect(gateway.slashCalls, isEmpty);
+    });
+
+    testWidgets('late accepted remote slash never overwrites a newer draft', (
+      tester,
+    ) async {
+      final gate = Completer<DesktopCommandRpcResult>();
+      final gateway = _SlashGateway()..slashGate = gate;
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.enterText(composer, '/goal first');
+      await tester.pump(const Duration(milliseconds: 250));
+      final sendAction = find.descendant(
+        of: find.byKey(const ValueKey('send')),
+        matching: find.byType(HermesTactileAction),
+      );
+      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      tester.widget<HermesTactileAction>(sendAction).onPressed!();
+      await tester.pump();
+      expect(gateway.slashCalls, ['goal first']);
+
+      await tester.enterText(composer, 'new draft');
+      gate.complete(
+        const DesktopCommandRpcResult(
+          kind: DesktopCommandDispatchKind.none,
+          accepted: DesktopCommandAcceptance.accepted,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final field = tester.widget<TextField>(composer);
+      expect(field.controller?.text, 'new draft');
+      expect(field.focusNode?.hasFocus, isTrue);
+      expect(gateway.submissions, isEmpty);
+
+      gateway
+        ..slashGate = null
+        ..slashResult = const DesktopCommandRpcResult(
+          kind: DesktopCommandDispatchKind.none,
+          accepted: DesktopCommandAcceptance.rejected,
+        );
+      await tester.enterText(composer, '/goal rejected');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      expect(field.controller?.text, '/goal rejected');
+
+      gateway.slashError = const TuiGatewayRpcError(
+        'slash.exec',
+        'synthetic failure',
+        code: 5005,
+      );
+      await tester.enterText(composer, '/goal errors');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      expect(field.controller?.text, '/goal errors');
+
+      gateway
+        ..slashError = null
+        ..slashResult = const DesktopCommandRpcResult(
+          kind: DesktopCommandDispatchKind.send,
+          accepted: DesktopCommandAcceptance.accepted,
+          message: 'directed turn',
+        );
+      await _submitSlash(tester);
+      expect(field.controller?.text, isEmpty);
+      expect(gateway.submissions, ['directed turn']);
+      expect(gateway.slashCalls, hasLength(4));
+      gateway.emitComplete();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('recording and transcribing hide slash suggestions', (
       tester,
