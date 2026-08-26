@@ -885,6 +885,22 @@ void main() {
       expect(gateway.submissions, ['directed turn']);
       final recovered = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
       final recoveredId = (recovered.values.single as Map)['client_turn_id'];
+
+      // Un turno dirigido recuperado conserva la propiedad de su outbox hasta
+      // que el usuario lo descarte explícitamente; enviar otro lote no puede
+      // reemplazarlo ni crear una segunda entrega potencialmente duplicada.
+      gateway.submitError = null;
+      _sendAction(tester).onPressed!();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, ['directed turn']);
+      final stillRecovered =
+          jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      expect(stillRecovered, hasLength(1));
+      expect(
+        (stillRecovered.values.single as Map)['client_turn_id'],
+        recoveredId,
+      );
+
       final discard = find.byType(SnackBarAction, skipOffstage: false).last;
       tester.widget<SnackBarAction>(discard).onPressed();
       await tester.pump(const Duration(milliseconds: 400));

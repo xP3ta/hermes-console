@@ -5403,6 +5403,15 @@ class _ChatScreenState extends State<ChatScreen>
       return true;
     }
 
+    final unresolvedHiddenTurn = _preparedTurn;
+    if (usesComposerState &&
+        unresolvedHiddenTurn != null &&
+        !unresolvedHiddenTurn.restoresComposer &&
+        unresolvedHiddenTurn.state != PreparedTurnState.terminal) {
+      _showHiddenRecoveredTurn(unresolvedHiddenTurn);
+      return false;
+    }
+
     // Quitar un chip sigue disponible mientras se prepara el lote. Si cambió
     // antes de tocar la outbox, abortamos este intento y conservamos el draft
     // visible en vez de enviar una copia obsoleta.
