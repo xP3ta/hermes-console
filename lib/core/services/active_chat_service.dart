@@ -4869,6 +4869,14 @@ class ActiveChat {
     final autoCompactionCleared =
         _desktopAutoCompacting && parsed.running == false;
     if (autoCompactionCleared) _desktopAutoCompacting = false;
+    final storedId = parsed.storedSessionId?.trim();
+    if (storedId != null &&
+        storedId.isNotEmpty &&
+        storedId != _desktopStoredSessionId) {
+      _desktopStoredSessionId = storedId;
+      final runtimeId = _desktopRuntimeSessionId;
+      if (runtimeId != null) _adoptDesktopRuntime(runtimeId);
+    }
     final configChanged = _observeSessionConfigInfo(parsed);
     final infoChanged = parsed != _desktopRuntimeInfo;
     final titleChanged = _adoptDesktopSessionTitle(parsed);
@@ -4887,8 +4895,6 @@ class ActiveChat {
       return;
     }
     if (infoChanged) _desktopRuntimeInfo = parsed;
-    final storedId = parsed.storedSessionId;
-    if (storedId != null) _desktopStoredSessionId = storedId;
     _emit(ActiveChatEvent.sessionInfo);
   }
 

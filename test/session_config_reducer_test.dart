@@ -310,7 +310,8 @@ void main() {
       state,
       scope,
       infoEpoch: 1,
-      observedRequestEpoch: 1,
+      // El payload tardío de A se recibe cuando B ya es el epoch vigente.
+      observedRequestEpoch: 2,
       model: 'model-b',
       provider: 'provider-b',
     );

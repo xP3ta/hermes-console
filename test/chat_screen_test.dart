@@ -4654,6 +4654,38 @@ void main() {
     },
   );
 
+   testWidgets('dos conexiones homónimas no comparten preferencia legacy', (
+     tester,
+   ) async {
+     final gateway = _UiRewindGateway()
+       ..resumeExistingError = const TuiGatewayRpcError(
+         'session.resume',
+         'not found',
+         code: 4007,
+       );
+     const connectionId = 'conn-profile-model';
+     const sessionId = 'mob-shared-model';
+     await pumpChat(
+       tester,
+       desktopGateway: gateway,
+       connection: _remoteConn(connectionId),
+       session: _session().copyWith(id: sessionId, title: 'Draft work'),
+       initialPreferences: const {
+         'selected_model_$sessionId': 'leaked-model',
+         'selected_provider_${connectionId}_$sessionId': 'provider-a',
+       },
+     );
+     await tester.enterText(find.byType(TextField), 'primer turno');
+     await tester.pump(const Duration(milliseconds: 250));
+     await tester.tap(find.byKey(const ValueKey('send')));
+     await tester.pump(const Duration(milliseconds: 300));
+     expect(gateway.createConfigs.single.model, isNull);
+     expect(gateway.submissions, ['primer turno']);
+     gateway.emit('message.complete', const {'text': 'hecho'});
+     await tester.pump(const Duration(milliseconds: 400));
+   });
+ 
+
   testWidgets(
     'un session.info con el modelo previo no revierte una elección aceptada',
     (tester) async {

@@ -330,6 +330,32 @@ void main() {
     expect(gateway.legacyCreateCalls, 0);
   });
 
+  test('session.info reaplica config en el stored id de reentrada', () async {
+    final gateway = _ConfiguredCreateGateway()..resumeExistingSucceeds = true;
+    final chat = _chat(gateway);
+    addTearDown(chat.dispose);
+
+    expect(await chat.ensureDesktopRuntime(), isTrue);
+    const key = DesktopSessionConfigKey.fast;
+    await chat.setSessionFastMode(DesktopFastMode.fast);
+    expect(chat.pendingSessionConfigChange(key), isNotNull);
+
+    gateway.emitSessionInfo(const {
+      'stored_session_id': 'stored-from-info',
+      'model': 'openai/gpt-5.7-codex',
+      'provider': 'openai-codex',
+      'fast': false,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(chat.serverSessionId, 'stored-from-info');
+    expect(chat.storedSessionId, 'stored-from-info');
+    expect(chat.pendingSessionConfigChange(key), isNull);
+    expect(chat.effectiveSessionConfig.model, 'openai/gpt-5.7-codex');
+    expect(chat.effectiveSessionConfig.provider, 'openai-codex');
+    expect(chat.effectiveSessionConfig.fast, isFalse);
+  });
+
   test(
     'un pin oficial ausente falla cerrado y nunca crea ni cae a REST',
     () async {
