@@ -21,7 +21,7 @@ void main() {
         'session_id': 'runtime-1',
         'session_key': 'stored-1',
         'messages': [
-          {'role': 'user', 'text': 'pregunta'},
+          {'role': 'user', 'text': 'pregunta', 'row_id': 73},
           {'role': 'assistant', 'text': 'respuesta'},
           {'role': 'tool', 'name': 'web_search', 'context': 'consulta'},
         ],
@@ -40,6 +40,7 @@ void main() {
       result.messagesNewestFirst.last['_desktopSnapshotKey'],
       'message-runtime-1-0',
     );
+    expect(result.messagesNewestFirst.last['_desktopRowId'], 73);
     expect(result.running, isFalse);
     expect(result.status, 'idle');
   });

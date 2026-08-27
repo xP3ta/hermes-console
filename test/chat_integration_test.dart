@@ -463,12 +463,9 @@ class _OwnerScopedDesktopGateway extends _FakeDesktopGateway
   }
 }
 
-class _FakeRewindGateway extends _FakeDesktopGateway
+class _LegacyOnlyRewindGateway extends _FakeDesktopGateway
     implements HermesDesktopRewindGateway {
-  final List<({String sessionId, String text, int ordinal})> rewinds = [];
-  bool rejectRewind = false;
-  int? rejectRewindOrdinal;
-  int rewindErrorCode = 422;
+  int legacyRewinds = 0;
 
   @override
   Future<void> submitRewindPrompt(
@@ -476,6 +473,33 @@ class _FakeRewindGateway extends _FakeDesktopGateway
     String text,
     int truncateBeforeUserOrdinal,
   ) async {
+    legacyRewinds += 1;
+  }
+}
+
+class _FakeRewindGateway extends _FakeDesktopGateway
+    implements
+        HermesDesktopRewindResolverGateway,
+        HermesDesktopDurableRewindGateway {
+  final List<({String sessionId, String text, int ordinal})> rewinds = [];
+  bool rejectRewind = false;
+  int? rejectRewindOrdinal;
+  int rewindErrorCode = 422;
+
+  @override
+  Future<int?> resolveDurableUserRowId(
+    String runtimeSessionId, {
+    required String sourceText,
+    required int expectedOrdinal,
+  }) async => 73;
+
+  @override
+  Future<DesktopRewindAck> submitDurableRewindPrompt(
+    String runtimeSessionId,
+    String text,
+    int truncateBeforeUserOrdinal, {
+    required int truncateBeforeRowId,
+  }) async {
     rewinds.add((
       sessionId: runtimeSessionId,
       text: text,
@@ -488,6 +512,7 @@ class _FakeRewindGateway extends _FakeDesktopGateway
         code: rewindErrorCode,
       );
     }
+    return const DesktopRewindAck();
   }
 }
 
@@ -2166,6 +2191,67 @@ void main() {
   });
 
   test(
+    'gateway legacy-only falla antes de publicar transcript optimista',
+    () async {
+      final desktop = _LegacyOnlyRewindGateway();
+      final service = ActiveChatService();
+      final connection = _remoteConn();
+      final chat = service.attach(
+        connection: connection,
+        sessionId: 'sess-legacy-rewind',
+        sessionTitle: 'Legacy rewind',
+        api: ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: 'test-key',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
+        desktopGateway: desktop,
+      );
+      chat.messages = [
+        {'role': 'assistant', 'content': 'respuesta original'},
+        {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
+      ];
+      final observedContents = <List<String>>[];
+      final subscription = chat.changes.listen((_) {
+        observedContents.add(
+          chat.messages
+              .map((message) => (message['content'] ?? '').toString())
+              .toList(growable: false),
+        );
+      });
+
+      await expectLater(
+        chat.rewrite(
+          userOrdinal: 0,
+          text: 'pregunta que nunca debe publicarse',
+          model: 'hermes-agent',
+        ),
+        throwsA(
+          isA<TuiGatewayRpcError>().having(
+            (error) => error.code,
+            'code',
+            -32601,
+          ),
+        ),
+      );
+
+      expect(desktop.legacyRewinds, 0);
+      expect(
+        observedContents.any(
+          (snapshot) => snapshot.contains('pregunta que nunca debe publicarse'),
+        ),
+        isFalse,
+      );
+      expect(chat.messages, [
+        {'role': 'assistant', 'content': 'respuesta original'},
+        {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
+      ]);
+      await subscription.cancel();
+      service.dispose();
+    },
+  );
+
+  test(
     'editar rebobina por ordinal e interrumpe primero un turno vivo',
     () async {
       final desktop = _FakeRewindGateway();
@@ -2284,7 +2370,7 @@ void main() {
       );
       chat.messages = [
         {'role': 'assistant', 'content': 'respuesta tercera'},
-        {'role': 'user', 'content': 'pregunta tercera'},
+        {'role': 'user', 'content': 'pregunta tercera', '_desktopRowId': 73},
         {'role': 'assistant', 'content': 'respuesta segunda'},
         {'role': 'user', 'content': 'pregunta segunda'},
         {
@@ -2329,7 +2415,7 @@ void main() {
     );
     chat.messages = [
       {'role': 'assistant', 'content': 'respuesta original'},
-      {'role': 'user', 'content': 'pregunta original'},
+      {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
     ];
     chat.state = ChatPipelineState.completed;
     final errored = chat.changes.firstWhere(
@@ -2345,7 +2431,7 @@ void main() {
 
     expect(chat.messages, [
       {'role': 'assistant', 'content': 'respuesta original'},
-      {'role': 'user', 'content': 'pregunta original'},
+      {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
     ]);
     expect(chat.state, ChatPipelineState.completed);
     expect(chat.takeRewindRestoredOnError(), isTrue);

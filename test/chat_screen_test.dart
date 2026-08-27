@@ -220,7 +220,8 @@ class _PartialSttEngine implements SttEngine {
 class _UiRewindGateway
     implements
         HermesDesktopGateway,
-        HermesDesktopRewindGateway,
+        HermesDesktopRewindResolverGateway,
+        HermesDesktopDurableRewindGateway,
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopCommandGateway,
@@ -230,14 +231,20 @@ class _UiRewindGateway
     this.resumeUsage,
     this.contextUnavailableOnce = false,
     this.contextUnavailableResponses = 0,
+    this.resolvedRowId = 73,
+    this.survivorUserRowIds = const [11],
   });
 
   final DesktopUsageStats? resumeUsage;
   final bool contextUnavailableOnce;
   final int contextUnavailableResponses;
+  final int? resolvedRowId;
+  final List<int?>? survivorUserRowIds;
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
   final List<({String text, int ordinal})> rewinds = [];
+  final List<int?> rewindRowIds = [];
+  final List<({String text, int ordinal})> resolutionCalls = [];
   final List<String> submissions = [];
   final List<String> steers = [];
   final List<({String runtimeId, String command})> slashCalls = [];
@@ -247,6 +254,9 @@ class _UiRewindGateway
   Completer<DesktopCommandRpcResult>? compressionGate;
   Completer<void>? submitGate;
   Completer<void>? rewindGate;
+  Completer<int?>? resolutionGate;
+  Completer<void>? interruptGate;
+  int interruptCalls = 0;
   Object? slashError;
   Object? dispatchError;
   Object? rewindError;
@@ -391,15 +401,29 @@ class _UiRewindGateway
   }
 
   @override
-  Future<void> submitRewindPrompt(
+  Future<int?> resolveDurableUserRowId(
+    String runtimeSessionId, {
+    required String sourceText,
+    required int expectedOrdinal,
+  }) async {
+    resolutionCalls.add((text: sourceText, ordinal: expectedOrdinal));
+    final gate = resolutionGate;
+    return gate == null ? resolvedRowId : await gate.future;
+  }
+
+  @override
+  Future<DesktopRewindAck> submitDurableRewindPrompt(
     String runtimeSessionId,
     String text,
-    int truncateBeforeUserOrdinal,
-  ) async {
+    int truncateBeforeUserOrdinal, {
+    required int truncateBeforeRowId,
+  }) async {
     rewinds.add((text: text, ordinal: truncateBeforeUserOrdinal));
+    rewindRowIds.add(truncateBeforeRowId);
     await rewindGate?.future;
     final error = rewindError;
     if (error != null) throw error;
+    return DesktopRewindAck(survivorUserRowIds: survivorUserRowIds);
   }
 
   @override
@@ -409,6 +433,8 @@ class _UiRewindGateway
 
   @override
   Future<void> interrupt(String runtimeSessionId) async {
+    interruptCalls += 1;
+    await interruptGate?.future;
     emit('message.complete', {'text': 'Operation interrupted.'});
   }
 
@@ -1402,22 +1428,18 @@ void main() {
     });
   }
 
-  attachmentValidationFenceTest(
-    'de fichero ausente',
-    (temp) async {
-      final file = File('${temp.path}/ausente.pdf');
-      await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
-      return AttachmentDraft(
-        localId: 'missing',
-        type: AttachmentType.document,
-        name: 'ausente.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: await file.length(),
-        localPath: file.path,
-      );
-    },
-    invalidateBeforeSend: (attachment) => File(attachment.localPath).delete(),
-  );
+  attachmentValidationFenceTest('de fichero ausente', (temp) async {
+    final file = File('${temp.path}/ausente.pdf');
+    await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
+    return AttachmentDraft(
+      localId: 'missing',
+      type: AttachmentType.document,
+      name: 'ausente.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: await file.length(),
+      localPath: file.path,
+    );
+  }, invalidateBeforeSend: (attachment) => File(attachment.localPath).delete());
 
   attachmentValidationFenceTest('de imagen corrupta', (temp) async {
     final image = File('${temp.path}/corrupta.gif');
@@ -2733,34 +2755,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('un fallo de lectura outbox bloquea transporte y conserva draft', (
-    tester,
-  ) async {
-    final outboxGate = Completer<String?>();
-    delayedOutboxRead = outboxGate;
-    final gateway = _SubmissionGateway();
-    await pumpChat(
-      tester,
-      connection: _remoteConn('conn-test'),
-      desktopGateway: gateway,
-    );
-    final field = find.byType(TextField).last;
-    await tester.enterText(field, 'draft retenido');
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump();
+  testWidgets(
+    'un fallo de lectura outbox bloquea transporte y conserva draft',
+    (tester) async {
+      final outboxGate = Completer<String?>();
+      delayedOutboxRead = outboxGate;
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-test'),
+        desktopGateway: gateway,
+      );
+      final field = find.byType(TextField).last;
+      await tester.enterText(field, 'draft retenido');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
 
-    delayedOutboxRead = null;
-    outboxGate.completeError(PlatformException(code: 'keystore_unavailable'));
-    for (var frame = 0; frame < 20; frame++) {
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+      delayedOutboxRead = null;
+      outboxGate.completeError(PlatformException(code: 'keystore_unavailable'));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
 
-    expect(gateway.submissions, isEmpty);
-    expect(tester.widget<TextField>(field).controller?.text, 'draft retenido');
-    expect(find.byType(SnackBar), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      expect(gateway.submissions, isEmpty);
+      expect(
+        tester.widget<TextField>(field).controller?.text,
+        'draft retenido',
+      );
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('un fallo outbox impide iniciar transporte de Voz', (
     tester,
@@ -4951,7 +4977,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
 
+    expect(gateway.resolutionCalls, [(text: 'pregunta original', ordinal: 0)]);
     expect(gateway.rewinds, [(text: 'pregunta corregida', ordinal: 0)]);
+    expect(gateway.rewindRowIds, [73]);
     expect(find.textContaining('pregunta original'), findsOneWidget);
     expect(tester.takeException(), isNull);
     gateway.emit('message.complete', {'text': 'Respuesta corregida'});
@@ -4959,6 +4987,200 @@ void main() {
       await tester.pump(const Duration(milliseconds: 33));
     }
     expect(find.textContaining('pregunta corregida'), findsOneWidget);
+    expect(chat.isStreaming, isFalse);
+  });
+
+  testWidgets('prompt.submit de rewind reserva la sesión frente a otro envío', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()..rewindGate = Completer<void>();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-submit-reservation-rewrite'),
+      messages: [
+        {'role': 'assistant', 'content': 'respuesta original'},
+        {'role': 'user', 'content': 'pregunta original'},
+      ],
+    );
+
+    final rewrite = chat.rewrite(
+      userOrdinal: 0,
+      text: 'pregunta corregida reservada',
+      model: 'test-model',
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(gateway.rewinds, hasLength(1));
+
+    final competingAccepted = await chat.send(
+      fullText: 'turno competidor',
+      model: 'test-model',
+      history: const [],
+    );
+    gateway.rewindGate!.complete();
+    await rewrite;
+
+    expect(competingAccepted, isFalse);
+    expect(gateway.submissions, isEmpty);
+    expect(
+      chat.messages.any((message) => message['content'] == 'turno competidor'),
+      isFalse,
+    );
+    gateway.emit('message.complete', {'text': 'respuesta corregida'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    expect(chat.isStreaming, isFalse);
+  });
+
+  testWidgets(
+    'ACK sin survivor_user_row_ids invalida identidades del prefijo',
+    (tester) async {
+      final gateway = _UiRewindGateway(survivorUserRowIds: null);
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-missing-survivor-ack'),
+        messages: [
+          {
+            'role': 'assistant',
+            'content': 'respuesta segunda',
+            '_desktopSnapshotKind': 'persisted',
+          },
+          {
+            'role': 'user',
+            'content': 'pregunta segunda',
+            '_desktopSnapshotKind': 'persisted',
+            '_desktopRowId': 73,
+          },
+          {
+            'role': 'assistant',
+            'content': 'respuesta primera',
+            '_desktopSnapshotKind': 'persisted',
+          },
+          {
+            'role': 'user',
+            'content': 'pregunta primera',
+            '_desktopSnapshotKind': 'persisted',
+            '_desktopRowId': 11,
+          },
+        ],
+      );
+
+      await chat.rewrite(
+        userOrdinal: 1,
+        text: 'pregunta segunda editada',
+        model: 'test-model',
+      );
+
+      final survivor = chat.messages.singleWhere(
+        (message) => message['content'] == 'pregunta primera',
+      );
+      expect(survivor.containsKey('_desktopRowId'), isFalse);
+      gateway.emit('message.complete', {'text': 'respuesta editada'});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(chat.isStreaming, isFalse);
+    },
+  );
+
+  testWidgets('dos rewinds consecutivos reutilizan survivor_user_row_ids', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway(
+      resolvedRowId: 73,
+      survivorUserRowIds: const [111],
+    );
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-survivor-rewrite'),
+      messages: [
+        {'role': 'assistant', 'content': 'respuesta dos'},
+        {'role': 'user', 'content': 'pregunta dos'},
+        {'role': 'assistant', 'content': 'respuesta uno'},
+        {'role': 'user', 'content': 'pregunta uno'},
+      ],
+    );
+
+    await chat.rewrite(
+      userOrdinal: 1,
+      text: 'pregunta dos corregida',
+      model: 'test-model',
+    );
+    expect(gateway.rewindRowIds, [73]);
+    gateway.emit('message.complete', {'text': 'respuesta dos corregida'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+
+    await chat.rewrite(
+      userOrdinal: 0,
+      text: 'pregunta uno corregida',
+      model: 'test-model',
+    );
+    expect(gateway.rewindRowIds, [73, 111]);
+    expect(gateway.resolutionCalls, [(text: 'pregunta dos', ordinal: 1)]);
+    gateway.emit('message.complete', {'text': 'respuesta uno corregida'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    expect(chat.isStreaming, isFalse);
+  });
+
+  testWidgets('turno nuevo durante session.history aborta rewind sin truncar', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()..resolutionGate = Completer<int?>();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-history-race-rewrite'),
+      messages: [
+        {'role': 'assistant', 'content': 'Respuesta original'},
+        {'role': 'user', 'content': 'pregunta original'},
+      ],
+    );
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('edit-message-composer')),
+      'pregunta corregida que debe abortar',
+    );
+    await tester.tap(find.text('Guardar y enviar'));
+    await tester.pump();
+    expect(gateway.resolutionCalls, [(text: 'pregunta original', ordinal: 0)]);
+
+    final newTurn = chat.send(
+      fullText: 'turno nuevo autoritativo',
+      model: 'test-model',
+      history: const [],
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await newTurn, isTrue);
+    gateway.resolutionGate!.complete(73);
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(gateway.rewinds, isEmpty);
+    expect(
+      chat.messages.any(
+        (message) => message['content'] == 'turno nuevo autoritativo',
+      ),
+      isTrue,
+    );
+    expect(
+      chat.messages.any(
+        (message) =>
+            message['content'] == 'pregunta corregida que debe abortar',
+      ),
+      isFalse,
+    );
+    gateway.emit('message.complete', {'text': 'Respuesta del turno nuevo'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
     expect(chat.isStreaming, isFalse);
   });
 
@@ -7235,6 +7457,68 @@ void main() {
     expect(chat.isStreaming, isFalse);
   });
 
+  testWidgets(
+    'turno nuevo durante interrupt drain conserva ownership y aborta rewind',
+    (tester) async {
+      final gateway = _UiRewindGateway()..interruptGate = Completer<void>();
+      final chat = await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-interrupt-race-rewrite'),
+        messages: [
+          {
+            'role': 'assistant',
+            'content': 'Respuesta parcial original',
+            '_pipeline': true,
+          },
+          {'role': 'user', 'content': 'pregunta original'},
+        ],
+      );
+
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(
+        find.byKey(const ValueKey('edit-message-composer')),
+        'pregunta corregida obsoleta',
+      );
+      await tester.tap(find.text('Guardar y enviar'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.interruptCalls, 1);
+      expect(gateway.rewinds, isEmpty);
+
+      final newTurn = chat.send(
+        fullText: 'turno nuevo durante drain',
+        model: 'test-model',
+        history: const [],
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await newTurn, isTrue);
+      gateway.interruptGate!.complete();
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(gateway.rewinds, isEmpty);
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'turno nuevo durante drain',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'pregunta corregida obsoleta',
+        ),
+        isFalse,
+      );
+      gateway.emit('message.complete', {'text': 'Respuesta del turno nuevo'});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(chat.isStreaming, isFalse);
+    },
+  );
+
   testWidgets('cancelar el editor conserva el turno original trabajando', (
     tester,
   ) async {
@@ -7575,70 +7859,80 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('dictado conserva el transcript fuera del controller hasta parar', (
-    tester,
-  ) async {
-    final stt = _PartialSttEngine();
-    await pumpChat(tester, stt: stt);
+  testWidgets(
+    'dictado conserva el transcript fuera del controller hasta parar',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      await pumpChat(tester, stt: stt);
 
-    final idleMic = tester.widget<HermesTactileAction>(
-      find.byKey(const ValueKey('mic')),
-    );
-    expect(idleMic.icon, Icons.mic_none_rounded);
-    expect(idleMic.iconSize, 25);
-    expect(idleMic.backgroundColor, Colors.transparent);
+      final idleMic = tester.widget<HermesTactileAction>(
+        find.byKey(const ValueKey('mic')),
+      );
+      expect(idleMic.icon, Icons.mic_none_rounded);
+      expect(idleMic.iconSize, 25);
+      expect(idleMic.backgroundColor, Colors.transparent);
 
-    await tester.tap(find.byKey(const ValueKey('mic')));
-    await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
 
-    expect(find.byKey(const ValueKey('dictation-visualizer')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('dictation-wave-history')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('dictation-pill')), findsNothing);
-    expect(find.byKey(const ValueKey('dictation-duration')), findsNothing);
-    expect(find.text('Escuchando…'), findsNothing);
-    final dictationPaint = tester.widget<CustomPaint>(
-      find.byKey(const ValueKey('dictation-bars-paint')),
-    );
-    final dynamic dictationPainter = dictationPaint.painter;
-    final dynamic samples = dictationPainter.samples;
-    final initialSamples = List<double>.from(samples.value as List);
-    await tester.pump(const Duration(milliseconds: 40));
-    expect(samples.value, isNot(same(initialSamples)));
-    expect(find.byKey(const ValueKey('dictation-cancel')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dictation-stop')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dictation-send')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('dictation-visualizer')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('dictation-wave-history')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('dictation-pill')), findsNothing);
+      expect(find.byKey(const ValueKey('dictation-duration')), findsNothing);
+      expect(find.text('Escuchando…'), findsNothing);
+      final dictationPaint = tester.widget<CustomPaint>(
+        find.byKey(const ValueKey('dictation-bars-paint')),
+      );
+      final dynamic dictationPainter = dictationPaint.painter;
+      final dynamic samples = dictationPainter.samples;
+      final initialSamples = List<double>.from(samples.value as List);
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(samples.value, isNot(same(initialSamples)));
+      expect(find.byKey(const ValueKey('dictation-cancel')), findsOneWidget);
+      expect(find.byKey(const ValueKey('dictation-stop')), findsOneWidget);
+      expect(find.byKey(const ValueKey('dictation-send')), findsOneWidget);
 
-    stt.results.add(const SttResult('hola', false));
-    await tester.pump();
-    expect(find.byKey(const ValueKey('dictation-live-preview')), findsNothing);
-    expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
-    expect(find.text('hola'), findsNothing);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      isEmpty,
-    );
+      stt.results.add(const SttResult('hola', false));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('dictation-live-preview')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
+      expect(find.text('hola'), findsNothing);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
 
-    stt.results.add(const SttResult('hola mundo', false));
-    await tester.pump();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      isEmpty,
-    );
-    expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
+      stt.results.add(const SttResult('hola mundo', false));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
 
-    await stt.emitFinalAndClose('hola mundo');
-    await tester.pump();
-    expect(find.byKey(const ValueKey('dictation-live-preview')), findsNothing);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'hola mundo',
-    );
-    expect(tester.takeException(), isNull);
-  });
+      await stt.emitFinalAndClose('hola mundo');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('dictation-live-preview')),
+        findsNothing,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'hola mundo',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'segundo dictado conserva altura y onda centrada tras materializar texto largo',
@@ -7678,46 +7972,45 @@ void main() {
     },
   );
 
-  testWidgets(
-    'borrador multilinea no cambia altura ni centrado del dictado',
-    (tester) async {
-      final stt = _PartialSttEngine();
-      await pumpChat(tester, stt: stt);
+  testWidgets('borrador multilinea no cambia altura ni centrado del dictado', (
+    tester,
+  ) async {
+    final stt = _PartialSttEngine();
+    await pumpChat(tester, stt: stt);
 
-      await tester.tap(find.byKey(const ValueKey('mic')));
-      await tester.pump();
-      final firstVisualizer = find.byKey(
-        const ValueKey('dictation-visualizer'),
-      );
-      final firstArea = find
-          .ancestor(of: firstVisualizer, matching: find.byType(Stack))
-          .first;
-      final firstHeight = tester.getSize(firstArea).height;
+    await tester.tap(find.byKey(const ValueKey('mic')));
+    await tester.pump();
+    final firstVisualizer = find.byKey(const ValueKey('dictation-visualizer'));
+    final firstArea = find
+        .ancestor(of: firstVisualizer, matching: find.byType(Stack))
+        .first;
+    final firstHeight = tester.getSize(firstArea).height;
 
-      await stt.emitFinalAndClose('');
-      await tester.pump();
-      await tester.enterText(
-        find.byType(TextField),
-        'línea uno\nlínea dos\nlínea tres\nlínea cuatro',
-      );
-      await tester.tap(find.byKey(const ValueKey('mic')));
-      await tester.pump();
+    await stt.emitFinalAndClose('');
+    await tester.pump();
+    await tester.enterText(
+      find.byType(TextField),
+      'línea uno\nlínea dos\nlínea tres\nlínea cuatro',
+    );
+    await tester.tap(find.byKey(const ValueKey('mic')));
+    await tester.pump();
 
-      final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
-      final recordingArea = find
-          .ancestor(of: visualizer, matching: find.byType(Stack))
-          .first;
-      expect(tester.getSize(recordingArea).height, firstHeight);
-      expect(tester.getSize(recordingArea).height, 48);
-      expect(
-        tester.getCenter(visualizer).dy,
-        closeTo(tester.getCenter(recordingArea).dy, 0.01),
-      );
-      expect(tester.getSize(visualizer).height, 28);
-    },
-  );
+    final visualizer = find.byKey(const ValueKey('dictation-visualizer'));
+    final recordingArea = find
+        .ancestor(of: visualizer, matching: find.byType(Stack))
+        .first;
+    expect(tester.getSize(recordingArea).height, firstHeight);
+    expect(tester.getSize(recordingArea).height, 48);
+    expect(
+      tester.getCenter(visualizer).dy,
+      closeTo(tester.getCenter(recordingArea).dy, 0.01),
+    );
+    expect(tester.getSize(visualizer).height, 28);
+  });
 
-  testWidgets('dictado deja tocar el campo a través de la onda', (tester) async {
+  testWidgets('dictado deja tocar el campo a través de la onda', (
+    tester,
+  ) async {
     final stt = _PartialSttEngine();
     await pumpChat(tester, stt: stt);
 
@@ -8070,51 +8363,52 @@ void main() {
     },
   );
 
-  testWidgets('dictado materializa cada tramo solo al parar y continúa al reanudar', (
-    tester,
-  ) async {
-    final stt = _PartialSttEngine();
-    await pumpChat(tester, stt: stt);
+  testWidgets(
+    'dictado materializa cada tramo solo al parar y continúa al reanudar',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      await pumpChat(tester, stt: stt);
 
-    await tester.enterText(find.byType(TextField), 'Inicio');
-    await tester.tap(find.byKey(const ValueKey('mic')));
-    await tester.pump();
+      await tester.enterText(find.byType(TextField), 'Inicio');
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
 
-    stt.results.add(const SttResult('uno', false));
-    await tester.pump();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Inicio',
-    );
-    expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
+      stt.results.add(const SttResult('uno', false));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Inicio',
+      );
+      expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('recording')));
-    await stt.endSegmentWithoutFinal();
-    await tester.pump();
-    expect(find.byKey(const ValueKey('recording')), findsNothing);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Inicio uno',
-    );
+      await tester.tap(find.byKey(const ValueKey('recording')));
+      await stt.endSegmentWithoutFinal();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('recording')), findsNothing);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Inicio uno',
+      );
 
-    await tester.tap(find.byKey(const ValueKey('mic')));
-    await tester.pump();
-    stt.results.add(const SttResult('dos', false));
-    await tester.pump();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Inicio uno',
-    );
-    expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      stt.results.add(const SttResult('dos', false));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Inicio uno',
+      );
+      expect(find.byKey(const ValueKey('dictation-bars')), findsOneWidget);
 
-    await stt.emitFinalAndClose('dos');
-    await tester.pump();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Inicio uno dos',
-    );
-    expect(tester.takeException(), isNull);
-  });
+      await stt.emitFinalAndClose('dos');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Inicio uno dos',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('dictado vacío pide cierre al motor y vuelve a reposo', (
     tester,

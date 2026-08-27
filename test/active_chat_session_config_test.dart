@@ -21,7 +21,8 @@ class _ConfiguredCreateGateway
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopSessionConfigGateway,
         HermesDesktopCompressionGateway,
-        HermesDesktopRewindGateway,
+        HermesDesktopRewindResolverGateway,
+        HermesDesktopDurableRewindGateway,
         HermesDesktopSessionActivityGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
@@ -178,12 +179,21 @@ class _ConfiguredCreateGateway
   }
 
   @override
-  Future<void> submitRewindPrompt(
+  Future<int?> resolveDurableUserRowId(
+    String runtimeSessionId, {
+    required String sourceText,
+    required int expectedOrdinal,
+  }) async => 73;
+
+  @override
+  Future<DesktopRewindAck> submitDurableRewindPrompt(
     String runtimeSessionId,
     String text,
-    int truncateBeforeUserOrdinal,
-  ) async {
+    int truncateBeforeUserOrdinal, {
+    required int truncateBeforeRowId,
+  }) async {
     submittedRuntime = runtimeSessionId;
+    return const DesktopRewindAck();
   }
 
   @override
@@ -552,7 +562,7 @@ void main() {
     addTearDown(chat.dispose);
     chat.messages = [
       {'role': 'assistant', 'content': 'respuesta anterior'},
-      {'role': 'user', 'content': 'pregunta original'},
+      {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
     ];
 
     await chat.rewrite(

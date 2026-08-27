@@ -866,6 +866,20 @@ Future<({Object? error, T? value})> _captureAsync<T>(
 }
 
 typedef SteerProjection = ({int anchorUserOrdinal, String content});
+
+class _RewriteReservation {
+  _RewriteReservation({
+    required this.transcriptRevision,
+    required this.turnEpoch,
+    required this.runtimeSessionId,
+  });
+
+  int transcriptRevision;
+  int turnEpoch;
+  String? runtimeSessionId;
+  bool transportStarted = false;
+}
+
 typedef StoredSessionMessageLoader =
     Future<List<Map<String, dynamic>>> Function(
       String sessionId,
@@ -1325,6 +1339,8 @@ class ActiveChat {
   /// puede escribir sobre el estado del nuevo run.
   int _turnEpoch = 0;
   Completer<void> _turnEpochInvalidated = Completer<void>();
+  int _transcriptRevision = 0;
+  _RewriteReservation? _activeRewrite;
 
   /// Run en curso (motor /v1/runs). Necesario para resolver aprobaciones y
   /// para cancelar.
@@ -1830,6 +1846,18 @@ class ActiveChat {
   }
 
   void _emit(ActiveChatEvent e) {
+    if (const {
+      ActiveChatEvent.started,
+      ActiveChatEvent.messagesHydrated,
+      ActiveChatEvent.earlierMessagesLoaded,
+      ActiveChatEvent.token,
+      ActiveChatEvent.toolProgress,
+      ActiveChatEvent.done,
+      ActiveChatEvent.error,
+      ActiveChatEvent.cancelled,
+    }.contains(e)) {
+      _transcriptRevision += 1;
+    }
     switch (e) {
       case ActiveChatEvent.started:
         _lastLiveActivityKind = ChatActivityKind.thinking;
@@ -2634,6 +2662,39 @@ class ActiveChat {
     DesktopSessionCreateConfig sessionConfig =
         const DesktopSessionCreateConfig(),
     Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
+  }) => _send(
+    fullText: fullText,
+    model: model,
+    history: history,
+    profile: profile,
+    serverSessionId: serverSessionId,
+    slowModel: slowModel,
+    nativeAttachments: nativeAttachments,
+    desktopText: desktopText,
+    voicePlaybackInterrupted: voicePlaybackInterrupted,
+    truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
+    delivery: delivery,
+    sessionConfig: sessionConfig,
+    beforeDesktopPromptSubmit: beforeDesktopPromptSubmit,
+  );
+
+  Future<bool> _send({
+    required String fullText,
+    required String model,
+    required List<Map<String, dynamic>> history,
+    String profile = '',
+    String? serverSessionId,
+    bool slowModel = false,
+    List<AttachmentDraft> nativeAttachments = const [],
+    String? desktopText,
+    bool voicePlaybackInterrupted = false,
+    int? truncateBeforeUserOrdinal,
+    int? truncateBeforeRowId,
+    ActiveTurnDelivery? delivery,
+    DesktopSessionCreateConfig sessionConfig =
+        const DesktopSessionCreateConfig(),
+    Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
+    _RewriteReservation? rewriteReservation,
   }) async {
     if (desktopCompressionInFlight) {
       throw const TuiGatewayRpcError(
@@ -2641,6 +2702,16 @@ class ActiveChat {
         'Session compression is still running',
         code: 4009,
       );
+    }
+    final reservedRewrite = _activeRewrite;
+    if (reservedRewrite != null &&
+        !identical(reservedRewrite, rewriteReservation) &&
+        reservedRewrite.transportStarted) {
+      return false;
+    }
+    if (rewriteReservation != null) {
+      if (!identical(reservedRewrite, rewriteReservation)) return false;
+      rewriteReservation.transportStarted = true;
     }
     _finishVoiceBargeHandoff(notifyTerminal: false);
     _beginObservedResponseTiming();
@@ -2701,6 +2772,9 @@ class ActiveChat {
     // Burbuja placeholder del asistente con el estado del pipeline.
     messages.insert(0, {'role': 'assistant', 'content': '', '_pipeline': true});
     _emit(ActiveChatEvent.started);
+    if (rewriteReservation != null) {
+      rewriteReservation.transcriptRevision = _transcriptRevision;
+    }
 
     if (!capturedSessionConfig.allowTransportFallback &&
         _desktopGateway is! HermesDesktopSessionLifecycleGateway) {
@@ -2759,6 +2833,7 @@ class ActiveChat {
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
+      truncateBeforeRowId: truncateBeforeRowId,
       beforeDesktopPromptSubmit: beforeDesktopPromptSubmit,
     );
     return _finishTurnDelivery(delivery, accepted, turnEpoch);
@@ -2810,6 +2885,40 @@ class ActiveChat {
     return ready;
   }
 
+  void _rebindSurvivorUserRowIds(List<int?>? rowIds) {
+    final authoritativeRowIds = rowIds ?? const <int?>[];
+    final userIndexesOldestFirst = <int>[];
+    for (var index = messages.length - 1; index >= 0; index--) {
+      if (isRealUserTurn(messages[index])) {
+        userIndexesOldestFirst.add(index);
+      }
+    }
+    if (userIndexesOldestFirst.isEmpty) return;
+    // El último usuario es el prompt nuevo insertado por send(); el ACK solo
+    // describe las filas del prefijo que el gateway acaba de reinsertar.
+    final survivorIndexes = userIndexesOldestFirst.sublist(
+      0,
+      userIndexesOldestFirst.length - 1,
+    );
+    final exact = survivorIndexes.length == authoritativeRowIds.length;
+    for (var ordinal = 0; ordinal < survivorIndexes.length; ordinal++) {
+      final index = survivorIndexes[ordinal];
+      final rebound = Map<String, dynamic>.from(messages[index]);
+      final rowId = exact ? authoritativeRowIds[ordinal] : null;
+      if (rowId == null) {
+        rebound.remove('_desktopRowId');
+      } else {
+        rebound['_desktopRowId'] = rowId;
+      }
+      messages[index] = rebound;
+    }
+    _transcriptRevision += 1;
+    final reservation = _activeRewrite;
+    if (reservation != null) {
+      reservation.transcriptRevision = _transcriptRevision;
+    }
+  }
+
   /// Rebobina hasta un prompt visible y lo vuelve a ejecutar. El ordinal usa el
   /// mismo índice de usuarios (0-based, de antiguo a nuevo) que Hermes Desktop.
   /// La conversación visible se recorta de forma optimista; si el transporte
@@ -2820,90 +2929,166 @@ class ActiveChat {
     required String model,
     String profile = '',
   }) async {
-    final snapshot = messages.map((m) => Map<String, dynamic>.from(m)).toList();
-    final chronological = messages.reversed.toList();
-    var seenUsers = 0;
-    var targetIndex = -1;
-    for (var i = 0; i < chronological.length; i++) {
-      final message = chronological[i];
-      if (!isRealUserTurn(message)) continue;
-      if (seenUsers == userOrdinal) {
-        targetIndex = i;
-        break;
-      }
-      seenUsers++;
+    if (_activeRewrite != null) {
+      throw StateError('Another conversation rewrite is already active');
     }
-    if (targetIndex < 0) {
-      throw StateError('The message is no longer in this conversation');
-    }
-    final fallbackOrdinal = modelSwitchRepairFallbackOrdinal(
-      messages,
-      chronological[targetIndex],
-      desktopOrdinal: userOrdinal,
+    final reservation = _RewriteReservation(
+      transcriptRevision: _transcriptRevision,
+      turnEpoch: _turnEpoch,
+      runtimeSessionId: _desktopRuntimeSessionId,
     );
-
-    if (isStreaming) {
-      final runtimeId = _desktopRuntimeSessionId;
-      final gateway = _desktopGateway;
-      final interruptDrain = runtimeId != null && gateway != null
-          ? Completer<void>()
+    _activeRewrite = reservation;
+    try {
+      final snapshot = messages
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      final chronological = messages.reversed.toList();
+      var seenUsers = 0;
+      var targetIndex = -1;
+      for (var i = 0; i < chronological.length; i++) {
+        final message = chronological[i];
+        if (!isRealUserTurn(message)) continue;
+        if (seenUsers == userOrdinal) {
+          targetIndex = i;
+          break;
+        }
+        seenUsers++;
+      }
+      if (targetIndex < 0) {
+        throw StateError('The message is no longer in this conversation');
+      }
+      final target = chronological[targetIndex];
+      final fallbackOrdinal = modelSwitchRepairFallbackOrdinal(
+        messages,
+        target,
+        desktopOrdinal: userOrdinal,
+      );
+      var runtimeId = _desktopRuntimeSessionId;
+      var gateway = _desktopGateway;
+      var truncateBeforeRowId = target['_desktopRowId'] is int
+          ? target['_desktopRowId'] as int
           : null;
-      _desktopInterruptDrain = interruptDrain;
-      _discardLateInterruptTerminal = interruptDrain != null;
-      _cancelCurrent(requestServerStop: false);
-      if (runtimeId != null && gateway != null) {
-        try {
-          await gateway.interrupt(runtimeId);
-          // session.interrupt confirma el RPC, pero el terminal del turno viejo
-          // puede llegar después. No suscribimos el rewind hasta drenarlo: si no,
-          // "Operation interrupted" puede cerrar el turno editado recién creado.
-          await interruptDrain?.future.timeout(const Duration(seconds: 3));
-        } on TimeoutException {
-          // Gateways antiguos pueden no publicar terminal de interrupción. El
-          // guard de _onDesktopEvent seguirá descartándolo si llega más tarde.
-        } catch (_) {
-          // prompt.submit también aplica el busy gate; el envío mostrará el
-          // error real si el agente todavía no estuviera listo.
-        } finally {
-          if (identical(_desktopInterruptDrain, interruptDrain)) {
-            _desktopInterruptDrain = null;
+      if (truncateBeforeRowId == null && runtimeId == null) {
+        final ready = await ensureDesktopRuntime();
+        if (!identical(_activeRewrite, reservation) ||
+            _turnEpoch != reservation.turnEpoch) {
+          return;
+        }
+        if (!ready) {
+          throw StateError('The message has no durable Desktop row identity');
+        }
+        runtimeId = _desktopRuntimeSessionId;
+        gateway = _desktopGateway;
+        reservation.runtimeSessionId = runtimeId;
+        reservation.transcriptRevision = _transcriptRevision;
+      }
+      if (truncateBeforeRowId == null) {
+        final resolver = gateway is HermesDesktopRewindResolverGateway
+            ? gateway as HermesDesktopRewindResolverGateway
+            : null;
+        if (runtimeId == null || resolver == null) {
+          throw StateError('The message has no durable Desktop row identity');
+        }
+        truncateBeforeRowId = await resolver.resolveDurableUserRowId(
+          runtimeId,
+          sourceText: (target['content'] ?? '').toString(),
+          expectedOrdinal: userOrdinal,
+        );
+        if (truncateBeforeRowId == null) {
+          throw StateError(
+            'The message has no unambiguous durable Desktop row identity',
+          );
+        }
+      }
+      if (!identical(_activeRewrite, reservation) ||
+          _transcriptRevision != reservation.transcriptRevision ||
+          _turnEpoch != reservation.turnEpoch ||
+          _desktopRuntimeSessionId != reservation.runtimeSessionId) {
+        return;
+      }
+      if (gateway is! HermesDesktopDurableRewindGateway) {
+        throw const TuiGatewayRpcError(
+          'prompt.submit',
+          'Durable conversation rewind is unavailable',
+          code: -32601,
+        );
+      }
+
+      if (isStreaming) {
+        final interruptDrain = runtimeId != null && gateway != null
+            ? Completer<void>()
+            : null;
+        _desktopInterruptDrain = interruptDrain;
+        _discardLateInterruptTerminal = interruptDrain != null;
+        _cancelCurrent(requestServerStop: false);
+        reservation.transcriptRevision = _transcriptRevision;
+        reservation.turnEpoch = _turnEpoch;
+        if (runtimeId != null && gateway != null) {
+          try {
+            await gateway.interrupt(runtimeId);
+            // session.interrupt confirma el RPC, pero el terminal del turno viejo
+            // puede llegar después. No suscribimos el rewind hasta drenarlo: si no,
+            // "Operation interrupted" puede cerrar el turno editado recién creado.
+            await interruptDrain?.future.timeout(const Duration(seconds: 3));
+          } on TimeoutException {
+            // Gateways antiguos pueden no publicar terminal de interrupción. El
+            // guard de _onDesktopEvent seguirá descartándolo si llega más tarde.
+          } catch (_) {
+            // prompt.submit también aplica el busy gate; el envío mostrará el
+            // error real si el agente todavía no estuviera listo.
+          } finally {
+            if (identical(_desktopInterruptDrain, interruptDrain)) {
+              _desktopInterruptDrain = null;
+            }
           }
         }
       }
-    }
+      if (!identical(_activeRewrite, reservation) ||
+          _turnEpoch != reservation.turnEpoch) {
+        return;
+      }
+      reservation.runtimeSessionId = _desktopRuntimeSessionId;
+      reservation.transcriptRevision = _transcriptRevision;
 
-    final prefix = chronological
-        .take(targetIndex)
-        .where((m) {
-          final role = m['role'];
-          return (role == 'user' || role == 'assistant') &&
-              m['_pipeline'] != true;
-        })
-        .map((m) => Map<String, dynamic>.from(m))
-        .toList();
-    final rollbackState = state;
-    messages = prefix.reversed.toList();
-    _rewindRollbackMessages = snapshot;
-    _rewindRollbackState = rollbackState;
-    _rewind4018FallbackOrdinal = fallbackOrdinal;
-    _rewindRestoredOnError = false;
-    final history = _buildHistoryFromMessages();
-    try {
-      final accepted = await send(
-        fullText: text,
-        model: model,
-        history: history,
-        profile: profile,
-        truncateBeforeUserOrdinal: userOrdinal,
-      );
-      if (!accepted) return;
-    } catch (_) {
-      messages = snapshot;
-      state = rollbackState;
-      _rewindRollbackMessages = null;
-      _rewindRollbackState = null;
-      _rewind4018FallbackOrdinal = null;
-      rethrow;
+      final prefix = chronological
+          .take(targetIndex)
+          .where((m) {
+            final role = m['role'];
+            return (role == 'user' || role == 'assistant') &&
+                m['_pipeline'] != true;
+          })
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      final rollbackState = state;
+      messages = prefix.reversed.toList();
+      _rewindRollbackMessages = snapshot;
+      _rewindRollbackState = rollbackState;
+      _rewind4018FallbackOrdinal = fallbackOrdinal;
+      _rewindRestoredOnError = false;
+      final history = _buildHistoryFromMessages();
+      try {
+        final accepted = await _send(
+          fullText: text,
+          model: model,
+          history: history,
+          profile: profile,
+          truncateBeforeUserOrdinal: userOrdinal,
+          truncateBeforeRowId: truncateBeforeRowId,
+          rewriteReservation: reservation,
+        );
+        if (!accepted) return;
+      } catch (_) {
+        messages = snapshot;
+        state = rollbackState;
+        _rewindRollbackMessages = null;
+        _rewindRollbackState = null;
+        _rewind4018FallbackOrdinal = null;
+        rethrow;
+      }
+    } finally {
+      if (identical(_activeRewrite, reservation)) {
+        _activeRewrite = null;
+      }
     }
   }
 
@@ -3661,6 +3846,7 @@ class ActiveChat {
     String? desktopText,
     bool voicePlaybackInterrupted = false,
     int? truncateBeforeUserOrdinal,
+    int? truncateBeforeRowId,
     Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
   }) {
     final gateway = _desktopGateway;
@@ -3689,6 +3875,7 @@ class ActiveChat {
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
+      truncateBeforeRowId: truncateBeforeRowId,
       beforeDesktopPromptSubmit: beforeDesktopPromptSubmit,
       fallback: () {
         _rewindRollbackMessages = null;
@@ -3792,6 +3979,7 @@ class ActiveChat {
     String? desktopText,
     bool voicePlaybackInterrupted = false,
     int? truncateBeforeUserOrdinal,
+    int? truncateBeforeRowId,
     Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
   }) async {
     var submissionAttempted = false;
@@ -4037,14 +4225,44 @@ class ActiveChat {
           gateway is HermesDesktopRewindGateway
           ? gateway as HermesDesktopRewindGateway
           : null;
+      final HermesDesktopDurableRewindGateway? durableRewindGateway =
+          gateway is HermesDesktopDurableRewindGateway
+          ? gateway as HermesDesktopDurableRewindGateway
+          : null;
       if (truncateBeforeUserOrdinal != null) {
-        if (rewindGateway == null) {
-          throw const TuiGatewayRpcError(
-            'prompt.submit',
-            'Conversation rewind is unavailable',
-            code: -32601,
+        final rewindRuntimeId = runtimeId;
+        Future<DesktopRewindAck> submitRewind(int ordinal) async {
+          final rowId = truncateBeforeRowId;
+          if (rowId != null) {
+            if (durableRewindGateway == null) {
+              throw const TuiGatewayRpcError(
+                'prompt.submit',
+                'Durable conversation rewind is unavailable',
+                code: -32601,
+              );
+            }
+            return durableRewindGateway.submitDurableRewindPrompt(
+              rewindRuntimeId,
+              promptText,
+              ordinal,
+              truncateBeforeRowId: rowId,
+            );
+          }
+          if (rewindGateway == null) {
+            throw const TuiGatewayRpcError(
+              'prompt.submit',
+              'Conversation rewind is unavailable',
+              code: -32601,
+            );
+          }
+          await rewindGateway.submitRewindPrompt(
+            rewindRuntimeId,
+            promptText,
+            ordinal,
           );
+          return const DesktopRewindAck();
         }
+
         if (!await _beginTurnTransport(
           turnEpoch,
           PreparedTurnTransport.desktop,
@@ -4052,12 +4270,9 @@ class ActiveChat {
           return false;
         }
         submissionAttempted = true;
+        late DesktopRewindAck rewindAck;
         try {
-          await rewindGateway.submitRewindPrompt(
-            runtimeId,
-            promptText,
-            truncateBeforeUserOrdinal,
-          );
+          rewindAck = await submitRewind(truncateBeforeUserOrdinal);
         } on TuiGatewayRpcError catch (error) {
           final fallbackOrdinal = _rewind4018FallbackOrdinal;
           if (error.code != 4018 ||
@@ -4069,12 +4284,9 @@ class ActiveChat {
             '[active-chat] retrying rewind after Hermes model-switch '
             'ordinal repair ($truncateBeforeUserOrdinal -> $fallbackOrdinal)',
           );
-          await rewindGateway.submitRewindPrompt(
-            runtimeId,
-            promptText,
-            fallbackOrdinal,
-          );
+          rewindAck = await submitRewind(fallbackOrdinal);
         }
+        _rebindSurvivorUserRowIds(rewindAck.survivorUserRowIds);
         _rewindRollbackMessages = null;
         _rewindRollbackState = null;
         _rewind4018FallbackOrdinal = null;

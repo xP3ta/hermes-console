@@ -628,14 +628,47 @@ abstract class HermesDesktopIdempotentGateway {
   );
 }
 
+class DesktopRewindAck {
+  final List<int?>? survivorUserRowIds;
+
+  const DesktopRewindAck({this.survivorUserRowIds});
+
+  factory DesktopRewindAck.fromJson(Map<String, dynamic> json) {
+    final raw = json['survivor_user_row_ids'];
+    if (raw is! List) return const DesktopRewindAck();
+    return DesktopRewindAck(
+      survivorUserRowIds: raw
+          .map<int?>((value) => value is int ? value : null)
+          .toList(growable: false),
+    );
+  }
+}
+
 /// Capacidades añadidas por Hermes Desktop moderno. Se separan de la interfaz
 /// base para que gateways antiguos y dobles de prueba sigan siendo válidos.
+abstract class HermesDesktopRewindResolverGateway {
+  Future<int?> resolveDurableUserRowId(
+    String runtimeSessionId, {
+    required String sourceText,
+    required int expectedOrdinal,
+  });
+}
+
 abstract class HermesDesktopRewindGateway {
   Future<void> submitRewindPrompt(
     String runtimeSessionId,
     String text,
     int truncateBeforeUserOrdinal,
   );
+}
+
+abstract class HermesDesktopDurableRewindGateway {
+  Future<DesktopRewindAck> submitDurableRewindPrompt(
+    String runtimeSessionId,
+    String text,
+    int truncateBeforeUserOrdinal, {
+    required int truncateBeforeRowId,
+  });
 }
 
 class DesktopAttachmentResult {
@@ -671,7 +704,9 @@ class TuiGatewayClient
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopLifecycleGateway,
         HermesDesktopIdempotentGateway,
+        HermesDesktopRewindResolverGateway,
         HermesDesktopRewindGateway,
+        HermesDesktopDurableRewindGateway,
         HermesDesktopAttachmentGateway,
         HermesDesktopInteractivePromptGateway,
         HermesDesktopSessionConfigGateway,
@@ -2893,6 +2928,55 @@ class TuiGatewayClient
   }
 
   @override
+  Future<int?> resolveDurableUserRowId(
+    String runtimeSessionId, {
+    required String sourceText,
+    required int expectedOrdinal,
+  }) async {
+    final wanted = sourceText.trim();
+    if (wanted.isEmpty) return null;
+    Map<String, dynamic> result;
+    try {
+      result = await _request('session.history', {
+        'session_id': runtimeSessionId,
+      });
+    } catch (_) {
+      return null;
+    }
+    final rawMessages = result['messages'];
+    if (rawMessages is! List) return null;
+    bool isTruthyJson(Object? value) {
+      if (value == null || value == false) return false;
+      if (value is num) return value != 0;
+      if (value is String) return value.isNotEmpty;
+      return true;
+    }
+
+    final durableUsers = rawMessages
+        .whereType<Map>()
+        .where((raw) {
+          final message = Map<String, dynamic>.from(raw);
+          return message['role'] == 'user' &&
+              !isTruthyJson(message['display_kind']) &&
+              message['row_id'] is int;
+        })
+        .map((raw) => Map<String, dynamic>.from(raw))
+        .toList();
+    if (expectedOrdinal < 0 || expectedOrdinal >= durableUsers.length) {
+      return null;
+    }
+    final matches = durableUsers.where((message) {
+      final text = message['text'];
+      return (text is String ? text : '').trim() == wanted;
+    }).toList();
+    if (matches.length != 1 ||
+        !identical(durableUsers[expectedOrdinal], matches.single)) {
+      return null;
+    }
+    return matches.single['row_id'] as int;
+  }
+
+  @override
   Future<void> submitRewindPrompt(
     String runtimeSessionId,
     String text,
@@ -2905,6 +2989,23 @@ class TuiGatewayClient
       'confirm_truncate': true,
       if (truncateBeforeUserOrdinal == 0) 'confirm_empty_truncate': true,
     });
+  }
+
+  @override
+  Future<DesktopRewindAck> submitDurableRewindPrompt(
+    String runtimeSessionId,
+    String text,
+    int truncateBeforeUserOrdinal, {
+    required int truncateBeforeRowId,
+  }) async {
+    final result = await _request('prompt.submit', {
+      'session_id': runtimeSessionId,
+      'text': text,
+      'truncate_before_row_id': truncateBeforeRowId,
+      'confirm_truncate': true,
+      if (truncateBeforeUserOrdinal == 0) 'confirm_empty_truncate': true,
+    });
+    return DesktopRewindAck.fromJson(result);
   }
 
   @override

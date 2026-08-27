@@ -771,6 +771,10 @@ void main() {
             'path': '/workspace/.hermes/test.txt',
             'ref_text': '@file:.hermes/test.txt',
           },
+          'prompt.submit' => {
+            'status': 'ok',
+            'survivor_user_row_ids': [11, null, 'malformed'],
+          },
           _ => <String, dynamic>{'status': 'ok'},
         };
         socket.add(
@@ -805,7 +809,12 @@ void main() {
       contentBase64: 'aG9sYQ==',
     );
     await client.detachImage(binding.runtimeSessionId, image.path!);
-    await client.submitRewindPrompt(binding.runtimeSessionId, 'corregido', 2);
+    final rewind = await client.submitDurableRewindPrompt(
+      binding.runtimeSessionId,
+      'corregido',
+      2,
+      truncateBeforeRowId: 73,
+    );
     await client.submitRewindPrompt(
       binding.runtimeSessionId,
       'primer turno',
@@ -830,10 +839,11 @@ void main() {
       'data:text/plain;base64,aG9sYQ==',
     );
     expect(file.refText, '@file:.hermes/test.txt');
+    expect(rewind.survivorUserRowIds, [11, null, null]);
     expect(requests[4]['params'], {
       'session_id': 'runtime-native',
       'text': 'corregido',
-      'truncate_before_user_ordinal': 2,
+      'truncate_before_row_id': 73,
       'confirm_truncate': true,
     });
     expect(requests[5]['params'], {
@@ -843,6 +853,92 @@ void main() {
       'confirm_truncate': true,
       'confirm_empty_truncate': true,
     });
+  });
+
+  test('resuelve row_id durable con el filtro exacto de Desktop', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final requests = <Map<String, dynamic>>[];
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        requests.add(frame);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': frame['id'],
+            'result': {
+              'messages': [
+                {'role': 'user', 'row_id': 0, 'text': 'cero'},
+                {
+                  'role': 'user',
+                  'row_id': 72,
+                  'text': 'pregunta original',
+                  'display_kind': '   ',
+                },
+                {'role': 'user', 'row_id': 73, 'text': ' pregunta original '},
+                {'role': 'user', 'row_id': 75, 'text': 'duplicada'},
+                {'role': 'user', 'row_id': 76, 'text': ' duplicada '},
+                {'role': 'assistant', 'row_id': 74, 'text': 'respuesta'},
+              ],
+            },
+          }),
+        );
+      }
+    });
+
+    final client = TuiGatewayClient(
+      SavedConnection(
+        id: 'conn-history-row-id',
+        label: 'History row id',
+        host: '127.0.0.1',
+        port: 8642,
+        apiKey: 'test-key',
+        dashboardUrl: 'http://127.0.0.1:${server.port}',
+      ),
+      dashboard: _TicketDashboardClient(),
+    );
+    addTearDown(client.close);
+
+    expect(
+      await client.resolveDurableUserRowId(
+        'runtime-history',
+        sourceText: 'pregunta original',
+        expectedOrdinal: 1,
+      ),
+      73,
+    );
+    expect(
+      await client.resolveDurableUserRowId(
+        'runtime-history',
+        sourceText: 'cero',
+        expectedOrdinal: 0,
+      ),
+      0,
+    );
+    expect(
+      await client.resolveDurableUserRowId(
+        'runtime-history',
+        sourceText: 'pregunta original',
+        expectedOrdinal: 0,
+      ),
+      isNull,
+    );
+    expect(
+      await client.resolveDurableUserRowId(
+        'runtime-history',
+        sourceText: 'duplicada',
+        expectedOrdinal: 3,
+      ),
+      isNull,
+    );
+    expect(requests.map((request) => request['method']), [
+      'session.history',
+      'session.history',
+      'session.history',
+      'session.history',
+    ]);
   });
 
   test(

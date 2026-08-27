@@ -357,12 +357,14 @@ class DesktopSessionReconciler {
     // deja una burbuja de usuario vacía.
     final dropMain =
         role == 'user' && content.isEmpty && toolResultMessages.isNotEmpty;
+    final rowId = message.raw['row_id'];
     final main = Map<String, dynamic>.unmodifiable({
       'role': role,
       'content': content,
       '_desktopSnapshotKey': 'message-$runtimeSessionId-$ordinal',
       '_desktopSnapshotKind': 'persisted',
       '_desktopMessageOrdinal': ordinal,
+      if (rowId is int) '_desktopRowId': rowId,
       if (message.stableId != null) '_desktopMessageId': message.stableId,
       if (displayKind.isNotEmpty) 'display_kind': displayKind,
       'display_metadata': ?displayMetadata,
