@@ -483,6 +483,7 @@ class _FakeRewindGateway extends _FakeDesktopGateway
         HermesDesktopDurableRewindGateway {
   final List<({String sessionId, String text, int ordinal})> rewinds = [];
   bool rejectRewind = false;
+  bool loseRewindAck = false;
   int? rejectRewindOrdinal;
   int rewindErrorCode = 422;
 
@@ -510,6 +511,12 @@ class _FakeRewindGateway extends _FakeDesktopGateway
         'prompt.submit',
         'rewind rejected for test',
         code: rewindErrorCode,
+      );
+    }
+    if (loseRewindAck) {
+      throw const TuiGatewayRpcError(
+        'prompt.submit',
+        'Timeout waiting for JSON-RPC response',
       );
     }
     return const DesktopRewindAck();
@@ -2437,4 +2444,49 @@ void main() {
     expect(chat.takeRewindRestoredOnError(), isTrue);
     service.dispose();
   });
+
+  test(
+    'ACK perdido tras rewind no restaura una línea temporal posiblemente obsoleta',
+    () async {
+      final desktop = _FakeRewindGateway()..loseRewindAck = true;
+      final service = ActiveChatService();
+      final chat = service.attach(
+        connection: _remoteConn(),
+        sessionId: 'sess-rewind-ack-lost',
+        sessionTitle: 'Rewind ACK lost',
+        api: ApiClient(
+          baseUrl: _remoteConn().baseUrl,
+          apiKey: '',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
+        desktopGateway: desktop,
+      );
+      chat.messages = [
+        {'role': 'assistant', 'content': 'respuesta original'},
+        {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
+      ];
+
+      await chat.rewrite(
+        userOrdinal: 0,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
+
+      expect(desktop.rewinds, hasLength(1));
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'respuesta original',
+        ),
+        isFalse,
+      );
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'pregunta corregida',
+        ),
+        isTrue,
+      );
+      expect(chat.takeRewindRestoredOnError(), isFalse);
+      service.dispose();
+    },
+  );
 }

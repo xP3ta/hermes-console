@@ -4340,7 +4340,9 @@ class ActiveChat {
       if (truncateBeforeUserOrdinal != null && submissionAttempted) {
         final rollback = _rewindRollbackMessages;
         final rollbackState = _rewindRollbackState;
-        if (rollback != null) {
+        final deterministicRejection =
+            error is TuiGatewayRpcError && error.code != null;
+        if (deterministicRejection && rollback != null) {
           _firstTokenTimer?.cancel();
           _firstTokenTimer = null;
           messages = rollback;
@@ -4356,6 +4358,12 @@ class ActiveChat {
           _onTerminal();
           return false;
         }
+        // Sin un error JSON-RPC con código, el servidor pudo haber aplicado el
+        // rewind antes de perderse el ACK. Restaurar el transcript antiguo sería
+        // afirmar una línea temporal que quizá ya no existe en Desktop.
+        _rewindRollbackMessages = null;
+        _rewindRollbackState = null;
+        _rewind4018FallbackOrdinal = null;
       }
       if (error is TuiGatewayRpcError) {
         debugPrint(
