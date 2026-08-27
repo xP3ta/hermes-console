@@ -4495,7 +4495,18 @@ class ActiveChat {
       _isCurrentEpoch(expectedEpoch) && !_runTerminal;
 
   bool _isTerminalDesktopRecoveryError(Object error) {
-    if (error is DashboardAuthException) return true;
+    if (error is DashboardAuthException) {
+      final status = error.statusCode;
+      if ((error.code == DashboardAuthFailureCode.rateLimited &&
+              status == 429) ||
+          (error.code == DashboardAuthFailureCode.loginFailed &&
+              status != null &&
+              status >= 500 &&
+              status < 600)) {
+        return false;
+      }
+      return true;
+    }
     if (error is DashboardHttpException) {
       final status = error.statusCode;
       return status >= 400 && status < 500 && status != 408 && status != 429;
@@ -4600,8 +4611,12 @@ class ActiveChat {
               _emit(ActiveChatEvent.waiting);
               return;
             case DesktopTurnState.running:
-              await delivery.markRunning();
-              if (!_canRecoverTurn(turnEpoch)) return;
+              final markedRunning =
+                  await _desktopRecoveryOperationBeforeDeadline(
+                    delivery.markRunning().then((_) => true),
+                    epochInvalidated,
+                  );
+              if (markedRunning == null || !_canRecoverTurn(turnEpoch)) return;
               _commitDesktopRecoveryRuntime(gateway, binding.runtimeSessionId);
               _desktopStoredSessionId = binding.storedSessionId;
               _adoptDesktopRuntime(

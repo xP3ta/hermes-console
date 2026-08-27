@@ -746,6 +746,68 @@ void main() {
     expect(gateway.submitCalls, 1);
   });
 
+  test('auth rateLimited 429 sigue en backoff sin reenviar ni crear', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..recoveryConnectError = const DashboardAuthException(
+        DashboardAuthFailureCode.rateLimited,
+        statusCode: 429,
+      );
+    final chat = _recoverableChat(
+      'coverage-auth-rate-limited',
+      gateway,
+      desktopRecoveryBackoff: const [
+        Duration.zero,
+        Duration(milliseconds: 10),
+        Duration(hours: 1),
+      ],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'no reenviar durante rate limit',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('coverage-auth-rate-limited', _NoopOutbox()),
+    );
+    gateway.drop();
+    await _waitUntil(() => gateway.connectCalls >= 3);
+
+    expect(chat.state, ChatPipelineState.connecting);
+    expect(gateway.submitCalls, 1);
+    expect(gateway.createForFirstSubmitCalls, 0);
+  });
+
+  test('auth loginFailed 503 sigue en backoff sin reenviar ni crear', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..recoveryConnectError = const DashboardAuthException(
+        DashboardAuthFailureCode.loginFailed,
+        statusCode: 503,
+      );
+    final chat = _recoverableChat(
+      'coverage-auth-login-failed',
+      gateway,
+      desktopRecoveryBackoff: const [
+        Duration.zero,
+        Duration(milliseconds: 10),
+        Duration(hours: 1),
+      ],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'no reenviar durante fallo transitorio de login',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('coverage-auth-login-failed', _NoopOutbox()),
+    );
+    gateway.drop();
+    await _waitUntil(() => gateway.connectCalls >= 3);
+
+    expect(chat.state, ChatPipelineState.connecting);
+    expect(gateway.submitCalls, 1);
+    expect(gateway.createForFirstSubmitCalls, 0);
+  });
+
   test(
     'recovery 4007 moderno no cae en resume legacy ni crea una sesión',
     () async {
@@ -950,6 +1012,48 @@ void main() {
       expect(chat.state, ChatPipelineState.cancelled);
 
       await send;
+    },
+  );
+
+  test(
+    'markRunning colgado vence y cancel dispose libera recovery sin mutar',
+    () async {
+      final gateway = _LifecycleRecoverableGateway();
+      final outbox = _GatedOutbox();
+      final chat = _recoverableChat(
+        'hung-mark-running',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 25),
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+          Duration(hours: 1),
+        ],
+      );
+
+      final send = chat.send(
+        fullText: 'persistir running una sola vez',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('hung-mark-running', outbox),
+      );
+      await outbox.acceptedStarted.future;
+      gateway.drop();
+      await _waitUntil(() => gateway.statusCalls == 1);
+      outbox.acceptedGate.complete();
+      await outbox.runningStarted.future;
+
+      await _waitUntil(() => gateway.connectCalls >= 3);
+      chat.cancel();
+      chat.dispose();
+      outbox.runningGate.complete();
+      await send;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(chat.state, ChatPipelineState.cancelled);
+      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
+      expect(gateway.submitCalls, 1);
+      expect(gateway.createForFirstSubmitCalls, 0);
     },
   );
 
