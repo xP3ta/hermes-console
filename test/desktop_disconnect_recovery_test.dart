@@ -101,12 +101,22 @@ class _RecoverableDesktopGateway extends _DroppingDesktopGateway
   Completer<void>? recoveryStatusGate;
   final recoveryResumeStarted = Completer<void>();
   DesktopTurnState recoveredState = DesktopTurnState.running;
+  int recoveryConnectFailuresRemaining = 0;
+  Object? recoveryConnectError;
   int statusCalls = 0;
 
   @override
   Future<void> connect() async {
     await super.connect();
-    if (connectCalls > 1) await recoveryConnectGate?.future;
+    if (connectCalls > 1) {
+      await recoveryConnectGate?.future;
+      if (recoveryConnectError case final error?) throw error;
+      if (recoveryConnectFailuresRemaining > 0) {
+        recoveryConnectFailuresRemaining--;
+        _connected = false;
+        throw StateError('coverage unavailable');
+      }
+    }
   }
 
   @override
@@ -262,8 +272,11 @@ class _GatedOutbox implements TurnOutboxPersistence {
   }
 }
 
-Future<void> _waitUntil(bool Function() predicate) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 2));
+Future<void> _waitUntil(
+  bool Function() predicate, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
   while (!predicate()) {
     if (DateTime.now().isAfter(deadline)) {
       fail('condition was not reached before timeout');
@@ -304,6 +317,12 @@ ActiveChat _recoverableChat(
   _RecoverableDesktopGateway gateway, {
   ApiClient? api,
   Duration terminalReconcileBudget = const Duration(seconds: 4),
+  List<Duration> desktopRecoveryBackoff = const [
+    Duration.zero,
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+  ],
 }) => ActiveChat(
   connection: _connection(id),
   sessionId: 'session-$id',
@@ -320,6 +339,7 @@ ActiveChat _recoverableChat(
   desktopGateway: gateway,
   turnIdempotencyCapability: () async => true,
   terminalReconcileBudget: terminalReconcileBudget,
+  desktopRecoveryBackoff: desktopRecoveryBackoff,
 );
 
 void main() {
@@ -427,6 +447,94 @@ void main() {
       expect(chat.state, ChatPipelineState.executing);
     },
   );
+
+  test(
+    'una pérdida de cobertura prolongada espera la red y conserva el turno',
+    () async {
+      final gateway = _RecoverableDesktopGateway()
+        // Supera los cuatro intentos 0s/1s/2s/4s del comportamiento anterior.
+        ..recoveryConnectFailuresRemaining = 4;
+      final chat = _recoverableChat(
+        'coverage',
+        gateway,
+        desktopRecoveryBackoff: const [Duration.zero],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'no duplicar durante la pérdida de cobertura',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('coverage', _NoopOutbox()),
+      );
+      expect(gateway.submitCalls, 1);
+
+      gateway.drop();
+      await _waitUntil(
+        () =>
+            gateway.statusCalls == 1 || chat.state == ChatPipelineState.failed,
+        timeout: const Duration(seconds: 10),
+      );
+
+      expect(chat.state, ChatPipelineState.executing);
+      expect(gateway.statusCalls, 1);
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
+  test(
+    'cancelar durante el backoff detiene la reconexión inmediatamente',
+    () async {
+      final gateway = _RecoverableDesktopGateway();
+      final chat = _recoverableChat(
+        'coverage-cancel',
+        gateway,
+        desktopRecoveryBackoff: const [Duration(hours: 1)],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'cancelar mientras no hay cobertura',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('coverage-cancel', _NoopOutbox()),
+      );
+      gateway.drop();
+      await _waitUntil(() => chat.state == ChatPipelineState.connecting);
+
+      chat.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(chat.state, ChatPipelineState.cancelled);
+      expect(gateway.connectCalls, 1);
+    },
+  );
+
+  test('un rechazo de autenticación no entra en reconexión infinita', () async {
+    final gateway = _RecoverableDesktopGateway()
+      ..recoveryConnectError = const DashboardAuthException(
+        DashboardAuthFailureCode.invalidCredentials,
+        statusCode: 401,
+      );
+    final chat = _recoverableChat(
+      'coverage-auth',
+      gateway,
+      desktopRecoveryBackoff: const [Duration.zero],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'no reintentar credenciales inválidas',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('coverage-auth', _NoopOutbox()),
+    );
+    gateway.drop();
+    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+
+    expect(gateway.connectCalls, 2);
+    expect(gateway.submitCalls, 1);
+  });
 
   test(
     'recovery 4007 moderno no cae en resume legacy ni crea una sesión',

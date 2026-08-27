@@ -1386,6 +1386,7 @@ class ActiveChat {
   bool _disposed = false;
   final Completer<void> _disposeSignal = Completer<void>();
   final Duration _terminalReconcileBudget;
+  final List<Duration> _desktopRecoveryBackoff;
   // Se marca cuando el run llega a un estado terminal (completed/failed/
   // cancelled) para que el cierre del SSE no lo procese dos veces.
   bool _runTerminal = false;
@@ -1447,6 +1448,15 @@ class ActiveChat {
     Future<bool> Function()? turnIdempotencyCapability,
     List<SteerProjection> initialSteerProjections = const [],
     Duration terminalReconcileBudget = const Duration(seconds: 4),
+    List<Duration> desktopRecoveryBackoff = const [
+      Duration.zero,
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+    ],
   }) : logicalSessionId = logicalSessionId ?? sessionId,
        _notifications = notifications,
        _policy = policy,
@@ -1461,6 +1471,9 @@ class ActiveChat {
            (() => _defaultMonotonicClock.elapsedMicroseconds),
        _observedFirstTokenLatencyMs = initialObservedFirstTokenLatencyMs,
        _terminalReconcileBudget = terminalReconcileBudget,
+       _desktopRecoveryBackoff = List<Duration>.unmodifiable(
+         desktopRecoveryBackoff,
+       ),
        _turnIdempotencyCapability =
            turnIdempotencyCapability ??
            (() => ConnectionManager.isTurnIdempotencySupported(connection.id)),
@@ -4430,6 +4443,15 @@ class ActiveChat {
   bool _canRecoverTurn(int expectedEpoch) =>
       _isCurrentEpoch(expectedEpoch) && !_runTerminal;
 
+  bool _isTerminalDesktopRecoveryError(Object error) {
+    if (error is DashboardAuthException) return true;
+    if (error is DashboardHttpException) {
+      return error.statusCode == 401 || error.statusCode == 403;
+    }
+    return error is TuiGatewayRpcError &&
+        (error.code == 4007 || error.code == -32601 || error.code == -32602);
+  }
+
   Future<void> _recoverDesktopTurn(
     HermesDesktopGateway gateway,
     int turnEpoch,
@@ -4459,16 +4481,27 @@ class ActiveChat {
         return;
       }
 
-      const delays = <Duration>[
-        Duration.zero,
-        Duration(seconds: 1),
-        Duration(seconds: 2),
-        Duration(seconds: 4),
-      ];
+      // Paridad con Desktop: una pérdida de cobertura no es un fallo terminal.
+      // Seguimos marcando el turno como vivo y reemplazamos el socket con
+      // backoff acotado (30 s máximo entre intentos) hasta que vuelva la red,
+      // el usuario cancele, llegue un terminal o se destruya el chat.
+      final delays = _desktopRecoveryBackoff.isEmpty
+          ? const <Duration>[Duration.zero]
+          : _desktopRecoveryBackoff;
+      final epochInvalidated = _turnEpochInvalidated.future;
+      var attempt = 0;
       Object lastError = originalError;
-      for (final delay in delays) {
+      while (_canRecoverTurn(turnEpoch)) {
+        final delay = delays[attempt.clamp(0, delays.length - 1)];
+        attempt++;
         if (!_canRecoverTurn(turnEpoch)) return;
-        if (delay > Duration.zero) await Future<void>.delayed(delay);
+        if (delay > Duration.zero) {
+          final elapsed = await _waitForTerminalReconcileDelay(
+            delay,
+            epochInvalidated,
+          );
+          if (!elapsed || !_canRecoverTurn(turnEpoch)) return;
+        }
         if (!_canRecoverTurn(turnEpoch)) return;
         try {
           await gateway.connect();
@@ -4527,11 +4560,7 @@ class ActiveChat {
         } catch (error) {
           if (!_canRecoverTurn(turnEpoch)) return;
           lastError = error;
-          if (error is TuiGatewayRpcError &&
-              error.method == 'session.resume' &&
-              error.code == 4007) {
-            break;
-          }
+          if (_isTerminalDesktopRecoveryError(error)) break;
         }
       }
       if (_canRecoverTurn(turnEpoch)) {

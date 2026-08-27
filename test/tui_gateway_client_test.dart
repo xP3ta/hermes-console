@@ -704,6 +704,105 @@ void main() {
   });
 
   test(
+    'heartbeat anunciado invalida un socket abierto pero sin respuestas',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {
+              'type': 'gateway.ready',
+              'payload': {'heartbeat': true},
+            },
+          }),
+        );
+        // Consume gateway.ping without contestar: simula una radio en agujero
+        // negro que deja el TCP aparentemente abierto.
+        await for (final _ in socket) {}
+      });
+
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'conn-heartbeat-blackhole',
+          label: 'Heartbeat blackhole',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: String.fromCharCodes(const [113, 97]),
+          dashboardUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        dashboard: _TicketDashboardClient(),
+        heartbeatInterval: const Duration(milliseconds: 10),
+        heartbeatDeadline: const Duration(milliseconds: 35),
+      );
+      addTearDown(client.close);
+
+      final transportError = client.events.firstWhere(
+        (event) => event.type == 'never-emitted-after-heartbeat',
+      );
+      await client.connect();
+
+      await expectLater(
+        transportError,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('heartbeat'),
+          ),
+        ),
+      );
+      expect(client.isConnected, isFalse);
+    },
+  );
+
+  test(
+    'un gateway antiguo sin heartbeat anunciado permanece compatible',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final received = <Map<String, dynamic>>[];
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+          }),
+        );
+        await for (final raw in socket) {
+          received.add(jsonDecode(raw as String) as Map<String, dynamic>);
+        }
+      });
+
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'conn-no-heartbeat',
+          label: 'No heartbeat',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: String.fromCharCodes(const [113, 97]),
+          dashboardUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        dashboard: _TicketDashboardClient(),
+        heartbeatInterval: const Duration(milliseconds: 10),
+        heartbeatDeadline: const Duration(milliseconds: 35),
+      );
+      addTearDown(client.close);
+
+      await client.connect();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      expect(client.isConnected, isTrue);
+      expect(received, isEmpty);
+    },
+  );
+
+  test(
     'reintentos de loginRequired conservan el error sin reparación',
     () async {
       final gatewaySource = File(

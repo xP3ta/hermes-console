@@ -731,6 +731,8 @@ class TuiGatewayClient
   final WebSocketChannel Function(Uri uri, Map<String, dynamic> headers)?
   _channelFactory;
   final DesktopGatewayCapabilityCache _capabilityCache;
+  final Duration _heartbeatInterval;
+  final Duration _heartbeatDeadline;
   static const CapabilityPayloadSanitizer _payloadSanitizer =
       CapabilityPayloadSanitizer();
 
@@ -743,6 +745,9 @@ class TuiGatewayClient
   bool _connected = false;
   bool _closed = false;
   int _socketGeneration = 0;
+  int _heartbeatSequence = 0;
+  DateTime _lastInboundAt = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _heartbeatTimer;
   Future<void>? _connecting;
   String? _legacyEventRuntimeId;
   bool _legacyEventRuntimeAmbiguous = false;
@@ -753,9 +758,13 @@ class TuiGatewayClient
     WebSocketChannel Function(Uri uri, Map<String, dynamic> headers)?
     channelFactory,
     DesktopGatewayCapabilityCache? capabilityCache,
+    Duration heartbeatInterval = const Duration(seconds: 15),
+    Duration heartbeatDeadline = const Duration(seconds: 45),
   }) : _dashboard = dashboard ?? DashboardClient.lazy(_connection),
        _channelFactory = channelFactory,
-       _capabilityCache = capabilityCache ?? DesktopGatewayCapabilityCache();
+       _capabilityCache = capabilityCache ?? DesktopGatewayCapabilityCache(),
+       _heartbeatInterval = heartbeatInterval,
+       _heartbeatDeadline = heartbeatDeadline;
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -793,6 +802,7 @@ class TuiGatewayClient
 
   Future<void> _connectOnce() async {
     final generation = ++_socketGeneration;
+    _stopHeartbeat();
     _resetLegacyEventRuntimeAnchor();
     late DashboardWebSocketAuth auth;
     try {
@@ -822,7 +832,7 @@ class TuiGatewayClient
     }
     late final StreamSubscription<dynamic> subscription;
     subscription = channel.stream.listen(
-      (raw) => _handleFrame(generation, raw),
+      (raw) => _handleFrame(generation, channel, raw),
       onError: (Object error, StackTrace stackTrace) =>
           _handleSocketError(generation, channel, error, stackTrace),
       onDone: () => _handleSocketDone(generation, channel),
@@ -869,8 +879,11 @@ class TuiGatewayClient
     return error.runtimeType.toString();
   }
 
-  void _handleFrame(int generation, dynamic raw) {
-    if (generation != _socketGeneration) return;
+  void _handleFrame(int generation, WebSocketChannel channel, dynamic raw) {
+    if (generation != _socketGeneration || !identical(_channel, channel)) {
+      return;
+    }
+    _lastInboundAt = DateTime.now();
     try {
       final decoded = raw is String ? jsonDecode(raw) : raw;
       if (decoded is! Map) return;
@@ -909,6 +922,11 @@ class TuiGatewayClient
       final params = Map<String, dynamic>.from(rawParams);
       final rawPayload = params['payload'];
       final type = (params['type'] ?? '').toString().trim();
+      if (type == 'gateway.ready' &&
+          rawPayload is Map &&
+          rawPayload['heartbeat'] == true) {
+        _startHeartbeat(generation, channel);
+      }
       final rawSessionId = params['session_id'];
       final explicitSessionId = rawSessionId is String
           ? rawSessionId.trim()
@@ -952,6 +970,7 @@ class TuiGatewayClient
     // rechazado.
     if (!wasConnected) return;
     _connected = false;
+    _stopHeartbeat();
     _resetLegacyEventRuntimeAnchor();
     _capabilityCache.resetForReconnect();
     _channel = null;
@@ -977,6 +996,7 @@ class TuiGatewayClient
     }
     final wasConnected = _connected;
     _connected = false;
+    _stopHeartbeat();
     _resetLegacyEventRuntimeAnchor();
     _capabilityCache.resetForReconnect();
     final subscription = _subscription;
@@ -990,6 +1010,47 @@ class TuiGatewayClient
     if (wasConnected && !_events.isClosed) {
       _events.addError(error);
     }
+  }
+
+  void _startHeartbeat(int generation, WebSocketChannel channel) {
+    _stopHeartbeat();
+    _lastInboundAt = DateTime.now();
+    if (_heartbeatInterval <= Duration.zero ||
+        _heartbeatDeadline <= Duration.zero) {
+      return;
+    }
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
+      if (generation != _socketGeneration ||
+          !identical(_channel, channel) ||
+          !_connected) {
+        return;
+      }
+      if (DateTime.now().difference(_lastInboundAt) >= _heartbeatDeadline) {
+        _handleSocketError(
+          generation,
+          channel,
+          StateError('Hermes Desktop WebSocket heartbeat timed out'),
+        );
+        return;
+      }
+      try {
+        channel.sink.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': 'heartbeat-${++_heartbeatSequence}',
+            'method': 'gateway.ping',
+            'params': const <String, dynamic>{},
+          }),
+        );
+      } catch (error, stackTrace) {
+        _handleSocketError(generation, channel, error, stackTrace);
+      }
+    });
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
   }
 
   void _failPending(Object error, [StackTrace? stackTrace]) {
@@ -3331,6 +3392,7 @@ class TuiGatewayClient
   Future<void> _disconnectTransport(String reason) async {
     _socketGeneration++;
     _connected = false;
+    _stopHeartbeat();
     _resetLegacyEventRuntimeAnchor();
     _capabilityCache.resetForReconnect();
     _failPending(StateError('Hermes Desktop gateway closed'));
