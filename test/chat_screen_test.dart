@@ -32,6 +32,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/main.dart';
 import 'package:hermes_android/core/companion/render/companion_message_presence.dart';
 import 'package:hermes_android/core/config/flavor.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/chat_preferences.dart';
@@ -2834,7 +2835,8 @@ void main() {
       find.ancestor(of: composer, matching: find.byType(SafeArea)),
       findsOneWidget,
     );
-    expect(textField.controller.runtimeType, TextEditingController);
+    final controller = textField.controller;
+    expect(controller, isA<TextEditingController>());
     final resting = tester.getRect(surface);
 
     await tester.enterText(field, 'borrador conservado');
@@ -2847,6 +2849,7 @@ void main() {
       tester.widget<TextField>(field).controller?.text,
       'borrador conservado',
     );
+    expect(tester.widget<TextField>(field).controller, same(controller));
     expect(tester.widget<TextField>(field).focusNode?.hasFocus, isTrue);
     expect(tester.takeException(), isNull);
   });
@@ -4690,6 +4693,136 @@ void main() {
     expect(find.byKey(const ValueKey('chat-artifacts-dialog')), findsOneWidget);
     expect(find.byType(BottomSheet), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('composingRange normaliza y acota el rango de composición', (
+    tester,
+  ) async {
+    await pumpChat(tester);
+    final input = find.byType(TextField).first;
+    final field = tester.widget<TextField>(input);
+    final controller = field.controller!;
+
+    TextRange callComposingRange(TextEditingValue value, bool withComposing) {
+      return (controller as dynamic).composingRange(value, withComposing)
+          as TextRange;
+    }
+
+    const normal = TextEditingValue(
+      text: 'hola',
+      composing: TextRange(start: 0, end: 4),
+    );
+    expect(callComposingRange(normal, true), const TextRange(start: 0, end: 4));
+
+    final inverted = normal.copyWith(
+      composing: const TextRange(start: 4, end: 2),
+    );
+    expect(callComposingRange(inverted, true), TextRange.empty);
+
+    final outOfBounds = normal.copyWith(
+      composing: const TextRange(start: 0, end: 100),
+    );
+    expect(callComposingRange(outOfBounds, true), TextRange.empty);
+
+    expect(callComposingRange(normal, false), TextRange.empty);
+  });
+
+  testWidgets('solo comandos slash conocidos usan color accent', (
+    tester,
+  ) async {
+    await pumpChat(tester);
+    final input = find.byType(TextField).first;
+    final context = tester.element(input);
+    final colors = Theme.of(context).hermes;
+
+    List<TextSpan> textLeaves(TextSpan root) {
+      final leaves = <TextSpan>[];
+      void visit(InlineSpan span) {
+        if (span is! TextSpan) return;
+        if ((span.text ?? '').isNotEmpty) leaves.add(span);
+        for (final child in span.children ?? const <InlineSpan>[]) {
+          visit(child);
+        }
+      }
+
+      visit(root);
+      return leaves;
+    }
+
+    List<TextSpan> composerLeaves() {
+      final field = tester.widget<TextField>(input);
+      return textLeaves(
+        field.controller!.buildTextSpan(
+          context: context,
+          style: TextStyle(color: colors.textPrimary),
+          withComposing: true,
+        ),
+      );
+    }
+
+    Future<void> checkSlash(String text, String token, bool colored) async {
+      await tester.enterText(input, text);
+      await tester.pump();
+      final leaves = composerLeaves();
+      expect(leaves.map((span) => span.text).join(), text);
+      final tokenLeaf = leaves.firstWhere((leaf) => leaf.text == token);
+      if (colored) {
+        expect(tokenLeaf.style?.color, colors.accent);
+      } else {
+        expect(tokenLeaf.style?.color, isNot(colors.accent));
+      }
+    }
+
+    await tester.enterText(input, '/help argumento');
+    await tester.pump();
+    final valid = composerLeaves();
+    expect(valid.map((span) => span.text).toList(), ['/help', ' argumento']);
+    expect(valid.first.style?.color, colors.accent);
+    expect(valid.last.style?.color, colors.textPrimary);
+
+    await checkSlash('/compact', '/compact', true);
+    await checkSlash('/HELP', '/HELP', true);
+    await checkSlash('  /help arg', '/help', true);
+    await checkSlash('/helpful', '/helpful', false);
+    await checkSlash('/comando-inexistente', '/comando-inexistente', false);
+  });
+
+  testWidgets('slash accent aplica composing underline solo al rango', (
+    tester,
+  ) async {
+    await pumpChat(tester);
+    final input = find.byType(TextField).first;
+    final context = tester.element(input);
+    final colors = Theme.of(context).hermes;
+
+    await tester.enterText(input, '/help mundo');
+    await tester.pump();
+
+    final field = tester.widget<TextField>(input);
+    field.controller!.value = field.controller!.value.copyWith(
+      composing: const TextRange(start: 6, end: 11),
+    );
+    await tester.pump();
+
+    final span = field.controller!.buildTextSpan(
+      context: context,
+      style: TextStyle(color: colors.textPrimary),
+      withComposing: true,
+    );
+    final leaves = _flattenTextSpans(
+      span,
+    ).where((leaf) => leaf.text?.isNotEmpty ?? false).toList();
+
+    final slashLeaf = leaves.firstWhere((leaf) => leaf.text == '/help');
+    expect(slashLeaf.style?.color, colors.accent);
+    expect(slashLeaf.style?.decoration, isNot(TextDecoration.underline));
+
+    final spaceLeaf = leaves.firstWhere((leaf) => leaf.text == ' ');
+    expect(spaceLeaf.style?.color, colors.textPrimary);
+    expect(spaceLeaf.style?.decoration, isNot(TextDecoration.underline));
+
+    final composingLeaf = leaves.firstWhere((leaf) => leaf.text == 'mundo');
+    expect(composingLeaf.style?.decoration, TextDecoration.underline);
   });
 
   testWidgets('la ayuda slash se abre como ventana flotante', (tester) async {
@@ -9547,6 +9680,75 @@ void main() {
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Room combina slash accent con mención seleccionada', (
+    tester,
+  ) async {
+    final room = MissionRoom(
+      id: 'room-slash-mention',
+      connectionId: 'conn-room-slash',
+      name: 'slash-room',
+      managerProfile: 'manager',
+      memberProfiles: const ['manager', 'infra'],
+      managerSessionId: 'room-slash-session',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    );
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-room-slash'),
+      session: const Session(
+        id: 'room-slash-session',
+        title: '#slash-room',
+        model: 'hermes-agent',
+        source: 'api',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'manager',
+      ),
+      missionRoom: room,
+      missionRoomStore: _RecordingMissionRoomStore(room),
+      missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
+    );
+    final composer = find.byType(TextField).last;
+    await tester.enterText(composer, '@i');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
+    await tester.pump();
+    await tester.enterText(composer, '/help @infra');
+    await tester.pump();
+
+    final field = tester.widget<TextField>(composer);
+    field.controller!.value = field.controller!.value.copyWith(
+      composing: const TextRange(start: 6, end: 12),
+    );
+    await tester.pump();
+
+    final context = tester.element(composer);
+    final colors = Theme.of(context).hermes;
+    final span = field.controller!.buildTextSpan(
+      context: context,
+      style: TextStyle(color: colors.textPrimary),
+      withComposing: true,
+    );
+    final leaves = _flattenTextSpans(
+      span,
+    ).where((leaf) => leaf.text?.isNotEmpty ?? false).toList();
+    expect(
+      leaves.where(
+        (leaf) => leaf.text == '/help' && leaf.style?.color == colors.accent,
+      ),
+      hasLength(1),
+    );
+    final mentionLeaves = leaves.where(
+      (leaf) =>
+          leaf.text == '@infra' && leaf.style?.fontWeight == FontWeight.w800,
+    );
+    expect(mentionLeaves, hasLength(1));
+    expect(mentionLeaves.first.style?.decoration, TextDecoration.underline);
   });
 
   testWidgets(

@@ -1353,7 +1353,7 @@ class _ChatScreenState extends State<ChatScreen>
   void initState() {
     super.initState();
     _textController = widget.missionRoom == null
-        ? TextEditingController()
+        ? _SlashAccentTextEditingController()
         : _RoomMentionTextEditingController(
             selectedMentions: () => _selectedRoomMentions,
           );
@@ -11325,7 +11325,77 @@ class _ComposerPaletteOverlayState extends State<_ComposerPaletteOverlay> {
   }
 }
 
-class _RoomMentionTextEditingController extends TextEditingController {
+class _SlashAccentTextEditingController extends TextEditingController {
+  TextRange? slashCommandRange() {
+    final parsed = parseSlashCommand(value.text);
+    if (parsed == null) return null;
+    final text = value.text;
+    final start = text.length - text.trimLeft().length;
+    final trimmed = text.trimLeft();
+    final sp = trimmed.indexOf(RegExp(r'\s'));
+    final end = start + (sp == -1 ? trimmed.length : sp);
+    return TextRange(start: start, end: end);
+  }
+
+  TextRange composingRange(TextEditingValue value, bool withComposing) {
+    final range = value.composing;
+    if (!withComposing || !value.isComposingRangeValid || range.isCollapsed) {
+      return TextRange.empty;
+    }
+    return range;
+  }
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final text = value.text;
+    final slashRange = slashCommandRange();
+    if (text.isEmpty || slashRange == null) {
+      return super.buildTextSpan(
+        context: context,
+        style: style,
+        withComposing: withComposing,
+      );
+    }
+    final composing = composingRange(value, withComposing);
+    final cuts = <int>{0, slashRange.start, slashRange.end, text.length};
+    if (!composing.isCollapsed) {
+      cuts
+        ..add(composing.start)
+        ..add(composing.end);
+    }
+    final orderedCuts = cuts.toList()..sort();
+    final spans = <InlineSpan>[];
+    for (var index = 0; index < orderedCuts.length - 1; index++) {
+      final start = orderedCuts[index];
+      final end = orderedCuts[index + 1];
+      if (start == end) continue;
+      var segmentStyle = style;
+      if (start >= slashRange.start && end <= slashRange.end) {
+        segmentStyle = (segmentStyle ?? const TextStyle()).copyWith(
+          color: Theme.of(context).hermes.accent,
+        );
+      }
+      if (!composing.isCollapsed &&
+          start >= composing.start &&
+          end <= composing.end) {
+        segmentStyle = (segmentStyle ?? const TextStyle()).merge(
+          const TextStyle(decoration: TextDecoration.underline),
+        );
+      }
+      spans.add(
+        TextSpan(text: text.substring(start, end), style: segmentStyle),
+      );
+    }
+    return TextSpan(style: style, children: spans);
+  }
+}
+
+class _RoomMentionTextEditingController
+    extends _SlashAccentTextEditingController {
   final Set<String> Function() selectedMentions;
   Color? mentionColor;
 
@@ -11338,6 +11408,7 @@ class _RoomMentionTextEditingController extends TextEditingController {
     required bool withComposing,
   }) {
     final text = value.text;
+    final slashRange = slashCommandRange();
     final mentions = selectedMentions()
         .map((mention) => mention.trim())
         .where((mention) => mention.isNotEmpty)
@@ -11373,10 +11444,13 @@ class _RoomMentionTextEditingController extends TextEditingController {
       );
     }
 
-    final composing = withComposing && value.composing.isValid
-        ? value.composing
-        : TextRange.empty;
+    final composing = composingRange(value, withComposing);
     final cuts = <int>{0, text.length};
+    if (slashRange != null) {
+      cuts
+        ..add(slashRange.start)
+        ..add(slashRange.end);
+    }
     for (final range in mentionRanges) {
       cuts
         ..add(range.start)
@@ -11393,6 +11467,10 @@ class _RoomMentionTextEditingController extends TextEditingController {
       final start = orderedCuts[index];
       final end = orderedCuts[index + 1];
       if (start == end) continue;
+      final isSlash =
+          slashRange != null &&
+          start >= slashRange.start &&
+          end <= slashRange.end;
       final isMention = mentionRanges.any(
         (range) => start >= range.start && end <= range.end,
       );
@@ -11400,11 +11478,15 @@ class _RoomMentionTextEditingController extends TextEditingController {
           !composing.isCollapsed &&
           start >= composing.start &&
           end <= composing.end;
-      TextStyle? segmentStyle;
+      var segmentStyle = style;
+      if (isSlash) {
+        segmentStyle = (segmentStyle ?? const TextStyle()).copyWith(
+          color: Theme.of(context).hermes.accent,
+        );
+      }
       if (isMention) {
-        segmentStyle = TextStyle(
-          color: mentionColor,
-          fontWeight: FontWeight.w800,
+        segmentStyle = (segmentStyle ?? const TextStyle()).merge(
+          TextStyle(color: mentionColor, fontWeight: FontWeight.w800),
         );
       }
       if (isComposing) {
