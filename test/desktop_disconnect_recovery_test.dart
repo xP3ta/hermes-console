@@ -20,6 +20,13 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
   int connectCalls = 0;
   int resumeCalls = 0;
   int submitCalls = 0;
+  int interruptCalls = 0;
+  int hangingInterruptsRemaining = 0;
+  int interruptErrorsRemaining = 0;
+  Object? interruptError;
+  Object? resumeSessionError;
+  final List<String> interruptedRuntimeIds = [];
+  final List<String> submittedRuntimeIds = [];
   final List<String> resumedStoredIds = [];
 
   @override
@@ -41,6 +48,7 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
     List<Map<String, dynamic>> seedMessages = const [],
     String model = '',
   }) async {
+    if (resumeSessionError case final error?) throw error;
     resumeCalls++;
     resumedStoredIds.add(storedSessionId);
     return DesktopSessionBinding(
@@ -53,6 +61,7 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     submitCalls++;
+    submittedRuntimeIds.add(runtimeSessionId);
   }
 
   void drop() {
@@ -81,7 +90,18 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
   }
 
   @override
-  Future<void> interrupt(String runtimeSessionId) async {}
+  Future<void> interrupt(String runtimeSessionId) async {
+    interruptCalls++;
+    interruptedRuntimeIds.add(runtimeSessionId);
+    if (hangingInterruptsRemaining > 0) {
+      hangingInterruptsRemaining--;
+      await Completer<void>().future;
+    }
+    if (interruptErrorsRemaining > 0) {
+      interruptErrorsRemaining--;
+      throw interruptError ?? StateError('interrupt failed');
+    }
+  }
 
   @override
   Future<void> resolveApproval(
@@ -147,6 +167,7 @@ class _RecoverableDesktopGateway extends _DroppingDesktopGateway
     String clientTurnId,
   ) async {
     submitCalls++;
+    submittedRuntimeIds.add(runtimeSessionId);
     return DesktopTurnAck(
       accepted: true,
       clientTurnId: clientTurnId,
@@ -180,6 +201,7 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   int createForFirstSubmitCalls = 0;
   final List<String> resumeExistingStoredIds = [];
   final List<String> committedRecoveryRuntimeIds = [];
+  Object? createForFirstSubmitError;
   Completer<DesktopSessionSnapshot>? recoveryExistingGate;
   Object? resumeExistingError;
 
@@ -207,6 +229,7 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
     String model = '',
   }) async {
     createForFirstSubmitCalls++;
+    if (createForFirstSubmitError case final error?) throw error;
     return const DesktopSessionBinding(
       runtimeSessionId: 'runtime-created-unexpectedly',
       storedSessionId: 'stored-created-unexpectedly',
@@ -236,6 +259,42 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   void commitRecoveryRuntime(String runtimeSessionId) {
     committedRecoveryRuntimeIds.add(runtimeSessionId);
   }
+}
+
+class _RestFallbackApiClient extends ApiClient {
+  _RestFallbackApiClient()
+    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'key');
+
+  int startCalls = 0;
+  int stopCalls = 0;
+  Completer<String>? startGate;
+
+  @override
+  Future<String> startRun({
+    required String input,
+    String? sessionId,
+    String? model,
+    List<Map<String, dynamic>>? history,
+    String? profile,
+  }) async {
+    startCalls++;
+    return startGate == null ? 'rest-run' : await startGate!.future;
+  }
+
+  @override
+  Future<Map<String, dynamic>> stopRun(String runId) async {
+    stopCalls++;
+    return <String, dynamic>{};
+  }
+
+  @override
+  Future<void> streamRunEvents(
+    String runId, {
+    required void Function(Map<String, dynamic> event) onEvent,
+    required void Function() onDone,
+    required void Function(String error) onError,
+    Duration idleTimeout = const Duration(seconds: 90),
+  }) => Completer<void>().future;
 }
 
 class _ControlledApiClient extends ApiClient {
@@ -948,7 +1007,7 @@ void main() {
   }
 
   test(
-    'una operación recovery colgada vence y cancel libera el chat',
+    'una operación recovery legacy colgada vence y cancel no reanuda',
     () async {
       final gateway = _RecoverableDesktopGateway()
         ..recoveryConnectGate = Completer<void>();
@@ -978,6 +1037,7 @@ void main() {
 
       expect(chat.state, ChatPipelineState.cancelled);
       expect(gateway.connectCalls, callsAfterCancel);
+      expect(gateway.submitCalls, 1);
     },
   );
 
@@ -1357,6 +1417,340 @@ void main() {
 
     expect(chat.assistantContent, 'no me borres');
     expect(chat.messages, hasLength(2));
+  });
+
+  test('Stop de fallback REST usa stopRun y no reanuda Desktop', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..resumeSessionError = StateError('desktop unavailable')
+      ..resumeExistingError = StateError('desktop unavailable')
+      ..createForFirstSubmitError = StateError('desktop unavailable');
+    final api = _RestFallbackApiClient();
+    final chat = _recoverableChat('rest-fallback-cancel', gateway, api: api);
+    addTearDown(chat.dispose);
+    final delivery = _delivery('rest-fallback-cancel', _NoopOutbox());
+
+    final accepted = await chat.send(
+      fullText: 'turno REST',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: delivery,
+    );
+    expect(accepted, isTrue);
+    expect(api.startCalls, 1);
+    expect(chat.currentRunId, 'rest-run');
+    final resumesBeforeCancel = gateway.resumeExistingCalls;
+
+    chat.cancel();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.stopCalls, 1);
+    expect(gateway.resumeExistingCalls, resumesBeforeCancel);
+    expect(gateway.interruptCalls, 0);
+  });
+
+  test('Stop durante startRun REST espera el id y no toca Desktop', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..resumeSessionError = StateError('desktop unavailable')
+      ..resumeExistingError = StateError('desktop unavailable')
+      ..createForFirstSubmitError = StateError('desktop unavailable');
+    final api = _RestFallbackApiClient()..startGate = Completer<String>();
+    final chat = _recoverableChat('rest-start-cancel', gateway, api: api);
+    addTearDown(chat.dispose);
+    final delivery = _delivery('rest-start-cancel', _NoopOutbox());
+
+    final send = chat.send(
+      fullText: 'turno REST lento',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: delivery,
+    );
+    await _waitUntil(() => api.startCalls == 1);
+    expect(delivery.current.transport, PreparedTurnTransport.rest);
+    expect(chat.currentRunId, isNull);
+    final resumesBeforeCancel = gateway.resumeExistingCalls;
+
+    chat.cancel();
+    api.startGate!.complete('rest-run-late');
+    expect(await send, isFalse);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.stopCalls, 1);
+    expect(gateway.resumeExistingCalls, resumesBeforeCancel);
+    expect(gateway.interruptCalls, 0);
+  });
+
+  test('cancel offline legacy no usa resumeSession que puede crear', () async {
+    final gateway = _RecoverableDesktopGateway()
+      ..hangingInterruptsRemaining = 1;
+    final chat = _recoverableChat(
+      'legacy-cancel-no-create',
+      gateway,
+      desktopRecoveryAttemptTimeout: const Duration(milliseconds: 20),
+      desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 1)],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno legacy',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('legacy-cancel-no-create', _NoopOutbox()),
+    );
+    final resumesBeforeCancel = gateway.resumeCalls;
+
+    chat.cancel();
+    await _waitUntil(() => gateway.interruptCalls == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 70));
+
+    expect(gateway.resumeCalls, resumesBeforeCancel);
+    expect(gateway.interruptCalls, 1);
+  });
+
+  test('cancel tras perder el runtime reanuda el stored id sin crear', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..recoveryExistingGate = Completer<DesktopSessionSnapshot>();
+    final chat = _recoverableChat(
+      'cancel-runtime-retired',
+      gateway,
+      desktopRecoveryAttemptTimeout: const Duration(milliseconds: 60),
+      desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 1)],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno viejo',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('cancel-runtime-retired', _NoopOutbox()),
+    );
+    final createsBeforeCancel = gateway.createForFirstSubmitCalls;
+    gateway.drop();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == null);
+
+    chat.cancel();
+    gateway.recoveryExistingGate!.complete(
+      const DesktopSessionBinding(
+        runtimeSessionId: 'runtime-recovered-after-cancel',
+        storedSessionId: 'cancel-runtime-retired',
+        created: false,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(
+      gateway.interruptedRuntimeIds,
+      contains('runtime-recovered-after-cancel'),
+      reason:
+          'resumeCalls=${gateway.resumeExistingCalls} state=${chat.state} runtime=${chat.desktopRuntimeSessionId}',
+    );
+
+    expect(gateway.createForFirstSubmitCalls, createsBeforeCancel);
+    expect(
+      gateway.resumeExistingStoredIds,
+      contains('session-cancel-runtime-retired'),
+    );
+    expect(chat.state, ChatPipelineState.cancelled);
+  });
+
+  test(
+    'cancel offline reata la sesión e interrumpe el runtime recuperado',
+    () async {
+      final gateway = _LifecycleRecoverableGateway()
+        ..hangingInterruptsRemaining = 1;
+      final chat = _recoverableChat(
+        'cancel-offline',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 20),
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'trabajo largo',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('cancel-offline', _NoopOutbox()),
+      );
+      expect(chat.isStreaming, isTrue);
+      final createsBeforeCancel = gateway.createForFirstSubmitCalls;
+
+      chat.cancel();
+
+      await _waitUntil(
+        () => gateway.resumeExistingCalls >= 1 && gateway.interruptCalls >= 2,
+        timeout: const Duration(milliseconds: 500),
+      );
+      expect(chat.state, ChatPipelineState.cancelled);
+      expect(gateway.connectCalls, greaterThanOrEqualTo(2));
+      expect(gateway.resumeExistingCalls, greaterThanOrEqualTo(1));
+      expect(gateway.interruptedRuntimeIds, hasLength(2));
+      expect(
+        gateway.interruptedRuntimeIds.last,
+        startsWith('runtime-recovery-'),
+      );
+      expect(gateway.committedRecoveryRuntimeIds, [
+        gateway.interruptedRuntimeIds.last,
+      ]);
+      expect(gateway.createForFirstSubmitCalls, createsBeforeCancel);
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
+  test(
+    'un turno nuevo espera a que el cancel offline quede entregado',
+    () async {
+      final gateway = _LifecycleRecoverableGateway()
+        ..hangingInterruptsRemaining = 1;
+      final chat = _recoverableChat(
+        'cancel-before-next',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 30),
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'turno viejo',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('cancel-before-next', _NoopOutbox()),
+      );
+      chat.cancel();
+      final next = chat.send(
+        fullText: 'turno nuevo',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('cancel-before-next-2', _NoopOutbox()),
+      );
+
+      await _waitUntil(() => gateway.interruptCalls == 2);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(gateway.submitCalls, 1);
+      final recoveredRuntimeId = gateway.interruptedRuntimeIds.last;
+      gateway.emit(
+        'message.complete',
+        sessionId: recoveredRuntimeId,
+        payload: const {'text': 'Operation interrupted.'},
+      );
+      await next.timeout(const Duration(milliseconds: 500));
+      expect(gateway.interruptCalls, 2);
+      expect(gateway.submitCalls, 2);
+    },
+  );
+
+  test('error terminal al cancelar retira el runtime muerto', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..interruptErrorsRemaining = 1
+      ..interruptError = const TuiGatewayRpcError(
+        'session.interrupt',
+        'session not found',
+        code: 4007,
+      );
+    final chat = _recoverableChat(
+      'cancel-terminal-error',
+      gateway,
+      desktopRecoveryAttemptTimeout: const Duration(milliseconds: 30),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno perdido',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('cancel-terminal-error', _NoopOutbox()),
+    );
+    expect(chat.desktopRuntimeSessionId, isNotNull);
+
+    chat.cancel();
+    await _waitUntil(() => gateway.interruptCalls == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(chat.desktopRuntimeSessionId, isNull);
+  });
+
+  test(
+    'terminal ausente retira el runtime antes del turno siguiente',
+    () async {
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'cancel-terminal-timeout',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 30),
+        desktopRecoveryBackoff: const [Duration.zero],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'turno viejo',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('cancel-terminal-timeout', _NoopOutbox()),
+      );
+      final oldRuntimeId = gateway.submittedRuntimeIds.single;
+      chat.cancel();
+
+      await chat
+          .send(
+            fullText: 'turno nuevo',
+            model: 'hermes-agent',
+            history: const [],
+            delivery: _delivery('cancel-terminal-timeout-2', _NoopOutbox()),
+          )
+          .timeout(const Duration(milliseconds: 300));
+
+      expect(gateway.submittedRuntimeIds, hasLength(2));
+      expect(gateway.submittedRuntimeIds.last, isNot(oldRuntimeId));
+      gateway.emit(
+        'message.complete',
+        sessionId: oldRuntimeId,
+        payload: const {'text': 'STALE_OLD_TURN'},
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.isStreaming, isTrue);
+      expect(
+        chat.messages.any((message) => message['content'] == 'STALE_OLD_TURN'),
+        isFalse,
+      );
+    },
+  );
+
+  test('dispose detiene el reintento de cancel offline', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..hangingInterruptsRemaining = 10;
+    final chat = _recoverableChat(
+      'cancel-dispose',
+      gateway,
+      desktopRecoveryAttemptTimeout: const Duration(milliseconds: 30),
+      desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+    );
+
+    await chat.send(
+      fullText: 'turno desechado',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('cancel-dispose', _NoopOutbox()),
+    );
+    chat.cancel();
+    await _waitUntil(() => gateway.interruptCalls == 1);
+    final next = chat.send(
+      fullText: 'no debe salir',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('cancel-dispose-2', _NoopOutbox()),
+    );
+
+    chat.dispose();
+    expect(await next.timeout(const Duration(milliseconds: 200)), isFalse);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    expect(gateway.interruptCalls, 1);
+    expect(gateway.resumeExistingCalls, 0);
+    expect(gateway.submitCalls, 1);
   });
 
   test('sin idempotencia, un corte a mitad de turno reconcilia el transcript '

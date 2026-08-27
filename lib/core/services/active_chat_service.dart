@@ -1410,6 +1410,7 @@ class ActiveChat {
   final Duration _terminalReconcileBudget;
   final Duration _desktopRecoveryAttemptTimeout;
   final List<Duration> _desktopRecoveryBackoff;
+  Future<void>? _desktopCancelRecovery;
   // Se marca cuando el run llega a un estado terminal (completed/failed/
   // cancelled) para que el cierre del SSE no lo procese dos veces.
   bool _runTerminal = false;
@@ -2737,6 +2738,11 @@ class ActiveChat {
     Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
     _RewriteReservation? rewriteReservation,
   }) async {
+    final pendingCancel = _desktopCancelRecovery;
+    if (pendingCancel != null) {
+      await pendingCancel;
+      if (_disposed) return false;
+    }
     if (desktopCompressionInFlight) {
       throw const TuiGatewayRpcError(
         'prompt.submit',
@@ -4522,6 +4528,164 @@ class ActiveChat {
         code == -32602;
   }
 
+  bool _canRetryDesktopCancel(
+    int expectedEpoch,
+    HermesDesktopGateway gateway,
+  ) =>
+      _isCurrentEpoch(expectedEpoch) &&
+      state == ChatPipelineState.cancelled &&
+      identical(_desktopGateway, gateway);
+
+  void _scheduleDesktopCancelRecovery({
+    required HermesDesktopGateway gateway,
+    required String? runtimeSessionId,
+    required String storedSessionId,
+    required String profile,
+    required String model,
+    required int cancelEpoch,
+  }) {
+    late final Future<void> task;
+    task = _recoverDesktopCancel(
+      gateway: gateway,
+      runtimeSessionId: runtimeSessionId,
+      storedSessionId: storedSessionId,
+      profile: profile,
+      model: model,
+      cancelEpoch: cancelEpoch,
+    );
+    _desktopCancelRecovery = task;
+    unawaited(
+      task.whenComplete(() {
+        if (identical(_desktopCancelRecovery, task)) {
+          _desktopCancelRecovery = null;
+        }
+      }),
+    );
+  }
+
+  Future<void> _recoverDesktopCancel({
+    required HermesDesktopGateway gateway,
+    required String? runtimeSessionId,
+    required String storedSessionId,
+    required String profile,
+    required String model,
+    required int cancelEpoch,
+  }) async {
+    final epochInvalidated = _turnEpochInvalidated.future;
+    final delays = _desktopRecoveryBackoff;
+    var attempt = runtimeSessionId == null ? 1 : 0;
+    var targetRuntimeId = runtimeSessionId;
+    while (_canRetryDesktopCancel(cancelEpoch, gateway)) {
+      if (attempt > 0 &&
+          gateway is! HermesDesktopSessionLifecycleGateway &&
+          gateway is! HermesDesktopRecoverySessionLifecycleGateway) {
+        // El contrato legacy resumeSession puede crear si el stored id falta.
+        // Una cancelación nunca debe generar una sesión nueva.
+        return;
+      }
+      final delay = delays[attempt.clamp(0, delays.length - 1)];
+      if (attempt > 0 && delay > Duration.zero) {
+        final elapsed = await _waitForTerminalReconcileDelay(
+          delay,
+          epochInvalidated,
+        );
+        if (!elapsed || !_canRetryDesktopCancel(cancelEpoch, gateway)) return;
+      }
+      Completer<void>? interruptDrain;
+      var interruptAcknowledged = false;
+      var runtimeRetired = false;
+      try {
+        if (attempt > 0) {
+          final connected = await _desktopRecoveryOperationBeforeDeadline(
+            gateway.connect().then((_) => true),
+            epochInvalidated,
+          );
+          if (connected == null ||
+              !_canRetryDesktopCancel(cancelEpoch, gateway)) {
+            if (!_canRetryDesktopCancel(cancelEpoch, gateway)) return;
+            attempt++;
+            continue;
+          }
+          final binding = await _desktopRecoveryOperationBeforeDeadline(
+            _resumeDesktopSessionForRecovery(
+              gateway,
+              storedSessionId,
+              profile: profile,
+              legacyModel: model,
+              deferRuntimeCommit: true,
+            ),
+            epochInvalidated,
+          );
+          if (binding == null ||
+              !_canRetryDesktopCancel(cancelEpoch, gateway)) {
+            if (!_canRetryDesktopCancel(cancelEpoch, gateway)) return;
+            attempt++;
+            continue;
+          }
+          targetRuntimeId = binding.runtimeSessionId;
+          _commitDesktopRecoveryRuntime(gateway, targetRuntimeId);
+          _desktopStoredSessionId = binding.storedSessionId;
+          _adoptDesktopRuntime(targetRuntimeId, info: binding.info);
+          _usingDesktopGateway = true;
+        }
+        final interruptRuntimeId = targetRuntimeId;
+        if (interruptRuntimeId == null) {
+          attempt++;
+          continue;
+        }
+        interruptDrain = Completer<void>();
+        _desktopInterruptDrain = interruptDrain;
+        _discardLateInterruptTerminal = true;
+        final interrupted = await _desktopRecoveryOperationBeforeDeadline(
+          gateway.interrupt(interruptRuntimeId).then((_) => true),
+          epochInvalidated,
+        );
+        if (interrupted == null) {
+          if (!_canRetryDesktopCancel(cancelEpoch, gateway)) return;
+        } else {
+          interruptAcknowledged = true;
+          try {
+            await _desktopRecoveryOperationBeforeDeadline(
+              interruptDrain.future.then((_) => true),
+              epochInvalidated,
+            );
+          } on TimeoutException {
+            // El ACK evita reenviar interrupt, pero sin terminal no podemos
+            // distinguir de forma segura un evento viejo del turno siguiente.
+            // Retiramos el runtime: cualquier terminal tardío queda aislado por
+            // session_id y el próximo prompt reanuda el stored id.
+            if (_canRetryDesktopCancel(cancelEpoch, gateway)) {
+              _usingDesktopGateway = false;
+              _retireDesktopRuntime();
+              _discardLateInterruptTerminal = false;
+              runtimeRetired = true;
+            }
+          }
+          return;
+        }
+      } catch (error) {
+        if (!_canRetryDesktopCancel(cancelEpoch, gateway)) return;
+        if (_isTerminalDesktopRecoveryError(error)) {
+          _usingDesktopGateway = false;
+          _retireDesktopRuntime();
+          _discardLateInterruptTerminal = false;
+          runtimeRetired = true;
+          return;
+        }
+      } finally {
+        if (identical(_desktopInterruptDrain, interruptDrain)) {
+          _desktopInterruptDrain = null;
+        }
+        if (!runtimeRetired &&
+            interruptAcknowledged &&
+            interruptDrain?.isCompleted == false) {
+          _discardLateInterruptTerminal = true;
+        }
+      }
+      attempt++;
+    }
+  }
+
   Future<void> _recoverDesktopTurn(
     HermesDesktopGateway gateway,
     int turnEpoch,
@@ -5517,7 +5681,15 @@ class ActiveChat {
             )
             .toList(),
       );
-      if (_turnEpoch != turnEpoch) return false;
+      if (_turnEpoch != turnEpoch) {
+        // El POST pudo crear el run justo después de que el usuario pulsase Stop.
+        // Su id identifica de forma inequívoca el turno viejo: detenlo y nunca lo
+        // adoptes como currentRunId del epoch siguiente.
+        try {
+          await _api.stopRun(runId);
+        } catch (_) {}
+        return false;
+      }
       currentRunId = runId;
       state = ChatPipelineState.waiting;
       // Arranca el foreground service / vigilancia en 2º plano para este run
@@ -7135,6 +7307,11 @@ class ActiveChat {
     if (_cancelling) return;
     _cancelling = true;
     _clearDesktopCompactingIndicator();
+    final activeTurnTransport = _activeTurnDelivery?.current.transport;
+    final hadDesktopTurn =
+        (_usingDesktopGateway && currentRunId == null) ||
+        activeTurnTransport == PreparedTurnTransport.desktop ||
+        _recoveringDesktopTurnEpoch == _turnEpoch;
     // Invalida todos los callbacks del transporte que se está abandonando.
     _advanceTurnEpoch();
     _firstTokenTimer?.cancel();
@@ -7145,9 +7322,15 @@ class ActiveChat {
     final runtimeId = _desktopRuntimeSessionId;
     final desktop = _desktopGateway;
     final runId = currentRunId;
-    if (requestServerStop && _usingDesktopGateway && runtimeId != null) {
-      desktop?.interrupt(runtimeId).catchError((_) {});
-    } else if (requestServerStop && runId != null) {
+    final cancelStoredSessionId = _desktopStoredSessionId ?? serverSessionId;
+    final shouldRecoverDesktopCancel =
+        requestServerStop &&
+        desktop != null &&
+        hadDesktopTurn &&
+        cancelStoredSessionId.isNotEmpty;
+    final cancelProfile = _turnProfile;
+    final cancelModel = _lastModel;
+    if (requestServerStop && !shouldRecoverDesktopCancel && runId != null) {
       _api.stopRun(runId).catchError((_) => <String, dynamic>{});
     }
     // Stop significa detener el trabajo completo solicitado desde el composer,
@@ -7166,6 +7349,16 @@ class ActiveChat {
     _finalizeAcceptedTurnDelivery();
     traceActive = false;
     _cancelling = false;
+    if (shouldRecoverDesktopCancel) {
+      _scheduleDesktopCancelRecovery(
+        gateway: desktop,
+        runtimeSessionId: runtimeId,
+        storedSessionId: cancelStoredSessionId,
+        profile: cancelProfile,
+        model: cancelModel,
+        cancelEpoch: _turnEpoch,
+      );
+    }
     if (!hasPartial &&
         messages.isNotEmpty &&
         messages[0]['role'] == 'assistant') {
