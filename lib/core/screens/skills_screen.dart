@@ -31,9 +31,42 @@ import '../widgets/feature_dependency_notice.dart';
 import 'instance_edit_screen.dart';
 import '../../l10n/app_localizations.dart';
 
+@visibleForTesting
+String resolveSkillsRouteProfile({
+  required String? profileOverride,
+  required String activeProfile,
+}) {
+  final override = profileOverride?.trim() ?? '';
+  return override.isNotEmpty ? override : activeProfile.trim();
+}
+
+@visibleForTesting
+String? skillsInitialLoadProfile({
+  required bool dependenciesResolved,
+  required String? profileOverride,
+  required String activeProfile,
+}) {
+  if (!dependenciesResolved) return null;
+  return resolveSkillsRouteProfile(
+    profileOverride: profileOverride,
+    activeProfile: activeProfile,
+  );
+}
+
+@visibleForTesting
+bool skillsProfileMutationsBlocked(String profile) {
+  final value = profile.trim();
+  return value.isNotEmpty && value != 'default';
+}
+
 class SkillsScreen extends StatefulWidget {
   final SavedConnection connection;
-  const SkillsScreen({required this.connection, super.key});
+  final String? profileOverride;
+  const SkillsScreen({
+    required this.connection,
+    this.profileOverride,
+    super.key,
+  });
 
   @override
   State<SkillsScreen> createState() => _SkillsScreenState();
@@ -54,6 +87,7 @@ class _SkillsScreenState extends State<SkillsScreen>
 
   /// Perfil de agente activo (vacío = por defecto). Escala GET /api/skills.
   String _profile = '';
+  bool _profileResolved = false;
 
   /// Fuente que alimentó la lista: Dashboard (con flag enabled) o Gateway
   /// (/v1/skills, fallback sin estado enabled).
@@ -92,7 +126,6 @@ class _SkillsScreenState extends State<SkillsScreen>
     _tabs = TabController(length: 2, vsync: this);
     _dashClient = DashboardClient.lazy(widget.connection);
     _storeClient = SkillStoreClient();
-    _loadInstalled();
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
     });
@@ -102,10 +135,16 @@ class _SkillsScreenState extends State<SkillsScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final conn = context.findAncestorStateOfType<HermesAppState>()?.connManager;
-    final p = conn?.activeProfileFor(widget.connection.id) ?? '';
-    if (p != _profile) {
+    final activeProfile = conn?.activeProfileFor(widget.connection.id) ?? '';
+    final p = skillsInitialLoadProfile(
+      dependenciesResolved: true,
+      profileOverride: widget.profileOverride,
+      activeProfile: activeProfile,
+    )!;
+    if (!_profileResolved || p != _profile) {
+      _profileResolved = true;
       _profile = p;
-      if (_bridgeProbed) _loadInstalled(); // reescala si cambió el perfil
+      _loadInstalled();
     }
     if (!_bridgeProbed) {
       _bridgeProbed = true;
@@ -221,26 +260,12 @@ class _SkillsScreenState extends State<SkillsScreen>
   /// perfil no-default activo, bloqueamos la edición para no tocar el perfil
   /// equivocado (la lista sí se muestra escalada al perfil).
   bool _blockedByProfile() {
-    if (_profile.isEmpty) return false;
+    if (!skillsProfileMutationsBlocked(_profile)) return false;
     if (mounted) {
       final str = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(str.sklProfileBlockMsg(_profile)),
-          action: SnackBarAction(
-            label: str.sklUseDefault,
-            onPressed: () async {
-              final conn = context
-                  .findAncestorStateOfType<HermesAppState>()
-                  ?.connManager;
-              await conn?.setActiveProfile(widget.connection.id, '');
-              if (!mounted) return;
-              setState(() => _profile = '');
-              _loadInstalled();
-            },
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(str.sklProfileBlockMsg(_profile))));
     }
     return true;
   }

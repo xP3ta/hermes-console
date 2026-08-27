@@ -39,6 +39,8 @@ final class MissionControlCopy {
   String get refresh => _english ? 'Refresh' : 'Actualizar';
   String get overview => _english ? 'Overview' : 'Resumen';
   String get tasks => _english ? 'Tasks' : 'Tareas';
+  String assignedTasks(int count) =>
+      _english ? 'Assigned tasks ($count)' : 'Tareas asignadas ($count)';
   String get activity => _english ? 'Activity' : 'Actividad';
   String get recentActivity =>
       _english ? 'Recent activity' : 'Actividad reciente';

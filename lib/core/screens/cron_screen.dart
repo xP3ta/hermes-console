@@ -49,6 +49,7 @@ class CronScreen extends StatefulWidget {
   @visibleForTesting
   final Future<bool> Function()? verifyHistoryCleanupForTesting;
   final String? initialJobId;
+  final String? profileOverride;
 
   const CronScreen({
     required this.connection,
@@ -56,6 +57,7 @@ class CronScreen extends StatefulWidget {
     @visibleForTesting this.eventStreamOverride,
     @visibleForTesting this.verifyHistoryCleanupForTesting,
     this.initialJobId,
+    this.profileOverride,
     super.key,
   });
 
@@ -142,7 +144,9 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     final manager = context
         .findAncestorStateOfType<HermesAppState>()
         ?.connManager;
-    final profile = manager?.activeProfileFor(widget.connection.id) ?? '';
+    final activeProfile = manager?.activeProfileFor(widget.connection.id) ?? '';
+    final override = widget.profileOverride?.trim() ?? '';
+    final profile = override.isNotEmpty ? override : activeProfile;
     if (!_started || profile != _profile) {
       _started = true;
       _profile = profile;

@@ -882,6 +882,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         height: MediaQuery.sizeOf(sheetContext).height * 0.72,
         child: _AgentDetail(
           agent: agent,
+          assignedTasks: [
+            for (final column
+                in _snapshot?.board?.columns ?? const <KanbanColumn>[])
+              for (final task in column.tasks)
+                if (task.assignee?.trim() == agent.profile.name) task,
+          ],
           copy: MissionControlCopy.of(sheetContext),
           avatarCache: _profileAvatarCache,
           onChat: () {
@@ -896,19 +902,19 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 },
           onRoutines: () {
             Navigator.pop(sheetContext);
-            _openRoutines();
+            _openRoutines(profile: agent.profile.name);
           },
           onTasks: () {
             Navigator.pop(sheetContext);
-            _openTasks();
+            _openTasks(assignee: agent.profile.name);
           },
           onMemory: () {
             Navigator.pop(sheetContext);
-            _openMemory();
+            _openMemory(profile: agent.profile.name);
           },
           onSkills: () {
             Navigator.pop(sheetContext);
-            _openSkills();
+            _openSkills(profile: agent.profile.name);
           },
           onSoul: () {
             Navigator.pop(sheetContext);
@@ -1285,32 +1291,35 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
-  Future<void> _openTasks() async {
+  Future<void> _openTasks({String? assignee}) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => TasksScreen(connection: widget.connection),
+        builder: (_) => TasksScreen(
+          connection: widget.connection,
+          initialAssignee: assignee,
+        ),
       ),
     );
   }
 
-  // Las rutinas/memoria/skills/SOUL ya resuelven su contexto (profile activo)
-  // y su modo solo lectura. La ficha del bot enlaza a esas superficies
-  // existentes sin crear filtros nuevos.
-  void _openRoutines() => Navigator.of(context).push(
+  void _openRoutines({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => CronScreen(connection: widget.connection),
+      builder: (_) =>
+          CronScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 
-  void _openMemory() => Navigator.of(context).push(
+  void _openMemory({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => MemoryScreen(connection: widget.connection),
+      builder: (_) =>
+          MemoryScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 
-  void _openSkills() => Navigator.of(context).push(
+  void _openSkills({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => SkillsScreen(connection: widget.connection),
+      builder: (_) =>
+          SkillsScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 
@@ -3555,13 +3564,17 @@ class _BotRow extends StatelessWidget {
     final displayName = profile.botTitle ?? profile.name;
     final hasLiveStatus = agent.status != MissionAgentStatus.idle;
     final preview = pinnedChat?.preview.trim() ?? '';
+    final currentTaskTitle = agent.currentTask?.title.trim() ?? '';
     final subtitle = [
       if (displayName != profile.name) '@${profile.name}',
-      preview.isNotEmpty
-          ? preview
-          : hasLiveStatus
-          ? copy.status(agent.status.name)
-          : copy.botChat,
+      if (hasLiveStatus && currentTaskTitle.isNotEmpty)
+        '${copy.status(agent.status.name)} · $currentTaskTitle'
+      else if (preview.isNotEmpty)
+        preview
+      else if (hasLiveStatus)
+        copy.status(agent.status.name)
+      else
+        copy.botChat,
     ].join(' · ');
     return Semantics(
       container: true,
@@ -3570,7 +3583,7 @@ class _BotRow extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           key: ValueKey('mission-bot-${profile.name}'),
-          onTap: onOpen,
+          onTap: onDetails,
           onLongPress: onDetails,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
@@ -3676,7 +3689,21 @@ class _BotRow extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (preview.isNotEmpty)
+                if (hasLiveStatus)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 92),
+                    child: Text(
+                      copy.status(agent.status.name),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _statusColor(context, agent.status),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  )
+                else if (preview.isNotEmpty)
                   Padding(
                     padding: const EdgeInsetsDirectional.only(start: 8),
                     child: Text(
@@ -3689,20 +3716,6 @@ class _BotRow extends StatelessWidget {
                         color: colors.textDisabled,
                         fontSize: 11,
                         fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  )
-                else if (hasLiveStatus)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 92),
-                    child: Text(
-                      copy.status(agent.status.name),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _statusColor(context, agent.status),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
@@ -4533,6 +4546,7 @@ class _OrganizationEditorState extends State<_OrganizationEditor> {
 /// organización del plugin oficial Hermes Bot Mode.
 class _AgentDetail extends StatelessWidget {
   final MissionAgent agent;
+  final List<KanbanTask> assignedTasks;
   final MissionControlCopy copy;
   final MissionProfileAvatarCache? avatarCache;
   final VoidCallback onChat;
@@ -4547,6 +4561,7 @@ class _AgentDetail extends StatelessWidget {
 
   const _AgentDetail({
     required this.agent,
+    required this.assignedTasks,
     required this.copy,
     required this.avatarCache,
     required this.onChat,
@@ -4619,13 +4634,23 @@ class _AgentDetail extends StatelessWidget {
           label: copy.modelLabel,
           value: model.isEmpty ? copy.modelUnavailable : model,
         ),
-        if (agent.currentTask != null)
-          _DetailLine(label: copy.tasks, value: agent.currentTask!.title),
         if (agent.currentSession != null)
           _DetailLine(
             label: copy.recentSessions,
             value: agent.currentSession!.displayTitle,
           ),
+        if (assignedTasks.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(
+            copy.assignedTasks(assignedTasks.length),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          for (final task in assignedTasks)
+            _DetailLine(label: task.status, value: task.title),
+        ],
         const SizedBox(height: 12),
         _UsageCard(usage: agent.usage, copy: copy),
         const SizedBox(height: 16),

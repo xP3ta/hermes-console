@@ -2463,15 +2463,21 @@ class DashboardClient {
     return _decodeMapResponse(res);
   }
 
-  Future<MemoryInfo> getMemoryInfo({bool retried = false}) async {
+  Future<MemoryInfo> getMemoryInfo({
+    String? profile,
+    bool retried = false,
+  }) async {
     final headers = await _authHeaders();
     final res = await _http
-        .get(Uri.parse('$_baseUrl/api/memory'), headers: headers)
+        .get(
+          Uri.parse('$_baseUrl/api/memory${_profileQuery(profile)}'),
+          headers: headers,
+        )
         .timeout(_kTimeout);
     _ingestSetCookie(res);
     if (res.statusCode == 401 && !retried) {
       _resetSession();
-      return getMemoryInfo(retried: true);
+      return getMemoryInfo(profile: profile, retried: true);
     }
     if (res.statusCode != 200) {
       throw DashboardHttpException(res.statusCode, body: res.body);

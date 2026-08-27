@@ -219,11 +219,13 @@ void main() {
             useHttps: true,
           ),
           clientOverride: client,
+          profileOverride: 'research',
         ),
       ),
     );
     await tester.pumpAndSettle();
 
+    expect(requestedProfiles.first, 'research');
     expect(find.byType(FloatingActionButton), findsOneWidget);
     expect(find.byType(PopupMenuButton<String>), findsNWidgets(2));
     expect(

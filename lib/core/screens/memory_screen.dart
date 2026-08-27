@@ -29,7 +29,12 @@ import 'instance_edit_screen.dart';
 
 class MemoryScreen extends StatefulWidget {
   final SavedConnection connection;
-  const MemoryScreen({required this.connection, super.key});
+  final String? profileOverride;
+  const MemoryScreen({
+    required this.connection,
+    this.profileOverride,
+    super.key,
+  });
 
   @override
   State<MemoryScreen> createState() => _MemoryScreenState();
@@ -62,8 +67,10 @@ class _MemoryScreenState extends State<MemoryScreen> {
     });
   }
 
+  String get _profile => widget.profileOverride?.trim() ?? '';
+
   bool _hasDraft(String name) =>
-      _drafts?.exists(widget.connection.id, name) ?? false;
+      _drafts?.exists(widget.connection.id, name, profile: _profile) ?? false;
 
   Future<void> _openDraft(String name) async {
     await Navigator.push(
@@ -72,6 +79,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
         builder: (_) => MemoryDraftScreen(
           connectionId: widget.connection.id,
           fileName: name,
+          profile: _profile,
         ),
       ),
     );
@@ -92,7 +100,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
       _dependencyFailure = DashboardDependencyFailure.other;
     });
     try {
-      final info = await _client.getMemoryInfo();
+      final info = await _client.getMemoryInfo(profile: _profile);
       if (!mounted) return;
       setState(() {
         _info = info;
@@ -210,7 +218,12 @@ class _MemoryScreenState extends State<MemoryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(Strings.of(context).memTitle),
-            if (_info != null)
+            if (_profile.isNotEmpty)
+              Text(
+                '@$_profile',
+                style: TextStyle(fontSize: 11, color: colors.accent),
+              )
+            else if (_info != null)
               Text(
                 '${_info!.configuredCount} / ${_info!.providers.length} configuradas',
                 style: TextStyle(fontSize: 11, color: colors.textSecondary),

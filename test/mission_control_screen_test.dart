@@ -311,6 +311,8 @@ Future<void> _openAgentDetail(WidgetTester tester, String profile) async {
 Future<void> _openBotChat(WidgetTester tester, String profile) async {
   await tester.tap(find.byKey(ValueKey('mission-bot-$profile')));
   await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
+  await tester.pumpAndSettle();
 }
 
 /// El formulario de creación es más alto que la ventana de test: los
@@ -472,7 +474,9 @@ void main() {
     expect(opened!.source, 'bot-mode');
   });
 
-  testWidgets('bot row opens the pinned Bot Chat in one tap', (tester) async {
+  testWidgets('bot row opens work detail and chat stays explicit', (
+    tester,
+  ) async {
     final manager = await _manager();
     Session? opened;
     await tester.pumpWidget(
@@ -485,11 +489,120 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('mission-bots')), findsOneWidget);
-    await _openBotChat(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
+    await tester.pumpAndSettle();
 
-    expect(opened, isNotNull);
+    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
+    expect(opened, isNull);
+    await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
+    await tester.pumpAndSettle();
     expect(opened?.profile, 'infra');
     expect(opened?.title, 'Bot Chat');
+  });
+
+  testWidgets('working bot row prioritizes its task over chat preview', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(
+          profiles: const [AgentProfile(name: 'infra')],
+          sessions: [_session('s-infra', 'infra')],
+          board: const KanbanBoard(
+            columns: [
+              KanbanColumn(
+                name: 'running',
+                tasks: [
+                  KanbanTask(
+                    id: 'task-live',
+                    title: 'Desplegar el gateway',
+                    body: '',
+                    status: 'running',
+                    assignee: 'infra',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final row = find.byKey(const ValueKey('mission-bot-infra'));
+    expect(
+      find.descendant(of: row, matching: find.textContaining('Desplegar')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: row, matching: find.text('Recent work')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('bot detail lists every assigned task', (tester) async {
+    final manager = await _manager();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(
+          profiles: const [AgentProfile(name: 'infra')],
+          board: const KanbanBoard(
+            columns: [
+              KanbanColumn(
+                name: 'running',
+                tasks: [
+                  KanbanTask(
+                    id: 'task-a',
+                    title: 'Desplegar gateway',
+                    body: '',
+                    status: 'running',
+                    assignee: 'infra',
+                  ),
+                ],
+              ),
+              KanbanColumn(
+                name: 'ready',
+                tasks: [
+                  KanbanTask(
+                    id: 'task-b',
+                    title: 'Revisar backups',
+                    body: '',
+                    status: 'ready',
+                    assignee: 'infra',
+                  ),
+                  KanbanTask(
+                    id: 'task-c',
+                    title: 'Rotar certificados',
+                    body: '',
+                    status: 'ready',
+                    assignee: 'infra',
+                  ),
+                  KanbanTask(
+                    id: 'task-d',
+                    title: 'Documentar recuperación',
+                    body: '',
+                    status: 'ready',
+                    assignee: 'infra',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tareas asignadas (4)'), findsOneWidget);
+    expect(find.text('Desplegar gateway'), findsOneWidget);
+    expect(find.text('Revisar backups'), findsOneWidget);
+    expect(find.text('Rotar certificados'), findsOneWidget);
+    expect(find.text('Documentar recuperación'), findsOneWidget);
   });
 
   testWidgets('bot sheet groups every action around the bot', (tester) async {

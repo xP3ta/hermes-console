@@ -287,6 +287,8 @@ void main() {
     );
 
     await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
     final openedSession = await tester.runAsync(
       () => opened.future.timeout(const Duration(seconds: 1)),
     );

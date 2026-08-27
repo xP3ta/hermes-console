@@ -109,6 +109,7 @@ import '../utils/assistant_suggestions.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
 import '../utils/semantic_markdown.dart';
 import '../utils/streaming_normalizer.dart';
+import '../utils/transport_privacy.dart';
 import 'activity_screen.dart';
 import 'cron_screen.dart';
 import 'extensions_center_screen.dart';
@@ -856,6 +857,10 @@ class ChatScreen extends StatefulWidget {
   attachmentMaterializer;
   @visibleForTesting
   final Future<bool> Function(AttachmentDraft)? attachmentPrivateCopyDeleter;
+  @visibleForTesting
+  final Future<void> Function()? cancelStreamOverride;
+  @visibleForTesting
+  final VoidCallback? sendAttemptObserver;
 
   const ChatScreen({
     required this.connection,
@@ -877,6 +882,8 @@ class ChatScreen extends StatefulWidget {
     this.performanceProbe,
     this.attachmentMaterializer,
     this.attachmentPrivateCopyDeleter,
+    this.cancelStreamOverride,
+    this.sendAttemptObserver,
     super.key,
   });
 
@@ -1005,6 +1012,9 @@ class _ChatScreenState extends State<ChatScreen>
   // Cubre el intervalo previo a ActiveChat.send (aprobación + subida + copia
   // local). Sin este estado, varios taps podían iniciar la misma subida.
   bool _attachmentSubmitting = false;
+  Future<void> _attachmentMutationTail = Future<void>.value();
+  int _attachmentMutationsPending = 0;
+  bool get _attachmentMutationInFlight => _attachmentMutationsPending > 0;
   // Valla de submit desde el primer tap/Enter hasta el ACK de transporte. No
   // sustituye `_sending`: después del ACK el composer vuelve a aceptar texto y
   // Hermes puede tratarlo como steering durante el run actual.
@@ -4639,9 +4649,11 @@ class _ChatScreenState extends State<ChatScreen>
     if (_composerSubmissionInFlight ||
         _roomTaskSubmitting ||
         _attachmentSubmitting ||
+        _attachmentMutationInFlight ||
         _compressingSession) {
       return false;
     }
+    widget.sendAttemptObserver?.call();
     if (mounted) {
       setState(() => _composerSubmissionInFlight = true);
     } else {
@@ -5663,22 +5675,41 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _cancelStream() async {
+    if (_composerSubmissionInFlight) return;
+    if (mounted) {
+      setState(() => _composerSubmissionInFlight = true);
+    } else {
+      _composerSubmissionInFlight = true;
+    }
+    var cancelled = false;
     // La cancelación no se confirma visualmente hasta que el tombstone cifrado
     // queda durable; así un cierre inmediato no puede resucitar la respuesta.
     try {
-      await _chat.cancel();
+      final override = widget.cancelStreamOverride;
+      if (override != null) {
+        await override();
+      } else {
+        await _chat.cancel();
+      }
+      cancelled = true;
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No se pudo guardar Stop de forma segura. Reinténtalo.',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo guardar Stop de forma segura. Reinténtalo.',
+            ),
           ),
-        ),
-      );
-      return;
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _composerSubmissionInFlight = false);
+      } else {
+        _composerSubmissionInFlight = false;
+      }
     }
-    if (!mounted) return;
+    if (!cancelled || !mounted) return;
     setState(() {});
     // Reset to idle after a moment
     Future.delayed(const Duration(milliseconds: 1200), () {
@@ -7181,7 +7212,114 @@ class _ChatScreenState extends State<ChatScreen>
     drafts.clear();
   }
 
-  Future<void> _pickImage([ImageSource source = ImageSource.gallery]) async {
+  Future<void> _serializeAttachmentMutation(Future<void> Function() operation) {
+    _attachmentMutationsPending++;
+    if (mounted && _attachmentMutationsPending == 1) setState(() {});
+    final run = _attachmentMutationTail.then((_) => operation());
+    final completed = run.whenComplete(() {
+      _attachmentMutationsPending--;
+      if (mounted && _attachmentMutationsPending == 0) setState(() {});
+    });
+    _attachmentMutationTail = completed.catchError((Object _) {});
+    return completed;
+  }
+
+  Future<void> _insertKeyboardContent(KeyboardInsertedContent content) =>
+      _serializeAttachmentMutation(() => _insertKeyboardContentNow(content));
+
+  Future<void> _insertKeyboardContentNow(
+    KeyboardInsertedContent content,
+  ) async {
+    if (_roomTaskMutationLocked || _attachmentSubmitting) return;
+    final bytes = content.data;
+    if (bytes == null || bytes.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
+          ),
+        );
+      }
+      return;
+    }
+    final currentImages = _pendingAttachments
+        .where((item) => item.isImage)
+        .length;
+    final currentBatchBytes = _pendingAttachments.fold<int>(
+      0,
+      (sum, item) => sum + item.sizeBytes,
+    );
+    if (currentImages >= _maxPendingImages ||
+        pendingAttachmentLimitViolation(
+              sizeBytes: bytes.length,
+              itemLimit: AttachmentUploader.maxBytes,
+              currentBatchBytes: currentBatchBytes,
+            ) !=
+            null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
+          ),
+        );
+      }
+      return;
+    }
+    final digest = sha256.convert(bytes).toString();
+    if ((await _knownAttachmentDigests()).contains(digest)) return;
+
+    final extension = switch (content.mimeType.toLowerCase()) {
+      'image/jpeg' => 'jpg',
+      'image/gif' => 'gif',
+      'image/webp' => 'webp',
+      _ => 'png',
+    };
+    final source = File(
+      '${Directory.systemTemp.path}/hermes-ime-${const Uuid().v4()}.$extension',
+    );
+    AttachmentDraft? persisted;
+    try {
+      await source.writeAsBytes(bytes, flush: true);
+      persisted = await _materializeAttachment(
+        AttachmentDraft(
+          localId: const Uuid().v4(),
+          type: AttachmentType.image,
+          name: 'pasted-image.$extension',
+          mimeType: content.mimeType,
+          sizeBytes: bytes.length,
+          localPath: source.path,
+        ),
+      );
+      if (persisted == null || !mounted || _roomTaskMutationLocked) {
+        if (persisted != null) await _deletePrivateAttachmentCopy(persisted);
+        return;
+      }
+      setState(() {
+        _pendingAttachments.add(persisted!);
+        _invalidatePreparedRoomTaskForMutation();
+      });
+      _scheduleDraftSave();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
+          ),
+        );
+      }
+    } finally {
+      if (persisted?.localPath != source.path) {
+        try {
+          if (await source.exists()) await source.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> _pickImage([ImageSource source = ImageSource.gallery]) =>
+      _serializeAttachmentMutation(() => _pickImageNow(source));
+
+  Future<void> _pickImageNow(ImageSource source) async {
     if (_roomTaskMutationLocked || _imagePickerOpen || _attachmentSubmitting) {
       return;
     }
@@ -7344,7 +7482,10 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _pickDocument() async {
+  Future<void> _pickDocument() =>
+      _serializeAttachmentMutation(_pickDocumentNow);
+
+  Future<void> _pickDocumentNow() async {
     if (_roomTaskMutationLocked ||
         _documentPickerOpen ||
         _attachmentSubmitting) {
@@ -9833,7 +9974,13 @@ class _ChatScreenState extends State<ChatScreen>
       );
     }
 
-    if (_sending && !_nothingToSend) {
+    final hasDraft = !_nothingToSend;
+    final dedicatedStopVisible = _sending && hasDraft;
+    if (shouldShowDictationStreamStop(
+      sending: _sending,
+      hasDraft: hasDraft,
+      dedicatedStopVisible: dedicatedStopVisible,
+    )) {
       return HermesTactileAction(
         key: const ValueKey('stop-stream'),
         icon: Icons.stop_circle_outlined,
@@ -9933,7 +10080,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             )
           : KeyedSubtree(
-              key: const ValueKey('send'),
+              key: ValueKey(_sending && _nothingToSend ? 'stop' : 'send'),
               child: _SendButton(
                 busy:
                     _composerSubmissionInFlight ||
@@ -9948,6 +10095,8 @@ class _ChatScreenState extends State<ChatScreen>
                     !_roomTaskSubmitting &&
                     !_attachmentSubmitting &&
                     !_compressingSession &&
+                    (!_attachmentMutationInFlight ||
+                        (_sending && _nothingToSend)) &&
                     (_sending || !_nothingToSend),
                 onSend: _sendMessage,
                 onStop: _cancelStream,
@@ -10010,10 +10159,12 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       );
     }
-    final interactive =
+    // Preparar el siguiente turno (texto, pegar o adjuntos) debe seguir siendo
+    // posible mientras Hermes responde. Solo se cierra el `+` durante estados
+    // locales que podrían mezclar el lote que se está enviando o subiendo.
+    final attachmentInteractive =
         !_loading &&
         !_composerSubmissionInFlight &&
-        !_sending &&
         !_roomTaskMutationLocked &&
         !_attachmentSubmitting &&
         !_compressingSession;
@@ -10115,7 +10266,7 @@ class _ChatScreenState extends State<ChatScreen>
                       semanticLabel: Strings.of(context).chaAttachTooltip,
                       onSelected: (source) =>
                           unawaited(_selectAttachmentSource(source)),
-                      enabled: interactive,
+                      enabled: attachmentInteractive,
                     ),
                   if (_isRecording) _buildDictationCancelAction(colors),
                   Expanded(
@@ -10173,6 +10324,18 @@ class _ChatScreenState extends State<ChatScreen>
                               maxLines: compactIme ? 2 : 4,
                               textCapitalization: TextCapitalization.sentences,
                               keyboardType: TextInputType.multiline,
+                              contentInsertionConfiguration:
+                                  ContentInsertionConfiguration(
+                                    allowedMimeTypes: const [
+                                      'image/png',
+                                      'image/jpeg',
+                                      'image/gif',
+                                      'image/webp',
+                                    ],
+                                    onContentInserted: (content) => unawaited(
+                                      _insertKeyboardContent(content),
+                                    ),
+                                  ),
                               textInputAction: TextInputAction.send,
                               enabled:
                                   !_loading &&
@@ -10215,6 +10378,32 @@ class _ChatScreenState extends State<ChatScreen>
                     dictationInteractive: dictationInteractive,
                   ),
                   if (_isRecording) _buildDictationSendAction(colors),
+                  if (!_isRecording && _sending && !_nothingToSend) ...[
+                    const SizedBox(width: 2),
+                    SizedBox.square(
+                      dimension: 48,
+                      child: Center(
+                        child: KeyedSubtree(
+                          key: const ValueKey('stop'),
+                          child: _SendButton(
+                            busy:
+                                _composerSubmissionInFlight ||
+                                _roomTaskSubmitting ||
+                                _attachmentSubmitting ||
+                                _compressingSession,
+                            mode: _SendMode.stop,
+                            enabled:
+                                !_composerSubmissionInFlight &&
+                                !_roomTaskSubmitting &&
+                                !_attachmentSubmitting &&
+                                !_compressingSession,
+                            onSend: _sendMessage,
+                            onStop: _cancelStream,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   if (!_isRecording) ...[
                     const SizedBox(width: 2),
                     SizedBox.square(
@@ -12493,7 +12682,7 @@ class _AssistantMessageWithMark extends StatelessWidget {
 
 /// Modo del botón principal del composer.
 /// - [send]: envío normal (idle).
-/// - [stop]: el agente responde y el campo está vacío → detiene el run.
+/// - [stop]: el agente responde; el borrador del turno siguiente no sustituye Stop.
 enum _SendMode { send, stop }
 
 class _SendButton extends StatefulWidget {
@@ -13570,6 +13759,32 @@ List<Widget> buildAssistantAnswerBlocks(
 String prepareAssistantAnswerStructure(String answer) =>
     enhanceCommandBlocks(tidyAssistantMarkdown(flattenInlineHtml(answer)));
 
+@visibleForTesting
+bool shouldShowDictationStreamStop({
+  required bool sending,
+  required bool hasDraft,
+  required bool dedicatedStopVisible,
+}) => sending && hasDraft && !dedicatedStopVisible;
+
+@visibleForTesting
+void validateRemoteChatImageTransport(Uri uri) {
+  TransportPrivacy.requireAllowed(uri.toString());
+}
+
+@visibleForTesting
+Uri validateRemoteChatImageRedirect(Uri current, String location) {
+  final target = current.resolve(location);
+  validateRemoteChatImageTransport(target);
+  if (target.origin != current.origin) {
+    throw ArgumentError.value(
+      target,
+      'location',
+      'Redirect cross-origin no permitido',
+    );
+  }
+  return target;
+}
+
 /// Imagen incrustada en una respuesta del agente. Las imágenes remotas
 /// (`http`/`https`) NO se cargan solas — cargarlas automáticamente sería un
 /// beacon de IP hacia el host que las sirve, disparado por texto que puede
@@ -13612,43 +13827,64 @@ class _GatedChatImageState extends State<_GatedChatImage> {
       _loading = true;
       _loadError = null;
     });
-    final client = http.Client();
     try {
-      final request = http.Request('GET', widget.uri);
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('HTTP ${response.statusCode}');
-      }
-      final type = (response.headers['content-type'] ?? '').toLowerCase();
-      if (!type.startsWith('image/')) {
-        throw const FormatException('The server did not return an image');
-      }
-      final declared = response.contentLength;
-      if (declared != null && declared > _maxRemoteImageBytes) {
-        throw const FormatException('Imagen demasiado grande');
-      }
-      final builder = BytesBuilder(copy: false);
-      await for (final chunk in response.stream.timeout(
-        const Duration(seconds: 15),
-      )) {
-        if (builder.length + chunk.length > _maxRemoteImageBytes) {
+      final client = http.Client();
+      try {
+        var current = widget.uri;
+        http.StreamedResponse? response;
+        for (var redirects = 0; redirects <= 5; redirects++) {
+          validateRemoteChatImageTransport(current);
+          final request = http.Request('GET', current)..followRedirects = false;
+          final candidate = await client
+              .send(request)
+              .timeout(const Duration(seconds: 15));
+          if (!candidate.isRedirect) {
+            response = candidate;
+            break;
+          }
+          final location = candidate.headers['location'];
+          await candidate.stream.listen((_) {}).cancel();
+          if (location == null || location.trim().isEmpty || redirects == 5) {
+            throw const HttpException('Redirect de imagen no permitido');
+          }
+          current = validateRemoteChatImageRedirect(current, location);
+        }
+        if (response == null) {
+          throw const HttpException('Demasiados redirects de imagen');
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw HttpException('HTTP ${response.statusCode}');
+        }
+        final type = (response.headers['content-type'] ?? '').toLowerCase();
+        if (!type.startsWith('image/')) {
+          throw const FormatException('The server did not return an image');
+        }
+        final declared = response.contentLength;
+        if (declared != null && declared > _maxRemoteImageBytes) {
           throw const FormatException('Imagen demasiado grande');
         }
-        builder.add(chunk);
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in response.stream.timeout(
+          const Duration(seconds: 15),
+        )) {
+          if (builder.length + chunk.length > _maxRemoteImageBytes) {
+            throw const FormatException('Imagen demasiado grande');
+          }
+          builder.add(chunk);
+        }
+        final bytes = builder.takeBytes();
+        if (!_hasSupportedImageMagic(bytes)) {
+          throw const FormatException('Formato de imagen no permitido');
+        }
+        if (!mounted) return;
+        setState(() => _bytes = bytes);
+      } finally {
+        client.close();
       }
-      final bytes = builder.takeBytes();
-      if (!_hasSupportedImageMagic(bytes)) {
-        throw const FormatException('Formato de imagen no permitido');
-      }
-      if (!mounted) return;
-      setState(() => _bytes = bytes);
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = error);
     } finally {
-      client.close();
       if (mounted) setState(() => _loading = false);
     }
   }

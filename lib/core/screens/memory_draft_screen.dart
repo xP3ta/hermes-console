@@ -28,10 +28,12 @@ import '../widgets/hermes_app_bar.dart';
 class MemoryDraftScreen extends StatefulWidget {
   final String connectionId;
   final String fileName; // sin extensión, p.ej. "memory" / "user"
+  final String? profile;
 
   const MemoryDraftScreen({
     required this.connectionId,
     required this.fileName,
+    this.profile,
     super.key,
   });
 
@@ -68,14 +70,21 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
     return 'memory';
   }
 
+  bool get _hasSecondaryProfileScope {
+    final profile = widget.profile?.trim() ?? '';
+    return profile.isNotEmpty && profile != 'default';
+  }
+
   bool get _bridgeCanWrite {
+    if (_hasSecondaryProfileScope) return false;
     final c = _bridge.caps;
     if (!_bridge.connected || c.readOnly) return false;
     // `soul` usa soul_write; persona/user/memory usan memory_write.
     return _bridgeTarget == 'soul' ? c.soulWrite : c.memoryWrite;
   }
 
-  bool get _bridgeCanRead => _bridge.connected && _bridge.caps.fileRead;
+  bool get _bridgeCanRead =>
+      !_hasSecondaryProfileScope && _bridge.connected && _bridge.caps.fileRead;
 
   @override
   void initState() {
@@ -146,7 +155,10 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: Text(s.memReload, style: TextStyle(color: colors.onAccent)),
+              child: Text(
+                s.memReload,
+                style: TextStyle(color: colors.onAccent),
+              ),
             ),
           ],
         ),
@@ -166,22 +178,28 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
         final s = Strings.of(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(exists
-                ? s.memLoadedFromServer('${res['size']}')
-                : s.memFileNotOnServer),
+            content: Text(
+              exists
+                  ? s.memLoadedFromServer('${res['size']}')
+                  : s.memFileNotOnServer,
+            ),
           ),
         );
       }
     } on BridgeException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).memBridgeError(e.message))),
+          SnackBar(
+            content: Text(Strings.of(context).memBridgeError(e.message)),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).memLoadFailed(e.toString()))),
+          SnackBar(
+            content: Text(Strings.of(context).memLoadFailed(e.toString())),
+          ),
         );
       }
     } finally {
@@ -218,11 +236,15 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
       final s = Strings.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_bridge.connected
-              ? s.memBridgeConnectedSnack(_bridgeCanWrite ? s.memYes : s.memNo)
-              : _bridge.running
-              ? s.memBridgeInvalidToken
-              : s.memBridgeConnFailed(_bridge.url)),
+          content: Text(
+            _bridge.connected
+                ? s.memBridgeConnectedSnack(
+                    _bridgeCanWrite ? s.memYes : s.memNo,
+                  )
+                : _bridge.running
+                ? s.memBridgeInvalidToken
+                : s.memBridgeConnFailed(_bridge.url),
+          ),
         ),
       );
     }
@@ -272,30 +294,33 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
 
       // 3) aplicar de verdad (con backup en el servidor).
       setState(() => _applying = true);
-      final res = await client.write(
-        file: _bridgeTarget,
-        content: _ctrl.text,
-      );
+      final res = await client.write(file: _bridgeTarget, content: _ctrl.text);
       if (!mounted) return;
       final backup = res['backup_id'];
       final s = Strings.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(backup != null
-              ? s.memAppliedWithBackup(backup.toString())
-              : s.memApplied),
+          content: Text(
+            backup != null
+                ? s.memAppliedWithBackup(backup.toString())
+                : s.memApplied,
+          ),
         ),
       );
     } on BridgeException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).memBridgeError(e.message))),
+          SnackBar(
+            content: Text(Strings.of(context).memBridgeError(e.message)),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).memApplyFailed(e.toString()))),
+          SnackBar(
+            content: Text(Strings.of(context).memApplyFailed(e.toString())),
+          ),
         );
       }
     } finally {
@@ -316,10 +341,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
           child: SingleChildScrollView(
             child: Text(
               diff.isEmpty ? s.memNoDiff : diff,
-              style: TextStyle(
-                fontSize: 11.5,
-                color: colors.textSecondary,
-              ),
+              style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
             ),
           ),
         ),
@@ -343,8 +365,18 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
     if (!mounted) return;
     setState(() {
       _store = store;
-      _ctrl.text = store.read(widget.connectionId, widget.fileName) ?? '';
-      _updatedAt = store.updatedAt(widget.connectionId, widget.fileName);
+      _ctrl.text =
+          store.read(
+            widget.connectionId,
+            widget.fileName,
+            profile: widget.profile,
+          ) ??
+          '';
+      _updatedAt = store.updatedAt(
+        widget.connectionId,
+        widget.fileName,
+        profile: widget.profile,
+      );
       _loaded = true;
     });
     _ctrl.addListener(_scheduleSave);
@@ -360,19 +392,28 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
   Future<void> _saveNow() async {
     final store = _store;
     if (store == null) return;
-    await store.write(widget.connectionId, widget.fileName, _ctrl.text);
+    await store.write(
+      widget.connectionId,
+      widget.fileName,
+      _ctrl.text,
+      profile: widget.profile,
+    );
     if (!mounted) return;
     setState(
-      () => _updatedAt = store.updatedAt(widget.connectionId, widget.fileName),
+      () => _updatedAt = store.updatedAt(
+        widget.connectionId,
+        widget.fileName,
+        profile: widget.profile,
+      ),
     );
   }
 
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: _ctrl.text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).memCopied)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(Strings.of(context).memCopied)));
   }
 
   Future<void> _export() async {
@@ -383,25 +424,25 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
           .replaceAll(':', '-')
           .split('.')
           .first;
-      final file = File(
-        '${dir.path}/memory_draft_${widget.fileName}_$ts.md',
-      );
+      final file = File('${dir.path}/memory_draft_${widget.fileName}_$ts.md');
       await file.writeAsString(_ctrl.text);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             Strings.of(context).memExported(file.path),
-            style: const TextStyle( fontSize: 11),
+            style: const TextStyle(fontSize: 11),
           ),
           duration: const Duration(seconds: 4),
         ),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(Strings.of(context).memExportFailed(e.toString()))));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Strings.of(context).memExportFailed(e.toString())),
+        ),
+      );
     }
   }
 
@@ -428,7 +469,11 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
     if (confirm != true || !mounted) return;
     _saveDebounce?.cancel();
     _ctrl.removeListener(_scheduleSave);
-    await _store?.delete(widget.connectionId, widget.fileName);
+    await _store?.delete(
+      widget.connectionId,
+      widget.fileName,
+      profile: widget.profile,
+    );
     if (!mounted) return;
     Navigator.pop(context);
   }
@@ -450,30 +495,21 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
             icon: Icons.cloud_done_outlined,
           );
         }
-        return (
-          text: s.memBridgeConnectedRO,
-          icon: Icons.cloud_done_outlined,
-        );
+        return (text: s.memBridgeConnectedRO, icon: Icons.cloud_done_outlined);
       case BridgeStatus.needsToken:
         return (
           text: s.memBridgeNeedsToken(_bridge.url),
           icon: Icons.cloud_queue,
         );
       case BridgeStatus.authFailed:
-        return (
-          text: s.memBridgeAuthFailed,
-          icon: Icons.cloud_off_outlined,
-        );
+        return (text: s.memBridgeAuthFailed, icon: Icons.cloud_off_outlined);
       case BridgeStatus.unreachable:
         return (
           text: s.memBridgeUnreachable(_bridge.url),
           icon: Icons.cloud_off_outlined,
         );
       case BridgeStatus.notConfigured:
-        return (
-          text: s.memBridgeNotConfigured,
-          icon: Icons.cloud_off_outlined,
-        );
+        return (text: s.memBridgeNotConfigured, icon: Icons.cloud_off_outlined);
     }
   }
 
@@ -500,9 +536,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
               decoration: BoxDecoration(
                 color: colors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: colors.accent.withValues(alpha: 0.4),
-                ),
+                border: Border.all(color: colors.accent.withValues(alpha: 0.4)),
               ),
               child: Text(
                 _bridgeCanWrite ? s.memBadgeBridge : s.memBadgeDraft,
@@ -575,7 +609,11 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                 Container(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
                   decoration: BoxDecoration(
-                    border: Border(top: BorderSide(color: colors.divider.withValues(alpha: 0.55))),
+                    border: Border(
+                      top: BorderSide(
+                        color: colors.divider.withValues(alpha: 0.55),
+                      ),
+                    ),
                   ),
                   child: SafeArea(
                     top: false,
@@ -599,7 +637,9 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                               _updatedAt == null
                                   ? s.memUnsaved
                                   : s.memAutosaved(
-                                      TimeOfDay.fromDateTime(_updatedAt!).format(context),
+                                      TimeOfDay.fromDateTime(
+                                        _updatedAt!,
+                                      ).format(context),
                                     ),
                               style: TextStyle(
                                 fontSize: 10,
@@ -629,7 +669,9 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                               ],
                               if (_bridgeCanWrite) ...[
                                 HermesSecondaryButton(
-                                  label: _applying ? s.memButtonApplying : s.memButtonApply,
+                                  label: _applying
+                                      ? s.memButtonApplying
+                                      : s.memButtonApply,
                                   icon: Icons.cloud_upload_outlined,
                                   color: colors.accent,
                                   onTap: _applying ? null : _applyToServer,

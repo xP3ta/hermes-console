@@ -911,6 +911,53 @@ void main() {
     }
   });
 
+  test('dictation no duplica el Stop dedicado del streaming', () {
+    expect(
+      shouldShowDictationStreamStop(
+        sending: true,
+        hasDraft: true,
+        dedicatedStopVisible: true,
+      ),
+      isFalse,
+    );
+  });
+
+  test('imagen inline respeta la frontera de privacidad antes del GET', () {
+    expect(
+      () => validateRemoteChatImageTransport(
+        Uri.parse('http://8.8.8.8/beacon.png'),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => validateRemoteChatImageTransport(
+        Uri.parse('http://127.0.0.1:8642/local.png'),
+      ),
+      returnsNormally,
+    );
+    expect(
+      () => validateRemoteChatImageRedirect(
+        Uri.parse('https://images.example.test/start.png'),
+        'http://8.8.8.8/beacon.png',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => validateRemoteChatImageRedirect(
+        Uri.parse('https://images.example.test/start.png'),
+        'https://cdn.example.test/final.png',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      validateRemoteChatImageRedirect(
+        Uri.parse('https://images.example.test/start.png'),
+        '/final.png',
+      ),
+      Uri.parse('https://images.example.test/final.png'),
+    );
+  });
+
   test('Stop escrito exige Voz, cero adjuntos y composer accesible', () {
     const stop = 'Hermes, stop.';
     expect(
@@ -1141,6 +1188,8 @@ void main() {
     bool preAttach = true,
     Future<AttachmentDraft?> Function(AttachmentDraft)? attachmentMaterializer,
     Future<bool> Function(AttachmentDraft)? attachmentPrivateCopyDeleter,
+    Future<void> Function()? cancelStreamOverride,
+    VoidCallback? sendAttemptObserver,
     MissionRoom? missionRoom,
     MissionRoomStoreContract? missionRoomStore,
     Future<KanbanTask> Function(MissionMentionIntent intent)?
@@ -1252,6 +1301,8 @@ void main() {
           performanceProbe: performanceProbe,
           attachmentMaterializer: attachmentMaterializer,
           attachmentPrivateCopyDeleter: attachmentPrivateCopyDeleter,
+          cancelStreamOverride: cancelStreamOverride,
+          sendAttemptObserver: sendAttemptObserver,
           missionRoom: missionRoom,
           missionRoomStore: missionRoomStore,
           missionRoomTaskCreator: missionRoomTaskCreator,
@@ -1928,6 +1979,245 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(MenuItemButton), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el + sigue disponible mientras el turno está activo', (
+    tester,
+  ) async {
+    await pumpChat(tester, chatState: ChatPipelineState.streaming);
+    final anchor = find.byKey(const ValueKey('composer-add'));
+
+    await tester.tap(anchor);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(MenuItemButton), findsNWidgets(3));
+    expect(find.text('Cámara'), findsOneWidget);
+    expect(find.text('Galería'), findsOneWidget);
+    expect(find.text('Archivos'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Stop permanece visible al preparar borrador durante streaming', (
+    tester,
+  ) async {
+    await pumpChat(tester, chatState: ChatPipelineState.streaming);
+
+    await tester.enterText(
+      find.byType(TextField).last,
+      'BORRADOR_DURANTE_TURNO',
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+    expect(find.byKey(const ValueKey('stop-stream')), findsNothing);
+    expect(find.byKey(const ValueKey('send')), findsOneWidget);
+    expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
+  });
+
+  testWidgets('Stop en vuelo bloquea steering hasta quedar durable', (
+    tester,
+  ) async {
+    final cancelGate = Completer<void>();
+    var cancelCalls = 0;
+    final gateway = _SubmissionGateway();
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.streaming,
+      desktopGateway: gateway,
+      cancelStreamOverride: () async {
+        cancelCalls++;
+        await cancelGate.future;
+      },
+    );
+
+    await tester.enterText(find.byType(TextField).last, 'steering pendiente');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('stop')).last);
+    await tester.pump();
+    expect(cancelCalls, 1);
+
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+
+    expect(gateway.steers, isEmpty);
+    cancelGate.complete();
+    await tester.pump(const Duration(milliseconds: 1300));
+  });
+
+  testWidgets('pegar imagen desde el IME crea un adjunto durante el turno', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('chat-ime-image-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.streaming,
+      attachmentMaterializer: (attachment) async => attachment,
+    );
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(field.contentInsertionConfiguration, isNotNull);
+
+    field.contentInsertionConfiguration!.onContentInserted(
+      KeyboardInsertedContent(
+        mimeType: 'image/png',
+        uri: 'content://keyboard/pasted.png',
+        data: base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+          'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      ),
+    );
+    for (
+      var frame = 0;
+      frame < 30 && find.byType(AttachmentCard).evaluate().isEmpty;
+      frame++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(find.byType(AttachmentCard), findsOneWidget);
+  });
+
+  testWidgets('pegados IME concurrentes se serializan y deduplican', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('chat-ime-race-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    final materializeGate = Completer<void>();
+    var materializations = 0;
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.streaming,
+      attachmentMaterializer: (draft) async {
+        materializations++;
+        await materializeGate.future;
+        return draft;
+      },
+      attachmentPrivateCopyDeleter: (_) async => true,
+    );
+
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    final content = KeyboardInsertedContent(
+      mimeType: 'image/png',
+      uri: '',
+      data: base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+    field.contentInsertionConfiguration!.onContentInserted(content);
+    field.contentInsertionConfiguration!.onContentInserted(content);
+    for (var frame = 0; frame < 30 && materializations == 0; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    for (var frame = 0; frame < 5; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(materializations, 1);
+    materializeGate.complete();
+    for (
+      var frame = 0;
+      frame < 30 && find.byType(AttachmentCard).evaluate().isEmpty;
+      frame++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(find.byType(AttachmentCard), findsOneWidget);
+    expect(materializations, 1);
+  });
+
+  testWidgets('materialización IME en vuelo bloquea Send', (tester) async {
+    final temp = Directory.systemTemp.createTempSync('chat-ime-send-race-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    final materializeGate = Completer<void>();
+    var materializations = 0;
+    final gateway = _SubmissionGateway();
+    var sendAttempts = 0;
+    await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      sendAttemptObserver: () => sendAttempts++,
+      attachmentMaterializer: (draft) async {
+        materializations++;
+        await materializeGate.future;
+        return draft;
+      },
+      attachmentPrivateCopyDeleter: (_) async => true,
+    );
+
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    field.contentInsertionConfiguration!.onContentInserted(
+      KeyboardInsertedContent(
+        mimeType: 'image/png',
+        uri: '',
+        data: base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      ),
+    );
+    for (var frame = 0; frame < 30 && materializations == 0; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    expect(materializations, 1);
+
+    await tester.enterText(find.byType(TextField).last, 'no enviar todavía');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+
+    expect(sendAttempts, 0);
+    expect(gateway.submissions, isEmpty);
+    materializeGate.complete();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
   });
 
   testWidgets(

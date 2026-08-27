@@ -32,6 +32,7 @@ class TasksScreen extends StatefulWidget {
   final Stream<KanbanEvent>? eventStreamOverride;
   final String? initialBoard;
   final String? initialTaskId;
+  final String? initialAssignee;
 
   const TasksScreen({
     required this.connection,
@@ -39,6 +40,7 @@ class TasksScreen extends StatefulWidget {
     this.eventStreamOverride,
     this.initialBoard,
     this.initialTaskId,
+    this.initialAssignee,
     super.key,
   });
 
@@ -53,6 +55,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   String? _error;
   String _searchQuery = '';
   KanbanMobileGroup? _taskFilter;
+  String? _assigneeFilter;
   bool _includeArchived = false;
 
   List<KanbanBoardRef> _boards = const [];
@@ -79,6 +82,10 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _selectedBoard = widget.initialBoard;
+    _assigneeFilter = switch (widget.initialAssignee?.trim()) {
+      final value? when value.isNotEmpty => value,
+      _ => null,
+    };
     WidgetsBinding.instance.addObserver(this);
     _client = widget.clientOverride ?? KanbanClient(widget.connection);
     _load().whenComplete(() {
@@ -154,6 +161,8 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   /// Perfil sugerido por defecto al crear: el del gateway activo, si no el
   /// `default`, si no el primero. Vacío si no hay perfiles (degrada a anotación).
   String _defaultAssignee() {
+    final contextual = widget.initialAssignee?.trim() ?? '';
+    if (contextual.isNotEmpty) return contextual;
     if (_profiles.isEmpty) return '';
     final running = _profiles.where((p) => p.gatewayRunning);
     if (running.isNotEmpty) return running.first.name;
@@ -625,7 +634,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   }
 
   bool get _hasActiveFilters =>
-      _searchQuery.trim().isNotEmpty || _taskFilter != null;
+      _searchQuery.trim().isNotEmpty ||
+      _taskFilter != null ||
+      _assigneeFilter != null;
 
   Future<void> _selectBoard(String slug) async {
     if (slug == _selectedBoard) return;
@@ -756,6 +767,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     setState(() {
       _searchQuery = '';
       _taskFilter = null;
+      _assigneeFilter = null;
       _includeArchived = false;
     });
   }
@@ -856,7 +868,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
           if (_hasActiveFilters) ...[
             _FilterSummary(
               colors: colors,
-              label: _taskFilter == null
+              label: _assigneeFilter != null
+                  ? '@$_assigneeFilter'
+                  : _taskFilter == null
                   ? s.kanbanFilterAll
                   : _filterLabel(s, _taskFilter!),
               query: _searchQuery.trim(),
@@ -914,6 +928,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
 
     for (final col in board.columns) {
       for (final t in col.tasks) {
+        if (_assigneeFilter != null && t.assignee?.trim() != _assigneeFilter) {
+          continue;
+        }
         if (!kanbanTaskMatchesFilter(
           t,
           query: _searchQuery,

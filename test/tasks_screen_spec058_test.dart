@@ -26,6 +26,7 @@ void main() {
     WidgetTester tester, {
     required MockClient httpClient,
     required Stream<KanbanEvent> events,
+    String? initialAssignee,
   }) async {
     tester.view.physicalSize = const Size(900, 1600);
     tester.view.devicePixelRatio = 1;
@@ -45,6 +46,7 @@ void main() {
           connection: connection,
           clientOverride: client,
           eventStreamOverride: events,
+          initialAssignee: initialAssignee,
         ),
       ),
     );
@@ -240,5 +242,70 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('perfil contextual filtra por assignee y puede quitarse', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/plugins/kanban/board') {
+        return http.Response(
+          jsonEncode({
+            'columns': [
+              {
+                'name': 'running',
+                'tasks': [
+                  {
+                    'id': 'infra-task',
+                    'title': 'Infra visible',
+                    'status': 'running',
+                    'assignee': 'infra',
+                  },
+                  {
+                    'id': 'other-task',
+                    'title': 'Other hidden',
+                    'status': 'running',
+                    'assignee': 'other',
+                  },
+                ],
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/api/plugins/kanban/boards') {
+        return http.Response('{}', 404);
+      }
+      if (request.url.path == '/api/plugins/kanban/profiles') {
+        return http.Response(jsonEncode({'profiles': []}), 200);
+      }
+      return http.Response('{}', 404);
+    });
+
+    await pumpScreen(
+      tester,
+      httpClient: client,
+      events: events.stream,
+      initialAssignee: 'infra',
+    );
+
+    expect(
+      find.byKey(const ValueKey('kanban-task-infra-task')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('kanban-task-other-task')), findsNothing);
+    expect(find.text('@infra'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('kanban-clear-filters')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('kanban-task-other-task')),
+      findsOneWidget,
+    );
   });
 }
