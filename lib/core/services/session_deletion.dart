@@ -270,6 +270,7 @@ class ClearConversationsSummary {
 Future<RemoteSessionDeleteSummary> deleteRemoteSessions(
   Iterable<String> sessionIds, {
   required DeleteRemoteSession delete,
+  Future<void> Function(String sessionId)? onDeleted,
 }) async {
   var deleted = 0;
   var rejected = 0;
@@ -280,6 +281,11 @@ Future<RemoteSessionDeleteSummary> deleteRemoteSessions(
     switch (result.status) {
       case RemoteSessionDeleteStatus.deleted:
         deleted++;
+        try {
+          await onDeleted?.call(sessionId);
+        } catch (_) {
+          // El borrado remoto ya es autoridad. El callback encola su cleanup.
+        }
         break;
       case RemoteSessionDeleteStatus.rejected:
         rejected++;
@@ -317,6 +323,7 @@ Future<ClearConversationsSummary> clearConversationsAndLocalState({
   required ClearConnectionConversationState clearDrafts,
   required ClearConnectionConversationState clearTranscripts,
   required ClearConnectionConversationState clearOutbox,
+  Future<void> Function(String sessionId)? onRemoteSessionDeleted,
 }) async {
   RemoteSessionDeleteSummary? remote;
   Object? remoteListError;
@@ -325,6 +332,7 @@ Future<ClearConversationsSummary> clearConversationsAndLocalState({
     remote = await deleteRemoteSessions(
       sessionsSafeForBulkDelete(sessions).map((session) => session.id),
       delete: deleteSession,
+      onDeleted: onRemoteSessionDeleted,
     );
   } catch (error) {
     remoteListError = error;

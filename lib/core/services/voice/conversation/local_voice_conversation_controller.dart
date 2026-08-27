@@ -2414,8 +2414,28 @@ class LocalVoiceConversationController extends ChangeNotifier
     _narration?.silence();
     activeTool = null;
     _notify();
-    unawaited(_stopPlaybackForDrain(playbackToken));
-    chat.cancel();
+    unawaited(_cancelBackendDurably(chat, operation, playbackToken));
+  }
+
+  Future<void> _cancelBackendDurably(
+    ActiveChat chat,
+    int operation,
+    VoiceRuntimeToken? playbackToken,
+  ) async {
+    try {
+      // Ambas operaciones empiezan ya: un audio driver colgado nunca puede
+      // impedir que el tombstone y el Stop del backend avancen.
+      await Future.wait<void>([
+        _stopPlaybackForDrain(playbackToken),
+        chat.cancel(),
+      ]);
+    } catch (_) {
+      if (!_isCurrent(operation)) return;
+      paused = true;
+      note = 'No se pudo guardar Stop de forma segura. Reinténtalo.';
+      _notify();
+      return;
+    }
     if (_isCurrent(operation)) _scheduleListening();
   }
 

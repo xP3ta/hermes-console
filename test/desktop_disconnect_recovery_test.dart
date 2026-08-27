@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -440,6 +441,10 @@ ActiveChat _recoverableChat(
     Duration(seconds: 2),
     Duration(seconds: 4),
   ],
+  List<CancelledTurnTombstone> initialCancelledTurnTombstones = const [],
+  Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
+  void Function(ActiveChatEvent)? onEvent,
+  StoredSessionMessageLoader? storedMessageLoader,
 }) => ActiveChat(
   connection: _connection(id),
   sessionId: 'session-$id',
@@ -458,10 +463,747 @@ ActiveChat _recoverableChat(
   terminalReconcileBudget: terminalReconcileBudget,
   desktopRecoveryAttemptTimeout: desktopRecoveryAttemptTimeout,
   desktopRecoveryBackoff: desktopRecoveryBackoff,
+  initialCancelledTurnTombstones: initialCancelledTurnTombstones,
+  onCancelledTurn: onCancelledTurn,
+  onEvent: onEvent,
+  storedMessageLoader: storedMessageLoader,
 );
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('reconciliar transcript oculta la respuesta del turno detenido', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'QA4931_OFFLINE_CANCEL_OLD',
+          firstUser: true,
+        ),
+      ],
+      incomingNewestFirst: const [
+        {'role': 'assistant', 'content': 'QA4931_OFFLINE_CANCEL_OLD'},
+        {'role': 'user', 'content': 'QA4931_OFFLINE_CANCEL_OLD'},
+      ],
+    );
+
+    expect(projected, [
+      {
+        'role': 'user',
+        'content': 'QA4931_OFFLINE_CANCEL_OLD',
+        '_cancelledUser': true,
+      },
+    ]);
+  });
+
+  test('tombstone distingue prompts repetidos por ancla durable', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'mismo prompt',
+          anchorMessageId: 'anchor-old',
+        ),
+      ],
+      incomingNewestFirst: const [
+        {'id': 'answer-new', 'role': 'assistant', 'content': 'respuesta nueva'},
+        {'id': 'user-new', 'role': 'user', 'content': 'mismo prompt'},
+        {'id': 'answer-old', 'role': 'assistant', 'content': 'respuesta vieja'},
+        {'id': 'user-old', 'role': 'user', 'content': 'mismo prompt'},
+        {
+          'id': 'anchor-old',
+          'role': 'assistant',
+          'content': 'respuesta previa',
+        },
+      ],
+    );
+
+    expect(projected.map((message) => message['content']), [
+      'respuesta nueva',
+      'mismo prompt',
+      'mismo prompt',
+      'respuesta previa',
+    ]);
+    expect(projected[2]['_cancelledUser'], isTrue);
+  });
+
+  test('tombstone ignora filas steer al contar turnos de usuario', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
+      ],
+      incomingNewestFirst: const [
+        {'role': 'assistant', 'content': 'respuesta nueva'},
+        {'role': 'user', 'content': 'turno nuevo'},
+        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
+        {'role': 'user', 'content': 'turno detenido'},
+      ],
+    );
+
+    expect(projected.map((message) => message['content']), [
+      'respuesta nueva',
+      'turno nuevo',
+      'turno detenido',
+    ]);
+    expect(projected.last['_cancelledUser'], isTrue);
+  });
+
+  test('tombstone conserva metadatos user del turno cancelado', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
+      ],
+      incomingNewestFirst: const [
+        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
+        {
+          'role': 'user',
+          'content': 'cambio de modelo',
+          'display_kind': 'model_switch',
+        },
+        {'role': 'user', 'content': 'turno detenido'},
+      ],
+    );
+
+    expect(projected.map((message) => message['content']), [
+      'cambio de modelo',
+      'turno detenido',
+    ]);
+    expect(projected.last['_cancelledUser'], isTrue);
+  });
+
+  test('tombstone conserva tool y artefactos del turno cancelado', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
+      ],
+      incomingNewestFirst: const [
+        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
+        {
+          'role': 'tool',
+          'content': 'resultado estructurado',
+          'call_id': 'call-1',
+        },
+        {
+          'role': 'artifact',
+          'content': 'informe.pdf',
+          'artifact_id': 'artifact-1',
+        },
+        {'role': 'user', 'content': 'turno detenido'},
+      ],
+    );
+
+    expect(projected.map((message) => message['role']), [
+      'tool',
+      'artifact',
+      'user',
+    ]);
+    expect(projected.last['_cancelledUser'], isTrue);
+  });
+
+  test('tombstone durable sobrevive sin mensajes locales', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
+      ],
+      incomingNewestFirst: const [
+        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
+        {'role': 'user', 'content': 'turno detenido'},
+      ],
+    );
+
+    expect(projected.map((message) => message['content']), ['turno detenido']);
+    expect(projected.single['_cancelledUser'], isTrue);
+  });
+
+  test('tombstone no cae por texto sobre una ventana parcial', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'prompt repetido',
+          anchorMessageId: 'missing-anchor',
+        ),
+      ],
+      incomingNewestFirst: const [
+        {'role': 'assistant', 'content': 'respuesta legítima reciente'},
+        {'role': 'user', 'content': 'prompt repetido'},
+      ],
+    );
+
+    expect(projected, isEmpty);
+  });
+
+  test(
+    'loadMessages reaplica tombstone restaurado tras recrear proceso',
+    () async {
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'restore-load',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'turno detenido',
+            anchorMessageId: 'anchor-before',
+          ),
+        ],
+        storedMessageLoader: (_, _) async => const [
+          {
+            'id': 'anchor-before',
+            'role': 'assistant',
+            'content': 'respuesta anterior',
+          },
+          {'id': 'cancelled-user', 'role': 'user', 'content': 'turno detenido'},
+          {
+            'id': 'cancelled-answer',
+            'role': 'assistant',
+            'content': 'respuesta que no debe reaparecer',
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 3);
+
+      expect(chat.messages.map((message) => message['content']), [
+        'turno detenido',
+        'respuesta anterior',
+      ]);
+      expect(chat.messages.first['_cancelledUser'], isTrue);
+    },
+  );
+
+  test('Stop publica un tombstone durable anclado', () async {
+    final recorded = <CancelledTurnTombstone>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'persist-cancel',
+      gateway,
+      onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno que se detiene',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('persist-cancel-1', _NoopOutbox()),
+    );
+    chat.cancel();
+    await _waitUntil(() => recorded.isNotEmpty);
+
+    expect(recorded.single.content, 'turno que se detiene');
+    expect(recorded.single.firstUser, isTrue);
+    expect(recorded.single.anchorMessageId, isNull);
+  });
+
+  test('Stop usa el id durable anterior como ancla', () async {
+    final recorded = <CancelledTurnTombstone>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'persist-anchor',
+      gateway,
+      onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+    );
+    addTearDown(chat.dispose);
+    chat.messages.add({
+      'id': 'durable-before-turn',
+      'role': 'assistant',
+      'content': 'respuesta anterior',
+    });
+
+    await chat.send(
+      fullText: 'turno anclado',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('persist-anchor-1', _NoopOutbox()),
+    );
+    await chat.cancel();
+
+    expect(recorded, hasLength(1));
+    expect(recorded.single.anchorMessageId, 'durable-before-turn');
+    expect(recorded.single.firstUser, isFalse);
+  });
+
+  test('Stop espera confirmación del almacenamiento durable', () async {
+    final gate = Completer<void>();
+    final events = <ActiveChatEvent>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'persist-ack',
+      gateway,
+      onCancelledTurn: (_) => gate.future,
+      onEvent: events.add,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno durable',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('persist-ack-1', _NoopOutbox()),
+    );
+    var completed = false;
+    final cancel = chat.cancel().then((_) => completed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, isFalse);
+    expect(chat.isStreaming, isTrue);
+    expect(chat.hasPendingDurableCancellation, isTrue);
+    expect(events, isNot(contains(ActiveChatEvent.cancelled)));
+    gate.complete();
+    await cancel;
+    expect(completed, isTrue);
+    expect(events, contains(ActiveChatEvent.cancelled));
+  });
+
+  test('Stop sin ancla durable falla cerrado y no confirma', () async {
+    var persisted = 0;
+    final events = <ActiveChatEvent>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'missing-anchor',
+      gateway,
+      onCancelledTurn: (_) async => persisted++,
+      onEvent: events.add,
+    );
+    addTearDown(chat.dispose);
+    chat.messages.add({'role': 'user', 'content': 'turno histórico sin id'});
+
+    await chat.send(
+      fullText: 'turno sin ancla',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('missing-anchor-1', _NoopOutbox()),
+    );
+
+    await expectLater(chat.cancel(), throwsStateError);
+    expect(persisted, 0);
+    expect(chat.isStreaming, isTrue);
+    expect(events, isNot(contains(ActiveChatEvent.cancelled)));
+  });
+
+  test('fallo durable bloquea envío pero permite reintentar Stop', () async {
+    var persistenceAttempts = 0;
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'persist-failure',
+      gateway,
+      onCancelledTurn: (_) async {
+        persistenceAttempts++;
+        if (persistenceAttempts == 1) {
+          throw StateError('keystore failed');
+        }
+      },
+    );
+    addTearDown(chat.dispose);
+    chat.messages.add({
+      'role': 'assistant',
+      'content': 'respuesta anterior',
+      'id': 'anchor-before-failure',
+    });
+
+    await chat.send(
+      fullText: 'turno detenido',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('persist-failure-1', _NoopOutbox()),
+    );
+    await expectLater(chat.cancel(), throwsStateError);
+
+    await expectLater(
+      chat.send(
+        fullText: 'turno posterior prohibido',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('persist-failure-2', _NoopOutbox()),
+      ),
+      throwsStateError,
+    );
+    expect(gateway.submitCalls, 1);
+    expect(chat.isStreaming, isTrue);
+    await chat.cancel();
+    expect(persistenceAttempts, 2);
+    expect(chat.isStreaming, isFalse);
+  });
+
+  test(
+    'terminal durante write fallido mantiene Stop y permite retry',
+    () async {
+      final gate = Completer<void>();
+      var attempts = 0;
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'terminal-during-write',
+        gateway,
+        onCancelledTurn: (_) {
+          attempts++;
+          return attempts == 1 ? gate.future : Future<void>.value();
+        },
+      );
+      addTearDown(chat.dispose);
+      chat.messages.add({
+        'role': 'assistant',
+        'content': 'ancla',
+        'id': 'anchor-terminal',
+      });
+      await chat.send(
+        fullText: 'turno',
+        model: 'hermes-agent',
+        history: const [],
+      );
+
+      final firstCancel = chat.cancel();
+      gateway.emit('message.complete');
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.isStreaming, isTrue);
+      gate.completeError(StateError('keystore unavailable'));
+      await expectLater(firstCancel, throwsA(isA<StateError>()));
+      expect(chat.isStreaming, isTrue);
+
+      await chat.cancel();
+      expect(attempts, 2);
+      expect(chat.isStreaming, isFalse);
+    },
+  );
+
+  test('store cifrado restaura tombstones tras recrear el proceso', () async {
+    String? encryptedPayload;
+    Future<String?> read() async => encryptedPayload;
+    Future<void> write(String value) async => encryptedPayload = value;
+
+    final first = CancelledTurnTombstoneStore(
+      read: read,
+      write: write,
+      nowMs: () => 1000,
+    );
+    await first.initialize();
+    await first.add(
+      connectionId: 'conn',
+      profile: 'default',
+      sessionId: 'session',
+      tombstone: const CancelledTurnTombstone(
+        content: 'turno detenido',
+        anchorMessageId: 'anchor-3',
+      ),
+    );
+
+    final restoredStore = CancelledTurnTombstoneStore(
+      read: read,
+      write: write,
+      nowMs: () => 1001,
+    );
+    await restoredStore.initialize();
+    final restored = restoredStore.load(
+      connectionId: 'conn',
+      profile: 'default',
+      sessionId: 'session',
+    );
+
+    expect(restored, hasLength(1));
+    expect(restored.single.content, 'turno detenido');
+    expect(restored.single.matchesContent('turno detenido'), isTrue);
+    expect(restored.single.anchorMessageId, 'anchor-3');
+  });
+
+  test(
+    'store falla cerrado y puede reintentar tras error de lectura',
+    () async {
+      var failRead = true;
+      var writes = 0;
+      final store = CancelledTurnTombstoneStore(
+        read: () async {
+          if (failRead) throw StateError('keystore unavailable');
+          return null;
+        },
+        write: (_) async => writes++,
+        nowMs: () => 1000,
+      );
+
+      await expectLater(store.initialize(), throwsStateError);
+      expect(
+        () => store.load(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: 'session',
+        ),
+        throwsStateError,
+      );
+      expect(writes, 0);
+
+      failRead = false;
+      await store.initialize();
+      await store.add(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'turno detenido',
+          firstUser: true,
+        ),
+      );
+      expect(writes, 1);
+    },
+  );
+
+  test('store no sobrescribe JSON cifrado corrupto', () async {
+    var writes = 0;
+    final store = CancelledTurnTombstoneStore(
+      read: () async => '{corrupt',
+      write: (_) async => writes++,
+      nowMs: () => 1000,
+    );
+
+    await expectLater(store.initialize(), throwsFormatException);
+    expect(writes, 0);
+    await expectLater(
+      store.add(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'turno detenido',
+          firstUser: true,
+        ),
+      ),
+      throwsFormatException,
+    );
+    expect(writes, 0);
+  });
+
+  test(
+    'store no publica en caché antes de confirmar escritura cifrada',
+    () async {
+      final writeGate = Completer<void>();
+      final store = CancelledTurnTombstoneStore(
+        read: () async => null,
+        write: (_) => writeGate.future,
+        nowMs: () => 1000,
+      );
+      await store.initialize();
+
+      final pending = store.add(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'turno detenido',
+          firstUser: true,
+        ),
+      );
+
+      expect(
+        store.load(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: 'session',
+        ),
+        isEmpty,
+      );
+      writeGate.complete();
+      await pending;
+      expect(
+        store.load(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: 'session',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test('store aísla generaciones distintas del mismo backend lógico', () async {
+    final store = CancelledTurnTombstoneStore(
+      read: () async => null,
+      write: (_) async {},
+    );
+    await store.initialize();
+    await store.add(
+      connectionId: 'conn',
+      profile: 'default',
+      sessionId: 'session',
+      generation: 'host-a:443',
+      tombstone: const CancelledTurnTombstone(
+        content: 'privado',
+        firstUser: true,
+      ),
+    );
+
+    expect(
+      store.load(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        generation: 'host-b:443',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('store borra una sesión sin afectar otra conexión', () async {
+    String? payload;
+    final store = CancelledTurnTombstoneStore(
+      read: () async => payload,
+      write: (value) async => payload = value,
+    );
+    await store.initialize();
+    for (final connection in ['conn-a', 'conn-b']) {
+      await store.add(
+        connectionId: connection,
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'privado',
+          firstUser: true,
+        ),
+      );
+    }
+
+    expect(
+      await store.removeSession(
+        connectionId: 'conn-a',
+        profile: 'default',
+        sessionId: 'session',
+      ),
+      1,
+    );
+    expect(
+      store.load(
+        connectionId: 'conn-a',
+        profile: 'default',
+        sessionId: 'session',
+      ),
+      isEmpty,
+    );
+    expect(
+      store.load(
+        connectionId: 'conn-b',
+        profile: 'default',
+        sessionId: 'session',
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('store borra todos los scopes de una conexión', () async {
+    String? payload;
+    final store = CancelledTurnTombstoneStore(
+      read: () async => payload,
+      write: (value) async => payload = value,
+    );
+    await store.initialize();
+    for (final session in ['one', 'two']) {
+      await store.add(
+        connectionId: 'conn-a',
+        profile: 'default',
+        sessionId: session,
+        tombstone: const CancelledTurnTombstone(
+          content: 'privado',
+          firstUser: true,
+        ),
+      );
+    }
+
+    expect(await store.removeConnection('conn-a'), 2);
+    expect(payload, isNot(contains('privado')));
+  });
+
+  test(
+    'cleanup fallido queda en cola durable y se reintenta al iniciar',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      String? payload;
+      var failWrites = false;
+      final store = CancelledTurnTombstoneStore(
+        read: () async => payload,
+        write: (value) async {
+          if (failWrites) throw StateError('keystore unavailable');
+          payload = value;
+        },
+      );
+      await store.initialize();
+      await store.add(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'privado',
+          firstUser: true,
+        ),
+      );
+      failWrites = true;
+      final first = ActiveChatService(prefs: prefs, cancelledTurnStore: store);
+      await expectLater(
+        first.clearCancelledTurnsForSession(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: 'session',
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        prefs.getStringList('cancelled_turn_cleanup_pending_v1'),
+        isNotEmpty,
+      );
+
+      failWrites = false;
+      ActiveChatService(prefs: prefs, cancelledTurnStore: store);
+      await _waitUntil(
+        () => store
+            .load(
+              connectionId: 'conn',
+              profile: 'default',
+              sessionId: 'session',
+            )
+            .isEmpty,
+      );
+      expect(prefs.getStringList('cancelled_turn_cleanup_pending_v1'), isEmpty);
+    },
+  );
+
+  test(
+    'store conserva tombstones antiguos mientras el servidor pueda retenerlos',
+    () async {
+      String? encryptedPayload;
+      Future<String?> read() async => encryptedPayload;
+      Future<void> write(String value) async => encryptedPayload = value;
+      final first = CancelledTurnTombstoneStore(
+        read: read,
+        write: write,
+        nowMs: () => 1000,
+      );
+      await first.initialize();
+      await first.add(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'turno detenido',
+          anchorMessageId: 'anchor-3',
+        ),
+      );
+
+      final expired = CancelledTurnTombstoneStore(
+        read: read,
+        write: write,
+        nowMs: () => 1000 + Duration.millisecondsPerDay * 31,
+      );
+      await expired.initialize();
+
+      expect(
+        expired.load(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: 'session',
+        ),
+        hasLength(1),
+      );
+    },
+  );
 
   test(
     'tras un corte Desktop el siguiente envío reanuda una sesión nueva',

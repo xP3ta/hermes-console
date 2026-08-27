@@ -921,6 +921,18 @@ class _SessionListScreenState extends State<SessionListScreen>
     final result = await _deleteSessionAndLinkedCron(session, cronDeletion);
     switch (result.status) {
       case LinkedSessionDeleteStatus.deleted:
+        try {
+          await _activeChats?.clearCancelledTurnsForSession(
+            connectionId: widget.connection.id,
+            profile: session.profile ?? '',
+            sessionId: session.id,
+          );
+        } catch (error) {
+          debugPrint(
+            '[session-list] cancelled-turn cleanup queued: '
+            '${error.runtimeType}',
+          );
+        }
         return true;
       case LinkedSessionDeleteStatus.cancelled:
         return false;
@@ -1066,6 +1078,18 @@ class _SessionListScreenState extends State<SessionListScreen>
       try {
         final ok = await _client.deleteSession(s.id);
         if (ok) {
+          try {
+            await _activeChats?.clearCancelledTurnsForSession(
+              connectionId: widget.connection.id,
+              profile: s.profile ?? '',
+              sessionId: s.id,
+            );
+          } catch (error) {
+            debugPrint(
+              '[session-list] cancelled-turn cleanup queued: '
+              '${error.runtimeType}',
+            );
+          }
           await _archive?.unarchiveSession(s);
           await _archive?.unhideSession(s);
           deleted++;

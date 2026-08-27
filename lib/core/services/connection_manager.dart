@@ -39,6 +39,7 @@ typedef BridgeProvisioner =
     Future<String?> Function(String baseUrl, String gatewayKey);
 typedef DashboardClientFactory =
     DashboardClient Function(SavedConnection connection);
+typedef ClearCancelledTurnsForConnection = Future<int> Function(String id);
 
 @visibleForTesting
 bool supportsKanbanTrackedCreateVersion(String? rawVersion) {
@@ -86,6 +87,7 @@ class ConnectionManager {
   final BridgeClientFactory _bridgeClientFactory;
   final BridgeProvisioner _bridgeProvisioner;
   final DashboardClientFactory _dashboardClientFactory;
+  final ClearCancelledTurnsForConnection? _clearCancelledTurns;
   // In-memory cache populated by [_loadApiKeys]. Keeps getConnections() sync.
   final Map<String, String> _apiKeyCache = {};
 
@@ -108,12 +110,14 @@ class ConnectionManager {
     BridgeClientFactory? bridgeClientFactory,
     BridgeProvisioner? bridgeProvisioner,
     DashboardClientFactory? dashboardClientFactory,
+    ClearCancelledTurnsForConnection? clearCancelledTurns,
   }) : _bridgeClientFactory =
            bridgeClientFactory ??
            (({required baseUrl, required token}) =>
                BridgeClient(baseUrl: baseUrl, token: token)),
        _bridgeProvisioner = bridgeProvisioner ?? BridgeClient.provision,
-       _dashboardClientFactory = dashboardClientFactory ?? DashboardClient.lazy;
+       _dashboardClientFactory = dashboardClientFactory ?? DashboardClient.lazy,
+       _clearCancelledTurns = clearCancelledTurns;
 
   static String _activeProfileKey(String connId) => 'active_profile_$connId';
 
@@ -322,6 +326,7 @@ class ConnectionManager {
     BridgeClientFactory? bridgeClientFactory,
     BridgeProvisioner? bridgeProvisioner,
     DashboardClientFactory? dashboardClientFactory,
+    ClearCancelledTurnsForConnection? clearCancelledTurns,
   }) async {
     final manager = ConnectionManager._(
       prefs,
@@ -329,6 +334,7 @@ class ConnectionManager {
       bridgeClientFactory: bridgeClientFactory,
       bridgeProvisioner: bridgeProvisioner,
       dashboardClientFactory: dashboardClientFactory,
+      clearCancelledTurns: clearCancelledTurns,
     );
     await manager._loadApiKeys();
     // Poda silenciosa de datos huérfanos de instancias borradas (no toca nada
@@ -772,8 +778,7 @@ class ConnectionManager {
   }
 
   Future<void> deleteConnection(String id) async {
-    // Borradores/turnos preparados contienen contenido privado y viven en el
-    // almacenamiento cifrado. Se limpian antes de retirar las credenciales.
+    // El resto de recovery local se mantiene best-effort por compatibilidad.
     try {
       await ChatDraftStore(prefs).deleteForConnection(id);
       await TurnOutboxStore().deleteForConnection(id);
@@ -798,7 +803,22 @@ class ConnectionManager {
     }
     final current = getConnections();
     current.removeWhere((c) => c.id == id);
+    // A estas alturas ya no quedan credenciales capaces de hidratar la conexión.
+    // Limpiar ahora evita retirar protección de un backend todavía utilizable.
+    Object? cleanupError;
+    try {
+      await _clearCancelledTurns?.call(id);
+    } catch (error) {
+      cleanupError = error;
+    }
+    // La baja de la conexión se completa incluso si el cleanup quedó encolado.
     await _saveAll(current);
+    if (cleanupError != null) {
+      debugPrint(
+        '[connection] cancelled-turn cleanup queued after delete: '
+        '${cleanupError.runtimeType}',
+      );
+    }
   }
 
   Future<void> _saveAll(List<SavedConnection> list) => prefs.setStringList(

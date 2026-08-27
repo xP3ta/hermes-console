@@ -1869,6 +1869,9 @@ class _ChatScreenState extends State<ChatScreen>
   /// con el que esta pantalla guardó draft/outbox. Esta limpieza usa de forma
   /// deliberada la identidad local y solo se invoca tras éxito remoto.
   Future<void> _clearDeletedChatRecovery(String localSessionId) async {
+    final activeChats = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.activeChats;
     try {
       final prefs = await SharedPreferences.getInstance();
       final drafts = ChatDraftStore(prefs);
@@ -1892,6 +1895,11 @@ class _ChatScreenState extends State<ChatScreen>
           profile: _recoveryProfile,
         );
       }
+      await activeChats?.clearCancelledTurnsForSession(
+        connectionId: widget.connection.id,
+        profile: _recoveryProfile,
+        sessionId: localSessionId,
+      );
     } catch (error) {
       debugPrint(
         '[chat-delete] recovery cleanup failed (${error.runtimeType})',
@@ -4009,9 +4017,20 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _cancelInteractivePrompt() {
+  Future<void> _cancelInteractivePrompt() async {
     if (_resolvingInteractivePrompt) return;
-    _chat.cancel();
+    try {
+      await _chat.cancel();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No se pudo guardar Stop de forma segura. Reinténtalo.',
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -4977,7 +4996,7 @@ class _ChatScreenState extends State<ChatScreen>
               : MissionRoomTaskPhase.outcomeUnknown;
           await _saveDraftSnapshot(text, attachments);
           if (conflict) {
-            return _reconcileUnknownRoomTask(
+            return await _reconcileUnknownRoomTask(
               room: room,
               intent: intent,
               text: text,
@@ -5643,10 +5662,22 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  void _cancelStream() {
-    // La cancelación (abort del stream + conservar el parcial) la hace el
-    // ActiveChat para que el estado sea coherente aunque la pantalla no esté.
-    _chat.cancel();
+  Future<void> _cancelStream() async {
+    // La cancelación no se confirma visualmente hasta que el tombstone cifrado
+    // queda durable; así un cierre inmediato no puede resucitar la respuesta.
+    try {
+      await _chat.cancel();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No se pudo guardar Stop de forma segura. Reinténtalo.',
+          ),
+        ),
+      );
+      return;
+    }
     if (!mounted) return;
     setState(() {});
     // Reset to idle after a moment

@@ -12,7 +12,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../widgets/chat_event_cards.dart';
@@ -412,6 +414,315 @@ List<Map<String, dynamic>> _mergeOlderTranscriptPage(
       .toList(growable: false);
   if (fresh.isEmpty) return existingNewestFirst;
   return <Map<String, dynamic>>[...existingNewestFirst, ...fresh];
+}
+
+@immutable
+class CancelledTurnTombstone {
+  const CancelledTurnTombstone({
+    required this.content,
+    this.anchorMessageId,
+    this.firstUser = false,
+    this.createdAtMs,
+  });
+
+  final String content;
+  final String? anchorMessageId;
+  final bool firstUser;
+  final int? createdAtMs;
+
+  bool matchesContent(String candidate) => content == candidate;
+
+  CancelledTurnTombstone stamped(int timestampMs) => CancelledTurnTombstone(
+    content: content,
+    anchorMessageId: anchorMessageId,
+    firstUser: firstUser,
+    createdAtMs: createdAtMs ?? timestampMs,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'content': content,
+    'anchor_message_id': anchorMessageId,
+    'first_user': firstUser,
+    'created_at_ms': createdAtMs,
+  };
+
+  static CancelledTurnTombstone? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final content = raw['content'];
+    final anchor = raw['anchor_message_id'];
+    final firstUser = raw['first_user'];
+    final createdAtMs = raw['created_at_ms'];
+    final normalizedAnchor = anchor is String && anchor.trim().isNotEmpty
+        ? anchor.trim()
+        : null;
+    if (content is! String ||
+        content.isEmpty ||
+        firstUser is! bool ||
+        (normalizedAnchor == null && !firstUser) ||
+        (normalizedAnchor != null && firstUser) ||
+        createdAtMs is! int ||
+        createdAtMs < 0) {
+      return null;
+    }
+    return CancelledTurnTombstone(
+      content: content,
+      anchorMessageId: normalizedAnchor,
+      firstUser: firstUser,
+      createdAtMs: createdAtMs,
+    );
+  }
+}
+
+String? _stableTranscriptMessageId(Map<String, dynamic> message) {
+  final raw = message['message_id'] ?? message['id'];
+  final value = raw?.toString().trim() ?? '';
+  return value.isEmpty ? null : value;
+}
+
+class CancelledTurnTombstoneStore {
+  CancelledTurnTombstoneStore({
+    required Future<String?> Function() read,
+    required Future<void> Function(String value) write,
+    int Function()? nowMs,
+  }) : _read = read,
+       _write = write,
+       _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  factory CancelledTurnTombstoneStore.secure({
+    FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
+  }) => CancelledTurnTombstoneStore(
+    read: () => secureStorage.read(key: _storageKey),
+    write: (value) => secureStorage.write(key: _storageKey, value: value),
+  );
+
+  static const _storageKey = 'cancelled_turn_tombstones_v2';
+
+  final Future<String?> Function() _read;
+  final Future<void> Function(String value) _write;
+  final int Function() _nowMs;
+  Future<void> _writeTail = Future<void>.value();
+  Map<String, dynamic> _root = <String, dynamic>{};
+  bool _initialized = false;
+
+  String _scopeKey({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    String generation = '',
+  }) => jsonEncode([connectionId, generation, profile, sessionId]);
+
+  Future<void> initialize() async {
+    if (_initialized) return;
+    final raw = await _read();
+    final decoded = raw == null || raw.isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const FormatException('invalid cancelled-turn tombstone root');
+    }
+    final candidate = Map<String, dynamic>.from(decoded);
+    for (final entry in candidate.entries) {
+      final value = entry.value;
+      if (value is! List ||
+          value.any((item) => CancelledTurnTombstone.fromJson(item) == null)) {
+        throw FormatException(
+          'invalid cancelled-turn tombstone scope ${entry.key}',
+        );
+      }
+    }
+    _root = candidate;
+    _initialized = true;
+  }
+
+  List<CancelledTurnTombstone> load({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    String generation = '',
+  }) {
+    if (!_initialized) {
+      throw StateError('cancelled-turn tombstone store not initialized');
+    }
+    final raw =
+        _root[_scopeKey(
+          connectionId: connectionId,
+          profile: profile,
+          sessionId: sessionId,
+          generation: generation,
+        )];
+    if (raw is! List) return const [];
+    return raw
+        .map(CancelledTurnTombstone.fromJson)
+        .whereType<CancelledTurnTombstone>()
+        .toList(growable: false);
+  }
+
+  Future<void> add({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    required CancelledTurnTombstone tombstone,
+    String generation = '',
+  }) {
+    final operation = _writeTail.then((_) async {
+      if (!_initialized) await initialize();
+      final candidate = Map<String, dynamic>.from(_root);
+      final scope = _scopeKey(
+        connectionId: connectionId,
+        profile: profile,
+        sessionId: sessionId,
+        generation: generation,
+      );
+      final current = candidate[scope] is List
+          ? List<Object?>.from(candidate[scope] as List)
+          : <Object?>[];
+      final durable = tombstone.stamped(_nowMs());
+      current.removeWhere((raw) {
+        final item = CancelledTurnTombstone.fromJson(raw);
+        return item != null &&
+            item.content == durable.content &&
+            item.anchorMessageId == durable.anchorMessageId &&
+            item.firstUser == durable.firstUser;
+      });
+      current.add(durable.toJson());
+      candidate[scope] = current;
+      await _write(jsonEncode(candidate));
+      _root = candidate;
+    });
+    _writeTail = operation.catchError((_) {});
+    return operation;
+  }
+
+  Future<int> removeSession({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+  }) => _removeScopes((scope) {
+    try {
+      final parts = jsonDecode(scope);
+      return parts is List &&
+          parts.length == 4 &&
+          parts[0] == connectionId &&
+          parts[2] == profile &&
+          parts[3] == sessionId;
+    } catch (_) {
+      return false;
+    }
+  });
+
+  Future<int> removeConnection(String connectionId) => _removeScopes((scope) {
+    try {
+      final parts = jsonDecode(scope);
+      return parts is List && parts.isNotEmpty && parts.first == connectionId;
+    } catch (_) {
+      return false;
+    }
+  });
+
+  Future<int> _removeScopes(bool Function(String scope) matches) {
+    var removed = 0;
+    final operation = _writeTail.then((_) async {
+      if (!_initialized) await initialize();
+      final candidate = Map<String, dynamic>.from(_root);
+      for (final scope in candidate.keys.toList(growable: false)) {
+        if (!matches(scope)) continue;
+        final value = candidate.remove(scope);
+        if (value is List) removed += value.length;
+      }
+      if (removed == 0) return;
+      await _write(jsonEncode(candidate));
+      _root = candidate;
+    });
+    _writeTail = operation.catchError((_) {});
+    return operation.then((_) => removed);
+  }
+}
+
+/// Reaplica los tombstones locales de Stop sobre un transcript canónico.
+///
+/// Las listas están en orden newest-first. Para cada usuario detenido elimina
+/// exclusivamente el bloque de respuesta situado entre ese usuario y el turno
+/// de usuario posterior; así una respuesta que el servidor terminó mientras el
+/// móvil estaba offline no reaparece al reconciliar, sin tocar turnos nuevos.
+@visibleForTesting
+List<Map<String, dynamic>> projectCancelledTurnTombstones({
+  required List<Map<String, dynamic>> existingNewestFirst,
+  required List<Map<String, dynamic>> incomingNewestFirst,
+  List<CancelledTurnTombstone> durableTombstones = const [],
+}) {
+  if (durableTombstones.isEmpty) return incomingNewestFirst;
+
+  for (final tombstone in durableTombstones) {
+    final anchor = tombstone.anchorMessageId;
+    final anchorPresent =
+        anchor == null ||
+        incomingNewestFirst.any(
+          (message) => _stableTranscriptMessageId(message) == anchor,
+        );
+    final firstUserPresent =
+        !tombstone.firstUser || incomingNewestFirst.any(isRealUserTurn);
+    if (!anchorPresent || !firstUserPresent) {
+      // Snapshot/compresión parcial: conservar la proyección ya saneada es más
+      // seguro que reintroducir una respuesta cuyo ancla aún no llegó.
+      return existingNewestFirst;
+    }
+  }
+
+  final projected = incomingNewestFirst
+      .map((message) => Map<String, dynamic>.of(message))
+      .toList();
+  for (final tombstone in durableTombstones) {
+    var userIndex = -1;
+    if (tombstone.firstUser) {
+      for (var index = projected.length - 1; index >= 0; index--) {
+        if (!isRealUserTurn(projected[index])) continue;
+        if (tombstone.matchesContent(
+          (projected[index]['content'] ?? '').toString(),
+        )) {
+          userIndex = index;
+        }
+        break;
+      }
+    } else {
+      final anchorId = tombstone.anchorMessageId;
+      final anchorIndex = anchorId == null
+          ? -1
+          : projected.indexWhere(
+              (message) => _stableTranscriptMessageId(message) == anchorId,
+            );
+      if (anchorIndex >= 0) {
+        for (var index = anchorIndex - 1; index >= 0; index--) {
+          if (!isRealUserTurn(projected[index])) continue;
+          if (tombstone.matchesContent(
+            (projected[index]['content'] ?? '').toString(),
+          )) {
+            userIndex = index;
+          }
+          break;
+        }
+      }
+    }
+    if (userIndex < 0) continue;
+
+    var newerUserIndex = -1;
+    for (var index = userIndex - 1; index >= 0; index--) {
+      if (isRealUserTurn(projected[index])) {
+        newerUserIndex = index;
+        break;
+      }
+    }
+    final responseStart = newerUserIndex + 1;
+    if (responseStart < userIndex) {
+      final preservedMetadata = projected
+          .sublist(responseStart, userIndex)
+          .where((message) => message['role'] != 'assistant')
+          .toList(growable: false);
+      projected.replaceRange(responseStart, userIndex, preservedMetadata);
+      userIndex = responseStart + preservedMetadata.length;
+    }
+    projected[userIndex] = {...projected[userIndex], '_cancelledUser': true};
+  }
+  return projected;
 }
 
 String _artifactEntryIdentity(String? stableId, int ordinal) =>
@@ -1018,6 +1329,12 @@ class ActiveChat {
   final Future<void> Function()? _onForegroundKeepAlive;
   final ValueChanged<int?>? _onObservedFirstTokenLatency;
   final ValueChanged<ActiveChatEvent>? _onEvent;
+  final List<CancelledTurnTombstone> _cancelledTurnTombstones;
+  final Future<void> Function(CancelledTurnTombstone)? _onCancelledTurn;
+  Future<void> _cancelledTurnPersistence = Future<void>.value();
+  bool _cancelledTurnPersistencePending = false;
+  bool _cancelledTurnPersistenceFailed = false;
+  Future<void>? _durableCancelFlight;
   final int Function() _monotonicMicros;
   int? _responseStartedAtMicros;
   int? _observedFirstTokenLatencyMs;
@@ -1471,6 +1788,8 @@ class ActiveChat {
     StoredSessionMessageLoader? storedMessageLoader,
     Future<bool> Function()? turnIdempotencyCapability,
     List<SteerProjection> initialSteerProjections = const [],
+    List<CancelledTurnTombstone> initialCancelledTurnTombstones = const [],
+    Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
     Duration terminalReconcileBudget = const Duration(seconds: 4),
     Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
     List<Duration> desktopRecoveryBackoff = const [
@@ -1491,6 +1810,10 @@ class ActiveChat {
        _onForegroundKeepAlive = onForegroundKeepAlive,
        _onObservedFirstTokenLatency = onObservedFirstTokenLatency,
        _onEvent = onEvent,
+       _cancelledTurnTombstones = List<CancelledTurnTombstone>.of(
+         initialCancelledTurnTombstones,
+       ),
+       _onCancelledTurn = onCancelledTurn,
        _monotonicMicros =
            monotonicMicros ??
            (() => _defaultMonotonicClock.elapsedMicroseconds),
@@ -1809,6 +2132,21 @@ class ActiveChat {
     _captureArtifactMessages(parsed, logicalSessionId: logicalSessionId);
   }
 
+  void clearCancelledTurnTombstones() {
+    _cancelledTurnTombstones.clear();
+    for (var index = 0; index < messages.length; index++) {
+      if (messages[index]['_cancelledUser'] != true) continue;
+      final cleaned = Map<String, dynamic>.of(messages[index])
+        ..remove('_cancelledUser');
+      messages[index] = cleaned;
+    }
+  }
+
+  bool get hasPendingDurableCancellation =>
+      _cancelledTurnPersistencePending ||
+      _cancelledTurnPersistenceFailed ||
+      _durableCancelFlight != null;
+
   /// ¿Hay una petición/ejecución viva en el gateway?
   bool get isStreaming =>
       state == ChatPipelineState.connecting ||
@@ -2009,6 +2347,14 @@ class ActiveChat {
     return false;
   }
 
+  List<Map<String, dynamic>> _applyCancelledTurnTombstones(
+    List<Map<String, dynamic>> incoming,
+  ) => projectCancelledTurnTombstones(
+    existingNewestFirst: messages,
+    incomingNewestFirst: incoming,
+    durableTombstones: _cancelledTurnTombstones,
+  );
+
   /// Carga el historial (lectura). No toca el stream.
   ///
   /// Instancia LOCAL (bridge): el agente oneshot no conserva el historial
@@ -2032,7 +2378,7 @@ class ActiveChat {
       final saved = await LocalTranscriptStore.load(connection.id, sessionId);
       if (_disposed || loadEpoch != _messageLoadEpoch) return;
       // Guardado en orden cronológico; index 0 = más nuevo en la lista viva.
-      messages = _normalizedNewestFirst(saved);
+      messages = _applyCancelledTurnTombstones(_normalizedNewestFirst(saved));
       messagesLoaded = true;
       return;
     }
@@ -2090,8 +2436,10 @@ class ActiveChat {
 
       void publishMessages(List<Map<String, dynamic>> next) {
         if (_disposed || loadEpoch != _messageLoadEpoch) return;
-        messages = _associateGeneratedImagesNewestFirst(
-          _preserveLocalAssistantErrors(next, messages),
+        messages = _applyCancelledTurnTombstones(
+          _associateGeneratedImagesNewestFirst(
+            _preserveLocalAssistantErrors(next, messages),
+          ),
         );
         _mergeSteerRecords();
         messagesLoaded = true;
@@ -2233,10 +2581,12 @@ class ActiveChat {
                   deferred,
                   logicalSessionId: logicalSessionId,
                 );
-                messages = _associateGeneratedImagesNewestFirst(
-                  _preserveLocalAssistantErrors(
-                    _normalizedNewestFirst(deferred),
-                    messages,
+                messages = _applyCancelledTurnTombstones(
+                  _associateGeneratedImagesNewestFirst(
+                    _preserveLocalAssistantErrors(
+                      _normalizedNewestFirst(deferred),
+                      messages,
+                    ),
                   ),
                 );
                 _mergeSteerRecords();
@@ -2315,10 +2665,12 @@ class ActiveChat {
     }
     _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
     // API devuelve más antiguo primero; lo invertimos: index 0 = más nuevo.
-    messages = _associateGeneratedImagesNewestFirst(
-      _preserveLocalAssistantErrors(
-        _graftRefreshedTail(_normalizedNewestFirst(m), messages),
-        messages,
+    messages = _applyCancelledTurnTombstones(
+      _associateGeneratedImagesNewestFirst(
+        _preserveLocalAssistantErrors(
+          _graftRefreshedTail(_normalizedNewestFirst(m), messages),
+          messages,
+        ),
       ),
     );
     _mergeSteerRecords();
@@ -2409,9 +2761,44 @@ class ActiveChat {
   Future<List<Map<String, dynamic>>> _loadStoredMessagesTail(
     String profile,
   ) async {
-    final page = await _fetchStoredMessagesPage(profile);
+    var page = await _fetchStoredMessagesPage(profile);
+    final collected = <Map<String, dynamic>>[...page.messages];
+    final requiredAnchors = <String>{};
+    for (final tombstone in _cancelledTurnTombstones) {
+      final anchor = tombstone.anchorMessageId;
+      if (anchor != null) requiredAnchors.add(anchor);
+    }
+    final needsAbsoluteStart = _cancelledTurnTombstones.any(
+      (tombstone) => tombstone.firstUser,
+    );
+
+    bool anchorPresent(String anchor) => collected.any(
+      (message) => _stableTranscriptMessageId(message) == anchor,
+    );
+
+    while (true) {
+      final limit = page.limit;
+      if (limit == null || limit <= 0) break;
+      final hasMore = page.messages.length >= limit;
+      final missingAnchor = requiredAnchors.any(
+        (anchor) => !anchorPresent(anchor),
+      );
+      if (!hasMore || (!needsAbsoluteStart && !missingAnchor)) break;
+      final nextOffset = page.offset + page.messages.length;
+      final older = await _fetchStoredMessagesPage(
+        profile,
+        limit: limit,
+        offset: nextOffset,
+      );
+      if (older.messages.isEmpty || older.offset <= page.offset) {
+        page = older;
+        break;
+      }
+      collected.insertAll(0, older.messages);
+      page = older;
+    }
     _recordTranscriptPage(page);
-    return page.messages;
+    return collected;
   }
 
   /// Re-ancla una cola refrescada sobre un transcript al que ya se le
@@ -2468,8 +2855,9 @@ class ActiveChat {
           _normalizedNewestFirst(page.messages),
         ),
       );
-      if (identical(merged, messages)) return false;
-      messages = merged;
+      final projectedMerged = _applyCancelledTurnTombstones(merged);
+      if (identical(projectedMerged, messages)) return false;
+      messages = projectedMerged;
       _hasBackfilledPrefix = true;
       _emit(ActiveChatEvent.earlierMessagesLoaded);
       return true;
@@ -2531,10 +2919,12 @@ class ActiveChat {
       final m = await _loadStoredMessagesTail(_storedSessionProfile);
       if (_disposed || loadEpoch != _messageLoadEpoch || m.isEmpty) return;
       _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
-      messages = _associateGeneratedImagesNewestFirst(
-        _preserveLocalAssistantErrors(
-          _graftRefreshedTail(_normalizedNewestFirst(m), messages),
-          messages,
+      messages = _applyCancelledTurnTombstones(
+        _associateGeneratedImagesNewestFirst(
+          _preserveLocalAssistantErrors(
+            _graftRefreshedTail(_normalizedNewestFirst(m), messages),
+            messages,
+          ),
         ),
       );
       _mergeSteerRecords();
@@ -2738,6 +3128,10 @@ class ActiveChat {
     Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
     _RewriteReservation? rewriteReservation,
   }) async {
+    if (_cancelledTurnPersistencePending || _cancelledTurnPersistenceFailed) {
+      await _cancelledTurnPersistence;
+      if (_disposed) return false;
+    }
     final pendingCancel = _desktopCancelRecovery;
     if (pendingCancel != null) {
       await pendingCancel;
@@ -3560,10 +3954,12 @@ class ActiveChat {
       info: compression.info,
     );
     final projection = const DesktopSessionReconciler().project(snapshot);
-    messages = _associateGeneratedImagesNewestFirst(
-      projection.messagesNewestFirst
-          .map(Map<String, dynamic>.from)
-          .toList(growable: true),
+    messages = _applyCancelledTurnTombstones(
+      _associateGeneratedImagesNewestFirst(
+        projection.messagesNewestFirst
+            .map(Map<String, dynamic>.from)
+            .toList(growable: true),
+      ),
     );
     _steerRecords.clear();
     messagesLoaded = true;
@@ -3596,10 +3992,12 @@ class ActiveChat {
           logicalSessionId: logicalSessionId,
         );
         final projection = const DesktopSessionReconciler().project(snapshot);
-        messages = _associateGeneratedImagesNewestFirst(
-          projection.messagesNewestFirst
-              .map(Map<String, dynamic>.from)
-              .toList(growable: true),
+        messages = _applyCancelledTurnTombstones(
+          _associateGeneratedImagesNewestFirst(
+            projection.messagesNewestFirst
+                .map(Map<String, dynamic>.from)
+                .toList(growable: true),
+          ),
         );
         _steerRecords.clear();
         messagesLoaded = true;
@@ -4987,7 +5385,11 @@ class ActiveChat {
               );
         if (ready) {
           _captureArtifactMaps(transcript, logicalSessionId: logicalSessionId);
-          messages = _normalizedNewestFirst(transcript);
+          messages = projectCancelledTurnTombstones(
+            existingNewestFirst: messages,
+            incomingNewestFirst: _normalizedNewestFirst(transcript),
+            durableTombstones: _cancelledTurnTombstones,
+          );
           _mergeSteerRecords();
           _emit(ActiveChatEvent.done);
           return;
@@ -6152,6 +6554,14 @@ class ActiveChat {
         client.close();
       }
       if (_turnEpoch != turnEpoch || _runTerminal) return;
+      if (hasPendingDurableCancellation) {
+        try {
+          await (_durableCancelFlight ?? _cancelledTurnPersistence);
+        } catch (_) {
+          // Mantiene el turno cancelable para que Stop pueda reintentarse.
+        }
+        return;
+      }
       _observeFirstResponseContent(text);
       _runTerminal = true;
       text = text.trim();
@@ -6758,6 +7168,14 @@ class ActiveChat {
     bool finalOutputNarratable = true,
   }) async {
     if (_runTerminal) return;
+    if (hasPendingDurableCancellation) {
+      try {
+        await (_durableCancelFlight ?? _cancelledTurnPersistence);
+      } catch (_) {
+        // Stop sigue visible y reintentable; el terminal no puede cerrar el run.
+      }
+      return;
+    }
     _observeFirstResponseContent(finalOutput);
     _assistantNarration.settleFinal(finalOutputNarratable ? finalOutput : null);
     _clearDesktopCompactingIndicator();
@@ -6912,7 +7330,11 @@ class ActiveChat {
           continue;
         }
         _captureArtifactMaps(transcript, logicalSessionId: logicalSessionId);
-        messages = _normalizedNewestFirst(transcript);
+        messages = projectCancelledTurnTombstones(
+          existingNewestFirst: messages,
+          incomingNewestFirst: _normalizedNewestFirst(transcript),
+          durableTombstones: _cancelledTurnTombstones,
+        );
         _mergeSteerRecords();
         return true;
       } catch (error) {
@@ -7055,7 +7477,7 @@ class ActiveChat {
     bool terminalTextIsPartial = false,
     Map<String, dynamic> failureMetadata = const {},
   }) {
-    if (_runTerminal) return;
+    if (_runTerminal || hasPendingDurableCancellation) return;
     _clearDesktopCompactingIndicator();
     _runTerminal = true;
     _desktopTurnStartedAt = null;
@@ -7124,9 +7546,126 @@ class ActiveChat {
     _drainOrTerminal(expectedEpoch: _turnEpoch);
   }
 
+  void _trackCancelledTurnPersistence(Future<void> operation) {
+    _cancelledTurnPersistence = operation;
+    _cancelledTurnPersistencePending = true;
+    _cancelledTurnPersistenceFailed = false;
+    unawaited(
+      operation.then<void>(
+        (_) {
+          if (identical(_cancelledTurnPersistence, operation)) {
+            _cancelledTurnPersistencePending = false;
+            _cancelledTurnPersistenceFailed = false;
+          }
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_cancelledTurnPersistence, operation)) {
+            _cancelledTurnPersistencePending = false;
+            _cancelledTurnPersistenceFailed = true;
+          }
+        },
+      ),
+    );
+  }
+
+  ({int index, CancelledTurnTombstone tombstone})?
+  _latestUserCancellationCandidate() {
+    for (var index = 0; index < messages.length; index++) {
+      final message = messages[index];
+      if (!isRealUserTurn(message)) continue;
+      final content = (message['content'] ?? '').toString();
+      if (content.isEmpty) return null;
+      String? anchorMessageId;
+      for (var older = index + 1; older < messages.length; older++) {
+        anchorMessageId = _stableTranscriptMessageId(messages[older]);
+        if (anchorMessageId != null) break;
+      }
+      if (anchorMessageId != null) {
+        return (
+          index: index,
+          tombstone: CancelledTurnTombstone(
+            content: content,
+            anchorMessageId: anchorMessageId,
+          ),
+        );
+      }
+      final hasOlderRealUser = messages.skip(index + 1).any(isRealUserTurn);
+      if (!hasOlderRealUser && !_earlierMessagesAvailable) {
+        return (
+          index: index,
+          tombstone: CancelledTurnTombstone(content: content, firstUser: true),
+        );
+      }
+      return null;
+    }
+    return null;
+  }
+
+  bool _sameCancelledTurn(
+    CancelledTurnTombstone left,
+    CancelledTurnTombstone right,
+  ) =>
+      left.content == right.content &&
+      left.anchorMessageId == right.anchorMessageId &&
+      left.firstUser == right.firstUser;
+
+  void _commitCancelledTurnLocally(
+    ({int index, CancelledTurnTombstone tombstone}) candidate,
+  ) {
+    final durable = candidate.tombstone;
+    if (!_cancelledTurnTombstones.any(
+      (item) => _sameCancelledTurn(item, durable),
+    )) {
+      _cancelledTurnTombstones.add(durable);
+    }
+    final message = messages[candidate.index];
+    messages[candidate.index] = {...message, '_cancelledUser': true};
+  }
+
+  void _markLatestUserCancelledLocally() {
+    for (var index = 0; index < messages.length; index++) {
+      final message = messages[index];
+      if (!isRealUserTurn(message)) continue;
+      messages[index] = {...message, '_cancelledUser': true};
+      return;
+    }
+  }
+
+  Future<void> _persistLatestUserCancellation() async {
+    final before = _latestUserCancellationCandidate();
+    final persist = _onCancelledTurn;
+    if (before == null) {
+      if (persist != null) {
+        throw StateError('cancelled turn has no durable transcript anchor');
+      }
+      _markLatestUserCancelledLocally();
+      return;
+    }
+    if (persist != null) {
+      Future<void> operation;
+      try {
+        operation = persist(before.tombstone);
+      } catch (error, stackTrace) {
+        operation = Future<void>.error(error, stackTrace);
+      }
+      _trackCancelledTurnPersistence(operation);
+      await operation;
+    } else {
+      _cancelledTurnPersistence = Future<void>.value();
+      _cancelledTurnPersistencePending = false;
+      _cancelledTurnPersistenceFailed = false;
+    }
+    final after = _latestUserCancellationCandidate();
+    if (after == null ||
+        !_sameCancelledTurn(before.tombstone, after.tombstone)) {
+      throw StateError('cancelled turn changed while persisting tombstone');
+    }
+    _commitCancelledTurnLocally(after);
+  }
+
   /// El run fue cancelado por el servidor (no por el usuario).
   void _cancelRunState() {
-    if (_runTerminal) return;
+    if (_runTerminal || hasPendingDurableCancellation) return;
     _clearDesktopCompactingIndicator();
     _runTerminal = true;
     _desktopTurnStartedAt = null;
@@ -7155,18 +7694,56 @@ class ActiveChat {
     // Marca también el mensaje de usuario para que el historial lo conserve con
     // la instrucción de no reanudarlo automáticamente. Usa una clave propia:
     // `_cancelled` pintaría la burbuja como cancelada y no queremos eso aquí.
-    for (var i = 0; i < messages.length; i++) {
-      if (isRealUserTurn(messages[i])) {
-        messages[i] = {...messages[i], '_cancelledUser': true};
-        break;
-      }
-    }
+    _markLatestUserCancelledLocally();
     _emit(ActiveChatEvent.cancelled);
     _drainOrTerminal(expectedEpoch: _turnEpoch);
   }
 
-  /// Cancela el run en curso (el usuario tocó "parar") y conserva el parcial.
-  void cancel() => _cancelCurrent(requestServerStop: true);
+  /// Cancela el run en curso y no completa hasta que el tombstone cifrado
+  /// queda confirmado por el almacenamiento durable.
+  Future<void> cancel() {
+    if (_onCancelledTurn == null) {
+      final candidate = _latestUserCancellationCandidate();
+      if (candidate != null) {
+        _commitCancelledTurnLocally(candidate);
+      } else {
+        _markLatestUserCancelledLocally();
+      }
+      _cancelCurrent(requestServerStop: true, markUserCancelled: false);
+      return Future<void>.value();
+    }
+    final existing = _durableCancelFlight;
+    if (existing != null) return existing;
+    final operation = _cancelDurably();
+    _durableCancelFlight = operation;
+    unawaited(
+      operation
+          .whenComplete(() {
+            if (identical(_durableCancelFlight, operation)) {
+              _durableCancelFlight = null;
+              if (releaseRequested && !isStreaming && !hasListeners) {
+                _onUnused?.call();
+              }
+            }
+          })
+          .catchError((_) {}),
+    );
+    return operation;
+  }
+
+  Future<void> _cancelDurably() async {
+    final cancelEpoch = _turnEpoch;
+    await _persistLatestUserCancellation();
+    if (_disposed || cancelEpoch != _turnEpoch) return;
+    _cancelCurrent(
+      requestServerStop: true,
+      deferConfirmation: true,
+      markUserCancelled: false,
+    );
+    final terminalEpoch = _turnEpoch;
+    _emit(ActiveChatEvent.cancelled);
+    _drainOrTerminal(expectedEpoch: terminalEpoch);
+  }
 
   void _beginVoiceBargeHandoff() {
     _voiceBargeHandoffPending = true;
@@ -7303,7 +7880,11 @@ class ActiveChat {
     }
   }
 
-  void _cancelCurrent({required bool requestServerStop}) {
+  void _cancelCurrent({
+    required bool requestServerStop,
+    bool deferConfirmation = false,
+    bool markUserCancelled = true,
+  }) {
     if (_cancelling) return;
     _cancelling = true;
     _clearDesktopCompactingIndicator();
@@ -7371,14 +7952,11 @@ class ActiveChat {
     // Stop conserva el tema como memoria, pero buildHistory lo etiqueta para que
     // ni voz ni texto lo retomen salvo referencia explícita. Steering no pasa
     // por aquí: mantiene este mismo run vivo.
-    for (var i = 0; i < messages.length; i++) {
-      if (isRealUserTurn(messages[i])) {
-        messages[i] = {...messages[i], '_cancelledUser': true};
-        break;
-      }
+    if (markUserCancelled) _markLatestUserCancelledLocally();
+    if (!deferConfirmation) {
+      _emit(ActiveChatEvent.cancelled);
+      _drainOrTerminal(expectedEpoch: _turnEpoch);
     }
-    _emit(ActiveChatEvent.cancelled);
-    _drainOrTerminal(expectedEpoch: _turnEpoch);
   }
 
   /// Corrige el turno vivo mediante `session.redirect`, igual que Hermes
@@ -7548,7 +8126,7 @@ class ActiveChat {
       // burbuja/scrollback local que el usuario ya estaba viendo.
       if (!_containsCompletedTurn(m, expectedUsers)) return false;
       _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
-      messages = _normalizedNewestFirst(m);
+      messages = _applyCancelledTurnTombstones(_normalizedNewestFirst(m));
       if (state != ChatPipelineState.failed) {
         state = ChatPipelineState.completed;
       }
@@ -7719,9 +8297,15 @@ class _HomeWidgetChatMetadata {
 
 /// Registro de chats con streaming activo. Singleton vivo en HermesAppState.
 class ActiveChatService {
-  ActiveChatService({this.notifications, this.policy, SharedPreferences? prefs})
-    : _prefs = prefs {
+  ActiveChatService({
+    this.notifications,
+    this.policy,
+    SharedPreferences? prefs,
+    CancelledTurnTombstoneStore? cancelledTurnStore,
+  }) : _prefs = prefs,
+       _cancelledTurnStore = cancelledTurnStore {
     _restoreObservedFirstTokenLatencies();
+    unawaited(_drainPendingCancelledTurnCleanup());
   }
 
   final NotificationService? notifications;
@@ -7733,6 +8317,7 @@ class ActiveChatService {
   /// Prefs para registrar runs en RunRegistry cuando se inician desde el chat.
   /// Si es null (p.ej. en tests), el registro se omite sin efecto secundario.
   final SharedPreferences? _prefs;
+  final CancelledTurnTombstoneStore? _cancelledTurnStore;
 
   final Map<String, ActiveChat> _chats = {};
   final Map<String, List<SteerProjection>> _steerProjectionCache = {};
@@ -7747,6 +8332,134 @@ class ActiveChatService {
 
   static String chatKey(String connectionId, String sessionId) =>
       '$connectionId::$sessionId';
+
+  static const _pendingCancelledTurnCleanupKey =
+      'cancelled_turn_cleanup_pending_v1';
+  Future<void> _cleanupMutation = Future<void>.value();
+
+  Future<void> _enqueueCancelledTurnCleanup(List<String> command) {
+    final prefs = _prefs;
+    if (prefs == null) return Future<void>.value();
+    final operation = _cleanupMutation.then((_) async {
+      final encoded = jsonEncode(command);
+      final pending =
+          prefs.getStringList(_pendingCancelledTurnCleanupKey) ?? [];
+      if (!pending.contains(encoded)) pending.add(encoded);
+      await prefs.setStringList(_pendingCancelledTurnCleanupKey, pending);
+    });
+    _cleanupMutation = operation.catchError((_) {});
+    return operation;
+  }
+
+  Future<void> _drainPendingCancelledTurnCleanup() {
+    final operation = _cleanupMutation.then((_) async {
+      final prefs = _prefs;
+      final store = _cancelledTurnStore;
+      if (prefs == null || store == null) return;
+      final pending =
+          prefs.getStringList(_pendingCancelledTurnCleanupKey) ?? [];
+      if (pending.isEmpty) return;
+      final remaining = <String>[];
+      for (final encoded in pending) {
+        try {
+          final command = jsonDecode(encoded);
+          if (command is! List || command.isEmpty) continue;
+          if (command.first == 'session' && command.length == 4) {
+            await store.removeSession(
+              connectionId: command[1] as String,
+              profile: command[2] as String,
+              sessionId: command[3] as String,
+            );
+          } else if (command.first == 'connection' && command.length == 2) {
+            await store.removeConnection(command[1] as String);
+          }
+        } catch (_) {
+          remaining.add(encoded);
+        }
+      }
+      await prefs.setStringList(_pendingCancelledTurnCleanupKey, remaining);
+    });
+    _cleanupMutation = operation.catchError((_) {});
+    return operation;
+  }
+
+  Future<int> clearCancelledTurnsForSession({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+  }) async {
+    final owner = Session.profileOwner(profile);
+    final scopeIds = <String>{sessionId};
+    final matchingChats = <ActiveChat>[];
+    for (final chat in _chats.values) {
+      if (chat.connection.id != connectionId || chat.sessionProfile != owner) {
+        continue;
+      }
+      final aliases = <String>{
+        chat.sessionId,
+        chat.serverSessionId,
+        chat.logicalSessionId,
+      };
+      if (!aliases.contains(sessionId)) continue;
+      matchingChats.add(chat);
+      scopeIds.addAll(aliases);
+    }
+
+    var removed = 0;
+    Object? firstError;
+    StackTrace? firstStack;
+    for (final scopeId in scopeIds) {
+      try {
+        removed +=
+            await _cancelledTurnStore?.removeSession(
+              connectionId: connectionId,
+              profile: owner,
+              sessionId: scopeId,
+            ) ??
+            0;
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStack ??= stackTrace;
+        await _enqueueCancelledTurnCleanup([
+          'session',
+          connectionId,
+          owner,
+          scopeId,
+        ]);
+      }
+    }
+    for (final chat in matchingChats) {
+      chat.clearCancelledTurnTombstones();
+    }
+    if (firstError != null) Error.throwWithStackTrace(firstError, firstStack!);
+    return removed;
+  }
+
+  Future<int> clearCancelledTurnsForConnection(String connectionId) async {
+    var removed = 0;
+    try {
+      removed = await _cancelledTurnStore?.removeConnection(connectionId) ?? 0;
+    } catch (_) {
+      await _enqueueCancelledTurnCleanup(['connection', connectionId]);
+      rethrow;
+    } finally {
+      for (final entry in _chats.entries) {
+        try {
+          final parts = jsonDecode(entry.key);
+          if (parts is List &&
+              parts.isNotEmpty &&
+              parts.first == connectionId) {
+            entry.value.clearCancelledTurnTombstones();
+          }
+        } catch (_) {
+          if (entry.key.startsWith('$connectionId::')) {
+            entry.value.clearCancelledTurnTombstones();
+          }
+        }
+      }
+    }
+    return removed;
+  }
 
   static String _registryKey(
     String connectionId,
@@ -8285,11 +8998,29 @@ class ActiveChatService {
         _publishHomeWidgetChat(existing);
         return existing;
       }
+      // Un binding nuevo no puede saltarse una escritura durable en vuelo. La
+      // próxima invalidación/attach resolverá la identidad tras el commit.
+      if (existing.hasPendingDurableCancellation) return existing;
       // A stable mobile Bot/Room route can be reopened after its authoritative
       // stored id changes. Never retarget an existing runtime; dispose that
       // binding and attach a fresh chat for the new durable identity.
       _dispose(key);
     }
+    final tombstoneGeneration = sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([
+              connection.id,
+              connection.kind.name,
+              connection.host,
+              connection.port,
+              connection.useHttps,
+              connection.gatewayAuthMode.storageKey,
+              connection.apiKey,
+            ]),
+          ),
+        )
+        .toString();
     late final ActiveChat chat;
     chat = ActiveChat(
       connection: connection,
@@ -8334,6 +9065,25 @@ class ActiveChatService {
             profile: owner,
           )] ??
           const [],
+      // El id de ruta del chat es el scope estable. El storedSessionId puede
+      // rotar por resume/compresión y nunca debe varar la protección local.
+      initialCancelledTurnTombstones:
+          _cancelledTurnStore?.load(
+            connectionId: connection.id,
+            profile: owner,
+            sessionId: sessionId,
+            generation: tombstoneGeneration,
+          ) ??
+          const [],
+      onCancelledTurn: _cancelledTurnStore == null
+          ? null
+          : (tombstone) => _cancelledTurnStore.add(
+              connectionId: connection.id,
+              profile: owner,
+              sessionId: sessionId,
+              tombstone: tombstone,
+              generation: tombstoneGeneration,
+            ),
     );
     _chats[key] = chat;
     final seed =
@@ -8432,6 +9182,7 @@ class ActiveChatService {
     _rememberSteerProjections(chat);
     chat.requestReleaseWhenUnused();
     if (chat.isStreaming ||
+        chat.hasPendingDurableCancellation ||
         chat.hasListeners ||
         chat.voiceBargeHandoffPending) {
       _refreshActiveIds();
@@ -8445,6 +9196,7 @@ class ActiveChatService {
     if (chat == null ||
         !chat.releaseRequested ||
         chat.isStreaming ||
+        chat.hasPendingDurableCancellation ||
         chat.hasListeners ||
         chat.voiceBargeHandoffPending) {
       return;
@@ -8474,6 +9226,7 @@ class ActiveChatService {
     // Si nadie está mirando el chat (la pantalla se cerró), libéralo: el
     // refetch y la notificación ya ocurrieron en onDone.
     if (!chat.isStreaming &&
+        !chat.hasPendingDurableCancellation &&
         !chat.hasListeners &&
         !chat.voiceBargeHandoffPending) {
       _dispose(key);

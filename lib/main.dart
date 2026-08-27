@@ -115,7 +115,12 @@ void main() async {
   final prefs = await SharedPreferences.getInstance();
   final themeProfileStore = ThemeProfileStore(prefs);
   final initialThemeProfiles = await themeProfileStore.load();
-  final connManager = await ConnectionManager.create(prefs);
+  final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
+  await cancelledTurnStore.initialize();
+  final connManager = await ConnectionManager.create(
+    prefs,
+    clearCancelledTurns: cancelledTurnStore.removeConnection,
+  );
   // Arranque en frío: si el usuario fijó una instancia predeterminada, la app
   // abre con ella (sembrándola como activa). El cambio de instancia en caliente
   // se sigue respetando durante la sesión.
@@ -133,6 +138,7 @@ void main() async {
     notifications: notifications,
     policy: approvalPolicy,
     prefs: prefs,
+    cancelledTurnStore: cancelledTurnStore,
   );
   runApp(
     HermesApp(

@@ -1023,9 +1023,13 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
     if (_clearingNormal || _clearingCron) return;
     final targetConnection = widget.connection;
     final verifier = _captureHistoryCleanupVerifier();
+    final activeChats = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.activeChats;
     setState(() => _clearingNormal = true);
 
     ApiClient? client;
+    var normalSessions = <Session>[];
     try {
       if (!await _authorizeHistoryCleanup(
         targetConnection: targetConnection,
@@ -1068,8 +1072,13 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       );
       final prefs = await SharedPreferences.getInstance();
       final result = await clearConversationsAndLocalState(
-        loadSessions: ({bool includeChildren = false}) =>
-            client!.getSessions(includeChildren: includeChildren),
+        loadSessions: ({bool includeChildren = false}) async {
+          final sessions = await client!.getSessions(
+            includeChildren: includeChildren,
+          );
+          normalSessions = sessionsSafeForBulkDelete(sessions);
+          return sessions;
+        },
         deleteSession: client.deleteSession,
         clearDrafts: () =>
             ChatDraftStore(prefs).deleteForConnection(targetConnection.id),
@@ -1077,6 +1086,21 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
             LocalTranscriptStore.deleteForConnection(targetConnection.id),
         clearOutbox: () =>
             TurnOutboxStore().deleteForConnection(targetConnection.id),
+        onRemoteSessionDeleted: (sessionId) async {
+          if (activeChats == null) return;
+          var profile = '';
+          for (final session in normalSessions) {
+            if (session.id == sessionId) {
+              profile = session.profile ?? '';
+              break;
+            }
+          }
+          await activeChats.clearCancelledTurnsForSession(
+            connectionId: targetConnection.id,
+            profile: profile,
+            sessionId: sessionId,
+          );
+        },
       );
       if (!mounted) return;
       if (result.hasChanges) {
