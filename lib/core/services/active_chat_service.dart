@@ -4727,20 +4727,10 @@ class ActiveChat {
     }
   }
 
-  /// Suelta un canal Desktop ocioso al ir a segundo plano. Un turno vivo se
-  /// conserva bajo foreground service y nunca pasa por este camino.
-  Future<void> suspendIdleDesktopConnection() async {
-    if (isStreaming) return;
-    final gateway = _desktopGateway;
-    final HermesDesktopLifecycleGateway? lifecycleGateway =
-        gateway is HermesDesktopLifecycleGateway
-        ? gateway as HermesDesktopLifecycleGateway
-        : null;
-    if (lifecycleGateway == null) return;
-    _usingDesktopGateway = false;
-    _retireDesktopRuntime();
-    await lifecycleGateway.disconnectIdle();
-  }
+  /// Background no demuestra que un canal Desktop esté ocioso: el estado
+  /// local puede ir por detrás de un turno remoto ya aceptado. Conservamos el
+  /// transporte y dejamos que dispose/process death ejecute el cierre real.
+  Future<void> suspendIdleDesktopConnection() => Future<void>.value();
 
   Future<bool> _canUseTurnIdempotency(HermesDesktopGateway gateway) async {
     if (_turnIdempotencyInvalid || gateway is! HermesDesktopIdempotentGateway) {

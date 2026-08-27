@@ -23,6 +23,7 @@ class _ConfiguredCreateGateway
         HermesDesktopCompressionGateway,
         HermesDesktopRewindResolverGateway,
         HermesDesktopDurableRewindGateway,
+        HermesDesktopLifecycleGateway,
         HermesDesktopSessionActivityGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
@@ -43,6 +44,8 @@ class _ConfiguredCreateGateway
   bool resumeExistingSucceeds = false;
   bool connected = true;
   int activationCalls = 0;
+  int activeListCalls = 0;
+  int idleDisconnects = 0;
   late DesktopCompressionResult compressionResult;
 
   @override
@@ -149,7 +152,16 @@ class _ConfiguredCreateGateway
   @override
   Future<DesktopActiveSessionList> listActiveSessions({
     String currentRuntimeSessionId = '',
-  }) async => const DesktopActiveSessionList();
+  }) async {
+    activeListCalls += 1;
+    return const DesktopActiveSessionList();
+  }
+
+  @override
+  Future<void> disconnectIdle() async {
+    idleDisconnects += 1;
+    connected = false;
+  }
 
   @override
   Future<DesktopSessionBinding> resumeSession(
@@ -305,6 +317,36 @@ ActiveChat _chat(
 );
 
 void main() {
+  test(
+    'background nunca cierra destructivamente un runtime enlazado',
+    () async {
+      final gateway = _ConfiguredCreateGateway()..resumeExistingSucceeds = true;
+      final chat = _chat(gateway);
+      addTearDown(chat.dispose);
+
+      expect(await chat.ensureDesktopRuntime(), isTrue);
+      expect(chat.isStreaming, isFalse);
+
+      await chat.suspendIdleDesktopConnection();
+
+      expect(gateway.activeListCalls, 0);
+      expect(gateway.idleDisconnects, 0);
+      expect(chat.hasDesktopRuntime, isTrue);
+    },
+  );
+
+  test('background tampoco cierra un transporte todavía sin runtime', () async {
+    final gateway = _ConfiguredCreateGateway();
+    final chat = _chat(gateway);
+    addTearDown(chat.dispose);
+
+    await chat.suspendIdleDesktopConnection();
+
+    expect(gateway.activeListCalls, 0);
+    expect(gateway.idleDisconnects, 0);
+    expect(chat.hasDesktopRuntime, isFalse);
+  });
+
   test('ensure runtime reanuda pero un 4007 nunca crea', () async {
     final draftGateway = _ConfiguredCreateGateway();
     final draft = _chat(draftGateway);
