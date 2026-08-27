@@ -337,19 +337,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// (U-11, spec 028). Se arma al pasar a paused y se cancela al volver.
   Timer? _sshIdleTimer;
 
-  /// Evita desmontar el canal Desktop por un cambio breve de aplicación,
-  /// selector del sistema o pestaña. Los estados hidden/paused pueden llegar
-  /// seguidos, por lo que se conserva un solo temporizador cancelable.
-  Timer? _connectionSuspendTimer;
   Timer? _deferredNotificationInitTimer;
 
   // La selección phone/server ocurre antes de que el controller publique
   // `active`. Serializar ese preflight evita que dos ChatScreen solapadas
   // configuren rutas distintas y que la primera capture la ruta de la segunda.
   Future<void> _voiceEntryTail = Future<void>.value();
-
-  @visibleForTesting
-  static const connectionSuspendGrace = Duration(seconds: 20);
 
   /// Id de la fuente activa (estilo de fuente de Ajustes). Reactivo: cambiarlo
   /// reconstruye el [ThemeData] sin reiniciar la app. Acceso desde descendientes
@@ -1077,8 +1070,6 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // foreground service activo normalmente no hace falta, pero si el SO mató el
     // isolate igualmente, re-sincronizamos los mensajes desde el servidor).
     if (state == AppLifecycleState.resumed) {
-      _connectionSuspendTimer?.cancel();
-      _connectionSuspendTimer = null;
       _sshIdleTimer?.cancel();
       _sshIdleTimer = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1097,17 +1088,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
-      if (state == AppLifecycleState.detached) {
-        _connectionSuspendTimer?.cancel();
-        _connectionSuspendTimer = null;
-        unawaited(widget.activeChats.suspendIdleConnections());
-      } else {
-        _connectionSuspendTimer ??= Timer(connectionSuspendGrace, () {
-          _connectionSuspendTimer = null;
-          if (!mounted || widget.notifications.appInForeground) return;
-          unawaited(widget.activeChats.suspendIdleConnections());
-        });
-      }
+      // No cerramos el WebSocket por lifecycle. Android puede encadenar
+      // hidden/paused/detached durante un selector, un cambio de red o una
+      // suspensión breve; cerrar aquí convierte una transición local en
+      // client_gone y el gateway puede cancelar un turno remoto aún activo.
+      // Al volver a foreground, reconcileAfterResume recupera cualquier corte
+      // real de transporte sin destruir trabajo deliberadamente.
       // Sin opt-in de pantalla bloqueada, pausa y silencia micro+TTS. Con opt-in
       // no se toca el bucle: ya está protegido por el FGS iniciado en foreground.
       if (kVoiceRuntimeEnabled &&
@@ -1821,7 +1807,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _homeReadyTimer?.cancel();
     _startupProgress.dispose();
     _deferredNotificationInitTimer?.cancel();
-    _connectionSuspendTimer?.cancel();
+
     _sshIdleTimer?.cancel();
     _linkSub?.cancel();
     widget.connManager.activeConnectionId.removeListener(_retryPendingShare);

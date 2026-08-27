@@ -3665,9 +3665,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('un cambio breve de app conserva el canal Desktop', (
-    tester,
-  ) async {
+  testWidgets('el lifecycle nunca desconecta el canal Desktop', (tester) async {
     final gateway = _UiRewindGateway();
     await pumpChat(
       tester,
@@ -3680,9 +3678,7 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.pump(
-      HermesAppState.connectionSuspendGrace - const Duration(seconds: 1),
-    );
+    await tester.pump(const Duration(seconds: 19));
     expect(gateway.idleDisconnects, 0);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
@@ -3694,16 +3690,12 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.pump(
-      HermesAppState.connectionSuspendGrace + const Duration(milliseconds: 1),
-    );
-    expect(gateway.idleDisconnects, 1);
+    await tester.pump(const Duration(seconds: 21));
+    expect(gateway.idleDisconnects, 0);
 
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.detached);
     await tester.pump();
-    expect(tester.takeException(), isNull);
+    expect(gateway.idleDisconnects, 0);
   });
 
   testWidgets('process death durante submitting restaura sin autoenvío', (
