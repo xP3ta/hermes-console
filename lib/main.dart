@@ -29,6 +29,7 @@ import 'core/screens/instance_edit_screen.dart';
 import 'core/screens/onboarding_screen.dart';
 import 'core/screens/splash_screen.dart';
 import 'core/services/pairing_link.dart';
+import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
@@ -366,6 +367,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   // Deep link hermes://pair (abrir la app ya rellena desde un enlace tocado).
   // La suscripción mantiene viva la instancia de AppLinks mientras escucha.
   StreamSubscription<Uri>? _linkSub;
+  final PairingLinkDeliveryGate _pairingLinkDeliveryGate =
+      PairingLinkDeliveryGate();
+  bool _pairingLinkRetryScheduled = false;
 
   // Share Sheet Android. La bandeja cifra el contenido hasta convertirlo en un
   // borrador local; nunca lo envía automáticamente al agente.
@@ -1659,7 +1663,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final link = PairingLink.tryParse(uri.toString());
     if (link == null) return;
     final nav = _navigatorKey.currentState;
-    if (nav == null) return;
+    if (nav == null) {
+      _pairingLinkDeliveryGate.defer(uri);
+      _scheduleDeferredPairingLink();
+      return;
+    }
+    if (!_pairingLinkDeliveryGate.shouldHandle(uri)) return;
     nav.push(
       MaterialPageRoute(
         builder: (_) => InstanceEditScreen(
@@ -1669,6 +1678,29 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         ),
       ),
     );
+    if (_pairingLinkDeliveryGate.hasDeferred) {
+      _scheduleDeferredPairingLink();
+    }
+  }
+
+  void _scheduleDeferredPairingLink() {
+    if (_pairingLinkRetryScheduled || !mounted) return;
+    _pairingLinkRetryScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pairingLinkRetryScheduled = false;
+      if (!mounted) return;
+      final pending = _pairingLinkDeliveryGate.takeDeferredIf(
+        _navigatorKey.currentState != null,
+      );
+      if (pending == null) {
+        if (_pairingLinkDeliveryGate.hasDeferred) {
+          _scheduleDeferredPairingLink();
+        }
+        return;
+      }
+      _handlePairingUri(pending);
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   Future<void> _initShareInbox() async {
