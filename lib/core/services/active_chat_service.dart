@@ -971,6 +971,28 @@ class _AssistantNarrationProjection {
 class ActiveChat {
   static final Stopwatch _defaultMonotonicClock = Stopwatch()..start();
   static const Duration _voiceBargeHandoffRetention = Duration(seconds: 30);
+  static const Duration _desktopRecoveryDelayCap = Duration(seconds: 30);
+  static const Duration _desktopRecoveryFallbackDelay = Duration(seconds: 1);
+
+  static List<Duration> _normalizeDesktopRecoveryBackoff(
+    List<Duration> configured,
+  ) {
+    final normalized = <Duration>[];
+    for (final delay in configured) {
+      if (delay <= Duration.zero) {
+        if (normalized.isEmpty) normalized.add(Duration.zero);
+        continue;
+      }
+      normalized.add(
+        delay > _desktopRecoveryDelayCap ? _desktopRecoveryDelayCap : delay,
+      );
+    }
+    if (normalized.isEmpty) normalized.add(Duration.zero);
+    if (normalized.last <= Duration.zero) {
+      normalized.add(_desktopRecoveryFallbackDelay);
+    }
+    return List<Duration>.unmodifiable(normalized);
+  }
 
   final SavedConnection connection;
   final String sessionId;
@@ -1386,6 +1408,7 @@ class ActiveChat {
   bool _disposed = false;
   final Completer<void> _disposeSignal = Completer<void>();
   final Duration _terminalReconcileBudget;
+  final Duration _desktopRecoveryAttemptTimeout;
   final List<Duration> _desktopRecoveryBackoff;
   // Se marca cuando el run llega a un estado terminal (completed/failed/
   // cancelled) para que el cierre del SSE no lo procese dos veces.
@@ -1448,6 +1471,7 @@ class ActiveChat {
     Future<bool> Function()? turnIdempotencyCapability,
     List<SteerProjection> initialSteerProjections = const [],
     Duration terminalReconcileBudget = const Duration(seconds: 4),
+    Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
     List<Duration> desktopRecoveryBackoff = const [
       Duration.zero,
       Duration(seconds: 1),
@@ -1471,7 +1495,11 @@ class ActiveChat {
            (() => _defaultMonotonicClock.elapsedMicroseconds),
        _observedFirstTokenLatencyMs = initialObservedFirstTokenLatencyMs,
        _terminalReconcileBudget = terminalReconcileBudget,
-       _desktopRecoveryBackoff = List<Duration>.unmodifiable(
+       _desktopRecoveryAttemptTimeout =
+           desktopRecoveryAttemptTimeout > Duration.zero
+           ? desktopRecoveryAttemptTimeout
+           : const Duration(seconds: 15),
+       _desktopRecoveryBackoff = _normalizeDesktopRecoveryBackoff(
          desktopRecoveryBackoff,
        ),
        _turnIdempotencyCapability =
@@ -3761,7 +3789,20 @@ class ActiveChat {
     String storedSessionId, {
     required String profile,
     required String legacyModel,
+    bool deferRuntimeCommit = false,
   }) async {
+    if (deferRuntimeCommit &&
+        gateway is HermesDesktopRecoverySessionLifecycleGateway) {
+      final recoveryGateway =
+          gateway as HermesDesktopRecoverySessionLifecycleGateway;
+      final snapshot = await recoveryGateway.resumeExistingForRecovery(
+        storedSessionId,
+        profile: profile,
+      );
+      return snapshot is DesktopSessionBinding
+          ? snapshot
+          : DesktopSessionBinding.fromSnapshot(snapshot);
+    }
     if (gateway is HermesDesktopSessionLifecycleGateway) {
       final lifecycleGateway = gateway as HermesDesktopSessionLifecycleGateway;
       final snapshot = await lifecycleGateway.resumeExisting(
@@ -3777,6 +3818,16 @@ class ActiveChat {
       profile: profile,
       model: legacyModel,
     );
+  }
+
+  void _commitDesktopRecoveryRuntime(
+    HermesDesktopGateway gateway,
+    String runtimeSessionId,
+  ) {
+    if (gateway is HermesDesktopRecoverySessionLifecycleGateway) {
+      (gateway as HermesDesktopRecoverySessionLifecycleGateway)
+          .commitRecoveryRuntime(runtimeSessionId);
+    }
   }
 
   /// Resuelve una entrega ambigua únicamente mediante el contrato negociado.
@@ -4446,10 +4497,18 @@ class ActiveChat {
   bool _isTerminalDesktopRecoveryError(Object error) {
     if (error is DashboardAuthException) return true;
     if (error is DashboardHttpException) {
-      return error.statusCode == 401 || error.statusCode == 403;
+      final status = error.statusCode;
+      return status >= 400 && status < 500 && status != 408 && status != 429;
     }
-    return error is TuiGatewayRpcError &&
-        (error.code == 4007 || error.code == -32601 || error.code == -32602);
+    if (error is! TuiGatewayRpcError) return false;
+    final code = error.code;
+    return code == null ||
+        code == 4007 ||
+        code == 4030 ||
+        code == -32700 ||
+        code == -32600 ||
+        code == -32601 ||
+        code == -32602;
   }
 
   Future<void> _recoverDesktopTurn(
@@ -4485,9 +4544,7 @@ class ActiveChat {
       // Seguimos marcando el turno como vivo y reemplazamos el socket con
       // backoff acotado (30 s máximo entre intentos) hasta que vuelva la red,
       // el usuario cancele, llegue un terminal o se destruya el chat.
-      final delays = _desktopRecoveryBackoff.isEmpty
-          ? const <Duration>[Duration.zero]
-          : _desktopRecoveryBackoff;
+      final delays = _desktopRecoveryBackoff;
       final epochInvalidated = _turnEpochInvalidated.future;
       var attempt = 0;
       Object lastError = originalError;
@@ -4504,23 +4561,34 @@ class ActiveChat {
         }
         if (!_canRecoverTurn(turnEpoch)) return;
         try {
-          await gateway.connect();
-          if (!_canRecoverTurn(turnEpoch)) return;
-          final binding = await _resumeDesktopSessionForRecovery(
-            gateway,
-            serverSessionId,
-            profile: _turnProfile,
-            legacyModel: _lastModel,
+          final connected = await _desktopRecoveryOperationBeforeDeadline(
+            gateway.connect().then((_) => true),
+            epochInvalidated,
           );
-          if (!_canRecoverTurn(turnEpoch)) return;
-          final status = await idempotentGateway.getTurnStatus(
-            binding.runtimeSessionId,
-            delivery.current.clientTurnId,
+          if (connected == null || !_canRecoverTurn(turnEpoch)) return;
+          final binding = await _desktopRecoveryOperationBeforeDeadline(
+            _resumeDesktopSessionForRecovery(
+              gateway,
+              serverSessionId,
+              profile: _turnProfile,
+              legacyModel: _lastModel,
+              deferRuntimeCommit: true,
+            ),
+            epochInvalidated,
           );
-          if (!_canRecoverTurn(turnEpoch)) return;
+          if (binding == null || !_canRecoverTurn(turnEpoch)) return;
+          final status = await _desktopRecoveryOperationBeforeDeadline(
+            idempotentGateway.getTurnStatus(
+              binding.runtimeSessionId,
+              delivery.current.clientTurnId,
+            ),
+            epochInvalidated,
+          );
+          if (status == null || !_canRecoverTurn(turnEpoch)) return;
           if (!status.known || status.state == null) continue;
           switch (status.state!) {
             case DesktopTurnState.accepted:
+              _commitDesktopRecoveryRuntime(gateway, binding.runtimeSessionId);
               _desktopStoredSessionId = binding.storedSessionId;
               _adoptDesktopRuntime(
                 binding.runtimeSessionId,
@@ -4534,6 +4602,7 @@ class ActiveChat {
             case DesktopTurnState.running:
               await delivery.markRunning();
               if (!_canRecoverTurn(turnEpoch)) return;
+              _commitDesktopRecoveryRuntime(gateway, binding.runtimeSessionId);
               _desktopStoredSessionId = binding.storedSessionId;
               _adoptDesktopRuntime(
                 binding.runtimeSessionId,
@@ -6682,6 +6751,31 @@ class ActiveChat {
         elapsed.future,
         _disposeSignal.future.then((_) => false),
         epochInvalidated.then((_) => false),
+      ]);
+    } finally {
+      timer.cancel();
+    }
+  }
+
+  Future<T?> _desktopRecoveryOperationBeforeDeadline<T>(
+    Future<T> operation,
+    Future<void> epochInvalidated,
+  ) async {
+    final deadline = Completer<T?>();
+    final timer = Timer(_desktopRecoveryAttemptTimeout, () {
+      deadline.completeError(
+        TimeoutException(
+          'Desktop recovery operation timed out',
+          _desktopRecoveryAttemptTimeout,
+        ),
+      );
+    });
+    try {
+      return await Future.any<T?>([
+        operation,
+        deadline.future,
+        _disposeSignal.future.then((_) => null),
+        epochInvalidated.then((_) => null),
       ]);
     } finally {
       timer.cancel();

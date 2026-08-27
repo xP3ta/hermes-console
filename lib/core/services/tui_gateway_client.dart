@@ -173,6 +173,17 @@ abstract class HermesDesktopSessionLifecycleGateway {
   });
 }
 
+/// Recovery-only resume whose runtime anchor is committed by the caller only
+/// after its turn generation is still current.
+abstract class HermesDesktopRecoverySessionLifecycleGateway {
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  });
+
+  void commitRecoveryRuntime(String runtimeSessionId);
+}
+
 /// Atomic first-submit creation with the 0.19 session-scoped configuration.
 ///
 /// This remains a separate optional interface so older gateway fakes and
@@ -701,6 +712,7 @@ class TuiGatewayClient
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
         HermesDesktopSessionLifecycleGateway,
+        HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopLifecycleGateway,
         HermesDesktopIdempotentGateway,
@@ -1888,6 +1900,30 @@ class TuiGatewayClient
   }
 
   @override
+  Future<DesktopSessionBinding> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) async {
+    final result = await _request('session.resume', {
+      'session_id': storedSessionId,
+      'source': 'mobile',
+      if (profile.trim().isNotEmpty) 'profile': profile.trim(),
+    });
+    return _parseSessionBinding(
+      result,
+      requestedStoredSessionId: storedSessionId,
+      created: false,
+      method: 'session.resume',
+      rememberLegacyRuntime: false,
+    );
+  }
+
+  @override
+  void commitRecoveryRuntime(String runtimeSessionId) {
+    _rememberLegacyEventRuntime(runtimeSessionId);
+  }
+
+  @override
   Future<DesktopSessionBinding> createForFirstSubmit({
     String profile = '',
     List<Map<String, dynamic>> seedMessages = const [],
@@ -1960,6 +1996,7 @@ class TuiGatewayClient
     required String requestedStoredSessionId,
     required bool created,
     required String method,
+    bool rememberLegacyRuntime = true,
   }) {
     try {
       final binding = DesktopSessionBinding.fromSnapshot(
@@ -1970,7 +2007,9 @@ class TuiGatewayClient
           method: method,
         ),
       );
-      _rememberLegacyEventRuntime(binding.runtimeSessionId);
+      if (rememberLegacyRuntime) {
+        _rememberLegacyEventRuntime(binding.runtimeSessionId);
+      }
       return binding;
     } on FormatException {
       throw TuiGatewayRpcError(

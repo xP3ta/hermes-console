@@ -173,10 +173,14 @@ class _RecoverableDesktopGateway extends _DroppingDesktopGateway
 }
 
 class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
-    implements HermesDesktopSessionLifecycleGateway {
+    implements
+        HermesDesktopSessionLifecycleGateway,
+        HermesDesktopRecoverySessionLifecycleGateway {
   int resumeExistingCalls = 0;
   int createForFirstSubmitCalls = 0;
   final List<String> resumeExistingStoredIds = [];
+  final List<String> committedRecoveryRuntimeIds = [];
+  Completer<DesktopSessionSnapshot>? recoveryExistingGate;
   Object? resumeExistingError;
 
   @override
@@ -208,6 +212,29 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
       storedSessionId: 'stored-created-unexpectedly',
       created: true,
     );
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) {
+    resumeExistingCalls++;
+    resumeExistingStoredIds.add(storedSessionId);
+    if (resumeExistingError case final error?) return Future.error(error);
+    return recoveryExistingGate?.future ??
+        Future.value(
+          DesktopSessionBinding(
+            runtimeSessionId: 'runtime-recovery-$resumeExistingCalls',
+            storedSessionId: storedSessionId,
+            created: false,
+          ),
+        );
+  }
+
+  @override
+  void commitRecoveryRuntime(String runtimeSessionId) {
+    committedRecoveryRuntimeIds.add(runtimeSessionId);
   }
 }
 
@@ -312,11 +339,42 @@ ActiveTurnDelivery _delivery(
   store: store,
 );
 
+Future<void> _expectRecoveryErrorClassification(
+  String id,
+  Object error, {
+  required bool terminal,
+}) async {
+  final gateway = _RecoverableDesktopGateway()..recoveryConnectError = error;
+  final chat = _recoverableChat(
+    id,
+    gateway,
+    desktopRecoveryBackoff: const [Duration.zero],
+  );
+  try {
+    await chat.send(
+      fullText: 'clasificar fallo recovery',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery(id, _NoopOutbox()),
+    );
+    gateway.drop();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(
+      chat.state,
+      terminal ? ChatPipelineState.failed : ChatPipelineState.connecting,
+    );
+    expect(gateway.connectCalls, 2);
+  } finally {
+    chat.dispose();
+  }
+}
+
 ActiveChat _recoverableChat(
   String id,
   _RecoverableDesktopGateway gateway, {
   ApiClient? api,
   Duration terminalReconcileBudget = const Duration(seconds: 4),
+  Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
   List<Duration> desktopRecoveryBackoff = const [
     Duration.zero,
     Duration(seconds: 1),
@@ -339,6 +397,7 @@ ActiveChat _recoverableChat(
   desktopGateway: gateway,
   turnIdempotencyCapability: () async => true,
   terminalReconcileBudget: terminalReconcileBudget,
+  desktopRecoveryAttemptTimeout: desktopRecoveryAttemptTimeout,
   desktopRecoveryBackoff: desktopRecoveryBackoff,
 );
 
@@ -483,6 +542,62 @@ void main() {
   );
 
   test(
+    'un backoff vacío conserva un intento inmediato y luego cede al timer',
+    () async {
+      final gateway = _RecoverableDesktopGateway()
+        ..recoveryConnectFailuresRemaining = 100;
+      final chat = _recoverableChat(
+        'coverage-empty-backoff',
+        gateway,
+        desktopRecoveryBackoff: const [],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'esperar sin monopolizar el event loop',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('coverage-empty-backoff', _NoopOutbox()),
+      );
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(gateway.connectCalls, 2);
+      expect(chat.state, ChatPipelineState.connecting);
+    },
+  );
+
+  test(
+    'backoff no positivo permite como máximo un intento inmediato',
+    () async {
+      final gateway = _RecoverableDesktopGateway()
+        ..recoveryConnectFailuresRemaining = 100;
+      final chat = _recoverableChat(
+        'coverage-nonpositive-backoff',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration(seconds: -2),
+          Duration.zero,
+          Duration(seconds: -1),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'normalizar retrasos inválidos',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('coverage-nonpositive-backoff', _NoopOutbox()),
+      );
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(gateway.connectCalls, 2);
+      expect(chat.state, ChatPipelineState.connecting);
+    },
+  );
+
+  test(
     'cancelar durante el backoff detiene la reconexión inmediatamente',
     () async {
       final gateway = _RecoverableDesktopGateway();
@@ -507,6 +622,101 @@ void main() {
 
       expect(chat.state, ChatPipelineState.cancelled);
       expect(gateway.connectCalls, 1);
+    },
+  );
+
+  test('HTTP 404 de sesión es terminal para recovery', () async {
+    final gateway = _RecoverableDesktopGateway()
+      ..recoveryConnectError = const DashboardHttpException(404);
+    final chat = _recoverableChat(
+      'coverage-http-404',
+      gateway,
+      desktopRecoveryBackoff: const [Duration.zero],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'no reintentar una sesión ausente',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('coverage-http-404', _NoopOutbox()),
+    );
+    gateway.drop();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    expect(chat.state, ChatPipelineState.failed);
+    expect(gateway.connectCalls, 2);
+  });
+
+  test('RPC malformado sin código es terminal para recovery', () async {
+    final gateway = _RecoverableDesktopGateway()
+      ..recoveryConnectError = const TuiGatewayRpcError(
+        'session.resume',
+        'malformed response',
+      );
+    final chat = _recoverableChat(
+      'coverage-rpc-null',
+      gateway,
+      desktopRecoveryBackoff: const [Duration.zero],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'no reintentar una respuesta inválida',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('coverage-rpc-null', _NoopOutbox()),
+    );
+    gateway.drop();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    expect(chat.state, ChatPipelineState.failed);
+    expect(gateway.connectCalls, 2);
+  });
+
+  test('fallos estructurales HTTP y RPC son terminales', () async {
+    final cases = <Object>[
+      const DashboardHttpException(400),
+      const DashboardHttpException(422),
+      const TuiGatewayRpcError('session.resume', 'parse', code: -32700),
+      const TuiGatewayRpcError(
+        'session.resume',
+        'invalid request',
+        code: -32600,
+      ),
+      const TuiGatewayRpcError(
+        'session.resume',
+        'invalid params',
+        code: -32602,
+      ),
+      const TuiGatewayRpcError('session.resume', 'auth', code: 4030),
+    ];
+    for (var index = 0; index < cases.length; index++) {
+      await _expectRecoveryErrorClassification(
+        'terminal-classification-$index',
+        cases[index],
+        terminal: true,
+      );
+    }
+  });
+
+  test(
+    'timeout rate-limit transporte y 5xx siguen siendo transitorios',
+    () async {
+      final cases = <Object>[
+        const DashboardHttpException(408),
+        const DashboardHttpException(429),
+        const DashboardHttpException(503),
+        const TuiGatewayRpcError('session.resume', 'server busy', code: 5001),
+        StateError('transport offline'),
+      ];
+      for (var index = 0; index < cases.length; index++) {
+        await _expectRecoveryErrorClassification(
+          'transient-classification-$index',
+          cases[index],
+          terminal: false,
+        );
+      }
     },
   );
 
@@ -570,6 +780,36 @@ void main() {
       expect(gateway.statusCalls, 0);
     },
   );
+
+  test('un resume recovery obsoleto no adopta la identidad runtime', () async {
+    final staleResume = Completer<DesktopSessionSnapshot>();
+    final gateway = _LifecycleRecoverableGateway()
+      ..recoveryExistingGate = staleResume;
+    final chat = _recoverableChat('stale-recovery-runtime', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno original',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('stale-recovery-runtime', _NoopOutbox()),
+    );
+    gateway.drop();
+    await _waitUntil(() => gateway.resumeExistingCalls == 1);
+
+    chat.cancel();
+    staleResume.complete(
+      const DesktopSessionBinding(
+        runtimeSessionId: 'runtime-obsoleto',
+        storedSessionId: 'session-stale-recovery-runtime',
+        created: false,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    expect(chat.state, ChatPipelineState.cancelled);
+    expect(gateway.committedRecoveryRuntimeIds, isEmpty);
+  });
 
   test(
     'reconciliar outbox 4007 moderno conserva ambiguo y nunca crea',
@@ -644,6 +884,40 @@ void main() {
       },
     );
   }
+
+  test(
+    'una operación recovery colgada vence y cancel libera el chat',
+    () async {
+      final gateway = _RecoverableDesktopGateway()
+        ..recoveryConnectGate = Completer<void>();
+      final chat = _recoverableChat(
+        'hung-recovery-operation',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 25),
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'no retener el chat por una operación colgada',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('hung-recovery-operation', _NoopOutbox()),
+      );
+      gateway.drop();
+      await _waitUntil(() => gateway.connectCalls >= 3);
+
+      chat.cancel();
+      final callsAfterCancel = gateway.connectCalls;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      expect(chat.state, ChatPipelineState.cancelled);
+      expect(gateway.connectCalls, callsAfterCancel);
+    },
+  );
 
   test(
     'cancelar durante markRunning impide una transición tardía a executing',
