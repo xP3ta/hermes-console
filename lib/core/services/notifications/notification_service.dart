@@ -839,15 +839,17 @@ class NotificationService implements RunNotificationFacade {
     return '${String.fromCharCodes(runes.take(maxRunes - 1))}…';
   }
 
-  /// Transición relevante del Kanban oficial de Hermes Agent 0.20. El board no
-  /// publica una sesión de chat asociada, así que el aviso abre la aplicación
-  /// sin inventar un destino de Task Center.
+  /// Transición relevante del Kanban oficial de Hermes Agent 0.20. El aviso
+  /// lleva el `taskId` autoritativo en el payload: el tap abre la tarjeta
+  /// exacta en TasksScreen, sin inventar un destino de Task Center.
+  /// Opt-in propio ([notifyKanbanResults]), independiente del de Cron.
   Future<void> kanbanTransition({
+    String connId = '',
     required String taskId,
     required String title,
     required String status,
   }) {
-    if (!notifyCronResults) return Future.value();
+    if (!notifyKanbanResults) return Future.value();
     final t = NotifL10n.of(_prefs);
     final notificationTitle = switch (status) {
       'done' => t.kanbanCompleted,
@@ -861,6 +863,7 @@ class NotificationService implements RunNotificationFacade {
       title: notificationTitle,
       body: title,
       subText: 'Kanban · $taskId',
+      payload: _encodePayload(connId, null, title, taskId: taskId),
     );
   }
 
@@ -1332,7 +1335,9 @@ class NotificationService implements RunNotificationFacade {
     final effectiveActions = compact
         ? null
         : redact
-        ? ((!ongoingFeel && payload != null)
+        // Con contenido oculto nunca se resuelve nada desde la bandeja: solo
+        // "Abrir" (la app decide tras el desbloqueo).
+        ? ((actions != null || !ongoingFeel) && payload != null
               ? <AndroidNotificationAction>[
                   AndroidNotificationAction(
                     'open',
@@ -1372,6 +1377,8 @@ class NotificationService implements RunNotificationFacade {
       colorized: false,
       subText: compact ? null : summary,
       groupKey: _groupKey,
+      // Re-publicar el mismo objeto actualiza la tarjeta sin repetir sonido.
+      onlyAlertOnce: true,
       category: compact
           ? AndroidNotificationCategory.status
           : ongoingFeel
