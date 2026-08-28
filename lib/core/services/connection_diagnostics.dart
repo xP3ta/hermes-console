@@ -175,6 +175,30 @@ class ServerCapabilities {
 
   bool hasEndpoint(String key) => endpoints.containsKey(key);
 
+  /// Returns a server-declared read endpoint only when it remains on [base].
+  /// Invalid or mutating metadata is ignored rather than probed speculatively.
+  Uri? safeGetEndpoint(String key, Uri base) {
+    final value = endpoints[key];
+    if (value is! Map || value['method'] != 'GET' || value['path'] is! String) {
+      return null;
+    }
+    final candidate = Uri.tryParse(value['path'] as String);
+    if (candidate == null ||
+        candidate.hasScheme ||
+        candidate.hasAuthority ||
+        !candidate.path.startsWith('/') ||
+        candidate.hasFragment) {
+      return null;
+    }
+    final resolved = base.resolveUri(candidate);
+    if (resolved.scheme != base.scheme ||
+        resolved.host != base.host ||
+        resolved.port != base.port) {
+      return null;
+    }
+    return resolved;
+  }
+
   /// Resumen legible para el diagnóstico (sin volcar el JSON entero).
   String get summary {
     final on = features.entries
@@ -437,18 +461,16 @@ class ConnectionDiagnostics {
       ),
     );
 
-    // 6. /v1/chat/completions con body inválido a propósito (messages vacío):
-    //    confirma que la ruta existe sin ejecutar el agente. 400 = existe.
-    results.add(
-      await _probe(
-        'chat',
-        'POST',
-        Uri.parse('$base/v1/chat/completions'),
-        headers: auth,
-        body: {'model': 'hermes-agent', 'messages': <Object>[]},
-        okCodes: const {200, 400, 422},
-      ),
-    );
+    // 5b. Skills toggle is never probed: authenticated capabilities is
+    // authoritative and diagnostics must not issue mutating requests. Plugins
+    // may be verified with GET, honoring valid same-origin endpoint metadata.
+    final baseUri = Uri.parse(base);
+    final pluginsUri = serverCaps?.hasEndpoint('plugins') ?? false
+        ? serverCaps!.safeGetEndpoint('plugins', baseUri)
+        : baseUri.resolve('/v1/plugins');
+    if (pluginsUri != null) {
+      results.add(await _probe('plugins', 'GET', pluginsUri, headers: auth));
+    }
 
     return (results, version, serverCaps);
   }
@@ -629,7 +651,6 @@ class ConnectionDiagnostics {
 
     final health = find(gw, 'health');
     final gwSessions = find(gw, 'sessions');
-    final gwChat = find(gw, 'chat');
     final dashStatus = find(dash, 'status');
     final dashAuth = find(dash, 'auth');
 
@@ -647,10 +668,8 @@ class ConnectionDiagnostics {
         ? CapState.unknown
         : (dashAuth.status == ProbeStatus.ok ? CapState.yes : CapState.no);
 
-    // Escrituras documentadas en API_AUDIT.md para hermes-agent 0.16.x:
-    // sesiones (POST/DELETE individual), cron completo y model/set existen
-    // cuando la lectura correspondiente funciona; memoria/config/skills son
-    // GET-only (Allow: GET verificado) y SOUL/plugins no tienen endpoint.
+    // Compatibilidad 0.16.x: sesiones, cron y modelos conservan la inferencia
+    // histórica. Versiones nuevas declaran skills/plugins en capabilities.
     final sessionsRead = fromProbe(gwSessions);
     final cronRead = fromProbe(find(dash, 'cron'));
     final modelsReadDash = fromProbe(find(dash, 'models/providers'));
@@ -678,7 +697,7 @@ class ConnectionDiagnostics {
       dashboardAuthValid: dashboardAuthValid,
       chatSupported: srv(
         'chatSupported',
-        fromProbe(gwChat),
+        CapState.unknown,
         serverCaps?.feature('chat_completions'),
       ),
       sessionsRead: srvEndpoint(
@@ -721,8 +740,14 @@ class ConnectionDiagnostics {
         ]),
         serverCaps?.feature('skills_api'),
       ),
-      skillsToggle: CapState.no,
-      skillsInstall: CapState.no,
+      skillsToggle: srv(
+        'skillsToggle',
+        CapState.unknown,
+        serverCaps?.feature('skills_toggle'),
+      ),
+      // Installation is a separate Mobile Bridge capability. The Gateway
+      // skills_toggle declaration says nothing about install support.
+      skillsInstall: CapState.unknown,
       toolsetsRead: srvEndpoint(
         'toolsetsRead',
         fromProbe(find(gw, 'toolsets')),
@@ -745,7 +770,11 @@ class ConnectionDiagnostics {
         serverCaps?.feature('admin_config_rw'),
       ),
       logsRead: fromProbe(find(dash, 'logs')),
-      pluginsSupported: CapState.no,
+      pluginsSupported: srv(
+        'pluginsSupported',
+        fromProbe(find(gw, 'plugins')),
+        serverCaps?.feature('plugins_api'),
+      ),
       gatewayVersion: version,
       serverModel: serverCaps?.model,
       serverSourced: serverSourced,
