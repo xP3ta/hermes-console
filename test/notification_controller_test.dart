@@ -153,6 +153,84 @@ void main() {
       expect(persisted, isNot(contains('body')));
       expect(persisted, isNot(contains('text')));
     });
+
+    test(
+      'un claim cuya presentación falla puede reclamarse de nuevo',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final ledger = NotificationEventLedger(prefs);
+
+        expect(
+          await ledger.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-retry',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+        await ledger.release(
+          connId: 'conn-a',
+          profile: 'research',
+          objectId: 'run-retry',
+          eventKind: 'run_terminal',
+        );
+
+        expect(
+          await ledger.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-retry',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('espera un lock breve de otro proceso en vez de duplicar', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final ledger = NotificationEventLedger(prefs);
+      final lockFile = File(
+        '${Directory.systemTemp.path}/notification_event_ledger.lock',
+      );
+      final holder = await Process.start('python3', [
+        '-c',
+        'import fcntl,time; '
+            "f=open(r'${lockFile.path}','a+b'); "
+            'fcntl.lockf(f,fcntl.LOCK_EX); '
+            "print('READY',flush=True); time.sleep(0.25)",
+      ]);
+      expect(
+        await holder.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .first,
+        'READY',
+      );
+
+      expect(
+        await ledger.claim(
+          connId: 'conn-lock',
+          profile: 'default',
+          objectId: 'run-lock',
+          eventKind: 'run_terminal',
+        ),
+        isTrue,
+      );
+      expect(await holder.exitCode, 0);
+      expect(
+        await ledger.claim(
+          connId: 'conn-lock',
+          profile: 'default',
+          objectId: 'run-lock',
+          eventKind: 'run_terminal',
+        ),
+        isFalse,
+      );
+    });
   });
 
   late _FakeNotif notif;
