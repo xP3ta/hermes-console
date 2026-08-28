@@ -100,7 +100,7 @@ void main() {
       jsonDecode(args['payload'] as String) as Map,
     );
 
-    expect(args['title'], 'Ejecución completada');
+    expect(args['title'], 'Cron completado');
     expect(body, contains('3 tareas verificadas'));
     expect(body, contains('2 pendientes'));
     expect(body, isNot(contains('**')));

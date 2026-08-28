@@ -726,47 +726,98 @@ class NotificationService implements RunNotificationFacade {
     String? sessionId,
     String? runId,
     String? profile,
-  }) {
-    if (!notifyRuns) return Future.value();
+  }) async {
+    if (!notifyRuns) return;
+    if (!await _eventLedger.claim(
+      connId: connId ?? '',
+      profile: profile,
+      objectId: runId ?? '',
+      eventKind: 'run_terminal',
+    )) {
+      return;
+    }
     final t = NotifL10n.of(_prefs);
-    return _show(
-      kind: NotificationKind.run,
-      id: 7100 + (title.hashCode & 0x3ff),
-      title: ok ? t.runCompleted : t.runFailed,
-      body: title,
-      targetSessionId: sessionId,
-      payload: _encodePayload(
-        connId,
-        sessionId,
-        title,
-        runId: runId,
+    try {
+      await _show(
+        kind: NotificationKind.run,
+        id: eventNotificationId(
+          base: 7100,
+          span: 1024,
+          parts: [connId ?? '', profile ?? '', runId ?? '', 'run_terminal'],
+        ),
+        title: ok ? t.runCompleted : t.runFailed,
+        body: title,
+        targetSessionId: sessionId,
+        payload: _encodePayload(
+          connId,
+          sessionId,
+          title,
+          runId: runId,
+          profile: profile,
+        ),
+      );
+    } catch (_) {
+      await _eventLedger.release(
+        connId: connId ?? '',
         profile: profile,
-      ),
-    );
+        objectId: runId ?? '',
+        eventKind: 'run_terminal',
+      );
+      rethrow;
+    }
   }
 
   /// Resultado de una automatización cron descubierta desde las sesiones de
-  /// Hermes Desktop. Comparte el opt-in de automatizaciones con Kanban y no
-  /// depende del toggle de runs iniciadas desde Task Center.
+  /// Hermes Desktop. Usa su propio opt-in ([notifyCronResults]), independiente
+  /// del de Kanban y del toggle de runs iniciadas desde Task Center.
   Future<void> cronFinished({
     required String title,
     required bool ok,
     required String connId,
     required String sessionId,
+    String executionId = '',
+    String jobId = '',
     String? profile,
     String? preview,
-  }) {
-    if (!notifyCronResults) return Future.value();
+  }) async {
+    if (!notifyCronResults) return;
+    if (!await _eventLedger.claim(
+      connId: connId,
+      profile: profile,
+      objectId: executionId,
+      eventKind: 'cron_terminal',
+    )) {
+      return;
+    }
     final t = NotifL10n.of(_prefs);
-    return _show(
-      kind: NotificationKind.run,
-      id: 7100 + (sessionId.hashCode & 0x3ff),
-      title: ok ? t.runCompleted : t.runFailed,
-      body: compactAutomationPreview(preview, fallback: title),
-      targetSessionId: sessionId,
-      subText: compactSessionLabel(title),
-      payload: _encodePayload(connId, sessionId, title, profile: profile),
-    );
+    try {
+      await _show(
+        kind: NotificationKind.run,
+        id: eventNotificationId(
+          base: 7100,
+          span: 1024,
+          parts: [
+            connId,
+            profile ?? '',
+            executionId.isNotEmpty ? executionId : jobId,
+            'cron_terminal',
+          ],
+        ),
+        title: ok ? t.cronCompleted : t.cronFailed,
+        body: compactAutomationPreview(preview, fallback: title),
+        targetSessionId: sessionId,
+        subText: compactSessionLabel(title),
+        payload: _encodePayload(connId, sessionId, title, profile: profile),
+      );
+    } catch (_) {
+      await _eventLedger.release(
+        connId: connId,
+        profile: profile,
+        objectId: executionId,
+        eventKind: 'cron_terminal',
+      );
+      rethrow;
+    }
   }
 
   /// Convierte la respuesta final del agente en texto legible para la bandeja.
@@ -953,6 +1004,21 @@ class NotificationService implements RunNotificationFacade {
       hash = (hash * 0x01000193) & 0xffffffff;
     }
     return 6000 + (hash & 0x1ff);
+  }
+
+  /// ID estable entre procesos derivado solo de identidad autoritativa.
+  @visibleForTesting
+  static int eventNotificationId({
+    required int base,
+    required int span,
+    required List<String> parts,
+  }) {
+    var hash = 0x811c9dc5;
+    for (final byte in utf8.encode(parts.join('\u001f'))) {
+      hash ^= byte;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return base + (hash % span);
   }
 
   /// Los títulos proceden del servidor y pueden contener Markdown, controles o
