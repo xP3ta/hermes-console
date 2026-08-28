@@ -186,7 +186,9 @@ class ServerCapabilities {
         candidate.hasScheme ||
         candidate.hasAuthority ||
         !candidate.path.startsWith('/') ||
-        candidate.hasFragment) {
+        candidate.hasFragment ||
+        candidate.hasQuery ||
+        candidate.pathSegments.lastOrNull != key) {
       return null;
     }
     final resolved = base.resolveUri(candidate);
@@ -302,10 +304,12 @@ class ConnectionDiagnostics {
     Map<String, String>? headers,
     Object? body,
     Set<int> okCodes = const {200},
+    void Function(http.Response)? inspectResponse,
   }) async {
     final sw = Stopwatch()..start();
     try {
       final request = http.Request(method, uri);
+      request.followRedirects = false;
       if (headers != null) request.headers.addAll(headers);
       if (body != null) {
         request.headers['Content-Type'] = 'application/json';
@@ -313,6 +317,7 @@ class ConnectionDiagnostics {
       }
       final streamed = await _http.send(request).timeout(_kTimeout);
       final res = await http.Response.fromStream(streamed);
+      inspectResponse?.call(res);
       sw.stop();
       final code = res.statusCode;
       final status = okCodes.contains(code)
@@ -422,25 +427,19 @@ class ConnectionDiagnostics {
     // 4. /v1/capabilities — fuente principal de la matriz cuando responde.
     //    Contrato: object hermes.api_server.capabilities con features{} y
     //    endpoints{} (api_server.py del upstream).
+    final capsUri = Uri.parse('$base/v1/capabilities');
     final capsProbe = await _probe(
       'capabilities',
       'GET',
-      Uri.parse('$base/v1/capabilities'),
+      capsUri,
       headers: auth,
+      inspectResponse: (res) {
+        if (res.statusCode == 200) {
+          serverCaps = ServerCapabilities.tryParse(res.body);
+        }
+      },
     );
     results.add(capsProbe);
-    if (capsProbe.status == ProbeStatus.ok) {
-      try {
-        final res = await _http
-            .get(Uri.parse('$base/v1/capabilities'), headers: auth)
-            .timeout(_kTimeout);
-        serverCaps = ServerCapabilities.tryParse(res.body);
-      } catch (e) {
-        debugPrint(
-          '[diagnostics] excepción silenciada (se ignora sin más): $e',
-        );
-      }
-    }
 
     // 5. /v1/skills y /v1/toolsets — lectura via Gateway.
     results.add(
@@ -571,13 +570,10 @@ class ConnectionDiagnostics {
 
   // ── Mobile Bridge (9131) ──────────────────────────────────────────────
 
-  /// Sondea el Mobile Bridge derivado del host (:9131): /bridge/health es
-  /// público y devuelve la versión; con API key, /bridge/provision canjea el
-  /// token del gateway por uno de bridge — confirma que la auth real funciona
-  /// (no guarda nada). Así "editar instancia" puede DETECTAR y COMPROBAR el
-  /// bridge igual que el gateway y el dashboard. Si ya existe un token del
-  /// Bridge, comprueba directamente sus capacidades y evita depender de que el
-  /// endpoint de provisión siga habilitado.
+  /// Sondea el Mobile Bridge derivado del host (:9131) sin mutar su estado.
+  /// /bridge/health es público; si ya existe un token del Bridge, comprueba
+  /// directamente sus capacidades. El aprovisionamiento pertenece al flujo de
+  /// edición, no al diagnóstico.
   Future<List<ProbeResult>> probeBridge(
     SavedConnection conn, {
     String? bridgeUrl,
@@ -596,7 +592,7 @@ class ConnectionDiagnostics {
     );
     results.add(health);
     // Sin un 200 en /bridge/health el bridge no está ahí (puerto cerrado u
-    // otro servicio): no tiene sentido intentar el provision.
+    // otro servicio): no tiene sentido comprobar sus capacidades.
     if (health.status != ProbeStatus.ok) return results;
 
     final storedToken = bridgeToken?.trim() ?? '';
@@ -607,15 +603,6 @@ class ConnectionDiagnostics {
           'GET',
           Uri.parse('$base/bridge/capabilities'),
           headers: {'Authorization': 'Bearer $storedToken'},
-        ),
-      );
-    } else if (conn.apiKey.isNotEmpty) {
-      results.add(
-        await _probe(
-          'provision',
-          'POST',
-          Uri.parse('$base/bridge/provision'),
-          headers: {'Authorization': 'Bearer ${conn.apiKey}'},
         ),
       );
     }

@@ -71,16 +71,12 @@ void main() {
   });
 
   group('ConnectionDiagnostics.probeBridge', () {
-    test('detecta el bridge y valida el provision con la API key', () async {
+    test('con API key y sin bridge token solo comprueba health', () async {
       final hits = <String>[];
       final client = MockClient((req) async {
         hits.add('${req.method} ${req.url.path}');
         if (req.url.path == '/bridge/health') {
           return http.Response('{"status":"ok","version":"1.10.0"}', 200);
-        }
-        if (req.url.path == '/bridge/provision') {
-          expect(req.headers['Authorization'], 'Bearer tok-123');
-          return http.Response('{"ok":true,"token":"b"}', 200);
         }
         return http.Response('not found', 404);
       });
@@ -89,9 +85,8 @@ void main() {
       final results = await diag.probeBridge(_conn());
 
       // Se sondea el puerto derivado del bridge (9131), no el del gateway.
-      expect(hits, contains('GET /bridge/health'));
-      expect(hits, contains('POST /bridge/provision'));
-      expect(results.map((r) => r.name), ['health', 'provision']);
+      expect(hits, ['GET /bridge/health']);
+      expect(results.map((r) => r.name), ['health']);
       expect(results.every((r) => r.status == ProbeStatus.ok), isTrue);
     });
 
@@ -136,6 +131,7 @@ void main() {
 
       expect(results.map((r) => r.name), ['health', 'auth']);
       expect(results.every((r) => r.status == ProbeStatus.ok), isTrue);
+      expect(hits.every((hit) => hit.startsWith('GET ')), isTrue);
       expect(hits.where((hit) => hit.contains('/bridge/provision')), isEmpty);
     });
 
