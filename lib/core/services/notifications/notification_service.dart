@@ -333,10 +333,13 @@ class NotificationService implements RunNotificationFacade {
   Future<void> setNotifyCronResults(bool v) => _prefs.setBool(_kCronResults, v);
 
   /// Kanban tiene opt-in propio, independiente del de Cron. Si el usuario
-  /// nunca lo tocó, hereda el de automatizaciones para que una actualización
-  /// no silencie avisos que ya estaban activos.
+  /// nunca lo tocó (p. ej. al actualizar desde una versión sin esta clave),
+  /// hereda el opt-in de automatizaciones —la escucha en segundo plano,
+  /// estable— para no silenciar avisos que ya estaban activos. Nunca consulta
+  /// la preferencia de Cron: apagar Cron no puede apagar Kanban.
   bool get notifyKanbanResults =>
-      _prefs.getBool(_kKanbanResults) ?? notifyCronResults;
+      _prefs.getBool(_kKanbanResults) ??
+      (_prefs.getBool(backgroundListenPreferenceKey) ?? false);
   Future<void> setNotifyKanbanResults(bool v) =>
       _prefs.setBool(_kKanbanResults, v);
 

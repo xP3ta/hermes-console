@@ -299,6 +299,39 @@ void main() {
   });
 
   test(
+    'B: kanban no hereda el toggle de cron con la clave aún ausente',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+
+      // Actualización desde una versión sin clave propia de Kanban: el
+      // opt-in de automatizaciones (escucha) está activo y la clave
+      // `notif_kanban_results` todavía no existe.
+      expect(prefs.getBool('notif_kanban_results'), isNull);
+      expect(service.notifyKanbanResults, isTrue);
+
+      // Apagar solo Cron no puede apagar Kanban ni silenciar sus avisos.
+      await service.setNotifyCronResults(false);
+      expect(service.notifyCronResults, isFalse);
+      expect(service.notifyKanbanResults, isTrue);
+
+      await service.kanbanTransition(
+        connId: 'demo-node',
+        taskId: 'task-migration-1',
+        title: 'Sigue avisando',
+        status: 'blocked',
+      );
+      expect(shownArgs(groupSummary: false), hasLength(1));
+
+      // Y al contrario: apagar Kanban tampoco arrastra a Cron.
+      await service.setNotifyCronResults(true);
+      await service.setNotifyKanbanResults(false);
+      expect(service.notifyKanbanResults, isFalse);
+      expect(service.notifyCronResults, isTrue);
+    },
+  );
+
+  test(
     'varias alertas activas publican un resumen de grupo sin perder el tap',
     () async {
       final prefs = await SharedPreferences.getInstance();
