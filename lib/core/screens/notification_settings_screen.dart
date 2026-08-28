@@ -68,6 +68,7 @@ class _NotificationSettingsScreenState
     if (!v) {
       await BackgroundListener.stop();
       await _notif?.setNotifyCronResults(false);
+      await _notif?.setNotifyKanbanResults(false);
     }
     await _prefs?.setBool(BackgroundListener.prefKey, v && ok);
     if (!mounted) return;
@@ -108,6 +109,41 @@ class _NotificationSettingsScreenState
       await _prefs?.setBool(BackgroundListener.prefKey, enabled);
     }
     await notif.setNotifyCronResults(enabled);
+    if (!mounted) return;
+    setState(() {
+      _bgRunning = enabled || _bgRunning;
+      _bgBusy = false;
+    });
+    if (value && !enabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).notifListenerStartFailed)),
+      );
+    }
+  }
+
+  /// Kanban tiene opt-in propio: descubrir transiciones también necesita el
+  /// listener en segundo plano, pero activar/desactivar Kanban no toca Cron.
+  Future<void> _toggleKanbanResults(
+    NotificationService notif,
+    bool value,
+  ) async {
+    setState(() => _bgBusy = true);
+    if (value && !_granted) {
+      final granted = await _requestPermission();
+      if (!granted) {
+        await notif.setNotifyKanbanResults(false);
+        if (mounted) setState(() => _bgBusy = false);
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    var enabled = value;
+    if (value) {
+      enabled = await BackgroundListener.start();
+      await _prefs?.setBool(BackgroundListener.prefKey, enabled);
+    }
+    await notif.setNotifyKanbanResults(enabled);
     if (!mounted) return;
     setState(() {
       _bgRunning = enabled || _bgRunning;
@@ -381,6 +417,15 @@ class _NotificationSettingsScreenState
         subtitle: s.notifCronResultsSub,
         value: notif.notifyCronResults,
         onChanged: (v) => _toggleCronResults(notif, v),
+      ),
+      _eventSwitch(
+        colors,
+        enabled: on,
+        icon: Icons.view_kanban_outlined,
+        title: s.notifKanbanResultsTitle,
+        subtitle: s.notifKanbanResultsSub,
+        value: notif.notifyKanbanResults,
+        onChanged: (v) => _toggleKanbanResults(notif, v),
       ),
       _eventSwitch(
         colors,
