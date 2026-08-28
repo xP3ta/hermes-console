@@ -297,4 +297,96 @@ void main() {
     expect(shown, hasLength(2));
     expect(shown.last['title'], 'Tarea de Kanban completada');
   });
+
+  test(
+    'varias alertas activas publican un resumen de grupo sin perder el tap',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+
+      await service.runFinished(
+        title: 'Primera tarea',
+        ok: true,
+        connId: 'demo-node',
+        runId: 'run-group-1',
+      );
+      // Una sola alerta no necesita resumen.
+      expect(shownArgs(groupSummary: true), isEmpty);
+
+      await service.runFinished(
+        title: 'Segunda tarea',
+        ok: false,
+        connId: 'demo-node',
+        runId: 'run-group-2',
+      );
+
+      final summaries = shownArgs(groupSummary: true);
+      expect(summaries, hasLength(1));
+      final summaryAndroid = androidOf(summaries.single);
+      expect(summaryAndroid['groupKey'], 'hermes');
+      expect(summaryAndroid['onlyAlertOnce'], isTrue);
+      expect(
+        summaryAndroid['groupAlertBehavior'],
+        GroupAlertBehavior.children.index,
+      );
+
+      final children = shownArgs(groupSummary: false);
+      expect(children, hasLength(2));
+      final childIds = children.map((args) => args['id']).toSet();
+      expect(childIds, hasLength(2));
+      final childRunIds = children
+          .map(
+            (args) =>
+                (jsonDecode(args['payload'] as String) as Map)['rid'],
+          )
+          .toSet();
+      expect(childRunIds, {'run-group-1', 'run-group-2'});
+    },
+  );
+
+  test(
+    'el resumen agrupa alertas de productores distintos y se retira al quedar una',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      // UI y listener/FGS son instancias (e isolates) distintas en producción.
+      final ui = NotificationService(prefs)..appInForeground = false;
+      final listener = NotificationService(prefs)..appInForeground = false;
+
+      await ui.runFinished(
+        title: 'Vista por la UI',
+        ok: true,
+        connId: 'demo-node',
+        runId: 'run-prod-1',
+      );
+      expect(shownArgs(groupSummary: true), isEmpty);
+
+      await listener.runFinished(
+        title: 'Vista por el listener',
+        ok: false,
+        connId: 'demo-node',
+        runId: 'run-prod-2',
+      );
+      expect(shownArgs(groupSummary: true), hasLength(1));
+
+      // Una instancia NUEVA (reinicio de proceso) ve la bandeja real: al
+      // cancelar una hija y quedar una sola, el resumen se retira.
+      final restarted = NotificationService(prefs)..appInForeground = false;
+      final firstId = NotificationService.eventNotificationId(
+        base: 7100,
+        span: 1024,
+        parts: ['demo-node', '', 'run-prod-1', 'run_terminal'],
+      );
+      await restarted.cancelById(firstId, 'test');
+
+      final cancels = calls
+          .where((call) => call.method == 'cancel')
+          .map((call) {
+            final raw = call.arguments;
+            return raw is Map ? raw['id'] : raw;
+          })
+          .toList();
+      expect(cancels, containsAllInOrder([firstId, 500]));
+      expect(tray.keys, isNot(contains(500)));
+    },
+  );
 }
