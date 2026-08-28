@@ -574,13 +574,14 @@ class NotificationService implements RunNotificationFacade {
     String? profile,
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? roomId,
+    String? taskId,
   }) {
     if (connId == null || connId.isEmpty) return null;
     final hasSid = sessionId != null && sessionId.isNotEmpty;
     final hasRid = runId != null && runId.isNotEmpty;
-    // Para notificaciones de chat: necesita sessionId.
-    // Para notificaciones de run: basta con runId.
-    if (!hasSid && !hasRid) return null;
+    final hasTaskId = taskId != null && taskId.isNotEmpty;
+    // Chat necesita sessionId; runs y Kanban llevan su objeto autoritativo.
+    if (!hasSid && !hasRid && !hasTaskId) return null;
     return NotificationOpen(
       connId: connId,
       sessionId: hasSid ? sessionId : '',
@@ -589,6 +590,7 @@ class NotificationService implements RunNotificationFacade {
       surface: surface,
       roomId: roomId,
       runId: hasRid ? runId : null,
+      taskId: hasTaskId ? taskId : null,
     ).toPayload(base: base);
   }
 
@@ -657,55 +659,62 @@ class NotificationService implements RunNotificationFacade {
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
-  }) {
-    if (!notifyApprovals) return Future.value();
+  }) async {
+    if (!notifyApprovals) return;
+    if (!await _eventLedger.claim(
+      connId: connId ?? '',
+      profile: profile,
+      objectId: runId ?? '',
+      eventKind: 'approval_required',
+    )) {
+      return;
+    }
     final t = NotifL10n.of(_prefs);
     final where = (instance != null && instance.isNotEmpty)
         ? ' · $instance'
         : '';
-    // Botones Aprobar/Rechazar resolubles SIN abrir la app: se procesan en el
-    // isolate de fondo (onDidReceiveBackgroundNotificationResponse) que carga el
-    // token del Keystore por connId y llama a POST /v1/runs/{id}/approval. Solo
-    // se añaden si hay datos suficientes (runId + base del gateway); si no, la
-    // notif sigue siendo informativa y se resuelve abriendo la tarjeta del chat.
-    final canResolve =
-        runId != null && runId.isNotEmpty && base != null && base.isNotEmpty;
-    return _show(
-      kind: NotificationKind.approval,
-      id: 7001,
-      title: t.approvalTitle,
-      body: t.approvalBody(tool, where),
-      ongoingFeel: true,
-      bypassForeground: true,
-      targetSessionId: sessionId,
-      subText: instance,
-      payload: _encodePayload(
-        connId,
-        sessionId,
-        sessionTitle ?? instance,
-        runId: runId,
-        base: base,
+    // La aprobación NUNCA se resuelve desde la bandeja: el plugin no puede
+    // exigir desbloqueo por acción y una decisión de seguridad no debe poder
+    // tomarse desde la pantalla de bloqueo. Solo "Abrir", que trae la app al
+    // frente; la decisión vive dentro, tras la autenticación del sistema.
+    try {
+      await _show(
+        kind: NotificationKind.approval,
+        id: 7001,
+        title: t.approvalTitle,
+        body: t.approvalBody(tool, where),
+        ongoingFeel: true,
+        bypassForeground: true,
+        targetSessionId: sessionId,
+        subText: instance,
+        payload: _encodePayload(
+          connId,
+          sessionId,
+          sessionTitle ?? instance,
+          runId: runId,
+          base: base,
+          profile: profile,
+          surface: surface,
+          roomId: roomId,
+        ),
+        actions: <AndroidNotificationAction>[
+          AndroidNotificationAction(
+            'open',
+            t.actOpen,
+            showsUserInterface: true,
+            cancelNotification: true,
+          ),
+        ],
+      );
+    } catch (_) {
+      await _eventLedger.release(
+        connId: connId ?? '',
         profile: profile,
-        surface: surface,
-        roomId: roomId,
-      ),
-      actions: canResolve
-          ? <AndroidNotificationAction>[
-              AndroidNotificationAction(
-                'approve',
-                t.actApprove,
-                showsUserInterface: false,
-                cancelNotification: true,
-              ),
-              AndroidNotificationAction(
-                'deny',
-                t.actDeny,
-                showsUserInterface: false,
-                cancelNotification: true,
-              ),
-            ]
-          : null,
-    );
+        objectId: runId ?? '',
+        eventKind: 'approval_required',
+      );
+      rethrow;
+    }
   }
 
   /// Una ejecución terminó (ok o con error).
