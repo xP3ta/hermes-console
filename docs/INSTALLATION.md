@@ -2,10 +2,10 @@
 
 ## Current status
 
-`1.2.7+915` is the source-current publication candidate. Its QA profile build
-is for internal validation only and still requires the final physical Voice
-gate before a production AAB or APK is created. `1.2.6 (913)` is the latest
-version already delivered through Google Play.
+`1.2.8+921` is the source-current publication candidate. Its QA profile build
+is for internal validation only and still requires the final physical release
+gate before a production AAB or APK is published. `1.2.7` is the latest version
+already delivered through Google Play and GitHub Releases/Obtainium.
 
 Do not install or share a `qa`, `debug`, or `profile` APK outside the internal
 validation flow. Those builds use different guarantees and, in the QA flavor,

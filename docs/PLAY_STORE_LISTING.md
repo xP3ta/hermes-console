@@ -1,6 +1,6 @@
 # Ficha de Google Play — Hermes Console
 
-Texto candidato para `1.2.7 (915)`. Idioma predeterminado: español. No está
+Texto candidato para `1.2.8 (921)`. Idioma predeterminado: español. No está
 autorizado para envío hasta verificar el AAB firmado, la política de privacidad
 desplegada, Data Safety, los vídeos FGS, las capturas y la QA física. Los
 recursos gráficos mantienen su propio gate al final del documento.
@@ -92,34 +92,29 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.7 (915)`
+## Novedades — `1.2.8 (921)`
 
 ### Español (máximo 500 caracteres)
 
-Estrenamos Bots: perfiles con Blobatar, salas, menciones y tareas separadas de
-tus conversaciones normales. Ya puedes ver imágenes generadas y artefactos,
-y Atrás respeta el espacio en el que estás. Voz se alinea con el streaming de
-Hermes Desktop y ahora deja claro si usa el móvil o tu servidor. También
-mejoramos tipografía, menús flotantes, avisos y compatibilidad con Android 16.
+Los chats se recuperan mejor tras perder red, pasar a segundo plano o reabrir
+la app. Editar y reenviar usa el historial durable de forma segura. También
+mejoramos comandos, dictado y voz, Bots y Kanban, emparejado, proveedores
+OpenAI-compatible y la protección de imágenes remotas.
 
 ### English (maximum 500 characters)
 
-Introducing Bots: Blobatar profiles, rooms, mentions, and tasks kept separate
-from regular conversations. You can now view generated images and artifacts,
-and Back keeps you in the right workspace. Voice now follows Hermes Desktop
-streaming and clearly shows whether it uses your phone or server. Typography,
-floating menus, notifications, and Android 16 support are improved too.
+Chats recover more reliably after network loss, backgrounding, or reopening
+the app. Edit and resend safely uses durable history. Commands, dictation and
+voice, Bots and Kanban, pairing, OpenAI-compatible providers, and remote image
+protection are improved too.
 
 ## Recursos gráficos
 
-- Icono y feature graphic: existe un icono canónico aprobado; la feature graphic
-  English-only tiene regeneración byte-idéntica y controles técnicos de
-  privacidad en PASS, pero sigue pendiente de revisión humana y aprobación
-  visual del propietario sobre el SHA-256
-  `858acb9a9deeb18a9336d583ee5cf6c6cbbd4e20f8f94aa7bb5f5d0d1b0613ec`.
-  No reutilizar el icono o la feature versionados anteriormente por coincidencia
-  de nombre ni copiar el candidato antes de esa aprobación.
-- Capturas Play: pendientes de un set nuevo del emulador con datos ficticios.
+- Para `1.2.8`, conservar el icono, la feature graphic y las capturas que ya
+  están publicadas y aprobadas en Google Play. Esta actualización no requiere
+  nuevos recursos gráficos ni cambia los flujos declarados en Data Safety.
+- Cualquier recurso nuevo conserva su gate independiente de privacidad,
+  revisión a resolución completa y aprobación explícita del propietario.
 
 No reutilizar capturas históricas ni media con datos de una instancia real. El
 gate y los criterios están en [`docs/screenshots/README.md`](screenshots/README.md).

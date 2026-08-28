@@ -283,7 +283,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
           // Hermes antiguos no tienen /api/providers/validate. Conservamos el
           // flujo anterior como compatibilidad, sin ocultar otros 4xx.
           if (error.statusCode != 404 && error.statusCode != 405) rethrow;
-          return _probeDirect(inputBase, directHeaders);
+          return await _probeDirect(inputBase, directHeaders);
         }
       }
       return (baseUrl: inputBase, models: const <String>[]);
