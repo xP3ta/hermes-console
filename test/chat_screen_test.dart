@@ -262,6 +262,8 @@ class _UiRewindGateway
   Object? dispatchError;
   Object? rewindError;
   Object? resumeExistingError;
+  Object? connectError;
+  bool connected = true;
   bool _compressionAccepted = false;
   int contextBreakdownCalls = 0;
 
@@ -269,10 +271,14 @@ class _UiRewindGateway
   Stream<TuiGatewayEvent> get events => _events.stream;
 
   @override
-  bool get isConnected => true;
+  bool get isConnected => connected;
 
   @override
-  Future<void> connect() async {}
+  Future<void> connect() async {
+    final error = connectError;
+    if (error != null) throw error;
+    connected = true;
+  }
 
   @override
   Future<void> disconnectIdle() async {
@@ -5362,6 +5368,51 @@ void main() {
     expect(chat.isStreaming, isFalse);
   });
 
+  testWidgets(
+    'auth Dashboard ausente al editar restaura el historial sin envío REST',
+    (tester) async {
+      final gateway = _UiRewindGateway()
+        ..connected = false
+        ..connectError = const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        );
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-auth-rewrite'),
+        messages: const [
+          {'role': 'assistant', 'content': 'Respuesta original'},
+          {
+            'role': 'user',
+            'content': 'pregunta original',
+            '_desktopRowId': 73,
+          },
+        ],
+      );
+
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('edit-message-composer')),
+        'pregunta que no debe enviarse',
+      );
+      await tester.tap(find.text('Guardar y enviar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(find.textContaining('pregunta original'), findsOneWidget);
+      expect(find.textContaining('pregunta que no debe enviarse'), findsNothing);
+      expect(chat.state, ChatPipelineState.idle);
+      expect(gateway.rewinds, isEmpty);
+      expect(
+        find.text(
+          'El Dashboard requiere iniciar sesión. Configura su usuario y contraseña en esta instancia.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('editar en reposo rebobina y reenvía desde el mensaje elegido', (
     tester,
   ) async {
@@ -5703,6 +5754,61 @@ void main() {
     expect(transcript('pregunta original'), findsOneWidget);
     expect(chat.state, ChatPipelineState.idle);
     expect(find.byIcon(Icons.edit_outlined).hitTestable(), findsOneWidget);
+  });
+
+  testWidgets('auth Dashboard al resolver identidad muestra configuración', (
+    tester,
+  ) async {
+    final failing = _UiRewindGateway()
+      ..resumeExistingError = const DashboardAuthException(
+        DashboardAuthFailureCode.loginRequired,
+      );
+    final (:chat, gateway: _) = await openRewriteEditor(
+      tester,
+      'conn-rewrite-identity-auth',
+      gateway: failing,
+    );
+    await submitEdit(tester, 'pregunta sin identidad');
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(failing.rewinds, isEmpty);
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(transcript('pregunta sin identidad'), findsNothing);
+    expect(chat.state, ChatPipelineState.idle);
+    expect(
+      find.text(
+        'El Dashboard requiere iniciar sesión. Configura su usuario y contraseña en esta instancia.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('auth Dashboard rechazada por rewind restaura transcript', (
+    tester,
+  ) async {
+    final failing = _UiRewindGateway()
+      ..rewindError = const DashboardAuthException(
+        DashboardAuthFailureCode.invalidCredentials,
+        statusCode: 401,
+      );
+    final (:chat, gateway: _) = await openRewriteEditor(
+      tester,
+      'conn-rewind-auth-failed',
+      gateway: failing,
+    );
+    await submitEdit(tester, 'pregunta no autorizada');
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(failing.rewinds, [(text: 'pregunta no autorizada', ordinal: 0)]);
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(transcript('pregunta no autorizada'), findsNothing);
+    expect(chat.state, ChatPipelineState.idle);
+    expect(
+      find.text(
+        'El Dashboard requiere iniciar sesión. Configura su usuario y contraseña en esta instancia.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('fallo RPC restaura transcript y vuelve a habilitar editar', (

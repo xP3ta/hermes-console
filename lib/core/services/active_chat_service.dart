@@ -1736,12 +1736,19 @@ class ActiveChat {
   ChatPipelineState? _rewindRollbackState;
   int? _rewind4018FallbackOrdinal;
   bool _rewindRestoredOnError = false;
+  bool _rewindDashboardAuthRequired = false;
 
   /// La pantalla consume esta señal para explicar que la edición falló pero la
   /// línea temporal original ya fue restaurada.
   bool takeRewindRestoredOnError() {
     final value = _rewindRestoredOnError;
     _rewindRestoredOnError = false;
+    return value;
+  }
+
+  bool takeRewindDashboardAuthRequired() {
+    final value = _rewindDashboardAuthRequired;
+    _rewindDashboardAuthRequired = false;
     return value;
   }
 
@@ -3379,6 +3386,7 @@ class ActiveChat {
       runtimeSessionId: _desktopRuntimeSessionId,
     );
     _activeRewrite = reservation;
+    _rewindDashboardAuthRequired = false;
     try {
       final snapshot = messages
           .map((m) => Map<String, dynamic>.from(m))
@@ -4805,11 +4813,34 @@ class ActiveChat {
           debugPrint('[active-chat] rewind failed (type=${error.runtimeType})');
         }
       }
+      if (truncateBeforeUserOrdinal != null && !submissionAttempted) {
+        final rollback = _rewindRollbackMessages;
+        final rollbackState = _rewindRollbackState;
+        if (rollback != null) {
+          _firstTokenTimer?.cancel();
+          _firstTokenTimer = null;
+          messages = rollback;
+          _rewindRollbackMessages = null;
+          _rewindRollbackState = null;
+          _rewind4018FallbackOrdinal = null;
+          _rewindRestoredOnError = true;
+          _rewindDashboardAuthRequired = error is DashboardAuthException;
+          _runTerminal = true;
+          traceActive = false;
+          pendingApproval = null;
+          state = rollbackState ?? ChatPipelineState.completed;
+          _emit(ActiveChatEvent.error);
+          _onTerminal();
+          return false;
+        }
+      }
       if (truncateBeforeUserOrdinal != null && submissionAttempted) {
         final rollback = _rewindRollbackMessages;
         final rollbackState = _rewindRollbackState;
         final deterministicRejection =
-            error is TuiGatewayRpcError && error.code != null;
+            (error is TuiGatewayRpcError && error.code != null) ||
+            (error is DashboardAuthException &&
+                _isTerminalDesktopRecoveryError(error));
         if (deterministicRejection && rollback != null) {
           _firstTokenTimer?.cancel();
           _firstTokenTimer = null;
@@ -4818,6 +4849,7 @@ class ActiveChat {
           _rewindRollbackState = null;
           _rewind4018FallbackOrdinal = null;
           _rewindRestoredOnError = true;
+          _rewindDashboardAuthRequired = error is DashboardAuthException;
           _runTerminal = true;
           traceActive = false;
           pendingApproval = null;

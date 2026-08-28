@@ -3667,9 +3667,18 @@ class _ChatScreenState extends State<ChatScreen>
           }
         }
       case ActiveChatEvent.error:
-        if (_chat.takeRewindRestoredOnError()) {
+        final rewindRestored = _chat.takeRewindRestoredOnError();
+        final dashboardAuthRequired =
+            _chat.takeRewindDashboardAuthRequired();
+        if (rewindRestored) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(Strings.of(context).chaEditFailed)),
+            SnackBar(
+              content: Text(
+                dashboardAuthRequired
+                    ? Strings.of(context).dashboardAuthLoginRequired
+                    : Strings.of(context).chaEditFailed,
+              ),
+            ),
           );
         }
         break;
@@ -5806,6 +5815,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     var failed = false;
+    Object? failure;
     _editingRewriteSubmitted = true;
     try {
       await _chat.rewrite(
@@ -5823,6 +5833,7 @@ class _ChatScreenState extends State<ChatScreen>
         '${rpc == null ? '' : ', method=${rpc.method}, code=${rpc.code}'})',
       );
       failed = true;
+      failure = error;
     }
     if (!mounted) return;
     setState(() {
@@ -5834,9 +5845,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
     if (failed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).chaEditFailed)),
-      );
+      final message = failure is DashboardAuthException
+          ? localizedApiError(Strings.of(context), failure)
+          : Strings.of(context).chaEditFailed;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
