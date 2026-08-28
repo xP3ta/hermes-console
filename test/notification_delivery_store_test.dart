@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -243,125 +245,301 @@ void main() {
 
       expect((await store.leaseNext())!.token, 'owner-2');
     });
-  });
 
-  group('lossless source ingestion', () {
-    test('stale cursor generations still ingest unseen material events', () async {
+    test('constructor rejects invalid durations', () {
+      expect(
+        () => NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          leaseDuration: Duration.zero,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          leaseDuration: const Duration(seconds: 30),
+          maximumFutureLease: const Duration(seconds: 10),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          leaseDuration: const Duration(seconds: 30),
+          maximumFutureLease: const Duration(seconds: 30),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          pendingCapacity: 0,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          mappingRetention: Duration.zero,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('renewLease caps at maximumFutureLease', () async {
       final directory = await Directory.systemTemp.createTemp(
-        'delivery-generation-',
+        'delivery-renew-cap-',
       );
       addTearDown(() => directory.delete(recursive: true));
+      final clock = _MutableClock(
+        DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
+      );
       final store = NotificationDeliveryStore(
         databaseFactory: databaseFactoryFfi,
         databasePath: '${directory.path}/notification_delivery_v1.db',
+        clock: clock.call,
+        tokenFactory: () => 'owner',
       );
       await store.open();
       addTearDown(store.close);
-
-      const newer = NotificationEventIdentity(
-        connId: 'conn-generation',
+      const identity = NotificationEventIdentity(
+        connId: 'conn-a',
         profile: 'work',
         sourceKind: 'run',
-        objectId: 'event-newer',
-        eventKind: 'terminal',
-        sourceVersion: 'v2',
-      );
-      const older = NotificationEventIdentity(
-        connId: 'conn-generation',
-        profile: 'work',
-        sourceKind: 'run',
-        objectId: 'event-older',
+        objectId: 'run-renew-cap',
         eventKind: 'terminal',
         sourceVersion: 'v1',
       );
-      SourceCursorUpdate update(
-        int generation,
-        NotificationEventIdentity identity,
-      ) {
-        return SourceCursorUpdate(
-          scopeKey: 'conn-generation/work/run/snapshot',
-          connId: 'conn-generation',
-          profile: 'work',
-          sourceKind: 'run',
-          objectId: 'snapshot',
-          lastState: 'complete',
-          lastVersion: 'v$generation',
-          generation: generation,
-          initialized: true,
-          events: <DeliveryEventSpec>[
-            DeliveryEventSpec(
-              identity: identity,
-              destinationKind: 'run_terminal',
-              runId: identity.objectId,
-            ),
-          ],
-        );
-      }
-
-      await store.ingestSourceBatch(<SourceCursorUpdate>[update(2, newer)]);
-      await store.ingestSourceBatch(<SourceCursorUpdate>[update(1, older)]);
-
-      expect(await store.eventCount(), 2);
-      expect(await store.sourceCursorGeneration('conn-generation/work/run/snapshot'), 2);
+      await store.ingestSourceBatch(<SourceCursorUpdate>[_updateFor(identity)]);
+      final lease = (await store.leaseNext())!;
+      expect(
+        await store.renewLease(
+          identity.eventKey,
+          lease.token,
+          duration: const Duration(minutes: 5),
+        ),
+        isTrue,
+      );
+      final record = await store.eventByKey(identity.eventKey);
+      expect(
+        record!.leaseUntil,
+        clock.value + const Duration(minutes: 2).inMilliseconds,
+      );
     });
 
-    test('reused scopeKey with a different cursor identity is rejected', () async {
+    test('markPresented and retry reject implausibly future leases', () async {
       final directory = await Directory.systemTemp.createTemp(
-        'delivery-identity-',
+        'delivery-future-lease-',
       );
       addTearDown(() => directory.delete(recursive: true));
+      final clock = _MutableClock(
+        DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
+      );
       final store = NotificationDeliveryStore(
         databaseFactory: databaseFactoryFfi,
         databasePath: '${directory.path}/notification_delivery_v1.db',
+        clock: clock.call,
+        tokenFactory: () => 'owner',
       );
       await store.open();
       addTearDown(store.close);
-
-      SourceCursorUpdate update({
-        required String connId,
-        required String objectId,
-        required int generation,
-      }) {
-        final identity = NotificationEventIdentity(
-          connId: connId,
-          profile: 'work',
-          sourceKind: 'run',
-          objectId: objectId,
-          eventKind: 'terminal',
-          sourceVersion: 'v$generation',
-        );
-        return SourceCursorUpdate(
-          scopeKey: 'shared-scope',
-          connId: connId,
-          profile: 'work',
-          sourceKind: 'run',
-          objectId: objectId,
-          lastState: 'complete',
-          lastVersion: 'v$generation',
-          generation: generation,
-          initialized: true,
-          events: <DeliveryEventSpec>[
-            DeliveryEventSpec(
-              identity: identity,
-              destinationKind: 'run_terminal',
-              runId: objectId,
-            ),
-          ],
-        );
-      }
-
-      await store.ingestSourceBatch(<SourceCursorUpdate>[
-        update(connId: 'conn-a', objectId: 'run-1', generation: 2),
-      ]);
-      await expectLater(
-        store.ingestSourceBatch(<SourceCursorUpdate>[
-          update(connId: 'conn-b', objectId: 'run-9', generation: 1),
-        ]),
-        throwsArgumentError,
+      const identity = NotificationEventIdentity(
+        connId: 'conn-a',
+        profile: 'work',
+        sourceKind: 'run',
+        objectId: 'run-future-lease',
+        eventKind: 'terminal',
+        sourceVersion: 'v1',
       );
-      expect(await store.eventCount(), 1);
-      expect(await store.sourceCursorGeneration('shared-scope'), 2);
+      await store.ingestSourceBatch(<SourceCursorUpdate>[_updateFor(identity)]);
+      final lease = (await store.leaseNext())!;
+      clock.advance(const Duration(minutes: -5));
+      expect(
+        await store.markPresented(identity.eventKey, lease.token, 'alert'),
+        isFalse,
+      );
+      expect(
+        await store.retry(
+          identity.eventKey,
+          lease.token,
+          delay: const Duration(seconds: 5),
+        ),
+        isFalse,
+      );
     });
+
+    test('exact expiry is reclaimed, not presented', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'delivery-exact-expiry-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final clock = _MutableClock(
+        DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
+      );
+      final store = NotificationDeliveryStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePath: '${directory.path}/notification_delivery_v1.db',
+        clock: clock.call,
+        tokenFactory: () => 'owner',
+        leaseDuration: const Duration(seconds: 30),
+      );
+      await store.open();
+      addTearDown(store.close);
+      const identity = NotificationEventIdentity(
+        connId: 'conn-a',
+        profile: 'work',
+        sourceKind: 'run',
+        objectId: 'run-exact-expiry',
+        eventKind: 'terminal',
+        sourceVersion: 'v1',
+      );
+      await store.ingestSourceBatch(<SourceCursorUpdate>[_updateFor(identity)]);
+      final lease = (await store.leaseNext())!;
+      clock.advance(const Duration(seconds: 30));
+      expect(
+        await store.markPresented(identity.eventKey, lease.token, 'alert'),
+        isFalse,
+      );
+      expect(await store.reclaimExpiredLeases(), 1);
+      expect(await store.countByStatus(DeliveryStatus.leased), 0);
+      expect(await store.countByStatus(DeliveryStatus.pending), 1);
+    });
+  });
+
+  group('lossless source ingestion', () {
+    test(
+      'stale cursor generations still ingest unseen material events',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-generation-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const newer = NotificationEventIdentity(
+          connId: 'conn-generation',
+          profile: 'work',
+          sourceKind: 'run',
+          objectId: 'event-newer',
+          eventKind: 'terminal',
+          sourceVersion: 'v2',
+        );
+        const older = NotificationEventIdentity(
+          connId: 'conn-generation',
+          profile: 'work',
+          sourceKind: 'run',
+          objectId: 'event-older',
+          eventKind: 'terminal',
+          sourceVersion: 'v1',
+        );
+        SourceCursorUpdate update(
+          int generation,
+          NotificationEventIdentity identity,
+        ) {
+          return SourceCursorUpdate(
+            scopeKey: 'conn-generation/work/run/snapshot',
+            connId: 'conn-generation',
+            profile: 'work',
+            sourceKind: 'run',
+            objectId: 'snapshot',
+            lastState: 'complete',
+            lastVersion: 'v$generation',
+            generation: generation,
+            initialized: true,
+            events: <DeliveryEventSpec>[
+              DeliveryEventSpec(
+                identity: identity,
+                destinationKind: 'run_terminal',
+                runId: identity.objectId,
+              ),
+            ],
+          );
+        }
+
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update(2, newer)]);
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update(1, older)]);
+
+        expect(await store.eventCount(), 2);
+        expect(
+          await store.sourceCursorGeneration(
+            'conn-generation/work/run/snapshot',
+          ),
+          2,
+        );
+      },
+    );
+
+    test(
+      'reused scopeKey with a different cursor identity is rejected',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-identity-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        SourceCursorUpdate update({
+          required String connId,
+          required String objectId,
+          required int generation,
+          String? scopeKey,
+        }) {
+          final identity = NotificationEventIdentity(
+            connId: connId,
+            profile: 'work',
+            sourceKind: 'run',
+            objectId: objectId,
+            eventKind: 'terminal',
+            sourceVersion: 'v$generation',
+          );
+          return SourceCursorUpdate(
+            scopeKey: scopeKey ?? '$connId/work/run/$objectId',
+            connId: connId,
+            profile: 'work',
+            sourceKind: 'run',
+            objectId: objectId,
+            lastState: 'complete',
+            lastVersion: 'v$generation',
+            generation: generation,
+            initialized: true,
+            events: <DeliveryEventSpec>[
+              DeliveryEventSpec(
+                identity: identity,
+                destinationKind: 'run_terminal',
+                runId: objectId,
+              ),
+            ],
+          );
+        }
+
+        await store.ingestSourceBatch(<SourceCursorUpdate>[
+          update(connId: 'conn-a', objectId: 'run-1', generation: 2),
+        ]);
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(
+              connId: 'conn-b',
+              objectId: 'run-9',
+              generation: 1,
+              scopeKey: 'conn-a/work/run/run-1',
+            ),
+          ]),
+          throwsArgumentError,
+        );
+        expect(await store.eventCount(), 1);
+        expect(await store.sourceCursorGeneration('conn-a/work/run/run-1'), 2);
+      },
+    );
 
     test(
       'six and fifty events enqueue fully while dispatch stays bounded',
@@ -500,6 +678,45 @@ void main() {
   });
 
   group('targeted approval cancellation', () {
+    test(
+      'cancellation waits for active lease to avoid presentation race',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-cancel-lease-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+        final update = _approvalUpdate();
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update.$1]);
+        final lease = (await store.leaseNext())!;
+        expect(lease.event.destinationKind, 'approval');
+
+        expect(await store.markCancelPending(lease.event.eventKey), isFalse);
+        expect(lease.event.status, DeliveryStatus.leased);
+
+        expect(
+          await store.markPresented(lease.event.eventKey, lease.token, 'alert'),
+          isTrue,
+        );
+        expect(
+          (await store.eventByKey(lease.event.eventKey))!.status,
+          DeliveryStatus.presented,
+        );
+
+        expect(await store.markCancelPending(lease.event.eventKey), isTrue);
+        expect(await store.markCancelled(lease.event.eventKey), isTrue);
+        expect(
+          (await store.eventByKey(lease.event.eventKey))!.status,
+          DeliveryStatus.cancelled,
+        );
+      },
+    );
+
     test('resolving approval A leaves approval B pending', () async {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-approval-',
@@ -538,6 +755,127 @@ void main() {
         DeliveryStatus.cancelPending,
       );
     });
+  });
+
+  group('privacy boundary', () {
+    test(
+      'secret-bearing or free-text values are rejected before persistence',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-privacy-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const identity = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'work',
+          sourceKind: 'run',
+          objectId: 'run-1',
+          eventKind: 'terminal',
+          sourceVersion: 'v1',
+        );
+        SourceCursorUpdate update({
+          String destinationKind = 'run_terminal',
+          String lastState = 'complete',
+          String lastVersion = 'v1',
+          String? runId = 'run-1',
+        }) {
+          return SourceCursorUpdate(
+            scopeKey: 'conn-a/work/run/run-1',
+            connId: 'conn-a',
+            profile: 'work',
+            sourceKind: 'run',
+            objectId: 'run-1',
+            lastState: lastState,
+            lastVersion: lastVersion,
+            generation: 1,
+            initialized: true,
+            events: <DeliveryEventSpec>[
+              DeliveryEventSpec(
+                identity: identity,
+                destinationKind: destinationKind,
+                runId: runId,
+              ),
+            ],
+          );
+        }
+
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update()]);
+        expect(await store.eventCount(), 1);
+
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(destinationKind: 'bearer sk-live-secret'),
+          ]),
+          throwsArgumentError,
+        );
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(lastState: 'failed with api key sk-123'),
+          ]),
+          throwsArgumentError,
+        );
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(lastVersion: 'prompt: delete everything\nrm -rf'),
+          ]),
+          throwsArgumentError,
+        );
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(runId: 'https://user:password@host.internal/path'),
+          ]),
+          throwsArgumentError,
+        );
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(runId: 'sk-1234567890abcdefghijklmnopqrstuv'),
+          ]),
+          throwsArgumentError,
+        );
+        await expectLater(
+          store.ingestSourceBatch(<SourceCursorUpdate>[
+            update(runId: 'api_key_xyz123'),
+          ]),
+          throwsArgumentError,
+        );
+
+        final lease = (await store.leaseNext())!;
+        await expectLater(
+          store.markPresented(
+            identity.eventKey,
+            lease.token,
+            'https://tracker.example/collect?token=abc',
+          ),
+          throwsArgumentError,
+        );
+        await expectLater(
+          store.retry(
+            identity.eventKey,
+            lease.token,
+            delay: const Duration(seconds: 5),
+            errorCode: 'PlatformException(secret token abc123)',
+          ),
+          throwsArgumentError,
+        );
+        expect(
+          await store.retry(
+            identity.eventKey,
+            lease.token,
+            delay: const Duration(seconds: 5),
+            errorCode: 'platform_show',
+          ),
+          isTrue,
+        );
+        expect(await store.eventCount(), 1);
+      },
+    );
   });
 
   group('retention and policy outcomes', () {
@@ -608,6 +946,120 @@ void main() {
         expect(await store.androidMappingCount(), 3);
       },
     );
+
+    test(
+      'tombstone removal keeps android_id_map authority so replay is suppressed',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-dedup-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final clock = _MutableClock(
+          DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
+        );
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+          clock: clock.call,
+          tokenFactory: () => 'dedup-owner',
+        );
+        await store.open();
+        addTearDown(store.close);
+        const identity = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'work',
+          sourceKind: 'run',
+          objectId: 'run-dedup',
+          eventKind: 'terminal',
+          sourceVersion: 'v1',
+        );
+        final update = _updateFor(identity);
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update]);
+        final lease = (await store.leaseNext())!;
+        expect(
+          await store.markPresented(identity.eventKey, lease.token, 'alert'),
+          isTrue,
+        );
+        expect(await store.eventCount(), 1);
+
+        await store.pruneRetention(
+          maxAge: const Duration(days: 30),
+          maxTombstones: 0,
+        );
+        expect(await store.eventCount(), 0);
+        expect(await store.androidMappingCount(), 1);
+
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update]);
+        expect(await store.eventCount(), 0);
+        expect(await store.androidMappingCount(), 1);
+
+        clock.advance(const Duration(days: 31));
+        await store.pruneRetention(
+          maxAge: const Duration(days: 30),
+          maxTombstones: 0,
+        );
+        expect(await store.androidMappingCount(), 0);
+
+        await store.ingestSourceBatch(<SourceCursorUpdate>[update]);
+        expect(await store.eventCount(), 1);
+      },
+    );
+
+    test('mapping overflow only retires mappings past retention age', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'delivery-mapping-retention-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final clock = _MutableClock(
+        DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
+      );
+      final store = NotificationDeliveryStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePath: '${directory.path}/notification_delivery_v1.db',
+        clock: clock.call,
+        tokenFactory: () => 'mapping-owner',
+        mappingRetention: const Duration(days: 7),
+      );
+      await store.open();
+      addTearDown(store.close);
+
+      for (var index = 0; index < 5; index++) {
+        await store.ingestSourceBatch(<SourceCursorUpdate>[
+          _updateFor(
+            NotificationEventIdentity(
+              connId: 'conn-a',
+              profile: 'work',
+              sourceKind: 'run',
+              objectId: 'run-mapping-$index',
+              eventKind: 'terminal',
+              sourceVersion: 'v1',
+            ),
+          ),
+        ]);
+      }
+      final leases = await store.leaseBatch(5);
+      for (var index = 0; index < 5; index++) {
+        await store.markPresented(
+          leases[index].event.eventKey,
+          leases[index].token,
+          'alert',
+        );
+      }
+
+      clock.advance(const Duration(days: 3));
+      await store.pruneRetention(
+        maxAge: const Duration(days: 30),
+        maxTombstones: 0,
+      );
+      expect(await store.androidMappingCount(), 5);
+
+      clock.advance(const Duration(days: 5));
+      await store.pruneRetention(
+        maxAge: const Duration(days: 30),
+        maxTombstones: 0,
+      );
+      expect(await store.androidMappingCount(), 0);
+    });
   });
 
   group('process-death persistence', () {
@@ -673,6 +1125,39 @@ void main() {
         ),
         isFalse,
       );
+    });
+  });
+
+  group('lifecycle serialization', () {
+    test('concurrent open uses exactly one database handle', () async {
+      final directory = await Directory.systemTemp.createTemp('delivery-open-');
+      addTearDown(() => directory.delete(recursive: true));
+      final factory = _CountingFactory(databaseFactoryFfi);
+      final store = NotificationDeliveryStore(
+        databaseFactory: factory,
+        databasePath: '${directory.path}/notification_delivery_v1.db',
+      );
+      await Future.wait(<Future<void>>[store.open(), store.open()]);
+      expect(factory.openCount, 1);
+      await store.close();
+      expect(factory.openCount, 1);
+    });
+
+    test('close waits for operations before nulling the handle', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'delivery-close-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = NotificationDeliveryStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePath: '${directory.path}/notification_delivery_v1.db',
+      );
+      await store.open();
+      final query = store.eventCount();
+      final close = Future<void>.delayed(Duration.zero, store.close);
+      final results = await Future.wait(<Future<Object?>>[query, close]);
+      expect(results[0], 0);
+      expect(() => store.eventCount(), throwsA(isA<StateError>()));
     });
   });
 
@@ -916,6 +1401,42 @@ SourceCursorUpdate _retentionUpdate() {
       );
     }),
   );
+}
+
+class _CountingFactory implements sqflite.DatabaseFactory {
+  _CountingFactory(this._inner);
+
+  final sqflite.DatabaseFactory _inner;
+  int openCount = 0;
+
+  @override
+  Future<sqflite.Database> openDatabase(
+    String path, {
+    sqflite.OpenDatabaseOptions? options,
+  }) async {
+    openCount += 1;
+    return _inner.openDatabase(path, options: options);
+  }
+
+  @override
+  Future<String> getDatabasesPath() => _inner.getDatabasesPath();
+
+  @override
+  Future<bool> databaseExists(String path) => _inner.databaseExists(path);
+
+  @override
+  Future<void> deleteDatabase(String path) => _inner.deleteDatabase(path);
+
+  @override
+  Future<Uint8List> readDatabaseBytes(String path) =>
+      _inner.readDatabaseBytes(path);
+
+  @override
+  Future<void> setDatabasesPath(String path) => _inner.setDatabasesPath(path);
+
+  @override
+  Future<void> writeDatabaseBytes(String path, Uint8List bytes) =>
+      _inner.writeDatabaseBytes(path, bytes);
 }
 
 class _MutableClock {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -208,6 +209,22 @@ class DeliveryCapacityException implements Exception {
   String toString() => 'DeliveryCapacityException(capacity: $capacity)';
 }
 
+class _Mutex {
+  Future<void>? _current;
+
+  Future<T> withLock<T>(Future<T> Function() action) async {
+    final previous = _current;
+    final completer = Completer<void>();
+    _current = completer.future;
+    if (previous != null) await previous;
+    try {
+      return await action();
+    } finally {
+      completer.complete();
+    }
+  }
+}
+
 /// Durable, app-private delivery state shared by every Flutter engine.
 ///
 /// SQLite transactions are the only serialization authority. This store holds
@@ -228,11 +245,115 @@ class NotificationDeliveryStore {
   }) : _databaseFactory = databaseFactory ?? sqflite.databaseFactory,
        _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        _tokenFactory = tokenFactory ?? const Uuid().v4,
-       _digest = digest ?? ((input) => sha256.convert(input).bytes);
+       _digest = digest ?? ((input) => sha256.convert(input).bytes) {
+    if (pendingCapacity <= 0) {
+      throw ArgumentError.value(pendingCapacity, 'pendingCapacity');
+    }
+    if (leaseDuration <= Duration.zero) {
+      throw ArgumentError.value(leaseDuration, 'leaseDuration');
+    }
+    if (maximumFutureLease <= leaseDuration) {
+      throw ArgumentError.value(
+        maximumFutureLease,
+        'maximumFutureLease',
+        'must be greater than leaseDuration',
+      );
+    }
+    if (mappingRetention <= Duration.zero) {
+      throw ArgumentError.value(mappingRetention, 'mappingRetention');
+    }
+  }
 
   static const databaseFileName = 'notification_delivery_v1.db';
   static const schemaVersionNumber = 1;
   static const busyTimeoutMilliseconds = 2000;
+
+  /// Closed routing vocabulary: presentation text has no place here.
+  static const destinationKinds = <String>{
+    'run_terminal',
+    'cron_terminal',
+    'kanban_transition',
+    'approval',
+    'chat_reply',
+  };
+  static const presentationSurfaces = <String>{'alert', 'inline'};
+
+  static final RegExp _identifierPattern = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$',
+  );
+  static final RegExp _scopeKeyPattern = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$',
+  );
+  static final RegExp _codePattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
+  static final RegExp _tokenPattern = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$',
+  );
+
+  static const _secretPrefixes = <String>{
+    'sk-',
+    'api_key',
+    'apikey',
+    'token',
+    'bearer',
+    'secret',
+    'password',
+    'private',
+  };
+
+  static void _requireIdentifier(String? value, String name) {
+    if (value == null) return;
+    if (!_identifierPattern.hasMatch(value)) {
+      throw ArgumentError.value(value, name, 'not an opaque identifier');
+    }
+    final lower = value.toLowerCase();
+    for (final prefix in _secretPrefixes) {
+      if (lower.startsWith(prefix) || lower.contains(' $prefix')) {
+        throw ArgumentError.value(
+          value,
+          name,
+          'resembles a secret-bearing value',
+        );
+      }
+    }
+  }
+
+  static void _requireToken(String value, String name) {
+    if (!_tokenPattern.hasMatch(value)) {
+      throw ArgumentError.value(value, name, 'not a machine token');
+    }
+  }
+
+  static void _validateCursorUpdate(SourceCursorUpdate update) {
+    if (!_scopeKeyPattern.hasMatch(update.scopeKey)) {
+      throw ArgumentError.value(update.scopeKey, 'scopeKey');
+    }
+    _requireIdentifier(update.connId, 'connId');
+    _requireIdentifier(update.profile.trim().toLowerCase(), 'profile');
+    _requireIdentifier(update.sourceKind, 'sourceKind');
+    _requireIdentifier(update.objectId, 'objectId');
+    _requireToken(update.lastState, 'lastState');
+    _requireToken(update.lastVersion, 'lastVersion');
+    for (final event in update.events) {
+      final identity = event.identity;
+      _requireIdentifier(identity.connId, 'identity.connId');
+      _requireIdentifier(identity.normalizedProfile, 'identity.profile');
+      _requireIdentifier(identity.sourceKind, 'identity.sourceKind');
+      _requireIdentifier(identity.objectId, 'identity.objectId');
+      _requireIdentifier(identity.eventKind, 'identity.eventKind');
+      _requireIdentifier(identity.sourceVersion, 'identity.sourceVersion');
+      if (!destinationKinds.contains(event.destinationKind)) {
+        throw ArgumentError.value(
+          event.destinationKind,
+          'destinationKind',
+          'outside the closed routing vocabulary',
+        );
+      }
+      _requireIdentifier(event.sessionId, 'sessionId');
+      _requireIdentifier(event.runId, 'runId');
+      _requireIdentifier(event.taskId, 'taskId');
+      _requireIdentifier(event.jobId, 'jobId');
+    }
+  }
 
   final sqflite.DatabaseFactory _databaseFactory;
   final DeliveryClock _clock;
@@ -245,20 +366,23 @@ class NotificationDeliveryStore {
   final Duration maximumFutureLease;
   final Duration mappingRetention;
   sqflite.Database? _database;
+  final _Mutex _lifecycleLock = _Mutex();
 
   Future<void> open() async {
-    if (_database != null) return;
-    final path = databasePath ?? await _defaultDatabasePath();
-    _database = await _databaseFactory.openDatabase(
-      path,
-      options: sqflite.OpenDatabaseOptions(
-        version: schemaVersionNumber,
-        singleInstance: false,
-        onConfigure: _configure,
-        onCreate: (database, _) => _ensureSchema(database),
-        onOpen: _ensureSchema,
-      ),
-    );
+    return _lifecycleLock.withLock(() async {
+      if (_database != null) return;
+      final path = databasePath ?? await _defaultDatabasePath();
+      _database = await _databaseFactory.openDatabase(
+        path,
+        options: sqflite.OpenDatabaseOptions(
+          version: schemaVersionNumber,
+          singleInstance: false,
+          onConfigure: _configure,
+          onCreate: (database, _) => _ensureSchema(database),
+          onOpen: _ensureSchema,
+        ),
+      );
+    });
   }
 
   Future<String> _defaultDatabasePath() async {
@@ -384,6 +508,9 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
   }
 
   Future<void> ingestSourceBatch(List<SourceCursorUpdate> updates) async {
+    for (final update in updates) {
+      _validateCursorUpdate(update);
+    }
     final now = _clock();
     await _exclusive((transaction) async {
       var eventIndex = 0;
@@ -474,6 +601,14 @@ ON CONFLICT(scope_key) DO UPDATE SET
       limit: 1,
     );
     if (existing.isNotEmpty) return;
+    final retained = await executor.query(
+      'android_id_map',
+      columns: const <String>['event_key'],
+      where: 'event_key = ?',
+      whereArgs: <Object?>[eventKey],
+      limit: 1,
+    );
+    if (retained.isNotEmpty) return;
 
     final active = sqflite.Sqflite.firstIntValue(
       await executor.rawQuery('''
@@ -649,7 +784,8 @@ WHERE status = 'leased' AND (lease_until <= ? OR lease_until > ?)
   }) async {
     final now = _clock();
     final futureLimit = now + maximumFutureLease.inMilliseconds;
-    final leaseUntil = now + (duration ?? leaseDuration).inMilliseconds;
+    final requested = now + (duration ?? leaseDuration).inMilliseconds;
+    final leaseUntil = requested.clamp(now + 1, futureLimit);
     return _exclusive((transaction) async {
       final changed = await transaction.rawUpdate(
         '''
@@ -669,7 +805,15 @@ WHERE event_key = ? AND status = 'leased' AND lease_token = ?
     String token,
     String presentationSurface,
   ) async {
+    if (!presentationSurfaces.contains(presentationSurface)) {
+      throw ArgumentError.value(
+        presentationSurface,
+        'presentationSurface',
+        'outside the closed surface vocabulary',
+      );
+    }
     final now = _clock();
+    final futureLimit = now + maximumFutureLease.inMilliseconds;
     return _exclusive((transaction) async {
       final changed = await transaction.rawUpdate(
         '''
@@ -678,9 +822,17 @@ SET status = 'presented', presented_at = ?, presentation_surface = ?,
     lease_token = NULL, lease_until = NULL, updated_at = ?,
     last_error_code = NULL
 WHERE event_key = ? AND status = 'leased' AND lease_token = ?
-  AND lease_until >= ?
+  AND lease_until > ? AND lease_until <= ?
 ''',
-        <Object?>[now, presentationSurface, now, eventKey, token, now],
+        <Object?>[
+          now,
+          presentationSurface,
+          now,
+          eventKey,
+          token,
+          now,
+          futureLimit,
+        ],
       );
       return changed == 1;
     });
@@ -692,7 +844,11 @@ WHERE event_key = ? AND status = 'leased' AND lease_token = ?
     required Duration delay,
     String? errorCode,
   }) async {
+    if (errorCode != null && !_codePattern.hasMatch(errorCode)) {
+      throw ArgumentError.value(errorCode, 'errorCode', 'not a machine code');
+    }
     final now = _clock();
+    final futureLimit = now + maximumFutureLease.inMilliseconds;
     return _exclusive((transaction) async {
       final changed = await transaction.rawUpdate(
         '''
@@ -700,7 +856,7 @@ UPDATE delivery_event
 SET status = 'pending', next_attempt_at = ?, lease_token = NULL,
     lease_until = NULL, updated_at = ?, last_error_code = ?
 WHERE event_key = ? AND status = 'leased' AND lease_token = ?
-  AND lease_until >= ?
+  AND lease_until > ? AND lease_until <= ?
 ''',
         <Object?>[
           now + delay.inMilliseconds,
@@ -709,6 +865,7 @@ WHERE event_key = ? AND status = 'leased' AND lease_token = ?
           eventKey,
           token,
           now,
+          futureLimit,
         ],
       );
       return changed == 1;
@@ -723,7 +880,7 @@ WHERE event_key = ? AND status = 'leased' AND lease_token = ?
 UPDATE delivery_event
 SET status = 'cancel_pending', lease_token = NULL, lease_until = NULL,
     updated_at = ?
-WHERE event_key = ? AND status IN ('pending', 'leased', 'presented')
+WHERE event_key = ? AND status IN ('pending', 'presented')
 ''',
         <Object?>[now, eventKey],
       );
@@ -745,7 +902,7 @@ SET status = 'cancel_pending', lease_token = NULL, lease_until = NULL,
     updated_at = ?
 WHERE conn_id = ? AND profile = ? AND run_id = ?
   AND destination_kind = 'approval'
-  AND status IN ('pending', 'leased', 'presented')
+  AND status IN ('pending', 'presented')
 ''',
         <Object?>[now, connId, profile.trim().toLowerCase(), runId],
       );
@@ -859,14 +1016,15 @@ WHERE retain_until <= ?
       final mappingOverflow = await transaction.rawQuery(
         '''
 SELECT event_key FROM android_id_map
-WHERE NOT EXISTS (
-  SELECT 1 FROM delivery_event
-  WHERE delivery_event.event_key = android_id_map.event_key
-)
+WHERE retain_until <= ?
+  AND NOT EXISTS (
+    SELECT 1 FROM delivery_event
+    WHERE delivery_event.event_key = android_id_map.event_key
+  )
 ORDER BY allocated_at DESC, event_key DESC
 LIMIT -1 OFFSET ?
 ''',
-        <Object?>[maxTombstones],
+        <Object?>[now, maxTombstones],
       );
       for (final row in mappingOverflow) {
         await transaction.delete(
@@ -969,8 +1127,11 @@ LIMIT -1 OFFSET ?
   }
 
   Future<void> close() async {
-    final database = _database;
-    _database = null;
-    await database?.close();
+    return _lifecycleLock.withLock(() async {
+      final database = _database;
+      if (database == null) return;
+      await database.close();
+      _database = null;
+    });
   }
 }
