@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_controller.dart';
+import 'package:hermes_android/core/services/notifications/notification_event_ledger.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/run_registry.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ─── Fake ─────────────────────────────────────────────────────────────────────
 
@@ -72,6 +77,84 @@ RunRecord _run({
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('NotificationEventLedger', () {
+    test(
+      'claim durable deduplica productores tras recrear el ledger',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final first = NotificationEventLedger(prefs);
+
+        expect(
+          await first.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+
+        final afterRestart = NotificationEventLedger(
+          await SharedPreferences.getInstance(),
+        );
+        expect(
+          await afterRestart.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'run_terminal',
+          ),
+          isFalse,
+        );
+        expect(
+          await afterRestart.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'approval_required',
+          ),
+          isTrue,
+        );
+        expect(
+          await afterRestart.claim(
+            connId: 'conn-b',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('ledger queda acotado y persiste solo identidad tipada', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final ledger = NotificationEventLedger(prefs, maxEntries: 2);
+
+      for (final id in ['run-1', 'run-2', 'run-3']) {
+        expect(
+          await ledger.claim(
+            connId: 'conn',
+            profile: 'default',
+            objectId: id,
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+      }
+
+      final persisted = prefs.getString(NotificationEventLedger.storageKey)!;
+      expect(NotificationEventLedger.decodeEntries(persisted), hasLength(2));
+      expect(persisted, isNot(contains('title')));
+      expect(persisted, isNot(contains('body')));
+      expect(persisted, isNot(contains('text')));
+    });
+  });
+
   late _FakeNotif notif;
   late NotificationController ctrl;
 
