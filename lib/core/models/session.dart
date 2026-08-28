@@ -176,8 +176,13 @@ class Session {
     // task t_<id>" (id crudo, no dice de qué tarea vino). Título humano.
     if (isKanbanJob) return 'Tarea del Kanban';
     final humanizedTitle = _humanizeTitle(title);
+    final syntheticTodoTitle = _looksSyntheticTodoTitle(
+      humanizedTitle,
+      preview,
+    );
     if (!isPlaceholderTitle(humanizedTitle) &&
-        !_looksInternalTitle(humanizedTitle)) {
+        !_looksInternalTitle(humanizedTitle) &&
+        !syntheticTodoTitle) {
       return humanizedTitle;
     }
     // Invocación de skill: el "mensaje" es un blob de sistema; el título limpio
@@ -189,7 +194,9 @@ class Session {
     // Job/skill sin contenido legible (preview = solo preámbulo, a veces
     // truncado por el servidor): título genérico, no el preámbulo crudo.
     if (isJob) return 'Tarea programada';
-    if (_looksInternalTitle(humanizedTitle)) return 'Conversación';
+    if (_looksInternalTitle(humanizedTitle) || syntheticTodoTitle) {
+      return 'Conversación';
+    }
     return title;
   }
 
@@ -234,12 +241,52 @@ class Session {
   String get cleanPreview =>
       isKanbanJob ? '' : markdownToCompactText(stripCronPreamble(preview));
 
+  /// Removes Hermes' synthetic todo handoff from user-visible projections.
+  ///
+  /// Context compression persists this as an ordinary `user` row so the agent
+  /// can restore pending work.  It is not authored chat content.  Match the
+  /// stable header only at a message/block boundary and require the following
+  /// todo marker, so ordinary discussion of the header remains visible.
+  static const _todoContinuationHeader =
+      '[Your active task list was preserved across context compression]';
+  // SessionDB selects 63 chars, then _shape_preview caps them to 60 + `...`.
+  static const _todoContinuationBackendPreview =
+      '[Your active task list was preserved across context compress...';
+
+  static String stripTodoContinuation(String raw) {
+    var from = 0;
+    while (true) {
+      final index = raw.indexOf(_todoContinuationHeader, from);
+      if (index < 0) return raw;
+      final prefix = raw.substring(0, index);
+      final atBoundary =
+          index == 0 ||
+          prefix.endsWith('\n\n') ||
+          prefix.endsWith('\r\n\r\n');
+      final suffix = raw.substring(index + _todoContinuationHeader.length);
+      if (atBoundary &&
+          RegExp(r'^(?:\r?\n| )- \[(?: |>)\]').hasMatch(suffix)) {
+        return raw.substring(0, index).trimRight();
+      }
+      from = index + _todoContinuationHeader.length;
+    }
+  }
+
+  static bool _looksSyntheticTodoTitle(String title, String rawPreview) {
+    if (title.trim() != _todoContinuationHeader) return false;
+    if (rawPreview.trim() == _todoContinuationBackendPreview) return true;
+    final stripped = stripTodoContinuation(rawPreview);
+    return stripped != rawPreview && stripped.trim().isEmpty;
+  }
+
   /// Quita el bloque inicial `[IMPORTANT: …]` que el cron antepone al prompt de
   /// un job (instrucción de sistema para el agente: delivery, [SILENT], etc.).
   /// Es ruido; no debe verse en chat ni en la lista. Cubre las variantes
   /// "scheduled cron job" e "invoked the skill". El contenido real va tras el
   /// doble salto o tras el cierre del bloque.
   static String stripCronPreamble(String raw) {
+    raw = stripTodoContinuation(raw);
+    if (raw.trim() == _todoContinuationBackendPreview) return '';
     final t = raw.trimLeft();
     // Handoff de compactación de contexto (interno): no es contenido del usuario.
     if (t.startsWith('[CONTEXT COMPACTION')) {

@@ -244,6 +244,45 @@ void main() {
       expect(s.displayTitle, 'Uso 50% de CPU');
     });
 
+    test('displayTitle no expone el título sintético de tareas', () {
+      final s = Session.fromJson({
+        'id': '20260828_todo',
+        'title':
+            '[Your active task list was preserved across context compression]',
+        'preview':
+            '[Your active task list was preserved across context compression]\n'
+            '- [>] verify. Ejecutar pruebas (in_progress)',
+        'source': 'mobile',
+      });
+      expect(Session.stripTodoContinuation(s.preview), '');
+      expect(s.cleanPreview, '');
+      expect(s.displayTitle, 'Conversación');
+    });
+
+    test('displayTitle conserva una consulta que empieza citando la cabecera', () {
+      const title =
+          '[Your active task list was preserved across context compression] ¿qué significa?';
+      final s = Session.fromJson({
+        'id': '20260828_question',
+        'title': title,
+        'preview': 'Explícame esa cabecera',
+        'source': 'mobile',
+      });
+      expect(s.displayTitle, title);
+    });
+
+    test('displayTitle oculta el snapshot con preview truncado por SessionDB', () {
+      final s = Session.fromJson({
+        'id': '20260828_todo_truncated',
+        'title':
+            '[Your active task list was preserved across context compression]',
+        'preview':
+            '[Your active task list was preserved across context compress...',
+        'source': 'mobile',
+      });
+      expect(s.displayTitle, 'Conversación');
+    });
+
     test('displayTitle de job sin contenido legible → "Tarea programada"', () {
       final s = Session.fromJson({
         'id': 'cron_abc_1',
@@ -277,6 +316,50 @@ void main() {
       // Caso real: el servidor trunca el preview al bloque [IMPORTANT:…].
       const trunc = '[IMPORTANT: You are running as a scheduled cron job.]';
       expect(Session.stripCronPreamble(trunc), '');
+    });
+
+    test('snapshot interno de tareas no aparece en el preview', () {
+      const raw =
+          '[Your active task list was preserved across context compression]\n'
+          '- [>] verify. Ejecutar pruebas (in_progress)\n\n'
+          '[Skills pruned during compression — reload before acting on these tasks]';
+      expect(Session.stripCronPreamble(raw), '');
+    });
+
+    test('preview truncado del backend no expone el snapshot interno', () {
+      const raw =
+          '[Your active task list was preserved across context compress...';
+      expect(Session.stripCronPreamble(raw), '');
+    });
+
+    test('conserva texto real anterior al snapshot interno', () {
+      const raw =
+          'Pregunta visible\n\n'
+          '[Your active task list was preserved across context compression]\n'
+          '- [ ] deploy. Activar cambio (pending)';
+      expect(Session.stripTodoContinuation(raw), 'Pregunta visible');
+    });
+
+    test('no oculta una conversación normal que cita la cabecera', () {
+      const raw =
+          '¿Por qué sale [Your active task list was preserved across context compression] todo el rato?';
+      expect(Session.stripTodoContinuation(raw), raw);
+    });
+
+    test('acepta frontera CRLF antes del snapshot sintético', () {
+      const raw =
+          'Pregunta visible\r\n\r\n'
+          '[Your active task list was preserved across context compression]\r\n'
+          '- [>] verify. Ejecutar pruebas (in_progress)';
+      expect(Session.stripTodoContinuation(raw), 'Pregunta visible');
+    });
+
+    test('no oculta una cita seguida de una etiqueta que no es un estado todo', () {
+      const raw =
+          'Texto real\n\n'
+          '[Your active task list was preserved across context compression]\n'
+          '- [question] ¿qué significa?';
+      expect(Session.stripTodoContinuation(raw), raw);
     });
 
     test('resumen de compactación de contexto se quita entero', () {

@@ -4654,6 +4654,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('oculta el snapshot interno de tareas tras compactar', (
+    tester,
+  ) async {
+    const internalSnapshot =
+        '[Your active task list was preserved across context compression]\n'
+        '- [>] verify. Ejecutar pruebas focalizadas (in_progress)\n\n'
+        '[Skills pruned during compression — reload before acting on these tasks]\n'
+        'The task list above crossed the compression boundary verbatim.';
+
+    await pumpChat(
+      tester,
+      messages: const [
+        {'role': 'assistant', 'content': 'Respuesta visible'},
+        {'role': 'user', 'content': internalSnapshot},
+        {'role': 'user', 'content': 'Pregunta visible'},
+      ],
+    );
+
+    expect(find.textContaining('Respuesta visible'), findsOneWidget);
+    expect(find.textContaining('Pregunta visible'), findsOneWidget);
+    expect(
+      find.textContaining('Your active task list was preserved'),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Skills pruned during compression'),
+      findsNothing,
+    );
+    expect(
+      find.byIcon(Icons.copy_rounded),
+      findsNWidgets(2),
+      reason: 'el snapshot oculto no debe conservar una burbuja accionable',
+    );
+  });
+
   testWidgets('mensajes terminales ofrecen selección parcial estable', (
     tester,
   ) async {

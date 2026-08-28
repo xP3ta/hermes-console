@@ -10796,15 +10796,22 @@ class _ChatScreenState extends State<ChatScreen>
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
+      final parsedContent = _parseUserContent(content);
+      final supplements = unit.supplements
+          .map((message) => (message['content'] as String?) ?? '')
+          .where((text) => text.trim().isNotEmpty)
+          .toList();
+      if (parsedContent.text.trim().isEmpty &&
+          parsedContent.attachments.isEmpty &&
+          supplements.isEmpty) {
+        return const SizedBox.shrink();
+      }
       return _UserMessage(
         content: content,
         verbose: _devDiagnostics,
         metadata: unit.primary,
         compact: compact,
-        supplements: unit.supplements
-            .map((message) => (message['content'] as String?) ?? '')
-            .where((text) => text.trim().isNotEmpty)
-            .toList(),
+        supplements: supplements,
         onEdit: unit.supplements.isEmpty && _canEditUserMessage(unit.primary)
             ? () => _editUserMessage(unit.primary)
             : null,
@@ -13210,7 +13217,9 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   // Quita los blobs de SISTEMA que no son del usuario: preámbulo de cron/skill y
   // el resumen de compactación de contexto. Si tras ellos hay un mensaje real,
   // se muestra ese; si no, el llamador ya lo habrá pintado como chip.
-  raw = _stripContextCompaction(_stripCronPreamble(raw));
+  raw = Session.stripTodoContinuation(
+    _stripContextCompaction(_stripCronPreamble(raw)),
+  );
   // Extrae primero el marcador actual, versionado y sin ruta absoluta. Los
   // formatos `⟦img:...⟧` se conservan solo para historiales antiguos.
   final historyReferences = <int, AttachmentHistoryReference>{};
