@@ -10,13 +10,10 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../secure_storage.dart';
 import '../../utils/markdown_clipboard.dart';
 import 'notification_event_ledger.dart';
-import '../../utils/transport_privacy.dart';
 import 'notification_strings.dart';
 
 /// Tipos de evento que pueden notificar (cada uno con su toggle).
@@ -374,12 +371,10 @@ class NotificationService implements RunNotificationFacade {
       await _plugin.initialize(
         settings,
         // Tap con la app viva (primer plano o 2º plano): navega a la sesión.
+        // No hay acciones de fondo: las aprobaciones solo ofrecen "Abrir" y
+        // la decisión se toma siempre dentro de la app, nunca desde la
+        // bandeja ni desde la pantalla de bloqueo.
         onDidReceiveNotificationResponse: _onNotificationTap,
-        // Tap de un botón de acción con la app MUERTA: se ejecuta en un isolate
-        // de fondo aislado. Solo resuelve Aprobar/Rechazar (red mínima); no
-        // toca la UI. Ver [notificationActionBackground].
-        onDidReceiveBackgroundNotificationResponse:
-            notificationActionBackground,
       );
       final android = _plugin
           .resolvePlatformSpecificImplementation<
@@ -494,15 +489,6 @@ class NotificationService implements RunNotificationFacade {
   // ── Navegación al pulsar ────────────────────────────────────────────────
 
   void _onNotificationTap(NotificationResponse response) {
-    // Botones Aprobar/Rechazar con la app viva: resolver directamente vía
-    // gateway, sin navegar. Mismo efecto que en el isolate de fondo, pero aquí
-    // sí tenemos contexto: el run sigue su curso y el chat (si está abierto)
-    // refleja el cambio en su próximo evento.
-    final action = response.actionId;
-    if (action == 'approve' || action == 'deny') {
-      _resolveApprovalFromPayload(response.payload, action!);
-      return;
-    }
     _handleOpenResponse(response);
   }
 
@@ -569,18 +555,6 @@ class NotificationService implements RunNotificationFacade {
       _log('no se pudo recuperar el tap de plataforma: $error');
       return false;
     }
-  }
-
-  /// Resuelve una aprobación a partir del payload de la notificación
-  /// (`{conn, rid, base}`) llamando al gateway. `action` es 'approve'|'deny'.
-  /// Compartido por el camino con la app viva ([_onNotificationTap]); el camino
-  /// de fondo usa la función top-level [resolveApprovalPayload].
-  Future<void> _resolveApprovalFromPayload(
-    String? payload,
-    String action,
-  ) async {
-    final choice = action == 'approve' ? 'once' : 'deny';
-    await resolveApprovalPayload(payload, choice);
   }
 
   /// Devuelve (y limpia) el destino pendiente de una notificación que abrió la
@@ -1448,57 +1422,4 @@ class _LastBgNotif {
     required this.compact,
     required this.at,
   });
-}
-
-/// Handler de los botones de acción de una notificación cuando la app está
-/// MUERTA o en 2º plano sin isolate de UI. flutter_local_notifications lo
-/// ejecuta en un isolate de fondo aislado; debe ser top-level y estar anotado
-/// con `vm:entry-point` para sobrevivir al tree-shaking de AOT.
-///
-/// Solo procesa Aprobar/Rechazar de las notificaciones de aprobación de runs:
-/// resuelve directamente contra el gateway (red mínima, sin tocar la UI). Para
-/// cualquier otra acción/tap, el arranque normal de la app consume el payload
-/// pendiente y navega.
-@pragma('vm:entry-point')
-void notificationActionBackground(NotificationResponse response) {
-  final action = response.actionId;
-  if (action != 'approve' && action != 'deny') return;
-  final choice = action == 'approve' ? 'once' : 'deny';
-  // No se puede await en este punto de entrada; se dispara y se deja correr.
-  resolveApprovalPayload(response.payload, choice);
-}
-
-/// Resuelve una aprobación de run a partir del payload de la notificación
-/// (`{conn, rid, base}`): carga el token del Keystore por `conn` y hace
-/// `POST {base}/v1/runs/{rid}/approval {choice}`. `choice` ∈ once|session|
-/// always|deny. Idempotente y tolerante a fallos (si el run ya no espera, el
-/// gateway responde 4xx y se ignora). Top-level para poder usarse también desde
-/// el isolate de fondo.
-Future<void> resolveApprovalPayload(String? payload, String choice) async {
-  if (payload == null || payload.isEmpty) return;
-  try {
-    final map = jsonDecode(payload);
-    if (map is! Map) return;
-    final connId = (map['conn'] ?? '').toString();
-    final runId = (map['rid'] ?? '').toString();
-    final base = (map['base'] ?? '').toString();
-    if (connId.isEmpty || runId.isEmpty || base.isEmpty) return;
-    final safeBase = TransportPrivacy.requireAllowed(base);
-    final token = await SecureStorage().readApiKey(connId);
-    final uri = Uri.parse('$safeBase/v1/runs/$runId/approval');
-    await http
-        .post(
-          uri,
-          headers: {
-            if (token != null && token.isNotEmpty)
-              'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({'choice': choice}),
-        )
-        .timeout(const Duration(seconds: 12));
-    debugPrint('[hermes-notif] approval $runId → $choice');
-  } catch (e) {
-    debugPrint('[hermes-notif] approval resolve failed: $e');
-  }
 }
