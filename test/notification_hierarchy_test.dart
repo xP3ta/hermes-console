@@ -226,4 +226,75 @@ void main() {
     expect(shown.last['title'], 'Cron falló');
     expect(shown.first['id'], isNot(shown.last['id']));
   });
+
+  test('B: kanban bloqueada abre la tarjeta exacta', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+
+    await service.kanbanTransition(
+      connId: 'demo-node',
+      taskId: 'task-42',
+      title: 'Preparar publicación',
+      status: 'blocked',
+    );
+
+    final shown = shownArgs(groupSummary: false);
+    expect(shown, hasLength(1));
+    final android = androidOf(shown.single);
+    expect(shown.single['title'], 'Tarea de Kanban bloqueada');
+    expect(shown.single['body'], 'Preparar publicación');
+    expect(android['subText'], 'Kanban · task-42');
+    final payload = Map<String, dynamic>.from(
+      jsonDecode(shown.single['payload'] as String) as Map,
+    );
+    expect(payload['tid'], 'task-42');
+    expect(payload['conn'], 'demo-node');
+    expect(NotificationOpen.tryParse(shown.single['payload'] as String)?.taskId,
+        'task-42');
+  });
+
+  test('B: cron y kanban tienen preferencias independientes', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+
+    // Kanban desactivado, cron activo: cron avisa, kanban calla.
+    await service.setNotifyKanbanResults(false);
+    await service.cronFinished(
+      title: 'Fichaje diario',
+      ok: true,
+      connId: 'demo-node',
+      sessionId: 'cron-ind',
+      executionId: 'execution-ind-1',
+      jobId: 'job-ind',
+    );
+    await service.kanbanTransition(
+      connId: 'demo-node',
+      taskId: 'task-ind-1',
+      title: 'Tarea silenciada',
+      status: 'blocked',
+    );
+    expect(shownArgs(groupSummary: false), hasLength(1));
+
+    // Cron desactivado, kanban activo: kanban avisa, cron calla.
+    await service.setNotifyCronResults(false);
+    await service.setNotifyKanbanResults(true);
+    await service.cronFinished(
+      title: 'Fichaje diario',
+      ok: true,
+      connId: 'demo-node',
+      sessionId: 'cron-ind',
+      executionId: 'execution-ind-2',
+      jobId: 'job-ind',
+    );
+    await service.kanbanTransition(
+      connId: 'demo-node',
+      taskId: 'task-ind-2',
+      title: 'Tarea visible',
+      status: 'done',
+    );
+
+    final shown = shownArgs(groupSummary: false);
+    expect(shown, hasLength(2));
+    expect(shown.last['title'], 'Tarea de Kanban completada');
+  });
 }
