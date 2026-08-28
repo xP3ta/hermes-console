@@ -48,6 +48,23 @@ void main() {
       expect(decoded.profile, 'manager');
     });
 
+    test('roundtrip conserva destino exacto de Kanban sin sesión', () {
+      const original = NotificationOpen(
+        connId: 'conn-1',
+        taskId: 'task-42',
+        title: 'Preparar publicación',
+      );
+
+      final raw = jsonDecode(original.toPayload()) as Map<String, dynamic>;
+      final decoded = NotificationOpen.tryParse(original.toPayload());
+
+      expect(raw['tid'], 'task-42');
+      expect(decoded, isNotNull);
+      expect(decoded!.taskId, 'task-42');
+      expect(decoded.sessionId, isEmpty);
+      expect(decoded.runId, isNull);
+    });
+
     test('payload legacy sin superficie conserva routing normal', () {
       final decoded = NotificationOpen.tryParse(
         jsonEncode({
