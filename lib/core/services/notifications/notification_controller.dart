@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/run_registry.dart';
 
@@ -10,27 +8,19 @@ import 'package:hermes_android/core/services/run_registry.dart';
 /// en primer plano).
 ///
 /// Reglas de ruido:
-///   • message.delta        → nunca notificar
-///   • tool.started/done    → debounce 5 s + intervalo mínimo 15 s
-///   • approval.request     → siempre (bypassa supresión en foreground)
-///   • terminales           → siempre (completed/failed/cancelled)
+///   • message.delta / tool lifecycle → solo UI y audit, nunca push nuevo
+///   • approval.request              → una alerta reclamada por objeto
+///   • terminales                    → una alerta reclamada por objeto
 class NotificationController {
   final RunNotificationFacade _notif;
+
   /// ID de la conexión activa. Se propaga al payload de todas las
   /// notificaciones para que el tap pueda navegar al run correcto.
   final String? _connId;
 
-  // Timers de debounce de progreso activos, indexados por runId.
-  final Map<String, Timer> _progressTimers = {};
-  // Última vez que se disparó una notificación de progreso por runId.
-  final Map<String, DateTime> _lastProgressAt = {};
-
   // runId del run que emitió la última notificación de aprobación.
   // Solo se cancela la aprobación si el run que termina es el mismo.
   String? _pendingApprovalRunId;
-
-  static const _debounce = Duration(seconds: 5);
-  static const _minProgressInterval = Duration(seconds: 15);
 
   NotificationController(this._notif, {this._connId});
 
@@ -40,28 +30,9 @@ class NotificationController {
   /// No notifica: en foreground el usuario ya ve la tarjeta en la lista.
   void notifyRunStarted(RunRecord run) {}
 
-  /// Llamado en tool.started/completed con progressLabel actualizado.
-  /// Debouncea 5 s y respeta un intervalo mínimo de 15 s para no saturar.
-  void notifyRunProgress(RunRecord run) {
-    if (!_notif.notifyRuns) return;
-    _progressTimers[run.runId]?.cancel();
-    _progressTimers[run.runId] = Timer(_debounce, () async {
-      _progressTimers.remove(run.runId);
-      final last = _lastProgressAt[run.runId];
-      if (last != null &&
-          DateTime.now().difference(last) < _minProgressInterval) {
-        return;
-      }
-      _lastProgressAt[run.runId] = DateTime.now();
-      await _notif.runLive(
-        runId: run.runId,
-        title: _truncate(run.prompt),
-        body: run.progressLabel ?? 'Ejecutando…',
-        connId: _connId,
-        sessionId: run.sessionId,
-      );
-    });
-  }
+  /// El progreso rutinario permanece en la tarjeta visible y en el registro de
+  /// ejecución. No crea una notificación push nueva.
+  void notifyRunProgress(RunRecord run) {}
 
   /// Llamado cuando llega approval.request por SSE.
   /// Siempre bypassa la supresión en foreground (accionable + sensible al tiempo).
@@ -97,13 +68,8 @@ class NotificationController {
     _notif.cancelRun(runId);
   }
 
-  /// Libera todos los timers pendientes. Llamar en dispose() de la pantalla.
+  /// Libera el estado efímero de la pantalla.
   void dispose() {
-    for (final t in _progressTimers.values) {
-      t.cancel();
-    }
-    _progressTimers.clear();
-    _lastProgressAt.clear();
     _pendingApprovalRunId = null;
   }
 
@@ -130,11 +96,7 @@ class NotificationController {
     }
   }
 
-  void _clearTimers(String runId) {
-    _progressTimers[runId]?.cancel();
-    _progressTimers.remove(runId);
-    _lastProgressAt.remove(runId);
-  }
+  void _clearTimers(String runId) {}
 
   static String _truncate(String s, [int max = 60]) =>
       s.length <= max ? s : '${s.substring(0, max)}…';
