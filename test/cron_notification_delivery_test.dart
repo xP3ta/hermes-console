@@ -17,11 +17,13 @@ void main() {
 
   late List<MethodCall> calls;
   late Map<String, dynamic> launchDetails;
+  late bool failNextShow;
 
   setUp(() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     calls = <MethodCall>[];
+    failNextShow = false;
     launchDetails = <String, dynamic>{
       'notificationLaunchedApp': false,
       'notificationResponse': null,
@@ -33,6 +35,10 @@ void main() {
     });
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
+      if (call.method == 'show' && failNextShow) {
+        failNextShow = false;
+        throw PlatformException(code: 'show_failed');
+      }
       return switch (call.method) {
         'initialize' || 'areNotificationsEnabled' => true,
         'getNotificationAppLaunchDetails' => launchDetails,
@@ -85,6 +91,8 @@ void main() {
       ok: true,
       connId: 'demo-node',
       sessionId: 'cron_demo_001',
+      executionId: 'execution-aurora-1',
+      jobId: 'job-aurora',
       profile: 'research',
       preview:
           '**3 tareas verificadas**\n'
@@ -129,6 +137,8 @@ void main() {
         ok: true,
         connId: 'demo-node',
         sessionId: 'cron_demo_001',
+        executionId: 'execution-project-1',
+        jobId: 'job-project',
         profile: 'research',
         preview: '3 tareas: dato-demo-que-no-debe-salir',
       );
