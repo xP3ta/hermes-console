@@ -248,4 +248,91 @@ void main() {
       expect(opened, hasLength(1));
     },
   );
+
+  /// Llamadas `show` que son alertas reales (no el resumen de grupo).
+  List<MethodCall> childShows() => calls.where((call) {
+    if (call.method != 'show') return false;
+    final args = Map<String, dynamic>.from(call.arguments as Map);
+    final android = Map<String, dynamic>.from(
+      args['platformSpecifics'] as Map,
+    );
+    return android['setAsGroupSummary'] != true;
+  }).toList();
+
+  test(
+    'productores concurrentes solo alertan una vez por terminal y approval',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final taskCenter = NotificationService(prefs)..appInForeground = false;
+      final runDetail = NotificationService(prefs)..appInForeground = false;
+
+      await taskCenter.runFinished(
+        title: 'Título visto por TaskCenter',
+        ok: false,
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+      await runDetail.runFinished(
+        title: 'Texto distinto visto por RunDetail',
+        ok: false,
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+      await taskCenter.approvalPending(
+        tool: 'bash',
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+      await runDetail.approvalPending(
+        tool: 'shell con otro texto',
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+
+      expect(childShows(), hasLength(2));
+    },
+  );
+
+  test('identidad incompleta no silencia fallos accionables', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+
+    await service.runFinished(title: 'Fallo A', ok: false);
+    await service.runFinished(title: 'Fallo B', ok: false);
+
+    expect(childShows(), hasLength(2));
+  });
+
+  test(
+    'un fallo de plataforma libera el claim terminal para reintento',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+      failNextShow = true;
+
+      await expectLater(
+        service.runFinished(
+          title: 'Fallo material',
+          ok: false,
+          connId: 'demo-node',
+          profile: 'research',
+          runId: 'run-retryable',
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+      await service.runFinished(
+        title: 'Fallo material',
+        ok: false,
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-retryable',
+      );
+
+      expect(childShows(), hasLength(2));
+    },
+  );
 }
