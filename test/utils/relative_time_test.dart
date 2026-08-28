@@ -42,4 +42,15 @@ void main() {
       '36m ago',
     );
   });
+
+  test('normaliza timestamps en milisegundos', () {
+    // Un timestamp en milisegundos de hace 2 horas no debe parecer "ahora".
+    final ms = now.subtract(const Duration(hours: 2)).millisecondsSinceEpoch;
+    expect(relativeTime(ms.toDouble(), languageCode: 'es', now: now), '2 h');
+
+    // Un timestamp futuro (en segundos) sigue el comportamiento previo.
+    final future =
+        now.add(const Duration(hours: 1)).millisecondsSinceEpoch / 1000;
+    expect(relativeTime(future, languageCode: 'es', now: now), 'ahora');
+  });
 }

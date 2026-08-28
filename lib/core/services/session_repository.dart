@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../utils/session_timestamp.dart';
 import 'connection_manager.dart';
 
 enum SessionArchiveMode {
@@ -422,47 +423,55 @@ final class SessionRepository {
         (page.rawCount > 0 && page.rawCount < page.limit);
   }
 
+  static Session _canonicalSessionWinner(Session current, Session candidate) {
+    if (current.id == candidate.id &&
+        current.lastActivityAt == candidate.lastActivityAt) {
+      return candidate;
+    }
+    return compareSessionsByRecentActivity(current, candidate) <= 0
+        ? current
+        : candidate;
+  }
+
   static List<Session> _mergeSessionPage(
     Iterable<Session> previous,
     Iterable<Session> incoming,
     Set<String> keepIds,
   ) {
-    final previousRows = previous.toList(growable: false);
-    final previousById = <String, Session>{
-      for (final row in previousRows) row.id: row,
-    };
-    final previousByLineage = <String, Session>{
-      for (final row in previousRows) row.logicalId: row,
-    };
+    final previousByLineage = <String, Session>{};
+    final previousAliasesByLineage = <String, Set<String>>{};
+    for (final row in previous) {
+      previousByLineage.update(
+        row.logicalId,
+        (prior) => _canonicalSessionWinner(prior, row),
+        ifAbsent: () => row,
+      );
+      previousAliasesByLineage
+          .putIfAbsent(row.logicalId, () => <String>{row.logicalId})
+          .add(row.id);
+    }
+
     final incomingByLineage = <String, Session>{};
     for (final serverRow in incoming) {
       final prior =
-          previousById[serverRow.id] ??
-          previousByLineage[serverRow.logicalId] ??
-          incomingByLineage[serverRow.logicalId];
-      var row = serverRow;
-      if (prior != null) {
-        final lastActive = prior.lastActivityAt > row.lastActivityAt
-            ? prior.lastActivityAt
-            : row.lastActivityAt;
-        final title = row.title.trim().isNotEmpty ? row.title : prior.title;
-        if (lastActive != row.updatedAt || title != row.title) {
-          row = row.copyWith(updatedAt: lastActive, title: title);
-        }
-      }
-      incomingByLineage[row.logicalId] = row;
+          incomingByLineage[serverRow.logicalId] ??
+          previousByLineage[serverRow.logicalId];
+      incomingByLineage[serverRow.logicalId] = prior == null
+          ? serverRow
+          : _canonicalSessionWinner(prior, serverRow);
     }
 
     final incomingIds = {for (final row in incomingByLineage.values) row.id};
     final incomingLineages = incomingByLineage.keys.toSet();
     final survivorsByLineage = <String, Session>{};
-    for (final row in previousRows) {
-      if (incomingIds.contains(row.id) ||
-          incomingLineages.contains(row.logicalId)) {
+    for (final entry in previousByLineage.entries) {
+      final aliases = previousAliasesByLineage[entry.key]!;
+      if (incomingLineages.contains(entry.key) ||
+          aliases.any(incomingIds.contains)) {
         continue;
       }
-      if (keepIds.contains(row.id) || keepIds.contains(row.logicalId)) {
-        survivorsByLineage[row.logicalId] = row;
+      if (aliases.any(keepIds.contains)) {
+        survivorsByLineage[entry.key] = entry.value;
       }
     }
     return [...survivorsByLineage.values, ...incomingByLineage.values];
@@ -522,11 +531,11 @@ final class SessionRepository {
           _boundedString(value['preview'], 1024) ??
           '',
       startedAt:
-          _nonNegativeDouble(value['started_at']) ??
-          _nonNegativeDouble(value['session_started']) ??
+          normalizeEpochTimestamp(value['started_at']) ??
+          normalizeEpochTimestamp(value['session_started']) ??
           0,
-      endedAt: _nonNegativeDouble(value['ended_at']),
-      updatedAt: _nonNegativeDouble(value['last_active']),
+      endedAt: normalizeEpochTimestamp(value['ended_at']),
+      updatedAt: normalizeEpochTimestamp(value['last_active']),
       parentSessionId: _boundedString(value['parent_session_id'], 1024),
       archived: value['archived'] == true,
       pinned: value['pinned'] is bool ? value['pinned'] as bool : null,
@@ -599,11 +608,6 @@ int? _nonNegativeInt(Object? value) {
   if (value is! num || !value.isFinite || value < 0) return null;
   final integer = value.toInt();
   return value == integer ? integer : null;
-}
-
-double? _nonNegativeDouble(Object? value) {
-  if (value is! num || !value.isFinite || value < 0) return null;
-  return value.toDouble();
 }
 
 String? _boundedString(Object? value, int maxRunes) {

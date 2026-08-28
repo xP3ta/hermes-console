@@ -3,6 +3,88 @@ import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/services/run_registry.dart';
 
 void main() {
+  group('timestamps: identidad canónica y orden estable (#2)', () {
+    final nowSeconds = DateTime(2026, 7, 26, 21).millisecondsSinceEpoch / 1000;
+
+    test('chat antiguo con last_active en ms no se muestra como "ahora"', () {
+      final oldMs = DateTime(2025, 1, 15, 10).millisecondsSinceEpoch.toDouble();
+      final s = Session.fromJson({
+        'id': 'old-ms',
+        'started_at': oldMs,
+        'last_active': oldMs,
+      });
+      // La identidad temporal debe corregirse a segundos.
+      expect(s.lastActivityAt, closeTo(oldMs / 1000.0, 0.001));
+      expect(s.lastActivityAt, lessThan(nowSeconds));
+    });
+
+    test(
+      'respuesta nueva mantiene prioridad sobre startedAt/endedAt antiguos',
+      () {
+        final s = Session.fromJson({
+          'id': 'new-reply',
+          'started_at': 1000,
+          'ended_at': 2000,
+          'last_active': nowSeconds - 120, // 2 min atrás
+        });
+        expect(s.lastActivityAt, closeTo(nowSeconds - 120, 0.001));
+      },
+    );
+
+    test('empate en lastActivityAt se resuelve establemente por id', () {
+      final a = Session.fromJson({
+        'id': 'session-a',
+        'started_at': 1000,
+        'last_active': 5000,
+      });
+      final b = Session.fromJson({
+        'id': 'session-b',
+        'started_at': 2000,
+        'last_active': 5000,
+      });
+      expect(a.lastActivityAt, b.lastActivityAt);
+      // Orden determinista: id lexicográfico como desempate.
+      final sorted = [b, a]
+        ..sort((x, y) {
+          final timeCompare = y.lastActivityAt.compareTo(x.lastActivityAt);
+          return timeCompare != 0 ? timeCompare : x.id.compareTo(y.id);
+        });
+      expect(sorted.map((s) => s.id), ['session-a', 'session-b']);
+    });
+
+    test('timestamps ausentes o malformados no rompen lastActivityAt', () {
+      final s = Session.fromJson({
+        'id': 'broken-ts',
+        'started_at': 'hoy',
+        'ended_at': -1,
+        'last_active': null,
+      });
+      expect(s.lastActivityAt, 0);
+    });
+
+    test('last_active malformado cae a updated_at válido', () {
+      final s = Session.fromJson({
+        'id': 'legacy-fallback',
+        'last_active': 'hoy',
+        'updated_at': 2000.0,
+      });
+
+      expect(s.updatedAt, 2000.0);
+      expect(s.lastActivityAt, 2000.0);
+    });
+
+    test('actualización local con ms se normaliza al actualizar updatedAt', () {
+      final s = Session.fromJson({
+        'id': 'local-update',
+        'started_at': 1000,
+        'last_active': 2000,
+      });
+      final nowMs = DateTime(2026, 7, 26, 21).millisecondsSinceEpoch;
+      final updated = s.copyWith(updatedAt: nowMs.toDouble());
+      expect(updated.lastActivityAt, closeTo(nowMs / 1000.0, 0.001));
+    });
+  });
+
   test('profileOwner conserva el owner y hace default explícito', () {
     expect(
       Session.profileOwner(' profile-a ', fallback: 'profile-b'),

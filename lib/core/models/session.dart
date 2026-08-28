@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../utils/markdown_clipboard.dart';
+import '../utils/session_timestamp.dart';
 
 /// Derived lifecycle state for a session.
 ///
@@ -33,7 +34,8 @@ enum SessionState {
 
 /// Session model matching the Gateway API Server response format
 /// (`_session_response` en api_server.py del upstream — campos client-safe).
-class Session {
+class Session implements SessionSortKey {
+  @override
   final String id;
   final String title;
   final String model;
@@ -367,10 +369,12 @@ class Session {
   }
 
   /// Best available timestamp for sorting by recent activity.
-  double get lastActivityAt {
-    final candidates = [startedAt, endedAt, updatedAt].whereType<double>();
-    return candidates.reduce((a, b) => a > b ? a : b);
-  }
+  @override
+  double get lastActivityAt => sessionLastActivityAt(
+    startedAt: startedAt,
+    endedAt: endedAt,
+    updatedAt: updatedAt,
+  );
 
   /// Age of this session expressed as a [Duration] from now.
   Duration get _age {
@@ -456,9 +460,11 @@ class Session {
     preview: preview ?? this.preview,
     lastUserPreview: lastUserPreview ?? this.lastUserPreview,
     lastAssistantPreview: lastAssistantPreview ?? this.lastAssistantPreview,
-    startedAt: startedAt ?? this.startedAt,
-    endedAt: clearEndedAt ? null : endedAt ?? this.endedAt,
-    updatedAt: updatedAt ?? this.updatedAt,
+    startedAt: normalizeEpochTimestamp(startedAt) ?? this.startedAt,
+    endedAt: clearEndedAt
+        ? null
+        : normalizeEpochTimestamp(endedAt) ?? this.endedAt,
+    updatedAt: normalizeEpochTimestamp(updatedAt) ?? this.updatedAt,
     endReason: endReason ?? this.endReason,
     parentSessionId: parentSessionId ?? this.parentSessionId,
     lineageRootId: lineageRootId ?? this.lineageRootId,
@@ -486,10 +492,10 @@ class Session {
   );
 
   factory Session.fromJson(Map<String, dynamic> json) {
-    final endedAt = _nonNegativeDouble(json['ended_at']);
-    final lastActive = _nonNegativeDouble(
-      json['last_active'] ?? json['updated_at'],
-    );
+    final endedAt = normalizeEpochTimestamp(json['ended_at']);
+    final lastActive =
+        normalizeEpochTimestamp(json['last_active']) ??
+        normalizeEpochTimestamp(json['updated_at']);
     final inputTokens = _nonNegativeInt(json['input_tokens']);
     final outputTokens = _nonNegativeInt(json['output_tokens']);
     final reasoningTokens = _nonNegativeInt(json['reasoning_tokens']);
@@ -510,7 +516,7 @@ class Session {
         json['last_assistant_preview'] ?? json['lastAssistantPreview'],
         2048,
       ),
-      startedAt: _nonNegativeDouble(json['started_at']) ?? 0,
+      startedAt: normalizeEpochTimestamp(json['started_at']) ?? 0,
       endedAt: endedAt,
       updatedAt: lastActive,
       endReason: _boundedText(json['end_reason'], 256),

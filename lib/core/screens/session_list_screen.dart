@@ -16,6 +16,7 @@ import '../services/session_archive.dart';
 import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../services/tui_gateway_client.dart';
+import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/hermes_drawer.dart';
@@ -295,7 +296,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             Session.profileOwner(session.profile) == owner,
       );
       _sessions = mergeRemoteSessionsWithDrafts(visibleRemote, drafts)
-        ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+        ..sort(compareSessionsByRecentActivity);
       _loading = false;
       _error = null;
     });
@@ -456,8 +457,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _migrateLineagePreferences(merged);
       await _pinSync?.updateSessions(merged, readFence: pinReadFence);
       if (!mounted) return;
-      final sorted = merged.toList()
-        ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+      final sorted = merged.toList()..sort(compareSessionsByRecentActivity);
       setState(() {
         _sessions = sorted;
         _librarySource = snapshot.source;
@@ -669,8 +669,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         (s) => s.parentSessionId == null || s.parentSessionId!.isEmpty,
       );
 
-      final sorted = visible.toList()
-        ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+      final sorted = visible.toList()..sort(compareSessionsByRecentActivity);
 
       if (!mounted) return;
       setState(() {
@@ -1469,7 +1468,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         final pa = _isPinned(a) ? 0 : 1;
         final pb = _isPinned(b) ? 0 : 1;
         if (pa != pb) return pa - pb;
-        return b.lastActivityAt.compareTo(a.lastActivityAt);
+        return compareSessionsByRecentActivity(a, b);
       });
     }
     return list;
@@ -2318,12 +2317,4 @@ class _SessionTile extends StatelessWidget {
 /// Separador "·" del pie del tile (modelo · tiempo).
 
 /// Tiempo relativo localizado para los tiles ("2h ago", "ahora", "14/6").
-String _relativeTime(double ts, Strings s) {
-  final dt = DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
-  final diff = DateTime.now().difference(dt);
-  if (diff.inMinutes < 1) return s.slRelativeNow;
-  if (diff.inHours < 1) return s.slRelativeMinutes(diff.inMinutes);
-  if (diff.inDays < 1) return s.slRelativeHours(diff.inHours);
-  if (diff.inDays < 7) return s.slRelativeDays(diff.inDays);
-  return '${dt.day}/${dt.month}';
-}
+String _relativeTime(double ts, Strings s) => formatSessionRelativeTime(ts, s);

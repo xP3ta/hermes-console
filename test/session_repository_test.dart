@@ -25,18 +25,23 @@ Map<String, dynamic> _lineageRow({
   required String id,
   required String root,
   required double lastActive,
+  String? title,
+  String? preview,
+  String model = 'model-a',
+  int messageCount = 2,
   bool pinned = false,
+  bool archived = false,
 }) => {
   'id': id,
   '_lineage_root_id': root,
-  'title': id,
-  'preview': id,
-  'model': 'model-a',
+  'title': title ?? id,
+  'preview': preview ?? id,
+  'model': model,
   'source': 'mobile',
-  'message_count': 2,
+  'message_count': messageCount,
   'started_at': lastActive - 10,
   'last_active': lastActive,
-  'archived': false,
+  'archived': archived,
   'pinned': pinned,
 };
 
@@ -229,6 +234,300 @@ void main() {
     },
   );
 
+  test(
+    'merge elige el ganador completo del lineage en cualquier orden',
+    () async {
+      var refreshes = 0;
+      final dashboardHttp = MockClient((_) async {
+        refreshes += 1;
+        final rows = refreshes.isOdd
+            ? [
+                _lineageRow(
+                  id: 'tip-existing',
+                  root: 'root-x',
+                  lastActive: 3000,
+                  title: 'existing title',
+                  preview: 'existing preview',
+                  model: 'existing-model',
+                  messageCount: 3,
+                ),
+              ]
+            : refreshes == 2
+            ? [
+                _lineageRow(
+                  id: 'tip-new',
+                  root: 'root-x',
+                  lastActive: 5000,
+                  title: 'new title',
+                  preview: 'new preview',
+                  model: 'new-model',
+                  messageCount: 5,
+                ),
+                _lineageRow(
+                  id: 'tip-old',
+                  root: 'root-x',
+                  lastActive: 4000,
+                  title: 'old title',
+                  preview: 'old preview',
+                  model: 'old-model',
+                  messageCount: 4,
+                ),
+              ]
+            : [
+                _lineageRow(
+                  id: 'tip-old',
+                  root: 'root-x',
+                  lastActive: 4000,
+                  title: 'old title',
+                  preview: 'old preview',
+                  model: 'old-model',
+                  messageCount: 4,
+                ),
+                _lineageRow(
+                  id: 'tip-new',
+                  root: 'root-x',
+                  lastActive: 5000,
+                  title: 'new title',
+                  preview: 'new preview',
+                  model: 'new-model',
+                  messageCount: 5,
+                ),
+              ];
+        return http.Response(
+          jsonEncode({
+            'sessions': rows,
+            'total': rows.length,
+            'limit': 20,
+            'offset': 0,
+          }),
+          200,
+        );
+      });
+      final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+      final dashboard = _dashboard(dashboardHttp);
+      final gateway = _gateway(gatewayHttp);
+      var repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+        gateway.close();
+      });
+
+      await repository.refresh(const SessionLibraryQuery());
+      final refreshed = await repository.refresh(const SessionLibraryQuery());
+      expect(refreshed.sessions.single.id, 'tip-new');
+      expect(refreshed.sessions.single.title, 'new title');
+      expect(refreshed.sessions.single.preview, 'new preview');
+      expect(refreshed.sessions.single.model, 'new-model');
+      expect(refreshed.sessions.single.messageCount, 5);
+      expect(refreshed.sessions.single.updatedAt, 5000);
+      expect(refreshed.sessions.single.lastActivityAt, 5000);
+
+      repository.close();
+      repository = SessionRepository(dashboard, gateway);
+      await repository.refresh(const SessionLibraryQuery());
+      final reversed = await repository.refresh(const SessionLibraryQuery());
+      expect(reversed.sessions.single.id, 'tip-new');
+      expect(reversed.sessions.single.title, 'new title');
+      expect(reversed.sessions.single.preview, 'new preview');
+      expect(reversed.sessions.single.model, 'new-model');
+      expect(reversed.sessions.single.messageCount, 5);
+      expect(reversed.sessions.single.updatedAt, 5000);
+      expect(reversed.sessions.single.lastActivityAt, 5000);
+    },
+  );
+
+  test(
+    'empate de actividad elige el id opaco menor en cualquier orden',
+    () async {
+      var requests = 0;
+      final dashboardHttp = MockClient((_) async {
+        requests += 1;
+        final smaller = _lineageRow(
+          id: 'tip-alpha',
+          root: 'root-tie',
+          lastActive: 5000,
+          title: 'alpha title',
+          preview: 'alpha preview',
+          model: 'alpha-model',
+          messageCount: 7,
+        );
+        final larger = _lineageRow(
+          id: 'tip-zeta',
+          root: 'root-tie',
+          lastActive: 5000,
+          title: 'zeta title',
+          preview: 'zeta preview',
+          model: 'zeta-model',
+          messageCount: 9,
+        );
+        final rows = requests == 1 ? [smaller, larger] : [larger, smaller];
+        return http.Response(
+          jsonEncode({'sessions': rows, 'total': 2, 'limit': 20, 'offset': 0}),
+          200,
+        );
+      });
+      final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+      final dashboard = _dashboard(dashboardHttp);
+      final gateway = _gateway(gatewayHttp);
+      var repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+        gateway.close();
+      });
+
+      final firstOrder = await repository.refresh(const SessionLibraryQuery());
+      expect(firstOrder.sessions.single.id, 'tip-alpha');
+      expect(firstOrder.sessions.single.title, 'alpha title');
+      expect(firstOrder.sessions.single.preview, 'alpha preview');
+      expect(firstOrder.sessions.single.model, 'alpha-model');
+      expect(firstOrder.sessions.single.messageCount, 7);
+      expect(firstOrder.sessions.single.updatedAt, 5000);
+      expect(firstOrder.sessions.single.lastActivityAt, 5000);
+
+      repository.close();
+      repository = SessionRepository(dashboard, gateway);
+      final reversed = await repository.refresh(const SessionLibraryQuery());
+      expect(reversed.sessions.single.id, 'tip-alpha');
+      expect(reversed.sessions.single.title, 'alpha title');
+      expect(reversed.sessions.single.preview, 'alpha preview');
+      expect(reversed.sessions.single.model, 'alpha-model');
+      expect(reversed.sessions.single.messageCount, 7);
+      expect(reversed.sessions.single.updatedAt, 5000);
+      expect(reversed.sessions.single.lastActivityAt, 5000);
+    },
+  );
+
+  test('misma sesión y actividad refresca metadatos completos', () async {
+    var requests = 0;
+    final dashboardHttp = MockClient((_) async {
+      requests += 1;
+      final row = requests == 1
+          ? _lineageRow(
+              id: 'tip-same',
+              root: 'root-same',
+              lastActive: 5000,
+              title: 'cached title',
+              preview: 'cached preview',
+              model: 'cached-model',
+              messageCount: 3,
+            )
+          : _lineageRow(
+              id: 'tip-same',
+              root: 'root-same',
+              lastActive: 5000,
+              title: 'refreshed title',
+              preview: 'refreshed preview',
+              model: 'refreshed-model',
+              messageCount: 8,
+              pinned: true,
+              archived: true,
+            );
+      return http.Response(
+        jsonEncode({
+          'sessions': [row],
+          'total': 1,
+          'limit': 20,
+          'offset': 0,
+        }),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    await repository.refresh(const SessionLibraryQuery());
+    final refreshed = await repository.refresh(const SessionLibraryQuery());
+    final winner = refreshed.sessions.single;
+
+    expect(winner.id, 'tip-same');
+    expect(winner.title, 'refreshed title');
+    expect(winner.preview, 'refreshed preview');
+    expect(winner.model, 'refreshed-model');
+    expect(winner.messageCount, 8);
+    expect(winner.pinned, isTrue);
+    expect(winner.archived, isTrue);
+    expect(winner.updatedAt, 5000);
+    expect(winner.lastActivityAt, 5000);
+  });
+
+  test(
+    'backfill de página posterior no reemplaza el ganador ni altera el offset',
+    () async {
+      final offsets = <int>[];
+      final dashboardHttp = MockClient((request) async {
+        final offset = int.parse(request.url.queryParameters['offset']!);
+        offsets.add(offset);
+        final rows = offset == 0
+            ? [
+                _lineageRow(
+                  id: 'tip-new',
+                  root: 'root-x',
+                  lastActive: 5000,
+                  title: 'new title',
+                  preview: 'new preview',
+                  model: 'new-model',
+                  messageCount: 5,
+                ),
+                _row(0),
+              ]
+            : [
+                _lineageRow(
+                  id: 'tip-old',
+                  root: 'root-x',
+                  lastActive: 4000,
+                  title: 'old title',
+                  preview: 'old preview',
+                  model: 'old-model',
+                  messageCount: 4,
+                ),
+                _row(1),
+              ];
+        return http.Response(
+          jsonEncode({
+            'sessions': rows,
+            'total': 4,
+            'limit': 2,
+            'offset': offset,
+          }),
+          200,
+        );
+      });
+      final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+      final dashboard = _dashboard(dashboardHttp);
+      final gateway = _gateway(gatewayHttp);
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+        gateway.close();
+      });
+
+      await repository.refresh(const SessionLibraryQuery(pageSize: 2));
+      final snapshot = await repository.loadNext();
+      final winner = snapshot.sessions.singleWhere(
+        (row) => row.logicalId == 'root-x',
+      );
+
+      expect(offsets, [0, 2]);
+      expect(winner.id, 'tip-new');
+      expect(winner.title, 'new title');
+      expect(winner.preview, 'new preview');
+      expect(winner.model, 'new-model');
+      expect(winner.messageCount, 5);
+      expect(winner.updatedAt, 5000);
+      expect(winner.lastActivityAt, 5000);
+    },
+  );
+
   test('refresh conserva working/pinned y rota el tip por lineage', () async {
     var refreshes = 0;
     final dashboardHttp = MockClient((_) async {
@@ -393,12 +692,69 @@ void main() {
       expect(remote.exhaustive, isTrue);
       expect(remote.sessions.single.id, 'tip-remote');
       expect(remote.sessions.single.logicalId, 'root-remote');
+      expect(remote.sessions.single.startedAt, 1234.0);
+      expect(remote.sessions.single.endedAt, isNull);
+      expect(remote.sessions.single.updatedAt, isNull);
 
       searchAvailable = false;
       final local = await repository.search('Conversation 2');
       expect(local.source, SessionLibrarySource.local);
       expect(local.exhaustive, isFalse);
       expect(local.sessions.single.id, 'session-2');
+    },
+  );
+
+  test(
+    'búsqueda normaliza timestamps ms y conserva fallback por campo',
+    () async {
+      final dashboardHttp = MockClient((request) async {
+        expect(request.url.path, '/api/sessions/search');
+        return http.Response(
+          jsonEncode({
+            'results': [
+              {
+                'session_id': 'primary-started',
+                'started_at': 1700000000000,
+                'session_started': 1500000000000,
+                'ended_at': 1700000060000,
+                'last_active': 1700000120000,
+              },
+              {
+                'session_id': 'fallback-started',
+                'started_at': 'malformed',
+                'session_started': 1600000000000,
+                'ended_at': -1,
+                'last_active': 'malformed',
+              },
+            ],
+          }),
+          200,
+        );
+      });
+      final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+      final dashboard = _dashboard(dashboardHttp);
+      final gateway = _gateway(gatewayHttp);
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+        gateway.close();
+      });
+
+      final result = await repository.search('timestamp contract');
+      final primary = result.sessions.singleWhere(
+        (session) => session.id == 'primary-started',
+      );
+      final fallback = result.sessions.singleWhere(
+        (session) => session.id == 'fallback-started',
+      );
+
+      expect(primary.startedAt, 1700000000.0);
+      expect(primary.endedAt, 1700000060.0);
+      expect(primary.updatedAt, 1700000120.0);
+      expect(fallback.startedAt, 1600000000.0);
+      expect(fallback.endedAt, isNull);
+      expect(fallback.updatedAt, isNull);
     },
   );
 
