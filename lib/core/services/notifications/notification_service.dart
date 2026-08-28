@@ -1407,6 +1407,11 @@ class NotificationService implements RunNotificationFacade {
       payload: payload,
     );
     _log('${kind.name} MOSTRADA (id=$id, fg=$appInForeground)');
+    // Jerarquía D→A: las alertas hijas conservan su tap individual; con 2+
+    // activas se publica un resumen de grupo silencioso que las agrupa.
+    if (!compact && kind != NotificationKind.test) {
+      await _refreshGroupSummary(channelId: ch.id, t: t);
+    }
     // Recuerda la última alerta de 2º plano para re-afirmarla si el desmontaje
     // del foreground service la borra (la de prueba no: es de primer plano).
     if (!appInForeground && kind != NotificationKind.test) {
@@ -1421,6 +1426,88 @@ class NotificationService implements RunNotificationFacade {
       );
     }
     return true;
+  }
+
+  /// Publica o retira el resumen del grupo según las alertas hijas REALMENTE
+  /// activas en la bandeja del sistema. Consultar al SO —en vez de memoria del
+  /// isolate— lo hace coherente entre productores (UI, listener, foreground
+  /// service), tras recrear el proceso y cuando el usuario descarta una hija a
+  /// mano. Silencioso ([GroupAlertBehavior.children]) y estable: nunca compite
+  /// con el contenido de las hijas. Sin [channelId]/[t] solo puede retirar el
+  /// resumen (camino de cancelación), nunca publicarlo.
+  Future<void> _refreshGroupSummary({String? channelId, NotifL10n? t}) async {
+    final children = await _countActiveChildren();
+    if (children < 2) {
+      await _plugin.cancel(_groupSummaryId);
+      return;
+    }
+    if (channelId == null || t == null) return;
+    final details = AndroidNotificationDetails(
+      channelId,
+      channelId,
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      icon: 'ic_stat_hermes',
+      color: _accent,
+      groupKey: _groupKey,
+      setAsGroupSummary: true,
+      groupAlertBehavior: GroupAlertBehavior.children,
+      onlyAlertOnce: true,
+    );
+    await _plugin.show(
+      _groupSummaryId,
+      t.brand,
+      t.groupSummaryBody,
+      NotificationDetails(android: details),
+    );
+  }
+
+  /// ¿Es esta notificación activa una ALERTA hija del grupo (jerarquía A/B)?
+  /// Excluye el resumen, la prueba, las respuestas compactas (canal replies),
+  /// los servicios ongoing (voz, FGS) y las transferencias: ninguno debe
+  /// disparar ni sostener el resumen. Pura y testeable.
+  @visibleForTesting
+  static bool isAlertChildNotification({
+    required int? id,
+    required String? channelId,
+    required String? groupKey,
+  }) {
+    if (groupKey != _groupKey) return false;
+    if (id == null || id == _groupSummaryId || id == _testNotificationId) {
+      return false;
+    }
+    if (channelId == _chApprovals || channelId == _chRuns) return true;
+    // API < 26 no expone channelId: degradar al rango de IDs de alerta.
+    if (channelId == null) {
+      return id == 7001 || (id >= 7100 && id != _voiceOngoingId);
+    }
+    return false;
+  }
+
+  /// Cuenta las alertas hijas activas consultando la bandeja del sistema.
+  /// Ante cualquier fallo de plataforma devuelve 0 (degrada a "sin resumen",
+  /// nunca bloquea la alerta que se acaba de mostrar).
+  Future<int> _countActiveChildren() async {
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) return 0;
+    try {
+      final active = await android.getActiveNotifications();
+      return active
+          .where(
+            (n) => isAlertChildNotification(
+              id: n.id,
+              channelId: n.channelId,
+              groupKey: n.groupKey,
+            ),
+          )
+          .length;
+    } catch (e) {
+      _log('no se pudieron consultar las notificaciones activas: $e');
+      return 0;
+    }
   }
 
   /// Vuelve a mostrar la última notificación de 2º plano si se posteó hace poco.
@@ -1482,6 +1569,7 @@ class NotificationService implements RunNotificationFacade {
   Future<void> cancelById(int id, String reason) async {
     _log('CANCEL id=$id motivo="$reason"\n${StackTrace.current}');
     await _plugin.cancel(id);
+    await _refreshGroupSummary();
   }
 }
 
