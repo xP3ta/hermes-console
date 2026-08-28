@@ -142,8 +142,6 @@ class NotifL10n {
   );
 
   // ── Acciones ──────────────────────────────────────────────────────────────
-  String get actApprove => _('Aprobar', 'Approve');
-  String get actDeny => _('Rechazar', 'Deny');
   String get actOpen => _('Abrir', 'Open');
 
   // ── Servicio en segundo plano (foreground service) ────────────────────────
