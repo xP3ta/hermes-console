@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/attachment_source_sheet.dart';
@@ -85,6 +86,10 @@ void main() {
     );
     await tester.pump();
 
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.textInputAction, TextInputAction.newline);
+    expect(field.keyboardType, TextInputType.multiline);
+
     final send = find.byKey(const ValueKey('home-prompt-send'));
     expect(tester.widget<HermesTactileAction>(send).onPressed, isNotNull);
     expect(tester.getSize(send), const Size(48, 48));
@@ -98,6 +103,56 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       isEmpty,
     );
+  });
+
+  testWidgets('Enter inserta nueva línea y Ctrl+Enter envía', (tester) async {
+    final submitted = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: Scaffold(
+          body: HomePromptComposer(
+            hintText: 'Pregunta a Hermes…',
+            attachmentTooltip: 'Adjuntar archivo',
+            dictationTooltip: 'Dictar',
+            voiceTooltip: 'Conversación de voz',
+            sendTooltip: 'Enviar',
+            onAttachmentSelected: (_) {},
+            onDictationPressed: () {},
+            onVoicePressed: () {},
+            onSubmitted: submitted.add,
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'línea 1');
+    await tester.pump();
+
+    // El campo es multiline con acción newline: no hay onSubmitted que envíe.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.textInputAction, TextInputAction.newline);
+    expect(field.onSubmitted, isNull);
+
+    // Un texto con newline real se conserva (no dispara envío).
+    await tester.enterText(find.byType(TextField), 'línea 1\nlínea 2');
+    await tester.pump();
+    expect(submitted, isEmpty);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'línea 1\nlínea 2',
+    );
+
+    // Ctrl+Enter envía desde teclado físico.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+    await tester.pump();
+
+    expect(submitted, isNotEmpty);
   });
 
   testWidgets('la acción contextual cambia de voz a enviar', (tester) async {

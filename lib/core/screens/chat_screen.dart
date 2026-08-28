@@ -4650,6 +4650,17 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Envía con teclado físico: Ctrl/Cmd+Enter envía; Enter suelto sigue siendo
+  /// newline en campos multiline. Durante dictado, el mismo atajo envía la
+  /// transcripción.
+  void _composerKeyboardSubmit() {
+    if (_isRecording) {
+      unawaited(_sendDictation());
+    } else {
+      unawaited(_sendMessage());
+    }
+  }
+
   /// Send message via SSE streaming (Gateway API Server).
   ///
   /// When [_pendingAttachments] are staged, text files are embedded and binary
@@ -10291,74 +10302,86 @@ class _ChatScreenState extends State<ChatScreen>
                         children: [
                           ExcludeSemantics(
                             excluding: _isRecording,
-                            child: TextField(
-                              controller: _textController,
-                              focusNode: _textFocusNode,
-                              style: _isRecording
-                                  ? const TextStyle(color: Colors.transparent)
-                                  : null,
-                              cursorColor: _isRecording
-                                  ? Colors.transparent
-                                  : null,
-                              decoration: InputDecoration(
-                                hintText: _attachmentSubmitting
-                                    ? Strings.of(context).chaUploadingAttachment
-                                    : _pendingAttachments.isNotEmpty
-                                    ? Strings.of(context).chaHintSystem
-                                    : widget.missionRoom != null
-                                    ? (Localizations.localeOf(
-                                                context,
-                                              ).languageCode ==
-                                              'en'
-                                          ? 'Message the team…'
-                                          : 'Escribe al equipo…')
-                                    : Strings.of(context).chaHintUser,
-                                hintStyle: TextStyle(
-                                  color: _isRecording
-                                      ? Colors.transparent
-                                      : colors.textSecondary,
-                                  fontSize: 14,
-                                ),
-                                filled: false,
-                                border: InputBorder.none,
-                                enabledBorder: InputBorder.none,
-                                focusedBorder: InputBorder.none,
-                                disabledBorder: InputBorder.none,
-                                contentPadding: EdgeInsets.fromLTRB(
-                                  4,
-                                  compactIme ? 10 : 12,
-                                  4,
-                                  _isRecording
-                                      ? _dictationWaveHeight + 8
-                                      : (compactIme ? 10 : 12),
-                                ),
-                                isDense: true,
-                              ),
-                              minLines: 1,
-                              maxLines: compactIme ? 2 : 4,
-                              textCapitalization: TextCapitalization.sentences,
-                              keyboardType: TextInputType.multiline,
-                              contentInsertionConfiguration:
-                                  ContentInsertionConfiguration(
-                                    allowedMimeTypes: const [
-                                      'image/png',
-                                      'image/jpeg',
-                                      'image/gif',
-                                      'image/webp',
-                                    ],
-                                    onContentInserted: (content) => unawaited(
-                                      _insertKeyboardContent(content),
-                                    ),
+                            child: CallbackShortcuts(
+                              bindings: {
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                  control: true,
+                                ): _composerKeyboardSubmit,
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                  meta: true,
+                                ): _composerKeyboardSubmit,
+                              },
+                              child: TextField(
+                                controller: _textController,
+                                focusNode: _textFocusNode,
+                                style: _isRecording
+                                    ? const TextStyle(color: Colors.transparent)
+                                    : null,
+                                cursorColor: _isRecording
+                                    ? Colors.transparent
+                                    : null,
+                                decoration: InputDecoration(
+                                  hintText: _attachmentSubmitting
+                                      ? Strings.of(
+                                          context,
+                                        ).chaUploadingAttachment
+                                      : _pendingAttachments.isNotEmpty
+                                      ? Strings.of(context).chaHintSystem
+                                      : widget.missionRoom != null
+                                      ? (Localizations.localeOf(
+                                                  context,
+                                                ).languageCode ==
+                                                'en'
+                                            ? 'Message the team…'
+                                            : 'Escribe al equipo…')
+                                      : Strings.of(context).chaHintUser,
+                                  hintStyle: TextStyle(
+                                    color: _isRecording
+                                        ? Colors.transparent
+                                        : colors.textSecondary,
+                                    fontSize: 14,
                                   ),
-                              textInputAction: TextInputAction.send,
-                              enabled:
-                                  !_loading &&
-                                  !_roomTaskMutationLocked &&
-                                  !_attachmentSubmitting &&
-                                  !_compressingSession,
-                              onSubmitted: (_) => _isRecording
-                                  ? unawaited(_sendDictation())
-                                  : _sendMessage(),
+                                  filled: false,
+                                  border: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  disabledBorder: InputBorder.none,
+                                  contentPadding: EdgeInsets.fromLTRB(
+                                    4,
+                                    compactIme ? 10 : 12,
+                                    4,
+                                    _isRecording
+                                        ? _dictationWaveHeight + 8
+                                        : (compactIme ? 10 : 12),
+                                  ),
+                                  isDense: true,
+                                ),
+                                minLines: 1,
+                                maxLines: compactIme ? 2 : 4,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                keyboardType: TextInputType.multiline,
+                                contentInsertionConfiguration:
+                                    ContentInsertionConfiguration(
+                                      allowedMimeTypes: const [
+                                        'image/png',
+                                        'image/jpeg',
+                                        'image/gif',
+                                        'image/webp',
+                                      ],
+                                      onContentInserted: (content) => unawaited(
+                                        _insertKeyboardContent(content),
+                                      ),
+                                    ),
+                                textInputAction: TextInputAction.newline,
+                                enabled:
+                                    !_loading &&
+                                    !_roomTaskMutationLocked &&
+                                    !_attachmentSubmitting &&
+                                    !_compressingSession,
+                              ),
                             ),
                           ),
                           if (_isRecording && _voice != null)

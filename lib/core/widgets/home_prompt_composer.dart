@@ -93,35 +93,45 @@ class _HomePromptComposerState extends State<HomePromptComposer> {
             enabled: widget.enabled,
           ),
           Expanded(
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              enabled: widget.enabled,
-              minLines: 1,
-              maxLines: 4,
-              keyboardType: TextInputType.multiline,
-              textInputAction: TextInputAction.send,
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) => _submit(),
-              onTapOutside: (_) =>
-                  FocusManager.instance.primaryFocus?.unfocus(),
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.25,
-                color: colors.textPrimary,
-              ),
-              decoration: InputDecoration(
-                hintText: widget.hintText,
-                hintStyle: TextStyle(color: colors.textSecondary, fontSize: 14),
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                disabledBorder: InputBorder.none,
-                errorBorder: InputBorder.none,
-                focusedErrorBorder: InputBorder.none,
-                filled: false,
-                isCollapsed: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+            child: CallbackShortcuts(
+              bindings: {
+                const SingleActivator(LogicalKeyboardKey.enter, control: true):
+                    _submit,
+                const SingleActivator(LogicalKeyboardKey.enter, meta: true):
+                    _submit,
+              },
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                enabled: widget.enabled,
+                minLines: 1,
+                maxLines: 4,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.newline,
+                onChanged: (_) => setState(() {}),
+                onTapOutside: (_) =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.25,
+                  color: colors.textPrimary,
+                ),
+                decoration: InputDecoration(
+                  hintText: widget.hintText,
+                  hintStyle: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 14,
+                  ),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  disabledBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                  filled: false,
+                  isCollapsed: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                ),
               ),
             ),
           ),
