@@ -202,6 +202,88 @@ void main() {
     },
   );
 
+  test('cron solo interrumpe por resultado material tipado o fallo', () {
+    final completed = _cronExecution('execution-ok', 'completed');
+    final failed = _cronExecution('execution-failed', 'failed');
+    const cronSession = Session(
+      id: 'cron_job-1_20260828',
+      title: 'Housing search',
+      model: '',
+      source: 'cron',
+      messageCount: 2,
+      isActive: false,
+      preview: '',
+      startedAt: 0,
+    );
+
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: cronSession,
+        preview: null,
+      ),
+      isFalse,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: cronSession,
+        preview: '   ',
+      ),
+      isFalse,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: cronSession,
+        preview: '[SILENT]',
+      ),
+      isFalse,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: cronSession,
+        preview: 'no_change',
+      ),
+      isFalse,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: cronSession,
+        preview: 'Entrada registrada y verificada · 08:03',
+      ),
+      isTrue,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: null,
+        preview: 'Texto sin sesión autoritativa',
+      ),
+      isFalse,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(
+        completed,
+        session: cronSession,
+        preview: 'silent',
+      ),
+      isTrue,
+    );
+    expect(
+      BackgroundCronWatch.shouldNotifyResult(failed, session: null, preview: null),
+      isTrue,
+    );
+  });
+
+  test('HTTP 404 no permite inferir que un run terminó correctamente', () {
+    expect(BackgroundListener.canInferRunOutcomeFromHttpStatus(404), isFalse);
+    expect(BackgroundListener.canInferRunOutcomeFromHttpStatus(500), isFalse);
+    expect(BackgroundListener.canInferRunOutcomeFromHttpStatus(200), isTrue);
+  });
+
   test('cron usa el agregado de perfiles de Desktop y fallback compatible', () {
     final endpoints = BackgroundCronWatch.cronSessionEndpoints();
     final jobEndpoints = BackgroundCronWatch.cronJobEndpoints();
