@@ -125,4 +125,105 @@ void main() {
       expect(android['priority'], Priority.max.value);
     },
   );
+
+  test(
+    'B/C: resultado y respuesta usan canales y prioridades separadas',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+
+      await service.runFinished(
+        title: 'Copia de seguridad',
+        ok: true,
+        connId: 'demo-node',
+        runId: 'run-result-1',
+      );
+      await service.replyReady(
+        preview: 'preview',
+        instance: 'Servidor',
+        session: 'Chat',
+        connId: 'demo-node',
+        sessionId: 'session-1',
+      );
+
+      final shown = shownArgs(groupSummary: false);
+      expect(shown, hasLength(2));
+      final run = androidOf(shown.first);
+      final reply = androidOf(shown.last);
+      expect(run['channelId'], 'hermes_runs');
+      expect(run['importance'], Importance.defaultImportance.value);
+      expect(run['priority'], Priority.defaultPriority.value);
+      expect(reply['channelId'], 'hermes_replies');
+      expect(reply['importance'], Importance.high.value);
+      expect(reply['priority'], Priority.high.value);
+    },
+  );
+
+  test(
+    'A: la aprobación nunca resuelve desde la bandeja, solo Abrir',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+
+      // Sin redacción: tampoco hay Aprobar/Rechazar; la decisión exige abrir.
+      await service.approvalPending(
+        tool: 'bash',
+        connId: 'demo-node',
+        runId: 'run-unlocked-1',
+        base: 'https://hermes.example',
+      );
+
+      var shown = shownArgs(groupSummary: false);
+      expect(shown, hasLength(1));
+      expect(actionIdsOf(shown.single), ['open']);
+
+      // Con contenido oculto (lockscreen): mismo contrato, contenido privado.
+      await service.setHideSensitiveContent(true);
+      await service.approvalPending(
+        tool: 'bash',
+        connId: 'demo-node',
+        runId: 'run-locked-1',
+        base: 'https://hermes.example',
+      );
+
+      shown = shownArgs(groupSummary: false);
+      expect(shown, hasLength(2));
+      final locked = shown.last;
+      final android = androidOf(locked);
+      expect(locked['title'], 'Nueva actividad en Hermes');
+      expect(locked['body'], 'Abre la aplicación para ver los detalles.');
+      expect(android['visibility'], NotificationVisibility.secret.index);
+      expect(actionIdsOf(locked), ['open']);
+    },
+  );
+
+  test('B: cron usa título específico según resultado', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+
+    await service.cronFinished(
+      title: 'Fichaje diario',
+      ok: true,
+      connId: 'demo-node',
+      sessionId: 'cron-rrhh-1',
+      executionId: 'execution-ok-1',
+      jobId: 'job-rrhh',
+      profile: 'rrhh',
+    );
+    await service.cronFinished(
+      title: 'Fichaje diario',
+      ok: false,
+      connId: 'demo-node',
+      sessionId: 'cron-rrhh-1',
+      executionId: 'execution-fail-1',
+      jobId: 'job-rrhh',
+      profile: 'rrhh',
+    );
+
+    final shown = shownArgs(groupSummary: false);
+    expect(shown, hasLength(2));
+    expect(shown.first['title'], 'Cron completado');
+    expect(shown.last['title'], 'Cron falló');
+    expect(shown.first['id'], isNot(shown.last['id']));
+  });
 }
