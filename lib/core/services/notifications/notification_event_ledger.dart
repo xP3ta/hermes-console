@@ -84,6 +84,42 @@ class NotificationEventLedger {
     }
   }
 
+  /// Libera un claim cuando la presentación falló antes de alcanzar una
+  /// superficie humana. Los componentes incompletos nunca se persistieron.
+  Future<void> release({
+    required String connId,
+    required String? profile,
+    required String objectId,
+    required String eventKind,
+  }) async {
+    final connection = connId.trim();
+    final scopedProfile = (profile ?? '').trim();
+    final object = objectId.trim();
+    final kind = eventKind.trim();
+    if (connection.isEmpty || object.isEmpty || kind.isEmpty) return;
+
+    final previous = _tail;
+    final done = Completer<void>();
+    _tail = done.future;
+    await previous;
+    try {
+      await _withProcessLock(() async {
+        await _prefs.reload();
+        final entries = decodeEntries(_prefs.getString(storageKey));
+        entries.removeWhere(
+          (entry) =>
+              entry['c'] == connection &&
+              entry['p'] == scopedProfile &&
+              entry['o'] == object &&
+              entry['k'] == kind,
+        );
+        await _prefs.setString(storageKey, jsonEncode(entries));
+      });
+    } finally {
+      done.complete();
+    }
+  }
+
   /// SharedPreferences no ofrece compare-and-set entre isolates. El lock de
   /// archivo serializa el read-modify-write entre UI y foreground service.
   static Future<T> _withProcessLock<T>(Future<T> Function() action) async {
