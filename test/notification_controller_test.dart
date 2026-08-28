@@ -174,16 +174,13 @@ void main() {
       expect(notif.calls, contains('approvalPending:herramienta'));
     });
 
-    test('cancela timers de progreso antes de notificar', () async {
-      // Inicia un timer de progreso
+    test('la aprobación sigue notificando tras progreso rutinario', () async {
+      // El progreso ya no crea push; la aprobación sí interrumpe.
       ctrl.notifyRunProgress(_run(progressLabel: 'tool: read_file'));
       expect(notif.calls.where((c) => c.startsWith('runLive')), isEmpty);
-      // La aprobación llega antes del debounce
       ctrl.notifyRunWaitingApproval(_run(progressLabel: 'bash'));
       expect(notif.calls, contains('approvalPending:bash'));
-      // Avanzamos el tiempo: el timer debería estar cancelado
       await Future.delayed(const Duration(seconds: 6));
-      // No debería haberse llamado runLive tras la aprobación
       expect(notif.calls.where((c) => c.startsWith('runLive:run-1')), isEmpty);
     });
   });
@@ -196,7 +193,7 @@ void main() {
       expect(notif.calls.where((c) => c.startsWith('runLive:')), isEmpty);
     });
 
-    test('debouncea: solo dispara una vez tras N llamadas rápidas', () async {
+    test('progreso rutinario no crea ninguna notificación push', () async {
       for (var i = 0; i < 5; i++) {
         ctrl.notifyRunProgress(_run(progressLabel: 'tool:$i'));
       }
@@ -204,29 +201,22 @@ void main() {
       final liveCalls = notif.calls
           .where((c) => c.startsWith('runLive:run-1'))
           .toList();
-      expect(liveCalls.length, 1);
-    });
-
-    test('dispara runLive con el runId correcto', () async {
-      ctrl.notifyRunProgress(_run(id: 'abc-123', progressLabel: 'bash'));
-      await Future.delayed(const Duration(seconds: 6));
-      expect(notif.calls.any((c) => c.startsWith('runLive:abc-123')), isTrue);
+      expect(liveCalls, isEmpty);
     });
   });
 
   group('clearRunNotification', () {
-    test('cancela timers y emite cancelRun', () async {
+    test('cancela el aviso del run sin emitir nada nuevo', () async {
       ctrl.notifyRunProgress(_run(progressLabel: 'bash'));
       ctrl.clearRunNotification('run-1');
       await Future.delayed(const Duration(seconds: 6));
       expect(notif.calls, contains('cancelRun:run-1'));
-      // El timer fue cancelado, no debe haber runLive
       expect(notif.calls.where((c) => c.startsWith('runLive:run-1')), isEmpty);
     });
   });
 
   group('dispose', () {
-    test('cancela todos los timers pendientes', () async {
+    test('libera el estado efímero sin notificar', () async {
       ctrl.notifyRunProgress(_run(id: 'r1', progressLabel: 'a'));
       ctrl.notifyRunProgress(_run(id: 'r2', progressLabel: 'b'));
       ctrl.dispose();
@@ -236,18 +226,18 @@ void main() {
   });
 
   group('propagación de connId', () {
-    test('connId se incluye en la llamada a runLive', () async {
+    test('connId no convierte el progreso en una interrupción', () async {
       final ctrlWithConn = NotificationController(notif, connId: 'conn-abc');
       ctrlWithConn.notifyRunProgress(_run(progressLabel: 'bash'));
       await Future.delayed(const Duration(seconds: 6));
-      expect(notif.calls.where((c) => c.contains('conn=conn-abc')), isNotEmpty);
+      expect(notif.calls.where((c) => c.startsWith('runLive:')), isEmpty);
       ctrlWithConn.dispose();
     });
 
-    test('sin connId el campo es vacío', () async {
+    test('sin connId el progreso también queda solo en UI', () async {
       ctrl.notifyRunProgress(_run(progressLabel: 'bash'));
       await Future.delayed(const Duration(seconds: 6));
-      expect(notif.calls.where((c) => c.contains('conn=')), isNotEmpty);
+      expect(notif.calls.where((c) => c.startsWith('runLive:')), isEmpty);
     });
   });
 }
