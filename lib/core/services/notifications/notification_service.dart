@@ -775,8 +775,8 @@ class NotificationService implements RunNotificationFacade {
     required bool ok,
     required String connId,
     required String sessionId,
-    String executionId = '',
-    String jobId = '',
+    required String executionId,
+    required String jobId,
     String? profile,
     String? preview,
   }) async {
@@ -844,7 +844,7 @@ class NotificationService implements RunNotificationFacade {
   /// exacta en TasksScreen, sin inventar un destino de Task Center.
   /// Opt-in propio ([notifyKanbanResults]), independiente del de Cron.
   Future<void> kanbanTransition({
-    String connId = '',
+    required String connId,
     required String taskId,
     required String title,
     required String status,
