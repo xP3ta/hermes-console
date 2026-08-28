@@ -120,7 +120,17 @@ void main() {
   test(
     '404 and malformed capabilities use the safe plugins GET fallback',
     () async {
-      for (final response in [(404, '{}'), (200, '{not-json')]) {
+      for (final response in [
+        (404, '{}'),
+        (200, '{not-json'),
+        (
+          200,
+          jsonEncode({
+            'object': 'other.contract',
+            'features': {'skills_toggle': true, 'plugins_api': true},
+          }),
+        ),
+      ]) {
         final result = await _run(
           capabilitiesStatus: response.$1,
           capabilitiesBody: response.$2,

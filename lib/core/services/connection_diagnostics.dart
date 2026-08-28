@@ -152,8 +152,7 @@ class ServerCapabilities {
   static ServerCapabilities? tryParse(String body) {
     try {
       final json = jsonDecode(body) as Map<String, dynamic>;
-      if (json['object'] != 'hermes.api_server.capabilities' &&
-          json['features'] == null) {
+      if (json['object'] != 'hermes.api_server.capabilities') {
         return null;
       }
       return ServerCapabilities(
