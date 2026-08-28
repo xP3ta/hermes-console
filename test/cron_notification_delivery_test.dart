@@ -335,4 +335,88 @@ void main() {
       expect(childShows(), hasLength(2));
     },
   );
+
+  test('un fallo de plataforma libera el claim de aprobación', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+    failNextShow = true;
+
+    await expectLater(
+      service.approvalPending(
+        tool: 'shell',
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-approval-retry',
+      ),
+      throwsA(isA<PlatformException>()),
+    );
+    await service.approvalPending(
+      tool: 'shell',
+      connId: 'demo-node',
+      profile: 'research',
+      runId: 'run-approval-retry',
+    );
+
+    expect(childShows(), hasLength(2));
+  });
+
+  test('un fallo de plataforma libera el claim de cron', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+    failNextShow = true;
+
+    Future<void> emit() => service.cronFinished(
+      title: 'Fichaje diario',
+      ok: false,
+      connId: 'demo-node',
+      sessionId: 'cron-rrhh',
+      executionId: 'execution-retry',
+      jobId: 'job-rrhh',
+      profile: 'rrhh',
+    );
+
+    await expectLater(emit(), throwsA(isA<PlatformException>()));
+    await emit();
+
+    expect(childShows(), hasLength(2));
+  });
+
+  test(
+    'cron sin sessionId deriva IDs Android de executionId y jobId',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+
+      await service.cronFinished(
+        title: 'Script sin sesión',
+        ok: false,
+        connId: 'demo-node',
+        sessionId: '',
+        executionId: 'execution-1',
+        jobId: 'job-script',
+        profile: 'ops',
+      );
+      await service.cronFinished(
+        title: 'Script sin sesión',
+        ok: false,
+        connId: 'demo-node',
+        sessionId: '',
+        executionId: 'execution-2',
+        jobId: 'job-script',
+        profile: 'ops',
+      );
+
+      final shown = childShows();
+      expect(shown, hasLength(2));
+      final ids = shown.map((call) => (call.arguments as Map)['id']).toSet();
+      expect(ids, hasLength(2));
+      for (final call in shown) {
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        final android = Map<String, dynamic>.from(
+          args['platformSpecifics'] as Map,
+        );
+        expect(android['onlyAlertOnce'], isTrue);
+      }
+    },
+  );
 }
