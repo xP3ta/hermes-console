@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../secure_storage.dart';
 import '../../utils/markdown_clipboard.dart';
+import 'notification_event_ledger.dart';
 import '../../utils/transport_privacy.dart';
 import 'notification_strings.dart';
 
@@ -61,6 +62,9 @@ class NotificationOpen {
   final NotificationChatSurface surface;
   final String? roomId;
 
+  /// Tarjeta Kanban exacta que debe abrirse al tocar el aviso.
+  final String? taskId;
+
   /// ID de la ejecución (v1/runs). Presente cuando la notificación proviene
   /// del Task Center; ausente en notificaciones de chat (compatibilidad).
   final String? runId;
@@ -73,6 +77,7 @@ class NotificationOpen {
     this.surface = NotificationChatSurface.normal,
     this.roomId,
     this.runId,
+    this.taskId,
   });
 
   String toPayload({String? base}) => jsonEncode({
@@ -80,6 +85,7 @@ class NotificationOpen {
     if (sessionId.isNotEmpty) 'sid': sessionId,
     if (title != null && title!.isNotEmpty) 'title': title,
     if (runId != null && runId!.isNotEmpty) 'rid': runId,
+    if (taskId != null && taskId!.isNotEmpty) 'tid': taskId,
     if (profile != null && profile!.isNotEmpty) 'profile': profile,
     'surface': surface.name,
     if (roomId != null && roomId!.isNotEmpty) 'room': roomId,
@@ -97,7 +103,8 @@ class NotificationOpen {
       if (conn.isEmpty) return null;
       final sid = (m['sid'] ?? '').toString();
       final runId = (m['rid'] ?? '').toString();
-      if (sid.isEmpty && runId.isEmpty) return null;
+      final taskId = (m['tid'] ?? '').toString();
+      if (sid.isEmpty && runId.isEmpty && taskId.isEmpty) return null;
       final title = m['title']?.toString();
       final profile = m['profile']?.toString();
       final roomId = m['room']?.toString();
@@ -109,6 +116,7 @@ class NotificationOpen {
         surface: NotificationChatSurface.fromWire(m['surface']),
         roomId: roomId?.isNotEmpty == true ? roomId : null,
         runId: runId.isNotEmpty ? runId : null,
+        taskId: taskId.isNotEmpty ? taskId : null,
       );
     } catch (e) {
       debugPrint('[hermes-notif] excepción silenciada (se devuelve null): $e');
@@ -184,6 +192,9 @@ abstract interface class RunNotificationFacade {
 
 class NotificationService implements RunNotificationFacade {
   final SharedPreferences _prefs;
+  late final NotificationEventLedger _eventLedger = NotificationEventLedger(
+    _prefs,
+  );
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
@@ -238,6 +249,19 @@ class NotificationService implements RunNotificationFacade {
   /// en la bandeja (en vez de sueltas).
   static const String _groupKey = 'hermes';
 
+  /// ID fijo del resumen de grupo. Fuera de todos los rangos de alertas
+  /// (reply 6000+, approval 7001, run 7100+, live 9000+, kanban 10000+).
+  static const int _groupSummaryId = 500;
+
+  /// ID de la notificación de prueba (no es una alerta hija del grupo).
+  static const int _testNotificationId = 7000;
+
+  /// ID de la notificación ongoing de modo voz (espejo de
+  /// `VoiceNotificationController.notifId`): jerarquía D, nunca cuenta como
+  /// hija de alerta aunque comparta `groupKey`. Se duplica el literal para no
+  /// acoplar ambos servicios.
+  static const int _voiceOngoingId = 8801;
+
   // Un canal POR TIPO para que el usuario ajuste sonido/importancia de cada
   // clase por separado en los ajustes de Android (premium). El antiguo canal
   // único `hermes_alerts` se borra en init (migración).
@@ -284,6 +308,7 @@ class NotificationService implements RunNotificationFacade {
   static const _kApprovals = 'notif_approvals';
   static const _kRuns = 'notif_runs';
   static const _kCronResults = 'notif_cron_results';
+  static const _kKanbanResults = 'notif_kanban_results';
   static const _kReplies = 'notif_replies';
   static const _kForeground = 'notif_even_foreground';
   static const _kHideSensitive = 'notif_hide_sensitive_content';
@@ -309,6 +334,14 @@ class NotificationService implements RunNotificationFacade {
       _prefs.getBool(_kCronResults) ??
       (_prefs.getBool(backgroundListenPreferenceKey) ?? false);
   Future<void> setNotifyCronResults(bool v) => _prefs.setBool(_kCronResults, v);
+
+  /// Kanban tiene opt-in propio, independiente del de Cron. Si el usuario
+  /// nunca lo tocó, hereda el de automatizaciones para que una actualización
+  /// no silencie avisos que ya estaban activos.
+  bool get notifyKanbanResults =>
+      _prefs.getBool(_kKanbanResults) ?? notifyCronResults;
+  Future<void> setNotifyKanbanResults(bool v) =>
+      _prefs.setBool(_kKanbanResults, v);
 
   bool get notifyReplies => _prefs.getBool(_kReplies) ?? true;
   Future<void> setNotifyReplies(bool v) => _prefs.setBool(_kReplies, v);
