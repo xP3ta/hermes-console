@@ -7306,6 +7306,17 @@ class ActiveChat {
     }
 
     _reduceInteractivePrompt(InteractivePromptResponseStarted(key));
+    if (!_interactivePromptResponseStillLive(
+      key,
+      expectedKind: InteractivePromptKind.clarify,
+      expectedRequest: request,
+    )) {
+      return DesktopPromptResponse.fromJson(
+        const {'status': 'expired'},
+        method: 'clarify.respond',
+        allowExpired: true,
+      );
+    }
     try {
       // Resume from confirmed progress: skip locked answers and preserve the
       // original question order.
@@ -7400,6 +7411,32 @@ class ActiveChat {
       }
       rethrow;
     }
+  }
+
+  bool _interactivePromptResponseStillLive(
+    InteractivePromptKey key, {
+    required InteractivePromptKind expectedKind,
+    required InteractivePromptRequest expectedRequest,
+  }) {
+    final current = _interactivePrompts[key];
+    final currentRequest = current?.request;
+    final isLive =
+        !_disposed &&
+        _retiringDesktopRuntimeSessionId != key.runtimeSessionId &&
+        _desktopRuntimeSessionId == key.runtimeSessionId &&
+        currentRequest?.kind == expectedKind &&
+        identical(currentRequest, expectedRequest) &&
+        current?.status == InteractivePromptStatus.responding;
+    if (isLive) return true;
+
+    // A callback may install a different request under a reused identity. Seal
+    // only the exact request that started this response, never its replacement
+    // or a successor runtime's composite key.
+    if (identical(currentRequest, expectedRequest) &&
+        current?.isTerminal != true) {
+      _reduceInteractivePrompt(InteractivePromptExpired(key));
+    }
+    return false;
   }
 
   bool _batchPromptIsResponding(InteractivePromptKey key) {
@@ -7519,6 +7556,20 @@ class ActiveChat {
     }
 
     _reduceInteractivePrompt(InteractivePromptResponseStarted(key));
+    if (!_interactivePromptResponseStillLive(
+      key,
+      expectedKind: expectedKind,
+      expectedRequest: entry!.request!,
+    )) {
+      if (expectedKind == InteractivePromptKind.terminalRead) {
+        return DesktopPromptResponse.fromJson(
+          const {'status': 'expired'},
+          method: 'terminal.read.respond',
+          allowExpired: true,
+        );
+      }
+      throw StateError('Interactive prompt is no longer responding');
+    }
     try {
       final result = await invoke(interactiveGateway);
       if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {

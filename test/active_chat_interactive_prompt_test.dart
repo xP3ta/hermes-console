@@ -227,6 +227,224 @@ Future<void> _waitUntil(bool Function() predicate, [String? reason]) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('legacy clarify disposal at ResponseStarted starts no RPC', () async {
+    final gateway = _InteractiveGateway();
+    late ActiveChat chat;
+    InteractivePromptKey? respondingKey;
+    var disposeOnResponseStarted = false;
+    chat = await _start(
+      gateway,
+      onEvent: (event) {
+        if (disposeOnResponseStarted &&
+            event == ActiveChatEvent.interactiveRequest &&
+            respondingKey != null &&
+            chat.interactivePrompts[respondingKey]?.status ==
+                InteractivePromptStatus.responding) {
+          disposeOnResponseStarted = false;
+          chat.dispose();
+        }
+      },
+    );
+    addTearDown(chat.dispose);
+    gateway.emit('clarify.request', const {
+      'request_id': 'clarify-dispose-at-start',
+      'question': '¿Continuar?',
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+
+    respondingKey = entry.key;
+    disposeOnResponseStarted = true;
+    await expectLater(
+      chat.respondToClarify(entry.key, 'Sí'),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(gateway.clarifyRequestId, isNull);
+    expect(chat.interactivePrompts.isDisposed, isTrue);
+    expect(chat.interactivePrompts[entry.key], isNull);
+  });
+
+  for (final kind in [
+    InteractivePromptKind.sudo,
+    InteractivePromptKind.secret,
+  ]) {
+    test('$kind disposal at ResponseStarted starts no sensitive RPC', () async {
+      final gateway = _InteractiveGateway();
+      late ActiveChat chat;
+      InteractivePromptKey? respondingKey;
+      var disposeOnResponseStarted = false;
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (disposeOnResponseStarted &&
+              event == ActiveChatEvent.interactiveRequest &&
+              respondingKey != null &&
+              chat.interactivePrompts[respondingKey]?.status ==
+                  InteractivePromptStatus.responding) {
+            disposeOnResponseStarted = false;
+            chat.dispose();
+          }
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.emit(
+        kind == InteractivePromptKind.sudo ? 'sudo.request' : 'secret.request',
+        kind == InteractivePromptKind.sudo
+            ? const {'request_id': 'sudo-dispose-at-start'}
+            : const {
+                'request_id': 'secret-dispose-at-start',
+                'env_var': 'TEST_SECRET',
+                'prompt': 'Secret',
+              },
+      );
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+      final value = EphemeralSensitiveValue('one-shot-value');
+
+      respondingKey = entry.key;
+      disposeOnResponseStarted = true;
+      final operation = kind == InteractivePromptKind.sudo
+          ? chat.respondToSudo(entry.key, value)
+          : chat.respondToSecret(entry.key, value);
+      await expectLater(operation, throwsA(isA<StateError>()));
+
+      expect(gateway.sensitiveResponses, 0);
+      expect(value.isDisposed, isTrue);
+      expect(value.hasValue, isFalse);
+      expect(chat.interactivePrompts.isDisposed, isTrue);
+      expect(chat.interactivePrompts[entry.key], isNull);
+    });
+  }
+
+  test('terminal read disposal at ResponseStarted starts no RPC', () async {
+    final gateway = _InteractiveGateway();
+    late ActiveChat chat;
+    final key = InteractivePromptKey(
+      runtimeSessionId: 'runtime-interactive',
+      requestId: 'terminal-dispose-at-start',
+    );
+    var disposeOnResponseStarted = true;
+    chat = await _start(
+      gateway,
+      onEvent: (event) {
+        if (disposeOnResponseStarted &&
+            event == ActiveChatEvent.interactiveRequest &&
+            chat.interactivePrompts[key]?.status ==
+                InteractivePromptStatus.responding) {
+          disposeOnResponseStarted = false;
+          chat.dispose();
+        }
+      },
+    );
+    addTearDown(chat.dispose);
+
+    gateway.emit('terminal.read.request', const {
+      'request_id': 'terminal-dispose-at-start',
+      'start': 0,
+      'count': 10,
+    });
+    await _waitUntil(() => chat.interactivePrompts.isDisposed);
+
+    expect(gateway.terminalResponses, 0);
+    expect(chat.interactivePrompts[key], isNull);
+  });
+
+  test('batch disposal at ResponseStarted starts no first RPC', () async {
+    final gateway = _InteractiveGateway();
+    late ActiveChat chat;
+    InteractivePromptKey? respondingKey;
+    var calls = 0;
+    var disposeOnResponseStarted = false;
+    gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+      calls++;
+      return DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+    };
+    chat = await _start(
+      gateway,
+      onEvent: (event) {
+        if (disposeOnResponseStarted &&
+            event == ActiveChatEvent.interactiveRequest &&
+            respondingKey != null &&
+            chat.interactivePrompts[respondingKey]?.status ==
+                InteractivePromptStatus.responding) {
+          disposeOnResponseStarted = false;
+          chat.dispose();
+        }
+      },
+    );
+    addTearDown(chat.dispose);
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-dispose-at-start',
+      'questions': [
+        {'qid': 'q0', 'question': '¿A?'},
+      ],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+
+    respondingKey = entry.key;
+    disposeOnResponseStarted = true;
+    final result = await chat.respondToClarifyBatch(entry.key, const {
+      'q0': 'A0',
+    });
+
+    expect(result.isExpired, isTrue);
+    expect(calls, 0);
+    expect(chat.interactivePrompts.isDisposed, isTrue);
+    expect(chat.interactivePrompts[entry.key], isNull);
+  });
+
+  test('fully locked batch disposal cannot complete locally', () async {
+    final gateway = _InteractiveGateway();
+    late ActiveChat chat;
+    InteractivePromptKey? respondingKey;
+    var calls = 0;
+    var disposeOnResponseStarted = false;
+    gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+      calls++;
+      return DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+    };
+    chat = await _start(
+      gateway,
+      onEvent: (event) {
+        if (disposeOnResponseStarted &&
+            event == ActiveChatEvent.interactiveRequest &&
+            respondingKey != null &&
+            chat.interactivePrompts[respondingKey]?.status ==
+                InteractivePromptStatus.responding) {
+          disposeOnResponseStarted = false;
+          chat.dispose();
+        }
+      },
+    );
+    addTearDown(chat.dispose);
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-locked-dispose-at-start',
+      'questions': [
+        {'qid': 'q0', 'question': '¿A?'},
+      ],
+      'answers': {'q0': 'A0'},
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+
+    respondingKey = entry.key;
+    disposeOnResponseStarted = true;
+    final result = await chat.respondToClarifyBatch(entry.key, const {
+      'q0': 'A0',
+    });
+
+    expect(result.isExpired, isTrue);
+    expect(calls, 0);
+    expect(chat.interactivePrompts.isDisposed, isTrue);
+    expect(chat.interactivePrompts[entry.key], isNull);
+  });
+
   test('clarify se aparca por runtime y responde una sola vez', () async {
     final gateway = _InteractiveGateway();
     final chat = await _start(gateway);
