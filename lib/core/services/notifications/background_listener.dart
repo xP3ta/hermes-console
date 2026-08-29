@@ -910,7 +910,7 @@ class _HermesTaskHandler extends TaskHandler {
           _emptyPolls = 0;
           return;
         }
-        return _maybeAutoStop(prefs);
+        return await _maybeAutoStop(prefs);
       }
       final notif = _notif ??= (NotificationService(prefs)
         ..appInForeground = false);
@@ -935,7 +935,7 @@ class _HermesTaskHandler extends TaskHandler {
           _emptyPolls = 0;
           return;
         }
-        return _maybeAutoStop(prefs);
+        return await _maybeAutoStop(prefs);
       }
       _emptyPolls = 0;
       if (!audioCardActive) _setPollInterval(_kActiveIntervalMs);
