@@ -3,7 +3,7 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## 1.2.8 (2939)
+## 1.2.8 (4939)
 
 - Improved chat recovery across network loss, backgrounding and reopening,
   including duplicate protection, safer rewind boundaries and stronger

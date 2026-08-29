@@ -1,6 +1,6 @@
 # Ficha de Google Play — Hermes Console
 
-Texto candidato para `1.2.8 (2939)`. Idioma predeterminado: español. No está
+Texto candidato para `1.2.8 (4939)`. Idioma predeterminado: español. No está
 autorizado para envío hasta verificar el AAB firmado, la política de privacidad
 desplegada, Data Safety, los vídeos FGS, las capturas y la QA física. Los
 recursos gráficos mantienen su propio gate al final del documento.
@@ -92,7 +92,7 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.8 (2939)`
+## Novedades — `1.2.8 (4939)`
 
 ### Español (máximo 500 caracteres)
 
