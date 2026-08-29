@@ -96,17 +96,17 @@ sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
 ### Español (máximo 500 caracteres)
 
-Los chats se recuperan mejor tras perder red, pasar a segundo plano o reabrir
-la app. Editar y reenviar usa el historial durable de forma segura. También
-mejoramos comandos, dictado y voz, Bots y Kanban, emparejado, proveedores
-OpenAI-compatible y la protección de imágenes remotas.
+Los chats se recuperan mejor y ahora se ordenan por actividad real, con tiempos
+relativos y compositor multilínea. Las preguntas interactivas de Hermes vuelven
+a mostrarse y responderse de forma segura, incluso por lotes. También mejoramos
+Editar, comandos, voz, Bots/Kanban, emparejado, proveedores y diagnósticos.
 
 ### English (maximum 500 characters)
 
-Chats recover more reliably after network loss, backgrounding, or reopening
-the app. Edit and resend safely uses durable history. Commands, dictation and
-voice, Bots and Kanban, pairing, OpenAI-compatible providers, and remote image
-protection are improved too.
+Chats recover more reliably and are now ordered by real activity, with relative
+times and multiline composing. Hermes interactive questions are visible and
+safe to answer again, including batches. Edit, commands, voice, Bots/Kanban,
+pairing, providers, and diagnostics are improved too.
 
 ## Recursos gráficos
 

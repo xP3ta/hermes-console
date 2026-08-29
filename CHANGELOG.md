@@ -3,6 +3,29 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.8 (921)
+
+- Improved chat recovery across network loss, backgrounding and reopening,
+  including durable offline cancellation, duplicate protection, safer rewind
+  boundaries and stronger profile/session isolation.
+- Added complete Hermes Desktop `clarify` handling for single and batch
+  questions, including restored pending prompts, sequential acknowledgements,
+  partial retries and fail-closed replay reconciliation.
+- Ordered conversations by canonical activity, added reliable relative times
+  and made the composer support natural multiline prompts while keeping an
+  explicit send action.
+- Improved slash commands, dictation focus, compressed-task transcript hiding
+  and chat controls aligned with Hermes Desktop.
+- Refined Bots, Kanban and active-task clarity, plus voice lifecycle,
+  interruption and waveform behavior on mobile.
+- Hardened pairing, Windows onboarding, external providers and authentication
+  fallbacks without rotating existing dashboard credentials.
+- Made connection diagnostics honor authenticated `skills_toggle` and
+  `plugins_api` capabilities using read-only, same-origin probes, with credit to
+  Austin Law for the original contribution.
+- Refreshed deterministic tests, Android/Flutter CI alignment, SBOMs and
+  third-party license evidence for the release candidate.
+
 ## 1.2.7 (915)
 
 - Added the Bots workspace with profiles, rooms, mentions and task-focused
