@@ -14,8 +14,10 @@ class _InteractiveGateway
         HermesDesktopGateway,
         HermesDesktopInteractivePromptGateway,
         HermesDesktopSessionLifecycleGateway {
-  final StreamController<TuiGatewayEvent> _events =
-      StreamController<TuiGatewayEvent>.broadcast();
+  final StreamController<TuiGatewayEvent> _events;
+
+  _InteractiveGateway({bool syncEvents = false})
+    : _events = StreamController<TuiGatewayEvent>.broadcast(sync: syncEvents);
 
   bool _connected = false;
   int terminalResponses = 0;
@@ -1369,6 +1371,350 @@ void main() {
       expect(
         chat.interactivePrompts[reentrantKey]?.status,
         InteractivePromptStatus.pending,
+      );
+    },
+  );
+
+  test(
+    'ResponseStarted snapshot locks current qid and sends next pending qid',
+    () async {
+      final gateway = _InteractiveGateway(syncEvents: true);
+      late ActiveChat chat;
+      final calls = <String?>[];
+      var applySnapshot = false;
+      const pending = {
+        'request_id': 'batch-start-lock-current',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      };
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add(questionId);
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!applySnapshot ||
+              event != ActiveChatEvent.interactiveRequest ||
+              chat.pendingInteractivePrompt?.status !=
+                  InteractivePromptStatus.responding) {
+            return;
+          }
+          applySnapshot = false;
+          gateway.emit('clarify.request', const {
+            ...pending,
+            'answers': {'q0': 'A0'},
+          });
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.emit('clarify.request', pending);
+      final entry = chat.pendingInteractivePrompt!;
+
+      applySnapshot = true;
+      final result = await chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+
+      expect(result.isExpired, isFalse);
+      expect(calls, ['q1']);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.responded,
+      );
+    },
+  );
+
+  test(
+    'ResponseStarted snapshot locks future qid after current qid sends',
+    () async {
+      final gateway = _InteractiveGateway(syncEvents: true);
+      late ActiveChat chat;
+      final calls = <String?>[];
+      var applySnapshot = false;
+      const pending = {
+        'request_id': 'batch-start-lock-future',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      };
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add(questionId);
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!applySnapshot ||
+              event != ActiveChatEvent.interactiveRequest ||
+              chat.pendingInteractivePrompt?.status !=
+                  InteractivePromptStatus.responding) {
+            return;
+          }
+          applySnapshot = false;
+          gateway.emit('clarify.request', const {
+            ...pending,
+            'answers': {'q1': 'B0'},
+          });
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.emit('clarify.request', pending);
+      final entry = chat.pendingInteractivePrompt!;
+
+      applySnapshot = true;
+      final result = await chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+
+      expect(result.isExpired, isFalse);
+      expect(calls, ['q0']);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.responded,
+      );
+    },
+  );
+
+  test(
+    'ResponseStarted snapshot locks all qids with zero RPC and responds locally',
+    () async {
+      final gateway = _InteractiveGateway(syncEvents: true);
+      late ActiveChat chat;
+      final calls = <String?>[];
+      var applySnapshot = false;
+      const pending = {
+        'request_id': 'batch-start-lock-all',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      };
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add(questionId);
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!applySnapshot ||
+              event != ActiveChatEvent.interactiveRequest ||
+              chat.pendingInteractivePrompt?.status !=
+                  InteractivePromptStatus.responding) {
+            return;
+          }
+          applySnapshot = false;
+          gateway.emit('clarify.request', const {
+            ...pending,
+            'answers': {'q0': 'A0', 'q1': 'B0'},
+          });
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.emit('clarify.request', pending);
+      final entry = chat.pendingInteractivePrompt!;
+
+      applySnapshot = true;
+      final result = await chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+
+      expect(result.isExpired, isFalse);
+      expect(calls, isEmpty);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.responded,
+      );
+    },
+  );
+
+  test(
+    'ResponseStarted snapshot with conflicting ordered definition expires',
+    () async {
+      final gateway = _InteractiveGateway(syncEvents: true);
+      late ActiveChat chat;
+      final calls = <String?>[];
+      var applySnapshot = false;
+      const pending = {
+        'request_id': 'batch-start-definition-conflict',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      };
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add(questionId);
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!applySnapshot ||
+              event != ActiveChatEvent.interactiveRequest ||
+              chat.pendingInteractivePrompt?.status !=
+                  InteractivePromptStatus.responding) {
+            return;
+          }
+          applySnapshot = false;
+          gateway.emit('clarify.request', const {
+            'request_id': 'batch-start-definition-conflict',
+            'questions': [
+              {
+                'qid': 'q1',
+                'question': '¿B?',
+                'choices': ['B0'],
+              },
+              {
+                'qid': 'q0',
+                'question': '¿A?',
+                'choices': ['A0'],
+              },
+            ],
+          });
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.emit('clarify.request', pending);
+      final entry = chat.pendingInteractivePrompt!;
+
+      applySnapshot = true;
+      final result = await chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+
+      expect(result.isExpired, isTrue);
+      expect(calls, isEmpty);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.expired,
+      );
+    },
+  );
+
+  test(
+    'ResponseStarted snapshot on successor leaves reused old composite key alone',
+    () async {
+      final gateway = _InteractiveGateway(syncEvents: true);
+      late ActiveChat chat;
+      final calls = <String?>[];
+      var applySuccessorSnapshot = false;
+      const pending = {
+        'request_id': 'batch-start-reused',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+        ],
+      };
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add(questionId);
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!applySuccessorSnapshot ||
+              event != ActiveChatEvent.interactiveRequest ||
+              chat.pendingInteractivePrompt?.status !=
+                  InteractivePromptStatus.responding) {
+            return;
+          }
+          applySuccessorSnapshot = false;
+          gateway.emit('clarify.request', const {
+            ...pending,
+            'answers': {'q0': 'A0'},
+          }, sessionId: 'runtime-successor');
+        },
+      );
+      addTearDown(chat.dispose);
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-old',
+        storedSessionId: 'stored-interactive',
+        created: false,
+      );
+      await chat.loadMessages();
+      gateway.emit('clarify.request', pending, sessionId: 'runtime-old');
+      final oldKey = chat.pendingInteractivePrompt!.key;
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-successor',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: pending,
+      );
+      await chat.loadMessages();
+      final successorKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-successor',
+        requestId: 'batch-start-reused',
+      );
+
+      applySuccessorSnapshot = true;
+      final result = await chat.respondToClarifyBatch(successorKey, const {
+        'q0': 'A0',
+      });
+
+      expect(result.isExpired, isFalse);
+      expect(calls, isEmpty);
+      expect(
+        chat.interactivePrompts[successorKey]?.status,
+        InteractivePromptStatus.responded,
+      );
+      expect(
+        chat.interactivePrompts[oldKey]?.status,
+        InteractivePromptStatus.expired,
       );
     },
   );

@@ -7306,11 +7306,7 @@ class ActiveChat {
     }
 
     _reduceInteractivePrompt(InteractivePromptResponseStarted(key));
-    if (!_interactivePromptResponseStillLive(
-      key,
-      expectedKind: InteractivePromptKind.clarify,
-      expectedRequest: request,
-    )) {
+    if (_respondingBatchRequest(key, expectedRequest: request) == null) {
       return DesktopPromptResponse.fromJson(
         const {'status': 'expired'},
         method: 'clarify.respond',
@@ -7318,21 +7314,13 @@ class ActiveChat {
       );
     }
     try {
-      // Resume from confirmed progress: skip locked answers and preserve the
-      // original question order.
-      final pending = request.questions;
-
-      if (pending.isEmpty) {
-        final result = DesktopPromptResponse.fromJson(const {
-          'status': 'ok',
-        }, method: 'clarify.respond');
-        _reduceInteractivePrompt(InteractivePromptResponded(key));
-        return result;
-      }
-
       DesktopPromptResponse? lastResult;
-      for (final question in pending) {
-        final liveRequest = _respondingBatchRequest(key);
+      var questionIndex = 0;
+      while (true) {
+        final liveRequest = _respondingBatchRequest(
+          key,
+          expectedRequest: request,
+        );
         if (liveRequest == null) {
           return lastResult ??
               DesktopPromptResponse.fromJson(
@@ -7341,6 +7329,8 @@ class ActiveChat {
                 allowExpired: true,
               );
         }
+        if (questionIndex >= liveRequest.questions.length) break;
+        final question = liveRequest.questions[questionIndex++];
         // A passive authoritative snapshot may confirm a later qid while an
         // earlier ACK is in flight. Re-read the live monotonic fence before
         // every send instead of relying on the list captured at submission.
@@ -7359,7 +7349,10 @@ class ActiveChat {
           answer,
           questionId: question.qid,
         );
-        final liveAfterAck = _respondingBatchRequest(key);
+        final liveAfterAck = _respondingBatchRequest(
+          key,
+          expectedRequest: request,
+        );
         if (liveAfterAck == null) return lastResult;
         // Evaluate each response immediately and stop on any non-success
         // outcome, before sending the next sequential answer.
@@ -7381,7 +7374,7 @@ class ActiveChat {
           DesktopPromptResponse.fromJson(const {
             'status': 'ok',
           }, method: 'clarify.respond');
-      if (!_batchPromptIsResponding(key)) {
+      if (_respondingBatchRequest(key, expectedRequest: request) == null) {
         _reduceInteractivePrompt(InteractivePromptExpired(key));
         return result;
       }
@@ -7439,13 +7432,13 @@ class ActiveChat {
     return false;
   }
 
-  bool _batchPromptIsResponding(InteractivePromptKey key) {
-    return _respondingBatchRequest(key) != null;
-  }
-
-  ClarifyPromptRequest? _respondingBatchRequest(InteractivePromptKey key) {
+  ClarifyPromptRequest? _respondingBatchRequest(
+    InteractivePromptKey key, {
+    required ClarifyPromptRequest expectedRequest,
+  }) {
     if (_disposed) return null;
-    if (_desktopRuntimeSessionId != key.runtimeSessionId) {
+    if (_retiringDesktopRuntimeSessionId == key.runtimeSessionId ||
+        _desktopRuntimeSessionId != key.runtimeSessionId) {
       // A runtime rotation invalidates only this exact in-flight batch. Seal its
       // entry before returning so a late ACK cannot leave it stuck responding;
       // terminal tombstones and prompts from every other identity stay intact.
@@ -7454,11 +7447,61 @@ class ActiveChat {
     }
     final current = _interactivePrompts[key];
     final request = current?.request;
-    return request is ClarifyPromptRequest &&
+    return current?.key == key &&
+            request is ClarifyPromptRequest &&
+            request.key == key &&
             request.isBatch &&
-            current?.status == InteractivePromptStatus.responding
+            current?.status == InteractivePromptStatus.responding &&
+            _orderedBatchDefinitionsEqual(expectedRequest, request) &&
+            _lockedAnswersAdvanceMonotonically(
+              expectedRequest.lockedAnswers,
+              request.lockedAnswers,
+            )
         ? request
         : null;
+  }
+
+  bool _orderedBatchDefinitionsEqual(
+    ClarifyPromptRequest expected,
+    ClarifyPromptRequest current,
+  ) {
+    if (expected.key != current.key ||
+        !expected.isBatch ||
+        !current.isBatch ||
+        expected.questions.length != current.questions.length) {
+      return false;
+    }
+    for (var index = 0; index < expected.questions.length; index++) {
+      final expectedQuestion = expected.questions[index];
+      final currentQuestion = current.questions[index];
+      if (expectedQuestion.qid != currentQuestion.qid ||
+          expectedQuestion.question != currentQuestion.question ||
+          expectedQuestion.multiSelect != currentQuestion.multiSelect ||
+          expectedQuestion.choices.length != currentQuestion.choices.length) {
+        return false;
+      }
+      for (
+        var choiceIndex = 0;
+        choiceIndex < expectedQuestion.choices.length;
+        choiceIndex++
+      ) {
+        if (expectedQuestion.choices[choiceIndex] !=
+            currentQuestion.choices[choiceIndex]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool _lockedAnswersAdvanceMonotonically(
+    Map<String, String> expected,
+    Map<String, String> current,
+  ) {
+    for (final answer in expected.entries) {
+      if (current[answer.key] != answer.value) return false;
+    }
+    return true;
   }
 
   Future<void> _reconcileAmbiguousClarify(InteractivePromptKey key) async {
