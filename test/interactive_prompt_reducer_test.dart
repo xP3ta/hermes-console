@@ -14,6 +14,20 @@ ClarifyPromptRequest _clarify(String runtime, [String request = 'request-1']) =>
       choices: const ['Pruebas', 'Producción'],
     );
 
+ClarifyPromptRequest _clarifyBatch(
+  String runtime,
+  String request, {
+  List<ClarifyQuestion> questions = const [
+    ClarifyQuestion(qid: 'q0', question: '¿A?'),
+    ClarifyQuestion(qid: 'q1', question: '¿B?'),
+  ],
+  Map<String, String> lockedAnswers = const {},
+}) => ClarifyPromptRequest(
+  key: _key(runtime, request),
+  questions: questions,
+  lockedAnswers: lockedAnswers,
+);
+
 void main() {
   group('typed gateway requests', () {
     test('parses all four Hermes 0.19 blocking event shapes', () {
@@ -71,6 +85,115 @@ void main() {
             InteractivePromptKey(runtimeSessionId: ' ', requestId: 'request-1'),
         throwsFormatException,
       );
+    });
+
+    test('rejects a clarify batch with malformed questions atomically', () {
+      expect(
+        () => InteractivePromptRequest.fromGatewayEvent(
+          type: 'clarify.request',
+          runtimeSessionId: 'runtime-a',
+          payload: const {
+            'request_id': 'batch-malformed',
+            'questions': [
+              {
+                'qid': 'q0',
+                'question': '¿Bebida?',
+                'choices': ['Coffee'],
+              },
+              {'qid': '', 'question': ''},
+            ],
+          },
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects a clarify batch with duplicate qids atomically', () {
+      expect(
+        () => InteractivePromptRequest.fromGatewayEvent(
+          type: 'clarify.request',
+          runtimeSessionId: 'runtime-a',
+          payload: const {
+            'request_id': 'batch-dup',
+            'questions': [
+              {
+                'qid': 'q0',
+                'question': '¿A?',
+                'choices': ['1', '2'],
+              },
+              {
+                'qid': 'q0',
+                'question': '¿B?',
+                'choices': ['x', 'y'],
+              },
+            ],
+          },
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects malformed batch fields instead of normalizing them', () {
+      final invalidPayloads = <Map<String, dynamic>>[
+        {
+          'request_id': 'bad-questions-type',
+          'questions': 'not-a-list',
+          'question': 'legacy must not hide an invalid batch',
+        },
+        {
+          'request_id': 'bad-choices-type',
+          'questions': [
+            {'qid': 'q0', 'question': '¿A?', 'choices': 'A'},
+          ],
+        },
+        {
+          'request_id': 'bad-choice-element',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': '¿A?',
+              'choices': ['A', 2],
+            },
+          ],
+        },
+        {
+          'request_id': 'bad-multi-select',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': '¿A?',
+              'choices': ['A'],
+              'multi_select': 'yes',
+            },
+          ],
+        },
+        {
+          'request_id': 'bad-answers-type',
+          'questions': [
+            {'qid': 'q0', 'question': '¿A?'},
+          ],
+          'answers': ['A'],
+        },
+        {
+          'request_id': 'unknown-answer-qid',
+          'questions': [
+            {'qid': 'q0', 'question': '¿A?'},
+          ],
+          'answers': {'q1': 'A'},
+        },
+      ];
+
+      for (final payload in invalidPayloads) {
+        expect(
+          () => InteractivePromptRequest.fromGatewayEvent(
+            type: 'clarify.request',
+            runtimeSessionId: 'runtime-a',
+            payload: payload,
+          ),
+          throwsFormatException,
+          reason: payload['request_id'] as String,
+        );
+      }
     });
   });
 
@@ -250,6 +373,148 @@ void main() {
       expect(disposed.entries, isEmpty);
       expect(identical(disposed, late), isTrue);
     });
+
+    test(
+      'replay with matching questions merges new locked answers monotonically',
+      () {
+        var state = InteractivePromptReducer.reduce(
+          const InteractivePromptState.empty(),
+          InteractivePromptReceived(
+            _clarifyBatch('runtime-a', 'request-1', lockedAnswers: {'q0': 'A'}),
+          ),
+        );
+        state = InteractivePromptReducer.reduce(
+          state,
+          InteractivePromptReceived(
+            _clarifyBatch(
+              'runtime-a',
+              'request-1',
+              lockedAnswers: {'q0': 'A', 'q1': 'B'},
+            ),
+          ),
+        );
+
+        final request =
+            state[_key('runtime-a', 'request-1')]?.request
+                as ClarifyPromptRequest;
+        expect(request.lockedAnswers, {'q0': 'A', 'q1': 'B'});
+      },
+    );
+
+    test('replay never erases confirmed answers with an older snapshot', () {
+      var state = InteractivePromptReducer.reduce(
+        const InteractivePromptState.empty(),
+        InteractivePromptReceived(
+          _clarifyBatch(
+            'runtime-a',
+            'request-1',
+            lockedAnswers: {'q0': 'A', 'q1': 'B'},
+          ),
+        ),
+      );
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptReceived(
+          _clarifyBatch('runtime-a', 'request-1', lockedAnswers: {'q0': 'A'}),
+        ),
+      );
+
+      final request =
+          state[_key('runtime-a', 'request-1')]?.request
+              as ClarifyPromptRequest;
+      expect(request.lockedAnswers, {'q0': 'A', 'q1': 'B'});
+    });
+
+    test('replay with different questions expires the live request', () {
+      var state = InteractivePromptReducer.reduce(
+        const InteractivePromptState.empty(),
+        InteractivePromptReceived(
+          _clarifyBatch(
+            'runtime-a',
+            'request-1',
+            questions: const [ClarifyQuestion(qid: 'q0', question: '¿A?')],
+          ),
+        ),
+      );
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptReceived(
+          _clarifyBatch(
+            'runtime-a',
+            'request-1',
+            questions: const [ClarifyQuestion(qid: 'q0', question: '¿B?')],
+          ),
+        ),
+      );
+
+      expect(
+        state[_key('runtime-a', 'request-1')]?.status,
+        InteractivePromptStatus.expired,
+      );
+    });
+
+    test(
+      'legacy replay with a changed definition expires the live request',
+      () {
+        var state = InteractivePromptReducer.reduce(
+          const InteractivePromptState.empty(),
+          InteractivePromptReceived(_clarify('runtime-a')),
+        );
+        state = InteractivePromptReducer.reduce(
+          state,
+          InteractivePromptReceived(
+            ClarifyPromptRequest(
+              key: _key('runtime-a'),
+              question: '¿Otra pregunta?',
+              choices: const ['Pruebas', 'Producción'],
+            ),
+          ),
+        );
+
+        expect(
+          state[_key('runtime-a')]?.status,
+          InteractivePromptStatus.expired,
+        );
+      },
+    );
+
+    test('authoritative clear preserves other prompt kinds and runtimes', () {
+      var state = InteractivePromptReducer.reduce(
+        const InteractivePromptState.empty(),
+        InteractivePromptReceived(_clarify('runtime-a', 'clarify-a')),
+      );
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptReceived(
+          SecretPromptRequest(
+            key: _key('runtime-a', 'secret-a'),
+            envVar: 'TOKEN',
+            prompt: 'Token',
+          ),
+        ),
+      );
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptReceived(_clarify('runtime-b', 'clarify-b')),
+      );
+      state = InteractivePromptReducer.reduce(
+        state,
+        const InteractivePromptClarifySnapshotCleared('runtime-a'),
+      );
+
+      expect(
+        state[_key('runtime-a', 'clarify-a')]?.status,
+        InteractivePromptStatus.expired,
+      );
+      expect(
+        state[_key('runtime-a', 'secret-a')]?.status,
+        InteractivePromptStatus.pending,
+      );
+      expect(
+        state[_key('runtime-b', 'clarify-b')]?.status,
+        InteractivePromptStatus.pending,
+      );
+    });
   });
 
   group('sensitive response handling', () {
@@ -316,5 +581,194 @@ void main() {
   test('terminal read without an owned terminal is exactly empty text', () {
     expect(TerminalReadResponsePolicy.noOwnedTerminalText, isEmpty);
     expect(TerminalReadResponsePolicy.noOwnedTerminalText, '');
+  });
+
+  group('clarify batch parsing', () {
+    test('batch with a single question is a batch, not legacy', () {
+      final request = InteractivePromptRequest.fromGatewayEvent(
+        type: 'clarify.request',
+        runtimeSessionId: 'runtime-a',
+        payload: const {
+          'request_id': 'batch-1',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': '¿Qué opción?',
+              'choices': ['A', 'B'],
+              'multi_select': false,
+            },
+          ],
+        },
+      );
+      expect(request, isA<ClarifyPromptRequest>());
+      final clarify = request as ClarifyPromptRequest;
+      expect(clarify.isBatch, isTrue);
+      expect(clarify.questions, hasLength(1));
+      expect(clarify.questions.single.qid, 'q0');
+      expect(clarify.questions.single.question, '¿Qué opción?');
+      expect(clarify.questions.single.choices, ['A', 'B']);
+      expect(clarify.questions.single.multiSelect, isFalse);
+    });
+
+    test(
+      'batch with several questions keeps qid, text, choices and multi_select',
+      () {
+        final request = InteractivePromptRequest.fromGatewayEvent(
+          type: 'clarify.request',
+          runtimeSessionId: 'runtime-a',
+          payload: const {
+            'request_id': 'batch-2',
+            'questions': [
+              {
+                'qid': 'q0',
+                'question': '¿Bebida?',
+                'choices': ['Coffee', 'Tea'],
+                'multi_select': false,
+              },
+              {
+                'qid': 'q1',
+                'question': '¿Momentos?',
+                'choices': ['Morning', 'Evening'],
+                'multi_select': true,
+              },
+            ],
+          },
+        );
+        final clarify = request as ClarifyPromptRequest;
+        expect(clarify.questions, hasLength(2));
+        expect(clarify.questions[1].multiSelect, isTrue);
+        expect(clarify.questions[1].qid, 'q1');
+      },
+    );
+
+    test('legacy single-question payload still works', () {
+      final request = InteractivePromptRequest.fromGatewayEvent(
+        type: 'clarify.request',
+        runtimeSessionId: 'runtime-a',
+        payload: const {
+          'request_id': 'legacy-1',
+          'question': '¿Cuál?',
+          'choices': ['A', 'B'],
+        },
+      );
+      final clarify = request as ClarifyPromptRequest;
+      expect(clarify.isBatch, isFalse);
+      expect(clarify.question, '¿Cuál?');
+      expect(clarify.choices, ['A', 'B']);
+      expect(clarify.multiSelect, isFalse);
+    });
+
+    test('legacy multi_select is rejected instead of answered as single', () {
+      expect(
+        () => InteractivePromptRequest.fromGatewayEvent(
+          type: 'clarify.request',
+          runtimeSessionId: 'runtime-a',
+          payload: const {
+            'request_id': 'legacy-multi',
+            'question': '¿Cuáles?',
+            'choices': ['A', 'B'],
+            'multi_select': true,
+          },
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('opaque ids, text, choices and locked answers stay literal', () {
+      final request =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'literal-batch',
+                  'questions': [
+                    {
+                      'qid': ' q0 ',
+                      'question': ' pregunta ',
+                      'choices': [' A ', 'B'],
+                    },
+                  ],
+                  'answers': {' q0 ': ' A '},
+                },
+              )
+              as ClarifyPromptRequest;
+
+      expect(request.questions.single.qid, ' q0 ');
+      expect(request.questions.single.question, ' pregunta ');
+      expect(request.questions.single.choices, [' A ', 'B']);
+      expect(request.lockedAnswers, {' q0 ': ' A '});
+    });
+
+    test('choices containing CR or LF are rejected atomically', () {
+      for (final invalid in ['A\n', '\nA', 'A\rB', 'A\r\nB']) {
+        expect(
+          () => InteractivePromptRequest.fromGatewayEvent(
+            type: 'clarify.request',
+            runtimeSessionId: 'runtime-a',
+            payload: {
+              'request_id': 'line-break',
+              'questions': [
+                {
+                  'qid': 'q0',
+                  'question': 'Pregunta',
+                  'choices': [invalid, 'B'],
+                },
+              ],
+            },
+          ),
+          throwsFormatException,
+          reason: invalid.codeUnits.toString(),
+        );
+      }
+    });
+
+    test('locked answers from replay are exposed on the request', () {
+      final request = InteractivePromptRequest.fromGatewayEvent(
+        type: 'clarify.request',
+        runtimeSessionId: 'runtime-a',
+        payload: const {
+          'request_id': 'batch-locked',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': 'Q1',
+              'choices': ['A', 'B'],
+            },
+          ],
+          'answers': {'q0': 'A'},
+        },
+      );
+      final clarify = request as ClarifyPromptRequest;
+      expect(clarify.lockedAnswers, {'q0': 'A'});
+    });
+
+    test('rejects batch with invalid question entries atomically', () {
+      expect(
+        () => InteractivePromptRequest.fromGatewayEvent(
+          type: 'clarify.request',
+          runtimeSessionId: 'runtime-a',
+          payload: const {
+            'request_id': 'batch-partial',
+            'questions': [
+              {'qid': '', 'question': 'No id'},
+              {'qid': 'q0', 'question': 'Valid'},
+              {'qid': 'q1', 'question': ''},
+            ],
+          },
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('empty batch with no legacy question is rejected', () {
+      expect(
+        () => InteractivePromptRequest.fromGatewayEvent(
+          type: 'clarify.request',
+          runtimeSessionId: 'runtime-a',
+          payload: const {'request_id': 'empty-batch', 'questions': []},
+        ),
+        throwsFormatException,
+      );
+    });
   });
 }

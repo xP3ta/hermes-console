@@ -237,8 +237,9 @@ final class DesktopPromptResponse {
 abstract class HermesDesktopInteractivePromptGateway {
   Future<DesktopPromptResponse> respondToClarify(
     String requestId,
-    String answer,
-  );
+    String answer, {
+    String? questionId,
+  });
 
   Future<DesktopPromptResponse> respondToSudo(
     String requestId,
@@ -2936,9 +2937,11 @@ class TuiGatewayClient
 
   @override
   Future<ProjectNode?> projectSessions(String projectId) async {
-    final result = await _controlRequest('projects.project_sessions', {
-      'project_id': _validatedControlValue(projectId, maxLength: 2048),
-    }, capability: DesktopGatewayCapability.projectsCenter);
+    final result = await _controlRequest(
+      'projects.project_sessions',
+      {'project_id': _validatedControlValue(projectId, maxLength: 2048)},
+      capability: DesktopGatewayCapability.projectsCenter,
+    );
     final rawProject = result['project'];
     if (rawProject == null) return null;
     if (rawProject is! Map) {
@@ -3321,14 +3324,21 @@ class TuiGatewayClient
   @override
   Future<DesktopPromptResponse> respondToClarify(
     String requestId,
-    String answer,
-  ) async {
+    String answer, {
+    String? questionId,
+  }) async {
     const method = 'clarify.respond';
-    final result = await _request(method, {
+    final params = <String, Object?>{
       'request_id': _interactiveRequestId(method, requestId),
       'answer': answer,
-    });
-    return DesktopPromptResponse.fromJson(result, method: method);
+    };
+    if (questionId != null) params['question_id'] = questionId;
+    final result = await _request(method, params);
+    return DesktopPromptResponse.fromJson(
+      result,
+      method: method,
+      allowExpired: true,
+    );
   }
 
   @override

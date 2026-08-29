@@ -78,6 +78,28 @@ final class InteractivePromptReceived extends InteractivePromptEvent {
   const InteractivePromptReceived(this.request);
 }
 
+/// Authoritative request state read from a fresh `session.resume` snapshot.
+///
+/// Unlike a duplicate socket event, this may safely release an ambiguous
+/// response back to pending after reconciling confirmed progress.
+final class InteractivePromptSnapshotReconciled extends InteractivePromptEvent {
+  final ClarifyPromptRequest request;
+  final bool unlockResponding;
+
+  const InteractivePromptSnapshotReconciled(
+    this.request, {
+    this.unlockResponding = false,
+  });
+}
+
+/// An authoritative snapshot explicitly reported no pending clarify request.
+final class InteractivePromptClarifySnapshotCleared
+    extends InteractivePromptEvent {
+  final String runtimeSessionId;
+
+  const InteractivePromptClarifySnapshotCleared(this.runtimeSessionId);
+}
+
 final class InteractivePromptResponseStarted extends InteractivePromptEvent {
   final InteractivePromptKey key;
 
@@ -124,6 +146,23 @@ final class InteractivePromptDisposed extends InteractivePromptEvent {
   const InteractivePromptDisposed();
 }
 
+/// Records that one batch question was accepted by the gateway.
+///
+/// This keeps confirmed progress monotonic so a retry or replay never
+/// duplicates an already-consumed answer.
+final class InteractivePromptBatchProgressConfirmed
+    extends InteractivePromptEvent {
+  final InteractivePromptKey key;
+  final String qid;
+  final String answer;
+
+  const InteractivePromptBatchProgressConfirmed(
+    this.key,
+    this.qid,
+    this.answer,
+  );
+}
+
 /// Pure state machine for Hermes Desktop blocking requests.
 ///
 /// Terminal states are absorbing. All transitions are keyed by both runtime
@@ -137,11 +176,24 @@ abstract final class InteractivePromptReducer {
 
     return switch (event) {
       InteractivePromptReceived(:final request) => _receive(state, request),
+      InteractivePromptSnapshotReconciled(
+        :final request,
+        :final unlockResponding,
+      ) =>
+        _reconcileSnapshot(state, request, unlockResponding: unlockResponding),
+      InteractivePromptClarifySnapshotCleared(:final runtimeSessionId) =>
+        _expireClarifies(state, runtimeSessionId),
       InteractivePromptResponseStarted(:final key) => _transition(
         state,
         key,
         InteractivePromptStatus.responding,
       ),
+      InteractivePromptBatchProgressConfirmed(
+        :final key,
+        :final qid,
+        :final answer,
+      ) =>
+        _confirmBatchProgress(state, key, qid, answer),
       InteractivePromptResponded(:final key) => _transition(
         state,
         key,
@@ -182,11 +234,104 @@ abstract final class InteractivePromptReducer {
         ),
       );
     }
-    if (current.isTerminal || current.request != null) return state;
+    if (current.isTerminal) return state;
+    final currentRequest = current.request;
+    if (currentRequest == null) {
+      // A non-terminal lifecycle event beat its request over the wire. Attach
+      // the typed payload without rolling the lifecycle backwards to pending.
+      return _replace(state, current.withRequest(request));
+    }
+    // Reconcile a replay of the same request. A reused opaque identity with a
+    // different definition is a protocol violation and must not stay usable.
+    if (currentRequest is ClarifyPromptRequest &&
+        request is ClarifyPromptRequest) {
+      if (!_clarifyDefinitionsEqual(currentRequest, request)) {
+        return _transition(state, request.key, InteractivePromptStatus.expired);
+      }
+      final merged = _mergeLockedAnswersMonotonically(
+        currentRequest.lockedAnswers,
+        request.lockedAnswers,
+      );
+      if (merged == null) return state;
+      if (identical(merged, currentRequest.lockedAnswers)) return state;
+      return _replace(
+        state,
+        current.withRequest(currentRequest.copyWith(lockedAnswers: merged)),
+      );
+    }
+    // Any other duplicate request is idempotent.
+    return state;
+  }
 
-    // A non-terminal lifecycle event beat its request over the wire. Attach
-    // the typed payload without rolling the lifecycle backwards to pending.
-    return _replace(state, current.withRequest(request));
+  static InteractivePromptState _reconcileSnapshot(
+    InteractivePromptState state,
+    ClarifyPromptRequest request, {
+    required bool unlockResponding,
+  }) {
+    final reconciled = _expireClarifies(
+      state,
+      request.key.runtimeSessionId,
+      exceptKey: request.key,
+    );
+    final current = reconciled[request.key];
+    if (current == null) return _receive(reconciled, request);
+    if (current.isTerminal) return reconciled;
+    final currentRequest = current.request;
+    if (currentRequest is! ClarifyPromptRequest ||
+        !_clarifyDefinitionsEqual(currentRequest, request)) {
+      return _transition(
+        reconciled,
+        request.key,
+        InteractivePromptStatus.expired,
+      );
+    }
+    final merged = _mergeLockedAnswersMonotonically(
+      currentRequest.lockedAnswers,
+      request.lockedAnswers,
+    );
+    if (merged == null) {
+      return _transition(
+        reconciled,
+        request.key,
+        InteractivePromptStatus.expired,
+      );
+    }
+    final nextStatus =
+        current.status == InteractivePromptStatus.responding &&
+            !unlockResponding
+        ? InteractivePromptStatus.responding
+        : InteractivePromptStatus.pending;
+    if (current.status == nextStatus &&
+        identical(merged, currentRequest.lockedAnswers)) {
+      return reconciled;
+    }
+    return _replace(
+      reconciled,
+      InteractivePromptEntry(
+        key: current.key,
+        request: currentRequest.copyWith(lockedAnswers: merged),
+        status: nextStatus,
+      ),
+    );
+  }
+
+  static InteractivePromptState _expireClarifies(
+    InteractivePromptState state,
+    String runtimeSessionId, {
+    InteractivePromptKey? exceptKey,
+  }) {
+    Map<InteractivePromptKey, InteractivePromptEntry>? changed;
+    for (final entry in state.entries.values) {
+      if (entry.key.runtimeSessionId != runtimeSessionId ||
+          entry.key == exceptKey ||
+          entry.isTerminal ||
+          entry.request is! ClarifyPromptRequest) {
+        continue;
+      }
+      changed ??= Map.of(state.entries);
+      changed[entry.key] = entry.withStatus(InteractivePromptStatus.expired);
+    }
+    return changed == null ? state : InteractivePromptState._(changed);
   }
 
   static InteractivePromptState _transition(
@@ -228,6 +373,84 @@ abstract final class InteractivePromptReducer {
     if (current == null || current.isTerminal) return state;
     if (current.status != InteractivePromptStatus.responding) return state;
     return _replace(state, current.withStatus(InteractivePromptStatus.pending));
+  }
+
+  static InteractivePromptState _confirmBatchProgress(
+    InteractivePromptState state,
+    InteractivePromptKey key,
+    String qid,
+    String answer,
+  ) {
+    final current = state[key];
+    if (current == null || current.isTerminal) return state;
+    final request = current.request;
+    if (request is! ClarifyPromptRequest) return state;
+    if (current.status != InteractivePromptStatus.responding) return state;
+    if (request.lockedAnswers[qid] == answer) return state;
+    final updated = Map<String, String>.of(request.lockedAnswers);
+    if (updated.containsKey(qid)) return state;
+    updated[qid] = answer;
+    return _replace(
+      state,
+      current.withRequest(request.copyWith(lockedAnswers: updated)),
+    );
+  }
+
+  static bool _questionsEqual(
+    List<ClarifyQuestion> a,
+    List<ClarifyQuestion> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final aq = a[i];
+      final bq = b[i];
+      if (aq.qid != bq.qid ||
+          aq.question != bq.question ||
+          aq.multiSelect != bq.multiSelect ||
+          aq.choices.length != bq.choices.length) {
+        return false;
+      }
+      for (var j = 0; j < aq.choices.length; j++) {
+        if (aq.choices[j] != bq.choices[j]) return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _clarifyDefinitionsEqual(
+    ClarifyPromptRequest a,
+    ClarifyPromptRequest b,
+  ) {
+    if (a.isBatch != b.isBatch) return false;
+    if (a.isBatch) return _questionsEqual(a.questions, b.questions);
+    if (a.question != b.question ||
+        a.multiSelect != b.multiSelect ||
+        a.choices.length != b.choices.length) {
+      return false;
+    }
+    for (var i = 0; i < a.choices.length; i++) {
+      if (a.choices[i] != b.choices[i]) return false;
+    }
+    return true;
+  }
+
+  static Map<String, String>? _mergeLockedAnswersMonotonically(
+    Map<String, String> current,
+    Map<String, String> replay,
+  ) {
+    var changed = false;
+    final merged = Map<String, String>.of(current);
+    for (final entry in replay.entries) {
+      final existing = merged[entry.key];
+      if (existing == null) {
+        merged[entry.key] = entry.value;
+        changed = true;
+      } else if (existing != entry.value) {
+        // Conflicting value for an already-confirmed answer: fail closed.
+        return null;
+      }
+    }
+    return changed ? merged : current;
   }
 
   static InteractivePromptState _replace(

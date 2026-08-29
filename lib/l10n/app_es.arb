@@ -5928,6 +5928,15 @@
       }
     }
   },
+  "interactiveBatchProgress": "Pregunta {answered} de {total}",
+  "@interactiveBatchProgress": {
+    "placeholders": {
+      "answered": {"type": "int"},
+      "total": {"type": "int"}
+    }
+  },
+  "interactiveBatchOtherHint": "Otro",
+  "interactiveBatchConfirm": "Confirmar y continuar",
   "subagentActivityTitle": "Subagentes",
   "subagentActivitySummary": "{active} en curso · {completed} finalizados",
   "@subagentActivitySummary": {

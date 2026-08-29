@@ -4770,6 +4770,15 @@
       }
     }
   },
+  "interactiveBatchProgress": "Question {answered} of {total}",
+  "@interactiveBatchProgress": {
+    "placeholders": {
+      "answered": {"type": "int"},
+      "total": {"type": "int"}
+    }
+  },
+  "interactiveBatchOtherHint": "Other",
+  "interactiveBatchConfirm": "Confirm and continue",
   "subagentActivityTitle": "Subagents",
   "subagentActivitySummary": "{active} active · {completed} finished",
   "@subagentActivitySummary": {

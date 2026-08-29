@@ -1394,6 +1394,8 @@ class ActiveChat {
   DateTime? _desktopTurnStartedAt;
   InteractivePromptState _interactivePrompts =
       const InteractivePromptState.empty();
+  final Map<InteractivePromptKey, Future<DesktopPromptResponse>> _batchLocks =
+      {};
   SubagentActivityState? _subagentActivities;
   final Set<SubagentActivityKey> _pendingSubagentInterrupts = {};
   ArtifactIndexSnapshot? _artifactIndex;
@@ -2495,6 +2497,7 @@ class ActiveChat {
         }
         _desktopStoredSessionId = snapshot.storedSessionId;
         _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
+        _restorePendingClarify(snapshot);
         _desktopStoredSessionKnownMissing = false;
         _desktopRuntimeInfo = snapshot.info;
         _rememberDesktopLiveStatus(
@@ -3628,6 +3631,7 @@ class ActiveChat {
       final infoChanged = snapshot.info != _desktopRuntimeInfo;
       _desktopStoredSessionId = snapshot.storedSessionId;
       _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
+      _restorePendingClarify(snapshot);
       _desktopStoredSessionKnownMissing = false;
       _desktopRuntimeInfo = snapshot.info;
       _rememberDesktopLiveStatus(snapshot.status, running: snapshot.running);
@@ -5866,6 +5870,34 @@ class ActiveChat {
     return true;
   }
 
+  void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
+    if (!snapshot.pendingClarifyProvided) return;
+    final pending = snapshot.pendingClarify;
+    if (pending == null || pending.isEmpty) {
+      _reduceInteractivePrompt(
+        InteractivePromptClarifySnapshotCleared(snapshot.runtimeSessionId),
+      );
+      return;
+    }
+    try {
+      final request = InteractivePromptRequest.fromGatewayEvent(
+        type: 'clarify.request',
+        runtimeSessionId: snapshot.runtimeSessionId,
+        payload: pending,
+      );
+      if (request is ClarifyPromptRequest) {
+        _reduceInteractivePrompt(InteractivePromptSnapshotReconciled(request));
+      }
+    } on FormatException {
+      // The field was present, so the snapshot is authoritative even though
+      // its payload is malformed. Fail closed only for clarifies in this
+      // runtime; unrelated prompt kinds and runtimes remain untouched.
+      _reduceInteractivePrompt(
+        InteractivePromptClarifySnapshotCleared(snapshot.runtimeSessionId),
+      );
+    }
+  }
+
   void _expireInteractivePromptsForRuntime(String? runtimeId) {
     if (runtimeId == null) return;
     _reduceInteractivePrompt(InteractivePromptRuntimeExpired(runtimeId));
@@ -7022,6 +7054,181 @@ class ActiveChat {
     expectedKind: InteractivePromptKind.clarify,
     invoke: (gateway) => gateway.respondToClarify(key.requestId, answer),
   );
+
+  Future<DesktopPromptResponse> respondToClarifyBatch(
+    InteractivePromptKey key,
+    Map<String, String> answers,
+  ) async {
+    // Mutual exclusion: concurrent calls for the same request are serialized
+    // so two confirmations never race and duplicate accepted answers.
+    final inFlight = _batchLocks[key];
+    if (inFlight != null) return inFlight;
+
+    final operation = _respondToClarifyBatch(key, answers);
+    _batchLocks[key] = operation;
+    try {
+      return await operation;
+    } finally {
+      if (_batchLocks[key] == operation) {
+        _batchLocks.remove(key);
+      }
+    }
+  }
+
+  Future<DesktopPromptResponse> _respondToClarifyBatch(
+    InteractivePromptKey key,
+    Map<String, String> answers,
+  ) async {
+    final runtimeId = _desktopRuntimeSessionId;
+    final entry = _interactivePrompts[key];
+    if (runtimeId != key.runtimeSessionId ||
+        entry?.request is! ClarifyPromptRequest ||
+        entry?.status != InteractivePromptStatus.pending) {
+      throw StateError('Interactive prompt is no longer pending');
+    }
+    final request = entry!.request as ClarifyPromptRequest;
+    final desktop = _desktopGateway;
+    final HermesDesktopInteractivePromptGateway? interactiveGateway =
+        desktop is HermesDesktopInteractivePromptGateway
+        ? desktop as HermesDesktopInteractivePromptGateway
+        : null;
+    if (interactiveGateway == null) {
+      throw const TuiGatewayRpcError(
+        'interactive.respond',
+        'Hermes interactive prompts are unavailable',
+        code: -32601,
+      );
+    }
+
+    _reduceInteractivePrompt(InteractivePromptResponseStarted(key));
+    try {
+      // Resume from confirmed progress: skip locked answers and preserve the
+      // original question order.
+      final pending = request.questions
+          .where((q) => !request.lockedAnswers.containsKey(q.qid))
+          .toList(growable: false);
+
+      if (pending.isEmpty) {
+        final result = DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+        _reduceInteractivePrompt(InteractivePromptResponded(key));
+        return result;
+      }
+
+      DesktopPromptResponse? lastResult;
+      for (final question in pending) {
+        if (!_batchPromptIsResponding(key)) {
+          return lastResult ??
+              DesktopPromptResponse.fromJson(
+                const {'status': 'expired'},
+                method: 'clarify.respond',
+                allowExpired: true,
+              );
+        }
+        final answer = answers[question.qid];
+        if (answer == null || answer.isEmpty) {
+          _reduceInteractivePrompt(InteractivePromptResponseFailed(key));
+          throw const TuiGatewayRpcError(
+            'clarify.respond',
+            'Missing answer for a batch question',
+            code: 4004,
+          );
+        }
+        lastResult = await interactiveGateway.respondToClarify(
+          key.requestId,
+          answer,
+          questionId: question.qid,
+        );
+        if (!_batchPromptIsResponding(key)) return lastResult;
+        // Evaluate each response immediately and stop on any non-success
+        // outcome, before sending the next sequential answer.
+        if (lastResult.isExpired) {
+          _reduceInteractivePrompt(InteractivePromptExpired(key));
+          return lastResult;
+        }
+        _reduceInteractivePrompt(
+          InteractivePromptBatchProgressConfirmed(key, question.qid, answer),
+        );
+      }
+      final result = lastResult!;
+      if (!_batchPromptIsResponding(key)) {
+        _reduceInteractivePrompt(InteractivePromptExpired(key));
+        return result;
+      }
+      _reduceInteractivePrompt(InteractivePromptResponded(key));
+      if (!_runTerminal && !_streamingConfirmed) {
+        _armFirstTokenTimer();
+      }
+      return result;
+    } catch (error) {
+      if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
+        _reduceInteractivePrompt(InteractivePromptExpired(key));
+      } else if (error is TuiGatewayRpcError && error.code != null) {
+        _reduceInteractivePrompt(
+          error.code == 4009
+              ? InteractivePromptExpired(key)
+              : InteractivePromptResponseFailed(key),
+        );
+      } else {
+        // A transport failure can happen after the server consumed the answer
+        // but before its ACK arrived. Never reopen the card until a fresh
+        // session snapshot says exactly which question IDs remain.
+        await _reconcileAmbiguousClarify(key);
+      }
+      rethrow;
+    }
+  }
+
+  bool _batchPromptIsResponding(InteractivePromptKey key) {
+    if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
+      return false;
+    }
+    final current = _interactivePrompts[key];
+    return current?.request is ClarifyPromptRequest &&
+        current?.status == InteractivePromptStatus.responding;
+  }
+
+  Future<void> _reconcileAmbiguousClarify(InteractivePromptKey key) async {
+    final desktop = _desktopGateway;
+    if (desktop is! HermesDesktopSessionLifecycleGateway) return;
+    final lifecycle = desktop as HermesDesktopSessionLifecycleGateway;
+    final bindEpoch = _desktopBindEpoch;
+    try {
+      final snapshot = await lifecycle.resumeExisting(
+        serverSessionId,
+        profile: _storedSessionProfile,
+        omitMessages: true,
+      );
+      if (_disposed ||
+          bindEpoch != _desktopBindEpoch ||
+          _desktopRuntimeSessionId != key.runtimeSessionId) {
+        return;
+      }
+      if (snapshot.runtimeSessionId != key.runtimeSessionId) {
+        _reduceInteractivePrompt(InteractivePromptExpired(key));
+        return;
+      }
+      if (!snapshot.pendingClarifyProvided) return;
+      final pending = snapshot.pendingClarify;
+      if (pending == null || pending.isEmpty) {
+        _reduceInteractivePrompt(InteractivePromptExpired(key));
+        return;
+      }
+      final request = InteractivePromptRequest.fromGatewayEvent(
+        type: 'clarify.request',
+        runtimeSessionId: snapshot.runtimeSessionId,
+        payload: pending,
+      );
+      if (request is! ClarifyPromptRequest) return;
+      _reduceInteractivePrompt(
+        InteractivePromptSnapshotReconciled(request, unlockResponding: true),
+      );
+    } on Object {
+      // Fail closed: keep `responding`, which disables retries until a later
+      // authoritative resume/reconnect reconciles the prompt.
+    }
+  }
 
   Future<DesktopPromptResponse> respondToSudo(
     InteractivePromptKey key,

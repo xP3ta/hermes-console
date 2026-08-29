@@ -23,6 +23,8 @@ class DesktopSessionSnapshot {
   final DateTime? startedAt;
   final DesktopSessionRuntimeInfo info;
   final Map<String, dynamic> raw;
+  final Map<String, dynamic>? pendingClarify;
+  final bool pendingClarifyProvided;
 
   const DesktopSessionSnapshot({
     required this.runtimeSessionId,
@@ -39,6 +41,8 @@ class DesktopSessionSnapshot {
     this.startedAt,
     this.info = const DesktopSessionRuntimeInfo(),
     this.raw = const {},
+    this.pendingClarify,
+    this.pendingClarifyProvided = false,
   });
 
   factory DesktopSessionSnapshot.fromJson(
@@ -91,6 +95,8 @@ class DesktopSessionSnapshot {
       status: _nonEmptyString(json['status']),
       startedAt: _epochSeconds(json['started_at']),
       info: DesktopSessionRuntimeInfo.fromJson(json['info']),
+      pendingClarify: _stringKeyedMap(json['pending_clarify']),
+      pendingClarifyProvided: json.containsKey('pending_clarify'),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
       // contain the whole transcript and a many-KiB system prompt; duplicating
       // those in `raw` increases memory pressure and makes accidental logging

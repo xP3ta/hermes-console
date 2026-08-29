@@ -5,6 +5,7 @@ import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_compression_result.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/screens/chat_render_projection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -1626,4 +1627,283 @@ void main() {
     expect(chat.assistantContent, 'conservar');
     expect(chat.messagesLoaded, isFalse);
   });
+
+  test('resume restores pending batch clarify from snapshot', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-clarify',
+        'session_key': 'stored-chat',
+        'messages': [
+          {'role': 'user', 'content': 'hola'},
+        ],
+        'pending_clarify': {
+          'request_id': 'batch-resume',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': '¿Bebida?',
+              'choices': ['Coffee', 'Tea'],
+            },
+          ],
+        },
+      });
+    final chat = _chat('resume-clarify', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+
+    expect(chat.pendingInteractivePrompt, isNotNull);
+    final request =
+        chat.pendingInteractivePrompt!.request! as ClarifyPromptRequest;
+    expect(request.isBatch, isTrue);
+    expect(request.questions.single.qid, 'q0');
+    expect(request.questions.single.question, '¿Bebida?');
+  });
+
+  test('resume restores locked answers inside pending clarify', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-locked',
+        'session_key': 'stored-chat',
+        'messages': [
+          {'role': 'user', 'content': 'hola'},
+        ],
+        'pending_clarify': {
+          'request_id': 'batch-locked',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': '¿Bebida?',
+              'choices': ['Coffee', 'Tea'],
+            },
+          ],
+          'answers': {'q0': 'Coffee'},
+        },
+      });
+    final chat = _chat('resume-locked', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+
+    final request =
+        chat.pendingInteractivePrompt!.request! as ClarifyPromptRequest;
+    expect(request.lockedAnswers, {'q0': 'Coffee'});
+  });
+
+  test(
+    'authoritative snapshot replaces a different pending request in its runtime',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-authoritative',
+          'session_key': 'stored-chat',
+          'messages': const <Object>[],
+          'pending_clarify': {
+            'request_id': 'old-request',
+            'questions': [
+              {
+                'qid': 'old-q',
+                'question': 'Old?',
+                'choices': ['A', 'B'],
+              },
+            ],
+          },
+        });
+      final chat = _chat('resume-authoritative', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.pendingInteractivePrompt?.key.requestId, 'old-request');
+
+      gateway.snapshot = _snapshot({
+        'session_id': 'runtime-authoritative',
+        'session_key': 'stored-chat',
+        'messages': const <Object>[],
+        'pending_clarify': {
+          'request_id': 'new-request',
+          'questions': [
+            {
+              'qid': 'new-q',
+              'question': 'New?',
+              'choices': ['C', 'D'],
+            },
+          ],
+        },
+      });
+      await chat.loadMessages();
+
+      expect(chat.pendingInteractivePrompt?.key.requestId, 'new-request');
+      expect(
+        chat.interactivePrompts.entries.entries
+            .where(
+              (entry) =>
+                  entry.key.runtimeSessionId == 'runtime-authoritative' &&
+                  entry.value.status == InteractivePromptStatus.pending,
+            )
+            .map((entry) => entry.key.requestId),
+        ['new-request'],
+      );
+    },
+  );
+
+  test('authoritative conflicting definition fails closed', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-conflict',
+        'session_key': 'stored-chat',
+        'messages': const <Object>[],
+        'pending_clarify': {
+          'request_id': 'same-request',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': 'Original?',
+              'choices': ['A', 'B'],
+            },
+          ],
+        },
+      });
+    final chat = _chat('resume-conflict', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    expect(chat.pendingInteractivePrompt, isNotNull);
+
+    gateway.snapshot = _snapshot({
+      'session_id': 'runtime-conflict',
+      'session_key': 'stored-chat',
+      'messages': const <Object>[],
+      'pending_clarify': {
+        'request_id': 'same-request',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': 'Changed?',
+            'choices': ['A', 'B'],
+          },
+        ],
+      },
+    });
+    await chat.loadMessages();
+
+    expect(chat.pendingInteractivePrompt, isNull);
+  });
+
+  test('explicit empty pending_clarify clears the local request', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-cleared',
+        'session_key': 'stored-chat',
+        'messages': const <Object>[],
+        'pending_clarify': {
+          'request_id': 'request-to-clear',
+          'questions': [
+            {
+              'qid': 'q0',
+              'question': 'Pending?',
+              'choices': ['A', 'B'],
+            },
+          ],
+        },
+      });
+    final chat = _chat('resume-cleared', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    expect(chat.pendingInteractivePrompt, isNotNull);
+
+    gateway.snapshot = _snapshot({
+      'session_id': 'runtime-cleared',
+      'session_key': 'stored-chat',
+      'messages': const <Object>[],
+      'pending_clarify': null,
+    });
+    await chat.loadMessages();
+
+    expect(chat.pendingInteractivePrompt, isNull);
+  });
+
+  test(
+    'malformed authoritative pending_clarify expires the local clarify',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-malformed-authority',
+          'stored_session_id': 'stored-malformed-authority',
+          'created': false,
+          'pending_clarify': {
+            'request_id': 'clarify-old',
+            'question': '¿Pregunta anterior?',
+          },
+        });
+      final chat = _chat(
+        'conn-malformed-authority',
+        gateway,
+        sessionId: 'stored-malformed-authority',
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final oldKey = chat.pendingInteractivePrompt!.key;
+
+      gateway.snapshot = _snapshot({
+        'session_id': 'runtime-malformed-authority',
+        'stored_session_id': 'stored-malformed-authority',
+        'created': false,
+        'pending_clarify': {
+          'request_id': 'clarify-old',
+          'questions': 'not-a-list',
+        },
+      });
+      await chat.loadMessages();
+
+      expect(chat.pendingInteractivePrompt, isNull);
+      expect(
+        chat.interactivePrompts[oldKey]?.status,
+        InteractivePromptStatus.expired,
+      );
+    },
+  );
+
+  test(
+    'snapshot without pending_clarify does not erase a restored clarify',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-no-clarify',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'hola'},
+          ],
+          'pending_clarify': {
+            'request_id': 'restored-batch',
+            'questions': [
+              {
+                'qid': 'q0',
+                'question': '¿Bebida?',
+                'choices': ['Coffee', 'Tea'],
+              },
+            ],
+          },
+        });
+      final chat = _chat('resume-no-clarify', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.pendingInteractivePrompt, isNotNull);
+
+      gateway.snapshot = _snapshot({
+        'session_id': 'runtime-no-clarify',
+        'session_key': 'stored-chat',
+        'messages': [
+          {'role': 'user', 'content': 'hola'},
+        ],
+      });
+      await chat.loadMessages();
+
+      expect(chat.pendingInteractivePrompt, isNotNull);
+      final request =
+          chat.pendingInteractivePrompt!.request! as ClarifyPromptRequest;
+      expect(request.questions.single.qid, 'q0');
+    },
+  );
 }

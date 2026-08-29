@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -9,7 +10,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _InteractiveGateway
-    implements HermesDesktopGateway, HermesDesktopInteractivePromptGateway {
+    implements
+        HermesDesktopGateway,
+        HermesDesktopInteractivePromptGateway,
+        HermesDesktopSessionLifecycleGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
 
@@ -18,9 +22,18 @@ class _InteractiveGateway
   int sensitiveResponses = 0;
   String? clarifyRequestId;
   String? clarifyAnswer;
+  String? clarifyQuestionId;
+  Future<DesktopPromptResponse> Function(
+    String requestId,
+    String answer, {
+    String? questionId,
+  })?
+  onRespondToClarify;
   DesktopPromptResponseStatus nextSensitiveStatus =
       DesktopPromptResponseStatus.ok;
   Object? nextSensitiveError;
+  DesktopSessionSnapshot? nextResumeSnapshot;
+  int lifecycleResumes = 0;
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -44,6 +57,33 @@ class _InteractiveGateway
   );
 
   @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async {
+    lifecycleResumes++;
+    return nextResumeSnapshot ??
+        DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-interactive',
+          storedSessionId: storedSessionId,
+          created: false,
+        );
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async => DesktopSessionSnapshot(
+    runtimeSessionId: 'runtime-interactive',
+    storedSessionId: 'stored-interactive',
+    created: true,
+  );
+
+  @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {}
 
   void emit(
@@ -64,10 +104,16 @@ class _InteractiveGateway
   @override
   Future<DesktopPromptResponse> respondToClarify(
     String requestId,
-    String answer,
-  ) async {
+    String answer, {
+    String? questionId,
+  }) async {
+    final callback = onRespondToClarify;
+    if (callback != null) {
+      return callback(requestId, answer, questionId: questionId);
+    }
     clarifyRequestId = requestId;
     clarifyAnswer = answer;
+    clarifyQuestionId = questionId;
     return DesktopPromptResponse.fromJson(const {
       'status': 'ok',
     }, method: 'clarify.respond');
@@ -291,4 +337,530 @@ void main() {
       expect(chat.pendingInteractivePrompt, isNull);
     },
   );
+
+  test(
+    'batch clarify se aparca y responde secuencialmente con question_id',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+
+      final calls = <({String? questionId, String answer})>[];
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add((questionId: questionId, answer: answer));
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-1',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿Bebida?',
+            'choices': ['Coffee', 'Tea'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿Momento?',
+            'choices': ['Morning', 'Evening'],
+          },
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final entry = chat.pendingInteractivePrompt!;
+      expect(entry.request, isA<ClarifyPromptRequest>());
+      final request = entry.request as ClarifyPromptRequest;
+      expect(request.isBatch, isTrue);
+      expect(request.questions, hasLength(2));
+
+      await chat.respondToClarifyBatch(entry.key, {
+        'q0': 'Coffee',
+        'q1': 'Morning',
+      });
+
+      expect(calls, [
+        (questionId: 'q0', answer: 'Coffee'),
+        (questionId: 'q1', answer: 'Morning'),
+      ]);
+      expect(chat.pendingInteractivePrompt, isNull);
+      expect(chat.needsInput, isFalse);
+    },
+  );
+
+  test('batch replay no duplica la tarjeta', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+
+    const payload = {
+      'request_id': 'batch-dup',
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿Bebida?',
+          'choices': ['Coffee', 'Tea'],
+        },
+      ],
+    };
+    gateway.emit('clarify.request', payload);
+    gateway.emit('clarify.request', payload);
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+    expect(chat.interactivePrompts.forRuntime('runtime-interactive').length, 1);
+  });
+
+  test(
+    'batch resume omits locked answers and keeps original question order',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+
+      final calls = <({String? questionId, String answer})>[];
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add((questionId: questionId, answer: answer));
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-resume',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿Bebida?',
+            'choices': ['Coffee', 'Tea'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿Momento?',
+            'choices': ['Morning'],
+          },
+          {'qid': 'q2', 'question': '¿Notas?', 'choices': []},
+        ],
+        'answers': {'q0': 'Coffee', 'q2': 'none'},
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final entry = chat.pendingInteractivePrompt!;
+      await chat.respondToClarifyBatch(entry.key, {
+        'q0': 'Coffee',
+        'q1': 'Morning',
+        'q2': 'none',
+      });
+
+      expect(calls, [(questionId: 'q1', answer: 'Morning')]);
+      expect(chat.pendingInteractivePrompt, isNull);
+    },
+  );
+
+  test(
+    'partial success then explicit RPC rejection retries only pending qids',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+
+      final calls = <({String? questionId, String answer})>[];
+      var attempt = 0;
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add((questionId: questionId, answer: answer));
+        attempt++;
+        if (questionId == 'q1' && attempt <= 2) {
+          throw const TuiGatewayRpcError(
+            'clarify.respond',
+            'rejected before consumption',
+            code: 4090,
+          );
+        }
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-partial',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0', 'A1'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0', 'B1'],
+          },
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final entry = chat.pendingInteractivePrompt!;
+      await expectLater(
+        chat.respondToClarifyBatch(entry.key, {'q0': 'A0', 'q1': 'B0'}),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+
+      expect(
+        chat.pendingInteractivePrompt?.status,
+        InteractivePromptStatus.pending,
+      );
+      final request =
+          chat.pendingInteractivePrompt!.request as ClarifyPromptRequest;
+      expect(request.lockedAnswers, {'q0': 'A0'});
+
+      await chat.respondToClarifyBatch(entry.key, {'q0': 'A0', 'q1': 'B0'});
+
+      expect(calls, [
+        (questionId: 'q0', answer: 'A0'),
+        (questionId: 'q1', answer: 'B0'),
+        (questionId: 'q1', answer: 'B0'),
+      ]);
+      expect(chat.pendingInteractivePrompt, isNull);
+    },
+  );
+
+  test(
+    'batch stops immediately when an intermediate response is expired',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+
+      final calls = <({String? questionId, String answer})>[];
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add((questionId: questionId, answer: answer));
+        if (questionId == 'q0') {
+          return DesktopPromptResponse.fromJson(
+            const {'status': 'expired'},
+            method: 'clarify.respond',
+            allowExpired: true,
+          );
+        }
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-expired',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final entry = chat.pendingInteractivePrompt!;
+      final result = await chat.respondToClarifyBatch(entry.key, {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+
+      expect(result.isExpired, isTrue);
+      expect(calls, [(questionId: 'q0', answer: 'A0')]);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.expired,
+      );
+    },
+  );
+
+  test('ambiguous failure reconciles snapshot before allowing retry', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    final calls = <String?>[];
+    var failOnce = true;
+    gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+      calls.add(questionId);
+      if (failOnce) {
+        failOnce = false;
+        throw StateError('ack lost');
+      }
+      return DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+    };
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-ambiguous',
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿A?',
+          'choices': ['A0'],
+        },
+        {
+          'qid': 'q1',
+          'question': '¿B?',
+          'choices': ['B0'],
+        },
+      ],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+    gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-interactive',
+      storedSessionId: 'stored-interactive',
+      created: false,
+      pendingClarifyProvided: true,
+      pendingClarify: {
+        'request_id': 'batch-ambiguous',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+        'answers': {'q0': 'A0'},
+      },
+    );
+
+    await expectLater(
+      chat.respondToClarifyBatch(entry.key, {'q0': 'A0', 'q1': 'B0'}),
+      throwsA(isA<StateError>()),
+    );
+    final reconciled =
+        chat.pendingInteractivePrompt!.request as ClarifyPromptRequest;
+    expect(reconciled.lockedAnswers, {'q0': 'A0'});
+    expect(
+      chat.pendingInteractivePrompt!.status,
+      InteractivePromptStatus.pending,
+    );
+
+    await chat.respondToClarifyBatch(entry.key, {'q0': 'A0', 'q1': 'B0'});
+    expect(calls, ['q0', 'q1']);
+  });
+
+  test(
+    'passive snapshot during an in-flight ACK never unlocks or duplicates qid',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final calls = <String?>[];
+      final first = Completer<DesktopPromptResponse>();
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        calls.add(questionId);
+        if (questionId == 'q0') return first.future;
+        return Future.value(
+          DesktopPromptResponse.fromJson(const {
+            'status': 'ok',
+          }, method: 'clarify.respond'),
+        );
+      };
+      const pending = {
+        'request_id': 'batch-race',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      };
+      gateway.emit('clarify.request', pending);
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+      final operation = chat.respondToClarifyBatch(entry.key, {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+      await _waitUntil(() => calls.isNotEmpty);
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: pending,
+      );
+      await chat.loadMessages();
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.responding,
+      );
+
+      first.complete(
+        DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond'),
+      );
+      await operation;
+
+      expect(calls, ['q0', 'q1']);
+    },
+  );
+
+  test('malformed ACK requires authoritative resume before retry', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    final resumesBefore = gateway.lifecycleResumes;
+    gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+      throw const TuiGatewayRpcError(
+        'clarify.respond',
+        'invalid response payload',
+      );
+    };
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-malformed-ack',
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿A?',
+          'choices': ['A0'],
+        },
+        {
+          'qid': 'q1',
+          'question': '¿B?',
+          'choices': ['B0'],
+        },
+      ],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+    gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-interactive',
+      storedSessionId: 'stored-interactive',
+      created: false,
+      pendingClarifyProvided: true,
+      pendingClarify: {
+        'request_id': 'batch-malformed-ack',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+        'answers': {'q0': 'A0'},
+      },
+    );
+
+    await expectLater(
+      chat.respondToClarifyBatch(entry.key, {'q0': 'A0', 'q1': 'B0'}),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+
+    expect(gateway.lifecycleResumes, resumesBefore + 1);
+    final request =
+        chat.pendingInteractivePrompt!.request as ClarifyPromptRequest;
+    expect(request.lockedAnswers, {'q0': 'A0'});
+  });
+
+  test(
+    'dispose while a batch answer is in flight never sends the next qid',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      final calls = <String?>[];
+      final first = Completer<DesktopPromptResponse>();
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        calls.add(questionId);
+        return first.future;
+      };
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-dispose',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final operation = chat.respondToClarifyBatch(
+        chat.pendingInteractivePrompt!.key,
+        {'q0': 'A0', 'q1': 'B0'},
+      );
+      await _waitUntil(() => calls.isNotEmpty);
+      chat.dispose();
+      first.complete(
+        DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond'),
+      );
+      await operation;
+
+      expect(calls, ['q0']);
+    },
+  );
+
+  test('concurrent respondToClarifyBatch calls are serialized', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+
+    final calls = <({String? questionId, String answer})>[];
+    final completers = <Completer<DesktopPromptResponse>>[];
+    gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+      calls.add((questionId: questionId, answer: answer));
+      final completer = Completer<DesktopPromptResponse>();
+      completers.add(completer);
+      return completer.future;
+    };
+
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-concurrent',
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿A?',
+          'choices': ['A0'],
+        },
+      ],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+    final entry = chat.pendingInteractivePrompt!;
+    final first = chat.respondToClarifyBatch(entry.key, {'q0': 'A0'});
+    final second = chat.respondToClarifyBatch(entry.key, {'q0': 'A0'});
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(calls, hasLength(1));
+
+    completers.first.complete(
+      DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond'),
+    );
+    await expectLater(first, completes);
+    await expectLater(second, completes);
+  });
 }

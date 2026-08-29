@@ -3668,8 +3668,7 @@ class _ChatScreenState extends State<ChatScreen>
         }
       case ActiveChatEvent.error:
         final rewindRestored = _chat.takeRewindRestoredOnError();
-        final dashboardAuthRequired =
-            _chat.takeRewindDashboardAuthRequired();
+        final dashboardAuthRequired = _chat.takeRewindDashboardAuthRequired();
         if (rewindRestored) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -4032,6 +4031,35 @@ class _ChatScreenState extends State<ChatScreen>
       }
     } finally {
       submittedValue = '';
+      if (mounted) setState(() => _resolvingInteractivePrompt = false);
+    }
+  }
+
+  Future<void> _resolveInteractivePromptBatch(
+    Map<String, String> answers,
+  ) async {
+    if (_resolvingInteractivePrompt) return;
+    final entry = _chat.pendingInteractivePrompt;
+    final request = entry?.request;
+    if (entry == null || request == null) return;
+    if (request is! ClarifyPromptRequest || !request.isBatch) return;
+
+    setState(() => _resolvingInteractivePrompt = true);
+    try {
+      await _chat.respondToClarifyBatch(entry.key, answers);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Strings.of(
+                context,
+              ).interactiveRespondFailed(humanizeApiError(error)),
+            ),
+          ),
+        );
+      }
+    } finally {
       if (mounted) setState(() => _resolvingInteractivePrompt = false);
     }
   }
@@ -8094,6 +8122,9 @@ class _ChatScreenState extends State<ChatScreen>
                                     InteractivePromptStatus.responding,
                             onSubmit: (value) {
                               unawaited(_resolveInteractivePrompt(value));
+                            },
+                            onSubmitBatch: (answers) {
+                              _resolveInteractivePromptBatch(answers);
                             },
                             onCancel: _cancelInteractivePrompt,
                           ),

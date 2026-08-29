@@ -32,6 +32,36 @@ TuiGatewayClient _clientFor(HttpServer server) => TuiGatewayClient(
 );
 
 void main() {
+  test('clarify expired atraviesa el transporte real como terminal', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': frame['id'],
+            'result': {'status': 'expired'},
+          }),
+        );
+      }
+    });
+
+    final client = _clientFor(server);
+    addTearDown(client.close);
+    final result = await client.respondToClarify(
+      'clarify-expired',
+      'respuesta',
+      questionId: 'q0',
+    );
+
+    expect(result.status, DesktopPromptResponseStatus.expired);
+    expect(result.isExpired, isTrue);
+  });
+
   test('envía los cuatro payloads exactos de Hermes Desktop 0.19', () async {
     const sudoValue = 'ephemeral-sudo-test-value';
     const secretValue = 'ephemeral-secret-test-value';

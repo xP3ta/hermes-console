@@ -100,36 +100,153 @@ sealed class InteractivePromptRequest {
   String toString() => '$runtimeType(key: $key)';
 }
 
+final class ClarifyQuestion {
+  final String qid;
+  final String question;
+  final List<String> choices;
+  final bool multiSelect;
+
+  const ClarifyQuestion({
+    required this.qid,
+    required this.question,
+    this.choices = const [],
+    this.multiSelect = false,
+  });
+
+  factory ClarifyQuestion._fromJson(Object? value) {
+    final json = _stringKeyedMap(value);
+    if (json == null) {
+      throw const FormatException('Invalid clarify question');
+    }
+    final qid = _nonEmptyString(json['qid']);
+    final question = _nonEmptyString(json['question']);
+    if (qid == null || question == null) {
+      throw const FormatException('Missing clarify question id or text');
+    }
+    final choices = _parseClarifyChoices(json);
+    final multiSelect = _parseClarifyMultiSelect(json, choices);
+    return ClarifyQuestion(
+      qid: qid,
+      question: question,
+      choices: choices,
+      multiSelect: multiSelect,
+    );
+  }
+
+  @override
+  String toString() =>
+      'ClarifyQuestion(qid: $qid, question: $question, '
+      'choices: $choices, multiSelect: $multiSelect)';
+}
+
 final class ClarifyPromptRequest extends InteractivePromptRequest {
   final String question;
   final List<String> choices;
+  final bool multiSelect;
+  final List<ClarifyQuestion> questions;
+  final Map<String, String> lockedAnswers;
 
   ClarifyPromptRequest({
     required super.key,
-    required this.question,
+    this.question = '',
     List<String> choices = const [],
-  }) : choices = List.unmodifiable(choices);
+    this.multiSelect = false,
+    List<ClarifyQuestion> questions = const [],
+    Map<String, String> lockedAnswers = const {},
+  }) : choices = List.unmodifiable(choices),
+       questions = List.unmodifiable(questions),
+       lockedAnswers = Map.unmodifiable(lockedAnswers);
+
+  bool get isBatch => questions.isNotEmpty;
+
+  ClarifyPromptRequest copyWith({Map<String, String>? lockedAnswers}) =>
+      ClarifyPromptRequest(
+        key: key,
+        question: question,
+        choices: choices,
+        multiSelect: multiSelect,
+        questions: questions,
+        lockedAnswers: lockedAnswers ?? this.lockedAnswers,
+      );
 
   factory ClarifyPromptRequest.fromGatewayEvent({
     required String runtimeSessionId,
     required Map<String, dynamic> payload,
-  }) => ClarifyPromptRequest(
-    key: _requestKey(runtimeSessionId, payload),
-    question: _requiredString(payload, 'question'),
-    choices: _stringList(payload['choices'], 'choices'),
-  );
+  }) {
+    final key = _requestKey(runtimeSessionId, payload);
+    final hasBatch = payload.containsKey('questions');
+    final questions = hasBatch
+        ? _normalizeClarifyQuestions(payload['questions'])
+        : const <ClarifyQuestion>[];
+    final lockedAnswers = _parseLockedAnswers(payload);
+    if (hasBatch) {
+      if (questions.isEmpty) {
+        throw const FormatException('Empty clarify batch');
+      }
+      final qids = questions.map((question) => question.qid).toSet();
+      if (lockedAnswers.keys.any((qid) => !qids.contains(qid))) {
+        throw const FormatException('Clarify answer references unknown qid');
+      }
+      return ClarifyPromptRequest(
+        key: key,
+        questions: questions,
+        lockedAnswers: lockedAnswers,
+      );
+    }
+    final question = _nonEmptyString(payload['question']) ?? '';
+    if (question.isEmpty) {
+      throw const FormatException('Missing or invalid clarify question');
+    }
+    if (lockedAnswers.isNotEmpty) {
+      throw const FormatException(
+        'Legacy clarify cannot contain batch answers',
+      );
+    }
+    final choices = _parseClarifyChoices(payload);
+    final multiSelect = _parseClarifyMultiSelect(payload, choices);
+    if (multiSelect) {
+      throw const FormatException('Legacy clarify cannot use multi_select');
+    }
+    return ClarifyPromptRequest(
+      key: key,
+      question: question,
+      choices: choices,
+      multiSelect: false,
+      lockedAnswers: lockedAnswers,
+    );
+  }
 
   @override
   InteractivePromptKind get kind => InteractivePromptKind.clarify;
 
   @override
-  Map<String, Object?> toJson() => {
-    'type': 'clarify.request',
-    'runtime_session_id': key.runtimeSessionId,
-    'request_id': key.requestId,
-    'question': question,
-    'choices': choices,
-  };
+  Map<String, Object?> toJson() {
+    final base = <String, Object?>{
+      'type': 'clarify.request',
+      'runtime_session_id': key.runtimeSessionId,
+      'request_id': key.requestId,
+    };
+    if (isBatch) {
+      base['questions'] = questions
+          .map(
+            (q) => <String, Object?>{
+              'qid': q.qid,
+              'question': q.question,
+              if (q.choices.isNotEmpty) 'choices': q.choices,
+              if (q.multiSelect) 'multi_select': true,
+            },
+          )
+          .toList(growable: false);
+    } else {
+      base['question'] = question;
+      if (choices.isNotEmpty) base['choices'] = choices;
+      if (multiSelect) base['multi_select'] = true;
+    }
+    if (lockedAnswers.isNotEmpty) {
+      base['answers'] = Map<String, Object?>.of(lockedAnswers);
+    }
+    return base;
+  }
 }
 
 /// A sudo challenge. The password is deliberately not representable here.
@@ -285,19 +402,6 @@ String _requiredString(Map<String, dynamic> json, String key) {
   return value;
 }
 
-List<String> _stringList(Object? value, String key) {
-  if (value == null) return const [];
-  if (value is! List) throw FormatException('Invalid $key');
-  final result = <String>[];
-  for (final item in value) {
-    if (item is! String || item.trim().isEmpty) {
-      throw FormatException('Invalid $key item');
-    }
-    result.add(item);
-  }
-  return List.unmodifiable(result);
-}
-
 int? _optionalInt(Object? value, String key) {
   if (value == null) return null;
   if (value is int) return value;
@@ -305,4 +409,91 @@ int? _optionalInt(Object? value, String key) {
     return value.toInt();
   }
   throw FormatException('Invalid $key');
+}
+
+String? _nonEmptyString(Object? value) {
+  if (value is! String) return null;
+  return value.trim().isEmpty ? null : value;
+}
+
+Map<String, dynamic>? _stringKeyedMap(Object? value) {
+  if (value is! Map) return null;
+  final result = <String, dynamic>{};
+  for (final entry in value.entries) {
+    if (entry.key is! String) continue;
+    result[entry.key as String] = entry.value;
+  }
+  return result;
+}
+
+List<String> _parseClarifyChoices(Map<String, dynamic> json) {
+  if (!json.containsKey('choices')) return const [];
+  final value = json['choices'];
+  if (value is! List) {
+    throw const FormatException('Invalid clarify choices');
+  }
+  final result = <String>[];
+  final seen = <String>{};
+  for (final item in value) {
+    if (item is! String) {
+      throw const FormatException('Invalid clarify choice');
+    }
+    if (item.trim().isEmpty ||
+        item.contains('\n') ||
+        item.contains('\r') ||
+        !seen.add(item)) {
+      throw const FormatException('Invalid clarify choice');
+    }
+    result.add(item);
+  }
+  return List.unmodifiable(result);
+}
+
+bool _parseClarifyMultiSelect(Map<String, dynamic> json, List<String> choices) {
+  if (!json.containsKey('multi_select')) return false;
+  final value = json['multi_select'];
+  if (value is! bool) {
+    throw const FormatException('Invalid clarify multi_select');
+  }
+  if (value && choices.isEmpty) {
+    throw const FormatException('multi_select requires choices');
+  }
+  return value;
+}
+
+List<ClarifyQuestion> _normalizeClarifyQuestions(Object? value) {
+  if (value is! List) {
+    throw const FormatException('Invalid clarify questions');
+  }
+  final result = <ClarifyQuestion>[];
+  final seen = <String>{};
+  for (final item in value) {
+    final question = ClarifyQuestion._fromJson(item);
+    if (!seen.add(question.qid)) {
+      throw const FormatException('Duplicate qid in clarify batch');
+    }
+    result.add(question);
+  }
+  return List.unmodifiable(result);
+}
+
+Map<String, String> _parseLockedAnswers(Map<String, dynamic> payload) {
+  if (!payload.containsKey('answers')) return const {};
+  final value = payload['answers'];
+  if (value is! Map) {
+    throw const FormatException('Invalid clarify answers');
+  }
+  final result = <String, String>{};
+  for (final entry in value.entries) {
+    if (entry.key is! String) {
+      throw const FormatException('Invalid clarify answer qid');
+    }
+    final qid = _nonEmptyString(entry.key);
+    final answer = _nonEmptyString(entry.value);
+    if (qid == null || answer == null || result.containsKey(qid)) {
+      throw const FormatException('Invalid clarify answer');
+    }
+    result[qid] = answer;
+  }
+  return Map.unmodifiable(result);
 }
