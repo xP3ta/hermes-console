@@ -51,7 +51,7 @@ void main() {
     const es = {
       'litertStoreTitle': 'Tienda de modelos GPU',
       'litertStoreIntro':
-          'Modelos .litertlm que OlliteRT ejecuta en la GPU/NPU del móvil. La descarga ocurre dentro de OlliteRT (en su tienda); aquí ves cuáles caben en tu móvil, los abres para descargar y pulsas «Usar» para fijar como modelo activo de Hermes uno que ya esté servido.',
+          'Modelos .litertlm que OlliteRT corre en la GPU/NPU del móvil. La descarga ocurre dentro de OlliteRT (su tienda); aquí ves cuáles caben en tu móvil, los abres para descargar, y «Usar» fija el que ya esté servido como modelo activo de Hermes.',
       'litertStoreRecommended': 'Recomendado',
       'litertStoreInUseLower': 'en uso',
       'litertStoreDownloaded': 'descargado',
