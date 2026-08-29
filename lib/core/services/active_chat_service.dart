@@ -2379,15 +2379,18 @@ class ActiveChat {
     _desktopBindEpoch += 1;
     final retiredRuntimeId = _desktopRuntimeSessionId;
     if (retiredRuntimeId != null) {
-      for (final key in _batchLocks.keys) {
-        if (key.runtimeSessionId != retiredRuntimeId) continue;
-        final entry = _interactivePrompts[key];
-        final request = entry?.request;
-        if (entry?.status == InteractivePromptStatus.responding &&
-            request is ClarifyPromptRequest &&
-            request.isBatch) {
-          _reduceInteractivePrompt(InteractivePromptExpired(key));
-        }
+      final retiringBatchKeys = List<InteractivePromptKey>.unmodifiable(
+        _batchLocks.keys.where((key) {
+          if (key.runtimeSessionId != retiredRuntimeId) return false;
+          final entry = _interactivePrompts[key];
+          final request = entry?.request;
+          return entry?.status == InteractivePromptStatus.responding &&
+              request is ClarifyPromptRequest &&
+              request.isBatch;
+        }),
+      );
+      for (final key in retiringBatchKeys) {
+        _reduceInteractivePrompt(InteractivePromptExpired(key));
       }
     }
     final scope = _sessionConfigScope;

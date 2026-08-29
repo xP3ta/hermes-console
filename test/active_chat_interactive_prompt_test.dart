@@ -174,7 +174,10 @@ class _InteractiveGateway
   }
 }
 
-ActiveChat _chat(_InteractiveGateway gateway) => ActiveChat(
+ActiveChat _chat(
+  _InteractiveGateway gateway, {
+  void Function(ActiveChatEvent)? onEvent,
+}) => ActiveChat(
   connection: SavedConnection(
     id: 'conn-interactive',
     label: 'Interactive',
@@ -188,6 +191,7 @@ ActiveChat _chat(_InteractiveGateway gateway) => ActiveChat(
   sessionTitle: 'Interactive',
   notifications: null,
   onTerminal: () {},
+  onEvent: onEvent,
   api: ApiClient(
     baseUrl: 'https://example.invalid',
     apiKey: 'test-only',
@@ -196,8 +200,11 @@ ActiveChat _chat(_InteractiveGateway gateway) => ActiveChat(
   desktopGateway: gateway,
 );
 
-Future<ActiveChat> _start(_InteractiveGateway gateway) async {
-  final chat = _chat(gateway);
+Future<ActiveChat> _start(
+  _InteractiveGateway gateway, {
+  void Function(ActiveChatEvent)? onEvent,
+}) async {
+  final chat = _chat(gateway, onEvent: onEvent);
   expect(
     await chat.send(
       fullText: 'turno de prueba',
@@ -209,12 +216,12 @@ Future<ActiveChat> _start(_InteractiveGateway gateway) async {
   return chat;
 }
 
-Future<void> _waitUntil(bool Function() predicate) async {
+Future<void> _waitUntil(bool Function() predicate, [String? reason]) async {
   for (var attempt = 0; attempt < 50; attempt++) {
     if (predicate()) return;
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
-  fail('Condition was not reached');
+  fail(reason ?? 'Condition was not reached');
 }
 
 void main() {
@@ -779,6 +786,198 @@ void main() {
         chat.interactivePrompts[entry.key]?.status,
         InteractivePromptStatus.expired,
       );
+    },
+  );
+
+  test(
+    'runtime retirement snapshots old batch locks before reentrant events',
+    () async {
+      final gateway = _InteractiveGateway();
+      late ActiveChat chat;
+      var reenterOnRetirement = false;
+      var reentryStarted = false;
+      Future<DesktopPromptResponse>? reentrantOperation;
+      final reentrantKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-retired',
+        requestId: 'batch-reentrant',
+      );
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!reenterOnRetirement ||
+              event != ActiveChatEvent.interactiveRequest ||
+              reentryStarted) {
+            return;
+          }
+          reentryStarted = true;
+          reentrantOperation = chat.respondToClarifyBatch(reentrantKey, const {
+            'q0': 'B0',
+          });
+        },
+      );
+      addTearDown(chat.dispose);
+
+      final firstAck = Completer<DesktopPromptResponse>();
+      final reentrantAck = Completer<DesktopPromptResponse>();
+      final ok = DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        if (requestId == 'batch-old') return firstAck.future;
+        if (requestId == 'batch-reentrant') return reentrantAck.future;
+        return Future.value(ok);
+      };
+
+      final otherBatchKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'batch-reentrant',
+      );
+      final otherSecretKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'secret-kept',
+      );
+      final otherSudoKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'sudo-kept',
+      );
+      final tombstoneKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'terminal-tombstone',
+      );
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-reentrant',
+        'questions': [
+          {'qid': 'q0', 'question': '¿Otro runtime?'},
+        ],
+      });
+      gateway.emit('secret.request', const {
+        'request_id': 'secret-kept',
+        'env_var': 'KEPT_SECRET',
+        'prompt': 'Otro secreto',
+      });
+      gateway.emit('sudo.request', const {'request_id': 'sudo-kept'});
+      gateway.emit('terminal.read.request', const {
+        'request_id': 'terminal-tombstone',
+        'start': 0,
+        'count': 1,
+      });
+      await _waitUntil(
+        () =>
+            chat.interactivePrompts[tombstoneKey]?.status ==
+            InteractivePromptStatus.responded,
+        'terminal tombstone was not recorded',
+      );
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-retired',
+        storedSessionId: 'stored-interactive',
+        created: false,
+      );
+      await chat.loadMessages();
+
+      final oldBatchKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-retired',
+        requestId: 'batch-old',
+      );
+      final legacyKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-retired',
+        requestId: 'clarify-kept',
+      );
+      final secretKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-retired',
+        requestId: 'secret-kept',
+      );
+      final sudoKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-retired',
+        requestId: 'sudo-kept',
+      );
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-old',
+        'questions': [
+          {'qid': 'q0', 'question': '¿Antiguo?'},
+        ],
+      }, sessionId: 'runtime-retired');
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-reentrant',
+        'questions': [
+          {'qid': 'q0', 'question': '¿Reentrante?'},
+        ],
+      }, sessionId: 'runtime-retired');
+      gateway.emit('clarify.request', const {
+        'request_id': 'clarify-kept',
+        'question': '¿Legacy?',
+      }, sessionId: 'runtime-retired');
+      gateway.emit('secret.request', const {
+        'request_id': 'secret-kept',
+        'env_var': 'RETIRED_SECRET',
+        'prompt': 'Secreto retirado',
+      }, sessionId: 'runtime-retired');
+      gateway.emit('sudo.request', const {
+        'request_id': 'sudo-kept',
+      }, sessionId: 'runtime-retired');
+      for (final key in [
+        oldBatchKey,
+        reentrantKey,
+        legacyKey,
+        secretKey,
+        sudoKey,
+      ]) {
+        await _waitUntil(
+          () => chat.interactivePrompts[key] != null,
+          'prompt was not recorded: $key',
+        );
+      }
+      final oldOperation = chat.respondToClarifyBatch(oldBatchKey, const {
+        'q0': 'A0',
+      });
+      await _waitUntil(
+        () =>
+            chat.interactivePrompts[oldBatchKey]?.status ==
+            InteractivePromptStatus.responding,
+        'old batch did not start responding',
+      );
+
+      reenterOnRetirement = true;
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-current',
+        storedSessionId: 'stored-interactive',
+        created: false,
+      );
+      try {
+        await chat.loadMessages();
+
+        expect(
+          chat.interactivePrompts[oldBatchKey]?.status,
+          InteractivePromptStatus.expired,
+        );
+        expect(
+          chat.interactivePrompts[reentrantKey]?.status,
+          InteractivePromptStatus.responding,
+        );
+        for (final key in [legacyKey, secretKey, sudoKey]) {
+          expect(
+            chat.interactivePrompts[key]?.status,
+            InteractivePromptStatus.pending,
+            reason: key.toString(),
+          );
+        }
+        expect(
+          chat.interactivePrompts[tombstoneKey]?.status,
+          InteractivePromptStatus.responded,
+        );
+        for (final key in [otherBatchKey, otherSecretKey, otherSudoKey]) {
+          expect(
+            chat.interactivePrompts[key]?.status,
+            InteractivePromptStatus.pending,
+            reason: key.toString(),
+          );
+        }
+      } finally {
+        if (!firstAck.isCompleted) firstAck.complete(ok);
+        if (!reentrantAck.isCompleted) reentrantAck.complete(ok);
+        await oldOperation;
+        if (reentrantOperation case final operation?) await operation;
+      }
     },
   );
 
