@@ -76,6 +76,30 @@ void main() {
     // completo vive detrás de flutter_secure_storage/Keystore, no en prefs.
   });
 
+  test('recupera todos los turnos queued del chat en orden FIFO', () async {
+    final store = TurnOutboxStore();
+    final base = DateTime.now().millisecondsSinceEpoch;
+    await store.save(turn(id: 'q2', text: 'segundo', updatedAtMs: base + 2));
+    await store.save(turn(id: 'q1', text: 'primero', updatedAtMs: base + 1));
+    await store.save(
+      turn(
+        id: 'ambiguous',
+        text: 'incierto',
+        updatedAtMs: base + 3,
+        state: PreparedTurnState.submitting,
+      ),
+    );
+
+    final restored = await store.loadAllForChat('c1', 's1', profile: 'default');
+
+    expect(restored.map((item) => item.clientTurnId), [
+      'q1',
+      'q2',
+      'ambiguous',
+    ]);
+    expect(restored.last.state, PreparedTurnState.ambiguous);
+  });
+
   test('aísla owners que comparten conexión y session id', () async {
     final store = TurnOutboxStore();
     final profileA = turn(profile: 'profile-a', id: 'turn-a', text: 'A');

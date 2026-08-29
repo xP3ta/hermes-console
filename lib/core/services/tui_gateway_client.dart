@@ -3055,28 +3055,33 @@ class TuiGatewayClient
       return true;
     }
 
-    final durableUsers = rawMessages
-        .whereType<Map>()
-        .where((raw) {
-          final message = Map<String, dynamic>.from(raw);
-          return message['role'] == 'user' &&
-              !isTruthyJson(message['display_kind']) &&
-              message['row_id'] is int;
-        })
-        .map((raw) => Map<String, dynamic>.from(raw))
-        .toList();
-    if (expectedOrdinal < 0 || expectedOrdinal >= durableUsers.length) {
-      return null;
+    final durableUsers = <Map<String, dynamic>>[];
+    for (final raw in rawMessages) {
+      if (raw is! Map) return null;
+      final message = Map<String, dynamic>.from(raw);
+      if (message['role'] != 'user' || isTruthyJson(message['display_kind'])) {
+        continue;
+      }
+      if (message['row_id'] is! int || message['text'] is! String) {
+        return null;
+      }
+      durableUsers.add(message);
     }
     final matches = durableUsers.where((message) {
-      final text = message['text'];
-      return (text is String ? text : '').trim() == wanted;
+      return message['text'] == sourceText;
     }).toList();
-    if (matches.length != 1 ||
-        !identical(durableUsers[expectedOrdinal], matches.single)) {
-      return null;
+    if (matches.length == 1) {
+      return matches.single['row_id'] as int;
     }
-    return matches.single['row_id'] as int;
+    if (matches.length > 1 &&
+        expectedOrdinal >= 0 &&
+        expectedOrdinal < durableUsers.length &&
+        matches.any(
+          (message) => identical(durableUsers[expectedOrdinal], message),
+        )) {
+      return durableUsers[expectedOrdinal]['row_id'] as int;
+    }
+    return null;
   }
 
   @override

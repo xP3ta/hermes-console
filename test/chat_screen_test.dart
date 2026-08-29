@@ -240,6 +240,7 @@ class _UiRewindGateway
   final bool contextUnavailableOnce;
   final int contextUnavailableResponses;
   final int? resolvedRowId;
+
   final List<int?>? survivorUserRowIds;
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
@@ -745,19 +746,23 @@ class _RecoverableSubmissionGateway extends _SubmissionGateway
     implements HermesDesktopIdempotentGateway {
   int statusCalls = 0;
   DesktopTurnState statusState = DesktopTurnState.running;
+  Completer<DesktopTurnStatus>? statusGate;
 
   @override
   Future<DesktopTurnAck> submitPromptIdempotent(
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) async => DesktopTurnAck(
-    accepted: true,
-    clientTurnId: clientTurnId,
-    serverTurnId: 'server-$clientTurnId',
-    state: DesktopTurnState.accepted,
-    duplicate: false,
-  );
+  ) async {
+    submissions.add(text);
+    return DesktopTurnAck(
+      accepted: true,
+      clientTurnId: clientTurnId,
+      serverTurnId: 'server-$clientTurnId',
+      state: DesktopTurnState.accepted,
+      duplicate: false,
+    );
+  }
 
   @override
   Future<DesktopTurnStatus> getTurnStatus(
@@ -765,6 +770,8 @@ class _RecoverableSubmissionGateway extends _SubmissionGateway
     String clientTurnId,
   ) async {
     statusCalls++;
+    final gate = statusGate;
+    if (gate != null) return gate.future;
     return DesktopTurnStatus(
       known: true,
       clientTurnId: clientTurnId,
@@ -915,17 +922,6 @@ void main() {
         isFalse,
       );
     }
-  });
-
-  test('dictation no duplica el Stop dedicado del streaming', () {
-    expect(
-      shouldShowDictationStreamStop(
-        sending: true,
-        hasDraft: true,
-        dedicatedStopVisible: true,
-      ),
-      isFalse,
-    );
   });
 
   test('imagen inline respeta la frontera de privacidad antes del GET', () {
@@ -1486,18 +1482,22 @@ void main() {
     });
   }
 
-  attachmentValidationFenceTest('de fichero ausente', (temp) async {
-    final file = File('${temp.path}/ausente.pdf');
-    await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
-    return AttachmentDraft(
-      localId: 'missing',
-      type: AttachmentType.document,
-      name: 'ausente.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: await file.length(),
-      localPath: file.path,
-    );
-  }, invalidateBeforeSend: (attachment) => File(attachment.localPath).delete());
+  attachmentValidationFenceTest(
+    'de fichero ausente',
+    (temp) async {
+      final file = File('${temp.path}/ausente.pdf');
+      await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
+      return AttachmentDraft(
+        localId: 'missing',
+        type: AttachmentType.document,
+        name: 'ausente.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: await file.length(),
+        localPath: file.path,
+      );
+    },
+    invalidateBeforeSend: (attachment) => File(attachment.localPath).delete(),
+  );
 
   attachmentValidationFenceTest('de imagen corrupta', (temp) async {
     final image = File('${temp.path}/corrupta.gif');
@@ -1540,6 +1540,88 @@ void main() {
       localPath: file.path,
     );
   });
+
+  testWidgets(
+    'texto y adjunto durante streaming se preparan y encolan durables',
+    (tester) async {
+      final temp = Directory.systemTemp.createTempSync('chat-stream-queue-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final file = File('${temp.path}/cola.pdf')
+        ..writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 1]);
+      final attachment = AttachmentDraft(
+        localId: 'queued-attachment',
+        type: AttachmentType.document,
+        name: 'cola.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: file.lengthSync(),
+        localPath: file.path,
+      );
+      secureStore['chat_draft_v2_conn-test_sess-test'] = jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'text': 'Revisa después',
+        'attachments': [attachment.toJson()],
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+
+      final chat = await pumpChat(
+        tester,
+        chatState: ChatPipelineState.streaming,
+        connection: _remoteConn('conn-test'),
+        initialPreferences: {
+          'approval_global_mode': ApprovalMode.yolo.storageKey,
+        },
+      );
+      for (
+        var frame = 0;
+        frame < 20 && find.byType(AttachmentCard).evaluate().isEmpty;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(chat.state, ChatPipelineState.streaming);
+      expect(find.byType(AttachmentCard), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).last).controller?.text,
+        'Revisa después',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      expect(find.byType(AlertDialog), findsNothing);
+      for (var frame = 0; frame < 40 && chat.queuedTurns.isEmpty; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      expect(chat.queuedTurns, hasLength(1));
+      final queued = chat.queuedTurns.single.turn;
+      expect(queued.text, 'Revisa después');
+      expect(queued.fullText, contains('Revisa después'));
+      expect(queued.fullText, contains('⟦hatt:v1:'));
+      expect(queued.desktopText, contains('cola.pdf'));
+      expect(queued.attachments.single.name, 'cola.pdf');
+      expect(find.byType(AttachmentCard), findsNothing);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).last).controller?.text,
+        isEmpty,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+      await tester.pump();
+      expect(find.textContaining('Revisa después'), findsOneWidget);
+      expect(find.text('cola.pdf'), findsOneWidget);
+    },
+  );
 
   testWidgets('el control válido alcanza los RPC Desktop instrumentados', (
     tester,
@@ -2004,7 +2086,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Stop permanece visible al preparar borrador durante streaming', (
+  testWidgets('el botón único cambia a Enviar al escribir durante streaming', (
     tester,
   ) async {
     await pumpChat(tester, chatState: ChatPipelineState.streaming);
@@ -2013,13 +2095,14 @@ void main() {
       find.byType(TextField).last,
       'BORRADOR_DURANTE_TURNO',
     );
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+    expect(find.byKey(const ValueKey('stop')), findsNothing);
     expect(find.byKey(const ValueKey('stop-stream')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
     expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
-    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.stop_rounded), findsNothing);
     expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
   });
 
@@ -2040,11 +2123,19 @@ void main() {
     );
 
     await tester.enterText(find.byType(TextField).last, 'steering pendiente');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('send')), findsOneWidget);
+    expect(find.byKey(const ValueKey('stop')), findsNothing);
+
+    await tester.enterText(find.byType(TextField).last, '');
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('stop')).last);
     await tester.pump();
     expect(cancelCalls, 1);
 
+    await tester.enterText(find.byType(TextField).last, 'steering pendiente');
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump();
 
@@ -3000,6 +3091,77 @@ void main() {
     expect(card, findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'recuperación no drena queued antes de reconciliar turno ambiguo',
+    (tester) async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final ambiguous = PreparedTurn(
+        connectionId: 'conn-test',
+        sessionId: 'sess-test',
+        clientTurnId: 'startup-ambiguous-turn',
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: 'turno anterior incierto',
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: '',
+        state: PreparedTurnState.ambiguous,
+        restoresComposer: false,
+      );
+      final queued = PreparedTurn(
+        connectionId: 'conn-test',
+        sessionId: 'sess-test',
+        clientTurnId: 'startup-queued-turn',
+        createdAtMs: now + 1,
+        updatedAtMs: now + 1,
+        text: 'turno queued posterior',
+        fullText: 'turno queued posterior',
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: '',
+        queued: true,
+        restoresComposer: false,
+      );
+      secureStore['chat_turn_outbox_v1'] = jsonEncode({
+        ambiguous.storageId: ambiguous.toJson(),
+        queued.storageId: queued.toJson(),
+      });
+      final statusGate = Completer<DesktopTurnStatus>();
+      final gateway = _RecoverableSubmissionGateway()..statusGate = statusGate;
+
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-test'),
+        desktopGateway: gateway,
+        initialStoredSessionId: 'sess-test',
+        turnIdempotencyCapability: () async => true,
+      );
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      expect(gateway.statusCalls, 1);
+      expect(gateway.submissions, isEmpty);
+
+      statusGate.complete(
+        const DesktopTurnStatus(
+          known: true,
+          clientTurnId: 'startup-ambiguous-turn',
+          serverTurnId: 'server-startup-ambiguous-turn',
+          state: DesktopTurnState.terminal,
+        ),
+      );
+      for (var frame = 0; frame < 120 && gateway.submissions.isEmpty; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(gateway.submissions, ['turno queued posterior']);
+      gateway.emitComplete('respuesta queued');
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('un submit espera la outbox inicial antes de tomar ownership', (
     tester,
@@ -5417,11 +5579,7 @@ void main() {
         connection: _remoteConn('conn-auth-rewrite'),
         messages: const [
           {'role': 'assistant', 'content': 'Respuesta original'},
-          {
-            'role': 'user',
-            'content': 'pregunta original',
-            '_desktopRowId': 73,
-          },
+          {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
         ],
       );
 
@@ -5436,7 +5594,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 700));
 
       expect(find.textContaining('pregunta original'), findsOneWidget);
-      expect(find.textContaining('pregunta que no debe enviarse'), findsNothing);
+      expect(
+        find.textContaining('pregunta que no debe enviarse'),
+        findsNothing,
+      );
       expect(chat.state, ChatPipelineState.idle);
       expect(gateway.rewinds, isEmpty);
       expect(
@@ -7756,6 +7917,14 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(find.byKey(const ValueKey('chat-queue-toggle')), findsOneWidget);
+    expect(find.text('Siguiente pregunta'), findsNothing);
+    expect(find.byTooltip('Quitar mensaje de la cola'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    expect(find.text('Siguiente pregunta'), findsOneWidget);
     final removeQueued = find.byTooltip('Quitar mensaje de la cola');
     expect(removeQueued, findsOneWidget);
     expect(tester.getSize(removeQueued), const Size(48, 48));

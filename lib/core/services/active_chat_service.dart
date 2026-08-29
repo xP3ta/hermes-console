@@ -830,6 +830,28 @@ class ActiveTurnDelivery {
   bool get acknowledged => _acknowledged;
   bool get persistenceFailed => _persistenceFailed;
 
+  Future<bool> persistPrepared() => _serializeMutation(() async {
+    if (_transportStarted || _acknowledged) return false;
+    try {
+      await _store.save(_current);
+      return true;
+    } catch (_) {
+      _persistenceFailed = true;
+      return false;
+    }
+  });
+
+  Future<bool> discardPrepared() => _serializeMutation(() async {
+    if (_transportStarted || _acknowledged) return false;
+    try {
+      await _store.delete(_current);
+      return true;
+    } catch (_) {
+      _persistenceFailed = true;
+      return false;
+    }
+  });
+
   void addAttachmentListener(
     ValueChanged<List<AttachmentDraft>> listener, {
     bool notifyImmediately = false,
@@ -1119,6 +1141,21 @@ class ActiveTurnDelivery {
       _persistenceFailed = true;
     }
   });
+}
+
+class QueuedPreparedTurn {
+  const QueuedPreparedTurn(this.delivery, {required this.queueOrder});
+
+  final ActiveTurnDelivery delivery;
+  final int queueOrder;
+  PreparedTurn get turn => delivery.current;
+}
+
+class _QueuedTextTurn {
+  const _QueuedTextTurn(this.text, this.queueOrder);
+
+  final String text;
+  final int queueOrder;
 }
 
 /// Estados del pipeline del chat — solo estados respaldados por señales reales.
@@ -1658,13 +1695,35 @@ class ActiveChat {
 
   /// Fallback compatible con cualquier instancia. Hermes Desktop también
   /// conserva en cola el texto cuando la corrección viva se rechaza o falla.
-  final Queue<String> _messageQueue = Queue<String>();
+  final Queue<_QueuedTextTurn> _messageQueue = Queue<_QueuedTextTurn>();
+  final Queue<QueuedPreparedTurn> _preparedTurnQueue =
+      Queue<QueuedPreparedTurn>();
+  int _nextQueueOrder = 0;
+  bool _preparedTurnDrainInFlight = false;
+  bool _queueDrainSuspended = false;
+  String? _blockedPreparedTurnId;
   String? _desktopAcceptedQueuedPrompt;
 
-  List<String> get queuedMessages => List<String>.unmodifiable([
+  List<String> get queuedTextMessages => List<String>.unmodifiable([
     ?_desktopAcceptedQueuedPrompt,
-    ..._messageQueue,
+    ..._messageQueue.map((item) => item.text),
   ]);
+
+  List<String> get queuedMessages {
+    final local = <({int order, String text})>[
+      ..._messageQueue.map((item) => (order: item.queueOrder, text: item.text)),
+      ..._preparedTurnQueue.map(
+        (item) => (order: item.queueOrder, text: item.turn.text),
+      ),
+    ]..sort((left, right) => left.order.compareTo(right.order));
+    return List<String>.unmodifiable([
+      ?_desktopAcceptedQueuedPrompt,
+      ...local.map((item) => item.text),
+    ]);
+  }
+
+  List<QueuedPreparedTurn> get queuedTurns =>
+      List<QueuedPreparedTurn>.unmodifiable(_preparedTurnQueue);
 
   /// Modelo lento y sin streaming (p.ej. Mixture of Agents): cada turno se
   /// calcula entero por dentro y puede estar 1-3 min en silencio antes de
@@ -3420,6 +3479,7 @@ class ActiveChat {
       var truncateBeforeRowId = target['_desktopRowId'] is int
           ? target['_desktopRowId'] as int
           : null;
+
       if (truncateBeforeRowId == null && runtimeId == null) {
         final ready = await ensureDesktopRuntime();
         if (!identical(_activeRewrite, reservation) ||
@@ -6700,11 +6760,73 @@ class ActiveChat {
   void enqueue(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-    _messageQueue.add(trimmed);
+    _messageQueue.add(_QueuedTextTurn(trimmed, _nextQueueOrder++));
     _emit(ActiveChatEvent.queueChanged);
-    // El turno puede haber terminado durante el await de `session.redirect`.
-    // En ese borde ya no llegará otro evento terminal que drene la cola.
-    if (!isStreaming) Timer.run(_drainQueue);
+    if (!_queueDrainSuspended && !isStreaming) Timer.run(_drainQueue);
+  }
+
+  Future<bool> enqueuePreparedTurn(ActiveTurnDelivery delivery) async {
+    final id = delivery.current.clientTurnId;
+    if (_preparedTurnQueue.any((item) => item.turn.clientTurnId == id)) {
+      return true;
+    }
+    if (!await delivery.persistPrepared()) return false;
+    _preparedTurnQueue.add(
+      QueuedPreparedTurn(delivery, queueOrder: _nextQueueOrder++),
+    );
+    _emit(ActiveChatEvent.queueChanged);
+    if (!_queueDrainSuspended && !isStreaming) Timer.run(_drainQueue);
+    return true;
+  }
+
+  Future<void> restoreQueuedTurns(
+    Iterable<PreparedTurn> turns,
+    TurnOutboxPersistence store, {
+    bool scheduleDrain = true,
+  }) async {
+    _queueDrainSuspended = !scheduleDrain;
+    var changed = false;
+    for (final turn in turns) {
+      if (!turn.queued ||
+          (turn.state != PreparedTurnState.prepared &&
+              turn.state != PreparedTurnState.failedBeforeAcceptance)) {
+        continue;
+      }
+      if (_preparedTurnQueue.any(
+        (item) => item.turn.clientTurnId == turn.clientTurnId,
+      )) {
+        continue;
+      }
+      _preparedTurnQueue.add(
+        QueuedPreparedTurn(
+          ActiveTurnDelivery(prepared: turn, store: store),
+          queueOrder: _nextQueueOrder++,
+        ),
+      );
+      changed = true;
+    }
+    if (changed) {
+      _emit(ActiveChatEvent.queueChanged);
+      if (scheduleDrain && !isStreaming) Timer.run(_drainQueue);
+    }
+  }
+
+  Future<bool> cancelQueuedTurn(String clientTurnId) async {
+    final queued = _preparedTurnQueue.where(
+      (item) => item.turn.clientTurnId == clientTurnId,
+    );
+    if (queued.isEmpty) return false;
+    final target = queued.first;
+    if (_preparedTurnQueue.isNotEmpty &&
+        identical(_preparedTurnQueue.first, target) &&
+        _preparedTurnDrainInFlight) {
+      return false;
+    }
+    if (!await target.delivery.discardPrepared()) return false;
+    _preparedTurnQueue.remove(target);
+    if (_blockedPreparedTurnId == clientTurnId) _blockedPreparedTurnId = null;
+    _emit(ActiveChatEvent.queueChanged);
+    return true;
   }
 
   void cancelQueued(int index) {
@@ -6728,11 +6850,18 @@ class ActiveChat {
       (message) => message['_desktopAcceptedQueued'] == true,
     );
     if (_messageQueue.isEmpty &&
+        _preparedTurnQueue.isEmpty &&
         _desktopAcceptedQueuedPrompt == null &&
         !hasAcceptedOptimistic) {
       return;
     }
     _messageQueue.clear();
+    final prepared = _preparedTurnQueue.toList(growable: false);
+    _preparedTurnQueue.clear();
+    _blockedPreparedTurnId = null;
+    for (final item in prepared) {
+      unawaited(item.delivery.discardPrepared());
+    }
     _desktopAcceptedQueuedPrompt = null;
     messages.removeWhere(
       (message) => message['_desktopAcceptedQueued'] == true,
@@ -6758,22 +6887,65 @@ class ActiveChat {
     _emit(ActiveChatEvent.queueChanged);
   }
 
-  void _drainQueue() {
-    if (_messageQueue.isEmpty || isStreaming) return;
-    final next = _messageQueue.removeFirst();
-    _emit(ActiveChatEvent.queueChanged);
-    send(
-      fullText: next,
+  Future<void> _drainQueue() async {
+    if (_queueDrainSuspended || isStreaming || _preparedTurnDrainInFlight) {
+      return;
+    }
+    final preparedComesFirst =
+        _preparedTurnQueue.isNotEmpty &&
+        (_messageQueue.isEmpty ||
+            _preparedTurnQueue.first.queueOrder <
+                _messageQueue.first.queueOrder);
+    if (preparedComesFirst) {
+      final next = _preparedTurnQueue.first;
+      if (_blockedPreparedTurnId == next.turn.clientTurnId) return;
+      final turn = next.turn;
+      _preparedTurnDrainInFlight = true;
+      try {
+        final accepted = await send(
+          fullText: turn.fullText,
+          desktopText: turn.desktopText,
+          model: turn.model,
+          history: _buildHistoryFromMessages(),
+          profile: turn.profile,
+          nativeAttachments: turn.activeAttachments,
+          delivery: next.delivery,
+        );
+        if (accepted &&
+            _preparedTurnQueue.isNotEmpty &&
+            identical(_preparedTurnQueue.first, next)) {
+          _preparedTurnQueue.removeFirst();
+          _blockedPreparedTurnId = null;
+          _emit(ActiveChatEvent.queueChanged);
+        } else if (!accepted) {
+          _blockedPreparedTurnId = next.turn.clientTurnId;
+          _emit(ActiveChatEvent.queueChanged);
+        }
+      } finally {
+        _preparedTurnDrainInFlight = false;
+      }
+      return;
+    }
+    if (_messageQueue.isEmpty) return;
+    final next = _messageQueue.first;
+    final accepted = await send(
+      fullText: next.text,
       model: _lastModel,
       history: _buildHistoryFromMessages(),
       profile: _turnProfile,
     );
+    if (accepted &&
+        _messageQueue.isNotEmpty &&
+        identical(_messageQueue.first, next)) {
+      _messageQueue.removeFirst();
+      _emit(ActiveChatEvent.queueChanged);
+    }
   }
 
   /// Los mensajes pendientes son independientes de que el turno anterior haya
   /// terminado, fallado o sido detenido. Desktop aplica el mismo fallback.
   void _drainOrTerminal({required int expectedEpoch}) {
-    if (_messageQueue.isEmpty) {
+    if (_messageQueue.isEmpty && _preparedTurnQueue.isEmpty) {
       _onTerminal();
       return;
     }
@@ -7496,7 +7668,7 @@ class ActiveChat {
     _terminalTimer = Timer(const Duration(milliseconds: 800), () {
       _terminalTimer = null;
       if (!_isCurrentEpoch(completingEpoch)) return;
-      if (_messageQueue.isNotEmpty) {
+      if (_messageQueue.isNotEmpty || _preparedTurnQueue.isNotEmpty) {
         _drainQueue();
         if (isStreaming) return;
       }

@@ -19,7 +19,7 @@ enum PreparedTurnTransport { desktop, rest, bridgeLocal, unknown }
 /// Lote local recuperable de un único envío. Todo el JSON se guarda cifrado;
 /// IDs, texto, nombres y rutas nunca deben copiarse a logs/diagnósticos.
 class PreparedTurn {
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
   final String connectionId;
   final String sessionId;
@@ -27,12 +27,15 @@ class PreparedTurn {
   final int createdAtMs;
   final int updatedAtMs;
   final String text;
+  final String fullText;
+  final String? desktopText;
   final List<AttachmentDraft> attachments;
   final String model;
   final String profile;
   final PreparedTurnTransport transport;
   final PreparedTurnState state;
   final bool restoresComposer;
+  final bool queued;
 
   const PreparedTurn({
     required this.connectionId,
@@ -41,13 +44,16 @@ class PreparedTurn {
     required this.createdAtMs,
     required this.updatedAtMs,
     required this.text,
+    String? fullText,
+    this.desktopText,
     required this.attachments,
     required this.model,
     required this.profile,
     this.transport = PreparedTurnTransport.unknown,
     this.state = PreparedTurnState.prepared,
     this.restoresComposer = true,
-  });
+    this.queued = false,
+  }) : fullText = fullText ?? text;
 
   String get storageId =>
       jsonEncode([connectionId, profile, sessionId, clientTurnId]);
@@ -89,9 +95,12 @@ class PreparedTurn {
     int? updatedAtMs,
     String? profile,
     List<AttachmentDraft>? attachments,
+    String? fullText,
+    String? desktopText,
     PreparedTurnTransport? transport,
     PreparedTurnState? state,
     bool? restoresComposer,
+    bool? queued,
   }) => PreparedTurn(
     connectionId: connectionId,
     sessionId: sessionId,
@@ -99,12 +108,15 @@ class PreparedTurn {
     createdAtMs: createdAtMs,
     updatedAtMs: updatedAtMs ?? this.updatedAtMs,
     text: text,
+    fullText: fullText ?? this.fullText,
+    desktopText: desktopText ?? this.desktopText,
     attachments: attachments ?? this.attachments,
     model: model,
     profile: profile ?? this.profile,
     transport: transport ?? this.transport,
     state: state ?? this.state,
     restoresComposer: restoresComposer ?? this.restoresComposer,
+    queued: queued ?? this.queued,
   );
 
   Map<String, dynamic> toJson() => {
@@ -115,17 +127,22 @@ class PreparedTurn {
     'created_at_ms': createdAtMs,
     'updated_at_ms': updatedAtMs,
     'text': text,
+    'full_text': fullText,
+    if (desktopText != null) 'desktop_text': desktopText,
     'attachments': attachments.map((item) => item.toJson()).toList(),
     'model': model,
     'profile': profile,
     'transport': transport.name,
     'state': state.name,
     'restores_composer': restoresComposer,
+    'queued': queued,
   };
 
   factory PreparedTurn.fromJson(Map<String, dynamic> json) {
     final persistedSchema = (json['schema_version'] as num?)?.toInt();
-    if (persistedSchema != 1 && persistedSchema != schemaVersion) {
+    if (persistedSchema != 1 &&
+        persistedSchema != 2 &&
+        persistedSchema != schemaVersion) {
       throw const FormatException('Unsupported prepared turn schema');
     }
     String requiredString(String key) {
@@ -182,6 +199,12 @@ class PreparedTurn {
       createdAtMs: createdAtMs,
       updatedAtMs: updatedAtMs,
       text: text,
+      fullText: persistedSchema == schemaVersion
+          ? (json['full_text'] ?? text).toString()
+          : text,
+      desktopText: persistedSchema == schemaVersion
+          ? json['desktop_text']?.toString()
+          : null,
       attachments: attachments,
       model: (json['model'] ?? '').toString(),
       profile: (json['profile'] ?? '').toString(),
@@ -196,6 +219,9 @@ class PreparedTurn {
         PreparedTurnState.ambiguous,
       ),
       restoresComposer: json['restores_composer'] as bool? ?? true,
+      queued: persistedSchema == schemaVersion
+          ? json['queued'] as bool? ?? false
+          : false,
     );
   }
 }

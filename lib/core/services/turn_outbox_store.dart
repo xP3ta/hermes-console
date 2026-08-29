@@ -143,6 +143,98 @@ class TurnOutboxStore implements TurnOutboxPersistence {
     if (previous != null) await _cleanupUnowned(previous.attachments);
   });
 
+  Future<List<PreparedTurn>> loadAllForChat(
+    String connectionId,
+    String sessionId, {
+    String? profile,
+  }) => _serialized(() async {
+    final now = DateTime.now();
+    final turns = await _readAll();
+    final restored = <PreparedTurn>[];
+    final cleanupCandidates = <AttachmentDraft>[];
+    var changed = false;
+    for (final entry in turns.entries.toList()) {
+      final turn = entry.value;
+      final age = now.difference(
+        DateTime.fromMillisecondsSinceEpoch(turn.updatedAtMs),
+      );
+      if (age > maxAge || turn.state == PreparedTurnState.terminal) {
+        turns.remove(entry.key);
+        cleanupCandidates.addAll(turn.attachments);
+        changed = true;
+        continue;
+      }
+      if (turn.connectionId != connectionId ||
+          turn.sessionId != sessionId ||
+          (profile != null &&
+              _profileOwner(turn.profile) != _profileOwner(profile))) {
+        continue;
+      }
+      final validAttachments = <AttachmentDraft>[];
+      var attachmentsChanged = false;
+      for (final item in turn.attachments) {
+        if (item.uploadState == AttachmentUploadState.removed) {
+          cleanupCandidates.add(item);
+          attachmentsChanged = true;
+          changed = true;
+          continue;
+        }
+        final hasLocalCopy =
+            item.localPath.isNotEmpty && File(item.localPath).existsSync();
+        final hasRemoteAssociation =
+            item.uploadState == AttachmentUploadState.attached &&
+            item.remoteRef?.isNotEmpty == true &&
+            item.remoteSessionId?.isNotEmpty == true &&
+            item.remoteTransport != null;
+        if (!hasLocalCopy && !hasRemoteAssociation) {
+          cleanupCandidates.add(item);
+          attachmentsChanged = true;
+          changed = true;
+          continue;
+        }
+        if (item.uploadState == AttachmentUploadState.uploading) {
+          validAttachments.add(
+            item.copyWith(
+              uploadState: AttachmentUploadState.error,
+              errorKind: AttachmentErrorKind.interrupted,
+            ),
+          );
+          attachmentsChanged = true;
+          changed = true;
+        } else {
+          validAttachments.add(item);
+        }
+      }
+      var candidate = attachmentsChanged
+          ? turn.copyWith(attachments: validAttachments)
+          : turn;
+      if (candidate.state == PreparedTurnState.submitting) {
+        candidate = candidate.copyWith(
+          updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+          state: PreparedTurnState.ambiguous,
+        );
+        changed = true;
+      }
+      if (candidate.text.trim().isEmpty && candidate.attachments.isEmpty) {
+        turns.remove(entry.key);
+        cleanupCandidates.addAll(turn.attachments);
+        changed = true;
+        continue;
+      }
+      if (!identical(candidate, turn)) turns[entry.key] = candidate;
+      restored.add(candidate);
+    }
+    restored.sort((left, right) {
+      final byCreated = left.createdAtMs.compareTo(right.createdAtMs);
+      return byCreated != 0
+          ? byCreated
+          : left.clientTurnId.compareTo(right.clientTurnId);
+    });
+    if (changed) await _writeAll(turns);
+    await _cleanupUnowned(cleanupCandidates);
+    return List<PreparedTurn>.unmodifiable(restored);
+  });
+
   Future<PreparedTurn?> loadForChat(
     String connectionId,
     String sessionId, {

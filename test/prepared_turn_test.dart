@@ -68,7 +68,7 @@ void main() {
     expect(item.localId, isNotEmpty);
     expect(item.uploadState, AttachmentUploadState.pending);
     expect(item.attempt, 0);
-    expect(restored.toJson()['schema_version'], 2);
+    expect(restored.toJson()['schema_version'], 3);
     expect(
       AttachmentDraft.fromJson(item.toJson()).localId,
       item.localId,
@@ -116,7 +116,7 @@ void main() {
     ).attachments.map((item) => item.localId).toList();
     expect(ids.toSet(), hasLength(2));
     expect(
-      () => PreparedTurn.fromJson({...legacy, 'schema_version': 3}),
+      () => PreparedTurn.fromJson({...legacy, 'schema_version': 4}),
       throwsFormatException,
     );
   });
@@ -143,6 +143,43 @@ void main() {
     expect(item.remoteSessionId, 'runtime-a');
     expect(item.remoteTransport, AttachmentRemoteTransport.desktop);
     expect(item.errorKind, AttachmentErrorKind.transport);
+  });
+
+  test('roundtrip conserva payloads preparados para REST y Desktop', () {
+    final original = PreparedTurn(
+      connectionId: 'connection-a',
+      sessionId: 'session-a',
+      clientTurnId: 'turn-payloads',
+      createdAtMs: 1000,
+      updatedAtMs: 1001,
+      text: 'resumen visible',
+      fullText: 'resumen visible\n⟦adjunto⟧\ncontenido privado',
+      desktopText: 'resumen visible\n@file:.hermes/informe.pdf',
+      attachments: [attachment()],
+      model: 'hermes-agent',
+      profile: 'research',
+      queued: true,
+    );
+
+    final restored = PreparedTurn.fromJson(original.toJson());
+
+    expect(restored.fullText, original.fullText);
+    expect(restored.desktopText, original.desktopText);
+    expect(restored.queued, isTrue);
+    expect(restored.text, 'resumen visible');
+    expect(restored.toJson()['schema_version'], 3);
+  });
+
+  test('schema 2 migra fullText desde text y deja desktopText ausente', () {
+    final legacy = turn(const []).toJson()
+      ..['schema_version'] = 2
+      ..remove('full_text')
+      ..remove('desktop_text');
+
+    final restored = PreparedTurn.fromJson(legacy);
+
+    expect(restored.fullText, restored.text);
+    expect(restored.desktopText, isNull);
   });
 
   test(

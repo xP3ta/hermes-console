@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -29,6 +30,17 @@ class _DesktopGateway implements HermesDesktopGateway {
   final _events = StreamController<TuiGatewayEvent>.broadcast();
   Object? submitError;
   int submitCalls = 0;
+  final List<String> submittedTexts = [];
+
+  void emit(String type, [Map<String, dynamic>? payload]) {
+    _events.add(
+      TuiGatewayEvent(
+        type: type,
+        sessionId: 'runtime-test',
+        payload: payload ?? const {},
+      ),
+    );
+  }
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -54,6 +66,7 @@ class _DesktopGateway implements HermesDesktopGateway {
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     submitCalls++;
+    submittedTexts.add(text);
     if (submitError case final error?) throw error;
   }
 
@@ -237,4 +250,307 @@ void main() {
     expect(delivery.current.state, PreparedTurnState.ambiguous);
     expect(chat.activeTurnDelivery, same(delivery));
   });
+
+  test('cola conserva turno completo y cancela por clientTurnId', () async {
+    final store = _MemoryOutbox();
+    final gateway = _DesktopGateway();
+    final api = ApiClient(
+      baseUrl: 'https://example.invalid',
+      apiKey: 'test',
+      httpClient: MockClient((_) async => http.Response('unused', 500)),
+    );
+    final chat = ActiveChat(
+      connection: SavedConnection(
+        id: 'conn-test',
+        label: 'Test',
+        host: 'example.invalid',
+        port: 443,
+        apiKey: 'test',
+        useHttps: true,
+      ),
+      sessionId: 'session-test',
+      sessionTitle: 'Test',
+      notifications: null,
+      onTerminal: () {},
+      api: api,
+      desktopGateway: gateway,
+    );
+    addTearDown(chat.dispose);
+    final complete = PreparedTurn(
+      connectionId: 'conn-test',
+      sessionId: 'session-test',
+      clientTurnId: 'queued-complete',
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
+      text: 'revisa',
+      fullText: 'revisa\n⟦adjunto⟧\nprivado',
+      desktopText: 'revisa\n@file:.hermes/a.pdf',
+      attachments: const [
+        AttachmentDraft(
+          localId: 'a',
+          type: AttachmentType.document,
+          name: 'a.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 1,
+          localPath: '/private/a.pdf',
+        ),
+      ],
+      model: 'modelo-cola',
+      profile: 'research',
+    );
+    final delivery = ActiveTurnDelivery(prepared: complete, store: store);
+
+    expect(await chat.enqueuePreparedTurn(delivery), isTrue);
+    expect(chat.queuedTurns.single.delivery, same(delivery));
+    expect(chat.queuedTurns.single.turn.fullText, contains('privado'));
+    expect(chat.queuedTurns.single.turn.attachments.single.name, 'a.pdf');
+    expect(await chat.cancelQueuedTurn('queued-complete'), isTrue);
+    expect(chat.queuedTurns, isEmpty);
+    expect(store.deletes.single.clientTurnId, 'queued-complete');
+  });
+
+  test('cola conjunta conserva FIFO entre texto y turno preparado', () async {
+    final store = _MemoryOutbox();
+    final gateway = _DesktopGateway();
+    final api = ApiClient(
+      baseUrl: 'https://example.invalid',
+      apiKey: 'test-key',
+      httpClient: MockClient((_) async => http.Response('unused', 500)),
+    );
+    final chat = ActiveChat(
+      connection: SavedConnection(
+        id: 'conn-test',
+        label: 'Test',
+        host: 'example.invalid',
+        port: 443,
+        apiKey: 'test-key',
+        useHttps: true,
+      ),
+      sessionId: 'session-test',
+      sessionTitle: 'Test',
+      notifications: null,
+      onTerminal: () {},
+      api: api,
+      desktopGateway: gateway,
+      storedMessageLoader: (_, _) async => const [],
+      terminalReconcileBudget: Duration.zero,
+    );
+    addTearDown(chat.dispose);
+
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    chat.enqueue('texto anterior');
+    final prepared = PreparedTurn(
+      connectionId: 'conn-test',
+      sessionId: 'session-test',
+      clientTurnId: 'turno-preparado-posterior',
+      createdAtMs: 2000,
+      updatedAtMs: 2000,
+      text: 'adjunto posterior',
+      fullText: 'adjunto posterior',
+      attachments: const [],
+      model: 'hermes-agent',
+      profile: '',
+      queued: true,
+    );
+    expect(
+      await chat.enqueuePreparedTurn(
+        ActiveTurnDelivery(prepared: prepared, store: store),
+      ),
+      isTrue,
+    );
+
+    gateway.emit('message.complete');
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+
+    expect(gateway.submittedTexts, ['turno vivo', 'texto anterior']);
+  });
+
+  test('terminal drena una cola que solo contiene turno preparado', () async {
+    final store = _MemoryOutbox();
+    final gateway = _DesktopGateway();
+    final api = ApiClient(
+      baseUrl: 'https://example.invalid',
+      apiKey: 'test-key',
+      httpClient: MockClient((_) async => http.Response('unused', 500)),
+    );
+    final chat = ActiveChat(
+      connection: SavedConnection(
+        id: 'conn-test',
+        label: 'Test',
+        host: 'example.invalid',
+        port: 443,
+        apiKey: 'test-key',
+        useHttps: true,
+      ),
+      sessionId: 'session-test',
+      sessionTitle: 'Test',
+      notifications: null,
+      onTerminal: () {},
+      api: api,
+      desktopGateway: gateway,
+      storedMessageLoader: (_, _) async => const [],
+      terminalReconcileBudget: Duration.zero,
+    );
+    addTearDown(chat.dispose);
+
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    final prepared = PreparedTurn(
+      connectionId: 'conn-test',
+      sessionId: 'session-test',
+      clientTurnId: 'turno-preparado-unico',
+      createdAtMs: 2000,
+      updatedAtMs: 2000,
+      text: 'turno preparado',
+      fullText: 'turno preparado',
+      attachments: const [],
+      model: 'hermes-agent',
+      profile: '',
+      queued: true,
+    );
+    expect(
+      await chat.enqueuePreparedTurn(
+        ActiveTurnDelivery(prepared: prepared, store: store),
+      ),
+      isTrue,
+    );
+
+    gateway.emit('message.complete');
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+
+    expect(gateway.submittedTexts, ['turno vivo', 'turno preparado']);
+  });
+
+  test(
+    'barrera ambigua bloquea drenajes disparados por enqueues posteriores',
+    () async {
+      final store = _MemoryOutbox();
+      final gateway = _DesktopGateway();
+      final api = ApiClient(
+        baseUrl: 'https://example.invalid',
+        apiKey: 'test-key',
+        httpClient: MockClient((_) async => http.Response('unused', 500)),
+      );
+      final chat = ActiveChat(
+        connection: SavedConnection(
+          id: 'conn-test',
+          label: 'Test',
+          host: 'example.invalid',
+          port: 443,
+          apiKey: 'test-key',
+          useHttps: true,
+        ),
+        sessionId: 'session-test',
+        sessionTitle: 'Test',
+        notifications: null,
+        onTerminal: () {},
+        api: api,
+        desktopGateway: gateway,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.restoreQueuedTurns(
+        [_prepared().copyWith(queued: true)],
+        store,
+        scheduleDrain: false,
+      );
+      chat.enqueue('turno nuevo posterior');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(gateway.submittedTexts, isEmpty);
+    },
+  );
+
+  test('ACK perdido no reintenta automáticamente el turno queued', () async {
+    final store = _MemoryOutbox();
+    final gateway = _DesktopGateway()
+      ..submitError = TimeoutException('synthetic ack loss');
+    final api = ApiClient(
+      baseUrl: 'https://example.invalid',
+      apiKey: 'test',
+      httpClient: MockClient((_) async => http.Response('unused', 500)),
+    );
+    final chat = ActiveChat(
+      connection: SavedConnection(
+        id: 'conn-test',
+        label: 'Test',
+        host: 'example.invalid',
+        port: 443,
+        apiKey: 'test',
+        useHttps: true,
+      ),
+      sessionId: 'session-test',
+      sessionTitle: 'Test',
+      notifications: null,
+      onTerminal: () {},
+      api: api,
+      desktopGateway: gateway,
+    );
+    addTearDown(chat.dispose);
+    final queued = _prepared().copyWith(queued: true);
+
+    expect(
+      await chat.enqueuePreparedTurn(
+        ActiveTurnDelivery(prepared: queued, store: store),
+      ),
+      isTrue,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+
+    expect(gateway.submitCalls, 1);
+    expect(chat.queuedTurns, hasLength(1));
+    expect(chat.queuedTurns.single.turn.state, PreparedTurnState.ambiguous);
+  });
+
+  test(
+    'recuperación solo autoencola estados inequívocamente no enviados',
+    () async {
+      final store = _MemoryOutbox();
+      final gateway = _DesktopGateway();
+      final api = ApiClient(
+        baseUrl: 'https://example.invalid',
+        apiKey: 'test',
+        httpClient: MockClient((_) async => http.Response('unused', 500)),
+      );
+      final chat = ActiveChat(
+        connection: SavedConnection(
+          id: 'conn-test',
+          label: 'Test',
+          host: 'example.invalid',
+          port: 443,
+          apiKey: 'test',
+          useHttps: true,
+        ),
+        sessionId: 'session-test',
+        sessionTitle: 'Test',
+        notifications: null,
+        onTerminal: () {},
+        api: api,
+        desktopGateway: gateway,
+      );
+      addTearDown(chat.dispose);
+      await chat.restoreQueuedTurns([
+        _prepared().copyWith(state: PreparedTurnState.prepared, queued: true),
+        _prepared().copyWith(state: PreparedTurnState.ambiguous, queued: true),
+        _prepared().copyWith(state: PreparedTurnState.submitting, queued: true),
+      ], store);
+
+      expect(chat.queuedTurns, hasLength(1));
+      expect(chat.queuedTurns.single.turn.state, PreparedTurnState.prepared);
+      expect(gateway.submitCalls, 0);
+    },
+  );
 }

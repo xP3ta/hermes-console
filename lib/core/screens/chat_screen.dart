@@ -994,6 +994,7 @@ class _ChatScreenState extends State<ChatScreen>
   // agente cuando el usuario envíe el mensaje. La galería puede añadir varias
   // imágenes en una sola selección; cámara y archivos se agregan a esta lista.
   final List<AttachmentDraft> _pendingAttachments = [];
+  bool _queueExpanded = false;
   ChatDraftStore? _draftStore;
   MissionBotChatStore? _botChatStore;
   String? _persistedCanonicalBotPinId;
@@ -1620,16 +1621,25 @@ class _ChatScreenState extends State<ChatScreen>
     // hay evidencia viva para esta ruta.
     final liveDelivery = liveDeliveryAtRestore;
     if (liveDelivery != null) _observeAttachmentDelivery(liveDelivery);
-    final loaded =
-        liveDelivery?.current ??
-        await outbox.loadForChat(
-          widget.connection.id,
-          widget.session.id,
-          profile: _recoveryProfile,
-        );
-    if (!mounted || loaded == null) return;
-    _preparedTurn = loaded;
+    PreparedTurn? loaded = liveDelivery?.current;
+    List<PreparedTurn> recoveredQueued = const [];
+    if (liveDelivery == null) {
+      final recovered = await outbox.loadAllForChat(
+        widget.connection.id,
+        widget.session.id,
+        profile: _recoveryProfile,
+      );
+      recoveredQueued = recovered.where((turn) => turn.queued).toList();
+      final nonQueued = recovered.where((turn) => !turn.queued).toList();
+      loaded = nonQueued.isEmpty ? null : nonQueued.last;
+    }
+    if (!mounted) return;
     if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(true);
+    if (loaded == null) {
+      await _chat.restoreQueuedTurns(recoveredQueued, outbox);
+      return;
+    }
+    _preparedTurn = loaded;
     var prepared = loaded;
     if (liveDelivery == null &&
         (prepared.state == PreparedTurnState.ambiguous ||
@@ -1638,6 +1648,12 @@ class _ChatScreenState extends State<ChatScreen>
       prepared = await _chat.reconcileAmbiguousTurn(prepared, outbox);
       if (!mounted) return;
     }
+    await _chat.restoreQueuedTurns(
+      recoveredQueued,
+      outbox,
+      scheduleDrain: prepared.state != PreparedTurnState.ambiguous,
+    );
+    if (!mounted) return;
     final reconciledDelivery = _chatBound ? _chat.activeTurnDelivery : null;
     if (reconciledDelivery != null) {
       _observeAttachmentDelivery(reconciledDelivery);
@@ -5320,19 +5336,6 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
 
-    // El contrato de steering de Hermes solo acepta texto: se inyecta dentro
-    // del próximo tool-result. Binarios/imágenes no pueden viajar por ese canal
-    // sin cambiar su semántica. Conservamos todo en el composer para enviarlo
-    // como turno normal cuando termine el run.
-    if (_sending && attachments.isNotEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(str.chaSteerTextOnly)));
-      }
-      return false;
-    }
-
     // Si estabas dictando y mandas (sin pulsar parar antes), cerramos el dictado
     // y descartamos lo que llegue después: enviar = "ya terminé este texto". Sin
     // esto, el dictado continuo seguía vivo y volvía a rellenar el composer con
@@ -5448,7 +5451,59 @@ class _ChatScreenState extends State<ChatScreen>
       fullText = text;
     }
 
-    // Igual que Hermes Desktop/TUI: una indicación durante el run se incorpora
+    // Adjuntos nunca usan steering: el lote completo se prepara y se conserva
+    // como siguiente turno normal, con la misma identidad y payloads que usará
+    // el transporte al drenar la cola.
+    if (_sending && attachments.isNotEmpty) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final prepared = PreparedTurn(
+        connectionId: widget.connection.id,
+        sessionId: widget.session.id,
+        clientTurnId: const Uuid().v4(),
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: text,
+        fullText: fullText,
+        desktopText: desktopText,
+        attachments: attachments,
+        model: selectedModel,
+        profile: _effectiveSessionProfile,
+        state: PreparedTurnState.prepared,
+        restoresComposer: usesComposerState,
+        queued: true,
+      );
+      final delivery = ActiveTurnDelivery(
+        prepared: prepared,
+        store: await _outboxStore(),
+      );
+      if (!await _chat.enqueuePreparedTurn(delivery)) {
+        if (usesComposerState) await _saveDraftSnapshot(text, attachments);
+        _showOutboxUnavailable();
+        return false;
+      }
+      if (usesComposerState &&
+          _textController.text == composerTextAtSubmit &&
+          _sameAttachmentDrafts(_pendingAttachments, attachments)) {
+        _draftTimer?.cancel();
+        _restoringDraft = true;
+        setState(() {
+          _textController.clear();
+          _pendingAttachments.clear();
+        });
+        _restoringDraft = false;
+        await _clearDraft();
+      } else {
+        _scheduleDraftSave();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
+      }
+      return true;
+    }
+
+    // Igual que Hermes Desktop/TUI: una indicación de solo texto durante el run se incorpora
     // mediante session.redirect (o session.steer en gateways antiguos) sin
     // cancelar herramientas, razonamiento ni estado ya completado. La cola
     // local queda únicamente como degradación cuando el transporte confirma
@@ -5539,6 +5594,8 @@ class _ChatScreenState extends State<ChatScreen>
       createdAtMs: sameRecoveredBatch ? existing!.createdAtMs : now,
       updatedAtMs: now,
       text: text,
+      fullText: fullText,
+      desktopText: desktopText,
       attachments: attachments,
       model: selectedModel,
       profile: profile,
@@ -9902,56 +9959,102 @@ class _ChatScreenState extends State<ChatScreen>
   /// Indicaciones que no pudieron entrar en el turno vivo. Viven junto al
   /// composer, no como burbujas apiladas, y pueden cancelarse antes de enviarse.
   Widget _buildQueueStrip(HermesThemeColors colors) {
-    final queued = _chat.queuedMessages;
-    if (queued.isEmpty) return const SizedBox.shrink();
+    final queuedText = _chat.queuedTextMessages;
+    final queuedTurns = _chat.queuedTurns;
+    final queuedCount = queuedText.length + queuedTurns.length;
+    if (queuedCount == 0) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.schedule_rounded,
-                size: 14,
-                color: colors.textSecondary,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                Strings.of(context).chaQueuedCount(queued.length),
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.8,
-                  color: colors.textSecondary,
+          Semantics(
+            button: true,
+            expanded: _queueExpanded,
+            child: InkWell(
+              key: const ValueKey('chat-queue-toggle'),
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => setState(() => _queueExpanded = !_queueExpanded),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.schedule_rounded,
+                      size: 14,
+                      color: colors.textSecondary,
+                    ),
+                    const SizedBox(width: 7),
+                    Text(
+                      Strings.of(context).chaQueuedCount(queuedCount),
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        Strings.of(context).chaQueuedNote,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: colors.textDisabled,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      _queueExpanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 20,
+                      color: colors.textSecondary,
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  Strings.of(context).chaQueuedNote,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: colors.textDisabled),
+            ),
+          ),
+          if (_queueExpanded) ...[
+            Divider(
+              height: 1,
+              thickness: 0.5,
+              color: colors.divider.withValues(alpha: 0.38),
+            ),
+            for (var i = 0; i < queuedTurns.length; i++) ...[
+              _QueuedRow(
+                text: queuedTurns[i].turn.text,
+                attachmentNames: queuedTurns[i].turn.activeAttachments
+                    .map((item) => item.name)
+                    .toList(growable: false),
+                onCancel: () => unawaited(
+                  _chat.cancelQueuedTurn(queuedTurns[i].turn.clientTurnId),
                 ),
               ),
+              if (i != queuedTurns.length - 1 || queuedText.isNotEmpty)
+                Divider(
+                  height: 1,
+                  thickness: 0.5,
+                  indent: 23,
+                  color: colors.divider.withValues(alpha: 0.26),
+                ),
             ],
-          ),
-          const SizedBox(height: 3),
-          Divider(
-            height: 1,
-            thickness: 0.5,
-            color: colors.divider.withValues(alpha: 0.38),
-          ),
-          for (var i = 0; i < queued.length; i++) ...[
-            _QueuedRow(text: queued[i], onCancel: () => _chat.cancelQueued(i)),
-            if (i != queued.length - 1)
-              Divider(
-                height: 1,
-                thickness: 0.5,
-                indent: 23,
-                color: colors.divider.withValues(alpha: 0.26),
+            for (var i = 0; i < queuedText.length; i++) ...[
+              _QueuedRow(
+                text: queuedText[i],
+                onCancel: () => _chat.cancelQueued(i),
               ),
+              if (i != queuedText.length - 1)
+                Divider(
+                  height: 1,
+                  thickness: 0.5,
+                  indent: 23,
+                  color: colors.divider.withValues(alpha: 0.26),
+                ),
+            ],
           ],
         ],
       ),
@@ -10027,25 +10130,6 @@ class _ChatScreenState extends State<ChatScreen>
         size: 44,
         iconSize: 25,
         visual: HermesTactileActionVisual.quiet,
-      );
-    }
-
-    final hasDraft = !_nothingToSend;
-    final dedicatedStopVisible = _sending && hasDraft;
-    if (shouldShowDictationStreamStop(
-      sending: _sending,
-      hasDraft: hasDraft,
-      dedicatedStopVisible: dedicatedStopVisible,
-    )) {
-      return HermesTactileAction(
-        key: const ValueKey('stop-stream'),
-        icon: Icons.stop_circle_outlined,
-        iconSize: 22,
-        onPressed: _cancelStream,
-        semanticLabel: Strings.of(context).chaStopTooltip,
-        backgroundColor: colors.surfaceVariant.withValues(alpha: 0.52),
-        foregroundColor: colors.textPrimary,
-        size: 38,
       );
     }
 
@@ -10446,32 +10530,6 @@ class _ChatScreenState extends State<ChatScreen>
                     dictationInteractive: dictationInteractive,
                   ),
                   if (_isRecording) _buildDictationSendAction(colors),
-                  if (!_isRecording && _sending && !_nothingToSend) ...[
-                    const SizedBox(width: 2),
-                    SizedBox.square(
-                      dimension: 48,
-                      child: Center(
-                        child: KeyedSubtree(
-                          key: const ValueKey('stop'),
-                          child: _SendButton(
-                            busy:
-                                _composerSubmissionInFlight ||
-                                _roomTaskSubmitting ||
-                                _attachmentSubmitting ||
-                                _compressingSession,
-                            mode: _SendMode.stop,
-                            enabled:
-                                !_composerSubmissionInFlight &&
-                                !_roomTaskSubmitting &&
-                                !_attachmentSubmitting &&
-                                !_compressingSession,
-                            onSend: _sendMessage,
-                            onStop: _cancelStream,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
                   if (!_isRecording) ...[
                     const SizedBox(width: 2),
                     SizedBox.square(
@@ -13837,13 +13895,6 @@ String prepareAssistantAnswerStructure(String answer) =>
     enhanceCommandBlocks(tidyAssistantMarkdown(flattenInlineHtml(answer)));
 
 @visibleForTesting
-bool shouldShowDictationStreamStop({
-  required bool sending,
-  required bool hasDraft,
-  required bool dedicatedStopVisible,
-}) => sending && hasDraft && !dedicatedStopVisible;
-
-@visibleForTesting
 void validateRemoteChatImageTransport(Uri uri) {
   TransportPrivacy.requireAllowed(uri.toString());
 }
@@ -15406,9 +15457,14 @@ class _MetaBlock extends StatelessWidget {
 /// no ocupa un turno visual y se puede retirar antes del envío automático.
 class _QueuedRow extends StatelessWidget {
   final String text;
+  final List<String> attachmentNames;
   final VoidCallback onCancel;
 
-  const _QueuedRow({required this.text, required this.onCancel});
+  const _QueuedRow({
+    required this.text,
+    this.attachmentNames = const [],
+    required this.onCancel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -15425,15 +15481,40 @@ class _QueuedRow extends StatelessWidget {
           ),
           const SizedBox(width: 7),
           Expanded(
-            child: Text(
-              preview,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12.5,
-                height: 1.25,
-                color: colors.textSecondary,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (preview.trim().isNotEmpty)
+                  Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.25,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                if (attachmentNames.isNotEmpty)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 2,
+                    children: attachmentNames
+                        .map(
+                          (name) => Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: colors.textDisabled,
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+              ],
             ),
           ),
           IconButton(

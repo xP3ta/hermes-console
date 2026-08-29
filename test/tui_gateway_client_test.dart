@@ -979,6 +979,8 @@ void main() {
                 {'role': 'user', 'row_id': 73, 'text': ' pregunta original '},
                 {'role': 'user', 'row_id': 75, 'text': 'duplicada'},
                 {'role': 'user', 'row_id': 76, 'text': ' duplicada '},
+                {'role': 'user', 'row_id': 77, 'text': 'última única'},
+                {'role': 'user', 'row_id': 78, 'text': 'duplicada'},
                 {'role': 'assistant', 'row_id': 74, 'text': 'respuesta'},
               ],
             },
@@ -1006,7 +1008,7 @@ void main() {
         sourceText: 'pregunta original',
         expectedOrdinal: 1,
       ),
-      73,
+      isNull,
     );
     expect(
       await client.resolveDurableUserRowId(
@@ -1032,7 +1034,17 @@ void main() {
       ),
       isNull,
     );
+    expect(
+      await client.resolveDurableUserRowId(
+        'runtime-history',
+        sourceText: 'última única',
+        // La vista móvil puede empezar mucho después que el historial durable.
+        expectedOrdinal: 0,
+      ),
+      77,
+    );
     expect(requests.map((request) => request['method']), [
+      'session.history',
       'session.history',
       'session.history',
       'session.history',
