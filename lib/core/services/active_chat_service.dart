@@ -7259,22 +7259,37 @@ class ActiveChat {
   Future<DesktopPromptResponse> respondToClarifyBatch(
     InteractivePromptKey key,
     Map<String, String> answers,
-  ) async {
-    final submittedAnswers = Map<String, String>.unmodifiable(answers);
-    // Mutual exclusion: concurrent calls for the same request are serialized
-    // so two confirmations never race and duplicate accepted answers.
+  ) {
+    // Mutual exclusion includes synchronous ResponseStarted callbacks: publish
+    // the shared operation before starting any work that can emit an event.
     final inFlight = _batchLocks[key];
     if (inFlight != null) return inFlight;
 
-    final operation = _respondToClarifyBatch(key, submittedAnswers);
-    _batchLocks[key] = operation;
-    try {
-      return await operation;
-    } finally {
-      if (_batchLocks[key] == operation) {
+    final submittedAnswers = Map<String, String>.unmodifiable(answers);
+    final completer = Completer<DesktopPromptResponse>();
+    final sharedOperation = completer.future;
+    _batchLocks[key] = sharedOperation;
+
+    void release() {
+      if (identical(_batchLocks[key], sharedOperation)) {
         _batchLocks.remove(key);
       }
     }
+
+    final source = Future<DesktopPromptResponse>.sync(
+      () => _respondToClarifyBatch(key, submittedAnswers),
+    );
+    source.then<void>(
+      (result) {
+        release();
+        completer.complete(result);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        release();
+        completer.completeError(error, stackTrace);
+      },
+    );
+    return sharedOperation;
   }
 
   Future<DesktopPromptResponse> _respondToClarifyBatch(
@@ -7535,30 +7550,55 @@ class ActiveChat {
   Future<DesktopPromptResponse> respondToSudo(
     InteractivePromptKey key,
     EphemeralSensitiveValue password,
-  ) async {
-    try {
-      return await _respondToInteractivePrompt(
-        key,
-        expectedKind: InteractivePromptKind.sudo,
-        invoke: (gateway) => gateway.respondToSudo(key.requestId, password),
-      );
-    } finally {
-      password.dispose();
-    }
-  }
+  ) => _respondToSensitiveInteractivePrompt(
+    key,
+    callerValue: password,
+    expectedKind: InteractivePromptKind.sudo,
+    invoke: (gateway, ownedValue) =>
+        gateway.respondToSudo(key.requestId, ownedValue),
+  );
 
   Future<DesktopPromptResponse> respondToSecret(
     InteractivePromptKey key,
     EphemeralSensitiveValue value,
-  ) async {
+  ) => _respondToSensitiveInteractivePrompt(
+    key,
+    callerValue: value,
+    expectedKind: InteractivePromptKind.secret,
+    invoke: (gateway, ownedValue) =>
+        gateway.respondToSecret(key.requestId, ownedValue),
+  );
+
+  Future<DesktopPromptResponse> _respondToSensitiveInteractivePrompt(
+    InteractivePromptKey key, {
+    required EphemeralSensitiveValue callerValue,
+    required InteractivePromptKind expectedKind,
+    required Future<DesktopPromptResponse> Function(
+      HermesDesktopInteractivePromptGateway gateway,
+      EphemeralSensitiveValue ownedValue,
+    )
+    invoke,
+  }) {
+    String sensitiveValue;
     try {
-      return await _respondToInteractivePrompt(
+      sensitiveValue = callerValue.take();
+    } catch (error, stackTrace) {
+      callerValue.dispose();
+      return Future<DesktopPromptResponse>.error(error, stackTrace);
+    }
+    callerValue.dispose();
+
+    final ownedValue = EphemeralSensitiveValue(sensitiveValue);
+    try {
+      final operation = _respondToInteractivePrompt(
         key,
-        expectedKind: InteractivePromptKind.secret,
-        invoke: (gateway) => gateway.respondToSecret(key.requestId, value),
+        expectedKind: expectedKind,
+        invoke: (gateway) => invoke(gateway, ownedValue),
       );
-    } finally {
-      value.dispose();
+      return operation.whenComplete(ownedValue.dispose);
+    } catch (error, stackTrace) {
+      ownedValue.dispose();
+      return Future<DesktopPromptResponse>.error(error, stackTrace);
     }
   }
 

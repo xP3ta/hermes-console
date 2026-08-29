@@ -31,6 +31,11 @@ class _InteractiveGateway
     String? questionId,
   })?
   onRespondToClarify;
+  Future<DesktopPromptResponse> Function(
+    String method,
+    EphemeralSensitiveValue value,
+  )?
+  onRespondToSensitive;
   DesktopPromptResponseStatus nextSensitiveStatus =
       DesktopPromptResponseStatus.ok;
   Object? nextSensitiveError;
@@ -138,6 +143,8 @@ class _InteractiveGateway
     EphemeralSensitiveValue value,
   ) async {
     sensitiveResponses++;
+    final callback = onRespondToSensitive;
+    if (callback != null) return callback(method, value);
     value.take();
     value.dispose();
     if (nextSensitiveError case final error?) throw error;
@@ -317,6 +324,106 @@ void main() {
       expect(chat.interactivePrompts.isDisposed, isTrue);
       expect(chat.interactivePrompts[entry.key], isNull);
     });
+  }
+
+  for (final kind in [
+    InteractivePromptKind.sudo,
+    InteractivePromptKind.secret,
+  ]) {
+    for (final outcome in ['success', 'error', 'runtime expiry']) {
+      test(
+        '$kind takes ownership before ResponseStarted on $outcome',
+        () async {
+          final gateway = _InteractiveGateway();
+          late ActiveChat chat;
+          InteractivePromptKey? respondingKey;
+          EphemeralSensitiveValue? callerHolder;
+          EphemeralSensitiveValue? ownedHolder;
+          var callerRedactedDuringCallback = false;
+          var attackOnResponseStarted = false;
+          final receivedValues = <String>[];
+          final pending = Completer<DesktopPromptResponse>();
+          final ok = DesktopPromptResponse.fromJson(const {
+            'status': 'ok',
+          }, method: '${kind.name}.respond');
+          gateway.onRespondToSensitive = (method, value) {
+            ownedHolder = value;
+            receivedValues.add(value.take());
+            if (outcome == 'error') {
+              return Future<DesktopPromptResponse>.error(
+                StateError('sanitized transport failure'),
+              );
+            }
+            return outcome == 'runtime expiry'
+                ? pending.future
+                : Future.value(ok);
+          };
+          chat = await _start(
+            gateway,
+            onEvent: (event) {
+              if (attackOnResponseStarted &&
+                  event == ActiveChatEvent.interactiveRequest &&
+                  respondingKey != null &&
+                  chat.interactivePrompts[respondingKey]?.status ==
+                      InteractivePromptStatus.responding) {
+                attackOnResponseStarted = false;
+                String? taken;
+                try {
+                  taken = callerHolder!.take();
+                } on StateError {
+                  // Ownership must already have moved to the service.
+                }
+                callerHolder!.dispose();
+                callerRedactedDuringCallback =
+                    taken == null &&
+                    callerHolder.isDisposed &&
+                    !callerHolder.hasValue;
+              }
+            },
+          );
+          addTearDown(chat.dispose);
+          gateway.emit(
+            kind == InteractivePromptKind.sudo
+                ? 'sudo.request'
+                : 'secret.request',
+            kind == InteractivePromptKind.sudo
+                ? const {'request_id': 'sudo-ownership'}
+                : const {
+                    'request_id': 'secret-ownership',
+                    'env_var': 'TEST_SECRET',
+                    'prompt': 'Secret',
+                  },
+          );
+          await _waitUntil(() => chat.pendingInteractivePrompt != null);
+          respondingKey = chat.pendingInteractivePrompt!.key;
+          callerHolder = EphemeralSensitiveValue('original-sensitive-value');
+
+          attackOnResponseStarted = true;
+          final operation = kind == InteractivePromptKind.sudo
+              ? chat.respondToSudo(respondingKey, callerHolder)
+              : chat.respondToSecret(respondingKey, callerHolder);
+          if (outcome == 'runtime expiry') {
+            await _waitUntil(() => gateway.sensitiveResponses == 1);
+            chat.dispose();
+            pending.complete(ok);
+          }
+
+          if (outcome == 'error') {
+            await expectLater(operation, throwsA(isA<StateError>()));
+          } else {
+            await expectLater(operation, completion(same(ok)));
+          }
+          expect(callerRedactedDuringCallback, isTrue);
+          expect(callerHolder.isDisposed, isTrue);
+          expect(callerHolder.hasValue, isFalse);
+          expect(ownedHolder, isNot(same(callerHolder)));
+          expect(receivedValues, ['original-sensitive-value']);
+          expect(gateway.sensitiveResponses, 1);
+          expect(ownedHolder!.isDisposed, isTrue);
+          expect(ownedHolder!.hasValue, isFalse);
+        },
+      );
+    }
   }
 
   test('terminal read disposal at ResponseStarted starts no RPC', () async {
@@ -789,6 +896,66 @@ void main() {
       (questionId: 'q1', answer: 'B0'),
     ]);
   });
+
+  test(
+    'ResponseStarted reentrant batch joins the immutable first submission',
+    () async {
+      final gateway = _InteractiveGateway();
+      late ActiveChat chat;
+      Future<DesktopPromptResponse>? reentrantOperation;
+      InteractivePromptKey? respondingKey;
+      var reenterOnResponseStarted = false;
+      final firstAnswers = <String, String>{'q0': 'A0', 'q1': 'B0'};
+      final reentrantAnswers = <String, String>{'q0': 'A1', 'q1': 'B1'};
+      final calls = <({String? questionId, String answer})>[];
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add((questionId: questionId, answer: answer));
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (reenterOnResponseStarted &&
+              event == ActiveChatEvent.interactiveRequest &&
+              respondingKey != null &&
+              chat.interactivePrompts[respondingKey]?.status ==
+                  InteractivePromptStatus.responding) {
+            reenterOnResponseStarted = false;
+            reentrantOperation = chat.respondToClarifyBatch(
+              respondingKey,
+              reentrantAnswers,
+            );
+          }
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-reentrant-snapshot',
+        'questions': [
+          {'qid': 'q0', 'question': '¿A?'},
+          {'qid': 'q1', 'question': '¿B?'},
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      respondingKey = chat.pendingInteractivePrompt!.key;
+
+      reenterOnResponseStarted = true;
+      final firstOperation = chat.respondToClarifyBatch(
+        respondingKey,
+        firstAnswers,
+      );
+      final firstResult = await firstOperation;
+      final secondResult = await reentrantOperation!;
+
+      expect(identical(secondResult, firstResult), isTrue);
+      expect(calls, [
+        (questionId: 'q0', answer: 'A0'),
+        (questionId: 'q1', answer: 'B0'),
+      ]);
+    },
+  );
 
   test('batch replay no duplica la tarjeta', () async {
     final gateway = _InteractiveGateway();
