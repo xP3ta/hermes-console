@@ -617,6 +617,179 @@ void main() {
     },
   );
 
+  test(
+    'batch snapshots answers before synchronous ResponseStarted callback',
+    () async {
+      final gateway = _InteractiveGateway();
+      late ActiveChat chat;
+      final answers = <String, String>{'q0': 'A0', 'q1': 'B0'};
+      final calls = <({String? questionId, String answer})>[];
+      var mutateOnResponseStarted = false;
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (mutateOnResponseStarted &&
+              event == ActiveChatEvent.interactiveRequest &&
+              chat.pendingInteractivePrompt?.status ==
+                  InteractivePromptStatus.responding) {
+            mutateOnResponseStarted = false;
+            answers['q0'] = 'changed-A';
+            answers['q1'] = 'changed-B';
+          }
+        },
+      );
+      addTearDown(chat.dispose);
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add((questionId: questionId, answer: answer));
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-sync-snapshot',
+        'questions': [
+          {'qid': 'q0', 'question': '¿A?'},
+          {'qid': 'q1', 'question': '¿B?'},
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      mutateOnResponseStarted = true;
+      await chat.respondToClarifyBatch(
+        chat.pendingInteractivePrompt!.key,
+        answers,
+      );
+
+      expect(calls, [
+        (questionId: 'q0', answer: 'A0'),
+        (questionId: 'q1', answer: 'B0'),
+      ]);
+    },
+  );
+
+  test(
+    'batch snapshots later answers while an earlier ACK is in flight',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final answers = <String, String>{'q0': 'A0', 'q1': 'B0'};
+      final calls = <({String? questionId, String answer})>[];
+      final firstAck = Completer<DesktopPromptResponse>();
+      final ok = DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        calls.add((questionId: questionId, answer: answer));
+        return questionId == 'q0' ? firstAck.future : Future.value(ok);
+      };
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-ack-snapshot',
+        'questions': [
+          {'qid': 'q0', 'question': '¿A?'},
+          {'qid': 'q1', 'question': '¿B?'},
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final operation = chat.respondToClarifyBatch(
+        chat.pendingInteractivePrompt!.key,
+        answers,
+      );
+      await _waitUntil(() => calls.length == 1);
+      answers['q1'] = 'changed-B';
+      firstAck.complete(ok);
+      await operation;
+
+      expect(calls, [
+        (questionId: 'q0', answer: 'A0'),
+        (questionId: 'q1', answer: 'B0'),
+      ]);
+    },
+  );
+
+  test(
+    'batch qid collection cannot change while an ACK is in flight',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final answers = <String, String>{'q0': 'A0', 'q1': 'B0'};
+      final calls = <({String? questionId, String answer})>[];
+      final firstAck = Completer<DesktopPromptResponse>();
+      final ok = DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        calls.add((questionId: questionId, answer: answer));
+        return questionId == 'q0' ? firstAck.future : Future.value(ok);
+      };
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-qids-snapshot',
+        'questions': [
+          {'qid': 'q0', 'question': '¿A?'},
+          {'qid': 'q1', 'question': '¿B?'},
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      final operation = chat.respondToClarifyBatch(
+        chat.pendingInteractivePrompt!.key,
+        answers,
+      );
+      await _waitUntil(() => calls.length == 1);
+      answers
+        ..clear()
+        ..['q9'] = 'injected';
+      firstAck.complete(ok);
+      await operation;
+
+      expect(calls, [
+        (questionId: 'q0', answer: 'A0'),
+        (questionId: 'q1', answer: 'B0'),
+      ]);
+    },
+  );
+
+  test('concurrent batch call joins the immutable first submission', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    final firstAnswers = <String, String>{'q0': 'A0', 'q1': 'B0'};
+    final secondAnswers = <String, String>{'q0': 'A1', 'q1': 'B1'};
+    final calls = <({String? questionId, String answer})>[];
+    final firstAck = Completer<DesktopPromptResponse>();
+    final ok = DesktopPromptResponse.fromJson(const {
+      'status': 'ok',
+    }, method: 'clarify.respond');
+    gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+      calls.add((questionId: questionId, answer: answer));
+      return questionId == 'q0' ? firstAck.future : Future.value(ok);
+    };
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-concurrent-snapshot',
+      'questions': [
+        {'qid': 'q0', 'question': '¿A?'},
+        {'qid': 'q1', 'question': '¿B?'},
+      ],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final key = chat.pendingInteractivePrompt!.key;
+
+    final firstOperation = chat.respondToClarifyBatch(key, firstAnswers);
+    await _waitUntil(() => calls.length == 1);
+    final secondOperation = chat.respondToClarifyBatch(key, secondAnswers);
+    firstAnswers['q1'] = 'changed-first';
+    secondAnswers['q1'] = 'changed-second';
+    firstAck.complete(ok);
+    await Future.wait([firstOperation, secondOperation]);
+
+    expect(calls, [
+      (questionId: 'q0', answer: 'A0'),
+      (questionId: 'q1', answer: 'B0'),
+    ]);
+  });
+
   test('batch replay no duplica la tarjeta', () async {
     final gateway = _InteractiveGateway();
     final chat = await _start(gateway);

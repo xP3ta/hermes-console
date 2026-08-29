@@ -7260,12 +7260,13 @@ class ActiveChat {
     InteractivePromptKey key,
     Map<String, String> answers,
   ) async {
+    final submittedAnswers = Map<String, String>.unmodifiable(answers);
     // Mutual exclusion: concurrent calls for the same request are serialized
     // so two confirmations never race and duplicate accepted answers.
     final inFlight = _batchLocks[key];
     if (inFlight != null) return inFlight;
 
-    final operation = _respondToClarifyBatch(key, answers);
+    final operation = _respondToClarifyBatch(key, submittedAnswers);
     _batchLocks[key] = operation;
     try {
       return await operation;
