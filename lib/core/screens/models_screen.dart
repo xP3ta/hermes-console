@@ -700,6 +700,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       showReadOnlyNotice(context);
       return;
     }
+    final l10n = Strings.of(context);
     // Footgun: `model/set` toca el gateway EN EJECUCIÓN (un solo gateway), no
     // solo el perfil seleccionado. Al cambiar el modelo PRINCIPAL con un perfil
     // no-default activo, avisamos de que también cambia el modelo del agente.
@@ -752,7 +753,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
       // Dashboard, que es quien las gestiona.
       if (_viaBridge && scope == 'main') {
         final client = await _bridgeMgr.clientFor(widget.connection.id);
-        if (client == null) throw Exception('Bridge no disponible');
+        if (client == null) {
+          throw Exception(l10n.mdlBridgeUnavailable);
+        }
         try {
           final r = await client.setModel(
             provider: providerSlug,
@@ -760,7 +763,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           );
           if (r['ok'] != true) {
             throw Exception(
-              (r['error'] ?? r['message'] ?? 'No se pudo aplicar el modelo')
+              (r['error'] ?? r['message'] ?? l10n.mdlApplyModelError)
                   .toString(),
             );
           }
@@ -1756,7 +1759,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Proveedor externo',
+                      Strings.of(context).mdlExternalProvider,
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1765,7 +1768,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Ollama remoto · LM Studio · OpenAI-compatible',
+                      Strings.of(context).mdlExternalProviderSubtitle,
                       style: TextStyle(
                         fontSize: 12,
                         color: colors.textSecondary,

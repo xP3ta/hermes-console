@@ -93,6 +93,11 @@ void main() {
       'mdlEditProvider': 'Edit provider',
       'mdlConfigNeedsDashboard': 'Requires the Dashboard to configure',
       'mdlDashboardOfflineSuffix': 'no Dashboard connection',
+      'mdlBridgeUnavailable': 'Bridge unavailable',
+      'mdlApplyModelError': 'Could not apply the model',
+      'mdlExternalProvider': 'External provider',
+      'mdlExternalProviderSubtitle':
+          'Remote Ollama · LM Studio · OpenAI-compatible',
     };
     const es = {
       'mdlNoActiveModelTitle': 'Sin modelo configurado',
@@ -101,6 +106,11 @@ void main() {
       'mdlEditProvider': 'Editar proveedor',
       'mdlConfigNeedsDashboard': 'Requiere el Dashboard para configurar',
       'mdlDashboardOfflineSuffix': 'sin conexión al Dashboard',
+      'mdlBridgeUnavailable': 'Bridge no disponible',
+      'mdlApplyModelError': 'No se pudo aplicar el modelo',
+      'mdlExternalProvider': 'Proveedor externo',
+      'mdlExternalProviderSubtitle':
+          'Ollama remoto · LM Studio · OpenAI-compatible',
     };
     _expectLocalized(en, es);
 
@@ -112,6 +122,13 @@ void main() {
     expect(source, isNot(contains("'Editar proveedor'")));
     expect(source, isNot(contains("'Requiere el Dashboard para configurar'")));
     expect(source, isNot(contains('· sin conexión al Dashboard')));
+    expect(source, isNot(contains("'Bridge no disponible'")));
+    expect(source, isNot(contains("'No se pudo aplicar el modelo'")));
+    expect(source, isNot(contains("'Proveedor externo'")));
+    expect(
+      source,
+      isNot(contains("'Ollama remoto · LM Studio · OpenAI-compatible'")),
+    );
   });
 
   test('local Runs copy is localized in English and Spanish', () {
