@@ -23,6 +23,7 @@ import 'core/screens/mission_control_screen.dart';
 import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 import 'core/screens/task_center_screen.dart';
+import 'core/screens/tasks_screen.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
@@ -1244,6 +1245,17 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final runId = open.runId;
     if (runId != null && runId.isNotEmpty) {
       unawaited(_openRunDetailFromNotification(nav, connection, runId));
+      return true;
+    }
+
+    final taskId = open.taskId;
+    if (taskId != null && taskId.isNotEmpty) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) =>
+              TasksScreen(connection: connection, initialTaskId: taskId),
+        ),
+      );
       return true;
     }
 

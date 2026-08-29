@@ -17,11 +17,13 @@ void main() {
 
   late List<MethodCall> calls;
   late Map<String, dynamic> launchDetails;
+  late bool failNextShow;
 
   setUp(() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     calls = <MethodCall>[];
+    failNextShow = false;
     launchDetails = <String, dynamic>{
       'notificationLaunchedApp': false,
       'notificationResponse': null,
@@ -33,6 +35,10 @@ void main() {
     });
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
+      if (call.method == 'show' && failNextShow) {
+        failNextShow = false;
+        throw PlatformException(code: 'show_failed');
+      }
       return switch (call.method) {
         'initialize' || 'areNotificationsEnabled' => true,
         'getNotificationAppLaunchDetails' => launchDetails,
@@ -85,6 +91,8 @@ void main() {
       ok: true,
       connId: 'demo-node',
       sessionId: 'cron_demo_001',
+      executionId: 'execution-aurora-1',
+      jobId: 'job-aurora',
       profile: 'research',
       preview:
           '**3 tareas verificadas**\n'
@@ -100,7 +108,7 @@ void main() {
       jsonDecode(args['payload'] as String) as Map,
     );
 
-    expect(args['title'], 'Ejecución completada');
+    expect(args['title'], 'Cron completado');
     expect(body, contains('3 tareas verificadas'));
     expect(body, contains('2 pendientes'));
     expect(body, isNot(contains('**')));
@@ -129,6 +137,8 @@ void main() {
         ok: true,
         connId: 'demo-node',
         sessionId: 'cron_demo_001',
+        executionId: 'execution-project-1',
+        jobId: 'job-project',
         profile: 'research',
         preview: '3 tareas: dato-demo-que-no-debe-salir',
       );
@@ -236,6 +246,177 @@ void main() {
       expect(await service.recoverPlatformOpen(), isTrue);
       expect(await service.recoverPlatformOpen(), isFalse);
       expect(opened, hasLength(1));
+    },
+  );
+
+  /// Llamadas `show` que son alertas reales (no el resumen de grupo).
+  List<MethodCall> childShows() => calls.where((call) {
+    if (call.method != 'show') return false;
+    final args = Map<String, dynamic>.from(call.arguments as Map);
+    final android = Map<String, dynamic>.from(
+      args['platformSpecifics'] as Map,
+    );
+    return android['setAsGroupSummary'] != true;
+  }).toList();
+
+  test(
+    'productores concurrentes solo alertan una vez por terminal y approval',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final taskCenter = NotificationService(prefs)..appInForeground = false;
+      final runDetail = NotificationService(prefs)..appInForeground = false;
+
+      await taskCenter.runFinished(
+        title: 'Título visto por TaskCenter',
+        ok: false,
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+      await runDetail.runFinished(
+        title: 'Texto distinto visto por RunDetail',
+        ok: false,
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+      await taskCenter.approvalPending(
+        tool: 'bash',
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+      await runDetail.approvalPending(
+        tool: 'shell con otro texto',
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-shared',
+      );
+
+      expect(childShows(), hasLength(2));
+    },
+  );
+
+  test('identidad incompleta no silencia fallos accionables', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+
+    await service.runFinished(title: 'Fallo A', ok: false);
+    await service.runFinished(title: 'Fallo B', ok: false);
+
+    expect(childShows(), hasLength(2));
+  });
+
+  test(
+    'un fallo de plataforma libera el claim terminal para reintento',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+      failNextShow = true;
+
+      await expectLater(
+        service.runFinished(
+          title: 'Fallo material',
+          ok: false,
+          connId: 'demo-node',
+          profile: 'research',
+          runId: 'run-retryable',
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+      await service.runFinished(
+        title: 'Fallo material',
+        ok: false,
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-retryable',
+      );
+
+      expect(childShows(), hasLength(2));
+    },
+  );
+
+  test('un fallo de plataforma libera el claim de aprobación', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+    failNextShow = true;
+
+    await expectLater(
+      service.approvalPending(
+        tool: 'shell',
+        connId: 'demo-node',
+        profile: 'research',
+        runId: 'run-approval-retry',
+      ),
+      throwsA(isA<PlatformException>()),
+    );
+    await service.approvalPending(
+      tool: 'shell',
+      connId: 'demo-node',
+      profile: 'research',
+      runId: 'run-approval-retry',
+    );
+
+    expect(childShows(), hasLength(2));
+  });
+
+  test('un fallo de plataforma libera el claim de cron', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationService(prefs)..appInForeground = false;
+    failNextShow = true;
+
+    Future<void> emit() => service.cronFinished(
+      title: 'Fichaje diario',
+      ok: false,
+      connId: 'demo-node',
+      sessionId: 'cron-rrhh',
+      executionId: 'execution-retry',
+      jobId: 'job-rrhh',
+      profile: 'rrhh',
+    );
+
+    await expectLater(emit(), throwsA(isA<PlatformException>()));
+    await emit();
+
+    expect(childShows(), hasLength(2));
+  });
+
+  test(
+    'cron sin sessionId deriva IDs Android de executionId y jobId',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = NotificationService(prefs)..appInForeground = false;
+
+      await service.cronFinished(
+        title: 'Script sin sesión',
+        ok: false,
+        connId: 'demo-node',
+        sessionId: '',
+        executionId: 'execution-1',
+        jobId: 'job-script',
+        profile: 'ops',
+      );
+      await service.cronFinished(
+        title: 'Script sin sesión',
+        ok: false,
+        connId: 'demo-node',
+        sessionId: '',
+        executionId: 'execution-2',
+        jobId: 'job-script',
+        profile: 'ops',
+      );
+
+      final shown = childShows();
+      expect(shown, hasLength(2));
+      final ids = shown.map((call) => (call.arguments as Map)['id']).toSet();
+      expect(ids, hasLength(2));
+      for (final call in shown) {
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        final android = Map<String, dynamic>.from(
+          args['platformSpecifics'] as Map,
+        );
+        expect(android['onlyAlertOnce'], isTrue);
+      }
     },
   );
 }

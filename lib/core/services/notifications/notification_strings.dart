@@ -35,6 +35,10 @@ class NotifL10n {
     'Abre la aplicación para ver los detalles.',
     'Open the app to view the details.',
   );
+  String get groupSummaryBody => _(
+    'Tienes varios avisos recientes.',
+    'You have several recent alerts.',
+  );
 
   // ── Canales (nombre + descripción) ────────────────────────────────────────
   String get chApprovals => _('Aprobaciones', 'Approvals');
@@ -70,6 +74,8 @@ class NotifL10n {
   // ── Ejecuciones ───────────────────────────────────────────────────────────
   String get runCompleted => _('Ejecución completada', 'Run completed');
   String get runFailed => _('Ejecución con errores', 'Run failed');
+  String get cronCompleted => _('Cron completado', 'Cron completed');
+  String get cronFailed => _('Cron falló', 'Cron failed');
   String get kanbanCompleted =>
       _('Tarea de Kanban completada', 'Kanban task completed');
   String get kanbanBlocked =>
@@ -136,8 +142,6 @@ class NotifL10n {
   );
 
   // ── Acciones ──────────────────────────────────────────────────────────────
-  String get actApprove => _('Aprobar', 'Approve');
-  String get actDeny => _('Rechazar', 'Deny');
   String get actOpen => _('Abrir', 'Open');
 
   // ── Servicio en segundo plano (foreground service) ────────────────────────

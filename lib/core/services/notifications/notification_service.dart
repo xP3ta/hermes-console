@@ -10,12 +10,10 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../secure_storage.dart';
 import '../../utils/markdown_clipboard.dart';
-import '../../utils/transport_privacy.dart';
+import 'notification_event_ledger.dart';
 import 'notification_strings.dart';
 
 /// Tipos de evento que pueden notificar (cada uno con su toggle).
@@ -61,6 +59,9 @@ class NotificationOpen {
   final NotificationChatSurface surface;
   final String? roomId;
 
+  /// Tarjeta Kanban exacta que debe abrirse al tocar el aviso.
+  final String? taskId;
+
   /// ID de la ejecución (v1/runs). Presente cuando la notificación proviene
   /// del Task Center; ausente en notificaciones de chat (compatibilidad).
   final String? runId;
@@ -73,6 +74,7 @@ class NotificationOpen {
     this.surface = NotificationChatSurface.normal,
     this.roomId,
     this.runId,
+    this.taskId,
   });
 
   String toPayload({String? base}) => jsonEncode({
@@ -80,6 +82,7 @@ class NotificationOpen {
     if (sessionId.isNotEmpty) 'sid': sessionId,
     if (title != null && title!.isNotEmpty) 'title': title,
     if (runId != null && runId!.isNotEmpty) 'rid': runId,
+    if (taskId != null && taskId!.isNotEmpty) 'tid': taskId,
     if (profile != null && profile!.isNotEmpty) 'profile': profile,
     'surface': surface.name,
     if (roomId != null && roomId!.isNotEmpty) 'room': roomId,
@@ -97,7 +100,8 @@ class NotificationOpen {
       if (conn.isEmpty) return null;
       final sid = (m['sid'] ?? '').toString();
       final runId = (m['rid'] ?? '').toString();
-      if (sid.isEmpty && runId.isEmpty) return null;
+      final taskId = (m['tid'] ?? '').toString();
+      if (sid.isEmpty && runId.isEmpty && taskId.isEmpty) return null;
       final title = m['title']?.toString();
       final profile = m['profile']?.toString();
       final roomId = m['room']?.toString();
@@ -109,6 +113,7 @@ class NotificationOpen {
         surface: NotificationChatSurface.fromWire(m['surface']),
         roomId: roomId?.isNotEmpty == true ? roomId : null,
         runId: runId.isNotEmpty ? runId : null,
+        taskId: taskId.isNotEmpty ? taskId : null,
       );
     } catch (e) {
       debugPrint('[hermes-notif] excepción silenciada (se devuelve null): $e');
@@ -184,6 +189,9 @@ abstract interface class RunNotificationFacade {
 
 class NotificationService implements RunNotificationFacade {
   final SharedPreferences _prefs;
+  late final NotificationEventLedger _eventLedger = NotificationEventLedger(
+    _prefs,
+  );
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
@@ -238,6 +246,19 @@ class NotificationService implements RunNotificationFacade {
   /// en la bandeja (en vez de sueltas).
   static const String _groupKey = 'hermes';
 
+  /// ID fijo del resumen de grupo. Fuera de todos los rangos de alertas
+  /// (reply 6000+, approval 7001, run 7100+, live 9000+, kanban 10000+).
+  static const int _groupSummaryId = 500;
+
+  /// ID de la notificación de prueba (no es una alerta hija del grupo).
+  static const int _testNotificationId = 7000;
+
+  /// ID de la notificación ongoing de modo voz (espejo de
+  /// `VoiceNotificationController.notifId`): jerarquía D, nunca cuenta como
+  /// hija de alerta aunque comparta `groupKey`. Se duplica el literal para no
+  /// acoplar ambos servicios.
+  static const int _voiceOngoingId = 8801;
+
   // Un canal POR TIPO para que el usuario ajuste sonido/importancia de cada
   // clase por separado en los ajustes de Android (premium). El antiguo canal
   // único `hermes_alerts` se borra en init (migración).
@@ -284,6 +305,7 @@ class NotificationService implements RunNotificationFacade {
   static const _kApprovals = 'notif_approvals';
   static const _kRuns = 'notif_runs';
   static const _kCronResults = 'notif_cron_results';
+  static const _kKanbanResults = 'notif_kanban_results';
   static const _kReplies = 'notif_replies';
   static const _kForeground = 'notif_even_foreground';
   static const _kHideSensitive = 'notif_hide_sensitive_content';
@@ -309,6 +331,17 @@ class NotificationService implements RunNotificationFacade {
       _prefs.getBool(_kCronResults) ??
       (_prefs.getBool(backgroundListenPreferenceKey) ?? false);
   Future<void> setNotifyCronResults(bool v) => _prefs.setBool(_kCronResults, v);
+
+  /// Kanban tiene opt-in propio, independiente del de Cron. Si el usuario
+  /// nunca lo tocó (p. ej. al actualizar desde una versión sin esta clave),
+  /// hereda el opt-in de automatizaciones —la escucha en segundo plano,
+  /// estable— para no silenciar avisos que ya estaban activos. Nunca consulta
+  /// la preferencia de Cron: apagar Cron no puede apagar Kanban.
+  bool get notifyKanbanResults =>
+      _prefs.getBool(_kKanbanResults) ??
+      (_prefs.getBool(backgroundListenPreferenceKey) ?? false);
+  Future<void> setNotifyKanbanResults(bool v) =>
+      _prefs.setBool(_kKanbanResults, v);
 
   bool get notifyReplies => _prefs.getBool(_kReplies) ?? true;
   Future<void> setNotifyReplies(bool v) => _prefs.setBool(_kReplies, v);
@@ -341,12 +374,10 @@ class NotificationService implements RunNotificationFacade {
       await _plugin.initialize(
         settings,
         // Tap con la app viva (primer plano o 2º plano): navega a la sesión.
+        // No hay acciones de fondo: las aprobaciones solo ofrecen "Abrir" y
+        // la decisión se toma siempre dentro de la app, nunca desde la
+        // bandeja ni desde la pantalla de bloqueo.
         onDidReceiveNotificationResponse: _onNotificationTap,
-        // Tap de un botón de acción con la app MUERTA: se ejecuta en un isolate
-        // de fondo aislado. Solo resuelve Aprobar/Rechazar (red mínima); no
-        // toca la UI. Ver [notificationActionBackground].
-        onDidReceiveBackgroundNotificationResponse:
-            notificationActionBackground,
       );
       final android = _plugin
           .resolvePlatformSpecificImplementation<
@@ -461,15 +492,6 @@ class NotificationService implements RunNotificationFacade {
   // ── Navegación al pulsar ────────────────────────────────────────────────
 
   void _onNotificationTap(NotificationResponse response) {
-    // Botones Aprobar/Rechazar con la app viva: resolver directamente vía
-    // gateway, sin navegar. Mismo efecto que en el isolate de fondo, pero aquí
-    // sí tenemos contexto: el run sigue su curso y el chat (si está abierto)
-    // refleja el cambio en su próximo evento.
-    final action = response.actionId;
-    if (action == 'approve' || action == 'deny') {
-      _resolveApprovalFromPayload(response.payload, action!);
-      return;
-    }
     _handleOpenResponse(response);
   }
 
@@ -538,18 +560,6 @@ class NotificationService implements RunNotificationFacade {
     }
   }
 
-  /// Resuelve una aprobación a partir del payload de la notificación
-  /// (`{conn, rid, base}`) llamando al gateway. `action` es 'approve'|'deny'.
-  /// Compartido por el camino con la app viva ([_onNotificationTap]); el camino
-  /// de fondo usa la función top-level [resolveApprovalPayload].
-  Future<void> _resolveApprovalFromPayload(
-    String? payload,
-    String action,
-  ) async {
-    final choice = action == 'approve' ? 'once' : 'deny';
-    await resolveApprovalPayload(payload, choice);
-  }
-
   /// Devuelve (y limpia) el destino pendiente de una notificación que abrió la
   /// app. Lo llama HermesAppState tras el primer frame.
   NotificationOpen? takePendingOpen() {
@@ -567,13 +577,14 @@ class NotificationService implements RunNotificationFacade {
     String? profile,
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? roomId,
+    String? taskId,
   }) {
     if (connId == null || connId.isEmpty) return null;
     final hasSid = sessionId != null && sessionId.isNotEmpty;
     final hasRid = runId != null && runId.isNotEmpty;
-    // Para notificaciones de chat: necesita sessionId.
-    // Para notificaciones de run: basta con runId.
-    if (!hasSid && !hasRid) return null;
+    final hasTaskId = taskId != null && taskId.isNotEmpty;
+    // Chat necesita sessionId; runs y Kanban llevan su objeto autoritativo.
+    if (!hasSid && !hasRid && !hasTaskId) return null;
     return NotificationOpen(
       connId: connId,
       sessionId: hasSid ? sessionId : '',
@@ -582,6 +593,7 @@ class NotificationService implements RunNotificationFacade {
       surface: surface,
       roomId: roomId,
       runId: hasRid ? runId : null,
+      taskId: hasTaskId ? taskId : null,
     ).toPayload(base: base);
   }
 
@@ -650,55 +662,62 @@ class NotificationService implements RunNotificationFacade {
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
-  }) {
-    if (!notifyApprovals) return Future.value();
+  }) async {
+    if (!notifyApprovals) return;
+    if (!await _eventLedger.claim(
+      connId: connId ?? '',
+      profile: profile,
+      objectId: runId ?? '',
+      eventKind: 'approval_required',
+    )) {
+      return;
+    }
     final t = NotifL10n.of(_prefs);
     final where = (instance != null && instance.isNotEmpty)
         ? ' · $instance'
         : '';
-    // Botones Aprobar/Rechazar resolubles SIN abrir la app: se procesan en el
-    // isolate de fondo (onDidReceiveBackgroundNotificationResponse) que carga el
-    // token del Keystore por connId y llama a POST /v1/runs/{id}/approval. Solo
-    // se añaden si hay datos suficientes (runId + base del gateway); si no, la
-    // notif sigue siendo informativa y se resuelve abriendo la tarjeta del chat.
-    final canResolve =
-        runId != null && runId.isNotEmpty && base != null && base.isNotEmpty;
-    return _show(
-      kind: NotificationKind.approval,
-      id: 7001,
-      title: t.approvalTitle,
-      body: t.approvalBody(tool, where),
-      ongoingFeel: true,
-      bypassForeground: true,
-      targetSessionId: sessionId,
-      subText: instance,
-      payload: _encodePayload(
-        connId,
-        sessionId,
-        sessionTitle ?? instance,
-        runId: runId,
-        base: base,
+    // La aprobación NUNCA se resuelve desde la bandeja: el plugin no puede
+    // exigir desbloqueo por acción y una decisión de seguridad no debe poder
+    // tomarse desde la pantalla de bloqueo. Solo "Abrir", que trae la app al
+    // frente; la decisión vive dentro, tras la autenticación del sistema.
+    try {
+      await _show(
+        kind: NotificationKind.approval,
+        id: 7001,
+        title: t.approvalTitle,
+        body: t.approvalBody(tool, where),
+        ongoingFeel: true,
+        bypassForeground: true,
+        targetSessionId: sessionId,
+        subText: instance,
+        payload: _encodePayload(
+          connId,
+          sessionId,
+          sessionTitle ?? instance,
+          runId: runId,
+          base: base,
+          profile: profile,
+          surface: surface,
+          roomId: roomId,
+        ),
+        actions: <AndroidNotificationAction>[
+          AndroidNotificationAction(
+            'open',
+            t.actOpen,
+            showsUserInterface: true,
+            cancelNotification: true,
+          ),
+        ],
+      );
+    } catch (_) {
+      await _eventLedger.release(
+        connId: connId ?? '',
         profile: profile,
-        surface: surface,
-        roomId: roomId,
-      ),
-      actions: canResolve
-          ? <AndroidNotificationAction>[
-              AndroidNotificationAction(
-                'approve',
-                t.actApprove,
-                showsUserInterface: false,
-                cancelNotification: true,
-              ),
-              AndroidNotificationAction(
-                'deny',
-                t.actDeny,
-                showsUserInterface: false,
-                cancelNotification: true,
-              ),
-            ]
-          : null,
-    );
+        objectId: runId ?? '',
+        eventKind: 'approval_required',
+      );
+      rethrow;
+    }
   }
 
   /// Una ejecución terminó (ok o con error).
@@ -710,47 +729,98 @@ class NotificationService implements RunNotificationFacade {
     String? sessionId,
     String? runId,
     String? profile,
-  }) {
-    if (!notifyRuns) return Future.value();
+  }) async {
+    if (!notifyRuns) return;
+    if (!await _eventLedger.claim(
+      connId: connId ?? '',
+      profile: profile,
+      objectId: runId ?? '',
+      eventKind: 'run_terminal',
+    )) {
+      return;
+    }
     final t = NotifL10n.of(_prefs);
-    return _show(
-      kind: NotificationKind.run,
-      id: 7100 + (title.hashCode & 0x3ff),
-      title: ok ? t.runCompleted : t.runFailed,
-      body: title,
-      targetSessionId: sessionId,
-      payload: _encodePayload(
-        connId,
-        sessionId,
-        title,
-        runId: runId,
+    try {
+      await _show(
+        kind: NotificationKind.run,
+        id: eventNotificationId(
+          base: 7100,
+          span: 1024,
+          parts: [connId ?? '', profile ?? '', runId ?? '', 'run_terminal'],
+        ),
+        title: ok ? t.runCompleted : t.runFailed,
+        body: title,
+        targetSessionId: sessionId,
+        payload: _encodePayload(
+          connId,
+          sessionId,
+          title,
+          runId: runId,
+          profile: profile,
+        ),
+      );
+    } catch (_) {
+      await _eventLedger.release(
+        connId: connId ?? '',
         profile: profile,
-      ),
-    );
+        objectId: runId ?? '',
+        eventKind: 'run_terminal',
+      );
+      rethrow;
+    }
   }
 
   /// Resultado de una automatización cron descubierta desde las sesiones de
-  /// Hermes Desktop. Comparte el opt-in de automatizaciones con Kanban y no
-  /// depende del toggle de runs iniciadas desde Task Center.
+  /// Hermes Desktop. Usa su propio opt-in ([notifyCronResults]), independiente
+  /// del de Kanban y del toggle de runs iniciadas desde Task Center.
   Future<void> cronFinished({
     required String title,
     required bool ok,
     required String connId,
     required String sessionId,
+    required String executionId,
+    required String jobId,
     String? profile,
     String? preview,
-  }) {
-    if (!notifyCronResults) return Future.value();
+  }) async {
+    if (!notifyCronResults) return;
+    if (!await _eventLedger.claim(
+      connId: connId,
+      profile: profile,
+      objectId: executionId,
+      eventKind: 'cron_terminal',
+    )) {
+      return;
+    }
     final t = NotifL10n.of(_prefs);
-    return _show(
-      kind: NotificationKind.run,
-      id: 7100 + (sessionId.hashCode & 0x3ff),
-      title: ok ? t.runCompleted : t.runFailed,
-      body: compactAutomationPreview(preview, fallback: title),
-      targetSessionId: sessionId,
-      subText: compactSessionLabel(title),
-      payload: _encodePayload(connId, sessionId, title, profile: profile),
-    );
+    try {
+      await _show(
+        kind: NotificationKind.run,
+        id: eventNotificationId(
+          base: 7100,
+          span: 1024,
+          parts: [
+            connId,
+            profile ?? '',
+            executionId.isNotEmpty ? executionId : jobId,
+            'cron_terminal',
+          ],
+        ),
+        title: ok ? t.cronCompleted : t.cronFailed,
+        body: compactAutomationPreview(preview, fallback: title),
+        targetSessionId: sessionId,
+        subText: compactSessionLabel(title),
+        payload: _encodePayload(connId, sessionId, title, profile: profile),
+      );
+    } catch (_) {
+      await _eventLedger.release(
+        connId: connId,
+        profile: profile,
+        objectId: executionId,
+        eventKind: 'cron_terminal',
+      );
+      rethrow;
+    }
   }
 
   /// Convierte la respuesta final del agente en texto legible para la bandeja.
@@ -772,15 +842,17 @@ class NotificationService implements RunNotificationFacade {
     return '${String.fromCharCodes(runes.take(maxRunes - 1))}…';
   }
 
-  /// Transición relevante del Kanban oficial de Hermes Agent 0.20. El board no
-  /// publica una sesión de chat asociada, así que el aviso abre la aplicación
-  /// sin inventar un destino de Task Center.
+  /// Transición relevante del Kanban oficial de Hermes Agent 0.20. El aviso
+  /// lleva el `taskId` autoritativo en el payload: el tap abre la tarjeta
+  /// exacta en TasksScreen, sin inventar un destino de Task Center.
+  /// Opt-in propio ([notifyKanbanResults]), independiente del de Cron.
   Future<void> kanbanTransition({
+    required String connId,
     required String taskId,
     required String title,
     required String status,
   }) {
-    if (!notifyCronResults) return Future.value();
+    if (!notifyKanbanResults) return Future.value();
     final t = NotifL10n.of(_prefs);
     final notificationTitle = switch (status) {
       'done' => t.kanbanCompleted,
@@ -794,6 +866,7 @@ class NotificationService implements RunNotificationFacade {
       title: notificationTitle,
       body: title,
       subText: 'Kanban · $taskId',
+      payload: _encodePayload(connId, null, title, taskId: taskId),
     );
   }
 
@@ -937,6 +1010,21 @@ class NotificationService implements RunNotificationFacade {
       hash = (hash * 0x01000193) & 0xffffffff;
     }
     return 6000 + (hash & 0x1ff);
+  }
+
+  /// ID estable entre procesos derivado solo de identidad autoritativa.
+  @visibleForTesting
+  static int eventNotificationId({
+    required int base,
+    required int span,
+    required List<String> parts,
+  }) {
+    var hash = 0x811c9dc5;
+    for (final byte in utf8.encode(parts.join('\u001f'))) {
+      hash ^= byte;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return base + (hash % span);
   }
 
   /// Los títulos proceden del servidor y pueden contener Markdown, controles o
@@ -1250,7 +1338,9 @@ class NotificationService implements RunNotificationFacade {
     final effectiveActions = compact
         ? null
         : redact
-        ? ((!ongoingFeel && payload != null)
+        // Con contenido oculto nunca se resuelve nada desde la bandeja: solo
+        // "Abrir" (la app decide tras el desbloqueo).
+        ? ((actions != null || !ongoingFeel) && payload != null
               ? <AndroidNotificationAction>[
                   AndroidNotificationAction(
                     'open',
@@ -1290,6 +1380,8 @@ class NotificationService implements RunNotificationFacade {
       colorized: false,
       subText: compact ? null : summary,
       groupKey: _groupKey,
+      // Re-publicar el mismo objeto actualiza la tarjeta sin repetir sonido.
+      onlyAlertOnce: true,
       category: compact
           ? AndroidNotificationCategory.status
           : ongoingFeel
@@ -1318,6 +1410,11 @@ class NotificationService implements RunNotificationFacade {
       payload: payload,
     );
     _log('${kind.name} MOSTRADA (id=$id, fg=$appInForeground)');
+    // Jerarquía D→A: las alertas hijas conservan su tap individual; con 2+
+    // activas se publica un resumen de grupo silencioso que las agrupa.
+    if (!compact && kind != NotificationKind.test) {
+      await _refreshGroupSummary(channelId: ch.id, t: t);
+    }
     // Recuerda la última alerta de 2º plano para re-afirmarla si el desmontaje
     // del foreground service la borra (la de prueba no: es de primer plano).
     if (!appInForeground && kind != NotificationKind.test) {
@@ -1332,6 +1429,88 @@ class NotificationService implements RunNotificationFacade {
       );
     }
     return true;
+  }
+
+  /// Publica o retira el resumen del grupo según las alertas hijas REALMENTE
+  /// activas en la bandeja del sistema. Consultar al SO —en vez de memoria del
+  /// isolate— lo hace coherente entre productores (UI, listener, foreground
+  /// service), tras recrear el proceso y cuando el usuario descarta una hija a
+  /// mano. Silencioso ([GroupAlertBehavior.children]) y estable: nunca compite
+  /// con el contenido de las hijas. Sin [channelId]/[t] solo puede retirar el
+  /// resumen (camino de cancelación), nunca publicarlo.
+  Future<void> _refreshGroupSummary({String? channelId, NotifL10n? t}) async {
+    final children = await _countActiveChildren();
+    if (children < 2) {
+      await _plugin.cancel(_groupSummaryId);
+      return;
+    }
+    if (channelId == null || t == null) return;
+    final details = AndroidNotificationDetails(
+      channelId,
+      channelId,
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      icon: 'ic_stat_hermes',
+      color: _accent,
+      groupKey: _groupKey,
+      setAsGroupSummary: true,
+      groupAlertBehavior: GroupAlertBehavior.children,
+      onlyAlertOnce: true,
+    );
+    await _plugin.show(
+      _groupSummaryId,
+      t.brand,
+      t.groupSummaryBody,
+      NotificationDetails(android: details),
+    );
+  }
+
+  /// ¿Es esta notificación activa una ALERTA hija del grupo (jerarquía A/B)?
+  /// Excluye el resumen, la prueba, las respuestas compactas (canal replies),
+  /// los servicios ongoing (voz, FGS) y las transferencias: ninguno debe
+  /// disparar ni sostener el resumen. Pura y testeable.
+  @visibleForTesting
+  static bool isAlertChildNotification({
+    required int? id,
+    required String? channelId,
+    required String? groupKey,
+  }) {
+    if (groupKey != _groupKey) return false;
+    if (id == null || id == _groupSummaryId || id == _testNotificationId) {
+      return false;
+    }
+    if (channelId == _chApprovals || channelId == _chRuns) return true;
+    // API < 26 no expone channelId: degradar al rango de IDs de alerta.
+    if (channelId == null) {
+      return id == 7001 || (id >= 7100 && id != _voiceOngoingId);
+    }
+    return false;
+  }
+
+  /// Cuenta las alertas hijas activas consultando la bandeja del sistema.
+  /// Ante cualquier fallo de plataforma devuelve 0 (degrada a "sin resumen",
+  /// nunca bloquea la alerta que se acaba de mostrar).
+  Future<int> _countActiveChildren() async {
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) return 0;
+    try {
+      final active = await android.getActiveNotifications();
+      return active
+          .where(
+            (n) => isAlertChildNotification(
+              id: n.id,
+              channelId: n.channelId,
+              groupKey: n.groupKey,
+            ),
+          )
+          .length;
+    } catch (e) {
+      _log('no se pudieron consultar las notificaciones activas: $e');
+      return 0;
+    }
   }
 
   /// Vuelve a mostrar la última notificación de 2º plano si se posteó hace poco.
@@ -1393,6 +1572,7 @@ class NotificationService implements RunNotificationFacade {
   Future<void> cancelById(int id, String reason) async {
     _log('CANCEL id=$id motivo="$reason"\n${StackTrace.current}');
     await _plugin.cancel(id);
+    await _refreshGroupSummary();
   }
 }
 
@@ -1415,57 +1595,4 @@ class _LastBgNotif {
     required this.compact,
     required this.at,
   });
-}
-
-/// Handler de los botones de acción de una notificación cuando la app está
-/// MUERTA o en 2º plano sin isolate de UI. flutter_local_notifications lo
-/// ejecuta en un isolate de fondo aislado; debe ser top-level y estar anotado
-/// con `vm:entry-point` para sobrevivir al tree-shaking de AOT.
-///
-/// Solo procesa Aprobar/Rechazar de las notificaciones de aprobación de runs:
-/// resuelve directamente contra el gateway (red mínima, sin tocar la UI). Para
-/// cualquier otra acción/tap, el arranque normal de la app consume el payload
-/// pendiente y navega.
-@pragma('vm:entry-point')
-void notificationActionBackground(NotificationResponse response) {
-  final action = response.actionId;
-  if (action != 'approve' && action != 'deny') return;
-  final choice = action == 'approve' ? 'once' : 'deny';
-  // No se puede await en este punto de entrada; se dispara y se deja correr.
-  resolveApprovalPayload(response.payload, choice);
-}
-
-/// Resuelve una aprobación de run a partir del payload de la notificación
-/// (`{conn, rid, base}`): carga el token del Keystore por `conn` y hace
-/// `POST {base}/v1/runs/{rid}/approval {choice}`. `choice` ∈ once|session|
-/// always|deny. Idempotente y tolerante a fallos (si el run ya no espera, el
-/// gateway responde 4xx y se ignora). Top-level para poder usarse también desde
-/// el isolate de fondo.
-Future<void> resolveApprovalPayload(String? payload, String choice) async {
-  if (payload == null || payload.isEmpty) return;
-  try {
-    final map = jsonDecode(payload);
-    if (map is! Map) return;
-    final connId = (map['conn'] ?? '').toString();
-    final runId = (map['rid'] ?? '').toString();
-    final base = (map['base'] ?? '').toString();
-    if (connId.isEmpty || runId.isEmpty || base.isEmpty) return;
-    final safeBase = TransportPrivacy.requireAllowed(base);
-    final token = await SecureStorage().readApiKey(connId);
-    final uri = Uri.parse('$safeBase/v1/runs/$runId/approval');
-    await http
-        .post(
-          uri,
-          headers: {
-            if (token != null && token.isNotEmpty)
-              'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({'choice': choice}),
-        )
-        .timeout(const Duration(seconds: 12));
-    debugPrint('[hermes-notif] approval $runId → $choice');
-  } catch (e) {
-    debugPrint('[hermes-notif] approval resolve failed: $e');
-  }
 }

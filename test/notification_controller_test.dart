@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_controller.dart';
+import 'package:hermes_android/core/services/notifications/notification_event_ledger.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/run_registry.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ─── Fake ─────────────────────────────────────────────────────────────────────
 
@@ -72,6 +77,162 @@ RunRecord _run({
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('NotificationEventLedger', () {
+    test(
+      'claim durable deduplica productores tras recrear el ledger',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final first = NotificationEventLedger(prefs);
+
+        expect(
+          await first.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+
+        final afterRestart = NotificationEventLedger(
+          await SharedPreferences.getInstance(),
+        );
+        expect(
+          await afterRestart.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'run_terminal',
+          ),
+          isFalse,
+        );
+        expect(
+          await afterRestart.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'approval_required',
+          ),
+          isTrue,
+        );
+        expect(
+          await afterRestart.claim(
+            connId: 'conn-b',
+            profile: 'research',
+            objectId: 'run-42',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('ledger queda acotado y persiste solo identidad tipada', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final ledger = NotificationEventLedger(prefs, maxEntries: 2);
+
+      for (final id in ['run-1', 'run-2', 'run-3']) {
+        expect(
+          await ledger.claim(
+            connId: 'conn',
+            profile: 'default',
+            objectId: id,
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+      }
+
+      final persisted = prefs.getString(NotificationEventLedger.storageKey)!;
+      expect(NotificationEventLedger.decodeEntries(persisted), hasLength(2));
+      expect(persisted, isNot(contains('title')));
+      expect(persisted, isNot(contains('body')));
+      expect(persisted, isNot(contains('text')));
+    });
+
+    test(
+      'un claim cuya presentación falla puede reclamarse de nuevo',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final ledger = NotificationEventLedger(prefs);
+
+        expect(
+          await ledger.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-retry',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+        await ledger.release(
+          connId: 'conn-a',
+          profile: 'research',
+          objectId: 'run-retry',
+          eventKind: 'run_terminal',
+        );
+
+        expect(
+          await ledger.claim(
+            connId: 'conn-a',
+            profile: 'research',
+            objectId: 'run-retry',
+            eventKind: 'run_terminal',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('espera un lock breve de otro proceso en vez de duplicar', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final ledger = NotificationEventLedger(prefs);
+      final lockFile = File(
+        '${Directory.systemTemp.path}/notification_event_ledger.lock',
+      );
+      final holder = await Process.start('python3', [
+        '-c',
+        'import fcntl,time; '
+            "f=open(r'${lockFile.path}','a+b'); "
+            'fcntl.lockf(f,fcntl.LOCK_EX); '
+            "print('READY',flush=True); time.sleep(0.25)",
+      ]);
+      expect(
+        await holder.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .first,
+        'READY',
+      );
+
+      expect(
+        await ledger.claim(
+          connId: 'conn-lock',
+          profile: 'default',
+          objectId: 'run-lock',
+          eventKind: 'run_terminal',
+        ),
+        isTrue,
+      );
+      expect(await holder.exitCode, 0);
+      expect(
+        await ledger.claim(
+          connId: 'conn-lock',
+          profile: 'default',
+          objectId: 'run-lock',
+          eventKind: 'run_terminal',
+        ),
+        isFalse,
+      );
+    });
+  });
+
   late _FakeNotif notif;
   late NotificationController ctrl;
 
@@ -174,16 +335,13 @@ void main() {
       expect(notif.calls, contains('approvalPending:herramienta'));
     });
 
-    test('cancela timers de progreso antes de notificar', () async {
-      // Inicia un timer de progreso
+    test('la aprobación sigue notificando tras progreso rutinario', () async {
+      // El progreso ya no crea push; la aprobación sí interrumpe.
       ctrl.notifyRunProgress(_run(progressLabel: 'tool: read_file'));
       expect(notif.calls.where((c) => c.startsWith('runLive')), isEmpty);
-      // La aprobación llega antes del debounce
       ctrl.notifyRunWaitingApproval(_run(progressLabel: 'bash'));
       expect(notif.calls, contains('approvalPending:bash'));
-      // Avanzamos el tiempo: el timer debería estar cancelado
       await Future.delayed(const Duration(seconds: 6));
-      // No debería haberse llamado runLive tras la aprobación
       expect(notif.calls.where((c) => c.startsWith('runLive:run-1')), isEmpty);
     });
   });
@@ -196,7 +354,7 @@ void main() {
       expect(notif.calls.where((c) => c.startsWith('runLive:')), isEmpty);
     });
 
-    test('debouncea: solo dispara una vez tras N llamadas rápidas', () async {
+    test('progreso rutinario no crea ninguna notificación push', () async {
       for (var i = 0; i < 5; i++) {
         ctrl.notifyRunProgress(_run(progressLabel: 'tool:$i'));
       }
@@ -204,29 +362,22 @@ void main() {
       final liveCalls = notif.calls
           .where((c) => c.startsWith('runLive:run-1'))
           .toList();
-      expect(liveCalls.length, 1);
-    });
-
-    test('dispara runLive con el runId correcto', () async {
-      ctrl.notifyRunProgress(_run(id: 'abc-123', progressLabel: 'bash'));
-      await Future.delayed(const Duration(seconds: 6));
-      expect(notif.calls.any((c) => c.startsWith('runLive:abc-123')), isTrue);
+      expect(liveCalls, isEmpty);
     });
   });
 
   group('clearRunNotification', () {
-    test('cancela timers y emite cancelRun', () async {
+    test('cancela el aviso del run sin emitir nada nuevo', () async {
       ctrl.notifyRunProgress(_run(progressLabel: 'bash'));
       ctrl.clearRunNotification('run-1');
       await Future.delayed(const Duration(seconds: 6));
       expect(notif.calls, contains('cancelRun:run-1'));
-      // El timer fue cancelado, no debe haber runLive
       expect(notif.calls.where((c) => c.startsWith('runLive:run-1')), isEmpty);
     });
   });
 
   group('dispose', () {
-    test('cancela todos los timers pendientes', () async {
+    test('libera el estado efímero sin notificar', () async {
       ctrl.notifyRunProgress(_run(id: 'r1', progressLabel: 'a'));
       ctrl.notifyRunProgress(_run(id: 'r2', progressLabel: 'b'));
       ctrl.dispose();
@@ -236,18 +387,18 @@ void main() {
   });
 
   group('propagación de connId', () {
-    test('connId se incluye en la llamada a runLive', () async {
+    test('connId no convierte el progreso en una interrupción', () async {
       final ctrlWithConn = NotificationController(notif, connId: 'conn-abc');
       ctrlWithConn.notifyRunProgress(_run(progressLabel: 'bash'));
       await Future.delayed(const Duration(seconds: 6));
-      expect(notif.calls.where((c) => c.contains('conn=conn-abc')), isNotEmpty);
+      expect(notif.calls.where((c) => c.startsWith('runLive:')), isEmpty);
       ctrlWithConn.dispose();
     });
 
-    test('sin connId el campo es vacío', () async {
+    test('sin connId el progreso también queda solo en UI', () async {
       ctrl.notifyRunProgress(_run(progressLabel: 'bash'));
       await Future.delayed(const Duration(seconds: 6));
-      expect(notif.calls.where((c) => c.contains('conn=')), isNotEmpty);
+      expect(notif.calls.where((c) => c.startsWith('runLive:')), isEmpty);
     });
   });
 }

@@ -13,8 +13,8 @@ void main() {
       expect(en.approvalTitle, 'Hermes needs your permission');
       expect(es.runCompleted, 'Ejecución completada');
       expect(en.runCompleted, 'Run completed');
-      expect(es.actApprove, 'Aprobar');
-      expect(en.actApprove, 'Approve');
+      expect(es.cronCompleted, 'Cron completado');
+      expect(en.cronFailed, 'Cron failed');
       expect(es.actOpen, 'Abrir');
       expect(en.actOpen, 'Open');
       expect(es.privateTitle, 'Nueva actividad en Hermes');

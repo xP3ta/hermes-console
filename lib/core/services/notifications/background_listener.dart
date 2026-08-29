@@ -374,6 +374,27 @@ class BackgroundCronWatch {
     return latestAssistantPreview(messages);
   }
 
+  /// Solo eleva al plano de interrupción un resultado material. Esta regla se
+  /// aplica exclusivamente a sesiones tipadas como Cron; por eso los tokens de
+  /// supresión no pueden ocultar texto humano de un chat normal.
+  @visibleForTesting
+  static bool shouldNotifyResult(
+    CronExecutionSnapshot execution, {
+    required Session? session,
+    required String? preview,
+  }) {
+    // Los fallos son accionables incluso si el Dashboard no pudo hidratar su
+    // sesión: ocultarlos por datos incompletos sería el fallo inseguro.
+    if (!execution.ok) return true;
+    // Un completed solo puede elevarse usando la proyección autoritativa Cron.
+    if (session == null || session.source.trim().toLowerCase() != 'cron') {
+      return false;
+    }
+    final outcome = (preview ?? '').trim();
+    if (outcome.isEmpty) return false;
+    return outcome != '[SILENT]' && outcome != 'no_change';
+  }
+
   static Session? sessionForExecution(
     CronExecutionSnapshot execution,
     List<Session> sessions,
@@ -910,7 +931,8 @@ class _HermesTaskHandler extends TaskHandler {
           _emptyPolls = 0;
           return;
         }
-        return await _maybeAutoStop(prefs);
+        await _maybeAutoStop(prefs);
+        return;
       }
       final notif = _notif ??= (NotificationService(prefs)
         ..appInForeground = false);
@@ -935,7 +957,8 @@ class _HermesTaskHandler extends TaskHandler {
           _emptyPolls = 0;
           return;
         }
-        return await _maybeAutoStop(prefs);
+        await _maybeAutoStop(prefs);
+        return;
       }
       _emptyPolls = 0;
       if (!audioCardActive) _setPollInterval(_kActiveIntervalMs);
@@ -1072,11 +1095,20 @@ class _HermesTaskHandler extends TaskHandler {
               );
             }
           }
+          if (!BackgroundCronWatch.shouldNotifyResult(
+            execution,
+            session: session,
+            preview: preview,
+          )) {
+            continue;
+          }
           await notif.cronFinished(
             title: session?.displayTitle ?? execution.title,
             ok: execution.ok,
             connId: connection.id,
             sessionId: destination?.sessionId ?? '',
+            executionId: execution.executionId,
+            jobId: execution.jobId,
             profile:
                 destination?.profile ??
                 (execution.profile.isEmpty ? null : execution.profile),
@@ -1094,16 +1126,16 @@ class _HermesTaskHandler extends TaskHandler {
     return true;
   }
 
-  /// Observa el board nativo de Agent 0.20 con el mismo opt-in de
-  /// "Resultados de automatizaciones" usado por Cron. En servidores legacy
-  /// sin Kanban, [BackgroundKanbanWatch.loadTasks] devuelve null y este camino
-  /// se limita a no hacer nada.
+  /// Observa el board nativo de Agent 0.20 con su propio opt-in
+  /// ([NotificationService.notifyKanbanResults]), independiente del de Cron.
+  /// En servidores legacy sin Kanban, [BackgroundKanbanWatch.loadTasks]
+  /// devuelve null y este camino se limita a no hacer nada.
   Future<bool> _discoverKanbanTransitions(
     NotificationService notif,
     SharedPreferences prefs,
     List<SavedConnection> targets,
   ) async {
-    if (targets.isEmpty || !notif.notifyCronResults) return false;
+    if (targets.isEmpty || !notif.notifyKanbanResults) return false;
     final uiForeground =
         prefs.getBool(BackgroundListener.uiForegroundKey) == true;
     for (final connection in targets) {
@@ -1148,6 +1180,7 @@ class _HermesTaskHandler extends TaskHandler {
         if (uiForeground && !notif.evenInForeground) continue;
         for (final transition in fresh) {
           await notif.kanbanTransition(
+            connId: connection.id,
             taskId: transition.taskId,
             title: transition.title,
             status: transition.status,
@@ -1288,22 +1321,13 @@ class _HermesTaskHandler extends TaskHandler {
           .timeout(const Duration(seconds: 12));
       debugPrint('[hermes-notif] poll run ${r.runId} → HTTP ${res.statusCode}');
 
-      // 404 = run barrida por el gateway tras completar. Como solo vigilamos
-      // runs que creamos con id válido, esto significa que terminó mientras el
-      // isolate de UI estaba muerto: avisamos (la UI viva ya habría quitado la
-      // vigilancia antes de este sondeo, así que no duplicamos).
-      if (res.statusCode == 404) {
-        final title = r.prompt.trim().isEmpty ? 'Agent task' : r.prompt.trim();
-        await notif.cancelApproval();
-        await notif.runFinished(
-          title: title,
-          ok: true,
-          connId: r.connId,
-          sessionId: r.sessionId,
-        );
-        return null;
+      // Solo un 200 aporta estado autoritativo. Un 404 también puede significar
+      // expiración o pérdida del ledger: nunca se convierte en éxito inventado.
+      if (!BackgroundListener.canInferRunOutcomeFromHttpStatus(
+        res.statusCode,
+      )) {
+        return r; // reintentar luego
       }
-      if (res.statusCode != 200) return r; // reintentar luego
 
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       final status = (body['status'] ?? '').toString();
@@ -1334,6 +1358,7 @@ class _HermesTaskHandler extends TaskHandler {
           ok: status == 'completed',
           connId: r.connId,
           sessionId: r.sessionId,
+          runId: r.runId,
         );
         return null; // dejar de vigilar
       }
@@ -1369,6 +1394,10 @@ class OrderedForegroundStateWriter {
 }
 
 class BackgroundListener {
+  @visibleForTesting
+  static bool canInferRunOutcomeFromHttpStatus(int statusCode) =>
+      statusCode == 200;
+
   /// Margen para que el port entre isolates entregue `end` antes de destruir
   /// el engine del foreground task. Sin él, el servicio podía cortar el
   /// micrófono pero perder la orden destinada a cerrar la UI principal.
