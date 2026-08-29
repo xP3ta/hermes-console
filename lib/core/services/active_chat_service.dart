@@ -2377,6 +2377,19 @@ class ActiveChat {
 
   void _retireDesktopRuntime() {
     _desktopBindEpoch += 1;
+    final retiredRuntimeId = _desktopRuntimeSessionId;
+    if (retiredRuntimeId != null) {
+      for (final key in _batchLocks.keys) {
+        if (key.runtimeSessionId != retiredRuntimeId) continue;
+        final entry = _interactivePrompts[key];
+        final request = entry?.request;
+        if (entry?.status == InteractivePromptStatus.responding &&
+            request is ClarifyPromptRequest &&
+            request.isBatch) {
+          _reduceInteractivePrompt(InteractivePromptExpired(key));
+        }
+      }
+    }
     final scope = _sessionConfigScope;
     if (scope != null) {
       _sessionConfigState = SessionConfigReducer.reduce(
@@ -7233,11 +7246,17 @@ class ActiveChat {
   Future<DesktopPromptResponse> respondToClarify(
     InteractivePromptKey key,
     String answer,
-  ) => _respondToInteractivePrompt(
-    key,
-    expectedKind: InteractivePromptKind.clarify,
-    invoke: (gateway) => gateway.respondToClarify(key.requestId, answer),
-  );
+  ) {
+    final request = _interactivePrompts[key]?.request;
+    if (request is ClarifyPromptRequest && request.isBatch) {
+      return Future.error(StateError('Batch clarify requires batch response'));
+    }
+    return _respondToInteractivePrompt(
+      key,
+      expectedKind: InteractivePromptKind.clarify,
+      invoke: (gateway) => gateway.respondToClarify(key.requestId, answer),
+    );
+  }
 
   Future<DesktopPromptResponse> respondToClarifyBatch(
     InteractivePromptKey key,
@@ -7271,6 +7290,9 @@ class ActiveChat {
       throw StateError('Interactive prompt is no longer pending');
     }
     final request = entry!.request as ClarifyPromptRequest;
+    if (!request.isBatch) {
+      throw StateError('Legacy clarify requires legacy response');
+    }
     final desktop = _desktopGateway;
     final HermesDesktopInteractivePromptGateway? interactiveGateway =
         desktop is HermesDesktopInteractivePromptGateway
@@ -7327,18 +7349,28 @@ class ActiveChat {
           answer,
           questionId: question.qid,
         );
-        if (!_batchPromptIsResponding(key)) return lastResult;
+        final liveAfterAck = _respondingBatchRequest(key);
+        if (liveAfterAck == null) return lastResult;
         // Evaluate each response immediately and stop on any non-success
         // outcome, before sending the next sequential answer.
         if (lastResult.isExpired) {
           _reduceInteractivePrompt(InteractivePromptExpired(key));
           return lastResult;
         }
+        final authoritativeAnswer = liveAfterAck.lockedAnswers[question.qid];
+        if (authoritativeAnswer != null && authoritativeAnswer != answer) {
+          _reduceInteractivePrompt(InteractivePromptExpired(key));
+          throw StateError('Authoritative clarify answer conflict');
+        }
         _reduceInteractivePrompt(
           InteractivePromptBatchProgressConfirmed(key, question.qid, answer),
         );
       }
-      final result = lastResult!;
+      final result =
+          lastResult ??
+          DesktopPromptResponse.fromJson(const {
+            'status': 'ok',
+          }, method: 'clarify.respond');
       if (!_batchPromptIsResponding(key)) {
         _reduceInteractivePrompt(InteractivePromptExpired(key));
         return result;
@@ -7349,7 +7381,11 @@ class ActiveChat {
       }
       return result;
     } catch (error) {
-      if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
+      if (_interactivePrompts[key]?.isTerminal == true) {
+        // A local fail-closed fence (for example, an authoritative answer
+        // conflict) must remain terminal and must not be reopened by resume.
+      } else if (_disposed ||
+          _desktopRuntimeSessionId != key.runtimeSessionId) {
         _reduceInteractivePrompt(InteractivePromptExpired(key));
       } else if (error is TuiGatewayRpcError && error.code != null) {
         _reduceInteractivePrompt(
@@ -7372,7 +7408,12 @@ class ActiveChat {
   }
 
   ClarifyPromptRequest? _respondingBatchRequest(InteractivePromptKey key) {
-    if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
+    if (_disposed) return null;
+    if (_desktopRuntimeSessionId != key.runtimeSessionId) {
+      // A runtime rotation invalidates only this exact in-flight batch. Seal its
+      // entry before returning so a late ACK cannot leave it stuck responding;
+      // terminal tombstones and prompts from every other identity stay intact.
+      _reduceInteractivePrompt(InteractivePromptExpired(key));
       return null;
     }
     final current = _interactivePrompts[key];

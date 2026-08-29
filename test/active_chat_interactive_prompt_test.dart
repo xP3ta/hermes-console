@@ -719,6 +719,259 @@ void main() {
   );
 
   test(
+    'runtime switch during an in-flight batch ACK expires the old entry',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final calls = <String?>[];
+      final firstAck = Completer<DesktopPromptResponse>();
+      final ok = DesktopPromptResponse.fromJson(const {
+        'status': 'ok',
+      }, method: 'clarify.respond');
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        calls.add(questionId);
+        return firstAck.future;
+      };
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-runtime-switch',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+          {
+            'qid': 'q1',
+            'question': '¿B?',
+            'choices': ['B0'],
+          },
+        ],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+      final operation = chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+        'q1': 'B0',
+      });
+
+      try {
+        await _waitUntil(() => calls.isNotEmpty);
+        gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-replaced',
+          storedSessionId: 'stored-interactive',
+          created: false,
+        );
+        await chat.loadMessages();
+        expect(
+          chat.interactivePrompts[entry.key]?.status,
+          InteractivePromptStatus.expired,
+        );
+        firstAck.complete(ok);
+
+        await operation.timeout(const Duration(seconds: 2));
+      } finally {
+        if (!firstAck.isCompleted) firstAck.complete(ok);
+      }
+
+      expect(calls, ['q0']);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.expired,
+      );
+    },
+  );
+
+  test(
+    'fully locked batch completes without sending or dereferencing a null ACK',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final calls = <String?>[];
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        calls.add(questionId);
+        return DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond');
+      };
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-fully-locked',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+        ],
+        'answers': {'q0': 'A0'},
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+
+      final result = await chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+      });
+
+      expect(result.isExpired, isFalse);
+      expect(calls, isEmpty);
+      expect(chat.pendingInteractivePrompt, isNull);
+    },
+  );
+
+  test(
+    'matching authoritative lock for the in-flight qid completes without resend',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final first = Completer<DesktopPromptResponse>();
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        return first.future;
+      };
+      const pending = {
+        'request_id': 'batch-current-lock-same',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0'],
+          },
+        ],
+      };
+      gateway.emit('clarify.request', pending);
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+      final operation = chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+      });
+      await _waitUntil(
+        () =>
+            chat.pendingInteractivePrompt?.status ==
+            InteractivePromptStatus.responding,
+      );
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: {
+          ...pending,
+          'answers': {'q0': 'A0'},
+        },
+      );
+      await chat.loadMessages();
+      first.complete(
+        DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond'),
+      );
+
+      await operation;
+      expect(chat.pendingInteractivePrompt, isNull);
+    },
+  );
+
+  test(
+    'conflicting authoritative lock for the in-flight qid fails closed',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final first = Completer<DesktopPromptResponse>();
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+        return first.future;
+      };
+      const pending = {
+        'request_id': 'batch-current-lock-conflict',
+        'questions': [
+          {
+            'qid': 'q0',
+            'question': '¿A?',
+            'choices': ['A0', 'A1'],
+          },
+        ],
+      };
+      gateway.emit('clarify.request', pending);
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+      final operation = chat.respondToClarifyBatch(entry.key, const {
+        'q0': 'A0',
+      });
+      await _waitUntil(
+        () =>
+            chat.pendingInteractivePrompt?.status ==
+            InteractivePromptStatus.responding,
+      );
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: {
+          ...pending,
+          'answers': {'q0': 'A1'},
+        },
+      );
+      await chat.loadMessages();
+      first.complete(
+        DesktopPromptResponse.fromJson(const {
+          'status': 'ok',
+        }, method: 'clarify.respond'),
+      );
+
+      await expectLater(operation, throwsA(isA<StateError>()));
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.expired,
+      );
+    },
+  );
+
+  test('legacy clarify rejects the batch response API', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    gateway.emit('clarify.request', const {
+      'request_id': 'legacy-cross-api',
+      'question': '¿Continuar?',
+      'choices': ['Sí', 'No'],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+
+    await expectLater(
+      chat.respondToClarifyBatch(entry.key, const {'q0': 'Sí'}),
+      throwsA(isA<StateError>()),
+    );
+    expect(entry.status, InteractivePromptStatus.pending);
+  });
+
+  test('batch clarify rejects the legacy response API', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    gateway.emit('clarify.request', const {
+      'request_id': 'batch-cross-api',
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿A?',
+          'choices': ['A0'],
+        },
+      ],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    final entry = chat.pendingInteractivePrompt!;
+
+    await expectLater(
+      chat.respondToClarify(entry.key, 'A0'),
+      throwsA(isA<StateError>()),
+    );
+    expect(entry.status, InteractivePromptStatus.pending);
+  });
+
+  test(
     'malformed authoritative snapshot after ambiguous ACK expires only clarify',
     () async {
       final gateway = _InteractiveGateway();
