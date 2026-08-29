@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../data/litert_catalog.dart';
 import '../services/connection_manager.dart';
 import '../services/litert_engine.dart';
@@ -61,18 +62,13 @@ class LitertStoreScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
     return Scaffold(
-      appBar: const HermesAppBar(title: Text('Tienda de modelos GPU')),
+      appBar: HermesAppBar(title: Text(s.litertStoreTitle)),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
-          HermesInfoBanner(
-            'Modelos .litertlm que OlliteRT corre en la GPU/NPU del móvil. La '
-            'descarga ocurre dentro de OlliteRT (su tienda); aquí ves cuáles '
-            'caben en tu móvil, los abres para descargar, y «Usar» fija el que '
-            'ya esté servido como modelo activo de Hermes.',
-            icon: Icons.storefront_outlined,
-          ),
+          HermesInfoBanner(s.litertStoreIntro, icon: Icons.storefront_outlined),
           const SizedBox(height: 16),
           for (final m in kLitertCatalog) ...[
             _modelCard(context, colors, m),
@@ -88,6 +84,7 @@ class LitertStoreScreen extends StatelessWidget {
     HermesThemeColors colors,
     LitertModel m,
   ) {
+    final s = Strings.of(context);
     final fit = _fitFor(m);
     final servedModel = _servedFor(m);
     final isServed = servedModel != null;
@@ -119,13 +116,22 @@ class LitertStoreScreen extends StatelessWidget {
                 ),
               ),
               if (m.recommended) ...[
-                HermesPill(label: 'Recomendado', color: colors.accent),
+                HermesPill(
+                  label: s.litertStoreRecommended,
+                  color: colors.accent,
+                ),
                 const SizedBox(width: 6),
               ],
               if (inUse)
-                HermesPill(label: 'en uso', color: colors.success)
+                HermesPill(
+                  label: s.litertStoreInUseLower,
+                  color: colors.success,
+                )
               else if (isServed)
-                HermesPill(label: 'descargado', color: colors.success),
+                HermesPill(
+                  label: s.litertStoreDownloaded,
+                  color: colors.success,
+                ),
             ],
           ),
           const SizedBox(height: 6),
@@ -136,13 +142,13 @@ class LitertStoreScreen extends StatelessWidget {
               _meta(colors, Icons.sd_storage_outlined, '${m.sizeGb} GB'),
               _meta(colors, Icons.memory, 'RAM ${m.minRamGb} GB'),
               _meta(colors, Icons.short_text, '${m.contextLabel} ctx'),
-              _fitChip(colors, fit),
+              _fitChip(colors, fit, s),
             ],
           ),
           if (m.note != null) ...[
             const SizedBox(height: 6),
             Text(
-              m.note!,
+              _note(s, m.note!),
               style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
             ),
           ],
@@ -152,18 +158,15 @@ class LitertStoreScreen extends StatelessWidget {
               Expanded(
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.download_outlined, size: 16),
-                  label: const Text('Descargar'),
+                  label: Text(s.litertStoreDownload),
                   onPressed: () => _openDownload(context, m),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
-                  icon: Icon(
-                    inUse ? Icons.check : Icons.play_arrow,
-                    size: 16,
-                  ),
-                  label: Text(inUse ? 'En uso' : 'Usar'),
+                  icon: Icon(inUse ? Icons.check : Icons.play_arrow, size: 16),
+                  label: Text(inUse ? s.litertStoreInUse : s.litertStoreUse),
                   onPressed: (!isServed || inUse)
                       ? null
                       : () => Navigator.of(context).pop(servedModel.id),
@@ -174,7 +177,7 @@ class LitertStoreScreen extends StatelessWidget {
           if (!isServed) ...[
             const SizedBox(height: 6),
             Text(
-              'Descárgalo y arráncalo en OlliteRT para poder usarlo.',
+              s.litertStoreStartHint,
               style: TextStyle(fontSize: 11, color: colors.textSecondary),
             ),
           ],
@@ -197,30 +200,36 @@ class LitertStoreScreen extends StatelessWidget {
     );
   }
 
-  Widget _fitChip(HermesThemeColors colors, _Fit fit) {
+  Widget _fitChip(HermesThemeColors colors, _Fit fit, Strings s) {
     final (String label, Color color) = switch (fit) {
-      _Fit.fits => ('cabe', colors.success),
-      _Fit.tight => ('justo', colors.warning),
-      _Fit.tooBig => ('no cabe', colors.error),
+      _Fit.fits => (s.litertStoreFits, colors.success),
+      _Fit.tight => (s.litertStoreTight, colors.warning),
+      _Fit.tooBig => (s.litertStoreTooBig, colors.error),
       _Fit.unknown => ('RAM ?', colors.textSecondary),
     };
     return HermesPill(label: label, color: color);
   }
 
+  String _note(Strings s, LitertModelNote note) => switch (note) {
+    LitertModelNote.recommended => s.litertNoteRecommended,
+    LitertModelNote.highEnd => s.litertNoteHighEnd,
+    LitertModelNote.lightweight => s.litertNoteLightweight,
+    LitertModelNote.distilledReasoner => s.litertNoteDistilledReasoner,
+  };
+
   /// Abre la página de HuggingFace del modelo (la descarga real la gestiona
   /// OlliteRT desde su propia tienda; el enlace es la fuente oficial).
   Future<void> _openDownload(BuildContext context, LitertModel m) async {
     try {
-      await launchUrl(
-        Uri.parse(m.hfUrl),
-        mode: LaunchMode.externalApplication,
-      );
+      await launchUrl(Uri.parse(m.hfUrl), mode: LaunchMode.externalApplication);
     } catch (e) {
-      debugPrint('[litert-store] excepción silenciada (se avisa al usuario y se sigue): $e');
+      debugPrint(
+        '[litert-store] excepción silenciada (se avisa al usuario y se sigue): $e',
+      );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('No se pudo abrir ${m.hfUrl}'),
+            content: Text(Strings.of(context).litertStoreOpenError(m.hfUrl)),
             duration: const Duration(seconds: 3),
           ),
         );

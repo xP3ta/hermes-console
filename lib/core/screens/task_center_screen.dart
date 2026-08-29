@@ -318,18 +318,16 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
   /// vivo: el bridge devuelve la respuesta final, que registramos y mostramos.
   Future<void> _launchLocalRun(String prompt) async {
     final conn = widget.connection;
+    final s = Strings.of(context);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ejecutando en el agente local…')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.runsLocalRunning)));
     }
     final base = conn.derivedBridgeUrl;
     final token = await BridgeClient.provision(base, conn.apiKey.trim());
     if (token == null || token.isEmpty) {
-      throw Exception(
-        'No se pudo conectar con el agente local (Mobile Bridge). '
-        'Arranca el agente y reintenta.',
-      );
+      throw Exception(s.runsLocalBridgeUnavailable);
     }
     final client = BridgeClient(baseUrl: base, token: token);
     final response = (await client.chat(prompt)).trim();

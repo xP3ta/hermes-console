@@ -1824,6 +1824,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   /// credencial: deja claro que no hay nada usable todavía en vez de fingir un
   /// modelo listo. El catálogo nativo (abajo) sigue visible para configurarlo.
   Widget _buildNoActiveModelCard(HermesThemeColors colors) {
+    final s = Strings.of(context);
     return _ModelTonalGroup(
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(
@@ -1846,8 +1847,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    // Literal español (candidato a l10n: mdlNoActiveModelTitle).
-                    'Sin modelo configurado',
+                    s.mdlNoActiveModelTitle,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -1856,9 +1856,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    // Literal español (candidato a l10n: mdlNoActiveModelBody).
-                    'Este servidor aún no tiene ningún proveedor de IA con '
-                    'credencial. Configura uno más abajo para poder usarlo.',
+                    s.mdlNoActiveModelBody,
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.35,
@@ -1915,7 +1913,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                     border: Border.all(color: colors.accent, width: 0.8),
                   ),
                   child: Text(
-                    'ACTIVO',
+                    s.mdlActiveBadge,
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
@@ -2360,7 +2358,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                   color: colors.accent,
                 ),
                 title: Text(
-                  'Editar proveedor',
+                  s.mdlEditProvider,
                   style: TextStyle(fontSize: 12.5, color: colors.accentHover),
                 ),
                 onTap: _setting
@@ -2478,8 +2476,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       // el Dashboard: sin él, la acción se deshabilita con aviso en vez de
       // fingir que funciona y fallar al pulsarla. NO se oculta el proveedor.
       trailing = Tooltip(
-        // Literal español (candidato a l10n: mdlConfigNeedsDashboard).
-        message: 'Requiere el Dashboard para configurar',
+        message: s.mdlConfigNeedsDashboard,
         child: Icon(
           Icons.cloud_off_rounded,
           size: 16,
@@ -2517,7 +2514,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         iconColor: colors.textDisabled,
         title: provider.name,
         subtitle: _dashboardConfigDown
-            ? '$subtitle · sin conexión al Dashboard'
+            ? '$subtitle · ${s.mdlDashboardOfflineSuffix}'
             : subtitle,
         trailing: trailing,
         // Pulsación larga: ocultar/mostrar este proveedor de la lista de la app.

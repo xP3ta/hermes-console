@@ -1118,6 +1118,28 @@
   "ollSearching": "buscando modelos en :11434…",
   "ollIntro": "Modelos Ollama que corren en este dispositivo. Descarga los que quepan en tu RAM y pulsa «Usar» para fijarlos como modelo del agente local.",
   "ollNoModels": "Aún no hay modelos descargados. Elige uno del catálogo abajo.",
+  "litertStoreTitle": "Tienda de modelos GPU",
+  "litertStoreIntro": "Modelos .litertlm que OlliteRT ejecuta en la GPU/NPU del móvil. La descarga ocurre dentro de OlliteRT (en su tienda); aquí ves cuáles caben en tu móvil, los abres para descargar y pulsas «Usar» para fijar como modelo activo de Hermes uno que ya esté servido.",
+  "litertStoreRecommended": "Recomendado",
+  "litertStoreInUseLower": "en uso",
+  "litertStoreDownloaded": "descargado",
+  "litertStoreDownload": "Descargar",
+  "litertStoreInUse": "En uso",
+  "litertStoreUse": "Usar",
+  "litertStoreStartHint": "Descárgalo y arráncalo en OlliteRT para poder usarlo.",
+  "litertStoreFits": "cabe",
+  "litertStoreTight": "justo",
+  "litertStoreTooBig": "no cabe",
+  "litertStoreOpenError": "No se pudo abrir {url}",
+  "@litertStoreOpenError": {
+    "placeholders": {
+      "url": {"type": "String"}
+    }
+  },
+  "litertNoteRecommended": "Recomendado para la mayoría de móviles",
+  "litertNoteHighEnd": "Más capaz, para gama alta (12 GB+)",
+  "litertNoteLightweight": "Muy ligero, arranca en casi cualquier móvil",
+  "litertNoteDistilledReasoner": "Razonador destilado",
   "ollInUse": "en uso",
   "ollUse": "Usar",
   "ollCatalogIntro": "Cualquier modelo de Ollama (ej: llama3.3) o de HuggingFace (hf.co/usuario/repo).",
@@ -2083,6 +2105,8 @@
   "runsNewRunNote": "El agente la ejecuta en el servidor. Si una acción requiere aprobación, te la pediré aquí.",
   "runsLaunch": "Lanzar",
   "runsLaunchError": "No se pudo lanzar la ejecución: {error}",
+  "runsLocalRunning": "Ejecutando en el agente local…",
+  "runsLocalBridgeUnavailable": "No se pudo conectar con el agente local (Mobile Bridge). Arranca el agente y reintenta.",
   "@runsLaunchError": {
     "placeholders": {
       "error": {
@@ -2964,6 +2988,11 @@
     }
   },
   "mdlActiveBadge": "ACTIVO",
+  "mdlNoActiveModelTitle": "Sin modelo configurado",
+  "mdlNoActiveModelBody": "Este servidor aún no tiene ningún proveedor de IA con credencial. Configura uno más abajo para poder usarlo.",
+  "mdlEditProvider": "Editar proveedor",
+  "mdlConfigNeedsDashboard": "Requiere el Dashboard para configurar",
+  "mdlDashboardOfflineSuffix": "sin conexión al Dashboard",
   "mdlReconnect": "Reconectar (reautenticar)",
   "mdlReconnectHint": "si el modelo falla por sesión caducada",
   "mdlUpdateKey": "Actualizar clave",
