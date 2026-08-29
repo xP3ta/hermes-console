@@ -754,6 +754,7 @@ const _snapshotParsedKeys = <String>{
   'status',
   'started_at',
   'info',
+  'pending_clarify',
 };
 
 const _messageParsedKeys = <String>{

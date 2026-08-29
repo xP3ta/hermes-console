@@ -696,7 +696,10 @@ void main() {
         storedSessionId: 'stored-interactive',
         created: false,
         pendingClarifyProvided: true,
-        pendingClarify: pending,
+        pendingClarify: {
+          ...pending,
+          'answers': {'q1': 'B0'},
+        },
       );
       await chat.loadMessages();
       expect(
@@ -711,7 +714,104 @@ void main() {
       );
       await operation;
 
-      expect(calls, ['q0', 'q1']);
+      expect(calls, ['q0']);
+    },
+  );
+
+  test(
+    'malformed authoritative snapshot after ambiguous ACK expires only clarify',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        throw StateError('ack lost');
+      };
+      gateway.emit('secret.request', const {
+        'request_id': 'secret-stays-pending',
+        'env_var': 'TEST_SECRET',
+        'prompt': 'Secret',
+      });
+      gateway.emit('clarify.request', const {
+        'request_id': 'batch-malformed-resume',
+        'questions': [
+          {'qid': 'q0', 'question': '¿A?'},
+        ],
+      });
+      await _waitUntil(
+        () => chat.interactivePrompts.entries.values.length == 2,
+      );
+      final clarify = chat.interactivePrompts.entries.values.singleWhere(
+        (entry) => entry.request is ClarifyPromptRequest,
+      );
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: {
+          'request_id': 'batch-malformed-resume',
+          'questions': 'not-a-list',
+        },
+      );
+
+      await expectLater(
+        chat.respondToClarifyBatch(clarify.key, const {'q0': 'A0'}),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(
+        chat.interactivePrompts[clarify.key]?.status,
+        InteractivePromptStatus.expired,
+      );
+      expect(
+        chat.interactivePrompts.entries.values
+            .singleWhere((entry) => entry.request is SecretPromptRequest)
+            .status,
+        InteractivePromptStatus.pending,
+      );
+    },
+  );
+
+  test(
+    'legacy malformed ACK reconciles authoritatively before retry',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final resumesBefore = gateway.lifecycleResumes;
+      gateway.onRespondToClarify = (requestId, answer, {questionId}) async {
+        throw const TuiGatewayRpcError(
+          'clarify.respond',
+          'invalid response payload',
+        );
+      };
+      const pending = {
+        'request_id': 'legacy-malformed-ack',
+        'question': '¿Continuar?',
+        'choices': ['Sí', 'No'],
+      };
+      gateway.emit('clarify.request', pending);
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final entry = chat.pendingInteractivePrompt!;
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: pending,
+      );
+
+      await expectLater(
+        chat.respondToClarify(entry.key, 'Sí'),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+
+      expect(gateway.lifecycleResumes, resumesBefore + 1);
+      expect(
+        chat.interactivePrompts[entry.key]?.status,
+        InteractivePromptStatus.pending,
+      );
     },
   );
 

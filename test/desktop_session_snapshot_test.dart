@@ -2,6 +2,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 
 void main() {
+  test(
+    'pending_clarify malformado se marca presente sin duplicarlo en raw',
+    () {
+      final snapshot = DesktopSessionSnapshot.fromJson(
+        const {
+          'session_id': 'runtime-clarify-malformed',
+          'session_key': 'stored-clarify-malformed',
+          'pending_clarify': 'not-a-map',
+          'extension_safe': 'kept',
+        },
+        requestedStoredSessionId: 'stored-clarify-malformed',
+        created: false,
+        method: 'session.resume',
+      );
+
+      expect(snapshot.pendingClarifyProvided, isTrue);
+      expect(snapshot.pendingClarify, isNull);
+      expect(snapshot.raw, {'extension_safe': 'kept'});
+    },
+  );
+
   group('DesktopInflightTurn corrections', () {
     test(
       'parsea el error terminal retenido sin conservar payload duplicado',

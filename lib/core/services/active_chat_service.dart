@@ -5871,6 +5871,13 @@ class ActiveChat {
   }
 
   void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
+    _reconcilePendingClarifySnapshot(snapshot, unlockResponding: false);
+  }
+
+  void _reconcilePendingClarifySnapshot(
+    DesktopSessionSnapshot snapshot, {
+    required bool unlockResponding,
+  }) {
     if (!snapshot.pendingClarifyProvided) return;
     final pending = snapshot.pendingClarify;
     if (pending == null || pending.isEmpty) {
@@ -5886,7 +5893,12 @@ class ActiveChat {
         payload: pending,
       );
       if (request is ClarifyPromptRequest) {
-        _reduceInteractivePrompt(InteractivePromptSnapshotReconciled(request));
+        _reduceInteractivePrompt(
+          InteractivePromptSnapshotReconciled(
+            request,
+            unlockResponding: unlockResponding,
+          ),
+        );
       }
     } on FormatException {
       // The field was present, so the snapshot is authoritative even though
@@ -7104,9 +7116,7 @@ class ActiveChat {
     try {
       // Resume from confirmed progress: skip locked answers and preserve the
       // original question order.
-      final pending = request.questions
-          .where((q) => !request.lockedAnswers.containsKey(q.qid))
-          .toList(growable: false);
+      final pending = request.questions;
 
       if (pending.isEmpty) {
         final result = DesktopPromptResponse.fromJson(const {
@@ -7118,7 +7128,8 @@ class ActiveChat {
 
       DesktopPromptResponse? lastResult;
       for (final question in pending) {
-        if (!_batchPromptIsResponding(key)) {
+        final liveRequest = _respondingBatchRequest(key);
+        if (liveRequest == null) {
           return lastResult ??
               DesktopPromptResponse.fromJson(
                 const {'status': 'expired'},
@@ -7126,6 +7137,10 @@ class ActiveChat {
                 allowExpired: true,
               );
         }
+        // A passive authoritative snapshot may confirm a later qid while an
+        // earlier ACK is in flight. Re-read the live monotonic fence before
+        // every send instead of relying on the list captured at submission.
+        if (liveRequest.lockedAnswers.containsKey(question.qid)) continue;
         final answer = answers[question.qid];
         if (answer == null || answer.isEmpty) {
           _reduceInteractivePrompt(InteractivePromptResponseFailed(key));
@@ -7181,12 +7196,20 @@ class ActiveChat {
   }
 
   bool _batchPromptIsResponding(InteractivePromptKey key) {
+    return _respondingBatchRequest(key) != null;
+  }
+
+  ClarifyPromptRequest? _respondingBatchRequest(InteractivePromptKey key) {
     if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
-      return false;
+      return null;
     }
     final current = _interactivePrompts[key];
-    return current?.request is ClarifyPromptRequest &&
-        current?.status == InteractivePromptStatus.responding;
+    final request = current?.request;
+    return request is ClarifyPromptRequest &&
+            request.isBatch &&
+            current?.status == InteractivePromptStatus.responding
+        ? request
+        : null;
   }
 
   Future<void> _reconcileAmbiguousClarify(InteractivePromptKey key) async {
@@ -7209,21 +7232,7 @@ class ActiveChat {
         _reduceInteractivePrompt(InteractivePromptExpired(key));
         return;
       }
-      if (!snapshot.pendingClarifyProvided) return;
-      final pending = snapshot.pendingClarify;
-      if (pending == null || pending.isEmpty) {
-        _reduceInteractivePrompt(InteractivePromptExpired(key));
-        return;
-      }
-      final request = InteractivePromptRequest.fromGatewayEvent(
-        type: 'clarify.request',
-        runtimeSessionId: snapshot.runtimeSessionId,
-        payload: pending,
-      );
-      if (request is! ClarifyPromptRequest) return;
-      _reduceInteractivePrompt(
-        InteractivePromptSnapshotReconciled(request, unlockResponding: true),
-      );
+      _reconcilePendingClarifySnapshot(snapshot, unlockResponding: true);
     } on Object {
       // Fail closed: keep `responding`, which disables retries until a later
       // authoritative resume/reconnect reconciles the prompt.
@@ -7313,12 +7322,18 @@ class ActiveChat {
       }
       return result;
     } catch (error) {
-      final expired = error is TuiGatewayRpcError && error.code == 4009;
-      _reduceInteractivePrompt(
-        expired
-            ? InteractivePromptExpired(key)
-            : InteractivePromptResponseFailed(key),
-      );
+      final rpcCode = error is TuiGatewayRpcError ? error.code : null;
+      if (expectedKind == InteractivePromptKind.clarify && rpcCode == null) {
+        // A malformed/lost ACK may arrive after Hermes consumed the legacy
+        // answer. Keep it fenced until session.resume reconciles authority.
+        await _reconcileAmbiguousClarify(key);
+      } else {
+        _reduceInteractivePrompt(
+          rpcCode == 4009
+              ? InteractivePromptExpired(key)
+              : InteractivePromptResponseFailed(key),
+        );
+      }
       rethrow;
     }
   }
