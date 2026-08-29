@@ -161,8 +161,8 @@ class ServerCapabilities {
         features: (json['features'] as Map?)?.cast<String, dynamic>() ?? {},
         endpoints: (json['endpoints'] as Map?)?.cast<String, dynamic>() ?? {},
       );
-    } catch (e) {
-      debugPrint('[diagnostics] excepción silenciada (se devuelve null): $e');
+    } catch (_) {
+      debugPrint('[diagnostics] respuesta de capacidades inválida');
       return null;
     }
   }

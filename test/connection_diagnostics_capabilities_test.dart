@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -105,6 +106,26 @@ void main() {
       );
     }
   });
+
+  test(
+    'malformed capabilities never expose response content in logs',
+    () async {
+      const marker = 'CAPABILITY_SECRET_MARKER_7f31';
+      final output = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) output.add(message);
+      };
+
+      try {
+        await _run(200, '{"token":"$marker",oops');
+      } finally {
+        debugPrint = previousDebugPrint;
+      }
+
+      expect(output.join('\n'), isNot(contains(marker)));
+    },
+  );
 
   test('plugin metadata is restricted to safe GET', () async {
     const valid = '/v9/server-declared/plugins';
