@@ -91,9 +91,12 @@ attachments, or credentials.
 ## Retention and deletion
 
 XPeta Lab does not receive or retain app data. Connection settings, drafts,
+queued-turn recovery state, privacy-minimized notification delivery state,
 downloaded voice models and credentials remain on your device until you remove
-them in the app, clear the app's Android storage, or uninstall it. Credentials
-are stored in Android Keystore-backed secure storage.
+them in the app, clear the app's Android storage, or uninstall it. Notification
+delivery state contains technical identifiers, statuses and cursors, not chat
+text, notification previews or credentials. Credentials are stored in Android
+Keystore-backed secure storage.
 
 Conversations and attachments stored by the Hermes server follow the retention
 settings of the server you configured. Where supported, deleting a conversation

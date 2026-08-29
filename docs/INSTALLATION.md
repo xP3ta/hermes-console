@@ -2,7 +2,7 @@
 
 ## Current status
 
-`1.2.8+921` is the source-current publication candidate. Its QA profile build
+`1.2.8+2939` is the source-current publication candidate. Its QA profile build
 is for internal validation only and still requires the final physical release
 gate before a production AAB or APK is published. `1.2.7` is the latest version
 already delivered through Google Play and GitHub Releases/Obtainium.

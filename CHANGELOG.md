@@ -3,14 +3,20 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## 1.2.8 (921)
+## 1.2.8 (2939)
 
 - Improved chat recovery across network loss, backgrounding and reopening,
-  including durable offline cancellation, duplicate protection, safer rewind
-  boundaries and stronger profile/session isolation.
+  including duplicate protection, safer rewind boundaries and stronger
+  profile/session isolation.
 - Added complete Hermes Desktop `clarify` handling for single and batch
   questions, including restored pending prompts, sequential acknowledgements,
-  partial retries and fail-closed replay reconciliation.
+  partial retries, authoritative-answer fencing and fail-closed replay
+  reconciliation.
+- Improved local Android notifications for runs, Cron, Kanban and approvals,
+  with stable channels, actionable tap destinations and approvals that only
+  open the app instead of acting from the lock screen.
+- Preserved queued and interrupted turns durably across reconnects without
+  resending prompts, duplicating messages or crossing profiles.
 - Ordered conversations by canonical activity, added reliable relative times
   and made the composer support natural multiline prompts while keeping an
   explicit send action.
@@ -23,8 +29,8 @@ are not releases.
 - Made connection diagnostics honor authenticated `skills_toggle` and
   `plugins_api` capabilities using read-only, same-origin probes, with credit to
   Austin Law for the original contribution.
-- Refreshed deterministic tests, Android/Flutter CI alignment, SBOMs and
-  third-party license evidence for the release candidate.
+- Refreshed deterministic tests and Android/Flutter CI alignment. Final SBOMs
+  and third-party license evidence are regenerated from the exact release tree.
 
 ## 1.2.7 (915)
 

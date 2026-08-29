@@ -5680,7 +5680,7 @@
       "version": "2.2.0"
     },
     {
-      "bom-ref": "pkg:pub/hermes_android@1.2.8+921",
+      "bom-ref": "pkg:pub/hermes_android@1.2.8+2939",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -5701,9 +5701,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.2.8+921",
+      "purl": "pkg:pub/hermes_android@1.2.8+2939",
       "type": "application",
-      "version": "1.2.8+921"
+      "version": "1.2.8+2939"
     },
     {
       "bom-ref": "pkg:pub/highlight@0.7.0",
@@ -6614,6 +6614,32 @@
       "purl": "pkg:pub/mime@2.0.0",
       "type": "library",
       "version": "2.0.0"
+    },
+    {
+      "bom-ref": "pkg:pub/native_toolchain_c@0.19.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "native_toolchain_c",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/native_toolchain_c@0.19.0",
+      "type": "library",
+      "version": "0.19.0"
     },
     {
       "bom-ref": "pkg:pub/objective_c@9.4.1",
@@ -8150,6 +8176,188 @@
       "version": "1.0.1"
     },
     {
+      "bom-ref": "pkg:pub/sqflite@2.4.3",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "name": "sqflite",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "direct"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqflite@2.4.3",
+      "type": "library",
+      "version": "2.4.3"
+    },
+    {
+      "bom-ref": "pkg:pub/sqflite_android@2.4.3",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "name": "sqflite_android",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqflite_android@2.4.3",
+      "type": "library",
+      "version": "2.4.3"
+    },
+    {
+      "bom-ref": "pkg:pub/sqflite_common@2.5.11",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "name": "sqflite_common",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqflite_common@2.5.11",
+      "type": "library",
+      "version": "2.5.11"
+    },
+    {
+      "bom-ref": "pkg:pub/sqflite_common_ffi@2.4.2+1",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "name": "sqflite_common_ffi",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "dev"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqflite_common_ffi@2.4.2+1",
+      "type": "library",
+      "version": "2.4.2+1"
+    },
+    {
+      "bom-ref": "pkg:pub/sqflite_darwin@2.4.3+1",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "name": "sqflite_darwin",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqflite_darwin@2.4.3+1",
+      "type": "library",
+      "version": "2.4.3+1"
+    },
+    {
+      "bom-ref": "pkg:pub/sqflite_platform_interface@2.4.1",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "name": "sqflite_platform_interface",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqflite_platform_interface@2.4.1",
+      "type": "library",
+      "version": "2.4.1"
+    },
+    {
+      "bom-ref": "pkg:pub/sqlite3@3.5.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "sqlite3",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/sqlite3@3.5.2",
+      "type": "library",
+      "version": "3.5.2"
+    },
+    {
       "bom-ref": "pkg:pub/stack_trace@1.12.1",
       "licenses": [
         {
@@ -9683,13 +9891,15 @@
         "pkg:pub/shared_preferences@2.5.5",
         "pkg:pub/sherpa_onnx@1.13.2",
         "pkg:pub/speech_to_text@7.4.0",
+        "pkg:pub/sqflite@2.4.3",
+        "pkg:pub/sqflite_common_ffi@2.4.2+1",
         "pkg:pub/url_launcher@6.3.2",
         "pkg:pub/uuid@4.5.3",
         "pkg:pub/web_socket_channel@3.0.3",
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
-      "ref": "pkg:pub/hermes_android@1.2.8+921"
+      "ref": "pkg:pub/hermes_android@1.2.8+2939"
     },
     {
       "dependsOn": [
@@ -9981,6 +10191,17 @@
     {
       "dependsOn": [],
       "ref": "pkg:pub/mime@2.0.0"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/code_assets@1.1.0",
+        "pkg:pub/glob@2.1.3",
+        "pkg:pub/hooks@2.0.0",
+        "pkg:pub/logging@1.3.0",
+        "pkg:pub/meta@1.18.0",
+        "pkg:pub/pub_semver@2.2.0"
+      ],
+      "ref": "pkg:pub/native_toolchain_c@0.19.0"
     },
     {
       "dependsOn": [
@@ -10477,6 +10698,79 @@
     },
     {
       "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/sqflite_android@2.4.3",
+        "pkg:pub/sqflite_common@2.5.11",
+        "pkg:pub/sqflite_darwin@2.4.3+1",
+        "pkg:pub/sqflite_platform_interface@2.4.1"
+      ],
+      "ref": "pkg:pub/sqflite@2.4.3"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/sqflite_common@2.5.11",
+        "pkg:pub/sqflite_platform_interface@2.4.1"
+      ],
+      "ref": "pkg:pub/sqflite_android@2.4.3"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/meta@1.18.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/synchronized@3.4.1"
+      ],
+      "ref": "pkg:pub/sqflite_common@2.5.11"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/meta@1.18.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/sqflite_common@2.5.11",
+        "pkg:pub/sqlite3@3.5.2",
+        "pkg:pub/synchronized@3.4.1"
+      ],
+      "ref": "pkg:pub/sqflite_common_ffi@2.4.2+1"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.18.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/sqflite_common@2.5.11",
+        "pkg:pub/sqflite_platform_interface@2.4.1"
+      ],
+      "ref": "pkg:pub/sqflite_darwin@2.4.3+1"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.18.0",
+        "pkg:pub/platform@3.1.6",
+        "pkg:pub/plugin_platform_interface@2.1.8",
+        "pkg:pub/sqflite_common@2.5.11"
+      ],
+      "ref": "pkg:pub/sqflite_platform_interface@2.4.1"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/code_assets@1.1.0",
+        "pkg:pub/collection@1.19.1",
+        "pkg:pub/crypto@3.0.7",
+        "pkg:pub/ffi@2.2.0",
+        "pkg:pub/hooks@2.0.0",
+        "pkg:pub/meta@1.18.0",
+        "pkg:pub/native_toolchain_c@0.19.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/typed_data@1.4.0",
+        "pkg:pub/web@1.1.1"
+      ],
+      "ref": "pkg:pub/sqlite3@3.5.2"
+    },
+    {
+      "dependsOn": [
         "pkg:pub/path@1.9.1"
       ],
       "ref": "pkg:pub/stack_trace@1.12.1"
@@ -10716,7 +11010,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:pub/hermes_android@1.2.8+921",
+      "bom-ref": "pkg:pub/hermes_android@1.2.8+2939",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -10737,14 +11031,14 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.2.8+921",
+      "purl": "pkg:pub/hermes_android@1.2.8+2939",
       "type": "application",
-      "version": "1.2.8+921"
+      "version": "1.2.8+2939"
     },
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "3cac2d88771686ad3c89676fa5777be429cff87c6e0cb3f60bccc848386bc11c"
+        "value": "dd100aa9631fd9978eadd1668a8cb5255146bff04f6ae94310dad676f93092c4"
       },
       {
         "name": "hermes.android.variant",
@@ -10756,7 +11050,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:5b6397f3-61ad-47b7-ada1-a72953ac0b02",
+  "serialNumber": "urn:uuid:62c3545a-126c-43b4-a6ce-2221d544c662",
   "specVersion": "1.6",
   "version": 1
 }

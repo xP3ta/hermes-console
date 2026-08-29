@@ -1,6 +1,6 @@
 # Ficha de Google Play — Hermes Console
 
-Texto candidato para `1.2.8 (921)`. Idioma predeterminado: español. No está
+Texto candidato para `1.2.8 (2939)`. Idioma predeterminado: español. No está
 autorizado para envío hasta verificar el AAB firmado, la política de privacidad
 desplegada, Data Safety, los vídeos FGS, las capturas y la QA física. Los
 recursos gráficos mantienen su propio gate al final del documento.
@@ -92,21 +92,21 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.8 (921)`
+## Novedades — `1.2.8 (2939)`
 
 ### Español (máximo 500 caracteres)
 
-Los chats se recuperan mejor y ahora se ordenan por actividad real, con tiempos
-relativos y compositor multilínea. Las preguntas interactivas de Hermes vuelven
-a mostrarse y responderse de forma segura, incluso por lotes. También mejoramos
-Editar, comandos, voz, Bots/Kanban, emparejado, proveedores y diagnósticos.
+Los chats y mensajes en cola se recuperan mejor, se ordenan por actividad real
+y admiten composición multilínea. Las preguntas interactivas vuelven a mostrarse
+y responderse con seguridad, incluso por lotes. Las notificaciones de runs, Cron,
+Kanban y aprobaciones son más fiables, privadas y llevan al destino exacto.
 
 ### English (maximum 500 characters)
 
-Chats recover more reliably and are now ordered by real activity, with relative
-times and multiline composing. Hermes interactive questions are visible and
-safe to answer again, including batches. Edit, commands, voice, Bots/Kanban,
-pairing, providers, and diagnostics are improved too.
+Chats and queued messages recover more reliably, sort by real activity, and
+support multiline composing. Interactive questions are visible and safe to
+answer again, including batches. Run, Cron, Kanban, and approval notifications
+are more reliable, private, and open the exact destination.
 
 ## Recursos gráficos
 

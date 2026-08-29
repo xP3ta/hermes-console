@@ -1,6 +1,6 @@
 # Auditoría de publicación 1.2.8
 
-Estado: **en integración — no publicar todavía**.
+Estado: **candidata ensamblada — no publicar todavía**.
 
 Base pública comprobada: `v1.2.7` (Google Play y GitHub/Obtainium).
 La candidata final debe incluir únicamente cambios reconciliados, revisados y
@@ -12,12 +12,14 @@ probados sobre el mismo commit para todos los canales.
 
 - [x] Recuperación durable de turnos tras pérdida de red, background y reapertura.
 - [x] Protección frente a reenvíos y duplicados durante la recuperación.
-- [x] Cancelación offline y tombstones durables.
+- [ ] Endurecimiento final de cancelación offline/tombstones (diferido; la rama
+      adicional no superó la revisión independiente).
 - [x] Edición/rewind con límites atómicos y reconciliación de ACK perdido.
 - [x] Aislamiento correcto por instancia, perfil, sesión y propietario del turno.
 - [x] Orden de conversaciones por actividad canónica y tiempos relativos.
 - [x] Ocultación de snapshots internos de tareas compactadas.
-- [ ] Reconciliar el trabajo local posterior de outbox/recuperación con la candidata.
+- [x] Rescatar la recuperación aprobada en la candidata canónica sin integrar la
+      rama posterior que falló la revisión.
 
 ### Interacción y composición
 
@@ -26,7 +28,7 @@ probados sobre el mismo commit para todos los canales.
 - [x] Comandos `/` reconocidos con accent y preservación de borradores/foco.
 - [x] Dictado aislado por perfil y protegido durante comandos y recuperación.
 - [x] `clarify` simple y por lotes conforme al contrato de Hermes Desktop.
-- [ ] Integrar y verificar la reconciliación posterior de ACK ambiguo de `clarify`.
+- [x] Integrar y verificar la reconciliación posterior de ACK ambiguo de `clarify`.
 
 ### Bots, Kanban, voz y configuración
 
@@ -40,14 +42,15 @@ probados sobre el mismo commit para todos los canales.
 
 ### Notificaciones
 
-- [ ] Reconciliar e integrar el ledger durable, deduplicación entre isolates,
-      navegación exacta, jerarquía de canales y contratos Cron/Kanban/aprobaciones.
-- [ ] Verificar privacidad, reintentos, process death y comportamiento real de Android.
+- [x] Conservar las notificaciones locales aprobadas de la candidata base.
+- [ ] Ledger durable SQLite, deduplicación entre isolates y cancelación exacta
+      tras process death (diferidos: la rama de wiring no superó la revisión final).
+- [ ] Verificar el comportamiento real de las notificaciones existentes en Android.
 
 ## 2. Falta terminar o corregir
 
 - [ ] Resolver todas las ramas/worktrees exclusivos y eliminar duplicados obsoletos.
-- [ ] Dejar una única implementación canónica de recuperación y notificaciones.
+- [x] Dejar una única candidata canónica sin las ramas endurecidas rechazadas.
 - [ ] Resolver cualquier fallo de análisis, tests o revisión independiente.
 - [ ] Elegir un `versionCode` final superior al QA instalado en el Pixel.
 - [ ] Sincronizar versión en changelog, ficha Play, instalación, checklist y SBOM.

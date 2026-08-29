@@ -1,6 +1,6 @@
 # Open-source release checklist
 
-Candidate version: `1.2.7+915`, maintained in an isolated fresh-history export.
+Candidate version: `1.2.8+2939`, integrated from the published `v1.2.7` source.
 Record the final public SHA after all audit commits are complete. This checklist
 is an engineering gate, not legal advice. Do not create a public remote or
 distribute a GPL-labelled APK/AAB until every blocking item is closed on the
@@ -70,8 +70,26 @@ exact candidate commit.
 
 ## Current decision
 
-**GO — source and `v1.2.7` release published on 2026-08-23.** The release tag
-points to `8006b01ad99d8d8f5d64c6bbde3ef29841b9a79d`; both signed distribution
-channels were built from that source. Remaining unchecked items are
-owner-operated Play Console policy confirmation, not unresolved source,
-licence, secret or binary gates.
+**`v1.2.7` is the published baseline; `1.2.8+2939` is NOT GO yet.** The 1.2.7
+tag points to `8006b01ad99d8d8f5d64c6bbde3ef29841b9a79d`. The 1.2.8 gate is tracked
+below and in [`RELEASE_1.2.8_AUDIT.md`](RELEASE_1.2.8_AUDIT.md).
+
+## 1.2.8 candidate gate
+
+- [x] Reconcile release, notification and durable-turn branches without
+  reintroducing superseded patches.
+- [x] Reconcile version, changelog, installation, Play listing, privacy and Data
+  Safety against the actual candidate scope.
+- [ ] Regenerate deterministic play/full SBOM and license-review evidence from
+  the exact candidate tree.
+- [ ] Pass REUSE, Gitleaks, TruffleHog, Flutter 3.44.1 analysis and the complete
+  test suite from a clean checkout.
+- [ ] Build and inspect signed `play` AAB and `full` APK from the same commit.
+- [ ] Install the exact QA arm64 APK on the physical Pixel with `adb install -r`,
+  preserving package data and signing identity.
+- [ ] Complete the 1.2.7→1.2.8 physical QA matrix, including recovery,
+  `clarify`, notifications, navigation, voice, pairing and regressions.
+- [ ] Reconcile the final merged manifest, FGS declarations and saved Play Data
+  Safety answers against the inspected AAB.
+- [ ] Obtain separate owner approval before pushing `main`, publishing GitHub /
+  Obtainium, or uploading to Google Play.

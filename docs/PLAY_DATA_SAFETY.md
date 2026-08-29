@@ -4,8 +4,8 @@ Cómo rellenar el formulario "Seguridad de los datos" en Play Console, coherente
 con `PRIVACY_POLICY.md` y con el comportamiento real de la app. Responde campo a
 campo.
 
-**Revisado 2026-08-10 (candidata source-current, voz manual, lectura y
-aclaración de IA de terceros)**: la
+**Revisado 2026-08-29 (candidata 1.2.8, voz manual, lectura, notificaciones
+locales y aclaración de IA de terceros)**: la
 versión anterior de esta guía declaraba "no se comparten
 datos con terceros" sin matices. Eso era incompleto: hay flujos funcionales y
 opt-in hacia terceros que deben declararse. Omitirlos es una infracción de
@@ -90,6 +90,9 @@ huggingface.co/GitHub son GET puros: no envían datos del usuario.)
 - Sin SDK publicitario, FCM ni analítica operada por XPeta Lab. El escáner QR
   ZXing no incluye telemetría ni servicios de Google.
 - `allowBackup=false`: nada viaja a la copia de seguridad de Google.
+- La cola local de turnos y el estado de las notificaciones permanecen solo en
+  el dispositivo. No añaden ningún destino de red ni cambian las respuestas del
+  formulario de Play.
 
 ## Aviso destacado y consentimiento de voz
 
