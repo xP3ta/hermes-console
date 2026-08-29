@@ -790,7 +790,7 @@ void main() {
   );
 
   test(
-    'runtime retirement snapshots old batch locks before reentrant events',
+    'runtime retirement fences old prompts and submissions before callbacks',
     () async {
       final gateway = _InteractiveGateway();
       late ActiveChat chat;
@@ -813,6 +813,17 @@ void main() {
           reentrantOperation = chat.respondToClarifyBatch(reentrantKey, const {
             'q0': 'B0',
           });
+          reentrantOperation!.ignore();
+          gateway.emit('clarify.request', const {
+            'request_id': 'legacy-during-retirement',
+            'question': '¿No debe revivir?',
+          }, sessionId: 'runtime-retired');
+          gateway.emit('clarify.request', const {
+            'request_id': 'batch-during-retirement',
+            'questions': [
+              {'qid': 'q0', 'question': '¿Tampoco este batch?'},
+            ],
+          }, sessionId: 'runtime-retired');
         },
       );
       addTearDown(chat.dispose);
@@ -952,12 +963,24 @@ void main() {
         );
         expect(
           chat.interactivePrompts[reentrantKey]?.status,
-          InteractivePromptStatus.responding,
+          InteractivePromptStatus.expired,
         );
+        for (final requestId in [
+          'legacy-during-retirement',
+          'batch-during-retirement',
+        ]) {
+          expect(
+            chat.interactivePrompts[InteractivePromptKey(
+              runtimeSessionId: 'runtime-retired',
+              requestId: requestId,
+            )],
+            isNull,
+          );
+        }
         for (final key in [legacyKey, secretKey, sudoKey]) {
           expect(
             chat.interactivePrompts[key]?.status,
-            InteractivePromptStatus.pending,
+            InteractivePromptStatus.expired,
             reason: key.toString(),
           );
         }
@@ -968,7 +991,7 @@ void main() {
         for (final key in [otherBatchKey, otherSecretKey, otherSudoKey]) {
           expect(
             chat.interactivePrompts[key]?.status,
-            InteractivePromptStatus.pending,
+            InteractivePromptStatus.expired,
             reason: key.toString(),
           );
         }
@@ -976,8 +999,159 @@ void main() {
         if (!firstAck.isCompleted) firstAck.complete(ok);
         if (!reentrantAck.isCompleted) reentrantAck.complete(ok);
         await oldOperation;
-        if (reentrantOperation case final operation?) await operation;
+        if (reentrantOperation case final operation?) {
+          await expectLater(operation, throwsA(isA<StateError>()));
+        }
       }
+    },
+  );
+
+  for (final lateStatus in ['ok', 'expired']) {
+    test(
+      'late $lateStatus reconciles only the retired runtime composite key',
+      () async {
+        final gateway = _InteractiveGateway();
+        final chat = await _start(gateway);
+        addTearDown(chat.dispose);
+        final lateAck = Completer<DesktopPromptResponse>();
+        gateway.onRespondToClarify = (requestId, answer, {questionId}) {
+          return lateAck.future;
+        };
+
+        gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-old',
+          storedSessionId: 'stored-interactive',
+          created: false,
+        );
+        await chat.loadMessages();
+        gateway.emit('clarify.request', const {
+          'request_id': 'shared-request',
+          'question': '¿La misma pregunta?',
+        }, sessionId: 'runtime-old');
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final oldKey = chat.pendingInteractivePrompt!.key;
+        final oldOperation = chat.respondToClarify(oldKey, 'old answer');
+        await _waitUntil(
+          () =>
+              chat.interactivePrompts[oldKey]?.status ==
+              InteractivePromptStatus.responding,
+        );
+
+        gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-successor',
+          storedSessionId: 'stored-interactive',
+          created: false,
+          pendingClarifyProvided: true,
+          pendingClarify: {
+            'request_id': 'shared-request',
+            'question': '¿La misma pregunta?',
+          },
+        );
+        await chat.loadMessages();
+        final successorKey = InteractivePromptKey(
+          runtimeSessionId: 'runtime-successor',
+          requestId: 'shared-request',
+        );
+        expect(
+          chat.interactivePrompts[successorKey]?.status,
+          InteractivePromptStatus.pending,
+        );
+
+        lateAck.complete(
+          DesktopPromptResponse.fromJson(
+            {'status': lateStatus},
+            method: 'clarify.respond',
+            allowExpired: true,
+          ),
+        );
+        await oldOperation;
+
+        expect(
+          chat.interactivePrompts[oldKey]?.status,
+          InteractivePromptStatus.expired,
+        );
+        expect(
+          chat.interactivePrompts[successorKey]?.status,
+          InteractivePromptStatus.pending,
+        );
+      },
+    );
+  }
+
+  test(
+    'successor snapshot rearms reused request and keeps reentrant callbacks',
+    () async {
+      final gateway = _InteractiveGateway();
+      late ActiveChat chat;
+      final successorKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-successor',
+        requestId: 'shared-request',
+      );
+      var reenterSuccessor = false;
+      chat = await _start(
+        gateway,
+        onEvent: (event) {
+          if (!reenterSuccessor ||
+              event != ActiveChatEvent.interactiveRequest ||
+              chat.interactivePrompts[successorKey]?.status !=
+                  InteractivePromptStatus.pending) {
+            return;
+          }
+          reenterSuccessor = false;
+          gateway.emit('clarify.request', const {
+            'request_id': 'successor-reentrant',
+            'question': '¿Callback sucesor?',
+          }, sessionId: 'runtime-successor');
+        },
+      );
+      addTearDown(chat.dispose);
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-old',
+        storedSessionId: 'stored-interactive',
+        created: false,
+      );
+      await chat.loadMessages();
+      gateway.emit('clarify.request', const {
+        'request_id': 'shared-request',
+        'question': '¿La misma pregunta?',
+      }, sessionId: 'runtime-old');
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final oldKey = chat.pendingInteractivePrompt!.key;
+
+      reenterSuccessor = true;
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-successor',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: {
+          'request_id': 'shared-request',
+          'question': '¿La misma pregunta?',
+        },
+      );
+      await chat.loadMessages();
+
+      final reentrantKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-successor',
+        requestId: 'successor-reentrant',
+      );
+      await _waitUntil(
+        () => chat.interactivePrompts[reentrantKey] != null,
+        'successor reentrant callback was dropped',
+      );
+      expect(
+        chat.interactivePrompts[oldKey]?.status,
+        InteractivePromptStatus.expired,
+      );
+      expect(
+        chat.interactivePrompts[successorKey]?.status,
+        InteractivePromptStatus.pending,
+      );
+      expect(
+        chat.interactivePrompts[reentrantKey]?.status,
+        InteractivePromptStatus.pending,
+      );
     },
   );
 

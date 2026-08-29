@@ -1402,6 +1402,7 @@ class ActiveChat {
   Timer? _voiceBargeHandoffTimer;
   bool _voiceBargeHandoffPending = false;
   String? _desktopRuntimeSessionId;
+  String? _retiringDesktopRuntimeSessionId;
   String? _desktopStoredSessionId;
   bool _usingDesktopGateway = false;
   int? _recoveringDesktopTurnEpoch;
@@ -2352,6 +2353,7 @@ class ActiveChat {
         scope.profileName != profile) {
       _retireDesktopRuntime();
       _desktopRuntimeSessionId = runtimeId;
+      _retiringDesktopRuntimeSessionId = null;
       _desktopSessionEpoch += 1;
       _sessionInfoEpoch = 0;
       _sessionConfigScope = SessionConfigScope(
@@ -2379,19 +2381,11 @@ class ActiveChat {
     _desktopBindEpoch += 1;
     final retiredRuntimeId = _desktopRuntimeSessionId;
     if (retiredRuntimeId != null) {
-      final retiringBatchKeys = List<InteractivePromptKey>.unmodifiable(
-        _batchLocks.keys.where((key) {
-          if (key.runtimeSessionId != retiredRuntimeId) return false;
-          final entry = _interactivePrompts[key];
-          final request = entry?.request;
-          return entry?.status == InteractivePromptStatus.responding &&
-              request is ClarifyPromptRequest &&
-              request.isBatch;
-        }),
-      );
-      for (final key in retiringBatchKeys) {
-        _reduceInteractivePrompt(InteractivePromptExpired(key));
-      }
+      // The reducer emits callbacks synchronously. Fence and detach first so a
+      // callback cannot register or submit new work for the retiring runtime.
+      _retiringDesktopRuntimeSessionId = retiredRuntimeId;
+      _desktopRuntimeSessionId = null;
+      _expireInteractivePromptsForRuntime(retiredRuntimeId);
     }
     final scope = _sessionConfigScope;
     if (scope != null) {
@@ -5916,6 +5910,7 @@ class ActiveChat {
     String runtimeId,
     Map<String, dynamic> payload,
   ) {
+    if (_retiringDesktopRuntimeSessionId == runtimeId) return;
     late final InteractivePromptRequest request;
     try {
       request = InteractivePromptRequest.fromGatewayEvent(
@@ -7287,7 +7282,8 @@ class ActiveChat {
   ) async {
     final runtimeId = _desktopRuntimeSessionId;
     final entry = _interactivePrompts[key];
-    if (runtimeId != key.runtimeSessionId ||
+    if (_retiringDesktopRuntimeSessionId == key.runtimeSessionId ||
+        runtimeId != key.runtimeSessionId ||
         entry?.request is! ClarifyPromptRequest ||
         entry?.status != InteractivePromptStatus.pending) {
       throw StateError('Interactive prompt is no longer pending');
@@ -7503,7 +7499,8 @@ class ActiveChat {
   }) async {
     final runtimeId = _desktopRuntimeSessionId;
     final entry = _interactivePrompts[key];
-    if (runtimeId != key.runtimeSessionId ||
+    if (_retiringDesktopRuntimeSessionId == key.runtimeSessionId ||
+        runtimeId != key.runtimeSessionId ||
         entry?.request?.kind != expectedKind ||
         entry?.status != InteractivePromptStatus.pending) {
       throw StateError('Interactive prompt is no longer pending');
