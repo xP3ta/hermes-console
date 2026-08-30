@@ -81,13 +81,6 @@ class WatchedRun {
 class BackgroundWatch {
   static const String _key = 'bg_watch_runs';
 
-  @visibleForTesting
-  static bool? automationNotificationsEnabledOverride;
-
-  static bool get _automationEnabled =>
-      automationNotificationsEnabledOverride ??
-      NotificationService.automationNotificationsAvailable;
-
   static Future<Directory> _lockDirectory() async {
     try {
       return await getApplicationSupportDirectory();
@@ -152,7 +145,7 @@ class BackgroundWatch {
   /// Empieza a vigilar una ejecución (idempotente por runId).
   static Future<void> add(SavedRunWatch w) async {
     final safeBase = TransportPrivacy.requireAllowed(w.base);
-    if (!_automationEnabled) return;
+    if (!NotificationService.automationNotificationsEnabled) return;
     await _locked((prefs) async {
       final runs = _read(prefs)..removeWhere((r) => r.runId == w.runId);
       runs.add(
@@ -456,6 +449,10 @@ class BackgroundCronWatch {
 
   static Future<void> syncConnections(List<SavedConnection> connections) =>
       BackgroundWatch._locked((prefs) async {
+        if (!NotificationService.automationNotificationsEnabled) {
+          await prefs.remove(_targetsKey);
+          return;
+        }
         final safe = <Map<String, dynamic>>[];
         for (final connection in connections) {
           try {
@@ -924,7 +921,7 @@ class _HermesTaskHandler extends TaskHandler {
     if (_polling) return;
     _polling = true;
     try {
-      if (!BackgroundWatch._automationEnabled) return;
+      if (!NotificationService.automationNotificationsEnabled) return;
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
       final voiceCardActive =
@@ -1660,6 +1657,7 @@ class BackgroundListener {
 
   /// Arranca el servicio. Devuelve si quedó corriendo.
   static Future<bool> start() async {
+    if (!NotificationService.automationNotificationsEnabled) return false;
     await ensureInitialized();
     await _touchUiAlive();
     _armUiHeartbeat();
@@ -2010,18 +2008,25 @@ class BackgroundListener {
   /// Llamar al arrancar la app: si el usuario dejó la escucha activada, la
   /// re-arranca (p.ej. tras reinicio del móvil con la app abierta de nuevo).
   static Future<void> restoreIfEnabled(SharedPreferences prefs) async {
-    // Una sesión de voz nunca se restaura tras proceso/boot. Limpiar primero la
-    // lease visual y rearmar únicamente la política dataSync normal. El rearme
-    // del detector consentido pertenece después a la Activity visible.
+    // Una sesión de voz nunca se restaura tras proceso/boot.
     await prefs.setBool(voiceCardActiveKey, false);
     await VoiceNotificationCardAdapter.clear();
     _voiceTypeSaved = false;
     _voiceNotificationState = null;
     _readAloudTypeSaved = false;
     _readAloudPaused = null;
-    _configure(NotifL10n.of(prefs), autoRunOnBoot: true);
-    if (prefs.getBool(prefKey) == true) {
-      await start();
+    if (!NotificationService.automationNotificationsEnabled) {
+      await prefs.setBool(prefKey, false);
+      try {
+        if (await FlutterForegroundTask.isRunningService) {
+          await FlutterForegroundTask.stopService();
+        }
+      } catch (_) {
+        // Plugin ausente/no inicializado: no hay FGS gestionable en este proceso.
+      }
+      return;
     }
+    _configure(NotifL10n.of(prefs), autoRunOnBoot: true);
+    if (prefs.getBool(prefKey) == true) await start();
   }
 }

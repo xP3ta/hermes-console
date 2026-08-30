@@ -298,12 +298,7 @@ class NotificationService implements RunNotificationFacade {
   /// sobreviva al desmontaje del servicio. Ver [reassertRecent].
   _LastBgNotif? _lastBg;
 
-  final bool automationNotificationsEnabled;
-
-  NotificationService(
-    this._prefs, {
-    this.automationNotificationsEnabled = automationNotificationsAvailable,
-  });
+  NotificationService(this._prefs);
 
   // ── Ajustes (persistidos) ───────────────────────────────────────────────
   static const _kEnabled = 'notif_enabled';
@@ -328,6 +323,19 @@ class NotificationService implements RunNotificationFacade {
   /// 1.2.8 conservadora: automatizaciones y approvals locales se difieren
   /// hasta que el protocolo CAS + SQLite cross-engine esté disponible.
   static const bool automationNotificationsAvailable = false;
+  static bool _debugAutomationNotificationsEnabled = false;
+
+  static bool get automationNotificationsEnabled =>
+      automationNotificationsAvailable ||
+      (kDebugMode && _debugAutomationNotificationsEnabled);
+
+  @visibleForTesting
+  static void setAutomationNotificationsEnabledForTest(bool enabled) {
+    assert(() {
+      _debugAutomationNotificationsEnabled = enabled;
+      return true;
+    }());
+  }
 
   bool get notifyApprovals =>
       automationNotificationsEnabled && (_prefs.getBool(_kApprovals) ?? true);

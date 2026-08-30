@@ -61,11 +61,13 @@ class _TrackedHttpClient extends http.BaseClient {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() => BackgroundWatch.automationNotificationsEnabledOverride = true);
-  tearDown(() => BackgroundWatch.automationNotificationsEnabledOverride = null);
+  setUp(() =>
+      NotificationService.setAutomationNotificationsEnabledForTest(true));
+  tearDown(() =>
+      NotificationService.setAutomationNotificationsEnabledForTest(false));
 
-  test('1.2.8 conservative does not persist background watches', () async {
-    BackgroundWatch.automationNotificationsEnabledOverride = false;
+  test('1.2.8 conservative does not persist background work', () async {
+    NotificationService.setAutomationNotificationsEnabledForTest(false);
     SharedPreferences.setMockInitialValues({});
     await BackgroundWatch.add(
       const SavedRunWatch(
@@ -76,6 +78,9 @@ void main() {
       ),
     );
     expect(await BackgroundWatch.snapshot(), isEmpty);
+    await BackgroundCronWatch.syncConnections([_dashboardConnection()]);
+    expect(await BackgroundCronWatch.snapshotTargets(), isEmpty);
+    expect(await BackgroundListener.start(), isFalse);
   });
 
   test('rechaza una vigilancia HTTP pública antes de persistirla', () async {
@@ -204,20 +209,14 @@ void main() {
     () async {
       SharedPreferences.setMockInitialValues({});
       var prefs = await SharedPreferences.getInstance();
-      var notifications = NotificationService(
-        prefs,
-        automationNotificationsEnabled: true,
-      );
+      var notifications = NotificationService(prefs);
       expect(notifications.notifyCronResults, isFalse);
 
       SharedPreferences.setMockInitialValues({
         BackgroundListener.prefKey: true,
       });
       prefs = await SharedPreferences.getInstance();
-      notifications = NotificationService(
-        prefs,
-        automationNotificationsEnabled: true,
-      );
+      notifications = NotificationService(prefs);
       expect(notifications.notifyCronResults, isTrue);
 
       await notifications.setNotifyCronResults(false);
@@ -296,11 +295,7 @@ void main() {
       isTrue,
     );
     expect(
-      BackgroundCronWatch.shouldNotifyResult(
-        failed,
-        session: null,
-        preview: null,
-      ),
+      BackgroundCronWatch.shouldNotifyResult(failed, session: null, preview: null),
       isTrue,
     );
   });

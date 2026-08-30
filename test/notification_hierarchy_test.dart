@@ -7,9 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-NotificationService _legacyService(SharedPreferences prefs) =>
-    NotificationService(prefs, automationNotificationsEnabled: true);
-
 /// Jerarquía de producto (A: acción requerida, B: resultado, C: respuesta,
 /// D: servicio activo) verificada sobre el canal de plataforma real:
 /// canal, importancia, prioridad, privacidad de lockscreen y agrupación.
@@ -28,6 +25,7 @@ void main() {
   late Map<int, Map<String, dynamic>> tray;
 
   setUp(() {
+    NotificationService.setAutomationNotificationsEnabledForTest(true);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     calls = <MethodCall>[];
@@ -82,6 +80,7 @@ void main() {
   });
 
   tearDown(() {
+    NotificationService.setAutomationNotificationsEnabledForTest(false);
     messenger.setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
   });
@@ -110,7 +109,7 @@ void main() {
     'A: aprobación usa canal de máxima prioridad y título de permiso',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       await service.approvalPending(
         tool: 'bash',
@@ -133,7 +132,7 @@ void main() {
     'B/C: resultado y respuesta usan canales y prioridades separadas',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       await service.runFinished(
         title: 'Copia de seguridad',
@@ -166,7 +165,7 @@ void main() {
     'A: la aprobación nunca resuelve desde la bandeja, solo Abrir',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       // Sin redacción: tampoco hay Aprobar/Rechazar; la decisión exige abrir.
       await service.approvalPending(
@@ -202,7 +201,7 @@ void main() {
 
   test('B: cron usa título específico según resultado', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
 
     await service.cronFinished(
       title: 'Fichaje diario',
@@ -232,7 +231,7 @@ void main() {
 
   test('B: kanban bloqueada abre la tarjeta exacta', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
 
     await service.kanbanTransition(
       connId: 'demo-node',
@@ -252,15 +251,13 @@ void main() {
     );
     expect(payload['tid'], 'task-42');
     expect(payload['conn'], 'demo-node');
-    expect(
-      NotificationOpen.tryParse(shown.single['payload'] as String)?.taskId,
-      'task-42',
-    );
+    expect(NotificationOpen.tryParse(shown.single['payload'] as String)?.taskId,
+        'task-42');
   });
 
   test('B: cron y kanban tienen preferencias independientes', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
 
     // Kanban desactivado, cron activo: cron avisa, kanban calla.
     await service.setNotifyKanbanResults(false);
@@ -307,7 +304,7 @@ void main() {
     'B: kanban no hereda el toggle de cron con la clave aún ausente',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       // Actualización desde una versión sin clave propia de Kanban: el
       // opt-in de automatizaciones (escucha) está activo y la clave
@@ -340,7 +337,7 @@ void main() {
     'varias alertas activas publican un resumen de grupo sin perder el tap',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       await service.runFinished(
         title: 'Primera tarea',
@@ -373,7 +370,10 @@ void main() {
       final childIds = children.map((args) => args['id']).toSet();
       expect(childIds, hasLength(2));
       final childRunIds = children
-          .map((args) => (jsonDecode(args['payload'] as String) as Map)['rid'])
+          .map(
+            (args) =>
+                (jsonDecode(args['payload'] as String) as Map)['rid'],
+          )
           .toSet();
       expect(childRunIds, {'run-group-1', 'run-group-2'});
     },
@@ -384,8 +384,8 @@ void main() {
     () async {
       final prefs = await SharedPreferences.getInstance();
       // UI y listener/FGS son instancias (e isolates) distintas en producción.
-      final ui = _legacyService(prefs)..appInForeground = false;
-      final listener = _legacyService(prefs)..appInForeground = false;
+      final ui = NotificationService(prefs)..appInForeground = false;
+      final listener = NotificationService(prefs)..appInForeground = false;
 
       await ui.runFinished(
         title: 'Vista por la UI',
@@ -405,7 +405,7 @@ void main() {
 
       // Una instancia NUEVA (reinicio de proceso) ve la bandeja real: al
       // cancelar una hija y quedar una sola, el resumen se retira.
-      final restarted = _legacyService(prefs)..appInForeground = false;
+      final restarted = NotificationService(prefs)..appInForeground = false;
       final firstId = NotificationService.eventNotificationId(
         base: 7100,
         span: 1024,
@@ -413,12 +413,13 @@ void main() {
       );
       await restarted.cancelById(firstId, 'test');
 
-      final cancels = calls.where((call) => call.method == 'cancel').map((
-        call,
-      ) {
-        final raw = call.arguments;
-        return raw is Map ? raw['id'] : raw;
-      }).toList();
+      final cancels = calls
+          .where((call) => call.method == 'cancel')
+          .map((call) {
+            final raw = call.arguments;
+            return raw is Map ? raw['id'] : raw;
+          })
+          .toList();
       expect(cancels, containsAllInOrder([firstId, 500]));
       expect(tray.keys, isNot(contains(500)));
     },

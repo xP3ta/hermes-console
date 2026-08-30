@@ -8,9 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-NotificationService _legacyService(SharedPreferences prefs) =>
-    NotificationService(prefs, automationNotificationsEnabled: true);
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -23,6 +20,7 @@ void main() {
   late bool failNextShow;
 
   setUp(() {
+    NotificationService.setAutomationNotificationsEnabledForTest(true);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     calls = <MethodCall>[];
@@ -51,6 +49,7 @@ void main() {
   });
 
   tearDown(() {
+    NotificationService.setAutomationNotificationsEnabledForTest(false);
     messenger.setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
   });
@@ -85,6 +84,7 @@ void main() {
   }
 
   test('1.2.8 conservative defers automation notifications', () async {
+    NotificationService.setAutomationNotificationsEnabledForTest(false);
     SharedPreferences.setMockInitialValues({
       'notif_approvals': true,
       'notif_runs': true,
@@ -100,7 +100,7 @@ void main() {
 
   test('Cron muestra un resumen útil, acotado y conserva el destino', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
     final longTail = List.filled(90, 'detalle').join(' ');
 
     await service.cronFinished(
@@ -147,7 +147,7 @@ void main() {
         'notif_hide_sensitive_content': true,
       });
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       await service.cronFinished(
         title: 'resumen-proyecto',
@@ -174,7 +174,7 @@ void main() {
 
   test('toque con la app viva entrega conexión, sesión y perfil', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs);
+    final service = NotificationService(prefs);
     final opened = <NotificationOpen>[];
     service.onOpenSession = (open) {
       opened.add(open);
@@ -202,7 +202,7 @@ void main() {
       },
     };
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs);
+    final service = NotificationService(prefs);
     final opened = <NotificationOpen>[];
     service.onOpenSession = (open) {
       opened.add(open);
@@ -219,7 +219,7 @@ void main() {
 
   test('si la navegación aún no está lista el toque se reintenta', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs);
+    final service = NotificationService(prefs);
     var ready = false;
     var opened = 0;
     service.onOpenSession = (open) {
@@ -241,7 +241,7 @@ void main() {
     'recupera un toque de reanudación perdido sin abrir dos veces',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs);
+      final service = NotificationService(prefs);
       final opened = <NotificationOpen>[];
       service.onOpenSession = (open) {
         opened.add(open);
@@ -270,7 +270,9 @@ void main() {
   List<MethodCall> childShows() => calls.where((call) {
     if (call.method != 'show') return false;
     final args = Map<String, dynamic>.from(call.arguments as Map);
-    final android = Map<String, dynamic>.from(args['platformSpecifics'] as Map);
+    final android = Map<String, dynamic>.from(
+      args['platformSpecifics'] as Map,
+    );
     return android['setAsGroupSummary'] != true;
   }).toList();
 
@@ -278,8 +280,8 @@ void main() {
     'productores concurrentes solo alertan una vez por terminal y approval',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final taskCenter = _legacyService(prefs)..appInForeground = false;
-      final runDetail = _legacyService(prefs)..appInForeground = false;
+      final taskCenter = NotificationService(prefs)..appInForeground = false;
+      final runDetail = NotificationService(prefs)..appInForeground = false;
 
       await taskCenter.runFinished(
         title: 'Título visto por TaskCenter',
@@ -314,7 +316,7 @@ void main() {
 
   test('identidad incompleta no silencia fallos accionables', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
 
     await service.runFinished(title: 'Fallo A', ok: false);
     await service.runFinished(title: 'Fallo B', ok: false);
@@ -326,7 +328,7 @@ void main() {
     'un fallo de plataforma libera el claim terminal para reintento',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
       failNextShow = true;
 
       await expectLater(
@@ -353,7 +355,7 @@ void main() {
 
   test('un fallo de plataforma libera el claim de aprobación', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
     failNextShow = true;
 
     await expectLater(
@@ -377,7 +379,7 @@ void main() {
 
   test('un fallo de plataforma libera el claim de cron', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = _legacyService(prefs)..appInForeground = false;
+    final service = NotificationService(prefs)..appInForeground = false;
     failNextShow = true;
 
     Future<void> emit() => service.cronFinished(
@@ -400,7 +402,7 @@ void main() {
     'cron sin sessionId deriva IDs Android de executionId y jobId',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = _legacyService(prefs)..appInForeground = false;
+      final service = NotificationService(prefs)..appInForeground = false;
 
       await service.cronFinished(
         title: 'Script sin sesión',
