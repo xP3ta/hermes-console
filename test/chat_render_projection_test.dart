@@ -164,6 +164,51 @@ void main() {
     },
   );
 
+  test('texto de usuario que solo menciona ASYNC sigue siendo un prompt', () {
+    final user = _message(
+      'user',
+      '[ASYNC DELEGATION BATCH COMPLETE quizá] ¿Qué significa esto?',
+    );
+
+    final projection = ChatRenderProjection.build([user]);
+
+    expect(projection.userOrdinalFor(user), 0);
+    expect(projection.visibleUserCount, 1);
+    expect(projection.units.single, isA<ChatUserTurnUnitPlan>());
+  });
+
+  test('solo repara el sentinel ASYNC reservado exacto', () {
+    const marker =
+        '[ASYNC DELEGATION BATCH COMPLETE — deleg_8980456e]';
+    for (final content in [marker, '$marker\nPayload interno']) {
+      final event = _message('user', content);
+      expect(
+        effectiveUserDisplayKind(event),
+        'async_delegation_complete',
+        reason: content,
+      );
+      expect(isRealUserTurn(event), isFalse, reason: content);
+    }
+
+    for (final content in [
+      '$marker ¿Qué significa?',
+      marker.toLowerCase(),
+      '[ASYNC DELEGATION BATCH COMPLETE - deleg_8980456e]',
+      ' $marker',
+    ]) {
+      final user = _message('user', content);
+      expect(effectiveUserDisplayKind(user), isEmpty, reason: content);
+      expect(isRealUserTurn(user), isTrue, reason: content);
+      final projection = ChatRenderProjection.build([user]);
+      expect(projection.visibleUserCount, 1, reason: content);
+      expect(
+        projection.units.single,
+        isA<ChatUserTurnUnitPlan>(),
+        reason: content,
+      );
+    }
+  });
+
   test(
     'calcula el fallback 4018 tras un prompt fusionado con model_switch',
     () {

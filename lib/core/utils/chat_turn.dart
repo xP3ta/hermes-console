@@ -1,3 +1,7 @@
+final RegExp _asyncDelegationMarkerPattern = RegExp(
+  r'^\[ASYNC DELEGATION BATCH COMPLETE — deleg_[0-9a-f]{8}\](?:\r?\n|$)',
+);
+
 /// True únicamente para mensajes enviados realmente por el usuario.
 ///
 /// Hermes puede persistir metadatos de runtime como `role=user` para mantener
@@ -6,20 +10,24 @@
 bool isRealUserTurn(Map<String, dynamic> message) {
   if (message['role'] != 'user' || message['_steer'] == true) return false;
 
-  return _userDisplayKind(message).isEmpty;
+  return effectiveUserDisplayKind(message).isEmpty;
 }
 
-String _userDisplayKind(Map<String, dynamic> message) {
+/// Devuelve la clase editorial efectiva de una fila `role=user`.
+///
+/// REST 0.19 omite `display_kind`; los markers abren con sentinelas estables
+/// generados por Hermes. Reconocer únicamente esos prefijos mantiene el fallo
+/// cerrado durante la hidratación sin reinterpretar texto normal del usuario.
+String effectiveUserDisplayKind(Map<String, dynamic> message) {
   final displayKind = message['display_kind']?.toString().trim() ?? '';
   if (displayKind.isNotEmpty) return displayKind;
+  if (message['role'] != 'user' || message['_steer'] == true) return '';
 
-  // La API REST 0.19 todavía omite `display_kind` en `_message_response`,
-  // aunque session.resume sí lo publica. Reconoce la misma fila por su marker
-  // estable para que ambas proyecciones calculen ordinales idénticos.
-  final content = (message['content'] ?? '')
-      .toString()
-      .trimLeft()
-      .toLowerCase();
+  final rawContent = (message['content'] ?? message['text'] ?? '').toString();
+  if (_asyncDelegationMarkerPattern.hasMatch(rawContent)) {
+    return 'async_delegation_complete';
+  }
+  final content = rawContent.trimLeft().toLowerCase();
   final isLegacyModelSwitch =
       content.startsWith('[system:') &&
       content.contains('active model') &&
@@ -69,7 +77,7 @@ int? modelSwitchRepairFallbackOrdinal(
       continue;
     }
 
-    final displayKind = _userDisplayKind(message);
+    final displayKind = effectiveUserDisplayKind(message);
     if (!previousWasUser) {
       previousWasUser = true;
       runStartsWithModelSwitch = displayKind == 'model_switch';

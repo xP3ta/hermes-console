@@ -22,6 +22,8 @@ class _SnapshotGateway
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
   DesktopSessionSnapshot? snapshot;
+  DesktopSessionSnapshot? omittedSnapshot;
+  DesktopSessionSnapshot? deferredSnapshot;
   Object? resumeExistingError;
   Completer<DesktopSessionSnapshot>? resumeGate;
   final List<Completer<DesktopSessionSnapshot>> resumeGates = [];
@@ -66,6 +68,8 @@ class _SnapshotGateway
     if (resumeGates.isNotEmpty) return resumeGates.removeAt(0).future;
     final gate = resumeGate;
     if (gate != null) return gate.future;
+    if (deferHistory && deferredSnapshot != null) return deferredSnapshot!;
+    if (omitMessages && omittedSnapshot != null) return omittedSnapshot!;
     return snapshot!;
   }
 
@@ -426,7 +430,9 @@ void main() {
       // El owner RPC es explícito, pero el perfil principal conserva el
       // transporte Gateway en vez de depender de credenciales Dashboard.
       expect(gateway.lastResumeProfile, 'default');
-      expect(gateway.lastResumeOmitMessages, isTrue);
+      // REST carga antes el contenido, pero no conserva metadata editorial;
+      // una sesión no vacía debe pedir el transcript completo al Gateway.
+      expect(gateway.lastResumeOmitMessages, isFalse);
 
       resumeGate.complete(
         _snapshot({
@@ -442,7 +448,7 @@ void main() {
       expect(chat.assistantContent, 'historial REST');
       expect(chat.messages, hasLength(2));
       expect(chat.hasDesktopRuntime, isTrue);
-      expect(gateway.lastResumeOmitMessages, isTrue);
+      expect(gateway.lastResumeOmitMessages, isFalse);
     },
   );
 
@@ -540,6 +546,16 @@ void main() {
             },
             {'role': 'assistant', 'content': 'Respuesta snapshot'},
           ],
+        })
+        // El Gateway real cumple omit_messages: no devuelve precisamente la
+        // metadata editorial que REST omite. El fake debe respetar el contrato
+        // para que la prueba pueda detectar el muro ASYNC DELEGATION.
+        ..omittedSnapshot = _snapshot({
+          'session_id': 'runtime-display-metadata',
+          'session_key': 'stored-chat',
+          'message_count': 2,
+          'messages': <Object>[],
+          'messages_omitted': true,
         });
       final chat = _chat(
         'resume-display-metadata',
@@ -553,6 +569,13 @@ void main() {
 
       await chat.loadMessages(expectedMessageCount: 2);
 
+      expect(
+        gateway.lastResumeOmitMessages,
+        isFalse,
+        reason:
+            'REST no conserva display_kind/display_metadata; session.resume debe '
+            'entregar el transcript editorial aunque el prefetch ya haya acabado',
+      );
       expect(chat.assistantContent, 'Respuesta REST autoritativa');
       final event = chat.messages.singleWhere(
         (message) => message['content'] == raw,
@@ -569,6 +592,90 @@ void main() {
       expect(projection.units.last, isA<ChatMessageUnitPlan>());
     },
   );
+
+  test(
+    'sesión existente con contador desconocido no omite historial',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-unknown-count',
+          'session_key': 'stored-chat',
+          'message_count': 2,
+          'messages': [
+            {'role': 'user', 'content': 'Pregunta recuperada'},
+            {'role': 'assistant', 'content': 'Respuesta recuperada'},
+          ],
+        })
+        ..omittedSnapshot = _snapshot({
+          'session_id': 'runtime-unknown-count',
+          'session_key': 'stored-chat',
+          'message_count': 2,
+          'messages': <Object>[],
+          'messages_omitted': true,
+        });
+      final chat = _chat(
+        'resume-unknown-count',
+        gateway,
+        storedMessageLoader: (_, _) async => <Map<String, dynamic>>[],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 0);
+
+      expect(gateway.lastResumeOmitMessages, isFalse);
+      expect(gateway.lastResumeDeferHistory, isTrue);
+      expect(
+        chat.messages.map((message) => message['content']),
+        containsAll(['Pregunta recuperada', 'Respuesta recuperada']),
+      );
+    },
+  );
+
+  test('REST repara marker editorial mientras resume 0.20 hidrata', () async {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_0d84d484]';
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-display-deferred',
+        'session_key': 'stored-chat',
+        'message_count': 2,
+        'messages': [
+          {
+            'role': 'user',
+            'content': raw,
+            'display_kind': 'async_delegation_complete',
+          },
+          {'role': 'assistant', 'content': 'Respuesta snapshot'},
+        ],
+      })
+      ..deferredSnapshot = _snapshot({
+        'session_id': 'runtime-display-deferred',
+        'session_key': 'stored-chat',
+        'message_count': 2,
+        'hydrating': true,
+        'messages': <Object>[],
+      });
+    final chat = _chat(
+      'resume-display-deferred',
+      gateway,
+      storedMessageLoader: (_, _) async => [
+        {'role': 'user', 'content': raw},
+        {'role': 'assistant', 'content': 'Respuesta REST autoritativa'},
+      ],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: 2);
+
+    expect(gateway.lastResumeDeferHistory, isTrue);
+    final event = chat.messages.singleWhere(
+      (message) => message['content'] == raw,
+    );
+    expect(event['display_kind'], 'async_delegation_complete');
+    expect(event['display_metadata'], isNull);
+    final projection = ChatRenderProjection.build(chat.messages);
+    expect(projection.visibleUserCount, 0);
+    expect(projection.units.last, isA<ChatMessageUnitPlan>());
+  });
 
   test('perfil llega tanto a Dashboard REST como a session.resume', () async {
     final requestedProfiles = <String>[];

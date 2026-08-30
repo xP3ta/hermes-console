@@ -158,6 +158,11 @@ Map<String, dynamic> normalizeTranscriptMessageForDisplay(
       desktopSessionDisplayText(message['content']) ??
       desktopSessionDisplayText(message['text']) ??
       '';
+  final displayKind = effectiveUserDisplayKind(normalized);
+  if (displayKind.isNotEmpty &&
+      (normalized['display_kind']?.toString().trim().isEmpty ?? true)) {
+    normalized['display_kind'] = displayKind;
+  }
   return normalized;
 }
 
@@ -2488,21 +2493,20 @@ class ActiveChat {
             Future<void>.delayed(Duration.zero),
           ]);
         }
-        final prefetched = prefetchCompletedBeforeResume?.value;
-        final hasAuthoritativePrefetch =
-            prefetched != null &&
-            (prefetched.isNotEmpty || expectedMessageCount == 0);
+        // El transcript REST es autoritativo para el contenido, pero las
+        // versiones actuales del Dashboard omiten display_kind y
+        // display_metadata. Un 0 también puede significar contador ausente o
+        // una apertura desde notificación, así que nunca prueba que una sesión
+        // existente esté vacía. Pedimos siempre el transcript editorial al
+        // Gateway; las sesiones móviles nuevas no pasan por resumeExisting.
         return lifecycleGateway.resumeExisting(
           serverSessionId,
           profile: _storedSessionProfile,
-          // Desktop omite el transcript porque su repositorio local ya lo
-          // posee. Android solo puede hacer lo mismo si REST terminó antes de
-          // enlazar el runtime. Si REST sigue pendiente, falló o devolvió un
-          // vacío inesperado, pedimos el snapshot completo sin retrasar resume.
-          omitMessages: hasAuthoritativePrefetch,
-          // Hermes Agent 0.20: ack inmediato e hidratación del historial en
-          // segundo plano (`session.resume_progress`). Un gateway antiguo
-          // ignora el parámetro y responde como siempre (sin `hydrating`).
+          omitMessages: false,
+          // Hermes Agent 0.20 puede devolver un ack inmediato y completar la
+          // hidratación mediante `session.resume_progress`. Solicitamos los
+          // mensajes (`omitMessages=false`) y además reparamos abajo los markers
+          // estables que REST 0.19 entrega sin metadata durante ese intervalo.
           deferHistory: true,
         );
       });
