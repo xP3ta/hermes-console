@@ -599,6 +599,66 @@ void main() {
     },
   );
 
+  test(
+    'cross-kind ordinary collision expires without a terminal-read RPC',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final key = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'cross-kind-terminal',
+      );
+      gateway.emit('clarify.request', const {
+        'request_id': 'cross-kind-terminal',
+        'question': '¿Continuar?',
+      });
+      await _waitUntil(() => chat.interactivePrompts[key] != null);
+
+      gateway.emit('terminal.read.request', const {
+        'request_id': 'cross-kind-terminal',
+        'start': 0,
+        'count': 1,
+      });
+      await _waitUntil(
+        () =>
+            chat.interactivePrompts[key]?.status ==
+            InteractivePromptStatus.expired,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.interactivePrompts[key]?.request, isNull);
+      expect(gateway.terminalResponses, 0);
+    },
+  );
+
+  test('malformed ordinary event with a valid key expires that key', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    final key = InteractivePromptKey(
+      runtimeSessionId: 'runtime-interactive',
+      requestId: 'malformed-exact',
+    );
+    gateway.emit('clarify.request', const {
+      'request_id': 'malformed-exact',
+      'question': '¿Continuar?',
+    });
+    await _waitUntil(() => chat.interactivePrompts[key] != null);
+
+    gateway.emit('secret.request', const {
+      'request_id': 'malformed-exact',
+      'prompt': 'missing env var',
+    });
+    await _waitUntil(
+      () =>
+          chat.interactivePrompts[key]?.status ==
+          InteractivePromptStatus.expired,
+    );
+
+    expect(chat.interactivePrompts[key]?.request, isNull);
+  });
+
   test('secret expired se borra y un replay tardío no lo reabre', () async {
     final gateway = _InteractiveGateway()
       ..nextSensitiveStatus = DesktopPromptResponseStatus.expired;
@@ -2247,6 +2307,93 @@ void main() {
     );
     expect(entry.status, InteractivePromptStatus.pending);
   });
+
+  test(
+    'malformed authoritative snapshot expires runtime clarifies only',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      final targetKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'snapshot-malformed-target',
+      );
+      final siblingKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'snapshot-clarify-sibling',
+      );
+      final secretKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'snapshot-secret-neighbor',
+      );
+      final sudoKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'snapshot-sudo-neighbor',
+      );
+      final tombstoneKey = InteractivePromptKey(
+        runtimeSessionId: 'runtime-interactive',
+        requestId: 'snapshot-terminal-tombstone',
+      );
+      gateway.emit('clarify.request', const {
+        'request_id': 'snapshot-malformed-target',
+        'question': '¿Objetivo?',
+      });
+      gateway.emit('clarify.request', const {
+        'request_id': 'snapshot-clarify-sibling',
+        'question': '¿También invalidar?',
+      });
+      gateway.emit('secret.request', const {
+        'request_id': 'snapshot-secret-neighbor',
+        'env_var': 'SNAPSHOT_SECRET',
+        'prompt': 'Conservar secreto',
+      });
+      gateway.emit('sudo.request', const {
+        'request_id': 'snapshot-sudo-neighbor',
+      });
+      gateway.emit('terminal.read.request', const {
+        'request_id': 'snapshot-terminal-tombstone',
+        'start': 0,
+        'count': 1,
+      });
+      await _waitUntil(
+        () =>
+            chat.interactivePrompts.entries.length == 5 &&
+            chat.interactivePrompts[tombstoneKey]?.status ==
+                InteractivePromptStatus.responded,
+      );
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+        pendingClarify: {
+          'request_id': 'snapshot-malformed-target',
+          'questions': 'not-a-list',
+        },
+      );
+
+      await chat.loadMessages();
+
+      for (final key in [targetKey, siblingKey]) {
+        expect(
+          chat.interactivePrompts[key]?.status,
+          InteractivePromptStatus.expired,
+        );
+        expect(chat.interactivePrompts[key]?.request, isNull);
+      }
+      for (final key in [secretKey, sudoKey]) {
+        expect(
+          chat.interactivePrompts[key]?.status,
+          InteractivePromptStatus.pending,
+        );
+      }
+      expect(
+        chat.interactivePrompts[tombstoneKey]?.status,
+        InteractivePromptStatus.responded,
+      );
+      expect(gateway.terminalResponses, 1);
+    },
+  );
 
   test(
     'malformed authoritative snapshot after ambiguous ACK expires only clarify',

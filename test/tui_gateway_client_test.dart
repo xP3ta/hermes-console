@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
@@ -286,6 +287,19 @@ void main() {
                 },
               }),
             );
+            socket.add(
+              jsonEncode({
+                'jsonrpc': '2.0',
+                'method': 'event',
+                'params': {
+                  'type': 'clarify.request',
+                  'payload': {
+                    'request_id': 'ambiguous-clarify',
+                    'question': 'Ambiguous runtime',
+                  },
+                },
+              }),
+            );
           }
         }
       });
@@ -308,12 +322,17 @@ void main() {
       final eventFuture = client.events.firstWhere(
         (event) => event.type == 'message.delta',
       );
+      final clarifyFuture = client.events.firstWhere(
+        (event) => event.type == 'clarify.request',
+      );
       await client.steer(second.runtimeSessionId, 'continúa');
       final event = await eventFuture.timeout(const Duration(seconds: 2));
+      final clarify = await clarifyFuture.timeout(const Duration(seconds: 2));
 
       expect(first.runtimeSessionId, 'runtime-1');
       expect(second.runtimeSessionId, 'runtime-2');
       expect(event.sessionId, isEmpty);
+      expect(clarify.sessionId, isEmpty);
     },
   );
 
@@ -409,6 +428,29 @@ void main() {
       });
     },
   );
+
+  test('session binding preserves pending clarify interpretation', () {
+    final snapshot = DesktopSessionSnapshot.fromJson(
+      const {
+        'session_id': 'runtime-binding-clarify',
+        'session_key': 'stored-binding-clarify',
+        'pending_clarify': 'not-a-map',
+      },
+      requestedStoredSessionId: 'stored-binding-clarify',
+      created: false,
+      method: 'session.resume',
+    );
+    final outcome = snapshot.pendingClarifyOutcome;
+    final binding = DesktopSessionBinding.fromSnapshot(snapshot);
+
+    expect(outcome, isA<InteractivePromptParseFailure>());
+    expect(binding.pendingClarifyProvided, isTrue);
+    expect(identical(binding.pendingClarifyOutcome, outcome), isTrue);
+    expect(
+      (binding.pendingClarifyOutcome! as InteractivePromptParseFailure).scope,
+      InteractivePromptFailureScope.runtimeKind,
+    );
+  });
 
   test(
     'resumeExisting nunca crea si el servidor no encuentra la sesión',

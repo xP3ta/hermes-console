@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/models/interactive_prompt.dart';
 
 void main() {
   test(
@@ -19,7 +20,75 @@ void main() {
 
       expect(snapshot.pendingClarifyProvided, isTrue);
       expect(snapshot.pendingClarify, isNull);
+      expect(
+        snapshot.pendingClarifyOutcome,
+        isA<InteractivePromptParseFailure>(),
+      );
+      expect(
+        (snapshot.pendingClarifyOutcome! as InteractivePromptParseFailure)
+            .scope,
+        InteractivePromptFailureScope.runtimeKind,
+      );
       expect(snapshot.raw, {'extension_safe': 'kept'});
+    },
+  );
+
+  test('pending_clarify map malformado no retiene preguntas ni respuestas', () {
+    final snapshot = DesktopSessionSnapshot.fromJson(
+      const {
+        'session_id': 'runtime-clarify-malformed-map',
+        'session_key': 'stored-clarify-malformed-map',
+        'pending_clarify': <String, dynamic>{
+          'request_id': 'clarify-malformed-map',
+          'questions': 'sensitive-question',
+          'answers': <String, dynamic>{'q1': 'sensitive-answer'},
+        },
+        'extension_safe': 'kept',
+      },
+      requestedStoredSessionId: 'stored-clarify-malformed-map',
+      created: false,
+      method: 'session.resume',
+    );
+
+    expect(snapshot.pendingClarifyProvided, isTrue);
+    expect(snapshot.pendingClarify, isNull);
+    final failure = snapshot.pendingClarifyOutcome;
+    expect(failure, isA<InteractivePromptParseFailure>());
+    expect(
+      (failure! as InteractivePromptParseFailure).scope,
+      InteractivePromptFailureScope.runtimeKind,
+    );
+    expect(snapshot.raw, {'extension_safe': 'kept'});
+    expect(snapshot.toString(), isNot(contains('sensitive')));
+  });
+
+  test(
+    'pending_clarify válido conserva el mapa y la interpretación tipada',
+    () {
+      const pending = <String, dynamic>{
+        'request_id': 'clarify-valid',
+        'questions': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'qid': 'q1',
+            'question': '¿Continuar?',
+            'choices': <String>['Sí', 'No'],
+          },
+        ],
+      };
+      final snapshot = DesktopSessionSnapshot.fromJson(
+        const {
+          'session_id': 'runtime-clarify-valid',
+          'session_key': 'stored-clarify-valid',
+          'pending_clarify': pending,
+        },
+        requestedStoredSessionId: 'stored-clarify-valid',
+        created: false,
+        method: 'session.resume',
+      );
+
+      expect(snapshot.pendingClarifyProvided, isTrue);
+      expect(snapshot.pendingClarify, pending);
+      expect(snapshot.pendingClarifyOutcome, isA<InteractivePromptParsed>());
     },
   );
 
