@@ -1,7 +1,7 @@
 # Google Play — Permissions justification
 
 Justificación de cada permiso para la revisión de Google Play. Esta tabla apunta
-al candidato fuente `1.2.7 (915)` y se reconcilió el 2026-08-23 con sus manifests
+al candidato fuente `1.2.8 (4943)` y se reconcilió el 2026-08-30 con sus manifests
 versionados. El AAB firmado definitivo todavía no se ha generado ni inspeccionado
 con bundletool, por lo que no se registra aquí ningún hash o permiso efectivo
 como si ya existiera. Antes de copiar el texto a Play Console hay que repetir la
@@ -15,12 +15,11 @@ que los permisos exclusivos de la variante completa no están presentes.
 | `INTERNET` | Conectar al servidor Hermes del usuario | Funcionalidad central |
 | `RECORD_AUDIO` | Dictado y modo conversación | Solo empieza tras una acción del usuario y su divulgación. Continuar una conversación fuera de la app requiere opt-in separado y notificación persistente; la app no guarda el audio |
 | `CAMERA` | Escanear un QR de conexión o tomar una foto adjunta | Solo se abre tras una acción del usuario. ZXing procesa los frames del QR íntegramente en el dispositivo; una foto capturada se envía únicamente al servidor configurado cuando el usuario manda el mensaje. Sin captura en background |
-| `POST_NOTIFICATIONS` | Avisos del agente y controles de Voz/lectura | Notificaciones locales para aprobaciones, ejecuciones, Cron/Kanban y audio iniciado por el usuario; sin push de terceros |
+| `POST_NOTIFICATIONS` | Respuestas completadas y controles de Voz/lectura | Aviso privado de una respuesta mientras el proceso sigue vivo y controles persistentes del audio iniciado por el usuario; sin push de terceros. Runs, Cron, Kanban y aprobaciones están desactivados en 1.2.8 |
 | `VIBRATE` | Feedback de notificaciones | Complementa las notificaciones |
-| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | Mantener operaciones activas y avisos con la app en 2º plano | Tipo `dataSync`: vigila ejecuciones activas del agente y mantiene transferencias SFTP o sesiones SSH iniciadas por el usuario. Se usa de forma acotada y se libera cuando no queda ninguna operación; la escucha persistente de avisos es opt-in |
+| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | Mantener operaciones SSH/SFTP iniciadas por el usuario en 2º plano | Tipo `dataSync`: mantiene una transferencia SFTP o sesión SSH explícita y se libera cuando no queda ninguna operación. No vigila runs ni automatizaciones en 1.2.8 |
 | `FOREGROUND_SERVICE_MICROPHONE` | Continuar una conversación de voz fuera de la app | Tipo `microphone`: solo se arranca desde una Activity visible, después de `RECORD_AUDIO` y del opt-in correspondiente. Muestra controles persistentes y nunca arranca desde boot/receiver. Tras process death no restaura la conversación |
 | `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Continuar lectura TTS y respuestas de Voz | Tipo `mediaPlayback`: protege audio solicitado por el usuario; la notificación no incluye contenido de conversación y no se restaura desde boot/process death |
-| `RECEIVE_BOOT_COMPLETED` | Recuperar únicamente vigilancia y trabajo `dataSync` autorizado | Permite restaurar avisos de runs/cron opt-in tras reiniciar. Nunca restaura micrófono, conversación ni reproducción de voz |
 | `WRITE_EXTERNAL_STORAGE` (solo Android ≤9) | Guardar una imagen generada cuando el usuario pulsa “Guardar” | Limitado con `maxSdkVersion=28`; Android moderno no lo recibe |
 | `WAKE_LOCK` | Mantener una operación iniciada por el usuario mientras el FGS está activo | Añadido por `flutter_foreground_task`; no se mantiene sin trabajo/opt-in |
 | `ACCESS_NETWORK_STATE` | Adaptar componentes de red al estado de conectividad | Permiso normal añadido por dependencias Android |
@@ -30,9 +29,9 @@ que los permisos exclusivos de la variante completa no están presentes.
 
 ### Foreground services — declaración para Play Console
 
-- **Tipo `dataSync`:** mantiene runs iniciadas por el usuario, operaciones
-  SSH/SFTP y vigilancia opt-in mientras la app está en segundo plano. Se libera
-  al terminar el trabajo y ofrece parada directa.
+- **Tipo `dataSync`:** mantiene operaciones SSH/SFTP iniciadas por el usuario
+  mientras la app está en segundo plano. Se libera al terminar el trabajo y
+  ofrece parada directa.
 - **Tipo `microphone`:** mantiene una conversación iniciada por el usuario tras
   el opt-in de continuidad. Terminar libera el micrófono y degrada el servicio.
 - **Tipo `mediaPlayback`:** mantiene ReadAloud, las respuestas de una
@@ -56,10 +55,8 @@ exclusivas de la variante completa.
 ## Permisos sensibles/restringidos — estado
 - `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: **eliminado del build de Play** (era el
   de mayor riesgo de objeción). Solo en la variante completa, opt-in.
-- `RECEIVE_BOOT_COMPLETED`: presente solo para recuperar trabajo `dataSync`
-  autorizado; no rearma micrófono ni voz.
-- El reinicio automático es exclusivamente `dataSync`; nunca recupera el tipo
-  `microphone` ni una conversación de voz.
+- `RECEIVE_BOOT_COMPLETED`: retirado del manifest fusionado. 1.2.8 no restaura
+  automatizaciones, SSH/SFTP, micrófono, conversación ni reproducción tras boot.
 - No se usa `QUERY_ALL_PACKAGES` (solo queries específicas y necesarias).
 - No se declara `USE_FULL_SCREEN_INTENT`; la voz usa una notificación normal,
   nunca invade la pantalla de bloqueo con una Activity.
@@ -75,7 +72,7 @@ exclusivas de la variante completa.
 
 ## Evidencia pendiente antes de Play
 
-- Manifest fusionado y permisos efectivos del AAB firmado `1.2.7 (915)`.
+- Manifest fusionado y permisos efectivos del AAB firmado `1.2.8 (4943)`.
 - Flujo físico de permiso y ciclo de vida de cámara con un QR real leído por
   ZXing, incluyendo denegación y el fallback de pegar enlace.
 - Los tres vídeos FGS y la QA física detallada en

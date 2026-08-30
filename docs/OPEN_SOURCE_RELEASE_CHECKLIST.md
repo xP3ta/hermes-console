@@ -1,6 +1,6 @@
 # Open-source release checklist
 
-Candidate version: `1.2.8+4939`, integrated from the published `v1.2.7` source.
+Candidate version: `1.2.8+4943`, integrated from the published `v1.2.7` source.
 Record the final public SHA after all audit commits are complete. This checklist
 is an engineering gate, not legal advice. Do not create a public remote or
 distribute a GPL-labelled APK/AAB until every blocking item is closed on the
@@ -70,7 +70,7 @@ exact candidate commit.
 
 ## Current decision
 
-**`v1.2.7` is the published baseline; `1.2.8+4939` is NOT GO yet.** The 1.2.7
+**`v1.2.7` is the published baseline; `1.2.8+4943` is NOT GO yet.** The 1.2.7
 tag points to `8006b01ad99d8d8f5d64c6bbde3ef29841b9a79d`. The 1.2.8 gate is tracked
 below and in [`RELEASE_1.2.8_AUDIT.md`](RELEASE_1.2.8_AUDIT.md).
 

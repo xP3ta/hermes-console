@@ -3,7 +3,7 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## 1.2.8 (4939)
+## 1.2.8 (4943)
 
 - Improved chat recovery across network loss, backgrounding and reopening,
   including duplicate protection, safer rewind boundaries and stronger
@@ -12,9 +12,9 @@ are not releases.
   questions, including restored pending prompts, sequential acknowledgements,
   partial retries, authoritative-answer fencing and fail-closed replay
   reconciliation.
-- Improved local Android notifications for runs, Cron, Kanban and approvals,
-  with stable channels, actionable tap destinations and approvals that only
-  open the app instead of acting from the lock screen.
+- Kept completed-reply notifications private and routed to the exact session
+  while the app process remains available in the background. Durable
+  closed-app notifications for runs, Cron, Kanban and approvals remain deferred.
 - Preserved queued and interrupted turns durably across reconnects without
   resending prompts, duplicating messages or crossing profiles.
 - Ordered conversations by canonical activity, added reliable relative times

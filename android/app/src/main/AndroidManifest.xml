@@ -24,13 +24,14 @@
         android:required="false" />
     <uses-feature android:name="android.hardware.microphone"
         android:required="false" />
-    <!-- Notificaciones locales (Android 13+). Sin FCM/push: las dispara la
-         propia app para eventos del agente (aprobaciones, ejecuciones). -->
+    <!-- Notificaciones locales (Android 13+). Sin FCM/push: en 1.2.8 cubren
+         respuestas completadas mientras el proceso sigue vivo y controles de
+         Voz/Read Aloud. Las automatizaciones durables están diferidas. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- Escucha en 2º plano (opt-in): foreground service que mantiene vivo el
-         proceso para avisar con la app cerrada. Tipo dataSync (sincroniza el
-         estado del agente). Sin push de Google. -->
+    <!-- El tipo dataSync mantiene únicamente trabajo de red iniciado por el
+         usuario (SSH/SFTP). No habilita escucha de automatizaciones ni avisos
+         con la app cerrada en 1.2.8. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -38,10 +39,12 @@
          Permiso normal (sin diálogo runtime); evita que Android/GrapheneOS
          silencie AudioTrack al bloquear o enviar la app a segundo plano. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- Re-arranca la escucha en 2º plano tras reiniciar el móvil, solo si el
-         usuario la dejó activada (opt-in). Sin esto, los avisos del agente no
-         volverían tras un reinicio. Lo usa flutter_foreground_task (autoRunOnBoot). -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 1.2.8 no restaura automatizaciones, SSH/SFTP, micrófono ni reproducción
+         tras reiniciar. Retira también cualquier permiso de boot aportado por
+         flutter_foreground_task. -->
+    <uses-permission
+        android:name="android.permission.RECEIVE_BOOT_COMPLETED"
+        tools:node="remove" />
     <!-- Guardar en la galería las imágenes que el agente genera y el usuario
          pide exportar. Android 13+ NO requiere permiso
          para la media propia de la app; este WRITE se limita a Android <=9
@@ -132,21 +135,20 @@
         <meta-data
             android:name="dev.xpetalab.hermesconsole.voice.NOTIFICATION_ICON_PAUSED"
             android:resource="@drawable/ic_stat_voice_orb_paused" />
-        <!-- Único foreground service de la app. dataSync vigila ejecuciones;
-             microphone continúa una conversación iniciada desde una Activity
-             visible; mediaPlayback protege TTS solicitado. Ningún tipo de audio
-             arranca desde boot o un receiver y una conversación no se restaura
-             tras process death. -->
+        <!-- Único foreground service de la app. dataSync protege transferencias
+             SFTP y sesiones SSH iniciadas por el usuario; microphone continúa
+             una conversación iniciada desde una Activity visible; mediaPlayback
+             protege TTS solicitado. En la 1.2.8 las automatizaciones no arrancan
+             este servicio, ningún tipo de audio arranca desde boot o un receiver
+             y una conversación no se restaura tras process death. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|microphone|mediaPlayback"
             android:exported="false" />
 
-        <!-- Recibe los toques de los botones de acción de las notificaciones
-             (Aprobar/Rechazar) cuando la app está muerta y los entrega al
-             isolate de fondo (onDidReceiveBackgroundNotificationResponse).
-             Requerido por flutter_local_notifications para acciones con
-             showsUserInterface:false. Sin permisos nuevos, no exportado. -->
+        <!-- Receiver no exportado requerido por flutter_local_notifications.
+             En la 1.2.8 las tarjetas de automatización están desactivadas y las
+             aprobaciones solo abren la app; no se ejecutan desde la notificación. -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
             android:exported="false" />

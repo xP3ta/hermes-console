@@ -42,20 +42,24 @@ probados sobre el mismo commit para todos los canales.
 
 ### Notificaciones
 
-- [x] Conservar las notificaciones locales aprobadas de la candidata base.
+- [x] Respuestas completadas: una notificación privada mientras el proceso de la
+      app sigue vivo; el tap abre la sesión exacta sin duplicados.
+- [x] Automatizaciones (runs, Cron, Kanban y aprobaciones) desactivadas de forma
+      fail-closed en 1.2.8; no se anuncian como funcionalidad de esta candidata.
 - [ ] Ledger durable SQLite, deduplicación entre isolates y cancelación exacta
       tras process death (diferidos: la rama de wiring no superó la revisión final).
-- [ ] Verificar el comportamiento real de las notificaciones existentes en Android.
+- [x] Verificado en Pixel: permiso/canal/tap, respuesta real en background y
+      ausencia esperada de entrega después de forzar el cierre de la app.
 
 ## 2. Falta terminar o corregir
 
 - [ ] Resolver todas las ramas/worktrees exclusivos y eliminar duplicados obsoletos.
 - [x] Dejar una única candidata canónica sin las ramas endurecidas rechazadas.
 - [ ] Resolver cualquier fallo de análisis, tests o revisión independiente.
-- [ ] Elegir un `versionCode` final superior al QA instalado en el Pixel.
-- [ ] Sincronizar versión en changelog, ficha Play, instalación, checklist y SBOM.
+- [x] Fijar `versionCode` 4943, superior al QA 4942 instalado en el Pixel.
+- [x] Sincronizar versión en changelog, ficha Play, instalación, checklist y SBOM.
 - [ ] Reconciliar manifest final, privacidad, Data Safety y declaraciones FGS.
-- [ ] Revisar licencias de nuevas dependencias y todos los `NOASSERTION` del SBOM.
+- [x] Revisar licencias: colas `NOASSERTION` vacías en Play y Full.
 
 ## 3. Falta probar en el Pixel físico
 
@@ -74,8 +78,8 @@ sin desinstalar ni borrar datos:
 - [ ] QR/enlace de pairing sin duplicados ni pérdida de intents.
 - [ ] Voz, dictado, lectura, interrupción, audio privado y background opt-in.
 - [ ] Proveedores externos, autenticación existente y diagnóstico de capacidades.
-- [ ] Notificaciones de run, cron, Kanban y aprobaciones; taps exactos, agrupación,
-      deduplicación, preferencias, reinicio de app y privacidad.
+- [x] Automatizaciones desactivadas: getters efectivos en `false`, sin watch,
+      servicio ni tarjeta Android; la preferencia permanece apagada.
 - [ ] Permisos, App Lock, modo solo lectura y limpieza de temporales.
 
 ## 4. Falta preparar o subir

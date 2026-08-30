@@ -3,7 +3,7 @@
 **Tipos declarados**: `dataSync`, `microphone` y `mediaPlayback` sobre el único
 servicio no exportado de `flutter_foreground_task`.
 
-**Revisado**: 2026-08-23 para el candidato fuente `1.2.7 (915)`. Los tipos
+**Revisado**: 2026-08-30 para el candidato fuente `1.2.8 (4943)`. Los tipos
 coinciden con el manifest versionado, pero el AAB firmado, su manifest fusionado
 y la demostración física todavía están pendientes. Copiar o adaptar en Play
 Console → Contenido de la aplicación → Permisos de servicios en primer plano
@@ -18,30 +18,29 @@ aprobación.
 
 > Hermes Console es un cliente para el agente de IA autoalojado del usuario. El
 > servicio `dataSync` mantiene trabajo de red visible e iniciado por el usuario:
-> una ejecución del agente que continúa al dejar la app, una transferencia SFTP,
-> una sesión SSH activa o la vigilancia de tareas que el usuario activa en
-> Ajustes. Una notificación persistente indica que Hermes sigue activo y permite
-> detenerlo. El servicio se libera al terminar el trabajo y no envía datos a un
-> backend de XPeta Lab.
+> una transferencia SFTP o una sesión SSH activa. Una notificación persistente
+> indica que Hermes sigue activo y permite detenerlo. El servicio se libera al
+> terminar el trabajo y no envía datos a un backend de XPeta Lab. La vigilancia
+> de runs, Cron, Kanban y aprobaciones está desactivada en 1.2.8.
 
 ### English text
 
 > Hermes Console is a client for the user's self-hosted AI agent. Its `dataSync`
 > foreground service keeps user-visible network work active after leaving the
-> app: a user-started agent run, SFTP transfer, active SSH session, or task
-> monitoring explicitly enabled in Settings. A persistent notification states
-> that Hermes is active and provides a direct Stop action. The service is
-> released when work ends and sends no data to an XPeta Lab backend.
+> app: a user-started SFTP transfer or active SSH session. A persistent
+> notification states that Hermes is active and provides a direct Stop action.
+> The service is released when work ends and sends no data to an XPeta Lab
+> backend. Run, Cron, Kanban, and approval monitoring is disabled in 1.2.8.
 
 - **Caso sugerido en Play**: Network transfer — upload or download /
   server-side processing initiated by the user.
-- **Si se aplaza**: el run, stream o transferencia deja de actualizarse al salir
-  de la app y el usuario puede perder progreso visible o tener que reanudar.
+- **Si se aplaza**: la transferencia o sesión deja de mantenerse al salir de la
+  app y el usuario puede perder progreso visible o tener que reanudar.
 - **Si se interrumpe**: la app reconcilia el estado al volver; una transferencia
   o sesión interactiva puede necesitar reanudación manual.
-- **Por qué no basta WorkManager/UIDT**: runs SSE/WebSocket y SSH son sesiones
-  interactivas con estado y respuesta en directo; no son una copia diferible
-  aislada. Para nuevas transferencias puras debe reevaluarse UIDT.
+- **Por qué no basta WorkManager/UIDT**: SSH es una sesión interactiva con estado
+  y respuesta en directo; no es una copia diferible aislada. Para nuevas
+  transferencias puras debe reevaluarse UIDT.
 
 ## `microphone`
 
@@ -118,9 +117,9 @@ o no listados, sin tokens, IPs, nombres reales ni conversaciones sensibles.
 
 ### `dataSync` (≤30 s)
 
-1. Lanzar una tarea demo de unos 15 s.
+1. Iniciar una transferencia SFTP demo de unos 15 s.
 2. Ir al launcher y mostrar la notificación persistente y Stop.
-3. Volver y enseñar la tarea completada, o pulsar Stop y mostrar su retirada.
+3. Volver y enseñar la transferencia completada, o pulsar Stop y mostrar su retirada.
 
 ### `microphone` (30–45 s)
 
@@ -152,8 +151,8 @@ usar un vídeo antiguo que solo muestre `dataSync`.
 - `RECORD_AUDIO` se concede antes de crear el FGS `microphone`; la conversación
   se inicia desde una Activity visible, nunca desde background o
   `BOOT_COMPLETED`.
-- El arranque automático y `restoreIfEnabled` restauran únicamente `dataSync` y
-  limpian cualquier lease de voz o reproducción.
+- `RECEIVE_BOOT_COMPLETED` no está presente: tras boot no se restauran
+  automatizaciones, SSH/SFTP, micrófono ni reproducción.
 - Los tipos se adquieren según el trabajo efectivo: Voz usa
   `microphone|mediaPlayback`, ReadAloud usa solo `mediaPlayback` y el modo sin
   audio usa `dataSync`. Los leases de audio no consumen la cuota limitada de
