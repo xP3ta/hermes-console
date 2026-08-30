@@ -64,7 +64,7 @@ class _NotificationSettingsScreenState
         return;
       }
     }
-    final ok = v ? await BackgroundListener.start() : true;
+    final ok = v ? await BackgroundListener.startForAutomation() : true;
     if (!v) {
       await BackgroundListener.stop();
       await _notif?.setNotifyCronResults(false);
@@ -105,7 +105,7 @@ class _NotificationSettingsScreenState
           app.connManager.getConnections(),
         );
       }
-      enabled = await BackgroundListener.start();
+      enabled = await BackgroundListener.startForAutomation();
       await _prefs?.setBool(BackgroundListener.prefKey, enabled);
     }
     await notif.setNotifyCronResults(enabled);
@@ -140,7 +140,7 @@ class _NotificationSettingsScreenState
     if (!mounted) return;
     var enabled = value;
     if (value) {
-      enabled = await BackgroundListener.start();
+      enabled = await BackgroundListener.startForAutomation();
       await _prefs?.setBool(BackgroundListener.prefKey, enabled);
     }
     await notif.setNotifyKanbanResults(enabled);

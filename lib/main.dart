@@ -1027,12 +1027,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         widget.sshSessions.hasActive;
     // SFTP y las sesiones de terminal levantan el foreground service al empezar y
     // delegan su parada en la coordinación central (que respeta voz/runs/el otro).
-    widget.sftpTransfers.onNeedForeground = () => BackgroundListener.start();
-    widget.sftpTransfers.onMaybeRelease = () =>
-        widget.activeChats.maybeReleaseForeground();
-    widget.sshSessions.onNeedForeground = () => BackgroundListener.start();
-    widget.sshSessions.onMaybeRelease = () =>
-        widget.activeChats.maybeReleaseForeground();
+    widget.sftpTransfers.onNeedForeground = () =>
+        BackgroundListener.acquireExternalDataSync();
+    widget.sftpTransfers.onMaybeRelease = () {
+      BackgroundListener.releaseExternalDataSync();
+      widget.activeChats.maybeReleaseForeground();
+    };
+    widget.sshSessions.onNeedForeground = () =>
+        BackgroundListener.acquireExternalDataSync();
+    widget.sshSessions.onMaybeRelease = () {
+      BackgroundListener.releaseExternalDataSync();
+      widget.activeChats.maybeReleaseForeground();
+    };
   }
 
   @override

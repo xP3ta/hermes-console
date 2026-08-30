@@ -80,7 +80,7 @@ void main() {
     expect(await BackgroundWatch.snapshot(), isEmpty);
     await BackgroundCronWatch.syncConnections([_dashboardConnection()]);
     expect(await BackgroundCronWatch.snapshotTargets(), isEmpty);
-    expect(await BackgroundListener.start(), isFalse);
+    expect(await BackgroundListener.startForAutomation(), isFalse);
   });
 
   test('rechaza una vigilancia HTTP pública antes de persistirla', () async {

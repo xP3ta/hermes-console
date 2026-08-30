@@ -9641,7 +9641,7 @@ class ActiveChatService {
       onForegroundKeepAlive: disableForegroundKeepAlive
           ? null
           : () async {
-              await BackgroundListener.start();
+              await BackgroundListener.startForAutomation();
               _refreshActiveIds();
             },
       api: api,
@@ -9751,7 +9751,7 @@ class ActiveChatService {
           sessionId: chat.sessionId,
         ),
       );
-      await BackgroundListener.start();
+      await BackgroundListener.startForAutomation();
     } catch (e) {
       if (kDebugMode) {
         debugPrint('ActiveChatService foreground start falló: $e');

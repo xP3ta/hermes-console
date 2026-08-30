@@ -172,6 +172,10 @@ class BackgroundWatch {
     });
   }
 
+  static Future<void> clearAll() => _locked((prefs) async {
+    await prefs.remove(_key);
+  });
+
   static Future<List<WatchedRun>> snapshot() =>
       _locked((prefs) async => _read(prefs));
 
@@ -1655,9 +1659,26 @@ class BackgroundListener {
     return prefs.getBool(prefKey) == true;
   }
 
+  /// Arranca dataSync para automatizaciones (desactivado en 1.2.8).
+  static Future<bool> startForAutomation() async {
+    if (!NotificationService.automationNotificationsEnabled) return false;
+    return start();
+  }
+
+  /// Lease dataSync de SFTP/SSH; independiente de automatizaciones.
+  static Future<bool> acquireExternalDataSync() async {
+    _externalDataSyncDemand++;
+    final started = await start();
+    if (!started && _externalDataSyncDemand > 0) _externalDataSyncDemand--;
+    return started;
+  }
+
+  static void releaseExternalDataSync() {
+    if (_externalDataSyncDemand > 0) _externalDataSyncDemand--;
+  }
+
   /// Arranca el servicio. Devuelve si quedó corriendo.
   static Future<bool> start() async {
-    if (!NotificationService.automationNotificationsEnabled) return false;
     await ensureInitialized();
     await _touchUiAlive();
     _armUiHeartbeat();
@@ -1698,6 +1719,7 @@ class BackgroundListener {
   static bool _readAloudTypeSaved = false;
   static VoiceNotificationState? _voiceNotificationState;
   static bool? _readAloudPaused;
+  static int _externalDataSyncDemand = 0;
 
   static ({
     bool paused,
@@ -1933,15 +1955,7 @@ class BackgroundListener {
     try {
       if (!await FlutterForegroundTask.isRunningService) return;
       await FlutterForegroundTask.stopService();
-      await FlutterForegroundTask.startService(
-        serviceId: 256,
-        serviceTypes: const [ForegroundServiceTypes.dataSync],
-        notificationTitle: 'Hermes Console',
-        notificationText: t.bgActive,
-        notificationIcon: _serviceNotificationIcon,
-        notificationButtons: [NotificationButton(id: 'stop', text: t.bgStop)],
-        callback: hermesForegroundCallback,
-      );
+      if (_externalDataSyncDemand > 0) await start();
     } catch (e) {
       if (kDebugMode) {
         debugPrint('BackgroundListener.downgradeFromVoice falló: $e');
@@ -1962,15 +1976,7 @@ class BackgroundListener {
     try {
       if (!await FlutterForegroundTask.isRunningService) return;
       await FlutterForegroundTask.stopService();
-      await FlutterForegroundTask.startService(
-        serviceId: 256,
-        serviceTypes: const [ForegroundServiceTypes.dataSync],
-        notificationTitle: 'Hermes Console',
-        notificationText: t.bgActive,
-        notificationIcon: _serviceNotificationIcon,
-        notificationButtons: [NotificationButton(id: 'stop', text: t.bgStop)],
-        callback: hermesForegroundCallback,
-      );
+      if (_externalDataSyncDemand > 0) await start();
     } catch (error) {
       if (kDebugMode) {
         debugPrint('BackgroundListener.downgradeFromReadAloud falló: $error');
@@ -2017,6 +2023,8 @@ class BackgroundListener {
     _readAloudPaused = null;
     if (!NotificationService.automationNotificationsEnabled) {
       await prefs.setBool(prefKey, false);
+      await BackgroundWatch.clearAll();
+      await BackgroundCronWatch.syncConnections(const <SavedConnection>[]);
       try {
         if (await FlutterForegroundTask.isRunningService) {
           await FlutterForegroundTask.stopService();
@@ -2027,6 +2035,6 @@ class BackgroundListener {
       return;
     }
     _configure(NotifL10n.of(prefs), autoRunOnBoot: true);
-    if (prefs.getBool(prefKey) == true) await start();
+    if (prefs.getBool(prefKey) == true) await startForAutomation();
   }
 }
