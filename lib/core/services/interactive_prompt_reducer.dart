@@ -274,7 +274,9 @@ abstract final class InteractivePromptReducer {
         currentRequest.lockedAnswers,
         request.lockedAnswers,
       );
-      if (merged == null) return state;
+      if (merged == null) {
+        return _transition(state, request.key, InteractivePromptStatus.expired);
+      }
       if (identical(merged, currentRequest.lockedAnswers)) return state;
       return _replace(
         state,

@@ -603,6 +603,28 @@ void main() {
       expect(request.lockedAnswers, {'q0': 'A', 'q1': 'B'});
     });
 
+    test(
+      'ordinary replay with conflicting locked answer expires the live request',
+      () {
+        final key = _key('runtime-a', 'request-1');
+        var state = InteractivePromptReducer.reduce(
+          const InteractivePromptState.empty(),
+          InteractivePromptReceived(
+            _clarifyBatch('runtime-a', 'request-1', lockedAnswers: {'q0': 'A'}),
+          ),
+        );
+        state = InteractivePromptReducer.reduce(
+          state,
+          InteractivePromptReceived(
+            _clarifyBatch('runtime-a', 'request-1', lockedAnswers: {'q0': 'B'}),
+          ),
+        );
+
+        expect(state[key]?.status, InteractivePromptStatus.expired);
+        expect(state.blocking, isEmpty);
+      },
+    );
+
     test('replay with different questions expires the live request', () {
       var state = InteractivePromptReducer.reduce(
         const InteractivePromptState.empty(),

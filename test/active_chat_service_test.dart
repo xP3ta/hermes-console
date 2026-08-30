@@ -2052,7 +2052,7 @@ void main() {
     );
 
     test(
-      'send → tokens → run.completed refresca mensajes y limpia la vigilancia',
+      'send → tokens → run.completed refresca mensajes sin vigilancia diferida',
       () async {
         final hits = <String>[];
         final api = ApiClient(
@@ -2088,14 +2088,14 @@ void main() {
           history: const [],
         );
 
-        // Mientras corre el run, queda registrado para vigilancia en 2º plano.
+        // En la candidata conservadora no se persiste vigilancia automática.
         await Future<void>.delayed(const Duration(milliseconds: 30));
         final prefsMid = await SharedPreferences.getInstance();
         await prefsMid.reload();
         expect(
           prefsMid.getString(_kWatchKey),
-          contains('run_1'),
-          reason: 'el run debe quedar vigilado en 2º plano mientras corre',
+          anyOf(isNull, equals('[]')),
+          reason: '1.2.8 difiere la vigilancia automática',
         );
 
         await done.timeout(const Duration(seconds: 5));

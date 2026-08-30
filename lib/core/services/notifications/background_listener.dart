@@ -81,6 +81,13 @@ class WatchedRun {
 class BackgroundWatch {
   static const String _key = 'bg_watch_runs';
 
+  @visibleForTesting
+  static bool? automationNotificationsEnabledOverride;
+
+  static bool get _automationEnabled =>
+      automationNotificationsEnabledOverride ??
+      NotificationService.automationNotificationsAvailable;
+
   static Future<Directory> _lockDirectory() async {
     try {
       return await getApplicationSupportDirectory();
@@ -145,6 +152,7 @@ class BackgroundWatch {
   /// Empieza a vigilar una ejecución (idempotente por runId).
   static Future<void> add(SavedRunWatch w) async {
     final safeBase = TransportPrivacy.requireAllowed(w.base);
+    if (!_automationEnabled) return;
     await _locked((prefs) async {
       final runs = _read(prefs)..removeWhere((r) => r.runId == w.runId);
       runs.add(
@@ -916,6 +924,7 @@ class _HermesTaskHandler extends TaskHandler {
     if (_polling) return;
     _polling = true;
     try {
+      if (!BackgroundWatch._automationEnabled) return;
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
       final voiceCardActive =

@@ -61,6 +61,23 @@ class _TrackedHttpClient extends http.BaseClient {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUp(() => BackgroundWatch.automationNotificationsEnabledOverride = true);
+  tearDown(() => BackgroundWatch.automationNotificationsEnabledOverride = null);
+
+  test('1.2.8 conservative does not persist background watches', () async {
+    BackgroundWatch.automationNotificationsEnabledOverride = false;
+    SharedPreferences.setMockInitialValues({});
+    await BackgroundWatch.add(
+      const SavedRunWatch(
+        connId: 'conn',
+        base: 'https://hermes.example',
+        runId: 'run-1',
+        prompt: 'safe',
+      ),
+    );
+    expect(await BackgroundWatch.snapshot(), isEmpty);
+  });
+
   test('rechaza una vigilancia HTTP pública antes de persistirla', () async {
     SharedPreferences.setMockInitialValues({});
 
@@ -187,14 +204,20 @@ void main() {
     () async {
       SharedPreferences.setMockInitialValues({});
       var prefs = await SharedPreferences.getInstance();
-      var notifications = NotificationService(prefs);
+      var notifications = NotificationService(
+        prefs,
+        automationNotificationsEnabled: true,
+      );
       expect(notifications.notifyCronResults, isFalse);
 
       SharedPreferences.setMockInitialValues({
         BackgroundListener.prefKey: true,
       });
       prefs = await SharedPreferences.getInstance();
-      notifications = NotificationService(prefs);
+      notifications = NotificationService(
+        prefs,
+        automationNotificationsEnabled: true,
+      );
       expect(notifications.notifyCronResults, isTrue);
 
       await notifications.setNotifyCronResults(false);
@@ -273,7 +296,11 @@ void main() {
       isTrue,
     );
     expect(
-      BackgroundCronWatch.shouldNotifyResult(failed, session: null, preview: null),
+      BackgroundCronWatch.shouldNotifyResult(
+        failed,
+        session: null,
+        preview: null,
+      ),
       isTrue,
     );
   });

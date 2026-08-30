@@ -298,7 +298,12 @@ class NotificationService implements RunNotificationFacade {
   /// sobreviva al desmontaje del servicio. Ver [reassertRecent].
   _LastBgNotif? _lastBg;
 
-  NotificationService(this._prefs);
+  final bool automationNotificationsEnabled;
+
+  NotificationService(
+    this._prefs, {
+    this.automationNotificationsEnabled = automationNotificationsAvailable,
+  });
 
   // ── Ajustes (persistidos) ───────────────────────────────────────────────
   static const _kEnabled = 'notif_enabled';
@@ -320,16 +325,23 @@ class NotificationService implements RunNotificationFacade {
   bool get enabled => _prefs.getBool(_kEnabled) ?? true;
   Future<void> setEnabled(bool v) => _prefs.setBool(_kEnabled, v);
 
-  bool get notifyApprovals => _prefs.getBool(_kApprovals) ?? true;
+  /// 1.2.8 conservadora: automatizaciones y approvals locales se difieren
+  /// hasta que el protocolo CAS + SQLite cross-engine esté disponible.
+  static const bool automationNotificationsAvailable = false;
+
+  bool get notifyApprovals =>
+      automationNotificationsEnabled && (_prefs.getBool(_kApprovals) ?? true);
   Future<void> setNotifyApprovals(bool v) => _prefs.setBool(_kApprovals, v);
 
   @override
-  bool get notifyRuns => _prefs.getBool(_kRuns) ?? true;
+  bool get notifyRuns =>
+      automationNotificationsEnabled && (_prefs.getBool(_kRuns) ?? true);
   Future<void> setNotifyRuns(bool v) => _prefs.setBool(_kRuns, v);
 
   bool get notifyCronResults =>
-      _prefs.getBool(_kCronResults) ??
-      (_prefs.getBool(backgroundListenPreferenceKey) ?? false);
+      automationNotificationsEnabled &&
+      (_prefs.getBool(_kCronResults) ??
+          (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
   Future<void> setNotifyCronResults(bool v) => _prefs.setBool(_kCronResults, v);
 
   /// Kanban tiene opt-in propio, independiente del de Cron. Si el usuario
@@ -338,8 +350,9 @@ class NotificationService implements RunNotificationFacade {
   /// estable— para no silenciar avisos que ya estaban activos. Nunca consulta
   /// la preferencia de Cron: apagar Cron no puede apagar Kanban.
   bool get notifyKanbanResults =>
-      _prefs.getBool(_kKanbanResults) ??
-      (_prefs.getBool(backgroundListenPreferenceKey) ?? false);
+      automationNotificationsEnabled &&
+      (_prefs.getBool(_kKanbanResults) ??
+          (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
   Future<void> setNotifyKanbanResults(bool v) =>
       _prefs.setBool(_kKanbanResults, v);
 
