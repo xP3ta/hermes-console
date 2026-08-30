@@ -78,13 +78,6 @@ final class InteractivePromptReceived extends InteractivePromptEvent {
   const InteractivePromptReceived(this.request);
 }
 
-/// A recognized request field that could not be parsed safely.
-final class InteractivePromptMalformedReceived extends InteractivePromptEvent {
-  final InteractivePromptParseFailure failure;
-
-  const InteractivePromptMalformedReceived(this.failure);
-}
-
 /// Authoritative request state read from a fresh `session.resume` snapshot.
 ///
 /// Unlike a duplicate socket event, this may safely release an ambiguous
@@ -183,8 +176,6 @@ abstract final class InteractivePromptReducer {
 
     return switch (event) {
       InteractivePromptReceived(:final request) => _receive(state, request),
-      InteractivePromptMalformedReceived(:final failure) =>
-        _failClosedMalformed(state, failure),
       InteractivePromptSnapshotReconciled(
         :final request,
         :final unlockResponding,
@@ -250,19 +241,6 @@ abstract final class InteractivePromptReducer {
       // the typed payload without rolling the lifecycle backwards to pending.
       return _replace(state, current.withRequest(request));
     }
-    // Kind is an immutable discriminator, not part of request identity. Reusing
-    // an exact runtime/request key for another kind is a protocol conflict.
-    // Erase the payload and keep an absorbing tombstone for delayed replays.
-    if (currentRequest.kind != request.kind) {
-      return _replace(
-        state,
-        InteractivePromptEntry(
-          key: request.key,
-          request: null,
-          status: InteractivePromptStatus.expired,
-        ),
-      );
-    }
     // Reconcile a replay of the same request. A reused opaque identity with a
     // different definition is a protocol violation and must not stay usable.
     if (currentRequest is ClarifyPromptRequest &&
@@ -274,9 +252,7 @@ abstract final class InteractivePromptReducer {
         currentRequest.lockedAnswers,
         request.lockedAnswers,
       );
-      if (merged == null) {
-        return _transition(state, request.key, InteractivePromptStatus.expired);
-      }
+      if (merged == null) return state;
       if (identical(merged, currentRequest.lockedAnswers)) return state;
       return _replace(
         state,
@@ -285,62 +261,6 @@ abstract final class InteractivePromptReducer {
     }
     // Any other duplicate request is idempotent.
     return state;
-  }
-
-  static InteractivePromptState _failClosedMalformed(
-    InteractivePromptState state,
-    InteractivePromptParseFailure failure,
-  ) {
-    switch (failure.scope) {
-      case InteractivePromptFailureScope.exactKey:
-        final key = failure.key;
-        return key == null ? state : _expireExactAsTombstone(state, key);
-      case InteractivePromptFailureScope.runtimeKind:
-        final runtimeSessionId = failure.runtimeSessionId;
-        return runtimeSessionId == null
-            ? state
-            : _expireRuntimeKind(state, runtimeSessionId, failure.kind);
-      case InteractivePromptFailureScope.transport:
-        return state;
-    }
-  }
-
-  static InteractivePromptState _expireExactAsTombstone(
-    InteractivePromptState state,
-    InteractivePromptKey key,
-  ) {
-    final current = state[key];
-    if (current?.isTerminal == true) return state;
-    return _replace(
-      state,
-      InteractivePromptEntry(
-        key: key,
-        request: null,
-        status: InteractivePromptStatus.expired,
-      ),
-    );
-  }
-
-  static InteractivePromptState _expireRuntimeKind(
-    InteractivePromptState state,
-    String runtimeSessionId,
-    InteractivePromptKind kind,
-  ) {
-    Map<InteractivePromptKey, InteractivePromptEntry>? changed;
-    for (final entry in state.entries.values) {
-      if (entry.key.runtimeSessionId != runtimeSessionId ||
-          entry.isTerminal ||
-          entry.request?.kind != kind) {
-        continue;
-      }
-      changed ??= Map.of(state.entries);
-      changed[entry.key] = InteractivePromptEntry(
-        key: entry.key,
-        request: null,
-        status: InteractivePromptStatus.expired,
-      );
-    }
-    return changed == null ? state : InteractivePromptState._(changed);
   }
 
   static InteractivePromptState _reconcileSnapshot(
@@ -357,17 +277,8 @@ abstract final class InteractivePromptReducer {
     if (current == null) return _receive(reconciled, request);
     if (current.isTerminal) return reconciled;
     final currentRequest = current.request;
-    if (currentRequest is! ClarifyPromptRequest) {
-      return _replace(
-        reconciled,
-        InteractivePromptEntry(
-          key: request.key,
-          request: null,
-          status: InteractivePromptStatus.expired,
-        ),
-      );
-    }
-    if (!_clarifyDefinitionsEqual(currentRequest, request)) {
+    if (currentRequest is! ClarifyPromptRequest ||
+        !_clarifyDefinitionsEqual(currentRequest, request)) {
       return _transition(
         reconciled,
         request.key,

@@ -1,5 +1,3 @@
-import 'interactive_prompt.dart';
-
 /// Typed, defensive projection of the Hermes Agent 0.19 Desktop session
 /// lifecycle responses.
 ///
@@ -26,7 +24,6 @@ class DesktopSessionSnapshot {
   final DesktopSessionRuntimeInfo info;
   final Map<String, dynamic> raw;
   final Map<String, dynamic>? pendingClarify;
-  final InteractivePromptParseOutcome? pendingClarifyOutcome;
   final bool pendingClarifyProvided;
 
   const DesktopSessionSnapshot({
@@ -45,7 +42,6 @@ class DesktopSessionSnapshot {
     this.info = const DesktopSessionRuntimeInfo(),
     this.raw = const {},
     this.pendingClarify,
-    this.pendingClarifyOutcome,
     this.pendingClarifyProvided = false,
   });
 
@@ -85,20 +81,6 @@ class DesktopSessionSnapshot {
       }
     }
 
-    final pendingClarifyProvided = json.containsKey('pending_clarify');
-    final pendingClarifyOutcome =
-        pendingClarifyProvided && json['pending_clarify'] != null
-        ? InteractivePromptParseOutcome.tryFromGatewayEvent(
-            type: 'clarify.request',
-            runtimeSessionId: runtimeSessionId,
-            payload: json['pending_clarify'],
-            source: InteractivePromptParseSource.authoritativeKindSlot,
-          )
-        : null;
-    final pendingClarify = pendingClarifyOutcome is InteractivePromptParsed
-        ? _stringKeyedMap(json['pending_clarify'])
-        : null;
-
     return DesktopSessionSnapshot(
       runtimeSessionId: runtimeSessionId,
       storedSessionId: storedSessionId,
@@ -113,9 +95,8 @@ class DesktopSessionSnapshot {
       status: _nonEmptyString(json['status']),
       startedAt: _epochSeconds(json['started_at']),
       info: DesktopSessionRuntimeInfo.fromJson(json['info']),
-      pendingClarify: pendingClarify,
-      pendingClarifyOutcome: pendingClarifyOutcome,
-      pendingClarifyProvided: pendingClarifyProvided,
+      pendingClarify: _stringKeyedMap(json['pending_clarify']),
+      pendingClarifyProvided: json.containsKey('pending_clarify'),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
       // contain the whole transcript and a many-KiB system prompt; duplicating
       // those in `raw` increases memory pressure and makes accidental logging

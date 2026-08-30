@@ -73,9 +73,6 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.startedAt,
     super.info,
     super.raw,
-    super.pendingClarify,
-    super.pendingClarifyOutcome,
-    super.pendingClarifyProvided,
   });
 
   factory DesktopSessionBinding.fromSnapshot(DesktopSessionSnapshot snapshot) {
@@ -94,9 +91,6 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       startedAt: snapshot.startedAt,
       info: snapshot.info,
       raw: snapshot.raw,
-      pendingClarify: snapshot.pendingClarify,
-      pendingClarifyOutcome: snapshot.pendingClarifyOutcome,
-      pendingClarifyProvided: snapshot.pendingClarifyProvided,
     );
   }
 }

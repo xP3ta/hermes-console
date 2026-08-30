@@ -4,16 +4,6 @@
 /// values are response data and never belong in these models.
 enum InteractivePromptKind { clarify, sudo, secret, terminalRead }
 
-extension InteractivePromptKindGatewayType on InteractivePromptKind {
-  static InteractivePromptKind? tryParse(String type) => switch (type) {
-    'clarify.request' => InteractivePromptKind.clarify,
-    'sudo.request' => InteractivePromptKind.sudo,
-    'secret.request' => InteractivePromptKind.secret,
-    'terminal.read.request' => InteractivePromptKind.terminalRead,
-    _ => null,
-  };
-}
-
 enum InteractivePromptStatus {
   pending,
   responding,
@@ -65,133 +55,6 @@ final class InteractivePromptKey {
   @override
   String toString() =>
       'InteractivePromptKey(runtime: $runtimeSessionId, request: $requestId)';
-}
-
-enum InteractivePromptFailureScope { exactKey, runtimeKind, transport }
-
-enum InteractivePromptFailureCode { malformedPayload, runtimeUnavailable }
-
-enum InteractivePromptParseSource { ordinaryEvent, authoritativeKindSlot }
-
-/// Sanitized result of interpreting one recognized interactive protocol field.
-///
-/// Failures retain only validated identity/discriminator data. They never keep
-/// the source map, parse exception, question text, choices, answers, or values.
-sealed class InteractivePromptParseOutcome {
-  final InteractivePromptKind kind;
-
-  const InteractivePromptParseOutcome(this.kind);
-
-  static InteractivePromptParseOutcome? tryFromGatewayEvent({
-    required String type,
-    required Object? runtimeSessionId,
-    required Object? payload,
-    InteractivePromptParseSource source =
-        InteractivePromptParseSource.ordinaryEvent,
-  }) {
-    final kind = InteractivePromptKindGatewayType.tryParse(type);
-    if (kind == null) return null;
-    final runtimeId = _nonEmptyString(runtimeSessionId);
-    if (runtimeId == null) {
-      return InteractivePromptParseFailure._transport(kind);
-    }
-
-    final requestId = payload is Map
-        ? _nonEmptyString(payload['request_id'])
-        : null;
-    final key = requestId == null
-        ? null
-        : InteractivePromptKey(
-            runtimeSessionId: runtimeId,
-            requestId: requestId,
-          );
-    final normalized = _strictStringKeyedMap(payload);
-    if (normalized == null) {
-      return _malformed(kind, runtimeId, key, source);
-    }
-    try {
-      return InteractivePromptParsed(
-        InteractivePromptRequest.fromGatewayEvent(
-          type: type,
-          runtimeSessionId: runtimeId,
-          payload: normalized,
-        ),
-      );
-    } on FormatException {
-      return _malformed(kind, runtimeId, key, source);
-    }
-  }
-
-  static InteractivePromptParseFailure _malformed(
-    InteractivePromptKind kind,
-    String runtimeSessionId,
-    InteractivePromptKey? key,
-    InteractivePromptParseSource source,
-  ) {
-    if (source == InteractivePromptParseSource.authoritativeKindSlot ||
-        key == null) {
-      return InteractivePromptParseFailure._runtimeKind(kind, runtimeSessionId);
-    }
-    return InteractivePromptParseFailure._exact(kind, key);
-  }
-}
-
-final class InteractivePromptParsed extends InteractivePromptParseOutcome {
-  final InteractivePromptRequest request;
-
-  InteractivePromptParsed(this.request) : super(request.kind);
-
-  @override
-  String toString() => 'InteractivePromptParsed(kind: ${kind.name})';
-}
-
-final class InteractivePromptParseFailure
-    extends InteractivePromptParseOutcome {
-  final InteractivePromptFailureScope scope;
-  final InteractivePromptFailureCode code;
-  final InteractivePromptKey? key;
-  final String? runtimeSessionId;
-
-  InteractivePromptParseFailure._({
-    required InteractivePromptKind kind,
-    required this.scope,
-    required this.code,
-    this.key,
-    this.runtimeSessionId,
-  }) : super(kind);
-
-  InteractivePromptParseFailure._exact(
-    InteractivePromptKind kind,
-    InteractivePromptKey key,
-  ) : this._(
-        kind: kind,
-        scope: InteractivePromptFailureScope.exactKey,
-        code: InteractivePromptFailureCode.malformedPayload,
-        key: key,
-        runtimeSessionId: key.runtimeSessionId,
-      );
-
-  InteractivePromptParseFailure._runtimeKind(
-    InteractivePromptKind kind,
-    String runtimeSessionId,
-  ) : this._(
-        kind: kind,
-        scope: InteractivePromptFailureScope.runtimeKind,
-        code: InteractivePromptFailureCode.malformedPayload,
-        runtimeSessionId: runtimeSessionId,
-      );
-
-  InteractivePromptParseFailure._transport(InteractivePromptKind kind)
-    : this._(
-        kind: kind,
-        scope: InteractivePromptFailureScope.transport,
-        code: InteractivePromptFailureCode.runtimeUnavailable,
-      );
-
-  @override
-  String toString() =>
-      'InteractivePromptParseFailure(kind: ${kind.name}, '
-      'scope: ${scope.name}, code: ${code.name})';
 }
 
 sealed class InteractivePromptRequest {
@@ -271,7 +134,9 @@ final class ClarifyQuestion {
   }
 
   @override
-  String toString() => 'ClarifyQuestion(<redacted>)';
+  String toString() =>
+      'ClarifyQuestion(qid: $qid, question: $question, '
+      'choices: $choices, multiSelect: $multiSelect)';
 }
 
 final class ClarifyPromptRequest extends InteractivePromptRequest {
@@ -556,16 +421,6 @@ Map<String, dynamic>? _stringKeyedMap(Object? value) {
   final result = <String, dynamic>{};
   for (final entry in value.entries) {
     if (entry.key is! String) continue;
-    result[entry.key as String] = entry.value;
-  }
-  return result;
-}
-
-Map<String, dynamic>? _strictStringKeyedMap(Object? value) {
-  if (value is! Map) return null;
-  final result = <String, dynamic>{};
-  for (final entry in value.entries) {
-    if (entry.key is! String) return null;
     result[entry.key as String] = entry.value;
   }
   return result;

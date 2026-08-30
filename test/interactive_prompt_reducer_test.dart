@@ -28,25 +28,6 @@ ClarifyPromptRequest _clarifyBatch(
   lockedAnswers: lockedAnswers,
 );
 
-InteractivePromptRequest _requestForKind(
-  InteractivePromptKind kind,
-  String runtime,
-  String request,
-) => switch (kind) {
-  InteractivePromptKind.clarify => _clarify(runtime, request),
-  InteractivePromptKind.sudo => SudoPromptRequest(key: _key(runtime, request)),
-  InteractivePromptKind.secret => SecretPromptRequest(
-    key: _key(runtime, request),
-    envVar: 'TEST_TOKEN',
-    prompt: 'Token',
-  ),
-  InteractivePromptKind.terminalRead => TerminalReadPromptRequest(
-    key: _key(runtime, request),
-    start: 0,
-    count: 1,
-  ),
-};
-
 void main() {
   group('typed gateway requests', () {
     test('parses all four Hermes 0.19 blocking event shapes', () {
@@ -214,33 +195,6 @@ void main() {
         );
       }
     });
-
-    test('shared interpreter applies source-specific malformed scope', () {
-      const payload = {
-        'request_id': 'shared-malformed',
-        'questions': 'not-a-list',
-      };
-      final ordinary = InteractivePromptParseOutcome.tryFromGatewayEvent(
-        type: 'clarify.request',
-        runtimeSessionId: 'runtime-a',
-        payload: payload,
-      );
-      final authoritative = InteractivePromptParseOutcome.tryFromGatewayEvent(
-        type: 'clarify.request',
-        runtimeSessionId: 'runtime-a',
-        payload: payload,
-        source: InteractivePromptParseSource.authoritativeKindSlot,
-      );
-
-      expect(
-        (ordinary! as InteractivePromptParseFailure).scope,
-        InteractivePromptFailureScope.exactKey,
-      );
-      expect(
-        (authoritative! as InteractivePromptParseFailure).scope,
-        InteractivePromptFailureScope.runtimeKind,
-      );
-    });
   });
 
   group('InteractivePromptReducer', () {
@@ -253,138 +207,6 @@ void main() {
       expect(once.entries, hasLength(1));
       expect(identical(once, twice), isTrue);
       expect(once[_key('runtime-a')]?.status, InteractivePromptStatus.pending);
-    });
-
-    test('cross-kind replay expires the exact key and erases its payload', () {
-      for (final firstKind in InteractivePromptKind.values) {
-        for (final replayKind in InteractivePromptKind.values) {
-          if (firstKind == replayKind) continue;
-          final requestId = '${firstKind.name}-${replayKind.name}';
-          final key = _key('runtime-a', requestId);
-          var state = InteractivePromptReducer.reduce(
-            const InteractivePromptState.empty(),
-            InteractivePromptReceived(
-              _requestForKind(firstKind, 'runtime-a', requestId),
-            ),
-          );
-
-          state = InteractivePromptReducer.reduce(
-            state,
-            InteractivePromptReceived(
-              _requestForKind(replayKind, 'runtime-a', requestId),
-            ),
-          );
-
-          expect(
-            state[key]?.status,
-            InteractivePromptStatus.expired,
-            reason: '${firstKind.name} then ${replayKind.name}',
-          );
-          expect(
-            state[key]?.request,
-            isNull,
-            reason: '${firstKind.name} then ${replayKind.name}',
-          );
-          final tombstone = state;
-          for (final delayedKind in InteractivePromptKind.values) {
-            state = InteractivePromptReducer.reduce(
-              state,
-              InteractivePromptReceived(
-                _requestForKind(delayedKind, 'runtime-a', requestId),
-              ),
-            );
-            expect(
-              identical(state, tombstone),
-              isTrue,
-              reason:
-                  '${firstKind.name} then ${replayKind.name}, '
-                  'late ${delayedKind.name}',
-            );
-          }
-        }
-      }
-    });
-
-    test('malformed kind scope expires only live peers in its runtime', () {
-      var state = const InteractivePromptState.empty();
-      for (final request in <InteractivePromptRequest>[
-        _clarify('runtime-a', 'clarify-live'),
-        _clarify('runtime-a', 'clarify-terminal'),
-        _requestForKind(
-          InteractivePromptKind.secret,
-          'runtime-a',
-          'secret-live',
-        ),
-        _clarify('runtime-b', 'clarify-other-runtime'),
-      ]) {
-        state = InteractivePromptReducer.reduce(
-          state,
-          InteractivePromptReceived(request),
-        );
-      }
-      state = InteractivePromptReducer.reduce(
-        state,
-        InteractivePromptResponded(_key('runtime-a', 'clarify-terminal')),
-      );
-      final outcome = InteractivePromptParseOutcome.tryFromGatewayEvent(
-        type: 'clarify.request',
-        runtimeSessionId: 'runtime-a',
-        payload: const {'questions': 'not-a-list'},
-      );
-      expect(outcome, isA<InteractivePromptParseFailure>());
-      final failure = outcome! as InteractivePromptParseFailure;
-      expect(failure.scope, InteractivePromptFailureScope.runtimeKind);
-
-      state = InteractivePromptReducer.reduce(
-        state,
-        InteractivePromptMalformedReceived(failure),
-      );
-
-      expect(
-        state[_key('runtime-a', 'clarify-live')]?.status,
-        InteractivePromptStatus.expired,
-      );
-      expect(state[_key('runtime-a', 'clarify-live')]?.request, isNull);
-      expect(
-        state[_key('runtime-a', 'clarify-terminal')]?.status,
-        InteractivePromptStatus.responded,
-      );
-      expect(
-        state[_key('runtime-a', 'secret-live')]?.status,
-        InteractivePromptStatus.pending,
-      );
-      expect(
-        state[_key('runtime-b', 'clarify-other-runtime')]?.status,
-        InteractivePromptStatus.pending,
-      );
-    });
-
-    test('transport-scope malformed event cannot mutate another runtime', () {
-      final populated = InteractivePromptReducer.reduce(
-        const InteractivePromptState.empty(),
-        InteractivePromptReceived(_clarify('runtime-a', 'clarify-live')),
-      );
-      final outcome = InteractivePromptParseOutcome.tryFromGatewayEvent(
-        type: 'clarify.request',
-        runtimeSessionId: '',
-        payload: const {
-          'request_id': 'clarify-live',
-          'questions': 'not-a-list',
-        },
-      );
-      final failure = outcome! as InteractivePromptParseFailure;
-      expect(failure.scope, InteractivePromptFailureScope.transport);
-
-      final next = InteractivePromptReducer.reduce(
-        populated,
-        InteractivePromptMalformedReceived(failure),
-      );
-
-      expect(identical(next, populated), isTrue);
-      expect(
-        next[_key('runtime-a', 'clarify-live')]?.status,
-        InteractivePromptStatus.pending,
-      );
     });
 
     test('terminal out-of-order event creates an absorbing tombstone', () {
@@ -603,28 +425,6 @@ void main() {
       expect(request.lockedAnswers, {'q0': 'A', 'q1': 'B'});
     });
 
-    test(
-      'ordinary replay with conflicting locked answer expires the live request',
-      () {
-        final key = _key('runtime-a', 'request-1');
-        var state = InteractivePromptReducer.reduce(
-          const InteractivePromptState.empty(),
-          InteractivePromptReceived(
-            _clarifyBatch('runtime-a', 'request-1', lockedAnswers: {'q0': 'A'}),
-          ),
-        );
-        state = InteractivePromptReducer.reduce(
-          state,
-          InteractivePromptReceived(
-            _clarifyBatch('runtime-a', 'request-1', lockedAnswers: {'q0': 'B'}),
-          ),
-        );
-
-        expect(state[key]?.status, InteractivePromptStatus.expired);
-        expect(state.blocking, isEmpty);
-      },
-    );
-
     test('replay with different questions expires the live request', () {
       var state = InteractivePromptReducer.reduce(
         const InteractivePromptState.empty(),
@@ -678,35 +478,6 @@ void main() {
       },
     );
 
-    test(
-      'authoritative cross-kind collision erases the old request payload',
-      () {
-        final key = _key('runtime-a', 'shared-request');
-        var state = InteractivePromptReducer.reduce(
-          const InteractivePromptState.empty(),
-          InteractivePromptReceived(
-            _requestForKind(
-              InteractivePromptKind.terminalRead,
-              key.runtimeSessionId,
-              key.requestId,
-            ),
-          ),
-        );
-
-        state = InteractivePromptReducer.reduce(
-          state,
-          InteractivePromptSnapshotReconciled(
-            _clarify(key.runtimeSessionId, key.requestId),
-          ),
-        );
-
-        final entry = state[key];
-        expect(entry?.status, InteractivePromptStatus.expired);
-        expect(entry?.request, isNull);
-        expect(state.blocking, isEmpty);
-      },
-    );
-
     test('authoritative clear preserves other prompt kinds and runtimes', () {
       var state = InteractivePromptReducer.reduce(
         const InteractivePromptState.empty(),
@@ -747,22 +518,6 @@ void main() {
   });
 
   group('sensitive response handling', () {
-    test('clarify question diagnostics redact protocol content', () {
-      const question = ClarifyQuestion(
-        qid: 'private-qid',
-        question: 'private-question',
-        choices: ['private-choice'],
-      );
-      final diagnostics = question.toString();
-      final leaked = <String>[
-        question.qid,
-        question.question,
-        ...question.choices,
-      ].any(diagnostics.contains);
-
-      expect(leaked, isFalse);
-    });
-
     test(
       'secret and sudo parsers never retain raw maps or accidental values',
       () {

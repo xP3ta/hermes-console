@@ -1824,7 +1824,7 @@ void main() {
   });
 
   test(
-    'non-map authoritative pending_clarify uses sanitized kind scope',
+    'malformed authoritative pending_clarify expires the local clarify',
     () async {
       final gateway = _SnapshotGateway()
         ..snapshot = _snapshot({
@@ -1849,7 +1849,10 @@ void main() {
         'session_id': 'runtime-malformed-authority',
         'stored_session_id': 'stored-malformed-authority',
         'created': false,
-        'pending_clarify': 'not-a-map',
+        'pending_clarify': {
+          'request_id': 'clarify-old',
+          'questions': 'not-a-list',
+        },
       });
       await chat.loadMessages();
 
@@ -1858,7 +1861,6 @@ void main() {
         chat.interactivePrompts[oldKey]?.status,
         InteractivePromptStatus.expired,
       );
-      expect(chat.interactivePrompts[oldKey]?.request, isNull);
     },
   );
 

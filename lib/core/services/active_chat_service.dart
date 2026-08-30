@@ -5911,35 +5911,25 @@ class ActiveChat {
     Map<String, dynamic> payload,
   ) {
     if (_retiringDesktopRuntimeSessionId == runtimeId) return;
-    final outcome = InteractivePromptParseOutcome.tryFromGatewayEvent(
-      type: type,
-      runtimeSessionId: runtimeId,
-      payload: payload,
+    late final InteractivePromptRequest request;
+    try {
+      request = InteractivePromptRequest.fromGatewayEvent(
+        type: type,
+        runtimeSessionId: runtimeId,
+        payload: payload,
+      );
+    } on FormatException {
+      return;
+    }
+    final changed = _reduceInteractivePrompt(
+      InteractivePromptReceived(request),
     );
-    switch (outcome) {
-      case InteractivePromptParseFailure(:final scope):
-        if (scope != InteractivePromptFailureScope.transport) {
-          _reduceInteractivePrompt(InteractivePromptMalformedReceived(outcome));
-        }
-        return;
-      case InteractivePromptParsed(:final request):
-        final changed = _reduceInteractivePrompt(
-          InteractivePromptReceived(request),
-        );
-        if (!changed) return;
-        final admitted = _interactivePrompts[request.key];
-        if (!identical(admitted?.request, request) ||
-            admitted?.status != InteractivePromptStatus.pending) {
-          return;
-        }
-        _firstTokenTimer?.cancel();
-        _firstTokenTimer = null;
-        if (!_runTerminal) state = ChatPipelineState.executing;
-        if (request is TerminalReadPromptRequest) {
-          unawaited(respondToTerminalRead(request.key));
-        }
-      case null:
-        return;
+    if (!changed) return;
+    _firstTokenTimer?.cancel();
+    _firstTokenTimer = null;
+    if (!_runTerminal) state = ChatPipelineState.executing;
+    if (request is TerminalReadPromptRequest) {
+      unawaited(respondToTerminalRead(request.key));
     }
   }
 
@@ -5961,36 +5951,33 @@ class ActiveChat {
   }) {
     if (!snapshot.pendingClarifyProvided) return;
     final pending = snapshot.pendingClarify;
-    final outcome =
-        snapshot.pendingClarifyOutcome ??
-        (pending == null
-            ? null
-            : InteractivePromptParseOutcome.tryFromGatewayEvent(
-                type: 'clarify.request',
-                runtimeSessionId: snapshot.runtimeSessionId,
-                payload: pending,
-                source: InteractivePromptParseSource.authoritativeKindSlot,
-              ));
-    if (outcome == null) {
+    if (pending == null || pending.isEmpty) {
       _reduceInteractivePrompt(
         InteractivePromptClarifySnapshotCleared(snapshot.runtimeSessionId),
       );
       return;
     }
-    switch (outcome) {
-      case InteractivePromptParsed(:final request):
-        if (request is ClarifyPromptRequest) {
-          _reduceInteractivePrompt(
-            InteractivePromptSnapshotReconciled(
-              request,
-              unlockResponding: unlockResponding,
-            ),
-          );
-        }
-      case InteractivePromptParseFailure(:final scope):
-        if (scope != InteractivePromptFailureScope.transport) {
-          _reduceInteractivePrompt(InteractivePromptMalformedReceived(outcome));
-        }
+    try {
+      final request = InteractivePromptRequest.fromGatewayEvent(
+        type: 'clarify.request',
+        runtimeSessionId: snapshot.runtimeSessionId,
+        payload: pending,
+      );
+      if (request is ClarifyPromptRequest) {
+        _reduceInteractivePrompt(
+          InteractivePromptSnapshotReconciled(
+            request,
+            unlockResponding: unlockResponding,
+          ),
+        );
+      }
+    } on FormatException {
+      // The field was present, so the snapshot is authoritative even though
+      // its payload is malformed. Fail closed only for clarifies in this
+      // runtime; unrelated prompt kinds and runtimes remain untouched.
+      _reduceInteractivePrompt(
+        InteractivePromptClarifySnapshotCleared(snapshot.runtimeSessionId),
+      );
     }
   }
 
