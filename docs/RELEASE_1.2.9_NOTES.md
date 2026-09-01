@@ -4,6 +4,9 @@
 
 - Los chats conservan el historial visible durante refreshes solapados,
   reconexiones, paginación y recuperación desde Desktop.
+- Si una conversación ya está abierta en Desktop u otro dispositivo, Console
+  muestra una explicación privada y permite reintentar sin duplicar el turno ni
+  revelar identificadores internos del servidor.
 - Al volver a la app después de ejecutar herramientas como búsqueda web, el
   turno se reengancha y la respuesta final se recupera automáticamente.
 - `Parar` conserva de forma durable la cancelación sin resucitar respuestas
