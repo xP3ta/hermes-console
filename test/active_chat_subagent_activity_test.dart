@@ -5,9 +5,11 @@ import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
+import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _SubagentGateway
     implements HermesDesktopGateway, HermesDesktopSubagentGateway {
@@ -78,6 +80,7 @@ class _SubagentGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override
@@ -86,7 +89,49 @@ class _SubagentGateway
   }
 }
 
-Future<ActiveChat> _start(_SubagentGateway gateway) async {
+class _RecordingNotifications extends NotificationService {
+  _RecordingNotifications(super.prefs, {this.eventLog});
+
+  final approvalIds = <String>[];
+  final List<String>? eventLog;
+
+  @override
+  Future<void> approvalPending({
+    required String tool,
+    String? instance,
+    String? connId,
+    String? sessionId,
+    String? sessionTitle,
+    String? runId,
+    String? approvalId,
+    String? base,
+    NotificationChatSurface surface = NotificationChatSurface.normal,
+    String? profile,
+    String? roomId,
+  }) async {
+    if (approvalId != null) approvalIds.add(approvalId);
+  }
+
+  @override
+  Future<void> replyReady({
+    required String preview,
+    String? instance,
+    String? session,
+    String? connId,
+    String? sessionId,
+    NotificationChatSurface surface = NotificationChatSurface.normal,
+    String? profile,
+    String? roomId,
+  }) async {
+    eventLog?.add('show');
+  }
+}
+
+Future<ActiveChat> _start(
+  _SubagentGateway gateway, {
+  NotificationService? notifications,
+  Future<void> Function()? beforeTerminalNotification,
+}) async {
   final chat = ActiveChat(
     connection: SavedConnection(
       id: 'conn-subagent',
@@ -99,8 +144,9 @@ Future<ActiveChat> _start(_SubagentGateway gateway) async {
     ),
     sessionId: 'stored-subagent',
     sessionTitle: 'Subagent',
-    notifications: null,
+    notifications: notifications,
     onTerminal: () {},
+    beforeTerminalNotification: beforeTerminalNotification,
     api: ApiClient(
       baseUrl: 'https://example.invalid',
       apiKey: 'test-only',
@@ -196,32 +242,33 @@ void main() {
     },
   );
 
-  test(
-    'delegate_task legacy proyecta estado básico por tool-call id',
-    () async {
-      final gateway = _SubagentGateway();
-      final chat = await _start(gateway);
-      addTearDown(chat.dispose);
+  test('delegate_task dispatched permanece visible por tool_id real', () async {
+    final gateway = _SubagentGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
 
-      gateway.emit('tool.start', const {
-        'name': 'delegate_task',
-        'tool_call_id': 'call-a',
-      });
-      gateway.emit('tool.complete', const {
-        'name': 'delegate_task',
-        'tool_call_id': 'call-a',
-        'status': 'completed',
-        'summary': 'Resumen básico',
-      });
-      await _settle();
+    gateway.emit('tool.start', const {
+      'name': 'delegate_task',
+      'tool_id': 'call-a',
+    });
+    gateway.emit('tool.complete', const {
+      'name': 'delegate_task',
+      'tool_id': 'call-a',
+      'result': {
+        'status': 'dispatched',
+        'delegation_id': 'deleg_1234abcd',
+        'subagent_ids': ['sa-0-1234abcd'],
+      },
+      'summary': 'Resumen básico',
+    });
+    await _settle();
 
-      expect(chat.subagentActivities, hasLength(1));
-      final activity = chat.subagentActivities.single;
-      expect(activity.source, SubagentActivitySource.legacyDelegateTask);
-      expect(activity.phase, SubagentActivityPhase.completed);
-      expect(activity.canResumeChildTranscript, isFalse);
-    },
-  );
+    expect(chat.subagentActivities, hasLength(1));
+    final activity = chat.subagentActivities.single;
+    expect(activity.source, SubagentActivitySource.legacyDelegateTask);
+    expect(activity.phase, SubagentActivityPhase.running);
+    expect(activity.canResumeChildTranscript, isFalse);
+  });
 
   test('interrupt es single-flight y espera el estado autoritativo', () async {
     final gateway = _SubagentGateway()
@@ -266,5 +313,25 @@ void main() {
       chat.subagentActivities.single.phase,
       SubagentActivityPhase.cancelled,
     );
+  });
+
+  test('terminal notification stops the FGS before platform show', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final events = <String>[];
+    final notifications = _RecordingNotifications(prefs, eventLog: events);
+    final gateway = _SubagentGateway();
+    final chat = await _start(
+      gateway,
+      notifications: notifications,
+      beforeTerminalNotification: () async => events.add('stop'),
+    );
+    addTearDown(chat.dispose);
+
+    gateway.emit('message.delta', const {'text': 'resultado'});
+    gateway.emit('message.complete', const {'text': 'resultado'});
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(events, ['stop', 'show']);
   });
 }

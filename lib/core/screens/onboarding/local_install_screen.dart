@@ -11,7 +11,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/agent_runtime/agent_runtime.dart';
@@ -19,7 +18,6 @@ import '../../services/agent_runtime/local_termux_agent_provider.dart';
 import '../../services/agent_runtime/provider_catalog.dart';
 import '../../services/bridge_manager.dart';
 import '../../services/connection_manager.dart';
-import '../../services/notifications/background_listener.dart';
 import '../../services/notifications/notification_service.dart';
 import '../../services/platform/android_apps.dart';
 import '../../services/secure_storage.dart';
@@ -1156,7 +1154,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
   void _setOllamaSubLabel(String label) {
     if (!mounted) return;
     setState(() => _ollamaSubLabel = label);
-    _OllamaInstallNotif.update(label);
+    unawaited(_OllamaInstallNotif.update(_notifications, label));
   }
 
   /// Ejecuta el flujo completo: install ollama → start → pull model →
@@ -1173,7 +1171,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
       _ollamaCanceled = false;
       _ollamaSubLabel = '';
     });
-    await _OllamaInstallNotif.start();
+    await _OllamaInstallNotif.start(_notifications);
 
     try {
       // Fase 1a: descargar e instalar ollama
@@ -1188,7 +1186,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             _ollamaSubLabel = '';
           });
         }
-        await _OllamaInstallNotif.stop();
+        await _OllamaInstallNotif.stop(_notifications);
         return;
       }
       await Future.delayed(const Duration(seconds: 5));
@@ -1210,7 +1208,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           _ollamaError = s.lisOllamaStartFailed;
           _ollamaSubLabel = '';
         });
-        await _OllamaInstallNotif.stop();
+        await _OllamaInstallNotif.stop(_notifications);
         return;
       }
 
@@ -1233,7 +1231,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           _ollamaError = s.lisOllamaModelFailed(model.name);
           _ollamaSubLabel = '';
         });
-        await _OllamaInstallNotif.stop();
+        await _OllamaInstallNotif.stop(_notifications);
         return;
       }
 
@@ -1246,7 +1244,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
 
       // Pasa el testigo a la maquinaria existente de arranque
       _setOllamaSubLabel(s.lisOllamaConnectingAgent);
-      await _OllamaInstallNotif.stop();
+      await _OllamaInstallNotif.stop(_notifications);
       await _startAgent();
     } catch (e) {
       if (mounted && !_ollamaCanceled) {
@@ -1256,7 +1254,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           _ollamaSubLabel = '';
         });
       }
-      await _OllamaInstallNotif.stop();
+      await _OllamaInstallNotif.stop(_notifications);
     }
   }
 
@@ -1377,7 +1375,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
 
   void _cancelOllamaSetup() {
     if (_ollamaPhase >= 1) _termux.stopOllama();
-    _OllamaInstallNotif.stop();
+    unawaited(_OllamaInstallNotif.stop(_notifications));
     setState(() {
       _ollamaCanceled = true;
       _ollamaPhase = 0;
@@ -2752,51 +2750,28 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
 
 // ── Notificación persistente durante la instalación de Ollama ───────────────
 //
-// Mantiene al usuario informado cuando la app va a segundo plano. Reutiliza el
-// foreground service de BackgroundListener si ya está activo (solo actualiza
-// texto); si no, lo arranca y lo para al terminar la instalación.
+// Mantiene al usuario informado cuando la app va a segundo plano mediante una
+// notificación local ongoing con ID propio. La instalación corre en Termux, así
+// que esta tarjeta no necesita adquirir ni reconfigurar el FGS compartido de
+// escucha/Voz/Read Aloud/SSH/SFTP.
 
 class _OllamaInstallNotif {
-  static bool _weStartedIt = false;
+  static const int _notificationId = 8890;
 
-  static Future<void> start() async {
-    await BackgroundListener.ensureInitialized();
-    if (await FlutterForegroundTask.isRunningService) {
-      _weStartedIt = false;
-      await FlutterForegroundTask.updateService(
-        notificationTitle: 'Hermes Console',
-        notificationText: 'Instalando Ollama…',
-      );
-    } else {
-      _weStartedIt = true;
-      await FlutterForegroundTask.startService(
-        notificationTitle: 'Hermes Console',
-        notificationText: 'Instalando Ollama…',
-        callback: hermesForegroundCallback,
-      );
-    }
-  }
+  static Future<void> start(NotificationService? notifications) =>
+      update(notifications, 'Instalando Ollama…');
 
-  static Future<void> update(String text) async {
-    if (!await FlutterForegroundTask.isRunningService) return;
-    await FlutterForegroundTask.updateService(
-      notificationTitle: 'Hermes Console',
-      notificationText: text,
+  static Future<void> update(
+    NotificationService? notifications,
+    String text,
+  ) async {
+    await notifications?.operationProgress(
+      id: _notificationId,
+      title: 'Hermes Console',
+      body: text,
     );
   }
 
-  static Future<void> stop() async {
-    if (!_weStartedIt) {
-      // Solo restauramos el texto del servicio que ya corría antes.
-      if (await FlutterForegroundTask.isRunningService) {
-        await FlutterForegroundTask.updateService(
-          notificationTitle: 'Hermes Console',
-          notificationText: 'Escuchando eventos del agente…',
-        );
-      }
-      return;
-    }
-    _weStartedIt = false;
-    await BackgroundListener.stop();
-  }
+  static Future<void> stop(NotificationService? notifications) async =>
+      notifications?.cancelOperation(_notificationId);
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/services/compression_dispatcher.dart';
@@ -17,6 +19,7 @@ final class _RecordingCommandGateway implements HermesDesktopCommandGateway {
   );
   Object? slashError;
   Object? dispatchError;
+  Completer<void>? slashGate;
 
   @override
   Future<DesktopCommandCatalog> commandsCatalog() => throw UnimplementedError();
@@ -34,6 +37,7 @@ final class _RecordingCommandGateway implements HermesDesktopCommandGateway {
       'slash.exec',
       {'session_id': runtimeSessionId, 'command': command},
     ));
+    await slashGate?.future;
     if (slashError case final error?) throw error;
     return slashResult;
   }
@@ -152,6 +156,40 @@ void main() {
       expect(result.accepted, DesktopCommandAcceptance.unknown);
       expect(result.failure?.kind, CommandFailureKind.timeout);
       expect(result.failure?.retryable, isFalse);
+    },
+  );
+
+  test(
+    'una valla vencida entre slash y dispatch impide el segundo RPC',
+    () async {
+      final slashGate = Completer<void>();
+      var fallbackStillValid = true;
+      final gateway = _RecordingCommandGateway()
+        ..slashGate = slashGate
+        ..slashError = const TuiGatewayRpcError(
+          'slash.exec',
+          'synthetic failure',
+          code: 4018,
+        );
+
+      final running = CompressionDispatcher(gateway).compress(
+        'runtime-047',
+        connectionEpoch: 1,
+        sessionEpoch: 2,
+        fallbackStillValid: () => fallbackStillValid,
+      );
+      while (gateway.calls.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      fallbackStillValid = false;
+      slashGate.complete();
+
+      final result = await running;
+
+      expect(gateway.calls.map((call) => call.$1), ['slash.exec']);
+      expect(result.attemptedRoute, DesktopCommandRoute.slashExec);
+      expect(result.fallbackUsed, isFalse);
+      expect(result.accepted, DesktopCommandAcceptance.unknown);
     },
   );
 

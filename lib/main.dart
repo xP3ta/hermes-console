@@ -22,7 +22,7 @@ import 'core/screens/home_dashboard_screen.dart';
 import 'core/screens/mission_control_screen.dart';
 import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
-import 'core/screens/task_center_screen.dart';
+
 import 'core/screens/tasks_screen.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
@@ -343,6 +343,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Vigilante de sesiones SSH ociosas mientras la app está en background
   /// (U-11, spec 028). Se arma al pasar a paused y se cancela al volver.
   Timer? _sshIdleTimer;
+
+  late final ExternalDataSyncDemandGate _externalDataSyncDemandGate;
+  static const MethodChannel _externalDataSyncControl = MethodChannel(
+    'hermes/foreground_external_data_sync',
+  );
 
   Timer? _deferredNotificationInitTimer;
 
@@ -784,6 +789,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   }
 
   void _onVoiceTaskData(Object data) {
+    if (BackgroundListener.foregroundStopRequestedFromData(data)) {
+      unawaited(_handleForegroundStopRequest());
+      return;
+    }
     final readAction = BackgroundListener.readAloudActionFromData(data);
     if (readAction != null) {
       switch (readAction) {
@@ -818,6 +827,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         break;
     }
     _queueVoiceForegroundSync();
+  }
+
+  Future<void> _handleForegroundStopRequest() async {
+    await BackgroundListener.stopAutomation();
+    await _stopExternalDataSyncOwners();
   }
 
   /// Directorio del sandbox donde se guardan las mascotas importadas por el
@@ -985,7 +999,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     unawaited(
       BackgroundCronWatch.syncConnections(widget.connManager.getConnections()),
     );
-    widget.connManager.activeConnectionId.addListener(
+    widget.connManager.connectionsRevision.addListener(
       _syncBackgroundCronConnections,
     );
     unawaited(BackgroundListener.setUiForeground(true));
@@ -1027,18 +1041,24 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         widget.sshSessions.hasActive;
     // SFTP y las sesiones de terminal levantan el foreground service al empezar y
     // delegan su parada en la coordinación central (que respeta voz/runs/el otro).
-    widget.sftpTransfers.onNeedForeground = () =>
-        BackgroundListener.acquireExternalDataSync();
-    widget.sftpTransfers.onMaybeRelease = () {
-      BackgroundListener.releaseExternalDataSync();
-      widget.activeChats.maybeReleaseForeground();
-    };
-    widget.sshSessions.onNeedForeground = () =>
-        BackgroundListener.acquireExternalDataSync();
-    widget.sshSessions.onMaybeRelease = () {
-      BackgroundListener.releaseExternalDataSync();
-      widget.activeChats.maybeReleaseForeground();
-    };
+    _externalDataSyncDemandGate = ExternalDataSyncDemandGate(
+      _applyExternalDataSyncDemand,
+    );
+    widget.sftpTransfers.onNeedForeground = _syncExternalDataSyncDemand;
+    widget.sftpTransfers.onMaybeRelease = _syncExternalDataSyncDemand;
+    widget.sshSessions.onNeedForeground = _syncExternalDataSyncDemand;
+    widget.sshSessions.onMaybeRelease = _syncExternalDataSyncDemand;
+    _externalDataSyncControl.setMethodCallHandler((call) async {
+      if (call.method == 'stopRequested') {
+        final released = await _stopExternalDataSyncOwners();
+        if (!released) {
+          throw StateError('external dataSync release was not confirmed');
+        }
+      }
+      return null;
+    });
+    unawaited(_consumePendingExternalDataSyncStop());
+    _syncExternalDataSyncDemand();
   }
 
   @override
@@ -1130,6 +1150,55 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     unawaited(
       BackgroundCronWatch.syncConnections(widget.connManager.getConnections()),
     );
+  }
+
+  void _syncExternalDataSyncDemand() {
+    unawaited(
+      _externalDataSyncDemandGate.reconcile(
+        sftpActive: widget.sftpTransfers.hasActive,
+        sshActive: widget.sshSessions.hasActive,
+      ),
+    );
+  }
+
+  Future<bool> _applyExternalDataSyncDemand(bool required) async {
+    final applied = await BackgroundListener.setExternalDataSyncRequired(
+      required,
+    );
+    if (!required) await widget.activeChats.maybeReleaseForeground();
+    return applied;
+  }
+
+  Future<void> _consumePendingExternalDataSyncStop() async {
+    try {
+      final pending =
+          await _externalDataSyncControl.invokeMethod<bool>(
+            'takePendingStopRequested',
+          ) ==
+          true;
+      if (pending) {
+        final released = await _stopExternalDataSyncOwners();
+        if (released) await _acknowledgeExternalDataSyncStop();
+      }
+    } catch (_) {
+      // Canal ausente fuera de Android o durante teardown: no hay acción nativa.
+    }
+  }
+
+  Future<bool> _stopExternalDataSyncOwners() async {
+    widget.sftpTransfers.cancelAll();
+    widget.sshSessions.closeAll();
+    return await _externalDataSyncDemandGate.confirmReleased();
+  }
+
+  Future<void> _acknowledgeExternalDataSyncStop() async {
+    try {
+      await _externalDataSyncControl.invokeMethod<void>(
+        'acknowledgeStopRequested',
+      );
+    } catch (_) {
+      // Sin ACK la orden nativa permanece durable y se reintenta al arrancar.
+    }
   }
 
   /// Abre el chat de la sesión indicada por una notificación pulsada. Resuelve
@@ -1225,8 +1294,14 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   }
 
   void _onAppLockNoticeGateChanged() {
-    if (widget.appLock.locked.value) _dismissInAppNotice();
+    if (widget.appLock.locked.value) {
+      _dismissInAppNotice();
+      return;
+    }
+    widget.notifications.retryPendingOpen();
   }
+
+  final Set<String> _hydratingNotificationRuns = <String>{};
 
   String _sessionProfileOwner(SavedConnection connection, {String? owner}) =>
       Session.profileOwner(
@@ -1245,13 +1320,48 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final connection = conn;
     final nav = _navigatorKey.currentState;
     if (connection == null || nav == null) return false;
+    if (widget.appLock.locked.value) return false;
 
     // Si la notificación es de una ejecución (runId presente), navegar a
     // RunDetailScreen; si el run ya expiró, fallback a TaskCenterScreen.
     final runId = open.runId;
     if (runId != null && runId.isNotEmpty) {
-      unawaited(_openRunDetailFromNotification(nav, connection, runId));
-      return true;
+      final profile = open.profile?.trim().toLowerCase();
+      if (profile == null || profile.isEmpty) return false;
+      final hydrationKey =
+          '${connection.id}\u0000$profile\u0000$runId\u0000${open.requestId ?? ''}';
+      if (_hydratingNotificationRuns.add(hydrationKey)) {
+        unawaited(() async {
+          try {
+            for (var attempt = 0; mounted && attempt < 20; attempt++) {
+              if (widget.appLock.locked.value) {
+                await Future<void>.delayed(const Duration(milliseconds: 250));
+                continue;
+              }
+              final opened = await _openRunDetailFromNotification(
+                nav,
+                connection,
+                runId,
+                profile: profile,
+                requestId: open.requestId,
+                onApprovalReady: open.requestId == null
+                    ? null
+                    : () => _completeApprovalOpenWhenUnlocked(open),
+              );
+              if (opened) {
+                if (open.requestId == null) {
+                  widget.notifications.completePendingOpen(open);
+                }
+                return;
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 250));
+            }
+          } finally {
+            _hydratingNotificationRuns.remove(hydrationKey);
+          }
+        }());
+      }
+      return false;
     }
 
     final taskId = open.taskId;
@@ -1329,42 +1439,51 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   /// Si la notificación lleva un runId, navega a RunDetailScreen de ese run.
   /// Fallback a TaskCenterScreen si el run ya expiró o no está en el registry.
-  Future<void> _openRunDetailFromNotification(
+  Future<bool> _openRunDetailFromNotification(
     NavigatorState nav,
     SavedConnection conn,
-    String runId,
-  ) async {
+    String runId, {
+    required String profile,
+    String? requestId,
+    VoidCallback? onApprovalReady,
+  }) async {
     try {
       final registry = await RunRegistry.load(
         widget.connManager.prefs,
         conn.id,
       );
       if (!nav.mounted) {
-        return; // navigator puede haberse desmontado durante await
+        return false; // navigator puede haberse desmontado durante await
       }
       final record = registry.records
-          .where((r) => r.runId == runId)
+          .where((r) => r.runId == runId && r.profile == profile)
           .firstOrNull;
       if (record != null) {
+        if (widget.appLock.locked.value) return false;
         nav.push(
           MaterialPageRoute(
-            builder: (_) => RunDetailScreen(connection: conn, record: record),
+            builder: (_) => RunDetailScreen(
+              connection: conn,
+              record: record,
+              initialApprovalId: requestId,
+              onInitialApprovalReady: onApprovalReady,
+            ),
           ),
         );
-      } else {
-        nav.push(
-          MaterialPageRoute(builder: (_) => TaskCenterScreen(connection: conn)),
-        );
+        return true;
       }
     } catch (e) {
-      debugPrint('main: RunRegistry.load falló, cae a TaskCenterScreen: $e');
-      if (nav.mounted) {
-        // Si RunRegistry.load falla, fallback seguro a TaskCenterScreen.
-        nav.push(
-          MaterialPageRoute(builder: (_) => TaskCenterScreen(connection: conn)),
-        );
-      }
+      debugPrint('main: no se pudo abrir el run exacto: $e');
     }
+    return false;
+  }
+
+  Future<void> _completeApprovalOpenWhenUnlocked(NotificationOpen open) async {
+    while (mounted && widget.appLock.locked.value) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    if (!mounted) return;
+    widget.notifications.completePendingOpen(open);
   }
 
   /// Onboarding de primera ejecución (se muestra una sola vez).
@@ -1833,9 +1952,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _deferredNotificationInitTimer?.cancel();
 
     _sshIdleTimer?.cancel();
+    _externalDataSyncControl.setMethodCallHandler(null);
     _linkSub?.cancel();
     widget.connManager.activeConnectionId.removeListener(_retryPendingShare);
-    widget.connManager.activeConnectionId.removeListener(
+    widget.connManager.connectionsRevision.removeListener(
       _syncBackgroundCronConnections,
     );
     _shareSub?.cancel();

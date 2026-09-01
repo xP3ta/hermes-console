@@ -82,6 +82,7 @@ class _StreamingGateway implements HermesDesktopGateway {
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   void emit(String type, [Map<String, dynamic> payload = const {}]) {

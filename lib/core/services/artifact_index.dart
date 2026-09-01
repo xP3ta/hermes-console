@@ -146,6 +146,7 @@ final class ArtifactTranscriptEntry {
   final int messageOrdinal;
   final int messageRevision;
   final String? stableMessageId;
+  final int? stableRowId;
 
   factory ArtifactTranscriptEntry({
     required DesktopSessionMessage message,
@@ -169,6 +170,7 @@ final class ArtifactTranscriptEntry {
       messageOrdinal: messageOrdinal,
       messageRevision: messageRevision,
       stableMessageId: derivedId,
+      stableRowId: message.identityAliasesConsistent ? message.rowId : null,
     );
   }
 
@@ -177,6 +179,7 @@ final class ArtifactTranscriptEntry {
     required this.messageOrdinal,
     required this.messageRevision,
     required this.stableMessageId,
+    required this.stableRowId,
   });
 
   ArtifactTranscriptEntry withMessageRevision(int revision) {
@@ -189,22 +192,27 @@ final class ArtifactTranscriptEntry {
       messageOrdinal: messageOrdinal,
       messageRevision: revision,
       stableMessageId: stableMessageId,
+      stableRowId: stableRowId,
     );
   }
 
-  String get _identity => stableMessageId == null
+  String get _identity => stableRowId != null
+      ? 'row:$stableRowId'
+      : stableMessageId == null
       ? 'ordinal:$messageOrdinal'
       : 'message:$stableMessageId';
 
   SessionArtifactSource get _source => SessionArtifactSource(
     messageId: stableMessageId,
+    rowId: stableRowId,
     messageOrdinal: messageOrdinal,
   );
 
   @override
   String toString() =>
       'ArtifactTranscriptEntry(ordinal: $messageOrdinal, '
-      'revision: $messageRevision, hasId: ${stableMessageId != null})';
+      'revision: $messageRevision, hasId: ${stableMessageId != null}, '
+      'hasRowId: ${stableRowId != null})';
 }
 
 const _artifactNestedKeys = <String>{
@@ -278,6 +286,8 @@ DesktopSessionMessage _artifactMessageProjection(
       : const <String, dynamic>{};
   return DesktopSessionMessage(
     stableId: message.stableId,
+    rowId: message.rowId,
+    identityAliasesConsistent: message.identityAliasesConsistent,
     serverOrdinal: message.serverOrdinal,
     artifactContainers: containers,
     role: message.role,
@@ -914,7 +924,11 @@ String _fallbackIdentity(
   return [
     scope.connectionId,
     scope.logicalSessionId,
-    source.messageId ?? 'ordinal:${source.messageOrdinal}',
+    source.rowId != null
+        ? 'row:${source.rowId}'
+        : source.messageId != null
+        ? 'message:${source.messageId}'
+        : 'ordinal:${source.messageOrdinal}',
     seed.kind.name,
     reference ?? '',
     seed.mimeType ?? '',

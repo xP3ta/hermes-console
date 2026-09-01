@@ -49,6 +49,7 @@ class _InterimGateway implements HermesDesktopGateway {
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   void emit(String type, [Map<String, dynamic> payload = const {}]) {
@@ -578,6 +579,7 @@ void main() {
         'error': 'Error: invalid model slug',
         'partial': false,
         'recoverable': true,
+        '_localTranscriptProjectionId': 'local-assistant-error-1',
       });
       expect(fixture.events, contains(ActiveChatEvent.error));
       expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
@@ -606,6 +608,7 @@ void main() {
           'error': 'connection reset mid-stream',
           'partial': true,
           'recoverable': true,
+          '_localTranscriptProjectionId': 'local-assistant-error-1',
         });
         expect(fixture.chat.messages[1]['role'], 'assistant');
         expect(fixture.chat.messages[1]['content'], 'half an ans');

@@ -10,4 +10,7 @@
     <string name="voice_notification_open_hint">Toca para abrir Hermes</string>
     <string name="voice_notification_primary_action">Pausar</string>
     <string name="voice_notification_end_action">Terminar conversación</string>
+    <string name="external_data_sync_channel">Transferencias seguras</string>
+    <string name="external_data_sync_active">Transferencia o terminal seguro activo</string>
+    <string name="external_data_sync_stop">Detener</string>
 </resources>

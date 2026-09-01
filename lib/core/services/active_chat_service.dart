@@ -52,6 +52,7 @@ import 'run_registry.dart';
 import 'session_config_reducer.dart';
 import 'session_reconciler.dart';
 import 'subagent_activity_reducer.dart';
+import 'subagent_transcript_projection.dart';
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -59,6 +60,38 @@ import 'turn_outbox_store.dart';
 /// de estar busy antes de entregar la corrección capturada por barge-in.
 @visibleForTesting
 const activeChatVoiceBargeSettleTimeout = Duration(seconds: 5);
+
+@visibleForTesting
+String activeChatDesktopRecoveryUiMessage(Object _) =>
+    'No se pudo recuperar el turno. Inténtalo de nuevo.';
+
+@visibleForTesting
+String activeChatDesktopSnapshotFailureUiMessage(String? _) =>
+    'No se pudo recuperar el turno. Inténtalo de nuevo.';
+
+@visibleForTesting
+String activeChatDesktopRecoveryDiagnostic(Object error) {
+  final code = error is TuiGatewayRpcError ? ', code=${error.code}' : '';
+  return '[active-chat] Desktop recovery failed '
+      '(${error.runtimeType}$code)';
+}
+
+List<Map<String, dynamic>> _sanitizeDesktopFailureProjection(
+  Iterable<Map<String, dynamic>> projected,
+) => projected
+    .map((message) {
+      if (message['role'] != 'assistant_error' ||
+          message['_desktopSnapshotKind'] != 'inflight') {
+        return message;
+      }
+      final safe = activeChatDesktopSnapshotFailureUiMessage(null);
+      return Map<String, dynamic>.unmodifiable({
+        ...message,
+        'content': safe,
+        'error': safe,
+      });
+    })
+    .toList(growable: true);
 
 @visibleForTesting
 bool activeChatVoiceBargeRunIsTerminal(Map<String, dynamic> snapshot) =>
@@ -392,12 +425,238 @@ List<Map<String, dynamic>> _associateGeneratedImagesNewestFirst(
   return projected;
 }
 
-/// Identidad para deduplicar filas del transcript entre páginas: el row id
-/// durable cuando el servidor lo envía; si no, una huella de contenido.
-Object _transcriptMessageKey(Map<String, dynamic> message) {
-  final id = message['id'] ?? message['message_id'];
-  if (id != null) return 'id:\u0000$id';
-  return 'fp:\u0000${message['role']}\u0000${message['content'] ?? message['text']}\u0000${message['timestamp']}';
+/// Identidad para deduplicar filas del transcript entre páginas.
+///
+/// Sin un id durable no existe evidencia de igualdad: dos filas con el mismo
+/// rol/contenido pueden ser turnos legítimos distintos y deben conservarse.
+bool _desktopSnapshotTranscriptIsComplete(DesktopSessionSnapshot snapshot) {
+  if (!snapshot.messagesProvided ||
+      !snapshot.messagesFullyParsed ||
+      snapshot.hydrating ||
+      !_desktopSnapshotIdentitiesAreUnambiguous(snapshot.messages)) {
+    return false;
+  }
+  final expectedCount = snapshot.messageCount;
+  return expectedCount == null || snapshot.messages.length == expectedCount;
+}
+
+bool _desktopSnapshotIdentitiesAreUnambiguous(
+  Iterable<DesktopSessionMessage> messages,
+) {
+  final seen = <TranscriptMessageIdentity>[];
+  for (final message in messages) {
+    if (!message.identityAliasesConsistent) return false;
+    final identity = _desktopSnapshotTranscriptIdentity(message);
+    if (identity == null) continue;
+    if (seen.any(identity.sharesExactCoordinate)) return false;
+    seen.add(identity);
+  }
+  return true;
+}
+
+bool _fallbackExactlyMatchesDesktopSnapshot(
+  List<Map<String, dynamic>> fallbackNewestFirst,
+  DesktopSessionSnapshot snapshot,
+) {
+  if (snapshot.messages.isEmpty ||
+      fallbackNewestFirst.length != snapshot.messages.length ||
+      !_transcriptRowsHaveUnambiguousIdentityEvidence(fallbackNewestFirst) ||
+      !_desktopSnapshotIdentitiesAreUnambiguous(snapshot.messages)) {
+    return false;
+  }
+  for (var index = 0; index < fallbackNewestFirst.length; index++) {
+    final fallbackIdentity = _transcriptMessageIdentity(
+      fallbackNewestFirst[index],
+    );
+    final snapshotIdentity = _desktopSnapshotTranscriptIdentity(
+      snapshot.messages[snapshot.messages.length - index - 1],
+    );
+    if (fallbackIdentity == null ||
+        snapshotIdentity == null ||
+        !fallbackIdentity.matches(snapshotIdentity)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _tailPageProvesTranscriptComplete(SessionMessagesPage page) {
+  if (page.offset != 0 ||
+      !page.messagesFullyParsed ||
+      !page.paginationFullyParsed ||
+      !_transcriptRowsHaveUnambiguousIdentityEvidence(page.messages)) {
+    return false;
+  }
+  final limit = page.limit;
+  return limit == null || limit <= 0 || page.rawMessageCount < limit;
+}
+
+TranscriptMessageIdentity? _transcriptMessageIdentity(
+  Map<String, dynamic> message,
+) => canonicalTranscriptIdentity(message);
+
+DateTime? _transcriptTimestamp(Map<String, dynamic> message) {
+  final value = message['timestamp'];
+  if (value is! num || !value.isFinite || value < 0) return null;
+  try {
+    return DateTime.fromMicrosecondsSinceEpoch(
+      (value.toDouble() * Duration.microsecondsPerSecond).round(),
+      isUtc: true,
+    );
+  } on RangeError {
+    return null;
+  }
+}
+
+TranscriptMessageIdentity? _desktopSnapshotTranscriptIdentity(
+  DesktopSessionMessage message,
+) {
+  if (!message.identityAliasesConsistent) return null;
+  final identity = TranscriptMessageIdentity(
+    messageId: message.stableId,
+    rowId: message.rowId,
+  );
+  return identity.isDurable ? identity : null;
+}
+
+bool _identityCollectionContains(
+  Iterable<TranscriptMessageIdentity> identities,
+  TranscriptMessageIdentity candidate,
+) => identities.any(candidate.matches);
+
+bool _removeMatchingIdentities(
+  List<TranscriptMessageIdentity> identities,
+  TranscriptMessageIdentity candidate,
+) {
+  final overlaps = identities
+      .where(candidate.sharesExactCoordinate)
+      .toList(growable: false);
+  if (overlaps.length != 1 || !candidate.matches(overlaps.single)) {
+    return false;
+  }
+  return identities.remove(overlaps.single);
+}
+
+TranscriptMessageIdentity? _uniqueTranscriptIdentityMatch(
+  TranscriptMessageIdentity candidate,
+  Iterable<Map<String, dynamic>> transcript,
+) {
+  TranscriptMessageIdentity? found;
+  for (final message in transcript) {
+    if (!transcriptIdentityAliasesAreConsistent(message)) {
+      if (transcriptIdentityAliasesShareExactCoordinate(message, candidate)) {
+        return null;
+      }
+      continue;
+    }
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null || !candidate.sharesExactCoordinate(identity)) {
+      continue;
+    }
+    if (!candidate.matches(identity) || found != null) return null;
+    found = identity;
+  }
+  final match = found;
+  if (match == null) return null;
+
+  // La página entrante puede declarar solo una coordenada. Verifica también
+  // la otra coordenada de la fila visible enriquecida para no confirmar, por
+  // ejemplo, (m1, 42) si el transcript contiene además (m2, 42).
+  var overlaps = 0;
+  for (final message in transcript) {
+    if (!transcriptIdentityAliasesAreConsistent(message)) {
+      if (transcriptIdentityAliasesShareExactCoordinate(message, match)) {
+        return null;
+      }
+      continue;
+    }
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null || !match.sharesExactCoordinate(identity)) continue;
+    if (!match.matches(identity)) return null;
+    overlaps++;
+  }
+  return overlaps == 1 ? match : null;
+}
+
+List<TranscriptMessageIdentity> _transcriptIdentities(
+  Iterable<Map<String, dynamic>> messages,
+) => <TranscriptMessageIdentity>[
+  for (final message in messages) ?_transcriptMessageIdentity(message),
+];
+
+bool _hasDurableTranscriptIdentity(Map<String, dynamic> message) =>
+    _transcriptMessageIdentity(message) != null;
+
+bool _allTranscriptRowsHaveDurableIds(Iterable<Map<String, dynamic>> messages) {
+  final seen = <TranscriptMessageIdentity>[];
+  for (final message in messages) {
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null || seen.any(identity.sharesExactCoordinate)) {
+      return false;
+    }
+    seen.add(identity);
+  }
+  return true;
+}
+
+bool _transcriptRowsHaveUnambiguousIdentityEvidence(
+  Iterable<Map<String, dynamic>> messages,
+) {
+  final seen = <TranscriptMessageIdentity>[];
+  for (final message in messages) {
+    if (!transcriptIdentityAliasesAreConsistent(message)) return false;
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null) continue;
+    if (seen.any(identity.sharesExactCoordinate)) return false;
+    seen.add(identity);
+  }
+  return true;
+}
+
+bool _isKnownLocalTranscriptProjection(
+  List<Map<String, dynamic>> newestFirst,
+  int index,
+) {
+  final message = newestFirst[index];
+  if (message['role'] == 'assistant_error' ||
+      message['_steer'] == true ||
+      message['_pipeline'] == true ||
+      message['_desktopInterim'] == true ||
+      message['_desktopSnapshotKind'] == 'inflight' ||
+      message['_cancelled'] == true ||
+      message['_cancelledUser'] == true) {
+    return true;
+  }
+  if (!isRealUserTurn(message) || index == 0) return false;
+  final newer = newestFirst[index - 1];
+  if (newer['role'] == 'assistant_error') {
+    return (newer['_prompt'] ?? '').toString() ==
+        (message['content'] ?? '').toString();
+  }
+  return newer['role'] == 'assistant' &&
+      (newer['_pipeline'] == true ||
+          newer['_desktopSnapshotKind'] == 'inflight');
+}
+
+bool _isLiveTranscriptProjection(Map<String, dynamic> message) =>
+    message['_desktopSnapshotKind'] == 'inflight' ||
+    message['_pipeline'] == true ||
+    message['_optimistic'] == true;
+
+int? _durableTranscriptCoverageCount(Iterable<Map<String, dynamic>> messages) {
+  final identities = <TranscriptMessageIdentity>[];
+  for (final message in messages) {
+    if (_isLiveTranscriptProjection(message)) continue;
+    final identity = _transcriptMessageIdentity(message);
+    // Una fila durable sin identidad sigue ocupando una posición real del
+    // transcript, pero no se puede comparar de forma segura con messageCount.
+    // Ignorarla haría que 2 filas visibles pareciesen coincidir con count=1.
+    if (identity == null || identities.any(identity.sharesExactCoordinate)) {
+      return null;
+    }
+    identities.add(identity);
+  }
+  return identities.length;
 }
 
 /// Antepone una página de mensajes ANTERIORES a la lista viva (newest-first:
@@ -408,14 +667,23 @@ List<Map<String, dynamic>> _mergeOlderTranscriptPage(
   List<Map<String, dynamic>> existingNewestFirst,
   List<Map<String, dynamic>> olderPageNewestFirst,
 ) {
-  if (existingNewestFirst.isEmpty || olderPageNewestFirst.isEmpty) {
+  if (existingNewestFirst.isEmpty) return olderPageNewestFirst;
+  if (olderPageNewestFirst.isEmpty) {
     return existingNewestFirst;
   }
-  final seen = <Object>{
-    for (final message in existingNewestFirst) _transcriptMessageKey(message),
-  };
+  final existingIdentities = _transcriptIdentities(existingNewestFirst);
   final fresh = olderPageNewestFirst
-      .where((message) => seen.add(_transcriptMessageKey(message)))
+      .where((message) {
+        final identity = _transcriptMessageIdentity(message);
+        if (identity == null) return true;
+        final overlaps = existingIdentities
+            .where(identity.sharesExactCoordinate)
+            .toList(growable: false);
+        if (overlaps.length == 1 && identity.matches(overlaps.single)) {
+          return false;
+        }
+        return true;
+      })
       .toList(growable: false);
   if (fresh.isEmpty) return existingNewestFirst;
   return <Map<String, dynamic>>[...existingNewestFirst, ...fresh];
@@ -426,28 +694,71 @@ class CancelledTurnTombstone {
   const CancelledTurnTombstone({
     required this.content,
     this.anchorMessageId,
+    this.anchorRowId,
     this.firstUser = false,
+    this.cancelledMessageId,
+    this.cancelledRowId,
+    this.invalidated = false,
     this.createdAtMs,
   });
 
   final String content;
   final String? anchorMessageId;
+  final int? anchorRowId;
   final bool firstUser;
+  final String? cancelledMessageId;
+  final int? cancelledRowId;
+  final bool invalidated;
   final int? createdAtMs;
+
+  bool get hasAnchorIdentity => anchorMessageId != null || anchorRowId != null;
+  bool get hasTargetIdentity =>
+      cancelledMessageId != null || cancelledRowId != null;
 
   bool matchesContent(String candidate) => content == candidate;
 
   CancelledTurnTombstone stamped(int timestampMs) => CancelledTurnTombstone(
     content: content,
     anchorMessageId: anchorMessageId,
+    anchorRowId: anchorRowId,
     firstUser: firstUser,
+    cancelledMessageId: cancelledMessageId,
+    cancelledRowId: cancelledRowId,
+    invalidated: invalidated,
     createdAtMs: createdAtMs ?? timestampMs,
+  );
+
+  CancelledTurnTombstone bindToMessage({String? messageId, int? rowId}) =>
+      CancelledTurnTombstone(
+        content: content,
+        anchorMessageId: anchorMessageId,
+        anchorRowId: anchorRowId,
+        firstUser: firstUser,
+        cancelledMessageId: cancelledMessageId ?? messageId,
+        cancelledRowId: cancelledRowId ?? rowId,
+        invalidated: false,
+        createdAtMs: createdAtMs,
+      );
+
+  CancelledTurnTombstone invalidate() => CancelledTurnTombstone(
+    content: content,
+    anchorMessageId: anchorMessageId,
+    anchorRowId: anchorRowId,
+    firstUser: firstUser,
+    cancelledMessageId: cancelledMessageId,
+    cancelledRowId: cancelledRowId,
+    invalidated: true,
+    createdAtMs: createdAtMs,
   );
 
   Map<String, dynamic> toJson() => {
     'content': content,
     'anchor_message_id': anchorMessageId,
+    'anchor_row_id': anchorRowId,
     'first_user': firstUser,
+    'cancelled_message_id': cancelledMessageId,
+    'cancelled_row_id': cancelledRowId,
+    'invalidated': invalidated,
     'created_at_ms': createdAtMs,
   };
 
@@ -455,33 +766,92 @@ class CancelledTurnTombstone {
     if (raw is! Map) return null;
     final content = raw['content'];
     final anchor = raw['anchor_message_id'];
+    final anchorRowId = raw['anchor_row_id'];
     final firstUser = raw['first_user'];
+    final cancelledMessageId = raw['cancelled_message_id'];
+    final cancelledRowId = raw['cancelled_row_id'];
+    final invalidated = raw['invalidated'];
     final createdAtMs = raw['created_at_ms'];
-    final normalizedAnchor = anchor is String && anchor.trim().isNotEmpty
-        ? anchor.trim()
+    final durableAnchor = anchor is String && anchor.trim().isNotEmpty
+        ? anchor
         : null;
+    final durableCancelledMessageId =
+        cancelledMessageId is String && cancelledMessageId.isNotEmpty
+        ? cancelledMessageId
+        : null;
+    final durableAnchorRowId = anchorRowId is int && anchorRowId > 0
+        ? anchorRowId
+        : null;
+    final durableCancelledRowId = cancelledRowId is int && cancelledRowId > 0
+        ? cancelledRowId
+        : null;
+    final hasAnchor = durableAnchor != null || durableAnchorRowId != null;
+    final hasTarget =
+        durableCancelledMessageId != null || durableCancelledRowId != null;
     if (content is! String ||
         content.isEmpty ||
         firstUser is! bool ||
-        (normalizedAnchor == null && !firstUser) ||
-        (normalizedAnchor != null && firstUser) ||
+        (!hasAnchor && !firstUser && !hasTarget) ||
+        (hasAnchor && firstUser) ||
+        (invalidated != null && invalidated is! bool) ||
         createdAtMs is! int ||
         createdAtMs < 0) {
       return null;
     }
     return CancelledTurnTombstone(
       content: content,
-      anchorMessageId: normalizedAnchor,
+      anchorMessageId: durableAnchor,
+      anchorRowId: durableAnchorRowId,
       firstUser: firstUser,
+      cancelledMessageId: durableCancelledMessageId,
+      cancelledRowId: durableCancelledRowId,
+      invalidated: invalidated == true,
       createdAtMs: createdAtMs,
     );
   }
 }
 
-String? _stableTranscriptMessageId(Map<String, dynamic> message) {
-  final raw = message['message_id'] ?? message['id'];
-  final value = raw?.toString().trim() ?? '';
-  return value.isEmpty ? null : value;
+bool _exactIdentityPairsMatch({
+  required String? leftMessageId,
+  required int? leftRowId,
+  required String? rightMessageId,
+  required int? rightRowId,
+}) {
+  if (leftMessageId != null &&
+      rightMessageId != null &&
+      leftMessageId != rightMessageId) {
+    return false;
+  }
+  if (leftRowId != null && rightRowId != null && leftRowId != rightRowId) {
+    return false;
+  }
+  return (leftMessageId != null && leftMessageId == rightMessageId) ||
+      (leftRowId != null && leftRowId == rightRowId);
+}
+
+bool _sameCancelledTurnIdentity(
+  CancelledTurnTombstone left,
+  CancelledTurnTombstone right,
+) {
+  if (left.content != right.content || left.firstUser != right.firstUser) {
+    return false;
+  }
+  if (left.hasAnchorIdentity != right.hasAnchorIdentity) return false;
+  if (left.hasAnchorIdentity) {
+    return _exactIdentityPairsMatch(
+      leftMessageId: left.anchorMessageId,
+      leftRowId: left.anchorRowId,
+      rightMessageId: right.anchorMessageId,
+      rightRowId: right.anchorRowId,
+    );
+  }
+  if (left.firstUser) return true;
+  return _exactIdentityPairsMatch(
+    leftMessageId: left.cancelledMessageId,
+    leftRowId: left.cancelledRowId,
+    rightMessageId: right.cancelledMessageId,
+    rightRowId: right.cancelledRowId,
+  );
 }
 
 class CancelledTurnTombstoneStore {
@@ -516,6 +886,21 @@ class CancelledTurnTombstoneStore {
     String generation = '',
   }) => jsonEncode([connectionId, generation, profile, sessionId]);
 
+  bool _scopeKeyIsValid(Object? raw) {
+    if (raw is! String) return false;
+    try {
+      final parts = jsonDecode(raw);
+      return parts is List &&
+          parts.length == 4 &&
+          parts.every((part) => part is String) &&
+          (parts[0] as String).isNotEmpty &&
+          (parts[2] as String).isNotEmpty &&
+          (parts[3] as String).isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> initialize() async {
     if (_initialized) return;
     final raw = await _read();
@@ -525,14 +910,25 @@ class CancelledTurnTombstoneStore {
     if (decoded is! Map) {
       throw const FormatException('invalid cancelled-turn tombstone root');
     }
-    final candidate = Map<String, dynamic>.from(decoded);
-    for (final entry in candidate.entries) {
+    final candidate = <String, dynamic>{};
+    for (final entry in decoded.entries) {
+      if (!_scopeKeyIsValid(entry.key)) continue;
       final value = entry.value;
-      if (value is! List ||
-          value.any((item) => CancelledTurnTombstone.fromJson(item) == null)) {
-        throw FormatException(
-          'invalid cancelled-turn tombstone scope ${entry.key}',
-        );
+      // Algunas QA anteriores escribieron un único tombstone directamente en
+      // el scope. Migra esa forma sin tocar todavía el payload cifrado.
+      final rawItems = value is List
+          ? List<Object?>.from(value)
+          : value is Map
+          ? <Object?>[value]
+          : null;
+      // Un scope ilegible no puede aplicarse con seguridad. Se omite solo en
+      // memoria para no bloquear el arranque ni destruir los scopes válidos;
+      // initialize() no sobrescribe el almacenamiento cifrado.
+      if (rawItems != null &&
+          rawItems.every(
+            (item) => CancelledTurnTombstone.fromJson(item) != null,
+          )) {
+        candidate[entry.key as String] = rawItems;
       }
     }
     _root = candidate;
@@ -562,35 +958,87 @@ class CancelledTurnTombstoneStore {
         .toList(growable: false);
   }
 
+  List<CancelledTurnTombstone> loadAliases({
+    required String connectionId,
+    required String profile,
+    required Iterable<String> sessionIds,
+    String generation = '',
+  }) {
+    final restored = <CancelledTurnTombstone>[];
+    for (final sessionId in sessionIds.where((id) => id.isNotEmpty).toSet()) {
+      for (final tombstone in load(
+        connectionId: connectionId,
+        profile: profile,
+        sessionId: sessionId,
+        generation: generation,
+      )) {
+        final existingIndex = restored.indexWhere(
+          (item) => _sameCancelledTurnIdentity(item, tombstone),
+        );
+        if (existingIndex < 0) {
+          restored.add(tombstone);
+          continue;
+        }
+        final existing = restored[existingIndex];
+        if ((!existing.invalidated && tombstone.invalidated) ||
+            (existing.invalidated == tombstone.invalidated &&
+                !existing.hasTargetIdentity &&
+                tombstone.hasTargetIdentity)) {
+          restored[existingIndex] = tombstone;
+        }
+      }
+    }
+    return List<CancelledTurnTombstone>.unmodifiable(restored);
+  }
+
   Future<void> add({
     required String connectionId,
     required String profile,
     required String sessionId,
     required CancelledTurnTombstone tombstone,
     String generation = '',
+  }) => addAliases(
+    connectionId: connectionId,
+    profile: profile,
+    sessionIds: [sessionId],
+    tombstone: tombstone,
+    generation: generation,
+  );
+
+  Future<void> addAliases({
+    required String connectionId,
+    required String profile,
+    required Iterable<String> sessionIds,
+    required CancelledTurnTombstone tombstone,
+    String generation = '',
   }) {
+    final exactSessionIds = sessionIds.where((id) => id.isNotEmpty).toSet();
+    if (exactSessionIds.isEmpty) {
+      return Future<void>.error(
+        ArgumentError.value(sessionIds, 'sessionIds', 'must not be empty'),
+      );
+    }
     final operation = _writeTail.then((_) async {
       if (!_initialized) await initialize();
       final candidate = Map<String, dynamic>.from(_root);
-      final scope = _scopeKey(
-        connectionId: connectionId,
-        profile: profile,
-        sessionId: sessionId,
-        generation: generation,
-      );
-      final current = candidate[scope] is List
-          ? List<Object?>.from(candidate[scope] as List)
-          : <Object?>[];
       final durable = tombstone.stamped(_nowMs());
-      current.removeWhere((raw) {
-        final item = CancelledTurnTombstone.fromJson(raw);
-        return item != null &&
-            item.content == durable.content &&
-            item.anchorMessageId == durable.anchorMessageId &&
-            item.firstUser == durable.firstUser;
-      });
-      current.add(durable.toJson());
-      candidate[scope] = current;
+      for (final sessionId in exactSessionIds) {
+        final scope = _scopeKey(
+          connectionId: connectionId,
+          profile: profile,
+          sessionId: sessionId,
+          generation: generation,
+        );
+        final current = candidate[scope] is List
+            ? List<Object?>.from(candidate[scope] as List)
+            : <Object?>[];
+        current.removeWhere((raw) {
+          final item = CancelledTurnTombstone.fromJson(raw);
+          return item != null && _sameCancelledTurnIdentity(item, durable);
+        });
+        current.add(durable.toJson());
+        candidate[scope] = current;
+      }
       await _write(jsonEncode(candidate));
       _root = candidate;
     });
@@ -645,68 +1093,33 @@ class CancelledTurnTombstoneStore {
 
 /// Reaplica los tombstones locales de Stop sobre un transcript canónico.
 ///
-/// Las listas están en orden newest-first. Para cada usuario detenido elimina
-/// exclusivamente el bloque de respuesta situado entre ese usuario y el turno
-/// de usuario posterior; así una respuesta que el servidor terminó mientras el
-/// móvil estaba offline no reaparece al reconciliar, sin tocar turnos nuevos.
+/// Las listas están en orden newest-first. El transcript entrante es la
+/// autoridad: un tombstone sin evidencia de identidad se ignora en esa ventana,
+/// nunca sustituye el transcript por [existingNewestFirst]. Para cada usuario
+/// detenido identificado elimina exclusivamente el bloque de respuesta situado
+/// entre ese usuario y el turno de usuario posterior; así una respuesta que el
+/// servidor terminó mientras el móvil estaba offline no reaparece al
+/// reconciliar, sin tocar turnos nuevos. [incomingTranscriptComplete] debe ser
+/// evidencia explícita de que la ventana alcanza el inicio absoluto antes de
+/// proyectar un tombstone `firstUser` sin ancla.
 @visibleForTesting
 List<Map<String, dynamic>> projectCancelledTurnTombstones({
   required List<Map<String, dynamic>> existingNewestFirst,
   required List<Map<String, dynamic>> incomingNewestFirst,
+  required bool incomingTranscriptComplete,
   List<CancelledTurnTombstone> durableTombstones = const [],
 }) {
   if (durableTombstones.isEmpty) return incomingNewestFirst;
-
-  for (final tombstone in durableTombstones) {
-    final anchor = tombstone.anchorMessageId;
-    final anchorPresent =
-        anchor == null ||
-        incomingNewestFirst.any(
-          (message) => _stableTranscriptMessageId(message) == anchor,
-        );
-    final firstUserPresent =
-        !tombstone.firstUser || incomingNewestFirst.any(isRealUserTurn);
-    if (!anchorPresent || !firstUserPresent) {
-      // Snapshot/compresión parcial: conservar la proyección ya saneada es más
-      // seguro que reintroducir una respuesta cuyo ancla aún no llegó.
-      return existingNewestFirst;
-    }
-  }
 
   final projected = incomingNewestFirst
       .map((message) => Map<String, dynamic>.of(message))
       .toList();
   for (final tombstone in durableTombstones) {
-    var userIndex = -1;
-    if (tombstone.firstUser) {
-      for (var index = projected.length - 1; index >= 0; index--) {
-        if (!isRealUserTurn(projected[index])) continue;
-        if (tombstone.matchesContent(
-          (projected[index]['content'] ?? '').toString(),
-        )) {
-          userIndex = index;
-        }
-        break;
-      }
-    } else {
-      final anchorId = tombstone.anchorMessageId;
-      final anchorIndex = anchorId == null
-          ? -1
-          : projected.indexWhere(
-              (message) => _stableTranscriptMessageId(message) == anchorId,
-            );
-      if (anchorIndex >= 0) {
-        for (var index = anchorIndex - 1; index >= 0; index--) {
-          if (!isRealUserTurn(projected[index])) continue;
-          if (tombstone.matchesContent(
-            (projected[index]['content'] ?? '').toString(),
-          )) {
-            userIndex = index;
-          }
-          break;
-        }
-      }
-    }
+    var userIndex = _cancelledTurnUserIndex(
+      projected,
+      tombstone,
+      incomingTranscriptComplete: incomingTranscriptComplete,
+    );
     if (userIndex < 0) continue;
 
     var newerUserIndex = -1;
@@ -728,6 +1141,149 @@ List<Map<String, dynamic>> projectCancelledTurnTombstones({
     projected[userIndex] = {...projected[userIndex], '_cancelledUser': true};
   }
   return projected;
+}
+
+enum _TranscriptIdentityResolutionKind { absent, unique, conflicting }
+
+typedef _TranscriptIdentityResolution = ({
+  _TranscriptIdentityResolutionKind kind,
+  int index,
+});
+
+bool _rawMessageSharesRequestedCoordinate(
+  Map<String, dynamic> message,
+  TranscriptMessageIdentity requested,
+) {
+  if (requested.messageId != null) {
+    for (final key in const ['_desktopMessageId', 'message_id', 'id']) {
+      if (message[key] == requested.messageId) return true;
+    }
+  }
+  if (requested.rowId != null) {
+    for (final key in const ['_desktopRowId', 'row_id', '_row_id', 'id']) {
+      if (message[key] == requested.rowId) return true;
+    }
+  }
+  return false;
+}
+
+_TranscriptIdentityResolution _resolveTranscriptIdentity(
+  List<Map<String, dynamic>> newestFirst, {
+  required String? messageId,
+  required int? rowId,
+  required bool Function(Map<String, dynamic> message) accepts,
+}) {
+  final requested = TranscriptMessageIdentity(
+    messageId: messageId,
+    rowId: rowId,
+  );
+  if (!requested.isDurable) {
+    return (kind: _TranscriptIdentityResolutionKind.absent, index: -1);
+  }
+  var found = -1;
+  for (var index = 0; index < newestFirst.length; index++) {
+    final message = newestFirst[index];
+    if (!accepts(message)) continue;
+    final candidate = _transcriptMessageIdentity(message);
+    if (candidate == null) {
+      if (!transcriptIdentityAliasesAreConsistent(message) &&
+          _rawMessageSharesRequestedCoordinate(message, requested)) {
+        return (kind: _TranscriptIdentityResolutionKind.conflicting, index: -1);
+      }
+      continue;
+    }
+    if (!requested.sharesExactCoordinate(candidate)) {
+      continue;
+    }
+    // Una coordenada común con la otra coordenada contradictoria no es una
+    // coincidencia parcial: invalida toda la búsqueda.
+    if (!requested.matches(candidate) || found >= 0) {
+      return (kind: _TranscriptIdentityResolutionKind.conflicting, index: -1);
+    }
+    found = index;
+  }
+  return found < 0
+      ? (kind: _TranscriptIdentityResolutionKind.absent, index: -1)
+      : (kind: _TranscriptIdentityResolutionKind.unique, index: found);
+}
+
+int _cancelledTurnUserIndex(
+  List<Map<String, dynamic>> newestFirst,
+  CancelledTurnTombstone tombstone, {
+  required bool incomingTranscriptComplete,
+}) {
+  if (tombstone.invalidated) return -1;
+  if (tombstone.hasTargetIdentity) {
+    final target = _resolveTranscriptIdentity(
+      newestFirst,
+      messageId: tombstone.cancelledMessageId,
+      rowId: tombstone.cancelledRowId,
+      accepts: (message) =>
+          isRealUserTurn(message) && !_isLiveTranscriptProjection(message),
+    );
+    if (target.kind == _TranscriptIdentityResolutionKind.unique) {
+      return target.index;
+    }
+    if (target.kind == _TranscriptIdentityResolutionKind.conflicting ||
+        !tombstone.hasAnchorIdentity) {
+      return -1;
+    }
+    // Algunas superficies exponen solo message_id y otras solo row_id. Si el
+    // target enriquecido no está representado en esta proyección, el ancla
+    // original sigue siendo una dirección durable válida para re-enlazarlo.
+  }
+  if (tombstone.firstUser) {
+    // Un tombstone sin ancla solo identifica al primer usuario absoluto. En
+    // una cola paginada, el usuario más antiguo visible no prueba esa
+    // identidad y no debe suprimirse por coincidencia de texto.
+    if (!incomingTranscriptComplete) return -1;
+    for (var index = newestFirst.length - 1; index >= 0; index--) {
+      final message = newestFirst[index];
+      if (!isRealUserTurn(message) || _isLiveTranscriptProjection(message)) {
+        continue;
+      }
+      if (canonicalTranscriptMessageId(message) == null &&
+          canonicalTranscriptRowId(message) == null) {
+        return -1;
+      }
+      return tombstone.matchesContent((message['content'] ?? '').toString())
+          ? index
+          : -1;
+    }
+    return -1;
+  }
+
+  final anchor = _resolveTranscriptIdentity(
+    newestFirst,
+    messageId: tombstone.anchorMessageId,
+    rowId: tombstone.anchorRowId,
+    accepts: (message) => !_isLiveTranscriptProjection(message),
+  );
+  if (anchor.kind != _TranscriptIdentityResolutionKind.unique) return -1;
+  for (var index = anchor.index - 1; index >= 0; index--) {
+    final message = newestFirst[index];
+    if (!isRealUserTurn(message)) continue;
+    if (_isLiveTranscriptProjection(message) ||
+        (canonicalTranscriptMessageId(message) == null &&
+            canonicalTranscriptRowId(message) == null)) {
+      return -1;
+    }
+    return tombstone.matchesContent((message['content'] ?? '').toString())
+        ? index
+        : -1;
+  }
+  return -1;
+}
+
+bool _sameTranscriptProjection(
+  List<Map<String, dynamic>> left,
+  List<Map<String, dynamic>> right,
+) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (!_artifactValueEquals(left[index], right[index])) return false;
+  }
+  return true;
 }
 
 String _artifactEntryIdentity(String? stableId, int ordinal) =>
@@ -1318,6 +1874,55 @@ class _AssistantNarrationProjection {
   }
 }
 
+enum _TranscriptExtent { unknown, partial, complete }
+
+enum _HydrationTailStatus { incomplete, partial, complete }
+
+const _terminalProjectionIdKey = '_localTerminalProjectionId';
+const _terminalProjectionAnchorKey = '_localTerminalAnchorMessageId';
+const _terminalProjectionAnchorRowKey = '_localTerminalAnchorRowId';
+const _terminalProjectionAnchorOrdinalKey = '_localTerminalOrdinalAfterAnchor';
+const _terminalProjectionAbsoluteOrdinalKey =
+    '_localTerminalAbsoluteUserOrdinal';
+const _stopProofAnchorMessageIdKey = '_localStopProofAnchorMessageId';
+const _stopProofAnchorRowIdKey = '_localStopProofAnchorRowId';
+
+class _TerminalProjectionFence {
+  const _TerminalProjectionFence({
+    required this.projectionId,
+    required this.userMessageId,
+    required this.userRowId,
+    required this.anchorMessageId,
+    required this.anchorRowId,
+    required this.ordinalAfterAnchor,
+    required this.absoluteUserOrdinal,
+    required this.localAssistantText,
+  });
+
+  final String projectionId;
+  final String? userMessageId;
+  final int? userRowId;
+  final String? anchorMessageId;
+  final int? anchorRowId;
+  final int? ordinalAfterAnchor;
+  final int? absoluteUserOrdinal;
+  final String? localAssistantText;
+}
+
+typedef _TerminalTurnEvidence = ({
+  bool complete,
+  List<int> projectionIndices,
+  String? assistantText,
+});
+
+typedef _RefreshedTranscriptGraft = ({
+  List<Map<String, dynamic>> messages,
+  bool preservesExistingCoverage,
+  bool acceptedRefreshed,
+  bool retainsExistingRows,
+  List<TranscriptMessageIdentity> unconfirmedRetainedIdentities,
+});
+
 /// Estado vivo de un chat con streaming. Es la fuente de verdad de los mensajes,
 /// el trace y el estado del pipeline mientras el chat está activo. Sobrevive al
 /// pop de la ruta del chat porque lo posee [ActiveChatService], no el widget.
@@ -1359,6 +1964,7 @@ class ActiveChat {
   final ApprovalPolicyService? _policy;
   final VoidCallback _onTerminal;
   final VoidCallback? _onUnused;
+  final Future<void> Function()? _beforeTerminalNotification;
 
   /// Se invoca cuando el run obtiene su id. La capa de servicio lo usa para
   /// arrancar el foreground service y registrar la vigilancia en 2º plano, de
@@ -1376,6 +1982,10 @@ class ActiveChat {
   Future<void> _cancelledTurnPersistence = Future<void>.value();
   bool _cancelledTurnPersistencePending = false;
   bool _cancelledTurnPersistenceFailed = false;
+  final Map<String, CancelledTurnTombstone> _pendingCancelledTombstoneUpdates =
+      {};
+  int _cancelledTombstoneRevision = 0;
+  Future<void>? _cancelledTombstoneUpdateFlight;
   Future<void>? _durableCancelFlight;
   final int Function() _monotonicMicros;
   int? _responseStartedAtMicros;
@@ -1411,9 +2021,15 @@ class ActiveChat {
   String? _desktopStoredSessionId;
   bool _usingDesktopGateway = false;
   int? _recoveringDesktopTurnEpoch;
+  Future<void>? _desktopTurnRecovery;
   int _messageLoadEpoch = 0;
   int _desktopBindEpoch = 0;
+  int? _activeTurnTranscriptBoundaryEpoch;
+  TranscriptMessageIdentity? _activeTurnTranscriptBoundaryIdentity;
+  String? _activeTurnTranscriptBoundarySessionId;
+  String? _activeTurnTranscriptBoundaryProfile;
   int _desktopInterimSerial = 0;
+  int _localTranscriptProjectionSerial = 0;
   String? _pendingDesktopInterimKey;
   final _AssistantNarrationProjection _assistantNarration =
       _AssistantNarrationProjection();
@@ -1440,6 +2056,7 @@ class ActiveChat {
   final Map<InteractivePromptKey, Future<DesktopPromptResponse>> _batchLocks =
       {};
   SubagentActivityState? _subagentActivities;
+  String? _subagentTranscriptTurnAnchor;
   final Set<SubagentActivityKey> _pendingSubagentInterrupts = {};
   ArtifactIndexSnapshot? _artifactIndex;
   ArtifactIndexScope? _artifactScope;
@@ -1622,19 +2239,52 @@ class ActiveChat {
   int _earlierMessagesNextOffset = 0;
   bool _earlierMessagesInFlight = false;
 
-  /// El usuario ya cargó páginas anteriores: un refresh de la cola debe
-  /// injertarse sobre ese prefijo en vez de clobberarlo.
-  bool _hasBackfilledPrefix = false;
+  /// Un snapshot que omite mensajes puede demostrar que la proyección visible
+  /// ya no cubre la cola actual. En ese caso el siguiente gesto debe hidratar
+  /// `offset=0` antes de continuar con las páginas anteriores.
+  bool _needsTranscriptTailHydration = false;
+
+  /// Filas conservadas provisionalmente cuando una cola paginada nueva no
+  /// comparte ancla con lo visible. Si una página posterior no confirma sus
+  /// ids antes de alcanzar el inicio absoluto, pertenecían a una proyección
+  /// compactada vieja y se retiran entonces, nunca durante el refresh.
+  final List<TranscriptMessageIdentity>
+  _unconfirmedRetainedTranscriptIdentities = <TranscriptMessageIdentity>[];
+
+  /// Evidencia sobre el alcance de la ventana visible. `unknown` y `partial`
+  /// fallan cerrado: solo una lectura one-shot, una página final o un snapshot
+  /// que incluya mensajes permiten proyectar un tombstone `firstUser`.
+  _TranscriptExtent _transcriptExtent = _TranscriptExtent.unknown;
+
+  /// Una fila REST descartada deja un hueco durable aunque páginas posteriores
+  /// alcancen el inicio absoluto. Se limpia únicamente cuando una fuente
+  /// autoritativa y completa sustituye toda la cobertura, no al terminar el
+  /// backfill que contiene el hueco.
+  bool _transcriptCoverageHasParseGap = false;
+
+  /// Revisión transaccional del cursor/cobertura. Un refresh y un backfill
+  /// pueden compartir `_messageLoadEpoch` cuando el gesto de scroll empieza
+  /// después del refresh; esta revisión impide que la respuesta pedida con el
+  /// cursor anterior aterrice sobre el bookkeeping que el refresh ya reemplazó.
+  int _transcriptCoverageRevision = 0;
 
   /// Resume diferido (Hermes Agent 0.20, upstream 60be8ef26): el ack de
   /// `session.resume` llega con `hydrating:true` y el historial se carga en
   /// segundo plano; `session.resume_progress` anuncia el desenlace.
   bool _desktopHistoryHydrating = false;
+  bool _desktopHistoryNeedsHydration = false;
+  int? _desktopHydrationExpectedMessageCount;
+  Future<void>? _desktopHistoryHydrationFlight;
+  int? _desktopHistoryHydrationFlightEpoch;
   bool? _desktopHydrationOutcome;
   Completer<bool>? _desktopHydrationWaiter;
 
   /// Quedan mensajes anteriores en el servidor más allá de lo ya cargado.
   bool get hasEarlierMessages => _earlierMessagesAvailable;
+
+  bool get _transcriptIsComplete =>
+      _transcriptExtent == _TranscriptExtent.complete &&
+      !_transcriptCoverageHasParseGap;
 
   /// El runtime enlazado está hidratando su historial en segundo plano.
   bool get isHydratingDesktopHistory => _desktopHistoryHydrating;
@@ -1844,6 +2494,7 @@ class ActiveChat {
     required NotificationService? notifications,
     required VoidCallback onTerminal,
     VoidCallback? onUnused,
+    Future<void> Function()? beforeTerminalNotification,
     ApprovalPolicyService? policy,
     void Function(String runId)? onRunStarted,
     Future<void> Function()? onForegroundKeepAlive,
@@ -1880,6 +2531,7 @@ class ActiveChat {
        _policy = policy,
        _onTerminal = onTerminal,
        _onUnused = onUnused,
+       _beforeTerminalNotification = beforeTerminalNotification,
        _onRunStarted = onRunStarted,
        _onForegroundKeepAlive = onForegroundKeepAlive,
        _onObservedFirstTokenLatency = onObservedFirstTokenLatency,
@@ -2001,6 +2653,7 @@ class ActiveChat {
     }
     _desktopStoredSessionKnownMissing = true;
     messagesLoaded = true;
+    _markTranscriptComplete(visibleCount: 0);
   }
 
   @visibleForTesting
@@ -2009,6 +2662,9 @@ class ActiveChat {
   /// Stream de cambios. La pantalla se suscribe para re-renderizar; al cerrarse
   /// cancela la suscripción SIN cancelar el stream del agente.
   Stream<ActiveChatEvent> get changes => _changes.stream;
+
+  @visibleForTesting
+  void debugEmitMessagesHydrated() => _emit(ActiveChatEvent.messagesHydrated);
 
   /// Tiempo de respuesta observado por Android para el último turno. Incluye
   /// red, cola y herramientas previas al primer contenido; no es una métrica
@@ -2207,11 +2863,20 @@ class ActiveChat {
   }
 
   void clearCancelledTurnTombstones() {
+    if (_cancelledTurnTombstones.isNotEmpty) {
+      _cancelledTombstoneRevision += 1;
+    }
     _cancelledTurnTombstones.clear();
+    _pendingCancelledTombstoneUpdates.clear();
     for (var index = 0; index < messages.length; index++) {
       if (messages[index]['_cancelledUser'] != true) continue;
       final cleaned = Map<String, dynamic>.of(messages[index])
-        ..remove('_cancelledUser');
+        ..remove('_cancelledUser')
+        ..remove('_cancelledTurnAnchorMessageId')
+        ..remove('_cancelledTurnAnchorRowId')
+        ..remove('_cancelledTurnFirstUser')
+        ..remove('_cancelledTurnMessageId')
+        ..remove('_cancelledTurnRowId');
       messages[index] = cleaned;
     }
   }
@@ -2219,7 +2884,17 @@ class ActiveChat {
   bool get hasPendingDurableCancellation =>
       _cancelledTurnPersistencePending ||
       _cancelledTurnPersistenceFailed ||
+      _pendingCancelledTombstoneUpdates.isNotEmpty ||
+      _cancelledTombstoneUpdateFlight != null ||
       _durableCancelFlight != null;
+
+  bool get _hasPendingActiveTurnCancellation =>
+      _cancelledTurnPersistencePending ||
+      _cancelledTurnPersistenceFailed ||
+      _durableCancelFlight != null;
+
+  bool get _hasPendingTombstoneMetadataUpdate =>
+      _pendingCancelledTombstoneUpdates.isNotEmpty;
 
   /// ¿Hay una petición/ejecución viva en el gateway?
   bool get isStreaming =>
@@ -2431,12 +3106,147 @@ class ActiveChat {
   }
 
   List<Map<String, dynamic>> _applyCancelledTurnTombstones(
-    List<Map<String, dynamic>> incoming,
-  ) => projectCancelledTurnTombstones(
-    existingNewestFirst: messages,
-    incomingNewestFirst: incoming,
-    durableTombstones: _cancelledTurnTombstones,
-  );
+    List<Map<String, dynamic>> incoming, {
+    required bool incomingTranscriptComplete,
+  }) {
+    _bindTombstonesToDurableIds(
+      incoming,
+      incomingTranscriptComplete: incomingTranscriptComplete,
+    );
+    if (_pendingCancelledTombstoneUpdates.isNotEmpty) {
+      unawaited(_flushPendingCancelledTombstoneUpdates().catchError((_) {}));
+    }
+    final withoutSupersededLocalUsers = incoming
+        .asMap()
+        .entries
+        .where((entry) {
+          final message = entry.value;
+          if (message['_cancelledUser'] != true ||
+              canonicalTranscriptMessageId(message) != null ||
+              canonicalTranscriptRowId(message) != null) {
+            return true;
+          }
+          final tombstone = _durableTombstoneForLocalCancelledUser(
+            incoming,
+            entry.key,
+          );
+          if (tombstone == null) return true;
+          final durableIndex = _cancelledTurnUserIndex(
+            incoming,
+            tombstone,
+            incomingTranscriptComplete: incomingTranscriptComplete,
+          );
+          return durableIndex < 0 ||
+              (canonicalTranscriptMessageId(incoming[durableIndex]) == null &&
+                  canonicalTranscriptRowId(incoming[durableIndex]) == null);
+        })
+        .map((entry) => entry.value)
+        .toList(growable: true);
+    return projectCancelledTurnTombstones(
+      existingNewestFirst: messages,
+      incomingNewestFirst: withoutSupersededLocalUsers,
+      durableTombstones: _cancelledTurnTombstones,
+      incomingTranscriptComplete: incomingTranscriptComplete,
+    );
+  }
+
+  void _persistUpdatedTombstone(CancelledTurnTombstone tombstone) {
+    final persist = _onCancelledTurn;
+    if (persist == null) return;
+    final key = jsonEncode([
+      tombstone.content,
+      tombstone.anchorMessageId,
+      tombstone.anchorRowId,
+      tombstone.firstUser,
+      if (!tombstone.hasAnchorIdentity && !tombstone.firstUser) ...[
+        tombstone.cancelledMessageId,
+        tombstone.cancelledRowId,
+      ],
+    ]);
+    _pendingCancelledTombstoneUpdates[key] = tombstone;
+    unawaited(_flushPendingCancelledTombstoneUpdates().catchError((_) {}));
+  }
+
+  Future<void> _flushPendingCancelledTombstoneUpdates() {
+    final persist = _onCancelledTurn;
+    if (persist == null || _pendingCancelledTombstoneUpdates.isEmpty) {
+      return Future<void>.value();
+    }
+    final existing = _cancelledTombstoneUpdateFlight;
+    if (existing != null) return existing;
+
+    late final Future<void> operation;
+    operation = () async {
+      while (_pendingCancelledTombstoneUpdates.isNotEmpty) {
+        final entry = _pendingCancelledTombstoneUpdates.entries.first;
+        final expected = entry.value;
+        await persist(expected);
+        if (identical(_pendingCancelledTombstoneUpdates[entry.key], expected)) {
+          _pendingCancelledTombstoneUpdates.remove(entry.key);
+        }
+      }
+    }();
+    _cancelledTombstoneUpdateFlight = operation;
+    unawaited(
+      operation.then<void>(
+        (_) {
+          if (identical(_cancelledTombstoneUpdateFlight, operation)) {
+            _cancelledTombstoneUpdateFlight = null;
+          }
+        },
+        onError: (Object _, StackTrace _) {
+          // Keep the exact update queued. The next hydration, compression or
+          // send retries it instead of silently reverting to an ambiguous
+          // content/position tombstone after process recreation.
+          if (identical(_cancelledTombstoneUpdateFlight, operation)) {
+            _cancelledTombstoneUpdateFlight = null;
+          }
+        },
+      ),
+    );
+    return operation;
+  }
+
+  Future<bool> _settleTombstoneMetadataBeforeTerminal(
+    int expectedTurnEpoch,
+  ) async {
+    if (!_hasPendingTombstoneMetadataUpdate) return true;
+    try {
+      await _flushPendingCancelledTombstoneUpdates();
+    } catch (_) {
+      // La identidad anterior sigue en cola durable. No publiques un terminal
+      // que permita liberar el chat mientras esa migración continúa ambigua.
+      return false;
+    }
+    return !_disposed && expectedTurnEpoch == _turnEpoch && !_runTerminal;
+  }
+
+  void _bindTombstonesToDurableIds(
+    List<Map<String, dynamic>> incoming, {
+    required bool incomingTranscriptComplete,
+  }) {
+    for (var index = 0; index < _cancelledTurnTombstones.length; index++) {
+      final tombstone = _cancelledTurnTombstones[index];
+      if (tombstone.invalidated) continue;
+      final userIndex = _cancelledTurnUserIndex(
+        incoming,
+        tombstone,
+        incomingTranscriptComplete: incomingTranscriptComplete,
+      );
+      if (userIndex < 0) continue;
+      final messageId = canonicalTranscriptMessageId(incoming[userIndex]);
+      final rowId = canonicalTranscriptRowId(incoming[userIndex]);
+      if (messageId == null && rowId == null) continue;
+      final bound = tombstone.bindToMessage(messageId: messageId, rowId: rowId);
+      if (bound.cancelledMessageId == tombstone.cancelledMessageId &&
+          bound.cancelledRowId == tombstone.cancelledRowId) {
+        continue;
+      }
+      _cancelledTurnTombstones[index] = bound;
+      _cancelledTombstoneRevision += 1;
+      _persistUpdatedTombstone(bound);
+    }
+  }
 
   /// Carga el historial (lectura). No toca el stream.
   ///
@@ -2446,7 +3256,10 @@ class ActiveChat {
   Future<void> loadMessages({
     int? expectedMessageCount,
     String profile = '',
+    VoidCallback? onMessagesPublished,
   }) async {
+    _ensureLocalAssistantErrorIdentities();
+    final loadTerminalFences = _terminalReconciliationFences(messages);
     final loadEpoch = ++_messageLoadEpoch;
     _storedSessionProfile = _bindSessionProfile(profile);
     if (_desktopStoredSessionKnownMissing) {
@@ -2461,8 +3274,13 @@ class ActiveChat {
       final saved = await LocalTranscriptStore.load(connection.id, sessionId);
       if (_disposed || loadEpoch != _messageLoadEpoch) return;
       // Guardado en orden cronológico; index 0 = más nuevo en la lista viva.
-      messages = _applyCancelledTurnTombstones(_normalizedNewestFirst(saved));
+      _markTranscriptComplete(visibleCount: saved.length);
+      messages = _applyCancelledTurnTombstones(
+        _normalizedNewestFirst(saved),
+        incomingTranscriptComplete: true,
+      );
       messagesLoaded = true;
+      onMessagesPublished?.call();
       return;
     }
 
@@ -2474,10 +3292,10 @@ class ActiveChat {
       // mientras el RPC termina de enlazar el runtime (MCP/prompt incluidos).
       // Capturamos los errores dentro de cada Future para que una rama que
       // falle pronto nunca se publique como error asíncrono no gestionado.
-      ({Object? error, List<Map<String, dynamic>>? value})?
+      ({Object? error, SessionMessagesPage? value})?
       prefetchCompletedBeforeResume;
       final prefetchFuture =
-          _captureAsync<List<Map<String, dynamic>>>(
+          _captureAsync<SessionMessagesPage>(
             () => _loadStoredMessagesTail(_storedSessionProfile),
           ).then((result) {
             prefetchCompletedBeforeResume = result;
@@ -2512,19 +3330,33 @@ class ActiveChat {
       });
 
       List<Map<String, dynamic>>? prefetchedNewestFirst;
+      var prefetchedTranscriptAccepted = false;
+      var prefetchedTranscriptComplete = false;
+      int? prefetchedRawMessageCount;
       DesktopSessionSnapshot? resumedSnapshot;
       Object? prefetchError;
       Object? resumeError;
 
-      void publishMessages(List<Map<String, dynamic>> next) {
+      void publishMessages(
+        List<Map<String, dynamic>> next, {
+        required bool incomingTranscriptComplete,
+      }) {
         if (_disposed || loadEpoch != _messageLoadEpoch) return;
+        final fencedNext = _carryNewestTerminalFence(
+          messages,
+          next,
+          candidateTranscriptComplete: incomingTranscriptComplete,
+        );
         messages = _applyCancelledTurnTombstones(
           _associateGeneratedImagesNewestFirst(
-            _preserveLocalAssistantErrors(next, messages),
+            _preserveLocalAssistantErrors(fencedNext, messages),
           ),
+          incomingTranscriptComplete: incomingTranscriptComplete,
         );
         _mergeSteerRecords();
+        _reconcileSubagentsFromTranscript();
         messagesLoaded = true;
+        onMessagesPublished?.call();
         _emit(ActiveChatEvent.messagesHydrated);
       }
 
@@ -2534,42 +3366,193 @@ class ActiveChat {
         // plano; un ack nuevo reinicia el desenlace registrado.
         _desktopHistoryHydrating = snapshot.hydrating;
         if (snapshot.hydrating) _desktopHydrationOutcome = null;
-        final rawFallback = prefetchedNewestFirst?.isNotEmpty == true
-            ? prefetchedNewestFirst!
-            : messages;
-        final preferFallback =
-            prefetchedNewestFirst?.isNotEmpty == true ||
-            (snapshot.messages.isEmpty && rawFallback.isNotEmpty);
+        _rememberDesktopHydrationExpectation(snapshot);
+        final snapshotTranscriptComplete = _desktopSnapshotTranscriptIsComplete(
+          snapshot,
+        );
         const reconciler = DesktopSessionReconciler();
+        final visibleTerminalFences = <_TerminalProjectionFence>[];
+        final visibleFenceIds = <String>{};
+        for (final fence in <_TerminalProjectionFence>[
+          ...loadTerminalFences,
+          ..._terminalReconciliationFences(messages),
+        ]) {
+          if (visibleFenceIds.add(fence.projectionId)) {
+            visibleTerminalFences.add(fence);
+          }
+        }
+        final durableSnapshotProjection = reconciler.project(
+          _withoutLiveDesktopProjection(snapshot),
+        );
+        final snapshotCoversVisibleTerminal = _terminalFencesAreCovered(
+          durableSnapshotProjection.messagesNewestFirst,
+          visibleTerminalFences,
+          candidateTranscriptComplete: snapshotTranscriptComplete,
+        );
+        final snapshotRejectedByTerminalFence =
+            visibleTerminalFences.isNotEmpty && !snapshotCoversVisibleTerminal;
+        final liveAuthorityFences = <_TerminalProjectionFence>[
+          ...visibleTerminalFences,
+        ];
+        final liveAuthorityFenceIds = <String>{
+          for (final fence in liveAuthorityFences) fence.projectionId,
+        };
+        for (final fence in _terminalReconciliationFences(
+          messages,
+          includeSettledTerminalBoundary: true,
+        )) {
+          if (liveAuthorityFenceIds.add(fence.projectionId)) {
+            liveAuthorityFences.add(fence);
+          }
+        }
+        final snapshotCoversLiveTerminal = _terminalFencesAreCovered(
+          durableSnapshotProjection.messagesNewestFirst,
+          liveAuthorityFences,
+          candidateTranscriptComplete: snapshotTranscriptComplete,
+        );
+        final liveSnapshotProjection = reconciler.project(snapshot);
+        final snapshotHasDistinctInflightUser = liveSnapshotProjection
+            .messagesNewestFirst
+            .any(
+              (message) =>
+                  isRealUserTurn(message) &&
+                  message['_desktopSnapshotKind'] == 'inflight',
+            );
+        final snapshotHasLiveActivity =
+            snapshot.running || snapshot.inflight != null;
+        final rejectSnapshotLiveActivity =
+            snapshotHasLiveActivity &&
+            (snapshotRejectedByTerminalFence ||
+                (_runTerminal &&
+                    (liveAuthorityFences.isEmpty ||
+                        !snapshotCoversLiveTerminal ||
+                        !snapshotHasDistinctInflightUser)));
+        var rawFallback = prefetchedNewestFirst ?? messages;
+        final snapshotAllowsAuthoritativeEmptyRest =
+            snapshot.messages.isEmpty &&
+            !snapshot.hydrating &&
+            (snapshot.messageCount ?? 0) <= 0;
+        final restPrefetchIsAuthoritative =
+            prefetchedTranscriptAccepted &&
+            prefetchedNewestFirst != null &&
+            (prefetchedNewestFirst!.isNotEmpty ||
+                snapshotAllowsAuthoritativeEmptyRest);
+        // Si REST terminó primero con una cola parcial nueva, injértala sobre
+        // el snapshot completo para conservar su prefijo antiguo sin permitir
+        // que el snapshot stale tape IDs más recientes.
+        if (restPrefetchIsAuthoritative &&
+            !prefetchedTranscriptComplete &&
+            snapshotTranscriptComplete &&
+            snapshot.messagesProvided) {
+          final restTail = prefetchedNewestFirst!;
+          final snapshotProjection = reconciler.project(
+            _withoutLiveDesktopProjection(snapshot),
+          );
+          final combined = _graftRefreshedTail(
+            restTail,
+            snapshotProjection.messagesNewestFirst,
+            refreshedTranscriptComplete: false,
+            requiredTerminalFences: loadTerminalFences,
+          );
+          if (combined.acceptedRefreshed) {
+            _commitRefreshedTailEvidence(restTail, combined);
+            rawFallback = _preserveLocalAssistantErrors(
+              combined.messages,
+              messages,
+            );
+            prefetchedNewestFirst = rawFallback;
+          }
+        }
+        final announcedHydrationCount = snapshot.messageCount;
+        final completeRestMatchesHydrationCount =
+            !snapshot.hydrating ||
+            announcedHydrationCount == null ||
+            prefetchedRawMessageCount == announcedHydrationCount;
+        final completeRestCoversHydration =
+            restPrefetchIsAuthoritative &&
+            prefetchedTranscriptComplete &&
+            completeRestMatchesHydrationCount;
+        _desktopHistoryNeedsHydration =
+            snapshot.hydrating && !completeRestCoversHydration;
+        final fallbackExactlyMatchesSnapshot =
+            snapshotTranscriptComplete &&
+            _fallbackExactlyMatchesDesktopSnapshot(rawFallback, snapshot);
+        final preferFallback =
+            snapshotRejectedByTerminalFence ||
+            (restPrefetchIsAuthoritative && prefetchedTranscriptComplete) ||
+            (rawFallback.isNotEmpty &&
+                (restPrefetchIsAuthoritative ||
+                    !snapshotTranscriptComplete ||
+                    snapshot.messages.isEmpty ||
+                    fallbackExactlyMatchesSnapshot));
         final fallback = preferFallback && snapshot.messagesProvided
             ? reconciler.overlayDurableDisplayMetadata(
                 rawFallback,
                 snapshot.messages,
               )
             : rawFallback;
-        final projectionSource = preferFallback
+        var projectionSource = preferFallback
             ? _withoutPersistedMessages(snapshot)
             : snapshot;
-        if (!preferFallback && snapshot.messagesProvided) {
+        if (rejectSnapshotLiveActivity) {
+          projectionSource = _withoutLiveDesktopProjection(projectionSource);
+        }
+        if (snapshot.messagesProvided) {
           _captureArtifactMessages(
             snapshot.messages,
             logicalSessionId: logicalSessionId,
           );
+          if (!preferFallback || fallbackExactlyMatchesSnapshot) {
+            _recordDesktopSnapshotTranscript(snapshot);
+          } else if ((!snapshotTranscriptComplete ||
+                  snapshot.messages.isEmpty) &&
+              !completeRestCoversHydration) {
+            _recordDesktopSnapshotTranscript(
+              snapshot,
+              preserveVisibleFallback: true,
+            );
+          }
+        } else {
+          final announcedCount = snapshot.messageCount;
+          final durableFallbackCount = _durableTranscriptCoverageCount(
+            rawFallback,
+          );
+          final fallbackCoverageIsInsufficient =
+              announcedCount == null ||
+              durableFallbackCount == null ||
+              announcedCount != durableFallbackCount;
+          if (!preferFallback ||
+              fallbackCoverageIsInsufficient ||
+              _desktopHistoryNeedsHydration) {
+            _recordDesktopSnapshotTranscript(
+              snapshot,
+              preserveVisibleFallback: preferFallback,
+            );
+          }
         }
         final projection = reconciler.project(
           projectionSource,
           fallbackNewestFirst: fallback,
         );
-        final projected = projection.messagesNewestFirst
-            .map(Map<String, dynamic>.from)
-            .toList(growable: true);
+        final projected = _sanitizeDesktopFailureProjection(
+          projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+        );
+        if (_runTerminal && (projection.running || projection.failed)) {
+          _beginExternallyObservedDesktopTurn(snapshot);
+        }
         final expectsTranscript =
             (expectedMessageCount ?? 0) > 0 || (snapshot.messageCount ?? 0) > 0;
         if (projected.isNotEmpty || !expectsTranscript) {
-          publishMessages(projected);
+          publishMessages(
+            projected,
+            incomingTranscriptComplete: preferFallback
+                ? _transcriptIsComplete
+                : snapshotTranscriptComplete,
+          );
         }
         _desktopStoredSessionId = snapshot.storedSessionId;
         _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
+        _reconcileSubagentsFromTranscript();
         _restorePendingClarify(snapshot);
         _desktopStoredSessionKnownMissing = false;
         _desktopRuntimeInfo = snapshot.info;
@@ -2579,7 +3562,7 @@ class ActiveChat {
         );
         _desktopStartedAt = snapshot.startedAt;
         _desktopTurnStartedAt = projection.running
-            ? snapshot.inflight?.startedAt
+            ? snapshot.resolvedTurnStartedAt
             : null;
         _replaceDesktopAcceptedQueue(projection.queuedUser);
         if (projection.failed) {
@@ -2606,23 +3589,58 @@ class ActiveChat {
         final prefetch = await prefetchFuture;
         if (_disposed || loadEpoch != _messageLoadEpoch) return;
         prefetchError = prefetch.error;
-        if (prefetch.value case final chronological?) {
+        if (prefetch.value case final page?) {
+          final chronological = page.messages;
           _captureArtifactMaps(
             chronological,
             logicalSessionId: logicalSessionId,
           );
-          final normalized = _graftRefreshedTail(
-            _normalizedNewestFirst(chronological),
+          final normalized = _normalizedNewestFirst(chronological);
+          final pageProvesComplete = _tailPageProvesTranscriptComplete(page);
+          final graft = _graftRefreshedTail(
+            normalized,
             messages,
+            refreshedTranscriptComplete: pageProvesComplete,
+            requiredTerminalFences: loadTerminalFences,
           );
-          if (normalized.isNotEmpty) {
-            prefetchedNewestFirst = _preserveLocalAssistantErrors(
-              normalized,
-              messages,
+          final authoritativeEmptyPage =
+              chronological.isEmpty &&
+              pageProvesComplete &&
+              (messages.isEmpty ||
+                  messages.every(_isLiveTranscriptProjection)) &&
+              (expectedMessageCount ?? 0) == 0;
+          if (graft.messages.isNotEmpty || authoritativeEmptyPage) {
+            prefetchedTranscriptAccepted =
+                graft.acceptedRefreshed || authoritativeEmptyPage;
+            if (prefetchedTranscriptAccepted) {
+              _desktopHistoryNeedsHydration = false;
+              // Es una página REST pura: el count bruto incluye filas id-less
+              // sin inventarles identidad y excluye las proyecciones live que
+              // solo existen en el fallback de UI.
+              prefetchedRawMessageCount = page.rawMessageCount;
+            }
+            _recordTranscriptPage(
+              page,
+              preserveExistingCoverage:
+                  !authoritativeEmptyPage && graft.preservesExistingCoverage,
             );
+            _commitRefreshedTailEvidence(normalized, graft);
+            prefetchedTranscriptComplete =
+                pageProvesComplete && prefetchedTranscriptAccepted;
+            prefetchedNewestFirst = authoritativeEmptyPage
+                ? <Map<String, dynamic>>[]
+                : _preserveLocalAssistantErrors(graft.messages, messages);
             final snapshot = resumedSnapshot;
             if (snapshot == null) {
-              publishMessages(prefetchedNewestFirst!);
+              publishMessages(
+                authoritativeEmptyPage
+                    ? graft.messages
+                    : prefetchedNewestFirst!,
+                // El lifecycle aún puede responder con un ack hydrating cuyo
+                // count demuestre que esta cola corta es provisional. Aplica
+                // anchors durables ya, pero difiere firstUser hasta conocerlo.
+                incomingTranscriptComplete: false,
+              );
             } else {
               publishSnapshot(snapshot);
             }
@@ -2655,11 +3673,35 @@ class ActiveChat {
             final hydrated = await _awaitDesktopHistoryHydration();
             if (_disposed || loadEpoch != _messageLoadEpoch) return;
             if (hydrated) {
-              final deferred = await _loadStoredMessagesTail(
+              final coverageRevision = _transcriptCoverageRevision;
+              final requestedTailHydration = _needsTranscriptTailHydration;
+              final requestedNextOffset = _earlierMessagesNextOffset;
+              final requestedExtent = _transcriptExtent;
+              final requestedEarlierMessagesAvailable =
+                  _earlierMessagesAvailable;
+              final deferredPage = await _loadStoredMessagesTail(
                 _storedSessionProfile,
               );
-              if (_disposed || loadEpoch != _messageLoadEpoch) return;
+              if (_disposed ||
+                  loadEpoch != _messageLoadEpoch ||
+                  coverageRevision != _transcriptCoverageRevision ||
+                  requestedTailHydration != _needsTranscriptTailHydration ||
+                  requestedNextOffset != _earlierMessagesNextOffset ||
+                  requestedExtent != _transcriptExtent ||
+                  requestedEarlierMessagesAvailable !=
+                      _earlierMessagesAvailable) {
+                return;
+              }
+              final deferred = deferredPage.messages;
               if (deferred.isNotEmpty) {
+                final hydrationStatus = _hydrationTailStatus(deferredPage);
+                if (hydrationStatus == _HydrationTailStatus.incomplete) {
+                  _recordIncompleteHydrationTail();
+                } else {
+                  _desktopHistoryNeedsHydration = false;
+                  _recordTranscriptPage(deferredPage);
+                }
+                _unconfirmedRetainedTranscriptIdentities.clear();
                 _captureArtifactMaps(
                   deferred,
                   logicalSessionId: logicalSessionId,
@@ -2671,9 +3713,12 @@ class ActiveChat {
                       messages,
                     ),
                   ),
+                  incomingTranscriptComplete: _transcriptIsComplete,
                 );
                 _mergeSteerRecords();
+                _reconcileSubagentsFromTranscript();
                 messagesLoaded = true;
+                onMessagesPublished?.call();
                 _emit(ActiveChatEvent.messagesHydrated);
                 return;
               }
@@ -2686,6 +3731,7 @@ class ActiveChat {
         }
         if (!messagesLoaded) {
           messagesLoaded = true;
+          onMessagesPublished?.call();
           _emit(ActiveChatEvent.messagesHydrated);
         }
         return;
@@ -2714,12 +3760,29 @@ class ActiveChat {
       // Si REST ya pintó un transcript legible, un fallo del canal vivo no lo
       // vuelve a ocultar. El próximo envío/reintento podrá enlazar el runtime.
       if (prefetchedNewestFirst?.isNotEmpty == true || messages.isNotEmpty) {
+        if (prefetchedTranscriptComplete && _transcriptIsComplete) {
+          final projected = _applyCancelledTurnTombstones(
+            messages,
+            incomingTranscriptComplete: true,
+          );
+          if (!_sameTranscriptProjection(projected, messages)) {
+            messages = projected;
+            _mergeSteerRecords();
+            _reconcileSubagentsFromTranscript();
+            onMessagesPublished?.call();
+            _emit(ActiveChatEvent.messagesHydrated);
+          }
+        }
         messagesLoaded = true;
         return;
       }
       if (capturedResumeError is TuiGatewayRpcError &&
           capturedResumeError.code == 4007) {
         _desktopStoredSessionKnownMissing = true;
+        // 4007 es evidencia autoritativa de que el id aún no existe en
+        // state.db. Igual que markStoredSessionMissing, habilita el tombstone
+        // firstUser del primer Stop sin inferir completitud desde un [] REST.
+        _markTranscriptComplete(visibleCount: 0);
       }
       if (prefetchError == null) {
         if ((expectedMessageCount ?? 0) > 0) {
@@ -2735,29 +3798,41 @@ class ActiveChat {
           StateError('Chat load failed');
     }
 
-    final m = await _loadStoredMessagesTail(_storedSessionProfile);
+    final page = await _loadStoredMessagesTail(_storedSessionProfile);
     if (_disposed || loadEpoch != _messageLoadEpoch) return;
+    final m = page.messages;
+    if (m.isEmpty && messages.isNotEmpty) {
+      messagesLoaded = true;
+      return;
+    }
     if (m.isEmpty && (expectedMessageCount ?? 0) > 0) {
-      if (messages.isNotEmpty) {
-        messagesLoaded = true;
-        return;
-      }
       throw StateError(
         'Hermes returned an empty transcript for a non-empty session',
       );
     }
+    final normalized = _normalizedNewestFirst(m);
+    final graft = _graftRefreshedTail(
+      normalized,
+      messages,
+      refreshedTranscriptComplete: _tailPageProvesTranscriptComplete(page),
+      requiredTerminalFences: loadTerminalFences,
+    );
+    _recordTranscriptPage(
+      page,
+      preserveExistingCoverage: graft.preservesExistingCoverage,
+    );
+    _commitRefreshedTailEvidence(normalized, graft);
     _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
     // API devuelve más antiguo primero; lo invertimos: index 0 = más nuevo.
     messages = _applyCancelledTurnTombstones(
       _associateGeneratedImagesNewestFirst(
-        _preserveLocalAssistantErrors(
-          _graftRefreshedTail(_normalizedNewestFirst(m), messages),
-          messages,
-        ),
+        _preserveLocalAssistantErrors(graft.messages, messages),
       ),
+      incomingTranscriptComplete: _transcriptIsComplete,
     );
     _mergeSteerRecords();
     messagesLoaded = true;
+    onMessagesPublished?.call();
   }
 
   Future<List<Map<String, dynamic>>> _loadStoredMessages(String profile) async {
@@ -2827,88 +3902,1132 @@ class ActiveChat {
   /// Actualiza el bookkeeping de la cola paginada tras cada página recibida.
   /// Sin metadata `pagination` (gateway legacy) la respuesta ES el transcript
   /// completo: no queda nada anterior que pedir.
-  void _recordTranscriptPage(SessionMessagesPage page) {
-    final limit = page.limit;
-    if (limit == null || limit <= 0) {
-      _earlierMessagesAvailable = false;
-      _earlierMessagesNextOffset = page.messages.length;
+  void _markTranscriptComplete({required int visibleCount}) {
+    _transcriptCoverageRevision += 1;
+    _transcriptCoverageHasParseGap = false;
+    _transcriptExtent = _TranscriptExtent.complete;
+    _earlierMessagesAvailable = false;
+    _earlierMessagesNextOffset = visibleCount;
+    _needsTranscriptTailHydration = false;
+    _desktopHydrationExpectedMessageCount = null;
+    _unconfirmedRetainedTranscriptIdentities.clear();
+  }
+
+  void _rememberDesktopHydrationExpectation(DesktopSessionSnapshot snapshot) {
+    final announced = snapshot.messageCount;
+    if (_desktopSnapshotTranscriptIsComplete(snapshot)) {
+      _desktopHydrationExpectedMessageCount = null;
       return;
     }
-    _earlierMessagesNextOffset = page.offset + page.messages.length;
-    _earlierMessagesAvailable = page.messages.length >= limit;
+    if (!snapshot.hydrating) {
+      // Un snapshot posterior ya fuera de hydration pertenece a la generación
+      // vigente. Su count (también null) sustituye cualquier expectativa alta
+      // de un ack hydrating anterior; conservar el máximo bloquearía para
+      // siempre una compactación 300 -> 1 aunque REST acreditase esa única fila.
+      _desktopHydrationExpectedMessageCount = announced;
+    } else if (announced != null && announced > snapshot.messages.length) {
+      _desktopHydrationExpectedMessageCount = math.max(
+        _desktopHydrationExpectedMessageCount ?? 0,
+        announced,
+      );
+    }
+  }
+
+  _HydrationTailStatus _hydrationTailStatus(SessionMessagesPage page) {
+    final expected = _desktopHydrationExpectedMessageCount;
+    final limit = page.limit;
+    if (page.offset == 0 &&
+        limit != null &&
+        limit > 0 &&
+        page.rawMessageCount >= limit) {
+      // Un count del snapshot y esta página REST pueden pertenecer a
+      // generaciones distintas. Una página llena nunca acredita el inicio
+      // absoluto; offset=120 debe confirmar una página corta o vacía.
+      return _HydrationTailStatus.partial;
+    }
+    if (!_tailPageProvesTranscriptComplete(page)) {
+      return _HydrationTailStatus.partial;
+    }
+    return expected == null || page.rawMessageCount >= expected
+        ? _HydrationTailStatus.complete
+        : _HydrationTailStatus.incomplete;
+  }
+
+  bool _pageFallsShortOfAnnouncedCoverage(SessionMessagesPage page) {
+    final expected = _desktopHydrationExpectedMessageCount;
+    if (expected == null || !page.paginationFullyParsed) return false;
+    final limit = page.limit;
+    final pageIsShort =
+        limit == null || limit <= 0 || page.rawMessageCount < limit;
+    return pageIsShort && page.offset + page.rawMessageCount < expected;
+  }
+
+  void _recordIncompleteHydrationTail() {
+    _transcriptCoverageRevision += 1;
+    _transcriptExtent = _TranscriptExtent.partial;
+    _earlierMessagesAvailable = true;
+    _earlierMessagesNextOffset = 0;
+    _needsTranscriptTailHydration = true;
+    _desktopHistoryNeedsHydration = true;
+  }
+
+  bool _preserveInflightOutsideHydrationGraft(Map<String, dynamic> message) =>
+      message['_desktopSnapshotKind'] == 'inflight' &&
+      message[_terminalProjectionIdKey] == null;
+
+  void _recordDesktopSnapshotTranscript(
+    DesktopSessionSnapshot snapshot, {
+    bool preserveVisibleFallback = false,
+  }) {
+    _rememberDesktopHydrationExpectation(snapshot);
+    final visibleCount = snapshot.messages.length;
+    if (_desktopSnapshotTranscriptIsComplete(snapshot) &&
+        !preserveVisibleFallback) {
+      _markTranscriptComplete(visibleCount: visibleCount);
+      return;
+    }
+    _transcriptCoverageRevision += 1;
+
+    // Un fallback paginado con offset positivo ya demuestra qué cola se leyó.
+    // Un snapshot que omite mensajes no puede rebobinarlo a cero: hacerlo
+    // mezclaría la cola actual con una página anterior interpretada como tail.
+    if (preserveVisibleFallback &&
+        _transcriptExtent == _TranscriptExtent.partial &&
+        _earlierMessagesNextOffset > 0) {
+      _earlierMessagesAvailable = true;
+      _needsTranscriptTailHydration = true;
+      return;
+    }
+
+    _transcriptExtent = _TranscriptExtent.partial;
+    final expectedCount = snapshot.messageCount;
+    final snapshotCoverageIsUncertain =
+        !snapshot.messagesFullyParsed ||
+        !_desktopSnapshotIdentitiesAreUnambiguous(snapshot.messages) ||
+        (expectedCount != null && expectedCount < visibleCount);
+    _earlierMessagesNextOffset =
+        preserveVisibleFallback ||
+            snapshot.hydrating ||
+            snapshotCoverageIsUncertain
+        ? 0
+        : snapshot.messagesProvided
+        ? visibleCount
+        : 0;
+    _earlierMessagesAvailable =
+        preserveVisibleFallback ||
+        !snapshot.messagesProvided ||
+        snapshot.hydrating ||
+        snapshotCoverageIsUncertain ||
+        (expectedCount != null && expectedCount > visibleCount);
+    _needsTranscriptTailHydration =
+        preserveVisibleFallback ||
+        snapshot.hydrating ||
+        !snapshot.messagesProvided ||
+        snapshotCoverageIsUncertain;
+  }
+
+  void _recordTranscriptPage(
+    SessionMessagesPage page, {
+    bool preserveExistingCoverage = false,
+  }) {
+    final identitiesAreUnambiguous =
+        _transcriptRowsHaveUnambiguousIdentityEvidence(page.messages);
+    if (preserveExistingCoverage) {
+      if (!page.messagesFullyParsed ||
+          !page.paginationFullyParsed ||
+          !identitiesAreUnambiguous) {
+        _transcriptCoverageRevision += 1;
+        _transcriptCoverageHasParseGap = true;
+        _transcriptExtent = _TranscriptExtent.partial;
+      }
+      return;
+    }
+    _transcriptCoverageRevision += 1;
+    if (!page.paginationFullyParsed) {
+      // `pagination` presente pero inválida no es un transcript legacy. Las
+      // filas siguen siendo visibles, pero no acreditan ni el inicio absoluto
+      // ni un cursor de backfill seguro, así que firstUser queda diferido.
+      _transcriptCoverageHasParseGap = true;
+      _transcriptExtent = _TranscriptExtent.partial;
+      _earlierMessagesAvailable = true;
+      _earlierMessagesNextOffset = 0;
+      _needsTranscriptTailHydration = true;
+      _desktopHistoryNeedsHydration = true;
+      return;
+    }
+    final limit = page.limit;
+    final pageProvesWholeTranscript =
+        page.offset == 0 &&
+        page.messagesFullyParsed &&
+        identitiesAreUnambiguous &&
+        (limit == null || limit <= 0 || page.rawMessageCount < limit);
+    if (pageProvesWholeTranscript) {
+      _transcriptCoverageHasParseGap = false;
+    } else if (!page.messagesFullyParsed || !identitiesAreUnambiguous) {
+      _transcriptCoverageHasParseGap = true;
+    }
+    if (limit == null || limit <= 0) {
+      // Una respuesta legacy es completa, pero esta función también puede
+      // cerrar un backfill que ya conservaba ids provisionales. No los borres
+      // hasta que el caller confirme/prune las filas contra esta respuesta.
+      _transcriptExtent = _transcriptCoverageHasParseGap
+          ? _TranscriptExtent.partial
+          : _TranscriptExtent.complete;
+      _earlierMessagesAvailable = false;
+      _earlierMessagesNextOffset = page.rawMessageCount;
+      _needsTranscriptTailHydration = false;
+      if (!_transcriptCoverageHasParseGap) {
+        _desktopHydrationExpectedMessageCount = null;
+      }
+      return;
+    }
+    _earlierMessagesNextOffset = page.offset + page.rawMessageCount;
+    _earlierMessagesAvailable = page.rawMessageCount >= limit;
+    _transcriptExtent =
+        _earlierMessagesAvailable || _transcriptCoverageHasParseGap
+        ? _TranscriptExtent.partial
+        : _TranscriptExtent.complete;
+    _needsTranscriptTailHydration = false;
+    if (!_earlierMessagesAvailable && !_transcriptCoverageHasParseGap) {
+      _desktopHydrationExpectedMessageCount = null;
+    }
   }
 
   /// Cola del transcript (los ~120 más recientes) para la hidratación
   /// inicial, en orden cronológico. Las páginas anteriores se piden bajo
   /// demanda con [loadEarlierMessages].
-  Future<List<Map<String, dynamic>>> _loadStoredMessagesTail(
-    String profile,
-  ) async {
-    var page = await _fetchStoredMessagesPage(profile);
-    final collected = <Map<String, dynamic>>[...page.messages];
-    final requiredAnchors = <String>{};
-    for (final tombstone in _cancelledTurnTombstones) {
-      final anchor = tombstone.anchorMessageId;
-      if (anchor != null) requiredAnchors.add(anchor);
+  Future<SessionMessagesPage> _loadStoredMessagesTail(String profile) =>
+      _fetchStoredMessagesPage(profile);
+
+  CancelledTurnTombstone? _durableTombstoneForLocalCancelledUser(
+    List<Map<String, dynamic>> newestFirst,
+    int userIndex,
+  ) {
+    final message = newestFirst[userIndex];
+    if (!isRealUserTurn(message) || message['_cancelledUser'] != true) {
+      return null;
     }
-    final needsAbsoluteStart = _cancelledTurnTombstones.any(
-      (tombstone) => tombstone.firstUser,
-    );
-
-    bool anchorPresent(String anchor) => collected.any(
-      (message) => _stableTranscriptMessageId(message) == anchor,
-    );
-
-    while (true) {
-      final limit = page.limit;
-      if (limit == null || limit <= 0) break;
-      final hasMore = page.messages.length >= limit;
-      final missingAnchor = requiredAnchors.any(
-        (anchor) => !anchorPresent(anchor),
+    final content = (message['content'] ?? '').toString();
+    if (content.isEmpty) return null;
+    final projectedAnchor = message['_cancelledTurnAnchorMessageId'];
+    final projectedAnchorRow = message['_cancelledTurnAnchorRowId'];
+    final projectedFirstUser = message['_cancelledTurnFirstUser'] == true;
+    final projectedTarget = message['_cancelledTurnMessageId'];
+    final projectedTargetRow = message['_cancelledTurnRowId'];
+    final targetMessageId =
+        projectedTarget is String && projectedTarget.isNotEmpty
+        ? projectedTarget
+        : canonicalTranscriptMessageId(message);
+    final targetRowId = projectedTargetRow is int && projectedTargetRow > 0
+        ? projectedTargetRow
+        : canonicalTranscriptRowId(message);
+    final anchorMessageId =
+        projectedAnchor is String && projectedAnchor.isNotEmpty
+        ? projectedAnchor
+        : null;
+    final anchorRowId = projectedAnchorRow is int && projectedAnchorRow > 0
+        ? projectedAnchorRow
+        : null;
+    if (targetMessageId != null ||
+        targetRowId != null ||
+        anchorMessageId != null ||
+        anchorRowId != null ||
+        projectedFirstUser) {
+      final candidate = CancelledTurnTombstone(
+        content: content,
+        anchorMessageId: anchorMessageId,
+        anchorRowId: anchorRowId,
+        firstUser: projectedFirstUser,
+        cancelledMessageId: targetMessageId,
+        cancelledRowId: targetRowId,
       );
-      if (!hasMore || (!needsAbsoluteStart && !missingAnchor)) break;
-      final nextOffset = page.offset + page.messages.length;
-      final older = await _fetchStoredMessagesPage(
-        profile,
-        limit: limit,
-        offset: nextOffset,
-      );
-      if (older.messages.isEmpty || older.offset <= page.offset) {
-        page = older;
-        break;
+      for (final durable in _cancelledTurnTombstones) {
+        if (!durable.invalidated && _sameCancelledTurn(durable, candidate)) {
+          return durable;
+        }
       }
-      collected.insertAll(0, older.messages);
-      page = older;
+      return null;
     }
-    _recordTranscriptPage(page);
-    return collected;
+    String? olderAnchorMessageId;
+    int? olderAnchorRowId;
+    for (var older = userIndex + 1; older < newestFirst.length; older++) {
+      final olderMessage = newestFirst[older];
+      olderAnchorMessageId = canonicalTranscriptMessageId(olderMessage);
+      olderAnchorRowId = canonicalTranscriptRowId(olderMessage);
+      if (olderAnchorMessageId != null || olderAnchorRowId != null) break;
+      if (isRealUserTurn(olderMessage)) return null;
+    }
+    final hasOlderRealUser = newestFirst
+        .skip(userIndex + 1)
+        .any(isRealUserTurn);
+    final candidate = olderAnchorMessageId != null || olderAnchorRowId != null
+        ? CancelledTurnTombstone(
+            content: content,
+            anchorMessageId: olderAnchorMessageId,
+            anchorRowId: olderAnchorRowId,
+          )
+        : !hasOlderRealUser && _transcriptIsComplete
+        ? CancelledTurnTombstone(content: content, firstUser: true)
+        : null;
+    if (candidate == null) return null;
+    for (final durable in _cancelledTurnTombstones) {
+      if (!durable.invalidated && _sameCancelledTurn(durable, candidate)) {
+        return durable;
+      }
+    }
+    return null;
+  }
+
+  bool _refreshedTranscriptReplacesLocalCancelledUser(
+    List<Map<String, dynamic>> previous,
+    int previousIndex,
+    List<Map<String, dynamic>> refreshed, {
+    required bool refreshedTranscriptComplete,
+  }) {
+    final tombstone = _durableTombstoneForLocalCancelledUser(
+      previous,
+      previousIndex,
+    );
+    if (tombstone == null) return false;
+    final refreshedIndex = _cancelledTurnUserIndex(
+      refreshed,
+      tombstone,
+      incomingTranscriptComplete: refreshedTranscriptComplete,
+    );
+    return refreshedIndex >= 0 &&
+        (canonicalTranscriptMessageId(refreshed[refreshedIndex]) != null ||
+            canonicalTranscriptRowId(refreshed[refreshedIndex]) != null);
+  }
+
+  int? _terminalProjectionInt(Object? value) => switch (value) {
+    int number => number,
+    num number => number.toInt(),
+    _ => null,
+  };
+
+  int? _terminalProjectionRowId(Object? value) =>
+      value is int && value > 0 ? value : null;
+
+  _TerminalTurnEvidence _terminalTurnEvidence(
+    List<Map<String, dynamic>> newestFirst,
+    int userIndex,
+  ) {
+    final projectionIndices = <int>[userIndex];
+    var complete = false;
+    String? assistantText;
+    for (var index = userIndex - 1; index >= 0; index--) {
+      final message = newestFirst[index];
+      if (isRealUserTurn(message)) break;
+      projectionIndices.add(index);
+      if (message['role'] == 'tool') {
+        complete = true;
+        continue;
+      }
+      if (message['role'] != 'assistant') continue;
+      final content = (message['content'] as String? ?? '').trim();
+      final toolCalls = message['tool_calls'];
+      if (content.isNotEmpty || (toolCalls is List && toolCalls.isNotEmpty)) {
+        complete = true;
+      }
+      if (content.isNotEmpty) assistantText = content;
+    }
+    return (
+      complete: complete,
+      projectionIndices: projectionIndices,
+      assistantText: assistantText,
+    );
+  }
+
+  List<_TerminalProjectionFence> _terminalProjectionFences(
+    List<Map<String, dynamic>> newestFirst,
+  ) {
+    final fences = <_TerminalProjectionFence>[];
+    final seen = <String>{};
+    for (var index = 0; index < newestFirst.length; index++) {
+      final message = newestFirst[index];
+      if (!isRealUserTurn(message)) continue;
+      final rawProjectionId = message[_terminalProjectionIdKey];
+      if (rawProjectionId is! String ||
+          rawProjectionId.isEmpty ||
+          !seen.add(rawProjectionId)) {
+        continue;
+      }
+      final anchor = message[_terminalProjectionAnchorKey];
+      final evidence = _terminalTurnEvidence(newestFirst, index);
+      fences.add(
+        _TerminalProjectionFence(
+          projectionId: rawProjectionId,
+          userMessageId: canonicalTranscriptMessageId(message),
+          userRowId: canonicalTranscriptRowId(message),
+          anchorMessageId: anchor is String && anchor.isNotEmpty
+              ? anchor
+              : null,
+          anchorRowId: _terminalProjectionRowId(
+            message[_terminalProjectionAnchorRowKey],
+          ),
+          ordinalAfterAnchor: _terminalProjectionInt(
+            message[_terminalProjectionAnchorOrdinalKey],
+          ),
+          absoluteUserOrdinal: _terminalProjectionInt(
+            message[_terminalProjectionAbsoluteOrdinalKey],
+          ),
+          localAssistantText: evidence.assistantText,
+        ),
+      );
+    }
+    return fences;
+  }
+
+  List<_TerminalProjectionFence> _terminalReconciliationFences(
+    List<Map<String, dynamic>> newestFirst, {
+    bool includeSettledTerminalBoundary = false,
+  }) {
+    final explicit = _terminalProjectionFences(newestFirst);
+    if (explicit.isNotEmpty ||
+        !_runTerminal ||
+        (!includeSettledTerminalBoundary &&
+            state != ChatPipelineState.completed)) {
+      return explicit;
+    }
+    final userIndex = newestFirst.indexWhere(isRealUserTurn);
+    if (userIndex < 0) return const [];
+    final user = newestFirst[userIndex];
+    final evidence = _terminalTurnEvidence(newestFirst, userIndex);
+    final userMessageId = canonicalTranscriptMessageId(user);
+    final userRowId = canonicalTranscriptRowId(user);
+    var anchorIndex = -1;
+    String? anchorMessageId;
+    int? anchorRowId;
+    for (var index = userIndex + 1; index < newestFirst.length; index++) {
+      final candidateId = canonicalTranscriptMessageId(newestFirst[index]);
+      final candidateRowId = canonicalTranscriptRowId(newestFirst[index]);
+      if (candidateId == null && candidateRowId == null) continue;
+      anchorIndex = index;
+      anchorMessageId = candidateId;
+      anchorRowId = candidateRowId;
+      break;
+    }
+    final ordinalAfterAnchor = anchorIndex < 0
+        ? null
+        : newestFirst.sublist(0, anchorIndex).where(isRealUserTurn).length;
+    final absoluteUserOrdinal = _transcriptIsComplete
+        ? newestFirst.where(isRealUserTurn).length
+        : null;
+    if (userMessageId == null &&
+        userRowId == null &&
+        anchorMessageId == null &&
+        anchorRowId == null &&
+        absoluteUserOrdinal == null) {
+      return const [];
+    }
+    return [
+      _TerminalProjectionFence(
+        projectionId: 'terminal-boundary-$_turnEpoch',
+        userMessageId: userMessageId,
+        userRowId: userRowId,
+        anchorMessageId: anchorMessageId,
+        anchorRowId: anchorRowId,
+        ordinalAfterAnchor: ordinalAfterAnchor,
+        absoluteUserOrdinal: absoluteUserOrdinal,
+        localAssistantText: evidence.assistantText,
+      ),
+    ];
+  }
+
+  int _terminalFenceTargetIndex(
+    List<Map<String, dynamic>> candidateNewestFirst,
+    _TerminalProjectionFence fence, {
+    required bool candidateTranscriptComplete,
+  }) {
+    if (fence.userMessageId != null || fence.userRowId != null) {
+      final exact = _resolveTranscriptIdentity(
+        candidateNewestFirst,
+        messageId: fence.userMessageId,
+        rowId: fence.userRowId,
+        accepts: isRealUserTurn,
+      );
+      if (exact.kind == _TranscriptIdentityResolutionKind.unique) {
+        return exact.index;
+      }
+      if (exact.kind == _TranscriptIdentityResolutionKind.conflicting) {
+        return -1;
+      }
+    }
+
+    final ordinalAfterAnchor = fence.ordinalAfterAnchor;
+    if ((fence.anchorMessageId != null || fence.anchorRowId != null) &&
+        ordinalAfterAnchor != null &&
+        ordinalAfterAnchor > 0) {
+      final anchor = _resolveTranscriptIdentity(
+        candidateNewestFirst,
+        messageId: fence.anchorMessageId,
+        rowId: fence.anchorRowId,
+        accepts: (_) => true,
+      );
+      if (anchor.kind == _TranscriptIdentityResolutionKind.conflicting) {
+        return -1;
+      }
+      if (anchor.kind == _TranscriptIdentityResolutionKind.unique) {
+        var ordinal = 0;
+        for (var index = anchor.index - 1; index >= 0; index--) {
+          if (!isRealUserTurn(candidateNewestFirst[index])) continue;
+          ordinal++;
+          if (ordinal == ordinalAfterAnchor) return index;
+        }
+      }
+    }
+
+    final absoluteUserOrdinal = fence.absoluteUserOrdinal;
+    if (candidateTranscriptComplete &&
+        absoluteUserOrdinal != null &&
+        absoluteUserOrdinal > 0) {
+      var ordinal = 0;
+      for (var index = candidateNewestFirst.length - 1; index >= 0; index--) {
+        if (!isRealUserTurn(candidateNewestFirst[index])) continue;
+        ordinal++;
+        if (ordinal == absoluteUserOrdinal) return index;
+      }
+    }
+    return -1;
+  }
+
+  bool _terminalFenceIsCovered(
+    List<Map<String, dynamic>> candidateNewestFirst,
+    _TerminalProjectionFence fence, {
+    required bool candidateTranscriptComplete,
+  }) {
+    final userIndex = _terminalFenceTargetIndex(
+      candidateNewestFirst,
+      fence,
+      candidateTranscriptComplete: candidateTranscriptComplete,
+    );
+    if (userIndex < 0) return false;
+    final evidence = _terminalTurnEvidence(candidateNewestFirst, userIndex);
+    if (evidence.projectionIndices.any(
+      (index) =>
+          candidateNewestFirst[index][_terminalProjectionIdKey] ==
+          fence.projectionId,
+    )) {
+      // Un fallback local no puede acreditarse a sí mismo como persistido.
+      return false;
+    }
+    if (!evidence.complete) return false;
+    final local = fence.localAssistantText?.replaceAll(RegExp(r'\s+'), ' ');
+    if (local == null || local.isEmpty) return true;
+    final remote = evidence.assistantText?.replaceAll(RegExp(r'\s+'), ' ');
+    if (remote == null || remote.isEmpty) return false;
+    // El contenido no identifica mensajes. Solo evita sustituir una respuesta
+    // visible por un prefijo demostrablemente anterior de esa misma posición.
+    return !(remote.length < local.length && local.startsWith(remote));
+  }
+
+  bool _terminalFencesAreCovered(
+    List<Map<String, dynamic>> candidateNewestFirst,
+    List<_TerminalProjectionFence> fences, {
+    required bool candidateTranscriptComplete,
+  }) => fences.every(
+    (fence) => _terminalFenceIsCovered(
+      candidateNewestFirst,
+      fence,
+      candidateTranscriptComplete: candidateTranscriptComplete,
+    ),
+  );
+
+  List<Map<String, dynamic>> _carryNewestTerminalFence(
+    List<Map<String, dynamic>> previous,
+    List<Map<String, dynamic>> candidateNewestFirst, {
+    required bool candidateTranscriptComplete,
+  }) {
+    final fences = _terminalProjectionFences(previous);
+    if (fences.isEmpty ||
+        !_terminalFencesAreCovered(
+          candidateNewestFirst,
+          fences,
+          candidateTranscriptComplete: candidateTranscriptComplete,
+        )) {
+      return candidateNewestFirst;
+    }
+    return candidateNewestFirst
+        .map((message) {
+          if (message[_terminalProjectionIdKey] == null &&
+              message[_terminalProjectionAnchorKey] == null &&
+              message[_terminalProjectionAnchorRowKey] == null &&
+              message[_terminalProjectionAnchorOrdinalKey] == null &&
+              message[_terminalProjectionAbsoluteOrdinalKey] == null) {
+            return message;
+          }
+          return Map<String, dynamic>.of(message)
+            ..remove(_terminalProjectionIdKey)
+            ..remove(_terminalProjectionAnchorKey)
+            ..remove(_terminalProjectionAnchorRowKey)
+            ..remove(_terminalProjectionAnchorOrdinalKey)
+            ..remove(_terminalProjectionAbsoluteOrdinalKey);
+        })
+        .toList(growable: true);
+  }
+
+  void _attachTerminalProjectionMetadata(
+    int index,
+    Map<String, dynamic> metadata,
+  ) {
+    final message = messages[index];
+    try {
+      // Las burbujas vivas usan la identidad del mapa para retener su host de
+      // viewport. Añadir metadata privada in-place conserva esa identidad.
+      message.addAll(metadata);
+    } on UnsupportedError {
+      // Las filas proyectadas por Desktop son inmutables; su copia sigue
+      // siendo segura porque no existe un host local que deba conservarse.
+      messages[index] = {...message, ...metadata};
+    }
+  }
+
+  void _markCurrentTurnAwaitingTranscript() {
+    final userIndex = messages.indexWhere(isRealUserTurn);
+    if (userIndex < 0) return;
+    final currentProjection = messages.take(userIndex + 1);
+    final hasLiveEvidence = currentProjection.any(
+      (message) =>
+          message['_optimistic'] == true ||
+          message['_pipeline'] == true ||
+          message['_desktopSnapshotKind'] == 'inflight' ||
+          message['_desktopInterim'] == true,
+    );
+    if (!hasLiveEvidence) return;
+
+    var anchorIndex = -1;
+    String? anchorMessageId;
+    int? anchorRowId;
+    for (var index = userIndex + 1; index < messages.length; index++) {
+      final candidateId = canonicalTranscriptMessageId(messages[index]);
+      final candidateRowId = canonicalTranscriptRowId(messages[index]);
+      if (candidateId == null && candidateRowId == null) continue;
+      anchorIndex = index;
+      anchorMessageId = candidateId;
+      anchorRowId = candidateRowId;
+      break;
+    }
+    final ordinalAfterAnchor = anchorIndex < 0
+        ? null
+        : messages.sublist(0, anchorIndex).where(isRealUserTurn).length;
+    final absoluteUserOrdinal = _transcriptIsComplete
+        ? messages.where(isRealUserTurn).length
+        : null;
+    final projectionId = 'terminal-$_turnEpoch';
+    for (var index = 0; index <= userIndex; index++) {
+      _attachTerminalProjectionMetadata(index, {
+        _terminalProjectionIdKey: projectionId,
+      });
+    }
+    _attachTerminalProjectionMetadata(userIndex, {
+      _terminalProjectionIdKey: projectionId,
+      _terminalProjectionAnchorKey: ?anchorMessageId,
+      _terminalProjectionAnchorRowKey: ?anchorRowId,
+      _terminalProjectionAnchorOrdinalKey: ?ordinalAfterAnchor,
+      _terminalProjectionAbsoluteOrdinalKey: ?absoluteUserOrdinal,
+    });
   }
 
   /// Re-ancla una cola refrescada sobre un transcript al que ya se le
   /// cargaron páginas anteriores. Sustituir la lista por la cola nueva
-  /// descartaría el prefijo recuperado con [loadEarlierMessages]; si la fila
-  /// más antigua de la cola no ancla en lo visible (reescritura por
-  /// compactación, otra sesión), la cola refrescada es la autoridad.
-  List<Map<String, dynamic>> _graftRefreshedTail(
+  /// descartaría el prefijo recuperado con [loadEarlierMessages]. Solo adopta
+  /// cobertura solapada o disjunta cuando sus IDs permiten demostrar y podar
+  /// el prefijo; ante filas históricas sin identidad falla cerrado.
+  _RefreshedTranscriptGraft _graftRefreshedTail(
     List<Map<String, dynamic>> refreshedNewestFirst,
-    List<Map<String, dynamic>> previous,
-  ) {
-    if (!_hasBackfilledPrefix ||
-        refreshedNewestFirst.isEmpty ||
-        previous.isEmpty) {
-      return refreshedNewestFirst;
+    List<Map<String, dynamic>> previous, {
+    required bool refreshedTranscriptComplete,
+    List<_TerminalProjectionFence> requiredTerminalFences = const [],
+    bool enforceTerminalFences = true,
+  }) {
+    final terminalFences = <_TerminalProjectionFence>[];
+    if (enforceTerminalFences) {
+      final seen = <String>{};
+      for (final fence in <_TerminalProjectionFence>[
+        ...requiredTerminalFences,
+        ..._terminalReconciliationFences(previous),
+      ]) {
+        if (seen.add(fence.projectionId)) terminalFences.add(fence);
+      }
     }
-    final anchor = _transcriptMessageKey(refreshedNewestFirst.last);
-    final index = previous.indexWhere(
-      (message) => _transcriptMessageKey(message) == anchor,
+    if (terminalFences.isNotEmpty) {
+      if (!_terminalFencesAreCovered(
+        refreshedNewestFirst,
+        terminalFences,
+        candidateTranscriptComplete: refreshedTranscriptComplete,
+      )) {
+        // Un único turno puede producir más de una página de tools antes de
+        // que offset=120 alcance su user canónico. La cola durable puede
+        // avanzar provisionalmente, pero la proyección terminal local sigue
+        // vallada y visible hasta que una página posterior acredite el turno.
+        if (!refreshedTranscriptComplete &&
+            refreshedNewestFirst.isNotEmpty &&
+            _allTranscriptRowsHaveDurableIds(refreshedNewestFirst)) {
+          final fenceIds = {
+            for (final fence in terminalFences) fence.projectionId,
+          };
+          final terminalUserIndex = previous.indexWhere(
+            (message) =>
+                isRealUserTurn(message) &&
+                fenceIds.contains(message[_terminalProjectionIdKey]),
+          );
+          if (terminalUserIndex >= 0) {
+            final prefix = previous.sublist(0, terminalUserIndex);
+            final terminalProjectionId =
+                previous[terminalUserIndex][_terminalProjectionIdKey];
+            final protectedPrefix = previous
+                .take(terminalUserIndex + 1)
+                .where(
+                  (message) =>
+                      !_hasDurableTranscriptIdentity(message) ||
+                      message[_terminalProjectionIdKey] == terminalProjectionId,
+                )
+                .toList(growable: false);
+            final durablePrefix = prefix
+                .where(
+                  (message) =>
+                      _hasDurableTranscriptIdentity(message) &&
+                      message[_terminalProjectionIdKey] != terminalProjectionId,
+                )
+                .toList(growable: false);
+            final refreshedAndKnown = _mergeOlderTranscriptPage(
+              refreshedNewestFirst,
+              durablePrefix,
+            );
+            final protectedIdentities = _transcriptIdentities(protectedPrefix);
+            final refreshedAndKnownPrefix = refreshedAndKnown
+                .where((message) {
+                  final identity = _transcriptMessageIdentity(message);
+                  return identity == null ||
+                      !_identityCollectionContains(
+                        protectedIdentities,
+                        identity,
+                      );
+                })
+                .toList(growable: false);
+            final refreshedIdentities = _transcriptIdentities(
+              refreshedNewestFirst,
+            );
+            final provisionalPreviousIdentities =
+                _transcriptIdentities(previous)
+                    .where(
+                      (identity) => !_identityCollectionContains(
+                        refreshedIdentities,
+                        identity,
+                      ),
+                    )
+                    .toList(growable: false);
+            final knownIdentities = _transcriptIdentities(
+              refreshedAndKnownPrefix,
+            );
+            final older = previous
+                .skip(terminalUserIndex + 1)
+                .where((message) {
+                  final identity = _transcriptMessageIdentity(message);
+                  return identity == null ||
+                      !_identityCollectionContains(knownIdentities, identity);
+                })
+                .toList(growable: false);
+            return (
+              messages: <Map<String, dynamic>>[
+                ...protectedPrefix,
+                ...refreshedAndKnownPrefix,
+                ...older,
+              ],
+              preservesExistingCoverage: false,
+              acceptedRefreshed: true,
+              retainsExistingRows: true,
+              unconfirmedRetainedIdentities: provisionalPreviousIdentities,
+            );
+          }
+        }
+        return (
+          messages: previous,
+          preservesExistingCoverage: true,
+          acceptedRefreshed: false,
+          retainsExistingRows: true,
+          unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+        );
+      }
+      final withoutCoveredTerminal = previous
+          .where((message) => message[_terminalProjectionIdKey] == null)
+          .toList(growable: false);
+      final reconciled = _graftRefreshedTail(
+        refreshedNewestFirst,
+        withoutCoveredTerminal,
+        refreshedTranscriptComplete: refreshedTranscriptComplete,
+        enforceTerminalFences: false,
+      );
+      if (!reconciled.acceptedRefreshed) {
+        return (
+          messages: previous,
+          preservesExistingCoverage: true,
+          acceptedRefreshed: false,
+          retainsExistingRows: true,
+          unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+        );
+      }
+      return (
+        messages: _carryNewestTerminalFence(
+          previous,
+          reconciled.messages,
+          candidateTranscriptComplete: refreshedTranscriptComplete,
+        ),
+        preservesExistingCoverage: reconciled.preservesExistingCoverage,
+        acceptedRefreshed: true,
+        retainsExistingRows: reconciled.retainsExistingRows,
+        unconfirmedRetainedIdentities: reconciled.unconfirmedRetainedIdentities,
+      );
+    }
+    if (refreshedTranscriptComplete && refreshedNewestFirst.isNotEmpty) {
+      final retainedLocal = <Map<String, dynamic>>[
+        for (var index = 0; index < previous.length; index++)
+          if (!_hasDurableTranscriptIdentity(previous[index]) &&
+              _isKnownLocalTranscriptProjection(previous, index) &&
+              previous[index]['_steer'] != true &&
+              previous[index]['_cancelled'] != true &&
+              !_refreshedTranscriptReplacesLocalCancelledUser(
+                previous,
+                index,
+                refreshedNewestFirst,
+                refreshedTranscriptComplete: refreshedTranscriptComplete,
+              ))
+            previous[index],
+      ];
+      return (
+        messages: retainedLocal.isEmpty
+            ? refreshedNewestFirst
+            : <Map<String, dynamic>>[...retainedLocal, ...refreshedNewestFirst],
+        preservesExistingCoverage: false,
+        acceptedRefreshed: true,
+        retainsExistingRows: retainedLocal.isNotEmpty,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+    if (previous.isEmpty) {
+      return (
+        messages: refreshedNewestFirst,
+        preservesExistingCoverage: false,
+        acceptedRefreshed: true,
+        retainsExistingRows: false,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+    if (refreshedNewestFirst.isEmpty) {
+      return (
+        messages: previous,
+        preservesExistingCoverage: true,
+        acceptedRefreshed: false,
+        retainsExistingRows: true,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+
+    final canPartitionPrevious =
+        <int>[
+          for (var index = 0; index < previous.length; index++) index,
+        ].every(
+          (index) =>
+              _hasDurableTranscriptIdentity(previous[index]) ||
+              _isKnownLocalTranscriptProjection(previous, index),
+        );
+    final durablePrevious = canPartitionPrevious
+        ? previous.where(_hasDurableTranscriptIdentity).toList(growable: false)
+        : previous;
+    final retainedLocal = canPartitionPrevious
+        ? <Map<String, dynamic>>[
+            for (var index = 0; index < previous.length; index++)
+              if (!_hasDurableTranscriptIdentity(previous[index]) &&
+                  previous[index]['_steer'] != true &&
+                  previous[index]['_cancelled'] != true &&
+                  !_refreshedTranscriptReplacesLocalCancelledUser(
+                    previous,
+                    index,
+                    refreshedNewestFirst,
+                    refreshedTranscriptComplete: refreshedTranscriptComplete,
+                  ))
+                previous[index],
+          ]
+        : const <Map<String, dynamic>>[];
+    List<Map<String, dynamic>> withRetainedLocal(
+      List<Map<String, dynamic>> durable,
+    ) => retainedLocal.isEmpty
+        ? durable
+        : <Map<String, dynamic>>[...retainedLocal, ...durable];
+
+    final exactlyMatchesKnownTail =
+        _transcriptIsComplete &&
+        refreshedNewestFirst.length <= durablePrevious.length &&
+        <int>[
+          for (var index = 0; index < refreshedNewestFirst.length; index++)
+            index,
+        ].every((index) {
+          final refreshedIdentity = _transcriptMessageIdentity(
+            refreshedNewestFirst[index],
+          );
+          final previousIdentity = _transcriptMessageIdentity(
+            durablePrevious[index],
+          );
+          return refreshedIdentity != null &&
+              previousIdentity != null &&
+              refreshedIdentity.matches(previousIdentity);
+        });
+    if (exactlyMatchesKnownTail) {
+      return (
+        messages: withRetainedLocal(<Map<String, dynamic>>[
+          ...refreshedNewestFirst,
+          ...durablePrevious.sublist(refreshedNewestFirst.length),
+        ]),
+        preservesExistingCoverage: true,
+        acceptedRefreshed: true,
+        retainsExistingRows:
+            durablePrevious.length > refreshedNewestFirst.length ||
+            retainedLocal.isNotEmpty,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+
+    final anchor = _transcriptMessageIdentity(refreshedNewestFirst.last);
+    if (anchor == null) {
+      return (
+        messages: previous,
+        preservesExistingCoverage: true,
+        acceptedRefreshed: false,
+        retainsExistingRows: true,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+    var index = -1;
+    for (
+      var candidateIndex = 0;
+      candidateIndex < durablePrevious.length;
+      candidateIndex++
+    ) {
+      final candidateIdentity = _transcriptMessageIdentity(
+        durablePrevious[candidateIndex],
+      );
+      if (candidateIdentity == null ||
+          !anchor.sharesExactCoordinate(candidateIdentity)) {
+        continue;
+      }
+      if (!anchor.matches(candidateIdentity) || index >= 0) {
+        index = -2;
+        break;
+      }
+      index = candidateIndex;
+    }
+    if (index < 0) {
+      if (_allTranscriptRowsHaveDurableIds(refreshedNewestFirst) &&
+          canPartitionPrevious &&
+          _allTranscriptRowsHaveDurableIds(durablePrevious)) {
+        return (
+          messages: withRetainedLocal(
+            _mergeOlderTranscriptPage(refreshedNewestFirst, durablePrevious),
+          ),
+          preservesExistingCoverage: false,
+          acceptedRefreshed: true,
+          retainsExistingRows:
+              durablePrevious.isNotEmpty || retainedLocal.isNotEmpty,
+          unconfirmedRetainedIdentities: _transcriptIdentities(durablePrevious),
+        );
+      }
+      return (
+        messages: previous,
+        preservesExistingCoverage: true,
+        acceptedRefreshed: false,
+        retainsExistingRows: true,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+    if (!canPartitionPrevious) {
+      return (
+        messages: previous,
+        preservesExistingCoverage: true,
+        acceptedRefreshed: false,
+        retainsExistingRows: true,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+    final retainedPrefix = durablePrevious.sublist(index + 1);
+    if (!_allTranscriptRowsHaveDurableIds(retainedPrefix)) {
+      return (
+        messages: previous,
+        preservesExistingCoverage: true,
+        acceptedRefreshed: false,
+        retainsExistingRows: true,
+        unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+      );
+    }
+    return (
+      messages: withRetainedLocal(<Map<String, dynamic>>[
+        ...refreshedNewestFirst,
+        ...retainedPrefix,
+      ]),
+      preservesExistingCoverage: false,
+      acceptedRefreshed: true,
+      retainsExistingRows:
+          retainedPrefix.isNotEmpty || retainedLocal.isNotEmpty,
+      unconfirmedRetainedIdentities: _transcriptIdentities(retainedPrefix),
     );
-    if (index < 0 || index == previous.length - 1) {
-      return refreshedNewestFirst;
+  }
+
+  List<Map<String, dynamic>> _reconcileCoveredTerminalProjection(
+    List<Map<String, dynamic>> candidateNewestFirst, {
+    required bool candidateTranscriptComplete,
+  }) {
+    final fences = _terminalProjectionFences(messages);
+    if (fences.isEmpty) return candidateNewestFirst;
+    final withoutLocalProjection = <Map<String, dynamic>>[];
+    for (final message in candidateNewestFirst) {
+      if (message[_terminalProjectionIdKey] == null) {
+        withoutLocalProjection.add(message);
+        continue;
+      }
+      final messageIdentity = _transcriptMessageIdentity(message);
+      if (messageIdentity == null ||
+          _identityCollectionContains(
+            _unconfirmedRetainedTranscriptIdentities,
+            messageIdentity,
+          )) {
+        continue;
+      }
+      withoutLocalProjection.add(
+        Map<String, dynamic>.of(message)
+          ..remove(_terminalProjectionIdKey)
+          ..remove(_terminalProjectionAnchorKey)
+          ..remove(_terminalProjectionAnchorRowKey)
+          ..remove(_terminalProjectionAnchorOrdinalKey)
+          ..remove(_terminalProjectionAbsoluteOrdinalKey),
+      );
     }
-    return <Map<String, dynamic>>[
-      ...refreshedNewestFirst,
-      ...previous.sublist(index + 1),
-    ];
+    if (!_terminalFencesAreCovered(
+      withoutLocalProjection,
+      fences,
+      candidateTranscriptComplete: candidateTranscriptComplete,
+    )) {
+      return candidateNewestFirst;
+    }
+    return _carryNewestTerminalFence(
+      messages,
+      withoutLocalProjection,
+      candidateTranscriptComplete: candidateTranscriptComplete,
+    );
+  }
+
+  void _commitRefreshedTailEvidence(
+    List<Map<String, dynamic>> refreshedNewestFirst,
+    _RefreshedTranscriptGraft graft, {
+    bool preserveTailHydration = false,
+  }) {
+    if (!graft.acceptedRefreshed) return;
+    _transcriptCoverageRevision += 1;
+    final refreshedIdentities = _transcriptIdentities(refreshedNewestFirst);
+    if (!graft.retainsExistingRows) {
+      _unconfirmedRetainedTranscriptIdentities.clear();
+    } else {
+      for (final identity in refreshedIdentities) {
+        _removeMatchingIdentities(
+          _unconfirmedRetainedTranscriptIdentities,
+          identity,
+        );
+      }
+    }
+    for (final identity in graft.unconfirmedRetainedIdentities) {
+      if (!_identityCollectionContains(
+        _unconfirmedRetainedTranscriptIdentities,
+        identity,
+      )) {
+        _unconfirmedRetainedTranscriptIdentities.add(identity);
+      }
+    }
+    if (!preserveTailHydration) _needsTranscriptTailHydration = false;
+  }
+
+  void _confirmTranscriptRows(Iterable<Map<String, dynamic>> rows) {
+    for (final message in rows) {
+      final identity = _transcriptMessageIdentity(message);
+      if (identity != null) {
+        final visibleIdentity = _uniqueTranscriptIdentityMatch(
+          identity,
+          messages,
+        );
+        if (visibleIdentity == null) continue;
+        _removeMatchingIdentities(
+          _unconfirmedRetainedTranscriptIdentities,
+          visibleIdentity,
+        );
+      }
+    }
+  }
+
+  List<Map<String, dynamic>> _mergeOlderPageBeforeUnconfirmedPrefix(
+    List<Map<String, dynamic>> existingNewestFirst,
+    List<Map<String, dynamic>> olderPageNewestFirst,
+  ) {
+    if (_unconfirmedRetainedTranscriptIdentities.isEmpty) {
+      return _mergeOlderTranscriptPage(
+        existingNewestFirst,
+        olderPageNewestFirst,
+      );
+    }
+    final confirmed = <Map<String, dynamic>>[];
+    final provisional = <Map<String, dynamic>>[];
+    final olderPageIdentities = _transcriptIdentities(olderPageNewestFirst);
+    for (final message in existingNewestFirst) {
+      final identity = _transcriptMessageIdentity(message);
+      final terminalProjectionStillMissing =
+          message[_terminalProjectionIdKey] != null &&
+          identity != null &&
+          !_identityCollectionContains(olderPageIdentities, identity);
+      if (identity != null &&
+          _identityCollectionContains(
+            _unconfirmedRetainedTranscriptIdentities,
+            identity,
+          ) &&
+          !terminalProjectionStillMissing) {
+        provisional.add(message);
+      } else {
+        confirmed.add(message);
+      }
+    }
+    return _mergeOlderTranscriptPage(
+      _mergeOlderTranscriptPage(confirmed, olderPageNewestFirst),
+      provisional,
+    );
+  }
+
+  List<Map<String, dynamic>> _pruneUnconfirmedRowsAtTranscriptStart(
+    List<Map<String, dynamic>> candidate,
+  ) {
+    if (!_transcriptIsComplete ||
+        _unconfirmedRetainedTranscriptIdentities.isEmpty) {
+      return candidate;
+    }
+    final retainedTerminalIdentities = <TranscriptMessageIdentity>[];
+    final projected = candidate
+        .where((message) {
+          final identity = _transcriptMessageIdentity(message);
+          if (identity == null ||
+              !_identityCollectionContains(
+                _unconfirmedRetainedTranscriptIdentities,
+                identity,
+              )) {
+            return true;
+          }
+          if (message[_terminalProjectionIdKey] != null) {
+            // Esta fila sigue siendo parte de una proyección terminal vallada:
+            // podarla separaría el user canónico de su assistant local. Sigue
+            // sin confirmar hasta que una página REST traiga esa identidad.
+            retainedTerminalIdentities.add(identity);
+            return true;
+          }
+          return false;
+        })
+        .toList(growable: true);
+    _unconfirmedRetainedTranscriptIdentities
+      ..clear()
+      ..addAll(retainedTerminalIdentities);
+    return projected;
   }
 
   /// Carga bajo demanda la siguiente página de mensajes ANTERIORES y la
@@ -2923,27 +5042,130 @@ class ActiveChat {
     }
     _earlierMessagesInFlight = true;
     final loadEpoch = _messageLoadEpoch;
+    final coverageRevision = _transcriptCoverageRevision;
+    final requestedTailHydration = _needsTranscriptTailHydration;
+    final requestedNextOffset = _earlierMessagesNextOffset;
+    final requestedExtent = _transcriptExtent;
+    final requestedEarlierMessagesAvailable = _earlierMessagesAvailable;
     try {
       final page = await _fetchStoredMessagesPage(
         _storedSessionProfile,
-        offset: _earlierMessagesNextOffset,
+        offset: requestedTailHydration ? 0 : requestedNextOffset,
       );
-      if (_disposed || loadEpoch != _messageLoadEpoch) return false;
+      if (_disposed ||
+          loadEpoch != _messageLoadEpoch ||
+          coverageRevision != _transcriptCoverageRevision ||
+          requestedTailHydration != _needsTranscriptTailHydration ||
+          requestedNextOffset != _earlierMessagesNextOffset ||
+          requestedExtent != _transcriptExtent ||
+          requestedEarlierMessagesAvailable != _earlierMessagesAvailable) {
+        return false;
+      }
+
+      if (requestedTailHydration) {
+        // Un snapshot omitido no aportó transcript. Esta lectura de offset 0
+        // es la cola actual, no una página más antigua: reconcíliala con el
+        // fallback conservado y solo después habilita el backfill normal.
+        final hydrationStatus = _hydrationTailStatus(page);
+        if (page.messages.isEmpty) {
+          final onlyLiveProjection = messages.every(
+            _isLiveTranscriptProjection,
+          );
+          if (hydrationStatus == _HydrationTailStatus.incomplete) {
+            _recordIncompleteHydrationTail();
+            return false;
+          }
+          if (!onlyLiveProjection) {
+            return false;
+          }
+          _desktopHistoryNeedsHydration = false;
+          _recordTranscriptPage(page);
+          _needsTranscriptTailHydration = false;
+          _unconfirmedRetainedTranscriptIdentities.clear();
+          messagesLoaded = true;
+          _emit(ActiveChatEvent.earlierMessagesLoaded);
+          return true;
+        }
+        final normalized = _normalizedNewestFirst(page.messages);
+        final inflight = messages
+            .where(_preserveInflightOutsideHydrationGraft)
+            .toList(growable: false);
+        final durableFallback = messages
+            .where(
+              (message) => !_preserveInflightOutsideHydrationGraft(message),
+            )
+            .toList(growable: false);
+        final graft = _graftRefreshedTail(
+          normalized,
+          durableFallback,
+          refreshedTranscriptComplete:
+              hydrationStatus == _HydrationTailStatus.complete,
+        );
+        if (!graft.acceptedRefreshed) return false;
+        _captureArtifactMaps(page.messages, logicalSessionId: logicalSessionId);
+        // Al hidratar offset cero la metadata de esta página sustituye el
+        // cursor provisional del snapshot, aunque hubiera fallback completo.
+        if (hydrationStatus == _HydrationTailStatus.incomplete) {
+          _recordIncompleteHydrationTail();
+        } else {
+          _desktopHistoryNeedsHydration = false;
+          _recordTranscriptPage(page);
+        }
+        _commitRefreshedTailEvidence(
+          normalized,
+          graft,
+          preserveTailHydration:
+              hydrationStatus == _HydrationTailStatus.incomplete,
+        );
+        final hydrated = <Map<String, dynamic>>[
+          ...inflight,
+          ..._preserveLocalAssistantErrors(graft.messages, durableFallback),
+        ];
+        final projected = _applyCancelledTurnTombstones(
+          _associateGeneratedImagesNewestFirst(
+            _pruneUnconfirmedRowsAtTranscriptStart(hydrated),
+          ),
+          incomingTranscriptComplete: _transcriptIsComplete,
+        );
+        messages = projected;
+        _mergeSteerRecords();
+        _reconcileSubagentsFromTranscript();
+        _emit(ActiveChatEvent.earlierMessagesLoaded);
+        return true;
+      }
+
+      if (_pageFallsShortOfAnnouncedCoverage(page)) {
+        return false;
+      }
+      final normalized = _normalizedNewestFirst(page.messages);
+      final mergedWithPage = _mergeOlderPageBeforeUnconfirmedPrefix(
+        messages,
+        normalized,
+      );
+      _confirmTranscriptRows(normalized);
       _recordTranscriptPage(page);
-      if (page.messages.isEmpty) return false;
-      _captureArtifactMaps(page.messages, logicalSessionId: logicalSessionId);
-      final merged = _associateGeneratedImagesNewestFirst(
-        _mergeOlderTranscriptPage(
-          messages,
-          _normalizedNewestFirst(page.messages),
-        ),
+      if (page.messages.isNotEmpty) {
+        _captureArtifactMaps(page.messages, logicalSessionId: logicalSessionId);
+      }
+      var merged = _pruneUnconfirmedRowsAtTranscriptStart(mergedWithPage);
+      merged = _reconcileCoveredTerminalProjection(
+        merged,
+        candidateTranscriptComplete: _transcriptIsComplete,
       );
-      final projectedMerged = _applyCancelledTurnTombstones(merged);
-      if (identical(projectedMerged, messages)) return false;
-      messages = projectedMerged;
-      _hasBackfilledPrefix = true;
-      _emit(ActiveChatEvent.earlierMessagesLoaded);
-      return true;
+      final projectedMerged = _applyCancelledTurnTombstones(
+        _associateGeneratedImagesNewestFirst(merged),
+        incomingTranscriptComplete: _transcriptIsComplete,
+      );
+      final changed = !_sameTranscriptProjection(projectedMerged, messages);
+      if (!changed && page.messages.isEmpty) return false;
+      if (changed) messages = projectedMerged;
+      if (changed || page.messages.isNotEmpty) {
+        _mergeSteerRecords();
+        _reconcileSubagentsFromTranscript();
+        _emit(ActiveChatEvent.earlierMessagesLoaded);
+        return true;
+      }
+      return false;
     } catch (error) {
       debugPrint(
         '[active-chat] earlier transcript page unavailable '
@@ -2974,6 +5196,18 @@ class ActiveChat {
 
   void _handleDesktopResumeProgress(Map<String, dynamic> payload) {
     final status = (payload['status'] ?? '').toString().trim().toLowerCase();
+    final announced = _terminalProjectionInt(payload['message_count']);
+    if (status == 'complete' && announced != null && announced >= 0) {
+      // Este evento es posterior al ack de resume y puede anunciar una
+      // compactación 300→2. Sustituye la expectativa vieja; usar max dejaría
+      // offset=0 en reintento eterno aunque la cola nueva ya esté completa.
+      _desktopHydrationExpectedMessageCount = announced > 0 ? announced : null;
+    } else if (announced != null && announced > 0) {
+      _desktopHydrationExpectedMessageCount = math.max(
+        _desktopHydrationExpectedMessageCount ?? 0,
+        announced,
+      );
+    }
     switch (status) {
       case 'loading':
         _desktopHistoryHydrating = true;
@@ -2985,32 +5219,112 @@ class ActiveChat {
         if (waiter != null && !waiter.isCompleted) waiter.complete(true);
         // Si loadMessages ya no está esperando y REST no había pintado nada,
         // el historial ya está listo server-side: recupéralo ahora.
-        if (waiter == null && messages.isEmpty && !_disposed) {
-          unawaited(_hydrateDeferredDesktopHistory());
+        if (waiter == null && _desktopHistoryNeedsHydration && !_disposed) {
+          _scheduleDeferredDesktopHistoryHydration();
         }
       case 'failed':
         _desktopHistoryHydrating = false;
+        _desktopHistoryNeedsHydration = false;
         _desktopHydrationOutcome = false;
         final waiter = _desktopHydrationWaiter;
         if (waiter != null && !waiter.isCompleted) waiter.complete(false);
     }
   }
 
+  void _scheduleDeferredDesktopHistoryHydration() {
+    final loadEpoch = _messageLoadEpoch;
+    if (_disposed ||
+        !_desktopHistoryNeedsHydration ||
+        (_desktopHistoryHydrationFlight != null &&
+            _desktopHistoryHydrationFlightEpoch == loadEpoch)) {
+      return;
+    }
+    late final Future<void> flight;
+    flight = _hydrateDeferredDesktopHistory().whenComplete(() {
+      if (identical(_desktopHistoryHydrationFlight, flight)) {
+        _desktopHistoryHydrationFlight = null;
+        _desktopHistoryHydrationFlightEpoch = null;
+      }
+    });
+    _desktopHistoryHydrationFlight = flight;
+    _desktopHistoryHydrationFlightEpoch = loadEpoch;
+    unawaited(flight);
+  }
+
   Future<void> _hydrateDeferredDesktopHistory() async {
     final loadEpoch = _messageLoadEpoch;
+    final coverageRevision = _transcriptCoverageRevision;
+    final requestedTailHydration = _needsTranscriptTailHydration;
+    final requestedNextOffset = _earlierMessagesNextOffset;
+    final requestedExtent = _transcriptExtent;
+    final requestedEarlierMessagesAvailable = _earlierMessagesAvailable;
     try {
-      final m = await _loadStoredMessagesTail(_storedSessionProfile);
-      if (_disposed || loadEpoch != _messageLoadEpoch || m.isEmpty) return;
+      final page = await _loadStoredMessagesTail(_storedSessionProfile);
+      final m = page.messages;
+      if (_disposed ||
+          loadEpoch != _messageLoadEpoch ||
+          coverageRevision != _transcriptCoverageRevision ||
+          requestedTailHydration != _needsTranscriptTailHydration ||
+          requestedNextOffset != _earlierMessagesNextOffset ||
+          requestedExtent != _transcriptExtent ||
+          requestedEarlierMessagesAvailable != _earlierMessagesAvailable) {
+        return;
+      }
+      final hydrationStatus = _hydrationTailStatus(page);
+      if (m.isEmpty) {
+        final onlyLiveProjection = messages.every(_isLiveTranscriptProjection);
+        if (hydrationStatus == _HydrationTailStatus.incomplete) {
+          _recordIncompleteHydrationTail();
+          return;
+        }
+        if (!onlyLiveProjection) {
+          return;
+        }
+        _desktopHistoryNeedsHydration = false;
+        _recordTranscriptPage(page);
+        _needsTranscriptTailHydration = false;
+        _unconfirmedRetainedTranscriptIdentities.clear();
+        messagesLoaded = true;
+        _emit(ActiveChatEvent.messagesHydrated);
+        return;
+      }
+      final normalized = _normalizedNewestFirst(m);
+      final inflight = messages
+          .where(_preserveInflightOutsideHydrationGraft)
+          .toList(growable: false);
+      final durableFallback = messages
+          .where((message) => !_preserveInflightOutsideHydrationGraft(message))
+          .toList(growable: false);
+      final graft = _graftRefreshedTail(
+        normalized,
+        durableFallback,
+        refreshedTranscriptComplete:
+            hydrationStatus == _HydrationTailStatus.complete,
+      );
+      if (!graft.acceptedRefreshed) return;
+      if (hydrationStatus == _HydrationTailStatus.incomplete) {
+        _recordIncompleteHydrationTail();
+      } else {
+        _desktopHistoryNeedsHydration = false;
+        _recordTranscriptPage(page);
+      }
+      _commitRefreshedTailEvidence(
+        normalized,
+        graft,
+        preserveTailHydration:
+            hydrationStatus == _HydrationTailStatus.incomplete,
+      );
       _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
+      final hydrated = <Map<String, dynamic>>[
+        ...inflight,
+        ..._preserveLocalAssistantErrors(graft.messages, durableFallback),
+      ];
       messages = _applyCancelledTurnTombstones(
-        _associateGeneratedImagesNewestFirst(
-          _preserveLocalAssistantErrors(
-            _graftRefreshedTail(_normalizedNewestFirst(m), messages),
-            messages,
-          ),
-        ),
+        _associateGeneratedImagesNewestFirst(hydrated),
+        incomingTranscriptComplete: _transcriptIsComplete,
       );
       _mergeSteerRecords();
+      _reconcileSubagentsFromTranscript();
       messagesLoaded = true;
       _emit(ActiveChatEvent.messagesHydrated);
     } catch (error) {
@@ -3028,12 +5342,33 @@ class ActiveChat {
     storedSessionId: snapshot.storedSessionId,
     created: snapshot.created,
     messagesProvided: false,
+    messagesFullyParsed: snapshot.messagesFullyParsed,
     messageCount: snapshot.messageCount,
     inflight: snapshot.inflight,
     queued: snapshot.queued,
     running: snapshot.running,
     status: snapshot.status,
     startedAt: snapshot.startedAt,
+    turnStartedAt: snapshot.turnStartedAt,
+    info: snapshot.info,
+    raw: snapshot.raw,
+  );
+
+  DesktopSessionSnapshot _withoutLiveDesktopProjection(
+    DesktopSessionSnapshot snapshot,
+  ) => DesktopSessionSnapshot(
+    runtimeSessionId: snapshot.runtimeSessionId,
+    storedSessionId: snapshot.storedSessionId,
+    created: snapshot.created,
+    messages: snapshot.messages,
+    messagesProvided: snapshot.messagesProvided,
+    messagesFullyParsed: snapshot.messagesFullyParsed,
+    messageCount: snapshot.messageCount,
+    hydrating: snapshot.hydrating,
+    running: false,
+    status: snapshot.status,
+    startedAt: snapshot.startedAt,
+    turnStartedAt: snapshot.turnStartedAt,
     info: snapshot.info,
     raw: snapshot.raw,
   );
@@ -3042,24 +5377,50 @@ class ActiveChat {
     List<Map<String, dynamic>> next,
     List<Map<String, dynamic>> current,
   ) {
-    final existing = <String>{
-      for (final message in next)
-        if (message['role'] == 'assistant_error')
-          '${message['content']}\u0000${message['_prompt']}',
-    };
-    final existingUsers = <String>{
-      for (final message in next)
-        if (isRealUserTurn(message)) (message['content'] ?? '').toString(),
+    const projectionIdKey = '_localTranscriptProjectionId';
+    const pairIdKey = '_localTranscriptPairId';
+    final currentProjectionIds =
+        HashMap<Map<String, dynamic>, String>.identity();
+    for (final message in current) {
+      if (message['role'] != 'assistant_error') continue;
+      final existingId = message[projectionIdKey];
+      currentProjectionIds[message] =
+          existingId is String && existingId.isNotEmpty
+          ? existingId
+          : _nextLocalTranscriptProjectionId();
+    }
+    final normalizedNext = List<Map<String, dynamic>>.of(next);
+    final existing = <String>{};
+    for (var index = 0; index < normalizedNext.length; index++) {
+      final message = normalizedNext[index];
+      if (message['role'] != 'assistant_error') continue;
+      final rawId = message[projectionIdKey];
+      final projectionId = rawId is String && rawId.isNotEmpty
+          ? rawId
+          : currentProjectionIds[message] ?? _nextLocalTranscriptProjectionId();
+      existing.add(projectionId);
+      if (rawId != projectionId) {
+        normalizedNext[index] = {...message, projectionIdKey: projectionId};
+      }
+    }
+    final existingUserIdentities = <TranscriptMessageIdentity>[
+      for (final message in normalizedNext)
+        if (isRealUserTurn(message)) ?_transcriptMessageIdentity(message),
+    ];
+    final existingPairIds = <String>{
+      for (final message in normalizedNext)
+        if (message[pairIdKey] case final String pairId)
+          if (pairId.isNotEmpty) pairId,
     };
     final preserved = <Map<String, dynamic>>[];
     for (var index = 0; index < current.length; index++) {
       final message = current[index];
       if (message['role'] != 'assistant_error') continue;
-      final identity = '${message['content']}\u0000${message['_prompt']}';
-      if (existing.add(identity)) {
-        preserved.add(Map<String, dynamic>.from(message));
+      final projectionId = currentProjectionIds[message]!;
+      if (existing.add(projectionId)) {
+        preserved.add({...message, projectionIdKey: projectionId});
         final prompt = (message['_prompt'] ?? '').toString();
-        if (prompt.isEmpty || existingUsers.contains(prompt)) continue;
+        if (prompt.isEmpty) continue;
         for (
           var candidate = index + 1;
           candidate < current.length;
@@ -3068,14 +5429,74 @@ class ActiveChat {
           final paired = current[candidate];
           if (!isRealUserTurn(paired)) continue;
           if ((paired['content'] ?? '').toString() != prompt) break;
-          preserved.add(Map<String, dynamic>.from(paired));
-          existingUsers.add(prompt);
+          final pairedIdentity = _transcriptMessageIdentity(paired);
+          if (pairedIdentity != null &&
+              _identityCollectionContains(
+                existingUserIdentities,
+                pairedIdentity,
+              )) {
+            break;
+          }
+          final pairId = paired[pairIdKey];
+          if (pairId is String && existingPairIds.contains(pairId)) break;
+          if (normalizedNext.any((item) => identical(item, paired))) break;
+          preserved.add({...paired, pairIdKey: projectionId});
+          existingPairIds.add(projectionId);
+          if (pairedIdentity != null) {
+            existingUserIdentities.add(pairedIdentity);
+          }
           break;
         }
       }
     }
-    if (preserved.isEmpty) return next;
-    return <Map<String, dynamic>>[...preserved, ...next];
+    if (preserved.isEmpty) return normalizedNext;
+    return <Map<String, dynamic>>[...preserved, ...normalizedNext];
+  }
+
+  String _nextLocalTranscriptProjectionId() =>
+      'local-assistant-error-${++_localTranscriptProjectionSerial}';
+
+  void _ensureLocalAssistantErrorIdentities() {
+    const projectionIdKey = '_localTranscriptProjectionId';
+    const pairIdKey = '_localTranscriptPairId';
+    for (var index = 0; index < messages.length; index++) {
+      final error = messages[index];
+      if (error['role'] != 'assistant_error') continue;
+      final rawProjectionId = error[projectionIdKey];
+      final projectionId =
+          rawProjectionId is String && rawProjectionId.isNotEmpty
+          ? rawProjectionId
+          : _nextLocalTranscriptProjectionId();
+      if (rawProjectionId != projectionId) {
+        messages[index] = {...error, projectionIdKey: projectionId};
+      }
+      final prompt = (error['_prompt'] ?? '').toString();
+      if (prompt.isEmpty) continue;
+      for (
+        var candidate = index + 1;
+        candidate < messages.length;
+        candidate++
+      ) {
+        final user = messages[candidate];
+        if (!isRealUserTurn(user)) continue;
+        if ((user['content'] ?? '').toString() != prompt) break;
+        if (user[pairIdKey] != projectionId) {
+          messages[candidate] = {...user, pairIdKey: projectionId};
+        }
+        break;
+      }
+    }
+  }
+
+  void _tagLatestUserForLocalError(String projectionId) {
+    for (var index = 0; index < messages.length; index++) {
+      if (!isRealUserTurn(messages[index])) continue;
+      messages[index] = {
+        ...messages[index],
+        '_localTranscriptPairId': projectionId,
+      };
+      return;
+    }
   }
 
   void _mergeSteerRecords() {
@@ -3160,6 +5581,85 @@ class ActiveChat {
     }
   }
 
+  bool get _hasUnanchoredCancelledUser => messages.any(
+    (message) =>
+        isRealUserTurn(message) &&
+        message['_cancelledUser'] == true &&
+        message['_cancelledTurnFirstUser'] != true &&
+        canonicalTranscriptMessageId(message) == null &&
+        canonicalTranscriptRowId(message) == null,
+  );
+
+  /// A second optimistic turn must never start behind a cancelled user that
+  /// still has no server identity: Stop could not anchor the new tombstone
+  /// without crossing that ambiguous row. Refresh the complete transcript
+  /// first and publish it only if every such row is now durably identified.
+  Future<bool> _hydrateCancelledUserAnchorsBeforeSend() async {
+    if (_onCancelledTurn == null) return true;
+    if (!_hasUnanchoredCancelledUser) return true;
+    final target = _latestUserCancellationCandidate();
+    if (target == null) return false;
+    final localTarget = messages[target.index];
+    if (localTarget['_cancelledUser'] != true ||
+        canonicalTranscriptMessageId(localTarget) != null ||
+        canonicalTranscriptRowId(localTarget) != null) {
+      return false;
+    }
+    final loadEpoch = _messageLoadEpoch;
+    try {
+      final page = await _loadStoredMessagesTail(_storedSessionProfile);
+      if (_disposed || loadEpoch != _messageLoadEpoch) return false;
+      if (page.messages.isEmpty) return false;
+      final pageProvesComplete = _tailPageProvesTranscriptComplete(page);
+      final normalized = _normalizedNewestFirst(page.messages);
+      final hydratedTargetIndex = _cancelledTurnUserIndex(
+        normalized,
+        target.tombstone,
+        incomingTranscriptComplete: pageProvesComplete,
+      );
+      if (hydratedTargetIndex < 0 ||
+          (canonicalTranscriptMessageId(normalized[hydratedTargetIndex]) ==
+                  null &&
+              canonicalTranscriptRowId(normalized[hydratedTargetIndex]) ==
+                  null)) {
+        return false;
+      }
+      final projected = _applyCancelledTurnTombstones(
+        _associateGeneratedImagesNewestFirst(normalized),
+        incomingTranscriptComplete: pageProvesComplete,
+      );
+
+      final graft = _graftRefreshedTail(
+        projected,
+        messages,
+        refreshedTranscriptComplete: pageProvesComplete,
+      );
+      if (!graft.acceptedRefreshed) return false;
+
+      _captureArtifactMaps(page.messages, logicalSessionId: logicalSessionId);
+      _recordTranscriptPage(
+        page,
+        preserveExistingCoverage: graft.preservesExistingCoverage,
+      );
+      _commitRefreshedTailEvidence(projected, graft);
+      final anchored = graft.messages
+          .where((message) => !identical(message, localTarget))
+          .toList();
+      messages = _preserveLocalAssistantErrors(anchored, messages);
+      _mergeSteerRecords();
+      _reconcileSubagentsFromTranscript();
+      messagesLoaded = true;
+      _emit(ActiveChatEvent.messagesHydrated);
+      return !_hasUnanchoredCancelledUser;
+    } catch (error) {
+      debugPrint(
+        '[active-chat] cancelled turn identity unavailable '
+        '(${error.runtimeType})',
+      );
+      return false;
+    }
+  }
+
   /// Lanza el envío con streaming. Inserta los mensajes optimistas y arranca el
   /// SSE en este servicio (no en el widget), de modo que continúa al navegar.
   Future<bool> send({
@@ -3211,6 +5711,12 @@ class ActiveChat {
     Future<void> Function(String storedSessionId)? beforeDesktopPromptSubmit,
     _RewriteReservation? rewriteReservation,
   }) async {
+    try {
+      await _flushPendingCancelledTombstoneUpdates();
+    } catch (_) {
+      await delivery?.markUnaccepted();
+      return false;
+    }
     if (_cancelledTurnPersistencePending || _cancelledTurnPersistenceFailed) {
       await _cancelledTurnPersistence;
       if (_disposed) return false;
@@ -3219,6 +5725,10 @@ class ActiveChat {
     if (pendingCancel != null) {
       await pendingCancel;
       if (_disposed) return false;
+    }
+    if (!await _hydrateCancelledUserAnchorsBeforeSend()) {
+      await delivery?.markUnaccepted();
+      return false;
     }
     if (desktopCompressionInFlight) {
       throw const TuiGatewayRpcError(
@@ -3269,12 +5779,17 @@ class ActiveChat {
     // El modo voz puede rotar deliberadamente su sesión server-side. Solo una
     // rotación real invalida el binding Desktop anterior; los turnos normales
     // (override null → null) conservan el id canónico obtenido por resume.
-    if (serverSessionId != _serverSessionOverride) {
+    final serverSessionScopeChanged = serverSessionId != _serverSessionOverride;
+    if (serverSessionScopeChanged) {
       _retireDesktopRuntime();
       _desktopStoredSessionId = null;
       _usingDesktopGateway = false;
     }
     _serverSessionOverride = serverSessionId;
+    _captureActiveTurnTranscriptBoundary(
+      turnEpoch,
+      allowExistingTranscript: !serverSessionScopeChanged,
+    );
     state = ChatPipelineState.connecting;
     trace.clear();
     _activeVoiceTools.clear();
@@ -3288,11 +5803,16 @@ class ActiveChat {
     _runTerminal = false;
     _desktopTurnStartedAt = null;
     _subagentActivities = null;
+    _subagentTranscriptTurnAnchor = null;
     // Un terminal sin texto o una reconciliación tardía no puede arrastrar el
     // placeholder del turno anterior al nuevo timeline.
     _settlePipelinePlaceholders();
     // Optimista: el mensaje del usuario aparece de inmediato.
-    messages.insert(0, {'role': 'user', 'content': fullText});
+    messages.insert(0, {
+      'role': 'user',
+      'content': fullText,
+      '_optimistic': true,
+    });
     // Burbuja placeholder del asistente con el estado del pipeline.
     messages.insert(0, {'role': 'assistant', 'content': '', '_pipeline': true});
     _emit(ActiveChatEvent.started);
@@ -3490,9 +6010,7 @@ class ActiveChat {
       );
       var runtimeId = _desktopRuntimeSessionId;
       var gateway = _desktopGateway;
-      var truncateBeforeRowId = target['_desktopRowId'] is int
-          ? target['_desktopRowId'] as int
-          : null;
+      var truncateBeforeRowId = canonicalTranscriptRowId(target);
 
       if (truncateBeforeRowId == null && runtimeId == null) {
         final ready = await ensureDesktopRuntime();
@@ -3704,6 +6222,7 @@ class ActiveChat {
       }
       final infoChanged = snapshot.info != _desktopRuntimeInfo;
       _desktopStoredSessionId = snapshot.storedSessionId;
+      _rebaseSubagentActivityScope(snapshot.runtimeSessionId);
       _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _restorePendingClarify(snapshot);
       _desktopStoredSessionKnownMissing = false;
@@ -3711,7 +6230,7 @@ class ActiveChat {
       _rememberDesktopLiveStatus(snapshot.status, running: snapshot.running);
       _desktopStartedAt = snapshot.startedAt;
       _desktopTurnStartedAt = snapshot.running
-          ? snapshot.inflight?.startedAt
+          ? snapshot.resolvedTurnStartedAt
           : null;
       if (infoChanged || snapshot.info != const DesktopSessionRuntimeInfo()) {
         _emit(ActiveChatEvent.sessionInfo);
@@ -3858,6 +6377,35 @@ class ActiveChat {
   Future<DesktopCommandDispatch> compressDesktopSession({
     String focusTopic = '',
   }) async {
+    try {
+      _bindTombstonesToDurableIds(
+        messages,
+        incomingTranscriptComplete: _transcriptIsComplete,
+      );
+      if (_cancelledTurnTombstones.any(
+        (tombstone) => !tombstone.invalidated && !tombstone.hasTargetIdentity,
+      )) {
+        final completeTranscript = await _loadStoredMessages(
+          _storedSessionProfile,
+        );
+        _bindTombstonesToDurableIds(
+          _normalizedNewestFirst(completeTranscript),
+          incomingTranscriptComplete: true,
+        );
+      }
+      if (_cancelledTurnTombstones.any(
+        (tombstone) => !tombstone.invalidated && !tombstone.hasTargetIdentity,
+      )) {
+        throw StateError('cancelled turn identity is still ambiguous');
+      }
+      await _flushPendingCancelledTombstoneUpdates();
+    } catch (_) {
+      throw const TuiGatewayRpcError(
+        'session.compress',
+        'Cancelled turn metadata is not durable yet',
+        code: 4009,
+      );
+    }
     if (connection.readOnly) {
       throw const TuiGatewayRpcError(
         'session.compress',
@@ -3897,6 +6445,15 @@ class ActiveChat {
     _emit(ActiveChatEvent.sessionInfo);
     final connectionEpoch = _desktopBindEpoch;
     final sessionEpoch = _desktopSessionEpoch;
+    final compressionMessageLoadEpoch = _messageLoadEpoch;
+    final compressionTombstoneRevision = _cancelledTombstoneRevision;
+    bool compressionFenceStillValid() =>
+        !_disposed &&
+        _desktopRuntimeSessionId == runtimeId &&
+        sessionEpoch == _desktopSessionEpoch &&
+        connectionEpoch == _desktopBindEpoch &&
+        compressionMessageLoadEpoch == _messageLoadEpoch &&
+        compressionTombstoneRevision == _cancelledTombstoneRevision;
     try {
       if (gateway case final HermesDesktopCompressionGateway nativeGateway) {
         try {
@@ -3911,17 +6468,26 @@ class ActiveChat {
             connectionEpoch: connectionEpoch,
             sessionEpoch: sessionEpoch,
           );
-          if (!_disposed &&
-              _desktopRuntimeSessionId == runtimeId &&
-              sessionEpoch == _desktopSessionEpoch &&
-              connectionEpoch == _desktopBindEpoch) {
-            _applyNativeCompressionResult(compression, runtimeId);
+          if (compressionFenceStillValid()) {
+            await _applyNativeCompressionResult(
+              compression,
+              runtimeId,
+              expectedMessageLoadEpoch: compressionMessageLoadEpoch,
+              expectedTombstoneRevision: compressionTombstoneRevision,
+            );
           }
           return result;
         } on TuiGatewayRpcError catch (error) {
           // No se reintenta un timeout ni un fallo remoto ambiguo: solo la
           // ausencia inequívoca del método habilita la compatibilidad antigua.
           if (error.code != -32601) rethrow;
+          if (!compressionFenceStillValid()) {
+            throw const TuiGatewayRpcError(
+              'session.compress',
+              'Session changed while compression fallback was pending',
+              code: 4009,
+            );
+          }
         }
       }
 
@@ -3940,11 +6506,9 @@ class ActiveChat {
             focusTopic: focusTopic,
             connectionEpoch: connectionEpoch,
             sessionEpoch: sessionEpoch,
+            fallbackStillValid: compressionFenceStillValid,
           );
-      if (_disposed ||
-          _desktopRuntimeSessionId != runtimeId ||
-          sessionEpoch != _desktopSessionEpoch ||
-          connectionEpoch != _desktopBindEpoch) {
+      if (!compressionFenceStillValid()) {
         return result;
       }
       if (result.accepted != DesktopCommandAcceptance.accepted) return result;
@@ -3952,6 +6516,8 @@ class ActiveChat {
       final reconciled = await _reconcileCompressionSnapshot(
         runtimeId,
         sessionEpoch,
+        expectedMessageLoadEpoch: compressionMessageLoadEpoch,
+        expectedTombstoneRevision: compressionTombstoneRevision,
       );
       if (reconciled) return result;
       return DesktopCommandDispatch(
@@ -4012,12 +6578,45 @@ class ActiveChat {
     );
   }
 
-  void _applyNativeCompressionResult(
+  Future<void> _applyNativeCompressionResult(
     DesktopCompressionResult compression,
-    String runtimeId,
-  ) {
-    _messageLoadEpoch += 1;
+    String runtimeId, {
+    required int expectedMessageLoadEpoch,
+    required int expectedTombstoneRevision,
+  }) async {
+    if (_disposed ||
+        expectedMessageLoadEpoch != _messageLoadEpoch ||
+        expectedTombstoneRevision != _cancelledTombstoneRevision) {
+      return;
+    }
+    final compressionMessageLoadEpoch = ++_messageLoadEpoch;
+    final expectedSessionEpoch = _desktopSessionEpoch;
+    final expectedBindEpoch = _desktopBindEpoch;
     final compressedStoredId = compression.info.storedSessionId?.trim();
+    final nextStoredId =
+        compressedStoredId != null && compressedStoredId.isNotEmpty
+        ? compressedStoredId
+        : _desktopStoredSessionId ?? serverSessionId;
+    final snapshot = DesktopSessionSnapshot(
+      runtimeSessionId: runtimeId,
+      storedSessionId: nextStoredId,
+      created: false,
+      messages: compression.messages,
+      messagesProvided: true,
+      messageCount: compression.afterMessages,
+      running: false,
+      status: compression.status,
+      info: compression.info,
+    );
+    final projection = const DesktopSessionReconciler().project(snapshot);
+    if (_disposed ||
+        compressionMessageLoadEpoch != _messageLoadEpoch ||
+        expectedTombstoneRevision != _cancelledTombstoneRevision ||
+        expectedSessionEpoch != _desktopSessionEpoch ||
+        expectedBindEpoch != _desktopBindEpoch ||
+        _desktopRuntimeSessionId != runtimeId) {
+      return;
+    }
     if (compressedStoredId != null && compressedStoredId.isNotEmpty) {
       final storedIdentityChanged =
           compressedStoredId != _desktopStoredSessionId;
@@ -4028,72 +6627,84 @@ class ActiveChat {
       compression.messages,
       logicalSessionId: logicalSessionId,
     );
-    final snapshot = DesktopSessionSnapshot(
-      runtimeSessionId: runtimeId,
-      storedSessionId: _desktopStoredSessionId ?? serverSessionId,
-      created: false,
-      messages: compression.messages,
-      messagesProvided: true,
-      messageCount: compression.afterMessages,
-      running: false,
-      status: compression.status,
-      info: compression.info,
+    _markTranscriptComplete(
+      visibleCount: projection.messagesNewestFirst.length,
     );
-    final projection = const DesktopSessionReconciler().project(snapshot);
     messages = _applyCancelledTurnTombstones(
       _associateGeneratedImagesNewestFirst(
-        projection.messagesNewestFirst
-            .map(Map<String, dynamic>.from)
-            .toList(growable: true),
+        _sanitizeDesktopFailureProjection(
+          projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+        ),
       ),
+      incomingTranscriptComplete: true,
     );
     _steerRecords.clear();
     messagesLoaded = true;
     _desktopRuntimeInfo = compression.info;
     _desktopTurnStartedAt = null;
     _observeSessionConfigInfo(compression.info);
+    _reconcileSubagentsFromTranscript();
     _emit(ActiveChatEvent.messagesHydrated);
     _emit(ActiveChatEvent.sessionInfo);
   }
 
   Future<bool> _reconcileCompressionSnapshot(
     String expectedRuntimeId,
-    int expectedSessionEpoch,
-  ) async {
+    int expectedSessionEpoch, {
+    required int expectedMessageLoadEpoch,
+    required int expectedTombstoneRevision,
+  }) async {
     final gateway = _desktopGateway;
     if (gateway is! HermesDesktopSessionLifecycleGateway) return false;
     final durableId = _desktopStoredSessionId ?? serverSessionId;
+    final expectedBindEpoch = _desktopBindEpoch;
     try {
       final snapshot = await (gateway as HermesDesktopSessionLifecycleGateway)
           .resumeExisting(durableId, profile: _storedSessionProfile);
       if (_disposed ||
+          expectedMessageLoadEpoch != _messageLoadEpoch ||
+          expectedTombstoneRevision != _cancelledTombstoneRevision ||
+          expectedBindEpoch != _desktopBindEpoch ||
           expectedSessionEpoch != _desktopSessionEpoch ||
           _desktopRuntimeSessionId != expectedRuntimeId) {
         return false;
       }
-      _messageLoadEpoch += 1;
-      if (snapshot.messagesProvided) {
-        _captureArtifactMessages(
-          snapshot.messages,
-          logicalSessionId: logicalSessionId,
-        );
-        final projection = const DesktopSessionReconciler().project(snapshot);
-        messages = _applyCancelledTurnTombstones(
-          _associateGeneratedImagesNewestFirst(
-            projection.messagesNewestFirst
-                .map(Map<String, dynamic>.from)
-                .toList(growable: true),
-          ),
-        );
-        _steerRecords.clear();
-        messagesLoaded = true;
+      final snapshotTranscriptComplete = _desktopSnapshotTranscriptIsComplete(
+        snapshot,
+      );
+      if (!snapshotTranscriptComplete) return false;
+      final compressionMessageLoadEpoch = ++_messageLoadEpoch;
+      final projection = const DesktopSessionReconciler().project(snapshot);
+      if (_disposed ||
+          compressionMessageLoadEpoch != _messageLoadEpoch ||
+          expectedTombstoneRevision != _cancelledTombstoneRevision ||
+          expectedBindEpoch != _desktopBindEpoch ||
+          expectedSessionEpoch != _desktopSessionEpoch ||
+          _desktopRuntimeSessionId != expectedRuntimeId) {
+        return false;
       }
+      _captureArtifactMessages(
+        snapshot.messages,
+        logicalSessionId: logicalSessionId,
+      );
+      _recordDesktopSnapshotTranscript(snapshot);
+      messages = _applyCancelledTurnTombstones(
+        _associateGeneratedImagesNewestFirst(
+          projection.messagesNewestFirst
+              .map(Map<String, dynamic>.from)
+              .toList(growable: true),
+        ),
+        incomingTranscriptComplete: true,
+      );
+      _steerRecords.clear();
+      messagesLoaded = true;
       _desktopStoredSessionId = snapshot.storedSessionId;
       _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
       _desktopRuntimeInfo = snapshot.info;
       _rememberDesktopLiveStatus(snapshot.status, running: snapshot.running);
       _desktopTurnStartedAt = null;
       _observeSessionConfigInfo(snapshot.info);
+      _reconcileSubagentsFromTranscript();
       _emit(ActiveChatEvent.sessionInfo);
       return true;
     } on TuiGatewayRpcError catch (error) {
@@ -4274,7 +6885,7 @@ class ActiveChat {
   /// Reanuda una sesión durable sin permitir creación implícita en gateways
   /// modernos. Gateways legacy conservan su contrato anterior hasta que puedan
   /// anunciar [HermesDesktopSessionLifecycleGateway].
-  Future<DesktopSessionBinding> _resumeDesktopSessionForRecovery(
+  Future<DesktopSessionSnapshot> _resumeDesktopSessionForRecovery(
     HermesDesktopGateway gateway,
     String storedSessionId, {
     required String profile,
@@ -4285,23 +6896,14 @@ class ActiveChat {
         gateway is HermesDesktopRecoverySessionLifecycleGateway) {
       final recoveryGateway =
           gateway as HermesDesktopRecoverySessionLifecycleGateway;
-      final snapshot = await recoveryGateway.resumeExistingForRecovery(
+      return recoveryGateway.resumeExistingForRecovery(
         storedSessionId,
         profile: profile,
       );
-      return snapshot is DesktopSessionBinding
-          ? snapshot
-          : DesktopSessionBinding.fromSnapshot(snapshot);
     }
     if (gateway is HermesDesktopSessionLifecycleGateway) {
       final lifecycleGateway = gateway as HermesDesktopSessionLifecycleGateway;
-      final snapshot = await lifecycleGateway.resumeExisting(
-        storedSessionId,
-        profile: profile,
-      );
-      return snapshot is DesktopSessionBinding
-          ? snapshot
-          : DesktopSessionBinding.fromSnapshot(snapshot);
+      return lifecycleGateway.resumeExisting(storedSessionId, profile: profile);
     }
     return gateway.resumeSession(
       storedSessionId,
@@ -4988,7 +7590,7 @@ class ActiveChat {
         _usingDesktopGateway = false;
         _retireDesktopRuntime();
         if (interruptedActiveTurn) {
-          unawaited(_recoverDesktopTurn(gateway, _turnEpoch, error));
+          _scheduleDesktopTurnRecovery(gateway, _turnEpoch, error);
         }
       },
     );
@@ -5194,6 +7796,26 @@ class ActiveChat {
     }
   }
 
+  void _scheduleDesktopTurnRecovery(
+    HermesDesktopGateway gateway,
+    int turnEpoch,
+    Object originalError,
+  ) {
+    if (!_canRecoverTurn(turnEpoch) ||
+        _recoveringDesktopTurnEpoch == turnEpoch) {
+      return;
+    }
+    late final Future<void> recovery;
+    recovery = _recoverDesktopTurn(gateway, turnEpoch, originalError)
+        .whenComplete(() {
+          if (identical(_desktopTurnRecovery, recovery)) {
+            _desktopTurnRecovery = null;
+          }
+        });
+    _desktopTurnRecovery = recovery;
+    unawaited(recovery);
+  }
+
   Future<void> _recoverDesktopTurn(
     HermesDesktopGateway gateway,
     int turnEpoch,
@@ -5213,7 +7835,16 @@ class ActiveChat {
           ? gateway as HermesDesktopIdempotentGateway
           : null;
       if (delivery == null || idempotentGateway == null) {
-        await _recoverTurnFromTranscript(turnEpoch, originalError);
+        if (gateway is! HermesDesktopSessionLifecycleGateway &&
+            gateway is! HermesDesktopRecoverySessionLifecycleGateway) {
+          await _recoverTurnFromTranscript(turnEpoch, originalError);
+          return;
+        }
+        await _recoverDesktopTurnFromSnapshot(
+          gateway,
+          turnEpoch,
+          originalError,
+        );
         return;
       }
       final canUseIdempotency = await _canUseTurnIdempotency(gateway);
@@ -5320,13 +7951,305 @@ class ActiveChat {
         }
       }
       if (_canRecoverTurn(turnEpoch)) {
-        _failRun('No se pudo reanudar el turno: $lastError');
+        debugPrint(activeChatDesktopRecoveryDiagnostic(lastError));
+        _failRun(activeChatDesktopRecoveryUiMessage(lastError));
       }
     } finally {
       if (_recoveringDesktopTurnEpoch == turnEpoch) {
         _recoveringDesktopTurnEpoch = null;
       }
     }
+  }
+
+  Future<void> _recoverDesktopTurnFromSnapshot(
+    HermesDesktopGateway gateway,
+    int turnEpoch,
+    Object originalError,
+  ) async {
+    final epochInvalidated = _turnEpochInvalidated.future;
+    final delays = _desktopRecoveryBackoff;
+    var attempt = 0;
+    Object lastError = originalError;
+    while (_canRecoverTurn(turnEpoch)) {
+      final delay = delays[attempt.clamp(0, delays.length - 1)];
+      attempt++;
+      if (delay > Duration.zero) {
+        final elapsed = await _waitForTerminalReconcileDelay(
+          delay,
+          epochInvalidated,
+        );
+        if (!elapsed || !_canRecoverTurn(turnEpoch)) return;
+      }
+      try {
+        final connected = await _desktopRecoveryOperationBeforeDeadline(
+          gateway.connect().then((_) => true),
+          epochInvalidated,
+        );
+        if (connected == null || !_canRecoverTurn(turnEpoch)) return;
+        final snapshot = await _desktopRecoveryOperationBeforeDeadline(
+          _resumeDesktopSessionForRecovery(
+            gateway,
+            _desktopStoredSessionId ?? serverSessionId,
+            profile: _turnProfile,
+            legacyModel: _lastModel,
+            deferRuntimeCommit: true,
+          ),
+          epochInvalidated,
+        );
+        if (snapshot == null || !_canRecoverTurn(turnEpoch)) return;
+        if (snapshot is DesktopSessionBinding) {
+          await _recoverTurnFromTranscript(turnEpoch, originalError);
+          return;
+        }
+        _commitDesktopRecoveryRuntime(gateway, snapshot.runtimeSessionId);
+        _applyDesktopRecoverySnapshot(snapshot, turnEpoch);
+        return;
+      } catch (error) {
+        if (!_canRecoverTurn(turnEpoch)) return;
+        lastError = error;
+        if (_isTerminalDesktopRecoveryError(error)) break;
+      }
+    }
+    if (_canRecoverTurn(turnEpoch)) {
+      debugPrint(activeChatDesktopRecoveryDiagnostic(lastError));
+      _failRun(activeChatDesktopRecoveryUiMessage(lastError));
+    }
+  }
+
+  void _applyDesktopRecoverySnapshot(
+    DesktopSessionSnapshot snapshot,
+    int turnEpoch,
+  ) {
+    if (!_canRecoverTurn(turnEpoch)) return;
+    // Recovery is a newer authoritative publication than any refresh that was
+    // already in flight when the socket dropped.
+    _messageLoadEpoch += 1;
+    // Recovery puede recibir el mismo ack diferido que la apertura normal.
+    // Sin un REST fresco que demuestre cobertura completa, conserva el
+    // fallback visible pero deja armado el refetch al llegar `complete`.
+    _desktopHistoryHydrating = snapshot.hydrating;
+    _desktopHistoryNeedsHydration = snapshot.hydrating;
+    if (snapshot.hydrating) _desktopHydrationOutcome = null;
+    const reconciler = DesktopSessionReconciler();
+    final snapshotTranscriptComplete = _desktopSnapshotTranscriptIsComplete(
+      snapshot,
+    );
+    final preferFallback =
+        messages.isNotEmpty &&
+        (!snapshotTranscriptComplete || snapshot.messages.isEmpty);
+    final terminalSnapshot = !snapshot.running && snapshot.inflight == null;
+    final persistedTail = snapshot.messagesProvided
+        ? reconciler
+              .project(_withoutLiveDesktopProjection(snapshot))
+              .messagesNewestFirst
+        : const <Map<String, dynamic>>[];
+    final terminalTailCompletesCurrentTurn =
+        terminalSnapshot &&
+        _partialTerminalTailCompletesCurrentTurn(persistedTail);
+    final terminalSnapshotNeedsProof =
+        preferFallback &&
+        terminalSnapshot &&
+        (!snapshotTranscriptComplete || snapshot.messages.isEmpty);
+    if (terminalSnapshotNeedsProof && !terminalTailCompletesCurrentTurn) {
+      // A terminal status does not prove that a partial message window covers
+      // this turn. Keep the visible prompt/partial intact and fall back to a
+      // full transcript read; otherwise an assistant-only page could delete
+      // the prompt or an old tool row could falsely seal the run.
+      if (snapshot.messagesProvided) {
+        _captureArtifactMessages(
+          snapshot.messages,
+          logicalSessionId: logicalSessionId,
+        );
+      }
+      _recordDesktopSnapshotTranscript(snapshot, preserveVisibleFallback: true);
+      _desktopStoredSessionId = snapshot.storedSessionId;
+      _rebaseSubagentActivityScope(snapshot.runtimeSessionId);
+      _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
+      _reconcileSubagentsFromTranscript();
+      _desktopStoredSessionKnownMissing = false;
+      _desktopRuntimeInfo = snapshot.info;
+      _rememberDesktopLiveStatus(snapshot.status, running: false);
+      _desktopStartedAt = snapshot.startedAt;
+      _desktopTurnStartedAt = null;
+      _replaceDesktopAcceptedQueue(snapshot.queued?.user);
+      _restorePendingClarify(snapshot);
+      _usingDesktopGateway = true;
+      state = ChatPipelineState.connecting;
+      _emit(ActiveChatEvent.waiting);
+      unawaited(
+        _recoverTurnFromTranscript(
+          turnEpoch,
+          StateError('terminal recovery snapshot did not cover current turn'),
+        ),
+      );
+      return;
+    }
+    var rawFallback = messages;
+    _RefreshedTranscriptGraft? acceptedTerminalTail;
+    if (preferFallback &&
+        snapshot.messagesProvided &&
+        snapshot.messages.isNotEmpty &&
+        !snapshot.running &&
+        snapshot.inflight == null) {
+      // A terminal recovery snapshot may expose only the newest durable page.
+      // It is still authoritative for that tail: merge it by stable IDs and
+      // discard the superseded synthetic inflight rows before sealing the run.
+      // Older visible coverage is retained only when the graft can prove its
+      // position; content equality is never used as identity.
+      final durableFallback = messages
+          .where(
+            (message) =>
+                message['_desktopSnapshotKind'] != 'inflight' &&
+                message['_pipeline'] != true &&
+                message['_optimistic'] != true,
+          )
+          .toList(growable: false);
+      final graft = _graftRefreshedTail(
+        persistedTail,
+        durableFallback,
+        refreshedTranscriptComplete: false,
+      );
+      if (graft.acceptedRefreshed) {
+        acceptedTerminalTail = graft;
+        rawFallback = _preserveLocalAssistantErrors(graft.messages, messages);
+      }
+    }
+    final fallback = preferFallback && snapshot.messagesProvided
+        ? reconciler.overlayDurableDisplayMetadata(
+            rawFallback,
+            snapshot.messages,
+          )
+        : messages;
+    final projectionSource = preferFallback
+        ? _withoutPersistedMessages(snapshot)
+        : snapshot;
+    final projection = reconciler.project(
+      projectionSource,
+      fallbackNewestFirst: fallback,
+    );
+    if (snapshot.messagesProvided) {
+      _captureArtifactMessages(
+        snapshot.messages,
+        logicalSessionId: logicalSessionId,
+      );
+      if (preferFallback &&
+          (!snapshotTranscriptComplete || snapshot.messages.isEmpty)) {
+        final terminalTail = acceptedTerminalTail;
+        _recordDesktopSnapshotTranscript(
+          snapshot,
+          preserveVisibleFallback:
+              terminalTail == null || terminalTail.preservesExistingCoverage,
+        );
+        if (terminalTail != null) {
+          _commitRefreshedTailEvidence(persistedTail, terminalTail);
+        }
+      }
+    } else {
+      final announcedCount = snapshot.messageCount;
+      final durableFallbackCount = _durableTranscriptCoverageCount(messages);
+      final fallbackCoverageIsInsufficient =
+          announcedCount == null ||
+          durableFallbackCount == null ||
+          announcedCount != durableFallbackCount;
+      if (!preferFallback ||
+          fallbackCoverageIsInsufficient ||
+          _desktopHistoryNeedsHydration) {
+        _recordDesktopSnapshotTranscript(
+          snapshot,
+          preserveVisibleFallback: preferFallback,
+        );
+      }
+    }
+    final incomingTranscriptComplete = preferFallback
+        ? _transcriptIsComplete
+        : snapshotTranscriptComplete;
+    messages = _applyCancelledTurnTombstones(
+      _associateGeneratedImagesNewestFirst(
+        _sanitizeDesktopFailureProjection(
+          projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+        ),
+      ),
+      incomingTranscriptComplete: incomingTranscriptComplete,
+    );
+    if (snapshot.messagesProvided && !preferFallback) {
+      _recordDesktopSnapshotTranscript(snapshot);
+    }
+    _mergeSteerRecords();
+    _desktopStoredSessionId = snapshot.storedSessionId;
+    _rebaseSubagentActivityScope(snapshot.runtimeSessionId);
+    _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
+    _reconcileSubagentsFromTranscript();
+    _desktopStoredSessionKnownMissing = false;
+    _desktopRuntimeInfo = snapshot.info;
+    _rememberDesktopLiveStatus(projection.status, running: projection.running);
+    _desktopStartedAt = snapshot.startedAt;
+    _desktopTurnStartedAt = projection.running
+        ? snapshot.resolvedTurnStartedAt
+        : null;
+    _replaceDesktopAcceptedQueue(projection.queuedUser);
+    _restorePendingClarify(snapshot);
+
+    if (projection.failed) {
+      _sealRecoveredLiveActivity(completed: false);
+      final failure =
+          snapshot.inflight?.error ??
+          StateError('desktop recovery snapshot reported failure');
+      debugPrint(activeChatDesktopRecoveryDiagnostic(failure));
+      _failRun(
+        activeChatDesktopSnapshotFailureUiMessage(snapshot.inflight?.error),
+      );
+      return;
+    }
+    if (projection.running) {
+      _usingDesktopGateway = true;
+      state = snapshot.inflight?.assistant?.isNotEmpty == true
+          ? ChatPipelineState.streaming
+          : ChatPipelineState.executing;
+      _emit(ActiveChatEvent.toolProgress);
+      return;
+    }
+
+    _usingDesktopGateway = true;
+    _sealRecoveredLiveActivity(completed: true);
+    final finalText = _latestTurnAssistantText(
+      projection.messagesNewestFirst.reversed.toList(growable: false),
+      projection.messagesNewestFirst.where(isRealUserTurn).length,
+    );
+    unawaited(_completeRun(finalOutput: finalText));
+  }
+
+  void _sealRecoveredLiveActivity({required bool completed}) {
+    for (final event in trace) {
+      if (!event.isDone && !event.isFailed) {
+        event.status = completed ? 'completed' : 'interrupted';
+      }
+    }
+    final current = _subagentActivities;
+    if (current == null) return;
+    final entries = <SubagentActivityKey, SubagentActivity>{};
+    for (final entry in current.entries.entries) {
+      final activity = entry.value;
+      entries[entry.key] = activity.isTerminal
+          ? activity
+          : SubagentActivity(
+              key: activity.key,
+              source: activity.source,
+              phase: completed
+                  ? SubagentActivityPhase.completed
+                  : SubagentActivityPhase.cancelled,
+              details: activity.details,
+              subagentId: activity.subagentId,
+              delegationId: activity.delegationId,
+              childSessionId: activity.childSessionId,
+              legacyToolCallId: activity.legacyToolCallId,
+              eventRevision: activity.eventRevision,
+              seenEventIds: activity.seenEventIds,
+            );
+    }
+    _subagentActivities = SubagentActivityState.withEntries(
+      current.scope,
+      entries,
+    );
   }
 
   /// Recuperación cuando el gateway NO soporta idempotencia de turno (no se
@@ -5342,6 +8265,7 @@ class ActiveChat {
     int turnEpoch,
     Object originalError,
   ) async {
+    final messageLoadEpoch = _messageLoadEpoch;
     final expectedUsers = messages.where(isRealUserTurn).length;
     final epochInvalidated = _turnEpochInvalidated.future;
     const delays = <Duration>[
@@ -5354,18 +8278,28 @@ class ActiveChat {
       Duration(seconds: 8),
     ];
     for (final delay in delays) {
-      if (!_canRecoverTurn(turnEpoch)) return;
+      if (!_canRecoverTurn(turnEpoch) ||
+          messageLoadEpoch != _messageLoadEpoch) {
+        return;
+      }
       if (delay > Duration.zero) {
         final elapsed = await _waitForTerminalReconcileDelay(
           delay,
           epochInvalidated,
         );
-        if (!elapsed || !_canRecoverTurn(turnEpoch)) return;
+        if (!elapsed ||
+            !_canRecoverTurn(turnEpoch) ||
+            messageLoadEpoch != _messageLoadEpoch) {
+          return;
+        }
       }
       try {
         final transcript = await _loadStoredMessages(_storedSessionProfile);
-        if (!_canRecoverTurn(turnEpoch)) return;
-        if (_containsCompletedTurn(transcript, expectedUsers)) {
+        if (!_canRecoverTurn(turnEpoch) ||
+            messageLoadEpoch != _messageLoadEpoch) {
+          return;
+        }
+        if (_containsDurableFinalAssistantTurn(transcript, expectedUsers)) {
           await _completeRun();
           return;
         }
@@ -5380,10 +8314,9 @@ class ActiveChat {
         );
       }
     }
-    if (_canRecoverTurn(turnEpoch)) {
-      // Sin respuesta recuperable en el servidor: propagar el error original
-      // (la capa de presentación lo muestra legible), como antes de este fix.
-      _failRun(originalError.toString());
+    if (_canRecoverTurn(turnEpoch) && messageLoadEpoch == _messageLoadEpoch) {
+      debugPrint(activeChatDesktopRecoveryDiagnostic(originalError));
+      _failRun(activeChatDesktopRecoveryUiMessage(originalError));
     }
   }
 
@@ -5415,8 +8348,69 @@ class ActiveChat {
     return null;
   }
 
+  bool _partialTerminalTailCompletesCurrentTurn(
+    List<Map<String, dynamic>> tailNewestFirst,
+  ) {
+    TranscriptMessageIdentity? currentUserIdentity;
+    for (final message in messages) {
+      if (!isRealUserTurn(message)) continue;
+      currentUserIdentity = _transcriptMessageIdentity(message);
+      break;
+    }
+    if (currentUserIdentity == null || tailNewestFirst.isEmpty) return false;
+
+    final chronological = tailNewestFirst.reversed.toList(growable: false);
+    final user = _resolveTranscriptIdentity(
+      chronological,
+      messageId: currentUserIdentity.messageId,
+      rowId: currentUserIdentity.rowId,
+      accepts: isRealUserTurn,
+    );
+    final userIndex = user.kind == _TranscriptIdentityResolutionKind.unique
+        ? user.index
+        : -1;
+    if (userIndex < 0) return false;
+    for (var index = chronological.length - 1; index > userIndex; index--) {
+      final message = chronological[index];
+      if (message['role'] != 'assistant') continue;
+      final text = (message['content'] as String? ?? '').trim();
+      final toolCalls = message['tool_calls'];
+      if (text.isNotEmpty && (toolCalls is! List || toolCalls.isEmpty)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _containsDurableFinalAssistantTurn(
+    List<Map<String, dynamic>> chronological,
+    int expectedUsers,
+  ) {
+    var userCount = 0;
+    var latestUserIndex = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (!isRealUserTurn(chronological[index])) continue;
+      userCount++;
+      latestUserIndex = index;
+    }
+    if (userCount < expectedUsers || latestUserIndex < 0) return false;
+    for (
+      var index = chronological.length - 1;
+      index > latestUserIndex;
+      index--
+    ) {
+      final message = chronological[index];
+      if (message['role'] != 'assistant') continue;
+      final content = (message['content'] as String? ?? '').trim();
+      final toolCalls = message['tool_calls'];
+      return content.isNotEmpty && (toolCalls is! List || toolCalls.isEmpty);
+    }
+    return false;
+  }
+
   void _scheduleTerminalTranscriptRecovery(
     int completingEpoch, {
+    required int messageLoadEpoch,
     required bool requireAssistantText,
   }) {
     if (_terminalTranscriptRecoveryEpoch == completingEpoch &&
@@ -5431,6 +8425,7 @@ class ActiveChat {
           if (!_isCurrentEpoch(completingEpoch)) return;
           await _recoverTerminalTranscriptLate(
             completingEpoch,
+            messageLoadEpoch: messageLoadEpoch,
             requireAssistantText: requireAssistantText,
           );
         }().whenComplete(() {
@@ -5450,6 +8445,7 @@ class ActiveChat {
   /// proyección local cuando el transcript contiene el turno completo.
   Future<void> _recoverTerminalTranscriptLate(
     int completingEpoch, {
+    required int messageLoadEpoch,
     required bool requireAssistantText,
   }) async {
     final expectedUsers = messages.where(isRealUserTurn).length;
@@ -5476,17 +8472,27 @@ class ActiveChat {
             Duration(milliseconds: 400),
           ];
     for (final delay in delays) {
-      if (!_isCurrentEpoch(completingEpoch)) return;
+      if (!_isCurrentEpoch(completingEpoch) ||
+          messageLoadEpoch != _messageLoadEpoch) {
+        return;
+      }
       if (requireAssistantText && assistantContent.trim().isNotEmpty) return;
       final elapsed = await _waitForTerminalReconcileDelay(
         delay,
         epochInvalidated,
       );
-      if (!elapsed || !_isCurrentEpoch(completingEpoch)) return;
+      if (!elapsed ||
+          !_isCurrentEpoch(completingEpoch) ||
+          messageLoadEpoch != _messageLoadEpoch) {
+        return;
+      }
       if (requireAssistantText && assistantContent.trim().isNotEmpty) return;
       try {
         final transcript = await _loadStoredMessages(_storedSessionProfile);
-        if (!_isCurrentEpoch(completingEpoch)) return;
+        if (!_isCurrentEpoch(completingEpoch) ||
+            messageLoadEpoch != _messageLoadEpoch) {
+          return;
+        }
         final ready = requireAssistantText
             ? _latestTurnAssistantText(transcript, expectedUsers) != null
             : _terminalTranscriptCanReplaceVisibleProjection(
@@ -5495,12 +8501,20 @@ class ActiveChat {
               );
         if (ready) {
           _captureArtifactMaps(transcript, logicalSessionId: logicalSessionId);
+          final fencedTranscript = _carryNewestTerminalFence(
+            messages,
+            _normalizedNewestFirst(transcript),
+            candidateTranscriptComplete: true,
+          );
           messages = projectCancelledTurnTombstones(
             existingNewestFirst: messages,
-            incomingNewestFirst: _normalizedNewestFirst(transcript),
+            incomingNewestFirst: fencedTranscript,
             durableTombstones: _cancelledTurnTombstones,
+            incomingTranscriptComplete: true,
           );
+          _markTranscriptComplete(visibleCount: messages.length);
           _mergeSteerRecords();
+          _reconcileSubagentsFromTranscript();
           _emit(ActiveChatEvent.done);
           return;
         }
@@ -5993,10 +9007,44 @@ class ActiveChat {
   SubagentActivityScope _subagentScope(String runtimeId) =>
       SubagentActivityScope(
         connectionId: connection.id,
+        profile: _storedSessionProfile,
         parentSessionId: serverSessionId,
         runtimeSessionId: runtimeId,
         turnEpoch: _turnEpoch,
       );
+
+  void _reconcileSubagentsFromTranscript() {
+    final runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null || runtimeId.trim().isEmpty || messages.isEmpty) {
+      return;
+    }
+    final before = _subagentActivities;
+    final projection = projectSubagentsFromTranscript(
+      messagesNewestFirst: messages,
+      scope: _subagentScope(runtimeId),
+      current: before,
+      currentTurnAnchor: _subagentTranscriptTurnAnchor,
+    );
+    final anchor = projection.turnAnchor;
+    if (anchor == null) return;
+    _subagentTranscriptTurnAnchor = anchor;
+    _subagentActivities = projection.state;
+    if (!identical(before, projection.state)) {
+      _emit(ActiveChatEvent.subagentActivity);
+    }
+  }
+
+  void _rebaseSubagentActivityScope(String runtimeId) {
+    final current = _subagentActivities;
+    if (current == null) return;
+    final recoveredScope = _subagentScope(runtimeId);
+    if (current.scope == recoveredScope) return;
+    if (current.scope.durableLineageKey != recoveredScope.durableLineageKey) {
+      return;
+    }
+    _subagentActivities = current.rebaseScope(recoveredScope);
+    _pendingSubagentInterrupts.clear();
+  }
 
   void _handleNativeSubagentEvent(
     String type,
@@ -6017,14 +9065,19 @@ class ActiveChat {
     String runtimeId,
     Map<String, dynamic> payload,
   ) {
+    final toolName = (payload['name'] ?? payload['tool'])?.toString();
+    final toolCallId =
+        (payload['tool_id'] ??
+                payload['tool_call_id'] ??
+                payload['call_id'] ??
+                payload['id'])
+            ?.toString();
     final event = SubagentActivityEvent.tryParseLegacyDelegateTool(
       type: type,
       scope: _subagentScope(runtimeId),
       payload: payload,
-      toolName: (payload['name'] ?? payload['tool'])?.toString(),
-      toolCallId:
-          (payload['tool_call_id'] ?? payload['call_id'] ?? payload['id'])
-              ?.toString(),
+      toolName: toolName,
+      toolCallId: toolCallId,
     );
     if (event != null) _reduceSubagentActivity(event);
   }
@@ -6063,9 +9116,8 @@ class ActiveChat {
 
   void _reduceSubagentActivity(SubagentActivityEvent event) {
     final current = _subagentActivities;
-    final scoped = current == null || current.scope != event.scope
-        ? SubagentActivityState.empty(event.scope)
-        : current;
+    if (current != null && current.scope != event.scope) return;
+    final scoped = current ?? SubagentActivityState.empty(event.scope);
     final next = SubagentActivityReducer.reduce(scoped, event);
     if (identical(next, scoped)) return;
     _subagentActivities = next;
@@ -6705,7 +9757,7 @@ class ActiveChat {
         client.close();
       }
       if (_turnEpoch != turnEpoch || _runTerminal) return;
-      if (hasPendingDurableCancellation) {
+      if (_hasPendingActiveTurnCancellation) {
         try {
           await (_durableCancelFlight ?? _cancelledTurnPersistence);
         } catch (_) {
@@ -6713,6 +9765,7 @@ class ActiveChat {
         }
         return;
       }
+      if (!await _settleTombstoneMetadataBeforeTerminal(turnEpoch)) return;
       _observeFirstResponseContent(text);
       _runTerminal = true;
       text = text.trim();
@@ -6721,16 +9774,18 @@ class ActiveChat {
       }
       state = ChatPipelineState.completed;
       traceActive = false;
-      if (text.isNotEmpty && _shouldNotifyReplies) {
-        _notifications?.replyReady(
-          preview: text.length > 140 ? '${text.substring(0, 140)}…' : text,
-          instance: connection.label,
-          session: sessionTitle.isNotEmpty ? sessionTitle : sessionId,
-          connId: connection.id,
-          sessionId: serverSessionId,
-          surface: notificationSurface,
-          profile: sessionProfile,
-          roomId: notificationRoomId,
+      if (text.isNotEmpty && _shouldNotifyReplies && _notifications != null) {
+        await _deliverTerminalNotification(
+          () => _notifications.replyReady(
+            preview: text.length > 140 ? '${text.substring(0, 140)}…' : text,
+            instance: connection.label,
+            session: sessionTitle.isNotEmpty ? sessionTitle : sessionId,
+            connId: connection.id,
+            sessionId: serverSessionId,
+            surface: notificationSurface,
+            profile: sessionProfile,
+            roomId: notificationRoomId,
+          ),
         );
       }
       _emit(ActiveChatEvent.done);
@@ -7069,6 +10124,14 @@ class ActiveChat {
         _flushTokenBuffer();
         _handleApprovalRequest(event);
       case 'approval.responded':
+        final respondedId = _approvalRequestId(event);
+        final pendingId = _approvalRequestId(pendingApproval);
+        if (respondedId == null ||
+            pendingId == null ||
+            respondedId != pendingId) {
+          return;
+        }
+        _cancelApprovalNotification(pendingApproval!, terminal: false);
         pendingApproval = null;
         state = ChatPipelineState.executing;
         _emit(ActiveChatEvent.toolProgress);
@@ -7183,19 +10246,21 @@ class ActiveChat {
       ),
     );
 
+    final requestId = _approvalRequestId(event);
+    if (requestId == null) return;
     if (decision != null && decision.kind == ApprovalDecisionKind.autoApprove) {
       // YOLO / regla "siempre": resolver sin molestar al usuario.
-      pendingApproval = null;
+      pendingApproval = event;
       state = ChatPipelineState.executing;
       _emit(ActiveChatEvent.toolProgress);
-      resolveApproval(decision.scope!.wire);
+      _resolveApprovalRequest(decision.scope!.wire, event);
       return;
     }
     if (decision != null && decision.kind == ApprovalDecisionKind.blocked) {
       // Solo lectura: el agente no puede ejecutar; denegamos automáticamente.
-      pendingApproval = null;
+      pendingApproval = event;
       state = ChatPipelineState.executing;
-      resolveApproval(ApprovalScope.deny.wire);
+      _resolveApprovalRequest(ApprovalScope.deny.wire, event);
       return;
     }
 
@@ -7209,6 +10274,9 @@ class ActiveChat {
                 event['description'] ??
                 'una herramienta')
             .toString();
+    final approvalId = (event['request_id'] ?? event['approval_id'])
+        ?.toString()
+        .trim();
     _notifications?.approvalPending(
       tool: tool,
       instance: sessionTitle.isNotEmpty ? sessionTitle : null,
@@ -7218,6 +10286,8 @@ class ActiveChat {
       // del propio chat como si viniera de "otro chat" y oculta su acceso.
       sessionId: serverSessionId,
       sessionTitle: sessionTitle,
+      runId: _approvalRunOwner,
+      approvalId: approvalId,
       surface: notificationSurface,
       profile: sessionProfile,
       roomId: notificationRoomId,
@@ -7225,21 +10295,81 @@ class ActiveChat {
   }
 
   /// Resuelve la aprobación pendiente del run (once|session|always|deny).
-  Future<void> resolveApproval(String choice) async {
+  Future<void> resolveApproval(String choice) {
+    final approval = pendingApproval;
+    if (_approvalRequestId(approval) == null) {
+      return Future<void>.error(StateError('Approval is no longer pending'));
+    }
+    return _resolveApprovalRequest(choice, approval!);
+  }
+
+  String? _approvalRequestId(Map<String, dynamic>? approval) {
+    final value = (approval?['request_id'] ?? approval?['approval_id'])
+        ?.toString()
+        .trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  String? get _approvalRunOwner =>
+      currentRunId ?? (_usingDesktopGateway ? _desktopRuntimeSessionId : null);
+
+  void _cancelApprovalNotification(
+    Map<String, dynamic> approval, {
+    required bool terminal,
+  }) {
+    final approvalId = _approvalRequestId(approval);
+    final runId = _approvalRunOwner;
+    if (approvalId == null || runId == null) return;
+    final operation = _notifications?.cancelApproval(
+      connId: connection.id,
+      profile: sessionProfile,
+      runId: runId,
+      approvalId: approvalId,
+      terminal: terminal,
+    );
+    if (operation != null) {
+      unawaited(operation.catchError((Object _) {}));
+    }
+  }
+
+  Future<void> _resolveApprovalRequest(
+    String choice,
+    Map<String, dynamic> approval,
+  ) async {
+    final runId = _approvalRunOwner;
+    final approvalId = _approvalRequestId(approval);
+    if (approvalId == null) return;
     final desktop = _desktopGateway;
     final runtimeId = _desktopRuntimeSessionId;
     if (_usingDesktopGateway && desktop != null && runtimeId != null) {
-      await desktop.resolveApproval(runtimeId, choice);
-      pendingApproval = null;
+      await desktop.resolveApproval(runtimeId, choice, requestId: approvalId);
+      if (runId != null) {
+        await _notifications?.cancelApproval(
+          connId: connection.id,
+          profile: sessionProfile,
+          runId: runId,
+          approvalId: approvalId,
+        );
+      }
+      if (_approvalRequestId(pendingApproval) == approvalId) {
+        pendingApproval = null;
+      }
       state = ChatPipelineState.executing;
       if (!_streamingConfirmed) _armFirstTokenTimer();
       _emit(ActiveChatEvent.toolProgress);
       return;
     }
-    final runId = currentRunId;
     if (runId == null) return;
-    await _api.resolveRunApproval(runId, choice);
-    pendingApproval = null;
+    await _api.resolveRunApproval(runId, choice, requestId: approvalId);
+    await _notifications?.cancelApproval(
+      connId: connection.id,
+      profile: sessionProfile,
+      runId: runId,
+      approvalId: approvalId,
+    );
+    if (_approvalRequestId(pendingApproval) == approvalId) {
+      pendingApproval = null;
+    }
     state = ChatPipelineState.executing;
     if (!_streamingConfirmed) _armFirstTokenTimer();
     _emit(ActiveChatEvent.toolProgress);
@@ -7690,6 +10820,46 @@ class ActiveChat {
     }
   }
 
+  /// Adopta un turno iniciado fuera de Console que `session.resume` demuestra
+  /// posterior al terminal visible. No reenvía el prompt: solo abre una época
+  /// nueva para que delta/complete, recovery y subagentes no compartan las
+  /// vallas ni el timer del turno anterior.
+  void _beginExternallyObservedDesktopTurn(DesktopSessionSnapshot snapshot) {
+    _terminalTimer?.cancel();
+    _terminalTimer = null;
+    final turnEpoch = _advanceTurnEpoch();
+    // Un turno descubierto por resume no tiene un instante pre-submit
+    // observado por Console: REST puede haber publicado ya su fila actual.
+    // Resetea la procedencia y deja que solo target+timestamp o un tombstone
+    // previo acrediten Stop.
+    _captureActiveTurnTranscriptBoundary(
+      turnEpoch,
+      allowExistingTranscript: false,
+    );
+    _beginObservedResponseTiming();
+    final prompt = snapshot.inflight?.user?.trim() ?? '';
+    if (prompt.isNotEmpty) lastPrompt = prompt;
+    trace.clear();
+    _activeVoiceTools.clear();
+    traceActive = true;
+    if (pendingApproval != null) {
+      _cancelApprovalNotification(pendingApproval!, terminal: true);
+    }
+    pendingApproval = null;
+    _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
+    _pendingDesktopInterimKey = null;
+    _assistantNarration.reset();
+    currentRunId = null;
+    _runTerminal = false;
+    _streamingConfirmed =
+        snapshot.inflight?.assistant?.trim().isNotEmpty == true;
+    _cancelling = false;
+    _discardLateInterruptTerminal = false;
+    _subagentActivities = null;
+    _subagentTranscriptTurnAnchor = null;
+    _pendingSubagentInterrupts.clear();
+  }
+
   /// Cierra la proyección visible del turno anterior y prepara el siguiente que
   /// Desktop ya aceptó. El Gateway conserva la autoridad sobre su envío.
   void _beginDesktopAcceptedQueuedTurn({String? finalOutput}) {
@@ -7706,8 +10876,12 @@ class ActiveChat {
       _publishBufferedTokenBatch();
     }
     _flushTokenBuffer();
+    if (pendingApproval != null) {
+      _cancelApprovalNotification(pendingApproval!, terminal: true);
+    }
     pendingApproval = null;
     _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
+    _markCurrentTurnAwaitingTranscript();
     if (finalOutput != null &&
         messages.isNotEmpty &&
         messages.first['role'] == 'assistant') {
@@ -7724,7 +10898,13 @@ class ActiveChat {
     // turno se dispara desde su propio drenado. Solo avanzamos la proyección y
     // conservamos la suscripción; llamar a send/submitPrompt lo duplicaría.
     _messageLoadEpoch += 1;
-    _advanceTurnEpoch();
+    final turnEpoch = _advanceTurnEpoch();
+    // El turno queued ya fue aceptado antes de que llegue aquí; una lectura
+    // intermedia puede contener su user durable y no prueba que sea anterior.
+    _captureActiveTurnTranscriptBoundary(
+      turnEpoch,
+      allowExistingTranscript: false,
+    );
     _desktopAcceptedQueuedPrompt = null;
     _beginObservedResponseTiming();
     lastPrompt = queuedPrompt;
@@ -7743,6 +10923,8 @@ class ActiveChat {
     _cancelling = false;
     _discardLateInterruptTerminal = false;
     _subagentActivities = null;
+    _subagentTranscriptTurnAnchor = null;
+    _pendingSubagentInterrupts.clear();
     final acceptedOptimistic = messages
         .where((message) => message['_desktopAcceptedQueued'] == true)
         .toList(growable: false);
@@ -7767,6 +10949,13 @@ class ActiveChat {
     _emit(ActiveChatEvent.started);
   }
 
+  Future<void> _deliverTerminalNotification(
+    Future<void> Function() show,
+  ) async {
+    await _beforeTerminalNotification?.call();
+    await show();
+  }
+
   /// Cierre exitoso del turno: fija el texto final, refresca el historial real
   /// (con sus tool events para agrupar) y notifica si procede.
   Future<void> _completeRun({
@@ -7774,7 +10963,7 @@ class ActiveChat {
     bool finalOutputNarratable = true,
   }) async {
     if (_runTerminal) return;
-    if (hasPendingDurableCancellation) {
+    if (_hasPendingActiveTurnCancellation) {
       try {
         await (_durableCancelFlight ?? _cancelledTurnPersistence);
       } catch (_) {
@@ -7782,10 +10971,19 @@ class ActiveChat {
       }
       return;
     }
+    final pendingMetadataTurnEpoch = _turnEpoch;
+    if (!await _settleTombstoneMetadataBeforeTerminal(
+      pendingMetadataTurnEpoch,
+    )) {
+      return;
+    }
     _observeFirstResponseContent(finalOutput);
     _assistantNarration.settleFinal(finalOutputNarratable ? finalOutput : null);
     _clearDesktopCompactingIndicator();
     final completingEpoch = _turnEpoch;
+    // A transport terminal is newer than any refresh already in flight.
+    _messageLoadEpoch += 1;
+    final completingMessageLoadEpoch = _messageLoadEpoch;
     _runTerminal = true;
     _desktopTurnStartedAt = null;
     _firstTokenTimer?.cancel();
@@ -7796,8 +10994,12 @@ class ActiveChat {
     }
     if (!_isCurrentEpoch(completingEpoch)) return;
     _flushTokenBuffer();
+    if (pendingApproval != null) {
+      _cancelApprovalNotification(pendingApproval!, terminal: true);
+    }
     pendingApproval = null;
     _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
+    _markCurrentTurnAwaitingTranscript();
     if (finalOutput != null &&
         messages.isNotEmpty &&
         messages[0]['role'] == 'assistant') {
@@ -7814,23 +11016,29 @@ class ActiveChat {
     _finalizeAcceptedTurnDelivery();
     final transcriptReconciled = await _reconcileTerminalTranscript(
       completingEpoch,
+      completingMessageLoadEpoch,
     );
-    if (!_isCurrentEpoch(completingEpoch)) return;
+    if (!_isCurrentEpoch(completingEpoch) ||
+        completingMessageLoadEpoch != _messageLoadEpoch) {
+      return;
+    }
     state = ChatPipelineState.completed;
     traceActive = false;
     final content = assistantContent.trim();
-    if (content.isNotEmpty && _shouldNotifyReplies) {
-      _notifications?.replyReady(
-        preview: content.length > 140
-            ? '${content.substring(0, 140)}…'
-            : content,
-        instance: connection.label,
-        session: sessionTitle.isNotEmpty ? sessionTitle : sessionId,
-        connId: connection.id,
-        sessionId: serverSessionId,
-        surface: notificationSurface,
-        profile: sessionProfile,
-        roomId: notificationRoomId,
+    if (content.isNotEmpty && _shouldNotifyReplies && _notifications != null) {
+      await _deliverTerminalNotification(
+        () => _notifications.replyReady(
+          preview: content.length > 140
+              ? '${content.substring(0, 140)}…'
+              : content,
+          instance: connection.label,
+          session: sessionTitle.isNotEmpty ? sessionTitle : sessionId,
+          connId: connection.id,
+          sessionId: serverSessionId,
+          surface: notificationSurface,
+          profile: sessionProfile,
+          roomId: notificationRoomId,
+        ),
       );
     }
     _emit(ActiveChatEvent.done);
@@ -7841,6 +11049,7 @@ class ActiveChat {
       // que el transcript autoritativo incluya este turno.
       _scheduleTerminalTranscriptRecovery(
         completingEpoch,
+        messageLoadEpoch: completingMessageLoadEpoch,
         requireAssistantText: content.isEmpty,
       );
     }
@@ -7881,8 +11090,14 @@ class ActiveChat {
   /// deja una burbuja vacía hasta reabrir el chat. El intento bloqueante sigue
   /// siendo único cuando ya existe texto local; si todavía llega un 404, el
   /// backoff de segundo plano completa la reconciliación sin alargar el run.
-  Future<bool> _reconcileTerminalTranscript(int completingEpoch) async {
-    if (!_isCurrentEpoch(completingEpoch)) return false;
+  Future<bool> _reconcileTerminalTranscript(
+    int completingEpoch,
+    int messageLoadEpoch,
+  ) async {
+    bool stillCurrent() =>
+        _isCurrentEpoch(completingEpoch) &&
+        messageLoadEpoch == _messageLoadEpoch;
+    if (!stillCurrent()) return false;
     if (_suppressTerminalHydrationAfterCompaction) {
       // Tras una compactación el stream/snapshot de Desktop es la fuente viva.
       // El endpoint REST puede seguir apuntando al tip anterior durante unos
@@ -7905,7 +11120,7 @@ class ActiveChat {
     final deadline = DateTime.now().add(_terminalReconcileBudget);
 
     for (final delay in delays) {
-      if (!_isCurrentEpoch(completingEpoch)) return false;
+      if (!stillCurrent()) return false;
       var remaining = deadline.difference(DateTime.now());
       if (remaining.inMicroseconds <= 0) return false;
       if (delay > Duration.zero) {
@@ -7915,7 +11130,7 @@ class ActiveChat {
           epochInvalidated,
         );
         if (!elapsed) return false;
-        if (!_isCurrentEpoch(completingEpoch)) return false;
+        if (!stillCurrent()) return false;
         if (wait < delay) return false;
       }
       remaining = deadline.difference(DateTime.now());
@@ -7926,7 +11141,7 @@ class ActiveChat {
           remaining,
           epochInvalidated,
         );
-        if (!_isCurrentEpoch(completingEpoch) || transcript == null) {
+        if (!stillCurrent() || transcript == null) {
           return false;
         }
         if (!_terminalTranscriptCanReplaceVisibleProjection(
@@ -7936,12 +11151,20 @@ class ActiveChat {
           continue;
         }
         _captureArtifactMaps(transcript, logicalSessionId: logicalSessionId);
+        final fencedTranscript = _carryNewestTerminalFence(
+          messages,
+          _normalizedNewestFirst(transcript),
+          candidateTranscriptComplete: true,
+        );
         messages = projectCancelledTurnTombstones(
           existingNewestFirst: messages,
-          incomingNewestFirst: _normalizedNewestFirst(transcript),
+          incomingNewestFirst: fencedTranscript,
           durableTombstones: _cancelledTurnTombstones,
+          incomingTranscriptComplete: true,
         );
+        _markTranscriptComplete(visibleCount: messages.length);
         _mergeSteerRecords();
+        _reconcileSubagentsFromTranscript();
         return true;
       } catch (error) {
         debugPrint(
@@ -8045,6 +11268,42 @@ class ActiveChat {
     return false;
   }
 
+  /// Distingue una invocación de herramienta cuyo `assistant` final aún puede
+  /// estar pendiente de un transcript legítimamente terminal `user -> tool`.
+  /// Este último existe en fuentes antiguas y no debe provocar polling eterno.
+  bool _turnAwaitsFinalAfterToolInvocation(
+    List<Map<String, dynamic>> chronological,
+    int expectedUsers,
+  ) {
+    var userCount = 0;
+    var latestUserIndex = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (!isRealUserTurn(chronological[index])) continue;
+      userCount++;
+      latestUserIndex = index;
+    }
+    if (userCount < expectedUsers || latestUserIndex < 0) return false;
+
+    for (
+      var index = latestUserIndex + 1;
+      index < chronological.length;
+      index++
+    ) {
+      final message = chronological[index];
+      final toolCalls = message['tool_calls'];
+      if (message['role'] == 'assistant' &&
+          toolCalls is List &&
+          toolCalls.isNotEmpty) {
+        return true;
+      }
+      if (message['role'] == 'tool') {
+        final linkedCallId = message['tool_call_id'] ?? message['call_id'];
+        if (linkedCallId is String && linkedCallId.isNotEmpty) return true;
+      }
+    }
+    return false;
+  }
+
   /// Un transcript recién persistido puede contener ya el usuario y una parte
   /// de la respuesta, pero seguir por detrás del `message.complete` que recibió
   /// la UI. Nunca debe sustituir una proyección local más completa: hacerlo
@@ -8083,13 +11342,30 @@ class ActiveChat {
     bool terminalTextIsPartial = false,
     Map<String, dynamic> failureMetadata = const {},
   }) {
-    if (_runTerminal || hasPendingDurableCancellation) return;
+    if (_runTerminal || _hasPendingActiveTurnCancellation) return;
+    if (_hasPendingTombstoneMetadataUpdate) {
+      final expectedTurnEpoch = _turnEpoch;
+      unawaited(
+        _deferFailRunUntilTombstoneMetadataSettles(
+          expectedTurnEpoch,
+          error,
+          terminalText: terminalText,
+          terminalTextIsPartial: terminalTextIsPartial,
+          failureMetadata: failureMetadata,
+        ),
+      );
+      return;
+    }
     _clearDesktopCompactingIndicator();
+    _messageLoadEpoch += 1;
     _runTerminal = true;
     _desktopTurnStartedAt = null;
     _firstTokenTimer?.cancel();
     _firstTokenTimer = null;
     _flushTokenBuffer();
+    if (pendingApproval != null) {
+      _cancelApprovalNotification(pendingApproval!, terminal: true);
+    }
     pendingApproval = null;
     _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
     if (messages.isNotEmpty && messages[0]['role'] == 'assistant') {
@@ -8113,11 +11389,14 @@ class ActiveChat {
     if (!hasPartial &&
         messages.isNotEmpty &&
         messages[0]['role'] == 'assistant') {
+      final projectionId = _nextLocalTranscriptProjectionId();
+      _tagLatestUserForLocalError(projectionId);
       messages[0] = {
         'role': 'assistant_error',
         'content': error,
         '_prompt': lastPrompt,
         ...failureMetadata,
+        '_localTranscriptProjectionId': projectionId,
       };
     } else if (hasPartial &&
         messages.isNotEmpty &&
@@ -8128,28 +11407,53 @@ class ActiveChat {
       // Se marca como interrumpido (misma marca visual que la cancelación) y
       // se añade la burbuja de error con "Reintentar" encima del parcial.
       messages[0] = {...messages[0], '_cancelled': true, '_pipeline': false};
+      final projectionId = _nextLocalTranscriptProjectionId();
+      _tagLatestUserForLocalError(projectionId);
       messages.insert(0, {
         'role': 'assistant_error',
         'content': error,
         '_prompt': lastPrompt,
         ...failureMetadata,
+        '_localTranscriptProjectionId': projectionId,
       });
     }
     // Avisa del problema si la app está en 2º plano (no molesta en primer plano).
-    if (_shouldNotifyReplies) {
-      _notifications?.replyFailed(
-        instance: connection.label,
-        session: sessionTitle.isNotEmpty ? sessionTitle : sessionId,
-        detail: error,
-        connId: connection.id,
-        sessionId: serverSessionId,
-        surface: notificationSurface,
-        profile: sessionProfile,
-        roomId: notificationRoomId,
+    if (_shouldNotifyReplies && _notifications != null) {
+      unawaited(
+        _deliverTerminalNotification(
+          () => _notifications.replyFailed(
+            instance: connection.label,
+            session: sessionTitle.isNotEmpty ? sessionTitle : sessionId,
+            detail: error,
+            connId: connection.id,
+            sessionId: serverSessionId,
+            surface: notificationSurface,
+            profile: sessionProfile,
+            roomId: notificationRoomId,
+          ),
+        ),
       );
     }
     _emit(ActiveChatEvent.error);
     _drainOrTerminal(expectedEpoch: _turnEpoch);
+  }
+
+  Future<void> _deferFailRunUntilTombstoneMetadataSettles(
+    int expectedTurnEpoch,
+    String error, {
+    String? terminalText,
+    required bool terminalTextIsPartial,
+    required Map<String, dynamic> failureMetadata,
+  }) async {
+    if (!await _settleTombstoneMetadataBeforeTerminal(expectedTurnEpoch)) {
+      return;
+    }
+    _failRun(
+      error,
+      terminalText: terminalText,
+      terminalTextIsPartial: terminalTextIsPartial,
+      failureMetadata: failureMetadata,
+    );
   }
 
   void _trackCancelledTurnPersistence(Future<void> operation) {
@@ -8181,22 +11485,94 @@ class ActiveChat {
       if (!isRealUserTurn(message)) continue;
       final content = (message['content'] ?? '').toString();
       if (content.isEmpty) return null;
-      String? anchorMessageId;
-      for (var older = index + 1; older < messages.length; older++) {
-        anchorMessageId = _stableTranscriptMessageId(messages[older]);
-        if (anchorMessageId != null) break;
+      final provenAnchorMessageId = message[_stopProofAnchorMessageIdKey];
+      final provenAnchorRowId = message[_stopProofAnchorRowIdKey];
+      final exactProvenAnchorMessageId =
+          provenAnchorMessageId is String && provenAnchorMessageId.isNotEmpty
+          ? provenAnchorMessageId
+          : null;
+      final exactProvenAnchorRowId =
+          provenAnchorRowId is int && provenAnchorRowId > 0
+          ? provenAnchorRowId
+          : null;
+      if (exactProvenAnchorMessageId != null ||
+          exactProvenAnchorRowId != null) {
+        return (
+          index: index,
+          tombstone: CancelledTurnTombstone(
+            content: content,
+            anchorMessageId: exactProvenAnchorMessageId,
+            anchorRowId: exactProvenAnchorRowId,
+          ),
+        );
       }
-      if (anchorMessageId != null) {
+      final targetMessageId = canonicalTranscriptMessageId(message);
+      final targetRowId = canonicalTranscriptRowId(message);
+      if (targetMessageId != null || targetRowId != null) {
+        return (
+          index: index,
+          tombstone: CancelledTurnTombstone(
+            content: content,
+            cancelledMessageId: targetMessageId,
+            cancelledRowId: targetRowId,
+          ),
+        );
+      }
+      String? anchorMessageId;
+      int? anchorRowId;
+      var anchorIndex = -1;
+      final candidateIsLive = _isLiveTranscriptProjection(message);
+      for (var older = index + 1; older < messages.length; older++) {
+        final olderMessage = messages[older];
+        anchorMessageId = canonicalTranscriptMessageId(olderMessage);
+        anchorRowId = canonicalTranscriptRowId(olderMessage);
+        if (anchorMessageId != null || anchorRowId != null) {
+          anchorIndex = older;
+          break;
+        }
+        // Un usuario intermedio sin identidad impide demostrar qué turno
+        // sigue al ancla. No lo cruces: prompts repetidos podrían cancelar el
+        // turno histórico y resucitar precisamente el que se detuvo.
+        if (isRealUserTurn(olderMessage)) {
+          final isSameLocalTurnProjection =
+              candidateIsLive &&
+              _isLiveTranscriptProjection(olderMessage) &&
+              (olderMessage['content'] ?? '').toString() == content;
+          if (!isSameLocalTurnProjection) return null;
+        }
+      }
+      if (anchorMessageId != null || anchorRowId != null) {
+        if (candidateIsLive && anchorIndex >= 0) {
+          final anchorMessage = messages[anchorIndex];
+          if (isRealUserTurn(anchorMessage) &&
+              (anchorMessage['content'] ?? '').toString() == content) {
+            // El primer ID encontrado puede ser la copia durable del propio
+            // inflight. No es un ancla anterior; la prueba de pertenencia se
+            // obtiene por separado del snapshot vivo y su timestamp.
+            return null;
+          }
+          final adjacentDurableUser = messages
+              .skip(anchorIndex + 1)
+              .where(isRealUserTurn)
+              .firstOrNull;
+          if (adjacentDurableUser != null &&
+              (adjacentDurableUser['content'] ?? '').toString() == content) {
+            // Una fila adyacente por posición puede ser un turno histórico
+            // homónimo que llegó tarde. El contenido nunca acredita identidad.
+            return null;
+          }
+        }
         return (
           index: index,
           tombstone: CancelledTurnTombstone(
             content: content,
             anchorMessageId: anchorMessageId,
+            anchorRowId: anchorRowId,
           ),
         );
       }
       final hasOlderRealUser = messages.skip(index + 1).any(isRealUserTurn);
-      if (!hasOlderRealUser && !_earlierMessagesAvailable) {
+      if (!hasOlderRealUser && _transcriptIsComplete) {
         return (
           index: index,
           tombstone: CancelledTurnTombstone(content: content, firstUser: true),
@@ -8210,22 +11586,50 @@ class ActiveChat {
   bool _sameCancelledTurn(
     CancelledTurnTombstone left,
     CancelledTurnTombstone right,
-  ) =>
-      left.content == right.content &&
-      left.anchorMessageId == right.anchorMessageId &&
-      left.firstUser == right.firstUser;
+  ) => _sameCancelledTurnIdentity(left, right);
+
+  bool _cancelledTurnIdentityWasUpgraded(
+    ({int index, CancelledTurnTombstone tombstone}) before,
+    ({int index, CancelledTurnTombstone tombstone}) after,
+  ) {
+    if (!after.tombstone.hasTargetIdentity ||
+        before.tombstone.content != after.tombstone.content) {
+      return false;
+    }
+    final reboundIndex = _cancelledTurnUserIndex(
+      messages,
+      before.tombstone,
+      incomingTranscriptComplete: _transcriptIsComplete,
+    );
+    return reboundIndex >= 0 && reboundIndex == after.index;
+  }
 
   void _commitCancelledTurnLocally(
     ({int index, CancelledTurnTombstone tombstone}) candidate,
   ) {
     final durable = candidate.tombstone;
-    if (!_cancelledTurnTombstones.any(
+    final existingIndex = _cancelledTurnTombstones.indexWhere(
       (item) => _sameCancelledTurn(item, durable),
-    )) {
+    );
+    if (existingIndex < 0) {
       _cancelledTurnTombstones.add(durable);
+      _cancelledTombstoneRevision += 1;
+    } else if (_cancelledTurnTombstones[existingIndex].invalidated) {
+      _cancelledTurnTombstones[existingIndex] = durable;
+      _cancelledTombstoneRevision += 1;
     }
-    final message = messages[candidate.index];
-    messages[candidate.index] = {...message, '_cancelledUser': true};
+    final message = Map<String, dynamic>.of(messages[candidate.index])
+      ..remove(_stopProofAnchorMessageIdKey)
+      ..remove(_stopProofAnchorRowIdKey)
+      ..addAll({
+        '_cancelledUser': true,
+        '_cancelledTurnAnchorMessageId': durable.anchorMessageId,
+        '_cancelledTurnAnchorRowId': durable.anchorRowId,
+        '_cancelledTurnFirstUser': durable.firstUser,
+        '_cancelledTurnMessageId': durable.cancelledMessageId,
+        '_cancelledTurnRowId': durable.cancelledRowId,
+      });
+    messages[candidate.index] = message;
   }
 
   void _markLatestUserCancelledLocally() {
@@ -8237,9 +11641,262 @@ class ActiveChat {
     }
   }
 
+  /// Conserva únicamente la identidad exacta del último user durable que ya
+  /// era visible antes de iniciar el turno. No guarda contenido ni ordinales:
+  /// una fila que aparece después del submit no puede convertirse por posición
+  /// en el predecessor del inflight.
+  void _captureActiveTurnTranscriptBoundary(
+    int turnEpoch, {
+    bool allowExistingTranscript = true,
+  }) {
+    _activeTurnTranscriptBoundaryEpoch = turnEpoch;
+    _activeTurnTranscriptBoundaryIdentity = null;
+    _activeTurnTranscriptBoundarySessionId = serverSessionId;
+    _activeTurnTranscriptBoundaryProfile = _storedSessionProfile;
+    if (!allowExistingTranscript) return;
+    for (final message in messages) {
+      if (!isRealUserTurn(message)) continue;
+      // El primer user visible ES la frontera. Si aún es una proyección local
+      // no se puede atravesar para capturar como predecessor otro user más
+      // antiguo: el tombstone caería sobre esta fila intermedia.
+      if (_isLiveTranscriptProjection(message) ||
+          message['_desktopAcceptedQueued'] == true) {
+        return;
+      }
+      if (!transcriptIdentityAliasesAreConsistent(message)) return;
+      final identity = _transcriptMessageIdentity(message);
+      if (identity == null ||
+          _uniqueTranscriptIdentityMatch(identity, messages) == null) {
+        return;
+      }
+      _activeTurnTranscriptBoundaryIdentity = identity;
+      return;
+    }
+  }
+
+  bool _activeTurnBoundaryAlreadyProven(TranscriptMessageIdentity identity) {
+    final baseline = _activeTurnTranscriptBoundaryIdentity;
+    return _activeTurnTranscriptBoundaryEpoch == _turnEpoch &&
+        _activeTurnTranscriptBoundarySessionId == serverSessionId &&
+        _activeTurnTranscriptBoundaryProfile == _storedSessionProfile &&
+        baseline != null &&
+        baseline.matches(identity);
+  }
+
+  /// Una identidad que no estaba visible antes del submit todavía puede ser
+  /// un predecessor acreditado si una página completa la enlaza de forma
+  /// única a un Stop anterior. Es el caso del firstUser que se vuelve durable
+  /// entre la primera cancelación y el segundo turno.
+  bool _completeTranscriptBindsPriorCancellationToBoundary(
+    List<Map<String, dynamic>> incoming,
+    TranscriptMessageIdentity boundaryIdentity, {
+    required bool incomingTranscriptComplete,
+  }) {
+    if (!incomingTranscriptComplete) return false;
+    for (final tombstone in _cancelledTurnTombstones) {
+      if (tombstone.invalidated) continue;
+      final index = _cancelledTurnUserIndex(
+        incoming,
+        tombstone,
+        incomingTranscriptComplete: true,
+      );
+      if (index < 0) continue;
+      final identity = _transcriptMessageIdentity(incoming[index]);
+      if (identity != null &&
+          identity.matches(boundaryIdentity) &&
+          _uniqueTranscriptIdentityMatch(identity, incoming) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Hidrata la identidad exacta del prompt vivo sin inferirla por posición.
+  ///
+  /// El Gateway actual publica `turn_started_at` antes de ejecutar el turno;
+  /// versiones experimentales usaron `inflight.started_at`. El resolver exige
+  /// que ambos coincidan cuando coexisten y falla cerrado ante un conflicto.
+  /// La fila durable del usuario se escribe después de esa frontera. Por tanto,
+  /// una única fila user con ID y timestamp posterior es el target exacto; si
+  /// la última fila user es anterior, su ID es un ancla exacta para el inflight
+  /// que aún no se persistió. Toda la lectura queda vallada por el epoch de
+  /// transcript y por el runtime exacto.
+  Future<bool> _hydrateCurrentTurnCancellationIdentity() async {
+    bool reject(String reason) {
+      debugPrint('[active-chat] Stop identity rejected ($reason)');
+      return false;
+    }
+
+    final expectedTurnEpoch = _turnEpoch;
+    String expectedPrompt = '';
+    for (final message in messages) {
+      if (!isRealUserTurn(message) || !_isLiveTranscriptProjection(message)) {
+        continue;
+      }
+      expectedPrompt = (message['content'] ?? '').toString();
+      if (expectedPrompt.isNotEmpty) break;
+    }
+    if (expectedPrompt.isEmpty) expectedPrompt = lastPrompt;
+    final gateway = _desktopGateway;
+    final expectedRuntimeId = _desktopRuntimeSessionId;
+    if (!isStreaming ||
+        !_usingDesktopGateway ||
+        expectedPrompt.isEmpty ||
+        expectedRuntimeId == null ||
+        gateway is! HermesDesktopSessionLifecycleGateway) {
+      return reject('precondition');
+    }
+    final lifecycle = gateway as HermesDesktopSessionLifecycleGateway;
+
+    // Stop supersede cualquier refresh anterior. Una carga nueva que empiece
+    // después incrementará el epoch y hará fallar esta prueba antes de mutar.
+    final proofMessageLoadEpoch = ++_messageLoadEpoch;
+    final expectedCoverageRevision = _transcriptCoverageRevision;
+    final expectedSessionEpoch = _desktopSessionEpoch;
+    final expectedBindEpoch = _desktopBindEpoch;
+    final expectedStoredId = serverSessionId;
+    final expectedProfile = _storedSessionProfile;
+
+    bool proofStillCurrent() =>
+        !_disposed &&
+        isStreaming &&
+        _usingDesktopGateway &&
+        _turnEpoch == expectedTurnEpoch &&
+        _messageLoadEpoch == proofMessageLoadEpoch &&
+        _transcriptCoverageRevision == expectedCoverageRevision &&
+        _desktopSessionEpoch == expectedSessionEpoch &&
+        _desktopBindEpoch == expectedBindEpoch &&
+        _desktopRuntimeSessionId == expectedRuntimeId &&
+        serverSessionId == expectedStoredId &&
+        _storedSessionProfile == expectedProfile;
+
+    try {
+      final snapshot = await lifecycle.resumeExisting(
+        expectedStoredId,
+        profile: expectedProfile,
+        omitMessages: true,
+      );
+      if (!proofStillCurrent() ||
+          snapshot.runtimeSessionId != expectedRuntimeId ||
+          snapshot.storedSessionId != expectedStoredId ||
+          !snapshot.running) {
+        return reject('snapshot-fence');
+      }
+      final inflight = snapshot.inflight;
+      final startedAt = snapshot.resolvedTurnStartedAt;
+      final inflightUser = inflight?.user;
+      if (startedAt == null || inflightUser != expectedPrompt) {
+        return reject('inflight-proof');
+      }
+
+      final page = await _loadStoredMessagesTail(_storedSessionProfile);
+      if (!proofStillCurrent() ||
+          page.offset != 0 ||
+          !page.messagesFullyParsed ||
+          !page.paginationFullyParsed) {
+        return reject('transcript-page');
+      }
+      final pageProvesComplete = _tailPageProvesTranscriptComplete(page);
+      final incoming = _normalizedNewestFirst(page.messages);
+      Map<String, dynamic>? durableBoundary;
+      for (final message in incoming) {
+        if (isRealUserTurn(message)) {
+          durableBoundary = message;
+          break;
+        }
+      }
+      if (durableBoundary == null ||
+          !transcriptIdentityAliasesAreConsistent(durableBoundary)) {
+        return reject('durable-boundary');
+      }
+      final durableIdentity = _transcriptMessageIdentity(durableBoundary);
+      final durableTimestamp = _transcriptTimestamp(durableBoundary);
+      if (durableIdentity == null ||
+          _uniqueTranscriptIdentityMatch(durableIdentity, incoming) == null ||
+          durableTimestamp == null ||
+          durableTimestamp.isAtSameMomentAs(startedAt)) {
+        return reject('durable-identity');
+      }
+      final boundaryIsCurrent = durableTimestamp.isAfter(startedAt);
+      if (boundaryIsCurrent &&
+          (durableBoundary['content'] ?? '').toString() != inflightUser) {
+        return reject('current-content');
+      }
+      if (!boundaryIsCurrent &&
+          !_activeTurnBoundaryAlreadyProven(durableIdentity) &&
+          !_completeTranscriptBindsPriorCancellationToBoundary(
+            incoming,
+            durableIdentity,
+            incomingTranscriptComplete: pageProvesComplete,
+          )) {
+        // Una fila homónima que apareció tras submit también puede ser el
+        // target actual con timestamp atrasado. Sin procedencia pre-turno o
+        // un tombstone previo enlazado, tratarla como ancla podría ocultar el
+        // siguiente turno legítimo.
+        return reject('historical-boundary');
+      }
+
+      // Un segundo user iniciado bajo la misma frontera indicaría que la
+      // página y el inflight no describen una única extensión del transcript.
+      for (final message
+          in incoming
+              .skipWhile((message) => !identical(message, durableBoundary))
+              .skip(1)) {
+        if (!isRealUserTurn(message)) continue;
+        final timestamp = _transcriptTimestamp(message);
+        if (timestamp != null && !timestamp.isBefore(startedAt)) {
+          return reject('multiple-current-users');
+        }
+      }
+
+      final localIndex = messages.indexWhere(
+        (message) =>
+            isRealUserTurn(message) &&
+            _isLiveTranscriptProjection(message) &&
+            (message['content'] ?? '').toString() == expectedPrompt,
+      );
+      if (localIndex < 0) return reject('local-projection');
+      if (!proofStillCurrent()) return reject('commit-fence');
+      messages[localIndex] = {
+        ...messages[localIndex],
+        if (boundaryIsCurrent && durableIdentity.messageId != null)
+          '_desktopMessageId': durableIdentity.messageId,
+        if (boundaryIsCurrent && durableIdentity.rowId != null)
+          '_desktopRowId': durableIdentity.rowId,
+        if (!boundaryIsCurrent && durableIdentity.messageId != null)
+          _stopProofAnchorMessageIdKey: durableIdentity.messageId,
+        if (!boundaryIsCurrent && durableIdentity.rowId != null)
+          _stopProofAnchorRowIdKey: durableIdentity.rowId,
+      };
+      // La misma lectura puede completar de forma autoritativa la identidad
+      // de Stops anteriores (por ejemplo, el firstUser del primer turno). No
+      // basta con encontrar el ancla del turno vivo: si dejamos aquel
+      // tombstone ambiguo, un segundo Stop queda pendiente entre dos
+      // escrituras y la siguiente continuación puede bloquearse. Solo se
+      // enlaza cuando offset=0 y la página demuestra cobertura completa; una
+      // cola paginada sigue fallando cerrado.
+      _bindTombstonesToDurableIds(
+        incoming,
+        incomingTranscriptComplete: pageProvesComplete,
+      );
+      return true;
+    } catch (error) {
+      debugPrint(
+        '[active-chat] Stop identity hydration unavailable '
+        '(${error.runtimeType})',
+      );
+      return false;
+    }
+  }
+
   Future<void> _persistLatestUserCancellation() async {
-    final before = _latestUserCancellationCandidate();
+    var before = _latestUserCancellationCandidate();
     final persist = _onCancelledTurn;
+    if (before == null && persist != null) {
+      if (await _hydrateCurrentTurnCancellationIdentity()) {
+        before = _latestUserCancellationCandidate();
+      }
+    }
     if (before == null) {
       if (persist != null) {
         throw StateError('cancelled turn has no durable transcript anchor');
@@ -8262,22 +11919,49 @@ class ActiveChat {
       _cancelledTurnPersistenceFailed = false;
     }
     final after = _latestUserCancellationCandidate();
-    if (after == null ||
-        !_sameCancelledTurn(before.tombstone, after.tombstone)) {
+    if (after == null) {
       throw StateError('cancelled turn changed while persisting tombstone');
     }
-    _commitCancelledTurnLocally(after);
+    if (_sameCancelledTurn(before.tombstone, after.tombstone)) {
+      _commitCancelledTurnLocally(after);
+      return;
+    }
+    if (!_cancelledTurnIdentityWasUpgraded(before, after)) {
+      throw StateError('cancelled turn changed while persisting tombstone');
+    }
+    // El tombstone anclado ya está confirmado. Conserva esa autoridad y deja
+    // que el mismo reconciliador que usa refresh lo enriquezca con los IDs
+    // exactos recién hidratados, sin equiparar mensajes por contenido.
+    _commitCancelledTurnLocally((
+      index: after.index,
+      tombstone: before.tombstone,
+    ));
+    _bindTombstonesToDurableIds(
+      messages,
+      incomingTranscriptComplete: _transcriptIsComplete,
+    );
   }
 
   /// El run fue cancelado por el servidor (no por el usuario).
   void _cancelRunState() {
-    if (_runTerminal || hasPendingDurableCancellation) return;
+    if (_runTerminal || _hasPendingActiveTurnCancellation) return;
+    if (_hasPendingTombstoneMetadataUpdate) {
+      final expectedTurnEpoch = _turnEpoch;
+      unawaited(
+        _deferCancelRunUntilTombstoneMetadataSettles(expectedTurnEpoch),
+      );
+      return;
+    }
     _clearDesktopCompactingIndicator();
+    _messageLoadEpoch += 1;
     _runTerminal = true;
     _desktopTurnStartedAt = null;
     _firstTokenTimer?.cancel();
     _firstTokenTimer = null;
     _flushTokenBuffer();
+    if (pendingApproval != null) {
+      _cancelApprovalNotification(pendingApproval!, terminal: true);
+    }
     pendingApproval = null;
     _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
     final hasPartial =
@@ -8303,6 +11987,15 @@ class ActiveChat {
     _markLatestUserCancelledLocally();
     _emit(ActiveChatEvent.cancelled);
     _drainOrTerminal(expectedEpoch: _turnEpoch);
+  }
+
+  Future<void> _deferCancelRunUntilTombstoneMetadataSettles(
+    int expectedTurnEpoch,
+  ) async {
+    if (!await _settleTombstoneMetadataBeforeTerminal(expectedTurnEpoch)) {
+      return;
+    }
+    _cancelRunState();
   }
 
   /// Cancela el run en curso y no completa hasta que el tombstone cifrado
@@ -8501,6 +12194,7 @@ class ActiveChat {
         _recoveringDesktopTurnEpoch == _turnEpoch;
     // Invalida todos los callbacks del transporte que se está abandonando.
     _advanceTurnEpoch();
+    _messageLoadEpoch += 1;
     _firstTokenTimer?.cancel();
     _firstTokenTimer = null;
     _flushTokenBuffer();
@@ -8581,6 +12275,17 @@ class ActiveChat {
       throw StateError('steer_not_available_for_local_bridge');
     }
     if (!isStreaming) throw StateError('run_not_active');
+
+    final steerEpoch = _turnEpoch;
+    final recovery = _recoveringDesktopTurnEpoch == steerEpoch
+        ? _desktopTurnRecovery
+        : null;
+    if (recovery != null) {
+      await recovery;
+      if (_turnEpoch != steerEpoch || !isStreaming) {
+        throw StateError('run_not_active');
+      }
+    }
 
     var runtimeId = _desktopRuntimeSessionId;
     for (
@@ -8710,14 +12415,95 @@ class ActiveChat {
   /// true si hubo cambios. No toca un stream vivo.
   Future<bool> reconcileAfterResume() async {
     if (isStreaming) return false;
+    final expectedUsers = messages.where(isRealUserTurn).length;
+    Map<String, dynamic>? latestVisibleUser;
+    for (final message in messages) {
+      if (!isRealUserTurn(message)) continue;
+      latestVisibleUser = message;
+      break;
+    }
+    // Stop es una autoridad terminal local y durable. Un snapshot `running`
+    // retrasado nunca puede convertir esa cancelación en un turno vivo.
+    if (state == ChatPipelineState.cancelled ||
+        latestVisibleUser?['_cancelledUser'] == true) {
+      return false;
+    }
     final top = messages.isNotEmpty ? messages.first : null;
     final looksUnfinished =
         top != null &&
         top['role'] == 'assistant' &&
         (top['_pipeline'] == true ||
             ((top['content'] as String?) ?? '').trim().isEmpty);
-    if (!looksUnfinished) return false;
-    final expectedUsers = messages.where(isRealUserTurn).length;
+    final visibleChronological = messages.reversed.toList(growable: false);
+    final endsInToolInvocationWithoutFinal =
+        expectedUsers > 0 &&
+        _turnAwaitsFinalAfterToolInvocation(
+          visibleChronological,
+          expectedUsers,
+        ) &&
+        !_containsDurableFinalAssistantTurn(
+          visibleChronological,
+          expectedUsers,
+        );
+    if (!looksUnfinished && !endsInToolInvocationWithoutFinal) return false;
+
+    // Cerrar/reabrir durante una herramienta puede dejar la proyección local
+    // terminada en `tool` justo antes de que Hermes publique el assistant
+    // final. Una lectura REST aislada solo ve ese corte y no vuelve a enlazar
+    // los eventos del runtime. Repite el mismo lifecycle autoritativo que usa
+    // Actualizar: si el turno sigue vivo restaura el WebSocket; si ya terminó
+    // adopta el transcript final sin borrar el fallback visible.
+    if (endsInToolInvocationWithoutFinal &&
+        _desktopGateway is HermesDesktopSessionLifecycleGateway) {
+      final previousMessages = messages
+          .map(Map<String, dynamic>.from)
+          .toList(growable: false);
+      final previousState = state;
+      // `loadMessages` incrementa este epoch síncronamente antes de su primer
+      // await. Stop, send y cualquier refresh posterior vuelven a avanzarlo.
+      final lifecycleLoadEpoch = _messageLoadEpoch + 1;
+      try {
+        await loadMessages(
+          expectedMessageCount: math.max(messages.length, expectedUsers),
+          profile: _storedSessionProfile,
+        );
+        if (_disposed || lifecycleLoadEpoch != _messageLoadEpoch) return false;
+        final changed =
+            previousState != state ||
+            !_sameTranscriptProjection(previousMessages, messages);
+        final refreshedChronological = messages.reversed.toList(
+          growable: false,
+        );
+        final stillMissingFinal =
+            !isStreaming &&
+            expectedUsers > 0 &&
+            _turnAwaitsFinalAfterToolInvocation(
+              refreshedChronological,
+              expectedUsers,
+            ) &&
+            !_containsDurableFinalAssistantTurn(
+              refreshedChronological,
+              expectedUsers,
+            );
+        if (stillMissingFinal) {
+          _scheduleTerminalTranscriptRecovery(
+            _turnEpoch,
+            messageLoadEpoch: _messageLoadEpoch,
+            requireAssistantText: true,
+          );
+        }
+        return changed;
+      } catch (error) {
+        if (_disposed || lifecycleLoadEpoch != _messageLoadEpoch) return false;
+        debugPrint(
+          '[active-chat] resume lifecycle reconciliation unavailable '
+          '(${error.runtimeType})',
+        );
+        // Conserva el fallback y prueba debajo la lectura REST acotada.
+      }
+    }
+    final loadEpoch = ++_messageLoadEpoch;
+    final turnEpoch = _turnEpoch;
     try {
       // Instancia LOCAL: no hay historial remoto que re-sincronizar; recupera
       // lo persistido localmente (el bridge no expone /api/sessions/.../messages).
@@ -8727,12 +12513,36 @@ class ActiveChat {
       } else {
         m = await _loadStoredMessages(_storedSessionProfile);
       }
+      if (_disposed ||
+          loadEpoch != _messageLoadEpoch ||
+          turnEpoch != _turnEpoch ||
+          isStreaming) {
+        return false;
+      }
       // El endpoint puede ir por detrás del stream justo al volver del fondo.
       // Un [] o el turno anterior no son autoridad suficiente para borrar la
       // burbuja/scrollback local que el usuario ya estaba viendo.
       if (!_containsCompletedTurn(m, expectedUsers)) return false;
+      final awaitsToolFinal = _turnAwaitsFinalAfterToolInvocation(
+        m,
+        expectedUsers,
+      );
+      if (awaitsToolFinal &&
+          !_containsDurableFinalAssistantTurn(m, expectedUsers)) {
+        _scheduleTerminalTranscriptRecovery(
+          turnEpoch,
+          messageLoadEpoch: loadEpoch,
+          requireAssistantText: true,
+        );
+        return false;
+      }
       _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
-      messages = _applyCancelledTurnTombstones(_normalizedNewestFirst(m));
+      messages = _applyCancelledTurnTombstones(
+        _normalizedNewestFirst(m),
+        incomingTranscriptComplete: true,
+      );
+      _markTranscriptComplete(visibleCount: messages.length);
+      _reconcileSubagentsFromTranscript();
       if (state != ChatPipelineState.failed) {
         state = ChatPipelineState.completed;
       }
@@ -8740,7 +12550,10 @@ class ActiveChat {
       _emit(ActiveChatEvent.done);
       return true;
     } catch (e) {
-      debugPrint('[active-chat] excepción silenciada (se asume false): $e');
+      debugPrint(
+        '[active-chat] resume reconciliation unavailable '
+        '(${e.runtimeType})',
+      );
       return false;
     }
   }
@@ -9627,6 +13440,14 @@ class ActiveChatService {
           ),
         )
         .toString();
+    final cancelledTurnStore = _cancelledTurnStore;
+    final initialTombstoneSessionIds = <String>{
+      sessionId,
+      if (logicalSessionId != null && logicalSessionId.isNotEmpty)
+        logicalSessionId,
+      if (initialStoredSessionId != null && initialStoredSessionId.isNotEmpty)
+        initialStoredSessionId,
+    };
     late final ActiveChat chat;
     chat = ActiveChat(
       connection: connection,
@@ -9641,11 +13462,12 @@ class ActiveChatService {
       policy: policy,
       onTerminal: () => _onChatTerminal(key),
       onUnused: () => _onChatUnused(key),
+      beforeTerminalNotification: _maybeStopForeground,
       onRunStarted: (runId) => _onRunStarted(key, runId),
       onForegroundKeepAlive: disableForegroundKeepAlive
           ? null
           : () async {
-              await BackgroundListener.startForAutomation();
+              await BackgroundListener.ensureAutomationForeground();
               _refreshActiveIds();
             },
       api: api,
@@ -9671,25 +13493,33 @@ class ActiveChatService {
             profile: owner,
           )] ??
           const [],
-      // El id de ruta del chat es el scope estable. El storedSessionId puede
-      // rotar por resume/compresión y nunca debe varar la protección local.
+      // La primera conversación puede cambiar de id al adoptar la sesión
+      // durable de Desktop. Restaura la unión exacta de ruta, lineage y stored
+      // id para que un Stop confirmado no desaparezca tras reabrir.
       initialCancelledTurnTombstones:
-          _cancelledTurnStore?.load(
+          cancelledTurnStore?.loadAliases(
             connectionId: connection.id,
             profile: owner,
-            sessionId: sessionId,
+            sessionIds: initialTombstoneSessionIds,
             generation: tombstoneGeneration,
           ) ??
           const [],
-      onCancelledTurn: _cancelledTurnStore == null
+      onCancelledTurn: cancelledTurnStore == null
           ? null
-          : (tombstone) => _cancelledTurnStore.add(
-              connectionId: connection.id,
-              profile: owner,
-              sessionId: sessionId,
-              tombstone: tombstone,
-              generation: tombstoneGeneration,
-            ),
+          : (tombstone) {
+              final aliases = <String>{...initialTombstoneSessionIds};
+              final storedId = chat.storedSessionId;
+              if (storedId != null && storedId.isNotEmpty) {
+                aliases.add(storedId);
+              }
+              return cancelledTurnStore.addAliases(
+                connectionId: connection.id,
+                profile: owner,
+                sessionIds: aliases,
+                tombstone: tombstone,
+                generation: tombstoneGeneration,
+              );
+            },
     );
     _chats[key] = chat;
     final seed =
@@ -9737,6 +13567,7 @@ class ActiveChatService {
             createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
             lastStatus: 'queued',
             connId: chat.connection.id,
+            profile: chat.sessionProfile,
           ),
         );
       } catch (e) {
@@ -9749,13 +13580,14 @@ class ActiveChatService {
       await BackgroundWatch.add(
         SavedRunWatch(
           connId: chat.connection.id,
+          profile: chat.sessionProfile,
           base: chat.connection.baseUrl,
           runId: runId,
           prompt: chat.lastPrompt,
           sessionId: chat.sessionId,
         ),
       );
-      await BackgroundListener.startForAutomation();
+      await BackgroundListener.ensureAutomationForeground();
     } catch (e) {
       if (kDebugMode) {
         debugPrint('ActiveChatService foreground start falló: $e');
@@ -9826,7 +13658,13 @@ class ActiveChatService {
     // El run terminó: deja de vigilarlo en 2º plano y, si ya no queda ningún
     // run activo, baja el foreground service.
     final runId = chat?.currentRunId;
-    if (runId != null) BackgroundWatch.remove(runId);
+    if (runId != null && chat != null) {
+      BackgroundWatch.remove(
+        runId,
+        connId: chat.connection.id,
+        profile: chat.sessionProfile,
+      );
+    }
     _maybeStopForeground();
     if (chat == null) return;
     // Si nadie está mirando el chat (la pantalla se cerró), libéralo: el
@@ -9847,15 +13685,7 @@ class ActiveChatService {
     if (keepAliveWhile?.call() ?? false) return;
     try {
       if (await BackgroundListener.isEnabled()) return;
-      final stopped = await BackgroundListener.stop();
-      // `stopService()` ejecuta `stopForeground(STOP_FOREGROUND_REMOVE)`, cuyo
-      // evento de borrado puede arrastrar la notificación de respuesta recién
-      // posteada (la app está en 2º plano). Tras un breve margen para que el
-      // desmontaje termine, la re-afirmamos en silencio para que sobreviva.
-      if (stopped) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        await notifications?.reassertRecent();
-      }
+      await BackgroundListener.releaseIdleRuntime();
     } catch (e) {
       if (kDebugMode) debugPrint('ActiveChatService foreground stop falló: $e');
     }

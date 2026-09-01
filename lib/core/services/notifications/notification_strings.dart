@@ -35,10 +35,8 @@ class NotifL10n {
     'Abre la aplicación para ver los detalles.',
     'Open the app to view the details.',
   );
-  String get groupSummaryBody => _(
-    'Tienes varios avisos recientes.',
-    'You have several recent alerts.',
-  );
+  String get groupSummaryBody =>
+      _('Tienes varios avisos recientes.', 'You have several recent alerts.');
 
   // ── Canales (nombre + descripción) ────────────────────────────────────────
   String get chApprovals => _('Aprobaciones', 'Approvals');
@@ -65,10 +63,10 @@ class NotifL10n {
 
   // ── Aprobaciones ──────────────────────────────────────────────────────────
   String get approvalTitle =>
-      _('Hermes necesita tu permiso', 'Hermes needs your permission');
+      _('Hermes necesita tu atención', 'Hermes needs your attention');
   String approvalBody(String tool, String where) => _(
-    'Decisión pendiente sobre «$tool»$where',
-    'Pending decision on “$tool”$where',
+    'Abre Hermes para revisar una decisión pendiente.',
+    'Open Hermes to review a pending decision.',
   );
 
   // ── Ejecuciones ───────────────────────────────────────────────────────────
@@ -152,6 +150,10 @@ class NotifL10n {
   );
   String get bgActive =>
       _('Activo en segundo plano', 'Active in the background');
+  String get bgPaused => _(
+    'Escucha pausada · abre Hermes para reanudar',
+    'Listening paused · open Hermes to resume',
+  );
   String bgWatching(int n) =>
       _('Vigilando $n ejecución(es)', 'Watching $n run(s)');
   String get bgStop => _('Detener', 'Stop');

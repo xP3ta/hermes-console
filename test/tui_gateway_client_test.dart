@@ -760,6 +760,74 @@ void main() {
   );
 
   test(
+    'una pausa del scheduler da margen al heartbeat antes de cortar',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      var pings = 0;
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {
+              'type': 'gateway.ready',
+              'payload': {'heartbeat': true},
+            },
+          }),
+        );
+        await for (final raw in socket) {
+          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (frame['method'] != 'gateway.ping') continue;
+          pings++;
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'result': {'ok': true},
+              'id': frame['id'],
+            }),
+          );
+        }
+      });
+
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'conn-heartbeat-scheduler-pause',
+          label: 'Heartbeat scheduler pause',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: String.fromCharCodes(const [113, 97]),
+          dashboardUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        dashboard: _TicketDashboardClient(),
+        heartbeatInterval: const Duration(milliseconds: 10),
+        heartbeatDeadline: const Duration(milliseconds: 35),
+      );
+      addTearDown(client.close);
+      final errors = <Object>[];
+      final subscription = client.events.listen(
+        (_) {},
+        onError: (Object error) => errors.add(error),
+      );
+      addTearDown(subscription.cancel);
+
+      await client.connect();
+      for (var attempt = 0; attempt < 100 && pings == 0; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(pings, greaterThan(0));
+
+      sleep(const Duration(milliseconds: 80));
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(client.isConnected, isTrue);
+      expect(errors, isEmpty);
+      expect(pings, greaterThan(1));
+    },
+  );
+
+  test(
     'un gateway antiguo sin heartbeat anunciado permanece compatible',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

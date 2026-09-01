@@ -13,7 +13,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../utils/markdown_clipboard.dart';
-import 'notification_event_ledger.dart';
+import 'notification_delivery_coordinator.dart';
+import 'notification_delivery_store.dart';
 import 'notification_strings.dart';
 
 /// Tipos de evento que pueden notificar (cada uno con su toggle).
@@ -62,9 +63,14 @@ class NotificationOpen {
   /// Tarjeta Kanban exacta que debe abrirse al tocar el aviso.
   final String? taskId;
 
-  /// ID de la ejecución (v1/runs). Presente cuando la notificación proviene
-  /// del Task Center; ausente en notificaciones de chat (compatibilidad).
+  /// ID de la ejecución (v1/runs).
   final String? runId;
+
+  /// Cron job fallback when no terminal session exists yet.
+  final String? jobId;
+
+  /// Solicitud autoritativa que la app debe enfocar; nunca se resuelve en tray.
+  final String? requestId;
 
   const NotificationOpen({
     required this.connId,
@@ -74,6 +80,8 @@ class NotificationOpen {
     this.surface = NotificationChatSurface.normal,
     this.roomId,
     this.runId,
+    this.jobId,
+    this.requestId,
     this.taskId,
   });
 
@@ -82,12 +90,18 @@ class NotificationOpen {
     if (sessionId.isNotEmpty) 'sid': sessionId,
     if (title != null && title!.isNotEmpty) 'title': title,
     if (runId != null && runId!.isNotEmpty) 'rid': runId,
+    if (jobId != null && jobId!.isNotEmpty) 'jid': jobId,
+    if (requestId != null && requestId!.isNotEmpty) 'aid': requestId,
     if (taskId != null && taskId!.isNotEmpty) 'tid': taskId,
     if (profile != null && profile!.isNotEmpty) 'profile': profile,
     'surface': surface.name,
     if (roomId != null && roomId!.isNotEmpty) 'room': roomId,
     if (base != null && base.isNotEmpty) 'base': base,
   });
+
+  static final RegExp _typedDestinationId = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$',
+  );
 
   /// Decodifica payloads actuales y legacy. Campos desconocidos se ignoran.
   static NotificationOpen? tryParse(String? payload) {
@@ -101,7 +115,28 @@ class NotificationOpen {
       final sid = (m['sid'] ?? '').toString();
       final runId = (m['rid'] ?? '').toString();
       final taskId = (m['tid'] ?? '').toString();
-      if (sid.isEmpty && runId.isEmpty && taskId.isEmpty) return null;
+      final rawJobId = m['jid'];
+      if (rawJobId != null && rawJobId is! String) return null;
+      final jobId = (rawJobId as String? ?? '').trim();
+      if (jobId.isNotEmpty && !_typedDestinationId.hasMatch(jobId)) return null;
+      final rawRequestId = m['aid'];
+      if (rawRequestId != null && rawRequestId is! String) return null;
+      final requestId = (rawRequestId as String? ?? '').trim();
+      if (requestId.isNotEmpty && !_typedDestinationId.hasMatch(requestId)) {
+        return null;
+      }
+      final primaryDestinations = <bool>[
+        requestId.isNotEmpty,
+        requestId.isEmpty && runId.isNotEmpty,
+        taskId.isNotEmpty,
+        jobId.isNotEmpty,
+        requestId.isEmpty && runId.isEmpty && sid.isNotEmpty,
+      ].where((present) => present).length;
+      if (primaryDestinations != 1 ||
+          (requestId.isNotEmpty && runId.isEmpty && sid.isEmpty) ||
+          (requestId.isNotEmpty && (taskId.isNotEmpty || jobId.isNotEmpty))) {
+        return null;
+      }
       final title = m['title']?.toString();
       final profile = m['profile']?.toString();
       final roomId = m['room']?.toString();
@@ -113,6 +148,8 @@ class NotificationOpen {
         surface: NotificationChatSurface.fromWire(m['surface']),
         roomId: roomId?.isNotEmpty == true ? roomId : null,
         runId: runId.isNotEmpty ? runId : null,
+        jobId: jobId.isNotEmpty ? jobId : null,
+        requestId: requestId.isNotEmpty ? requestId : null,
         taskId: taskId.isNotEmpty ? taskId : null,
       );
     } catch (e) {
@@ -149,6 +186,43 @@ class InAppNotice {
   });
 }
 
+class DurableDiscoveryNotification {
+  const DurableDiscoveryNotification({
+    required this.identity,
+    required this.destinationKind,
+    required this.kind,
+    required this.title,
+    required this.body,
+    this.sessionId,
+    this.runId,
+    this.taskId,
+    this.jobId,
+    this.requestId,
+    this.subText,
+    this.payload,
+  });
+
+  final NotificationEventIdentity identity;
+  final String destinationKind;
+  final NotificationKind kind;
+  final String title;
+  final String body;
+  final String? sessionId;
+  final String? runId;
+  final String? taskId;
+  final String? jobId;
+  final String? requestId;
+  final String? subText;
+  final String? payload;
+}
+
+enum _ShowOutcome {
+  alertShown,
+  inlineShown,
+  policySuppressed,
+  transientFailure,
+}
+
 /// Interfaz mínima que NotificationController necesita de NotificationService.
 /// Permite testear el controlador sin instanciar el servicio real.
 abstract interface class RunNotificationFacade {
@@ -175,6 +249,7 @@ abstract interface class RunNotificationFacade {
     String? sessionId,
     String? sessionTitle,
     String? runId,
+    String? approvalId,
     String? base,
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
@@ -182,16 +257,23 @@ abstract interface class RunNotificationFacade {
   });
   Future<void> cancelRun(String runId);
 
-  /// Cancela la notificación de aprobación global (ID 7001).
-  /// No-op si no hay ninguna mostrándose.
-  Future<void> cancelApproval();
+  /// Cancela aprobaciones por scope autoritativo exacto; identidad incompleta
+  /// falla cerrada y no cancela ninguna tarjeta.
+  Future<void> cancelApproval({
+    String? connId,
+    String? profile,
+    String? runId,
+    String? approvalId,
+    bool terminal = false,
+  });
 }
 
-class NotificationService implements RunNotificationFacade {
+class NotificationService
+    implements RunNotificationFacade, NotificationDeliveryPresenter {
   final SharedPreferences _prefs;
-  late final NotificationEventLedger _eventLedger = NotificationEventLedger(
-    _prefs,
-  );
+  late final NotificationDeliveryCoordinator _delivery;
+  final Map<String, _DurableDisplay> _pendingDisplays =
+      <String, _DurableDisplay>{};
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
@@ -274,6 +356,14 @@ class NotificationService implements RunNotificationFacade {
   static const String _transferChannelDesc =
       'Upload and download progress via SFTP';
 
+  // Operaciones locales largas iniciadas por el usuario (por ejemplo, instalar
+  // un modelo en Termux). Es una notificación local ongoing independiente del
+  // foreground service: nunca adquiere, reconfigura ni detiene sus owners.
+  static const String _operationChannelId = 'hermes_background_operations';
+  static const String _operationChannelName = 'Background operations';
+  static const String _operationChannelDesc =
+      'Progress for user-started local operations';
+
   /// Llamado cuando el usuario pulsa una notificación con sesión asociada. Lo
   /// cablea HermesAppState para navegar al chat correcto. Si es null al pulsar
   /// (p.ej. la app se abrió desde cero por la notificación, antes de montar la
@@ -289,16 +379,112 @@ class NotificationService implements RunNotificationFacade {
   NotificationOpen? _pendingOpen;
   String? _lastPlatformOpenFingerprint;
 
-  /// Última notificación mostrada con la app en 2º plano (respuesta/ejecución/
-  /// aprobación). Se guarda para poder RE-AFIRMARLA tras parar el foreground
-  /// service: `stopService()` ejecuta `stopForeground(STOP_FOREGROUND_REMOVE)`,
-  /// que en algunos dispositivos arrastra la notificación recién posteada (el
-  /// sistema enlaza la notificación persistente del servicio con la de alerta
-  /// como dueña de sonido/vibración). Re-mostrarla —en silencio— garantiza que
-  /// sobreviva al desmontaje del servicio. Ver [reassertRecent].
-  _LastBgNotif? _lastBg;
+  NotificationService(this._prefs, {NotificationDeliveryStore? deliveryStore}) {
+    _automationNotificationsOptedIn =
+        _prefs.getBool(backgroundListenPreferenceKey) ?? false;
+    _delivery = NotificationDeliveryCoordinator(
+      store: deliveryStore ?? NotificationDeliveryStore(),
+      presenter: this,
+    );
+  }
 
-  NotificationService(this._prefs);
+  Future<void> closeDelivery() => _delivery.close();
+
+  Future<bool> deliverDiscoveryBatch({
+    required String scopeKey,
+    required String connId,
+    required String profile,
+    required String sourceKind,
+    required String objectId,
+    required String lastState,
+    required String sourceVersion,
+    required List<DurableDiscoveryNotification> events,
+    required bool suppressByPolicy,
+    bool versionEventsByPreviousSnapshot = false,
+    bool suppressEventsWhenVersionUnchanged = false,
+    bool suppressInitialEvents = true,
+  }) async {
+    final displayKeys = <String>{};
+    _DurableDisplay displayFor(DurableDiscoveryNotification event) =>
+        _DurableDisplay(
+          kind: event.kind,
+          title: event.title,
+          body: event.body,
+          targetSessionId: event.sessionId,
+          subText: event.subText,
+          payload: event.payload,
+        );
+    for (final event in events) {
+      displayKeys.add(event.identity.eventKey);
+      _pendingDisplays[event.identity.eventKey] = displayFor(event);
+    }
+
+    SourceCursorUpdate updateFor(
+      int? previousGeneration,
+      String? previousVersion,
+    ) {
+      final specs = <DeliveryEventSpec>[];
+      for (final event in events) {
+        final original = event.identity;
+        final identity = versionEventsByPreviousSnapshot
+            ? NotificationEventIdentity(
+                connId: original.connId,
+                profile: original.profile,
+                sourceKind: original.sourceKind,
+                objectId: original.objectId,
+                eventKind: original.eventKind,
+                sourceVersion:
+                    '${original.sourceVersion}:after:${previousVersion ?? 'initial'}',
+              )
+            : original;
+        displayKeys.add(identity.eventKey);
+        _pendingDisplays[identity.eventKey] = displayFor(event);
+        specs.add(
+          DeliveryEventSpec(
+            identity: identity,
+            destinationKind: event.destinationKind,
+            sessionId: event.sessionId,
+            runId: event.runId,
+            taskId: event.taskId,
+            jobId: event.jobId,
+            requestId: event.requestId,
+          ),
+        );
+      }
+      return SourceCursorUpdate(
+        scopeKey: scopeKey,
+        connId: connId,
+        profile: profile,
+        sourceKind: sourceKind,
+        objectId: objectId,
+        lastState: lastState,
+        lastVersion: sourceVersion,
+        generation: (previousGeneration ?? 0) + 1,
+        initialized: true,
+        events: specs,
+      );
+    }
+
+    try {
+      return await _delivery.ingestDiscovery(
+        scopeKey: scopeKey,
+        suppressByPolicy: suppressByPolicy,
+        buildUpdate: (previousGeneration) =>
+            updateFor(previousGeneration, null),
+        buildUpdateWithPrevious: versionEventsByPreviousSnapshot
+            ? updateFor
+            : null,
+        suppressEventsWhenVersionUnchanged:
+            versionEventsByPreviousSnapshot ||
+            suppressEventsWhenVersionUnchanged,
+        suppressInitialEvents: suppressInitialEvents,
+      );
+    } finally {
+      for (final key in displayKeys) {
+        _pendingDisplays.remove(key);
+      }
+    }
+  }
 
   // ── Ajustes (persistidos) ───────────────────────────────────────────────
   static const _kEnabled = 'notif_enabled';
@@ -320,14 +506,20 @@ class NotificationService implements RunNotificationFacade {
   bool get enabled => _prefs.getBool(_kEnabled) ?? true;
   Future<void> setEnabled(bool v) => _prefs.setBool(_kEnabled, v);
 
-  /// 1.2.8 conservadora: automatizaciones y approvals locales se difieren
-  /// hasta que el protocolo CAS + SQLite cross-engine esté disponible.
-  static const bool automationNotificationsAvailable = false;
+  /// 1.2.9: el protocolo SQLite cross-engine está disponible. Disponibilidad
+  /// no implica consentimiento: la entrega sigue cercada por el opt-in.
+  static const bool automationNotificationsAvailable = true;
+  static bool _automationNotificationsOptedIn = false;
   static bool _debugAutomationNotificationsEnabled = false;
 
   static bool get automationNotificationsEnabled =>
-      automationNotificationsAvailable ||
-      (kDebugMode && _debugAutomationNotificationsEnabled);
+      automationNotificationsAvailable &&
+      (_automationNotificationsOptedIn ||
+          (kDebugMode && _debugAutomationNotificationsEnabled));
+
+  static void setAutomationNotificationsOptedIn(bool enabled) {
+    _automationNotificationsOptedIn = enabled;
+  }
 
   @visibleForTesting
   static void setAutomationNotificationsEnabledForTest(bool enabled) {
@@ -381,6 +573,18 @@ class NotificationService implements RunNotificationFacade {
 
   // ── Inicialización ──────────────────────────────────────────────────────
   Future<void> init() async {
+    await _ensurePlatformInitialized();
+    try {
+      await _delivery.recoverAndDispatch();
+    } catch (error) {
+      // Local notification permission/replies must stay usable if durable
+      // automation recovery is temporarily unavailable. Producers still fail
+      // closed through the coordinator until a later successful open.
+      _log('delivery recovery unavailable (${error.runtimeType})');
+    }
+  }
+
+  Future<void> _ensurePlatformInitialized() async {
     if (_inited) return;
     final pending = _initFuture;
     if (pending != null) return pending;
@@ -561,6 +765,15 @@ class NotificationService implements RunNotificationFacade {
     return _deliverOrQueue(open);
   }
 
+  /// Acknowledges a queued tap only after real asynchronous navigation.
+  void completePendingOpen(NotificationOpen open) {
+    final pending = _pendingOpen;
+    if (pending != null && pending.toPayload() == open.toPayload()) {
+      _pendingOpen = null;
+      _log('tap confirmado tras navegación asíncrona');
+    }
+  }
+
   /// Red de seguridad para Android: si `onNewIntent` reanudó la Activity pero
   /// el callback del plugin no alcanzó el isolate de UI, vuelve a leer el
   /// intent que conserva `flutter_local_notifications`. El callback vivo no se
@@ -599,22 +812,36 @@ class NotificationService implements RunNotificationFacade {
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? roomId,
     String? taskId,
+    String? jobId,
+    String? requestId,
   }) {
     if (connId == null || connId.isEmpty) return null;
     final hasSid = sessionId != null && sessionId.isNotEmpty;
     final hasRid = runId != null && runId.isNotEmpty;
     final hasTaskId = taskId != null && taskId.isNotEmpty;
-    // Chat necesita sessionId; runs y Kanban llevan su objeto autoritativo.
-    if (!hasSid && !hasRid && !hasTaskId) return null;
+    final hasJobId = jobId != null && jobId.isNotEmpty;
+    // Chat necesita sessionId; runs y automatizaciones llevan objeto autoritativo.
+    if (!hasSid && !hasRid && !hasTaskId && !hasJobId) return null;
+    // Exactly one primary route is encoded. A resolved cron session is more
+    // specific and tappable than its job fallback; approval keeps its run only
+    // as the required owner fence.
+    final useRequest = requestId != null && requestId.isNotEmpty;
+    final useRun = !useRequest && hasRid;
+    final useTask = !useRequest && !useRun && hasTaskId;
+    final useSession = !useRequest && !useRun && !useTask && hasSid;
+    final useJob =
+        !useRequest && !useRun && !useTask && !useSession && hasJobId;
     return NotificationOpen(
       connId: connId,
-      sessionId: hasSid ? sessionId : '',
+      sessionId: useSession || (useRequest && hasSid) ? sessionId : '',
       title: title,
       profile: profile,
       surface: surface,
       roomId: roomId,
-      runId: hasRid ? runId : null,
-      taskId: hasTaskId ? taskId : null,
+      runId: useRequest || useRun ? runId : null,
+      jobId: useJob ? jobId : null,
+      requestId: useRequest ? requestId : null,
+      taskId: useTask ? taskId : null,
     ).toPayload(base: base);
   }
 
@@ -624,7 +851,7 @@ class NotificationService implements RunNotificationFacade {
   /// Pide el permiso POST_NOTIFICATIONS (Android 13+). Devuelve si quedó
   /// concedido. Idempotente y seguro de llamar varias veces.
   Future<bool> requestPermission() async {
-    await init();
+    await _ensurePlatformInitialized();
     final android = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
@@ -633,7 +860,7 @@ class NotificationService implements RunNotificationFacade {
   }
 
   Future<bool> permissionGranted() async {
-    await init();
+    await _ensurePlatformInitialized();
     final android = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
@@ -644,7 +871,13 @@ class NotificationService implements RunNotificationFacade {
   /// Estado del canal `hermes_alerts` según el sistema. Permite avisar al usuario
   /// de que tiene el permiso global pero ha bloqueado ESTE canal (causa silenciosa
   /// muy común de "no me llegan las notificaciones" en móviles reales).
-  Future<ChannelStatus> alertChannelStatus() async {
+  Future<ChannelStatus> alertChannelStatus() => _channelStatus(_chApprovals);
+
+  /// Foreground-service channel used by the finite Android dataSync session.
+  Future<ChannelStatus> foregroundServiceChannelStatus() =>
+      _channelStatus('hermes_service_v2');
+
+  Future<ChannelStatus> _channelStatus(String channelId) async {
     await init();
     final android = _plugin
         .resolvePlatformSpecificImplementation<
@@ -655,14 +888,14 @@ class NotificationService implements RunNotificationFacade {
       final channels = await android.getNotificationChannels() ?? const [];
       AndroidNotificationChannel? ch;
       for (final c in channels) {
-        if (c.id == _chApprovals) ch = c;
+        if (c.id == channelId) ch = c;
       }
       if (ch == null) return ChannelStatus.missing;
       return ch.importance == Importance.none
           ? ChannelStatus.blocked
           : ChannelStatus.active;
     } catch (e) {
-      _log('no se pudo leer el estado del canal: $e');
+      _log('no se pudo leer el estado del canal $channelId: $e');
       return ChannelStatus.missing;
     }
   }
@@ -679,65 +912,91 @@ class NotificationService implements RunNotificationFacade {
     String? sessionId,
     String? sessionTitle,
     String? runId,
+    String? approvalId,
     String? base,
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
   }) async {
     if (!notifyApprovals) return;
-    if (!await _eventLedger.claim(
-      connId: connId ?? '',
-      profile: profile,
-      objectId: runId ?? '',
-      eventKind: 'approval_required',
-    )) {
+    final connection = connId?.trim() ?? '';
+    final normalizedProfile = profile?.trim().isNotEmpty == true
+        ? profile!.trim().toLowerCase()
+        : 'default';
+    final run = runId?.trim() ?? '';
+    final version = approvalId?.trim() ?? '';
+    if (connection.isEmpty ||
+        normalizedProfile.isEmpty ||
+        run.isEmpty ||
+        version.isEmpty) {
+      _log(
+        'approval suprimida: identidad durable incompleta o no autoritativa',
+      );
       return;
     }
+    final identity = NotificationEventIdentity(
+      connId: connection,
+      profile: normalizedProfile,
+      sourceKind: 'approval',
+      objectId: run,
+      eventKind: 'pending',
+      sourceVersion: version,
+    );
     final t = NotifL10n.of(_prefs);
     final where = (instance != null && instance.isNotEmpty)
         ? ' · $instance'
         : '';
-    // La aprobación NUNCA se resuelve desde la bandeja: el plugin no puede
-    // exigir desbloqueo por acción y una decisión de seguridad no debe poder
-    // tomarse desde la pantalla de bloqueo. Solo "Abrir", que trae la app al
-    // frente; la decisión vive dentro, tras la autenticación del sistema.
-    try {
-      await _show(
-        kind: NotificationKind.approval,
-        id: 7001,
-        title: t.approvalTitle,
-        body: t.approvalBody(tool, where),
-        ongoingFeel: true,
-        bypassForeground: true,
-        targetSessionId: sessionId,
-        subText: instance,
-        payload: _encodePayload(
-          connId,
-          sessionId,
-          sessionTitle ?? instance,
-          runId: runId,
-          base: base,
-          profile: profile,
-          surface: surface,
-          roomId: roomId,
+    _pendingDisplays[identity.eventKey] = _DurableDisplay(
+      kind: NotificationKind.approval,
+      title: t.approvalTitle,
+      body: t.approvalBody(tool, where),
+      ongoingFeel: true,
+      bypassForeground: true,
+      targetSessionId: sessionId,
+      payload: _encodePayload(
+        connection,
+        sessionId,
+        null,
+        runId: run,
+        profile: normalizedProfile,
+        surface: surface,
+        roomId: roomId,
+        requestId: version,
+      ),
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction(
+          'open',
+          t.actOpen,
+          showsUserInterface: true,
+          cancelNotification: true,
         ),
-        actions: <AndroidNotificationAction>[
-          AndroidNotificationAction(
-            'open',
-            t.actOpen,
-            showsUserInterface: true,
-            cancelNotification: true,
-          ),
-        ],
-      );
-    } catch (_) {
-      await _eventLedger.release(
-        connId: connId ?? '',
-        profile: profile,
-        objectId: runId ?? '',
-        eventKind: 'approval_required',
-      );
-      rethrow;
+      ],
+    );
+    try {
+      await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey: '$connection/$normalizedProfile/approval/$run/$version',
+          connId: connection,
+          profile: normalizedProfile,
+          sourceKind: 'approval',
+          objectId: run,
+          lastState: 'pending',
+          lastVersion: version,
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(
+              identity: identity,
+              destinationKind: 'approval',
+              sessionId: sessionId,
+              runId: run,
+              requestId: version,
+            ),
+          ],
+        ),
+      ]);
+    } finally {
+      _pendingDisplays.remove(identity.eventKey);
     }
   }
 
@@ -752,42 +1011,61 @@ class NotificationService implements RunNotificationFacade {
     String? profile,
   }) async {
     if (!notifyRuns) return;
-    if (!await _eventLedger.claim(
-      connId: connId ?? '',
-      profile: profile,
-      objectId: runId ?? '',
-      eventKind: 'run_terminal',
-    )) {
+    final connection = connId?.trim() ?? '';
+    final normalizedProfile = profile?.trim().isNotEmpty == true
+        ? profile!.trim().toLowerCase()
+        : 'default';
+    final run = runId?.trim() ?? '';
+    if (connection.isEmpty || run.isEmpty) {
+      _log('run terminal suprimida: identidad durable incompleta');
       return;
     }
+    final identity = NotificationEventIdentity(
+      connId: connection,
+      profile: normalizedProfile,
+      sourceKind: 'run',
+      objectId: run,
+      eventKind: 'terminal',
+      sourceVersion: ok ? 'completed' : 'failed',
+    );
     final t = NotifL10n.of(_prefs);
+    _pendingDisplays[identity.eventKey] = _DurableDisplay(
+      kind: NotificationKind.run,
+      title: ok ? t.runCompleted : t.runFailed,
+      body: title,
+      targetSessionId: sessionId,
+      payload: _encodePayload(
+        connection,
+        sessionId,
+        title,
+        runId: run,
+        profile: normalizedProfile,
+      ),
+    );
     try {
-      await _show(
-        kind: NotificationKind.run,
-        id: eventNotificationId(
-          base: 7100,
-          span: 1024,
-          parts: [connId ?? '', profile ?? '', runId ?? '', 'run_terminal'],
+      await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey: '$connection/$normalizedProfile/run/$run/terminal',
+          connId: connection,
+          profile: normalizedProfile,
+          sourceKind: 'run',
+          objectId: run,
+          lastState: ok ? 'completed' : 'failed',
+          lastVersion: ok ? 'completed' : 'failed',
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(
+              identity: identity,
+              destinationKind: 'run_terminal',
+              sessionId: sessionId,
+              runId: run,
+            ),
+          ],
         ),
-        title: ok ? t.runCompleted : t.runFailed,
-        body: title,
-        targetSessionId: sessionId,
-        payload: _encodePayload(
-          connId,
-          sessionId,
-          title,
-          runId: runId,
-          profile: profile,
-        ),
-      );
-    } catch (_) {
-      await _eventLedger.release(
-        connId: connId ?? '',
-        profile: profile,
-        objectId: runId ?? '',
-        eventKind: 'run_terminal',
-      );
-      rethrow;
+      ]);
+    } finally {
+      _pendingDisplays.remove(identity.eventKey);
     }
   }
 
@@ -805,49 +1083,68 @@ class NotificationService implements RunNotificationFacade {
     String? preview,
   }) async {
     if (!notifyCronResults) return;
-    if (!await _eventLedger.claim(
-      connId: connId,
-      profile: profile,
-      objectId: executionId,
-      eventKind: 'cron_terminal',
-    )) {
+    final normalizedProfile = profile?.trim().isNotEmpty == true
+        ? profile!.trim().toLowerCase()
+        : 'default';
+    if (connId.trim().isEmpty ||
+        executionId.trim().isEmpty ||
+        jobId.trim().isEmpty) {
+      _log('cron suprimida: identidad durable incompleta');
       return;
     }
+    final identity = NotificationEventIdentity(
+      connId: connId.trim(),
+      profile: normalizedProfile,
+      sourceKind: 'cron',
+      objectId: executionId.trim(),
+      eventKind: 'terminal',
+      sourceVersion: ok ? 'completed' : 'failed',
+    );
     final t = NotifL10n.of(_prefs);
+    _pendingDisplays[identity.eventKey] = _DurableDisplay(
+      kind: NotificationKind.run,
+      title: ok ? t.cronCompleted : t.cronFailed,
+      body: compactAutomationPreview(preview, fallback: title),
+      targetSessionId: sessionId,
+      subText: compactSessionLabel(title),
+      payload: _encodePayload(
+        connId,
+        sessionId,
+        title,
+        profile: normalizedProfile,
+      ),
+    );
     try {
-      await _show(
-        kind: NotificationKind.run,
-        id: eventNotificationId(
-          base: 7100,
-          span: 1024,
-          parts: [
-            connId,
-            profile ?? '',
-            executionId.isNotEmpty ? executionId : jobId,
-            'cron_terminal',
+      await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey:
+              '${connId.trim()}/$normalizedProfile/cron/${executionId.trim()}',
+          connId: connId.trim(),
+          profile: normalizedProfile,
+          sourceKind: 'cron',
+          objectId: executionId.trim(),
+          lastState: ok ? 'completed' : 'failed',
+          lastVersion: ok ? 'completed' : 'failed',
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(
+              identity: identity,
+              destinationKind: 'cron_terminal',
+              sessionId: sessionId.isEmpty ? null : sessionId,
+              jobId: sessionId.isEmpty ? jobId.trim() : null,
+            ),
           ],
         ),
-        title: ok ? t.cronCompleted : t.cronFailed,
-        body: compactAutomationPreview(preview, fallback: title),
-        targetSessionId: sessionId,
-        subText: compactSessionLabel(title),
-        payload: _encodePayload(connId, sessionId, title, profile: profile),
-      );
-    } catch (_) {
-      await _eventLedger.release(
-        connId: connId,
-        profile: profile,
-        objectId: executionId,
-        eventKind: 'cron_terminal',
-      );
-      rethrow;
+      ]);
+    } finally {
+      _pendingDisplays.remove(identity.eventKey);
     }
   }
 
   /// Convierte la respuesta final del agente en texto legible para la bandeja.
   /// Nunca usa el prompt del job como fallback: si el Dashboard no publica el
   /// último turno del asistente, muestra únicamente el nombre de la tarea.
-  @visibleForTesting
   static String compactAutomationPreview(
     String? raw, {
     required String fallback,
@@ -872,8 +1169,29 @@ class NotificationService implements RunNotificationFacade {
     required String taskId,
     required String title,
     required String status,
-  }) {
-    if (!notifyKanbanResults) return Future.value();
+    String profile = 'default',
+    String sourceVersion = 'current',
+  }) async {
+    if (!notifyKanbanResults) return;
+    final connection = connId.trim();
+    final task = taskId.trim();
+    final normalizedProfile = profile.trim().toLowerCase();
+    final version = sourceVersion.trim();
+    if (connection.isEmpty ||
+        task.isEmpty ||
+        normalizedProfile.isEmpty ||
+        version.isEmpty) {
+      _log('kanban suprimida: identidad durable incompleta');
+      return;
+    }
+    final identity = NotificationEventIdentity(
+      connId: connection,
+      profile: normalizedProfile,
+      sourceKind: 'kanban',
+      objectId: task,
+      eventKind: status.trim().toLowerCase(),
+      sourceVersion: version,
+    );
     final t = NotifL10n.of(_prefs);
     final notificationTitle = switch (status) {
       'done' => t.kanbanCompleted,
@@ -881,14 +1199,37 @@ class NotificationService implements RunNotificationFacade {
       'triage' => t.kanbanNeedsAttention,
       _ => t.kanbanUpdated,
     };
-    return _show(
+    _pendingDisplays[identity.eventKey] = _DurableDisplay(
       kind: NotificationKind.run,
-      id: 10000 + (taskId.hashCode & 0x3ff),
       title: notificationTitle,
       body: title,
-      subText: 'Kanban · $taskId',
-      payload: _encodePayload(connId, null, title, taskId: taskId),
+      subText: 'Kanban · $task',
+      payload: _encodePayload(connection, null, title, taskId: task),
     );
+    try {
+      await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey: '$connection/$normalizedProfile/kanban/$task',
+          connId: connection,
+          profile: normalizedProfile,
+          sourceKind: 'kanban',
+          objectId: task,
+          lastState: status.trim().toLowerCase(),
+          lastVersion: version,
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(
+              identity: identity,
+              destinationKind: 'kanban_transition',
+              taskId: task,
+            ),
+          ],
+        ),
+      ]);
+    } finally {
+      _pendingDisplays.remove(identity.eventKey);
+    }
   }
 
   /// Notificación de progreso de una ejecución en curso (Task Center). Rango
@@ -1050,7 +1391,6 @@ class NotificationService implements RunNotificationFacade {
 
   /// Los títulos proceden del servidor y pueden contener Markdown, controles o
   /// varias líneas. La bandeja solo necesita una etiqueta breve y legible.
-  @visibleForTesting
   static String compactSessionLabel(String? raw) {
     final source = (raw ?? '')
         .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), ' ')
@@ -1112,9 +1452,9 @@ class NotificationService implements RunNotificationFacade {
   }
 
   /// Notificación de prueba (desde Ajustes), para que el usuario vea el estilo.
-  Future<bool> sendTest() {
+  Future<bool> sendTest() async {
     final t = NotifL10n.of(_prefs);
-    return _show(
+    final outcome = await _show(
       kind: NotificationKind.test,
       id: 7000,
       title: t.testTitle,
@@ -1131,6 +1471,7 @@ class NotificationService implements RunNotificationFacade {
         ),
       ],
     );
+    return outcome == _ShowOutcome.alertShown;
   }
 
   // ── Transferencias SFTP (progreso silencioso) ────────────────────────────
@@ -1199,6 +1540,40 @@ class NotificationService implements RunNotificationFacade {
   }
 
   Future<void> cancelTransfer(int id) => cancelById(id, 'transfer');
+
+  Future<void> operationProgress({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    await init();
+    if (!_available || !await permissionGranted()) return;
+    const details = AndroidNotificationDetails(
+      _operationChannelId,
+      _operationChannelName,
+      channelDescription: _operationChannelDesc,
+      importance: Importance.low,
+      priority: Priority.low,
+      icon: 'ic_stat_hermes',
+      color: _accent,
+      onlyAlertOnce: true,
+      ongoing: true,
+      autoCancel: false,
+      showProgress: true,
+      maxProgress: 100,
+      progress: 0,
+      indeterminate: true,
+      category: AndroidNotificationCategory.progress,
+    );
+    await _plugin.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(android: details),
+    );
+  }
+
+  Future<void> cancelOperation(int id) => cancelById(id, 'operation');
 
   /// ¿Debe mostrarse una notificación del sistema, dada la situación de primer
   /// plano? Pura y testeable: concentra las Reglas 1/2/6.
@@ -1278,10 +1653,65 @@ class NotificationService implements RunNotificationFacade {
     }
   }
 
+  @override
+  Future<DeliveryPresentation> show(DeliveryEventRecord event) async {
+    final t = NotifL10n.of(_prefs);
+    final durablePayload = _encodePayload(
+      event.connId,
+      event.sessionId,
+      null,
+      runId: event.runId,
+      profile: event.profile,
+      taskId: event.taskId,
+      jobId: event.jobId,
+      requestId: event.requestId,
+    );
+    final pendingDisplay = _pendingDisplays[event.eventKey];
+    final display =
+        pendingDisplay ??
+        _DurableDisplay(
+          kind: event.destinationKind == 'approval'
+              ? NotificationKind.approval
+              : NotificationKind.run,
+          title: event.destinationKind == 'approval'
+              ? t.approvalTitle
+              : t.privateTitle,
+          body: t.privateBody,
+          ongoingFeel: event.destinationKind == 'approval',
+          bypassForeground: event.destinationKind == 'approval',
+          targetSessionId: event.sessionId,
+          payload: durablePayload,
+        );
+    final outcome = await _show(
+      kind: display.kind,
+      id: event.androidId,
+      androidTag: event.androidTag,
+      title: display.title,
+      body: display.body,
+      ongoingFeel: display.ongoingFeel,
+      bypassForeground: display.bypassForeground,
+      payload: display.payload ?? durablePayload,
+      targetSessionId: display.targetSessionId ?? event.sessionId,
+      subText: display.subText,
+      actions: display.actions,
+    );
+    return switch (outcome) {
+      _ShowOutcome.alertShown => DeliveryPresentation.alert,
+      _ShowOutcome.inlineShown => DeliveryPresentation.inline,
+      _ShowOutcome.policySuppressed => DeliveryPresentation.suppressed,
+      _ShowOutcome.transientFailure => DeliveryPresentation.retry,
+    };
+  }
+
+  @override
+  Future<void> cancel(DeliveryEventRecord event) =>
+      _plugin.cancel(event.androidId, tag: event.androidTag);
+
   // ── Núcleo ──────────────────────────────────────────────────────────────
-  Future<bool> _show({
+  Future<_ShowOutcome> _show({
     required NotificationKind kind,
     required int id,
+    String? androidTag,
     required String title,
     required String body,
     bool ongoingFeel = false,
@@ -1292,14 +1722,14 @@ class NotificationService implements RunNotificationFacade {
     List<AndroidNotificationAction>? actions,
     bool compact = false,
   }) async {
-    await init();
+    await _ensurePlatformInitialized();
     // Cada return false registra el motivo: es el único modo de saber por qué un
     // aviso no aparece cuando la app está en 2º plano (sin UI que observar).
     if (!enabled) {
       _log(
         '${kind.name} suprimida: notificaciones desactivadas por el usuario',
       );
-      return false;
+      return _ShowOutcome.policySuppressed;
     }
     // Regla 2: evento de OTRO chat con la app en primer plano → aviso discreto
     // DENTRO de la app (banner con "Ir"), no notificación del sistema. Se decide
@@ -1318,16 +1748,16 @@ class NotificationService implements RunNotificationFacade {
           InAppNotice(kind: kind, title: title, body: body, open: open),
         );
         _log('${kind.name} → aviso in-app (otro chat, no al sistema)');
-        return false;
+        return _ShowOutcome.inlineShown;
       }
     }
     if (!_available) {
       _log('${kind.name} suprimida: servicio no disponible (init falló)');
-      return false;
+      return _ShowOutcome.transientFailure;
     }
     if (!await permissionGranted()) {
       _log('${kind.name} suprimida: POST_NOTIFICATIONS no concedido');
-      return false;
+      return _ShowOutcome.transientFailure;
     }
     // Decisión de primer plano centralizada (testeable): Regla 1/6 (mismo chat
     // visible → la UI inline ya lo muestra, no duplicar) + la regla previa de
@@ -1345,7 +1775,7 @@ class NotificationService implements RunNotificationFacade {
         'visibleMatch=${targetSessionId == visibleSessionId}, '
         'bypass=$bypassForeground, even=$evenInForeground)',
       );
-      return false;
+      return _ShowOutcome.policySuppressed;
     }
 
     // Acciones: por defecto un botón "Open" en toda notificación accionable
@@ -1353,8 +1783,11 @@ class NotificationService implements RunNotificationFacade {
     // `showsUserInterface` trae la app al frente → el tap dispara el mismo
     // payload que tocar el cuerpo (sin manejo extra en segundo plano).
     final t = NotifL10n.of(_prefs);
-    final redact = hideSensitiveContent;
-    final displayTitle = redact ? t.privateTitle : title;
+    final isApproval = kind == NotificationKind.approval;
+    final redact = hideSensitiveContent || isApproval;
+    // Approval titles are fixed generic copy; preserve that useful signal while
+    // redacting every body/preview and keeping lock-screen visibility secret.
+    final displayTitle = isApproval ? title : (redact ? t.privateTitle : title);
     final displayBody = redact ? t.privateBody : body;
     final effectiveActions = compact
         ? null
@@ -1397,6 +1830,7 @@ class NotificationService implements RunNotificationFacade {
       importance: ongoingFeel ? Importance.max : ch.importance,
       priority: ongoingFeel ? Priority.max : ch.priority,
       icon: 'ic_stat_hermes',
+      tag: androidTag,
       color: _accent,
       colorized: false,
       subText: compact ? null : summary,
@@ -1436,20 +1870,7 @@ class NotificationService implements RunNotificationFacade {
     if (!compact && kind != NotificationKind.test) {
       await _refreshGroupSummary(channelId: ch.id, t: t);
     }
-    // Recuerda la última alerta de 2º plano para re-afirmarla si el desmontaje
-    // del foreground service la borra (la de prueba no: es de primer plano).
-    if (!appInForeground && kind != NotificationKind.test) {
-      _lastBg = _LastBgNotif(
-        id: id,
-        channelId: ch.id,
-        title: displayTitle,
-        body: displayBody,
-        payload: payload,
-        compact: compact,
-        at: DateTime.now(),
-      );
-    }
-    return true;
+    return _ShowOutcome.alertShown;
   }
 
   /// Publica o retira el resumen del grupo según las alertas hijas REALMENTE
@@ -1534,57 +1955,44 @@ class NotificationService implements RunNotificationFacade {
     }
   }
 
-  /// Vuelve a mostrar la última notificación de 2º plano si se posteó hace poco.
-  /// Se llama JUSTO DESPUÉS de parar el foreground service: `stopForeground`
-  /// emite un evento de borrado que en algunos dispositivos arrastra la alerta
-  /// recién posteada. La re-emitimos en silencio (sin volver a sonar/vibrar ni
-  /// hacer heads-up) y con el mismo id, así que si sigue viva es un no-op visual
-  /// y si la borraron, reaparece sin molestar. Idempotente y sin secretos.
-  Future<void> reassertRecent({
-    Duration within = const Duration(seconds: 8),
-  }) async {
-    final last = _lastBg;
-    if (last == null) return;
-    if (!_available || !enabled) return;
-    if (DateTime.now().difference(last.at) > within) return;
-    final t = NotifL10n.of(_prefs);
-    final details = AndroidNotificationDetails(
-      last.channelId,
-      last.channelId,
-      importance: Importance.high,
-      priority: Priority.high,
-      icon: 'ic_stat_hermes',
-      color: _accent,
-      groupKey: _groupKey,
-      subText: last.compact ? null : t.brand,
-      // Re-afirmación silenciosa: ya alertó al mostrarse; no repetir.
-      onlyAlertOnce: true,
-      silent: true,
-      category: last.compact
-          ? AndroidNotificationCategory.status
-          : AndroidNotificationCategory.message,
-      styleInformation: last.compact
-          ? null
-          : BigTextStyleInformation(
-              last.body,
-              contentTitle: '<b>${last.title}</b>',
-              htmlFormatContentTitle: true,
-              summaryText: t.brand,
-              htmlFormatSummaryText: false,
-            ),
-    );
-    await _plugin.show(
-      last.id,
-      last.title,
-      last.body,
-      NotificationDetails(android: details),
-      payload: last.payload,
-    );
-    _log('re-afirmada notificación de 2º plano (id=${last.id}) tras parar FGS');
-  }
-
   @override
-  Future<void> cancelApproval() => cancelById(7001, 'cancelApproval');
+  Future<void> cancelApproval({
+    String? connId,
+    String? profile,
+    String? runId,
+    String? approvalId,
+    bool terminal = false,
+  }) async {
+    final connection = connId?.trim() ?? '';
+    final normalizedProfile = profile?.trim().isNotEmpty == true
+        ? profile!.trim().toLowerCase()
+        : 'default';
+    final run = runId?.trim() ?? '';
+    final request = approvalId?.trim() ?? '';
+    if (connection.isEmpty || normalizedProfile.isEmpty || run.isEmpty) {
+      _log('cancelApproval ignorada: scope durable incompleto');
+      return;
+    }
+    if (terminal) {
+      await _delivery.cancelApprovalForRun(
+        connId: connection,
+        profile: normalizedProfile,
+        runId: run,
+      );
+    } else {
+      if (request.isEmpty) {
+        _log('cancelApproval ignorada: request durable incompleto');
+        return;
+      }
+      await _delivery.cancelApproval(
+        connId: connection,
+        profile: normalizedProfile,
+        runId: run,
+        requestId: request,
+      );
+    }
+    await _refreshGroupSummary();
+  }
 
   /// Cancela una notificación por id dejando rastro de QUIÉN y POR QUÉ. Es el
   /// único camino permitido para cancelar: así cualquier borrado programático
@@ -1597,23 +2005,26 @@ class NotificationService implements RunNotificationFacade {
   }
 }
 
-/// Instantánea de la última notificación mostrada en 2º plano, para re-afirmarla
-/// si el desmontaje del foreground service la borra. Ver [NotificationService].
-class _LastBgNotif {
-  final int id;
-  final String channelId;
-  final String title;
-  final String body;
-  final String? payload;
-  final bool compact;
-  final DateTime at;
-  const _LastBgNotif({
-    required this.id,
-    required this.channelId,
+class _DurableDisplay {
+  const _DurableDisplay({
+    required this.kind,
     required this.title,
     required this.body,
-    required this.payload,
-    required this.compact,
-    required this.at,
+    this.ongoingFeel = false,
+    this.bypassForeground = false,
+    this.payload,
+    this.targetSessionId,
+    this.subText,
+    this.actions,
   });
+
+  final NotificationKind kind;
+  final String title;
+  final String body;
+  final bool ongoingFeel;
+  final bool bypassForeground;
+  final String? payload;
+  final String? targetSessionId;
+  final String? subText;
+  final List<AndroidNotificationAction>? actions;
 }
