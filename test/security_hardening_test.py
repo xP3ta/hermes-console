@@ -174,6 +174,12 @@ class ReleaseWorkflowBoundaryTest(unittest.TestCase):
         self.assertIn("-printf '%f\\0'", self.workflow)
         self.assertIn("xargs -0 sha256sum > SHA256SUMS", self.workflow)
 
+    def test_release_commands_have_explicit_repository_context(self):
+        self.assertEqual(
+            self.workflow.count('--repo "$GITHUB_REPOSITORY"'),
+            2,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
