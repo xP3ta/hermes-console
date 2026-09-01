@@ -196,6 +196,7 @@ class _FakeDesktopGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {
     approvals.add((sessionId: runtimeSessionId, choice: choice));
   }
@@ -2077,6 +2078,7 @@ void main() {
         await _waitUntil(() => desktop.prompts.isNotEmpty);
         desktop.emit('message.start');
         desktop.emit('approval.request', {
+          'request_id': 'request-a',
           'command': 'ls -la',
           'pattern_key': 'ls',
         });
@@ -2090,6 +2092,7 @@ void main() {
 
         desktop.emit('tool.complete', {'name': 'terminal'});
         desktop.emit('approval.request', {
+          'request_id': 'request-b',
           'command': 'cat informe.txt',
           'pattern_key': 'cat',
         });

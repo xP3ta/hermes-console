@@ -174,6 +174,7 @@ class _InteractiveGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override

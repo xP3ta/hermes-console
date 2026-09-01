@@ -100,6 +100,7 @@ import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
+import '../utils/chat_turn.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/responsive.dart';
 import '../utils/slash_commands.dart';
@@ -702,21 +703,36 @@ final class _RetainedTerminalErrorChatListEntry extends _ChatListEntry {
   ChatRenderUnitPlan get sourcePlan => assistantPlan;
 }
 
-@visibleForTesting
 int? messageIndexForArtifactSource(
   List<Map<String, dynamic>> messagesNewestFirst,
   SessionArtifactSource source,
 ) {
-  final stableId = source.messageId;
-  if (stableId != null) {
+  final sourceIdentity = TranscriptMessageIdentity(
+    messageId: source.messageId,
+    rowId: source.rowId,
+  );
+  if (sourceIdentity.isDurable) {
+    var found = -1;
     for (var index = 0; index < messagesNewestFirst.length; index++) {
       final message = messagesNewestFirst[index];
-      if (message['_desktopMessageId'] == stableId ||
-          message['message_id'] == stableId ||
-          message['id'] == stableId) {
-        return index;
+      if (!transcriptIdentityAliasesAreConsistent(message)) {
+        if (transcriptIdentityAliasesShareExactCoordinate(
+          message,
+          sourceIdentity,
+        )) {
+          return null;
+        }
+        continue;
       }
+      final candidate = canonicalTranscriptIdentity(message);
+      if (candidate == null ||
+          !sourceIdentity.sharesExactCoordinate(candidate)) {
+        continue;
+      }
+      if (!sourceIdentity.matches(candidate) || found >= 0) return null;
+      found = index;
     }
+    if (found >= 0) return found;
     // Un ID estable que ya no existe pertenece a otra revisión/compresión. No
     // degradar a un ordinal que ahora podría señalar otro mensaje.
     return null;
@@ -818,6 +834,88 @@ class ChatPerformanceProbe {
     terminalProjectionComputations = 0;
     liveStableProjectionComputations = 0;
   }
+}
+
+bool chatRefreshMessagesShareAnchorIdentity(
+  Map<String, dynamic> selected,
+  Map<String, dynamic> candidate,
+) {
+  if (!transcriptIdentityAliasesAreConsistent(selected) ||
+      !transcriptIdentityAliasesAreConsistent(candidate)) {
+    return false;
+  }
+  final selectedIdentity = canonicalTranscriptIdentity(selected);
+  final candidateIdentity = canonicalTranscriptIdentity(candidate);
+  if (selectedIdentity != null &&
+      candidateIdentity != null &&
+      selectedIdentity.matches(candidateIdentity)) {
+    return true;
+  }
+  // Sin identidad durable no hay equivalencia entre proyecciones: dos turnos
+  // legítimos pueden compartir rol y texto. Solo el mismo objeto conserva el
+  // ancla mientras la lista no haya sido sustituida.
+  return identical(selected, candidate);
+}
+
+@visibleForTesting
+Map<String, dynamic>? chatRefreshFindAnchorMessage(
+  Map<String, dynamic> selected,
+  Iterable<Map<String, dynamic>> candidates,
+) {
+  if (!transcriptIdentityAliasesAreConsistent(selected)) return null;
+  final selectedIdentity = canonicalTranscriptIdentity(selected);
+  Map<String, dynamic>? match;
+  for (final candidate in candidates) {
+    if (selectedIdentity != null) {
+      if (!transcriptIdentityAliasesAreConsistent(candidate)) {
+        if (transcriptIdentityAliasesShareExactCoordinate(
+          candidate,
+          selectedIdentity,
+        )) {
+          return null;
+        }
+        continue;
+      }
+      final candidateIdentity = canonicalTranscriptIdentity(candidate);
+      if (candidateIdentity == null ||
+          !selectedIdentity.sharesExactCoordinate(candidateIdentity)) {
+        continue;
+      }
+      if (!selectedIdentity.matches(candidateIdentity)) return null;
+    } else if (!identical(selected, candidate)) {
+      continue;
+    }
+    if (match != null) return null;
+    match = candidate;
+  }
+  return match;
+}
+
+@visibleForTesting
+String chatReadAloudMessageKey(
+  String sessionId,
+  Map<String, dynamic>? message,
+  String answer,
+) {
+  final identity = message == null
+      ? null
+      : canonicalTranscriptIdentity(message);
+  final durableKey = identity?.rowId != null
+      ? 'row:${identity!.rowId}'
+      : identity?.messageId != null
+      ? 'message:${identity!.messageId}'
+      : null;
+  return '$sessionId:assistant:'
+      '${durableKey ?? 'content:${_stableChatReadAloudHash(answer)}'}';
+}
+
+String _stableChatReadAloudHash(String value) {
+  var hash = 0x811c9dc5;
+  for (final unit in value.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 0x01000193) & 0xffffffff;
+  }
+  return hash.toRadixString(16).padLeft(8, '0');
 }
 
 class ChatScreen extends StatefulWidget {
@@ -936,6 +1034,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool _loading = true;
   String? _error;
+  int _messageRefreshEpoch = 0;
+  int? _messageRefreshInFlightEpoch;
+  int? _messageRefreshAnchorEpoch;
+  int? _messageRefreshPublishedEpoch;
+  bool _messageRefreshReanchorScheduled = false;
 
   /// A-201 (spec 028): la excepción cruda del error de carga solo se muestra
   /// bajo demanda ("ver detalles"), nunca como cuerpo del estado de error.
@@ -3503,15 +3606,20 @@ class _ChatScreenState extends State<ChatScreen>
     }
     var contextOnlySessionInfo = false;
     if (event == ActiveChatEvent.messagesHydrated) {
-      _loading = false;
-      _error = null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        // La hidratación diferida del historial (0.20) o una compactación
-        // pueden aterrizar a mitad de stream con el lector arriba. Solo
-        // reengancha el fondo si el seguimiento sigue activo; si el usuario
-        // pausó el seguimiento para leer, la hidratación no le roba la vista.
-        if (mounted && _autoFollowStreaming) _scrollToBottom(animate: false);
-      });
+      // Una carga iniciada por esta pantalla conserva su propia valla de estado
+      // y su ancla visual. El evento del servicio solo fuerza el rebuild; no
+      // puede cerrar el overlay ni programar otro scroll por fuera de ese vuelo.
+      if (_messageRefreshInFlightEpoch == null) {
+        _loading = false;
+        _error = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          // La hidratación diferida del historial (0.20) o una compactación
+          // pueden aterrizar a mitad de stream con el lector arriba. Solo
+          // reengancha el fondo si el seguimiento sigue activo; si el usuario
+          // pausó el seguimiento para leer, la hidratación no le roba la vista.
+          if (mounted && _autoFollowStreaming) _scrollToBottom(animate: false);
+        });
+      }
     }
     if (event == ActiveChatEvent.sessionInfo) {
       final presentationFingerprint = _runtimePresentationFingerprint(
@@ -4204,6 +4312,17 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
+    final refreshEpoch = _messageRefreshInFlightEpoch;
+    if (refreshEpoch != null &&
+        _messageRefreshPublishedEpoch != refreshEpoch &&
+        _userIsDragging) {
+      // La intención del lector manda sobre el ancla capturada al iniciar el
+      // refresh. Retirarla dentro del propio callback de scroll evita que la
+      // física interprete el drag como un reflow y lo corrija de vuelta. El
+      // post-frame siguiente captura otra burbuja desde el viewport elegido.
+      _cancelMessageRefreshViewportAnchor();
+    }
+    _scheduleMessageRefreshViewportReanchor();
     // Lista reverse:true → offset 0 es el FONDO (mensaje más nuevo) y
     // maxScrollExtent es lo más antiguo. "Estás abajo" = cerca de
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
@@ -4620,6 +4739,86 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  void _cancelMessageRefreshViewportAnchor() {
+    _messageRefreshAnchorEpoch = null;
+    _streamingViewportLock.disable();
+  }
+
+  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
+    _cancelMessageRefreshViewportAnchor();
+    if (!_scrollController.hasClients || _isNearBottom) return;
+    final viewportHeight = _scrollController.position.viewportDimension;
+    Map<String, dynamic>? selectedMessage;
+    RenderBox? selectedAnchor;
+    var bestDistance = double.infinity;
+    for (final entry in _messageAnchors.entries) {
+      final anchor = entry.value;
+      final top = _ChatStreamingViewportLock._visualOffsetInViewport(anchor);
+      final height = anchor is ChatAnswerAnchorRenderBox
+          ? anchor.laidOutHeight
+          : null;
+      if (top == null ||
+          height == null ||
+          top >= viewportHeight ||
+          top + height <= 0) {
+        continue;
+      }
+      final distance = (top + height / 2 - viewportHeight / 2).abs();
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        selectedMessage = entry.key;
+        selectedAnchor = anchor;
+      }
+    }
+    if (selectedMessage == null || selectedAnchor == null) return;
+
+    if (!_messages.any((message) => identical(message, selectedMessage))) {
+      return;
+    }
+
+    RenderBox? lookup() {
+      if (_messageRefreshAnchorEpoch != refreshEpoch) return null;
+      final message = chatRefreshFindAnchorMessage(selectedMessage!, _messages);
+      return message == null ? null : _messageAnchors[message];
+    }
+
+    _streamingViewportLock.enable();
+    _messageRefreshAnchorEpoch = refreshEpoch;
+    if (!_streamingViewportLock.expectAnchorVisualChange(
+      selectedAnchor,
+      lookup,
+    )) {
+      _cancelMessageRefreshViewportAnchor();
+    }
+  }
+
+  void _releaseMessageRefreshViewportAnchorAfterLayout(int refreshEpoch) {
+    if (_messageRefreshAnchorEpoch != refreshEpoch) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_messageRefreshAnchorEpoch == refreshEpoch) {
+        _cancelMessageRefreshViewportAnchor();
+      }
+    });
+  }
+
+  void _scheduleMessageRefreshViewportReanchor() {
+    final refreshEpoch = _messageRefreshInFlightEpoch;
+    if (refreshEpoch == null ||
+        _messageRefreshPublishedEpoch == refreshEpoch ||
+        _messageRefreshReanchorScheduled) {
+      return;
+    }
+    _messageRefreshReanchorScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _messageRefreshReanchorScheduled = false;
+      if (_messageRefreshInFlightEpoch != refreshEpoch ||
+          _messageRefreshPublishedEpoch == refreshEpoch) {
+        return;
+      }
+      _beginMessageRefreshViewportAnchor(refreshEpoch);
+    });
+  }
+
   Future<void> _fetchMessages() async {
     await _profileReady;
     if (!mounted) return;
@@ -4643,6 +4842,13 @@ class _ChatScreenState extends State<ChatScreen>
       }
       return;
     }
+    final refreshEpoch = ++_messageRefreshEpoch;
+    final hadTranscript = _messages.isNotEmpty;
+    _messageRefreshInFlightEpoch = refreshEpoch;
+    _messageRefreshPublishedEpoch = null;
+    if (hadTranscript) {
+      _beginMessageRefreshViewportAnchor(refreshEpoch);
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -4652,18 +4858,35 @@ class _ChatScreenState extends State<ChatScreen>
       await _chat.loadMessages(
         expectedMessageCount: widget.session.messageCount,
         profile: _effectiveSessionProfile,
+        onMessagesPublished: () {
+          if (!mounted ||
+              refreshEpoch != _messageRefreshEpoch ||
+              _messageRefreshInFlightEpoch != refreshEpoch) {
+            return;
+          }
+          _messageRefreshPublishedEpoch = refreshEpoch;
+        },
       );
-      if (!mounted) return;
+      if (!mounted || refreshEpoch != _messageRefreshEpoch) return;
       // `loadMessages` may finish linking an old durable session after the
       // eager entry attempt. Retry once from this authoritative completion.
       unawaited(_ensureDesktopRuntimeAndBootstrapContext());
       _syncDesktopSessionConfig();
+      _messageRefreshInFlightEpoch = null;
+      _messageRefreshPublishedEpoch = null;
       setState(() {
         _loading = false;
       });
-      _scrollToBottom();
+      if (!hadTranscript) {
+        _scrollToBottom();
+      } else {
+        _releaseMessageRefreshViewportAnchorAfterLayout(refreshEpoch);
+      }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || refreshEpoch != _messageRefreshEpoch) return;
+      _messageRefreshInFlightEpoch = null;
+      _messageRefreshPublishedEpoch = null;
+      _cancelMessageRefreshViewportAnchor();
       final errStr = e.toString();
       if (errStr.contains('404') || errStr.contains('not found')) {
         final isUnpersistedMobileChat =
@@ -9492,36 +9715,10 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   String _readAloudMessageKey(Map<String, dynamic>? message, String answer) {
-    Object? identity;
-    if (message != null) {
-      for (final field in const [
-        'id',
-        'message_id',
-        'uuid',
-        'created_at',
-        'timestamp',
-      ]) {
-        final value = message[field];
-        if (value != null && value.toString().trim().isNotEmpty) {
-          identity = value;
-          break;
-        }
-      }
-    }
-    identity ??= _stableReadAloudHash(answer);
-    return '${widget.session.id}:assistant:$identity';
+    return chatReadAloudMessageKey(widget.session.id, message, answer);
   }
 
-  String _readAloudRevision(String answer) => _stableReadAloudHash(answer);
-
-  static String _stableReadAloudHash(String value) {
-    var hash = 0x811c9dc5;
-    for (final unit in value.codeUnits) {
-      hash ^= unit;
-      hash = (hash * 0x01000193) & 0xffffffff;
-    }
-    return hash.toRadixString(16).padLeft(8, '0');
-  }
+  String _readAloudRevision(String answer) => _stableChatReadAloudHash(answer);
 
   /// Alterna la sesión de lectura de una burbuja concreta. El servicio decide
   /// si el gesto pausa/reanuda o detiene/reinicia según la preferencia.
@@ -10548,7 +10745,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildBody() {
     final colors = Theme.of(context).hermes;
-    if (_loading) {
+    if (_loading && _messages.isEmpty) {
       // Estado de carga con la mascota (006): si la presencia está activa, el
       // Companion "piensa" mientras carga; si está apagada, cae al spinner.
       final app = context.findAncestorStateOfType<HermesAppState>();
@@ -10571,7 +10768,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
     }
 
-    if (_error != null) {
+    if (_error != null && _messages.isEmpty) {
       // A-201 (spec 028): estado de error según la plantilla §14 del design
       // system — card `error` alpha 0.08 con borde 0.3, mensaje conciso en
       // español y reintento con HermesSecondaryButton. La excepción cruda
@@ -10672,7 +10869,7 @@ class _ChatScreenState extends State<ChatScreen>
     final entries = _currentListEntries;
     pruneMessageAnchorCache(_messageAnchors, _messages);
 
-    return ChatScrollInteractionGuard(
+    final transcript = ChatScrollInteractionGuard(
       onPointerDown: _pauseStreamingFollow,
       onPointerMove: _trackStreamingScrollInteraction,
       onPointerUp: _finishStreamingScrollInteraction,
@@ -10785,6 +10982,13 @@ class _ChatScreenState extends State<ChatScreen>
           return result;
         },
       ),
+    );
+    return ChatRefreshStatusOverlay(
+      loading: _loading,
+      errorMessage: _error == null
+          ? null
+          : Strings.of(context).chaMessagesError,
+      child: transcript,
     );
   }
 
@@ -16524,6 +16728,80 @@ class _ProfileContextChip extends StatelessWidget
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Keeps an existing transcript mounted while a manual refresh is in flight or
+/// reports a failure. Initial loads without history still use the full states.
+class ChatRefreshStatusOverlay extends StatelessWidget {
+  const ChatRefreshStatusOverlay({
+    required this.loading,
+    required this.errorMessage,
+    required this.child,
+    super.key,
+  });
+
+  final bool loading;
+  final String? errorMessage;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Stack(
+      children: [
+        Positioned.fill(child: child),
+        if (loading)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Semantics(
+              key: const ValueKey('chat-refresh-progress'),
+              liveRegion: true,
+              label: MaterialLocalizations.of(
+                context,
+              ).refreshIndicatorSemanticLabel,
+              child: ExcludeSemantics(
+                child: LinearProgressIndicator(
+                  minHeight: 2,
+                  color: colors.accent,
+                  backgroundColor: Colors.transparent,
+                ),
+              ),
+            ),
+          ),
+        if (errorMessage != null)
+          Positioned(
+            top: 8,
+            left: 12,
+            right: 12,
+            child: Center(
+              child: Semantics(
+                key: const ValueKey('chat-refresh-error'),
+                liveRegion: true,
+                label: errorMessage,
+                child: ExcludeSemantics(
+                  child: Material(
+                    color: colors.error,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        errorMessage!,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

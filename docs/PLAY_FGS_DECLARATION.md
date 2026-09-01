@@ -1,15 +1,18 @@
 # Declaración FGS (Foreground Service) para Play Console
 
-**Tipos declarados**: `dataSync`, `microphone` y `mediaPlayback` sobre el único
-servicio no exportado de `flutter_foreground_task`.
+**Tipos declarados**: `dataSync`, `remoteMessaging`, `microphone` y
+`mediaPlayback`, repartidos entre dos servicios no exportados. El servicio
+Flutter (notificación ID 256) mantiene `remoteMessaging`, Voz, Read Aloud y el
+fallback `dataSync` de API ≤34. `HermesExternalDataSyncService` (notificación
+ID 257) mantiene únicamente SSH/SFTP `dataSync` en API ≥35.
 
-**Revisado**: 2026-08-30 para el candidato fuente `1.2.8 (4943)`. Los tipos
+**Revisado**: 2026-09-01 para el candidato fuente `1.2.9`. Los tipos
 coinciden con el manifest versionado, pero el AAB firmado, su manifest fusionado
 y la demostración física todavía están pendientes. Copiar o adaptar en Play
 Console → Contenido de la aplicación → Permisos de servicios en primer plano
 solo después de cerrar esos gates. Google exige declarar cada tipo, describir el
 efecto de un aplazamiento/interrupción y aportar un vídeo que muestre cómo lo
-activa el usuario. Los tres vídeos continúan pendientes de generación y
+activa el usuario. Los cuatro vídeos continúan pendientes de generación y
 aprobación.
 
 ## `dataSync`
@@ -17,30 +20,65 @@ aprobación.
 ### Texto ES
 
 > Hermes Console es un cliente para el agente de IA autoalojado del usuario. El
-> servicio `dataSync` mantiene trabajo de red visible e iniciado por el usuario:
-> una transferencia SFTP o una sesión SSH activa. Una notificación persistente
-> indica que Hermes sigue activo y permite detenerlo. El servicio se libera al
-> terminar el trabajo y no envía datos a un backend de XPeta Lab. La vigilancia
-> de runs, Cron, Kanban y aprobaciones está desactivada en 1.2.8.
+> tipo `dataSync` mantiene dos clases de red visibles: transferencias SFTP o
+> sesiones SSH iniciadas por el usuario y, únicamente en Android 14 o anterior,
+> el fallback compatible de «Escuchar en segundo plano». En Android 15 o
+> posterior, SSH/SFTP usa un servicio nativo efímero separado y la escucha usa
+> `remoteMessaging`; así el timeout de una transferencia no puede derribar la
+> escucha permanente. Una notificación persistente indica el trabajo y permite
+> detenerlo. SSH/SFTP se libera al terminar; la escucha dura hasta que el
+> usuario la desactiva. No se envían datos a un backend de XPeta Lab.
 
 ### English text
 
 > Hermes Console is a client for the user's self-hosted AI agent. Its `dataSync`
-> foreground service keeps user-visible network work active after leaving the
-> app: a user-started SFTP transfer or active SSH session. A persistent
-> notification states that Hermes is active and provides a direct Stop action.
-> The service is released when work ends and sends no data to an XPeta Lab
-> backend. Run, Cron, Kanban, and approval monitoring is disabled in 1.2.8.
+> type keeps two visible network cases active: user-started SFTP transfers or
+> SSH sessions and, only on Android 14 or earlier, the compatible fallback for
+> “Listen in background.” On Android 15 or later, SSH/SFTP uses a separate
+> ephemeral native service while listening uses `remoteMessaging`, so a
+> transfer timeout cannot stop permanent listening. A persistent notification
+> describes the work and provides a direct Stop action. SSH/SFTP is released
+> when work ends; listening lasts until the user turns it off. No data is sent
+> to an XPeta Lab backend.
 
 - **Caso sugerido en Play**: Network transfer — upload or download /
   server-side processing initiated by the user.
-- **Si se aplaza**: la transferencia o sesión deja de mantenerse al salir de la
-  app y el usuario puede perder progreso visible o tener que reanudar.
+- **Si se aplaza**: una transferencia/sesión deja de mantenerse al salir de la
+  app; en Android ≤14 también se retrasan las respuestas y automatizaciones
+  hasta reanudar la escucha.
 - **Si se interrumpe**: la app reconcilia el estado al volver; una transferencia
   o sesión interactiva puede necesitar reanudación manual.
 - **Por qué no basta WorkManager/UIDT**: SSH es una sesión interactiva con estado
   y respuesta en directo; no es una copia diferible aislada. Para nuevas
   transferencias puras debe reevaluarse UIDT.
+
+## `remoteMessaging`
+
+### Texto ES
+
+> En Android 15 o posterior, Hermes Console usa `remoteMessaging` para mantener
+> la continuidad de chat entre el agente de IA autoalojado/cliente Desktop del
+> usuario y su móvil. El usuario activa expresamente «Escuchar en segundo
+> plano»; la misma conexión puede avisar de runs, Cron y Kanban como efectos
+> secundarios. La escucha dura hasta que se desactiva y una notificación
+> persistente incluye Parar. No se envían datos a un backend de XPeta Lab ni se
+> requiere Google Play Services.
+
+### English text
+
+> On Android 15 or later, Hermes Console uses `remoteMessaging` to maintain chat
+> continuity between the user's self-hosted AI agent/Desktop client and their
+> phone. The user explicitly enables “Listen in background”; the same connection
+> can surface run, Cron, and Kanban updates as secondary outcomes. Listening
+> lasts until the user turns it off, and a persistent notification includes a
+> Stop action. No data is sent to an XPeta Lab backend and Google Play Services
+> are not required.
+
+- **Caso sugerido en Play**: Relay text communication to another device.
+- **Si se aplaza/interrumpe**: las respuestas y automatizaciones siguen en el
+  agente, pero el móvil no puede avisar a tiempo hasta que se reanude la escucha.
+- **Control y minimización**: opt-in separado, canal LOW, intervalo adaptativo,
+  sin wake-lock/Wi-Fi-lock continuo y parada directa desde ajustes/notificación.
 
 ## `microphone`
 
@@ -112,7 +150,7 @@ aprobación.
 
 ## Vídeos requeridos
 
-Play solicita un enlace de vídeo para **cada tipo**. Preparar tres vídeos públicos
+Play solicita un enlace de vídeo para **cada tipo**. Preparar cuatro vídeos públicos
 o no listados, sin tokens, IPs, nombres reales ni conversaciones sensibles.
 
 ### `dataSync` (≤30 s)
@@ -120,6 +158,14 @@ o no listados, sin tokens, IPs, nombres reales ni conversaciones sensibles.
 1. Iniciar una transferencia SFTP demo de unos 15 s.
 2. Ir al launcher y mostrar la notificación persistente y Stop.
 3. Volver y enseñar la transferencia completada, o pulsar Stop y mostrar su retirada.
+
+### `remoteMessaging` (30–45 s)
+
+1. Activar «Escuchar en segundo plano» y mostrar la notificación persistente.
+2. Ir al launcher y completar una respuesta de chat desde el agente/Desktop.
+3. Mostrar el aviso recibido, abrir el mismo chat en Console y pulsar Parar para
+   demostrar continuidad entre dispositivos y control del usuario. Cron/Kanban
+   pueden aparecer como resultado secundario, no como justificación principal.
 
 ### `microphone` (30–45 s)
 
@@ -140,30 +186,36 @@ o no listados, sin tokens, IPs, nombres reales ni conversaciones sensibles.
 2. Ir al launcher y mostrar la notificación sin contenido de conversación.
 3. Pulsar Pausar, Reanudar y Terminar; comprobar que el audio se detiene.
 
-Guardar una copia local fuera de Git y pegar las tres URLs en Play Console. No
+Guardar una copia local fuera de Git y pegar las cuatro URLs en Play Console. No
 usar un vídeo antiguo que solo muestre `dataSync`.
 
 ## Verificación técnica obligatoria
 
 - Manifest: `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`,
-  `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` y
-  `foregroundServiceType="dataSync|microphone|mediaPlayback"`.
+  `FOREGROUND_SERVICE_REMOTE_MESSAGING`, `FOREGROUND_SERVICE_MICROPHONE` y
+  `FOREGROUND_SERVICE_MEDIA_PLAYBACK`. El servicio Flutter declara
+  `dataSync|remoteMessaging|microphone|mediaPlayback`; el servicio nativo
+  separado declara solo `dataSync`.
 - `RECORD_AUDIO` se concede antes de crear el FGS `microphone`; la conversación
   se inicia desde una Activity visible, nunca desde background o
   `BOOT_COMPLETED`.
-- `RECEIVE_BOOT_COMPLETED` no está presente: tras boot no se restauran
-  automatizaciones, SSH/SFTP, micrófono ni reproducción.
-- Los tipos se adquieren según el trabajo efectivo: Voz usa
-  `microphone|mediaPlayback`, ReadAloud usa solo `mediaPlayback` y el modo sin
-  audio usa `dataSync`. Los leases de audio no consumen la cuota limitada de
-  `dataSync`.
-- Al terminar voz, el único servicio se detiene o se reinicia solo como
-  `dataSync` si queda otro trabajo legítimo.
+- `RECEIVE_BOOT_COMPLETED` restaura únicamente la automatización si el opt-in
+  sigue activo: `remoteMessaging` en API ≥35 y el fallback `dataSync` en API
+  ≤34. Nunca restaura SSH/SFTP, micrófono ni reproducción.
+- Los tipos se adquieren según el trabajo efectivo: el servicio Flutter usa
+  `microphone|mediaPlayback` para Voz, solo `mediaPlayback` para Read Aloud,
+  `remoteMessaging` para la escucha en API ≥35 y `dataSync` para la escucha y
+  SSH/SFTP en API ≤34. En API ≥35, SSH/SFTP adquiere el servicio nativo
+  `dataSync` separado. Los leases de audio no consumen esa cuota.
+- Al terminar Voz, el servicio Flutter se detiene o se reinicia con el tipo de
+  red exacto que siga teniendo demanda. No altera el servicio nativo SSH/SFTP.
 - Una notificación persistente y precisa permanece durante todo el acceso; no
   se usa `USE_FULL_SCREEN_INTENT`.
 - Android 15+ limita `dataSync` a seis horas acumuladas en segundo plano por cada
-  24 horas; el plugin implementa `Service.onTimeout`. Esa cuota no se mezcla con
-  el FGS `microphone`, pero continúa siendo un gate propio del trabajo de red.
+  24 horas y prohíbe iniciarlo desde `BOOT_COMPLETED`; por eso la escucha usa
+  `remoteMessaging` allí. `HermesExternalDataSyncService` implementa
+  `Service.onTimeout` y detiene solo el trabajo externo; la cuota sigue siendo
+  un gate propio de SSH/SFTP y no alcanza al listener permanente.
 
 ## Fuentes oficiales revisadas
 

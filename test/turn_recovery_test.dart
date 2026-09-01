@@ -81,6 +81,7 @@ class _DesktopGateway implements HermesDesktopGateway {
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override

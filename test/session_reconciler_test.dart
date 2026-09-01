@@ -132,6 +132,7 @@ void main() {
   test('superpone metadata de resume sobre la fila REST exacta', () {
     const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_exact]';
     final persisted = DesktopSessionMessage.tryParse({
+      'message_id': 'deleg-exact-id',
       'role': 'user',
       'content': raw,
       'display_kind': 'async_delegation_complete',
@@ -143,7 +144,7 @@ void main() {
     })!;
     final rest = <Map<String, dynamic>>[
       {'role': 'assistant', 'content': 'Hecho'},
-      {'role': 'user', 'content': raw},
+      {'message_id': 'deleg-exact-id', 'role': 'user', 'content': raw},
     ];
 
     final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
@@ -154,6 +155,177 @@ void main() {
       'task_count': 1,
       'duration_seconds': 12,
     });
+  });
+
+  test('superpone metadata entre Desktop row_id y REST id numérico', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_row_exact]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'row_id': 74,
+      'role': 'user',
+      'content': raw,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 2, 'completed_count': 2},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'id': 74, 'role': 'user', 'content': raw},
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(merged.single['display_kind'], 'async_delegation_complete');
+    expect(merged.single['display_metadata'], {
+      'task_count': 2,
+      'completed_count': 2,
+    });
+  });
+
+  test('superpone metadata desde los aliases Desktop id y _row_id', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_row_alias]';
+    for (final alias in const ['id', '_row_id']) {
+      final persisted = DesktopSessionMessage.tryParse({
+        alias: 74,
+        'role': 'user',
+        'content': raw,
+        'display_kind': 'async_delegation_complete',
+        'display_metadata': {'task_count': 2, 'completed_count': 2},
+      })!;
+      final rest = <Map<String, dynamic>>[
+        {'id': 74, 'role': 'user', 'content': raw},
+      ];
+
+      final merged = reconciler.overlayDurableDisplayMetadata(rest, [
+        persisted,
+      ]);
+
+      expect(
+        merged.single['display_kind'],
+        'async_delegation_complete',
+        reason: alias,
+      );
+    }
+  });
+
+  test('fila Desktop enriquecida cruza con REST que solo conserva row id', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_dual_id]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'message_id': 'deleg-message-74',
+      'row_id': 74,
+      'role': 'user',
+      'content': raw,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 1, 'completed_count': 1},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'id': 74, 'role': 'user', 'content': raw},
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(merged.single['display_kind'], 'async_delegation_complete');
+  });
+
+  test('aliases Desktop contradictorios no superponen metadata', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_conflict]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'row_id': 73,
+      'id': 74,
+      'role': 'user',
+      'content': raw,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 1},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'id': 73, 'role': 'user', 'content': raw},
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(merged.single, same(rest.single));
+    expect(merged.single, isNot(contains('display_kind')));
+  });
+
+  test('metadata no se superpone sobre identidades REST duplicadas', () {
+    const marker = '[ASYNC DELEGATION BATCH COMPLETE — deleg_rest_dup]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'message_id': 'duplicate-rest-id',
+      'role': 'user',
+      'content': marker,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 1},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'message_id': 'duplicate-rest-id', 'role': 'user', 'content': marker},
+      {
+        'message_id': 'duplicate-rest-id',
+        'role': 'user',
+        'content': 'turno legítimo con id contradictorio',
+      },
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(
+      merged.every((message) => !message.containsKey('display_kind')),
+      isTrue,
+    );
+  });
+
+  test('no superpone metadata si ambas filas carecen de identidad', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — sin identidad]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'role': 'user',
+      'content': raw,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 1},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'role': 'user', 'content': raw},
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(merged.single, same(rest.single));
+    expect(merged.single, isNot(contains('display_kind')));
+  });
+
+  test('refresh no equipara un id REST numérico con un id Desktop string', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_numeric]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'message_id': '42',
+      'role': 'user',
+      'content': raw,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 1},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'message_id': 42, 'role': 'user', 'content': raw},
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(merged.single, same(rest.single));
+    expect(merged.single, isNot(contains('display_kind')));
+  });
+
+  test('no inventa identidad por contenido ante filas REST duplicadas', () {
+    const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_repeat]';
+    final persisted = DesktopSessionMessage.tryParse({
+      'role': 'user',
+      'content': raw,
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {'task_count': 1},
+    })!;
+    final rest = <Map<String, dynamic>>[
+      {'role': 'user', 'content': raw},
+      {'role': 'user', 'content': raw},
+    ];
+
+    final merged = reconciler.overlayDurableDisplayMetadata(rest, [persisted]);
+
+    expect(
+      merged.every((message) => !message.containsKey('display_kind')),
+      isTrue,
+    );
   });
 
   test('el contenido estructurado conserva enlaces y URLs de fuentes', () {
@@ -317,7 +489,7 @@ void main() {
     );
   });
 
-  test('deduplica solo contra el último bloque user del turno vivo', () {
+  test('no fusiona por texto el bloque durable con el turno vivo', () {
     final result = reconciler.project(
       snapshot({
         'session_id': 'runtime-latest-user-run',
@@ -344,6 +516,8 @@ void main() {
       'respuesta anterior',
       'turno actual',
       'ya persistida',
+      'turno actual',
+      'ya persistida',
       'repetida',
       'parcial',
     ]);
@@ -355,7 +529,7 @@ void main() {
     );
   });
 
-  test('deduplica el bloque user aunque exista una cola viva detrás', () {
+  test('conserva identidad separada aunque haya tools detrás del bloque', () {
     final result = reconciler.project(
       snapshot({
         'session_id': 'runtime-live-tail',
@@ -379,6 +553,8 @@ void main() {
         .where((message) => message['role'] == 'user')
         .toList(growable: false);
     expect(userMessages.map((message) => message['content']), [
+      'turno actual',
+      'corrección persistida',
       'turno actual',
       'corrección persistida',
     ]);
@@ -409,7 +585,7 @@ void main() {
     expect(second.messagesNewestFirst, first.messagesNewestFirst);
   });
 
-  test('no duplica el user inflight ya presente al final del transcript', () {
+  test('no identifica por texto el user inflight y la cola durable', () {
     final result = reconciler.project(
       snapshot({
         'session_id': 'runtime-dedup',
@@ -426,7 +602,84 @@ void main() {
       result.messagesNewestFirst
           .where((message) => message['role'] == 'user')
           .map((message) => message['content']),
-      ['mismo turno'],
+      ['mismo turno', 'mismo turno'],
+    );
+    expect(
+      result.messagesNewestFirst
+          .where((message) => message['role'] == 'user')
+          .map((message) => message['_desktopSnapshotKind']),
+      ['inflight', 'persisted'],
+    );
+  });
+
+  test(
+    'no identifica inflight por texto contra un turno anterior ya respondido',
+    () {
+      final result = reconciler.project(
+        snapshot({
+          'session_id': 'runtime-repeated-completed-prompt',
+          'session_key': 'stored-1',
+          'messages': [
+            {'message_id': 'old-user', 'role': 'user', 'text': 'mismo prompt'},
+            {
+              'message_id': 'old-answer',
+              'role': 'assistant',
+              'text': 'respuesta legítima anterior',
+            },
+          ],
+          'inflight': {
+            'user': 'mismo prompt',
+            'assistant': 'respuesta nueva parcial',
+            'streaming': true,
+          },
+          'running': true,
+        }),
+      );
+
+      final chronological = result.messagesNewestFirst.reversed.toList();
+      expect(chronological.map((message) => message['content']), [
+        'mismo prompt',
+        'respuesta legítima anterior',
+        'mismo prompt',
+        'respuesta nueva parcial',
+      ]);
+      expect(
+        chronological.where((message) => message['role'] == 'user'),
+        hasLength(2),
+      );
+    },
+  );
+
+  test('no deduplica inflight contra un user cancelado con el mismo texto', () {
+    final result = reconciler.project(
+      snapshot({
+        'session_id': 'runtime-repeated-cancelled-prompt',
+        'session_key': 'stored-1',
+        'messages': [
+          {
+            'message_id': 'cancelled-user-a',
+            'role': 'user',
+            'text': 'mismo prompt',
+          },
+        ],
+        'inflight': {
+          'user': 'mismo prompt',
+          'assistant': 'respuesta viva de B',
+          'streaming': true,
+        },
+        'running': true,
+      }),
+    );
+
+    final chronological = result.messagesNewestFirst.reversed.toList();
+    expect(chronological.map((message) => message['content']), [
+      'mismo prompt',
+      'mismo prompt',
+      'respuesta viva de B',
+    ]);
+    expect(
+      chronological.where((message) => message['role'] == 'user'),
+      hasLength(2),
     );
   });
 

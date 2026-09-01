@@ -43,6 +43,22 @@ import '../widgets/run_template_composer.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 
+@visibleForTesting
+bool runTerminalCancelsApproval(String eventType) =>
+    const {'run.completed', 'run.failed', 'run.cancelled'}.contains(eventType);
+
+@visibleForTesting
+Future<bool> resolveRunApprovalWithLockFence({
+  required String requestId,
+  required String? Function() currentRequestId,
+  required Future<bool> Function() verify,
+  required Future<bool> Function() resolve,
+}) async {
+  final verified = await verify();
+  if (!verified || currentRequestId() != requestId) return false;
+  return resolve();
+}
+
 Color commandRiskColor(CommandRisk risk, HermesThemeColors colors) =>
     switch (risk) {
       CommandRisk.low => colors.textSecondary,
@@ -131,6 +147,7 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
         final status = await _client.getRun(r.runId);
         await registry.update(
           r.runId,
+          profile: r.profile,
           lastStatus: status['status'] as String?,
           output: status['output'] as String?,
           error: status['error'] as String?,
@@ -139,7 +156,11 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
         if (e.toString().contains('404')) {
           // El gateway ya no conserva este run (se barre tras completar o
           // al reiniciar): estado final desconocido.
-          await registry.update(r.runId, lastStatus: 'expired');
+          await registry.update(
+            r.runId,
+            profile: r.profile,
+            lastStatus: 'expired',
+          );
         }
       }
     }
@@ -511,11 +532,15 @@ class RunDetailScreen extends StatefulWidget {
   final SavedConnection connection;
   final RunRecord record;
   final ApiClient? client;
+  final String? initialApprovalId;
+  final VoidCallback? onInitialApprovalReady;
 
   const RunDetailScreen({
     required this.connection,
     required this.record,
     this.client,
+    this.initialApprovalId,
+    this.onInitialApprovalReady,
     super.key,
   });
 
@@ -541,6 +566,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
   /// Aprobación pendiente (último approval.request sin responder).
   Map<String, dynamic>? _pendingApproval;
   bool _resolvingApproval = false;
+  bool _initialApprovalReadyReported = false;
 
   final List<_RunEvent> _events = [];
   bool _streamClosed = false;
@@ -580,6 +606,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
     await BackgroundWatch.add(
       SavedRunWatch(
         connId: widget.connection.id,
+        profile: widget.record.profile,
         base: widget.connection.baseUrl,
         runId: widget.record.runId,
         prompt: widget.record.prompt,
@@ -631,6 +658,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
   void _persist() {
     _registry?.update(
       widget.record.runId,
+      profile: widget.record.profile,
       lastStatus: _status,
       output: _output.isEmpty ? null : _output,
       error: _error,
@@ -644,11 +672,19 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         if (!mounted) return;
         final type = (event['event'] ?? '').toString();
         final evS = Strings.of(context);
-        setState(() => _applyEvent(event, evS));
+        var accepted = false;
+        setState(() => accepted = _applyEvent(event, evS));
+        if (accepted &&
+            type == 'approval.request' &&
+            !_initialApprovalReadyReported &&
+            widget.initialApprovalId != null) {
+          _initialApprovalReadyReported = true;
+          widget.onInitialApprovalReady?.call();
+        }
         _persist();
         // Tras registrar una solicitud de aprobación, la política decide:
         // YOLO/regla guardada → auto-aprobar; read-only → bloquear; si no, pedir.
-        if (type == 'approval.request') {
+        if (type == 'approval.request' && accepted) {
           _applyApprovalPolicy(event);
           // Notifica solo si la aprobación sigue requiriendo acción del usuario
           // (si la política la auto-resolvió, _pendingApproval ya es null).
@@ -666,7 +702,10 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                 sessionId: widget.record.sessionId,
                 sessionTitle: widget.record.prompt,
                 runId: widget.record.runId,
+                approvalId: (event['request_id'] ?? event['approval_id'])
+                    ?.toString(),
                 base: widget.connection.baseUrl,
+                profile: widget.record.profile,
               );
             }
           });
@@ -675,9 +714,20 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
             type == 'run.cancelled') {
           // Ya la gestionamos en primer plano: que el servicio deje de vigilarla
           // (evita doble aviso; además los ids de notificación se reemplazan).
-          BackgroundWatch.remove(widget.record.runId);
+          BackgroundWatch.remove(
+            widget.record.runId,
+            connId: widget.connection.id,
+            profile: widget.record.profile,
+          );
+          if (runTerminalCancelsApproval(type)) {
+            _notifications?.cancelApproval(
+              connId: widget.connection.id,
+              profile: widget.record.profile,
+              runId: widget.record.runId,
+              terminal: true,
+            );
+          }
           if (type != 'run.cancelled') {
-            _notifications?.cancelApproval();
             _notifications?.runFinished(
               title: widget.record.prompt.trim().isEmpty
                   ? Strings.of(context).runsAgentTask
@@ -686,6 +736,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
               connId: widget.connection.id,
               sessionId: widget.record.sessionId,
               runId: widget.record.runId,
+              profile: widget.record.profile,
             );
           }
         }
@@ -704,7 +755,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
     );
   }
 
-  void _applyEvent(Map<String, dynamic> event, Strings s) {
+  bool _applyEvent(Map<String, dynamic> event, Strings s) {
     final type = (event['event'] ?? '').toString();
     switch (type) {
       case 'message.delta':
@@ -737,7 +788,18 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
           'cancelled',
           'expired',
         }.contains(_status)) {
-          return;
+          return false;
+        }
+        final requestId = (event['request_id'] ?? event['approval_id'])
+            ?.toString()
+            .trim();
+        if (requestId == null || requestId.isEmpty) return false;
+        final initialApprovalId = widget.initialApprovalId?.trim();
+        if (!_initialApprovalReadyReported &&
+            initialApprovalId != null &&
+            initialApprovalId.isNotEmpty &&
+            requestId != initialApprovalId) {
+          return false;
         }
         _pendingApproval = event;
         _status = 'waiting_for_approval';
@@ -749,6 +811,21 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
           ),
         );
       case 'approval.responded':
+        final respondedId = (event['request_id'] ?? event['approval_id'])
+            ?.toString()
+            .trim();
+        final pendingId =
+            (_pendingApproval?['request_id'] ??
+                    _pendingApproval?['approval_id'])
+                ?.toString()
+                .trim();
+        if (pendingId == null ||
+            pendingId.isEmpty ||
+            respondedId == null ||
+            respondedId.isEmpty ||
+            respondedId != pendingId) {
+          return false;
+        }
         _pendingApproval = null;
         _status = 'running';
         _events.add(
@@ -771,6 +848,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         _status = 'cancelled';
         _pendingApproval = null;
     }
+    return true;
   }
 
   /// Evalúa la política al llegar una `approval.request`: YOLO/regla guardada
@@ -821,10 +899,30 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
   Future<void> _autoResolve(ApprovalScope scope, String reason) async {
     final s = Strings.of(context);
     final command = (_pendingApproval?['command'] ?? '').toString();
+    final requestId =
+        (_pendingApproval?['request_id'] ?? _pendingApproval?['approval_id'])
+            ?.toString()
+            .trim();
+    if (requestId == null || requestId.isEmpty) return;
     setState(() => _resolvingApproval = true);
     try {
-      await _client.resolveRunApproval(widget.record.runId, scope.wire);
+      await _client.resolveRunApproval(
+        widget.record.runId,
+        scope.wire,
+        requestId: requestId,
+      );
+      await _notifications?.cancelApproval(
+        connId: widget.connection.id,
+        profile: widget.record.profile,
+        runId: widget.record.runId,
+        approvalId: requestId,
+      );
       if (!mounted) return;
+      final currentRequestId =
+          (_pendingApproval?['request_id'] ?? _pendingApproval?['approval_id'])
+              ?.toString()
+              .trim();
+      if (currentRequestId != requestId) return;
       setState(() {
         _pendingApproval = null;
         _status = 'running';
@@ -870,29 +968,58 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
     }
 
     final approval = _pendingApproval;
+    final requestId = (approval?['request_id'] ?? approval?['approval_id'])
+        ?.toString()
+        .trim();
+    if (requestId == null || requestId.isEmpty) return;
     final command = (approval?['command'] ?? '').toString();
     final risk = assessCommandRisk(command);
 
-    // App Lock antes de aprobar acciones sensibles (si la política lo exige).
-    // "deny" nunca pide verificación.
-    if (choice != 'deny' && (policy?.requireLock ?? true)) {
-      final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
-      if (lock != null && lock.enabled) {
-        final reason = choice == 'always'
-            ? s.runsAllowAlwaysThis
-            : risk == CommandRisk.high
-            ? s.runsApproveHighRisk
-            : s.runsApproveAction;
-        final verified = await LockScreen.verify(context, lock, reason: reason);
-        if (!verified) return;
-      }
-    }
-    if (!mounted) return;
-
-    setState(() => _resolvingApproval = true);
+    final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
     try {
-      await _client.resolveRunApproval(widget.record.runId, choice);
+      final resolved = await resolveRunApprovalWithLockFence(
+        requestId: requestId,
+        currentRequestId: () =>
+            (_pendingApproval?['request_id'] ??
+                    _pendingApproval?['approval_id'])
+                ?.toString()
+                .trim(),
+        verify: () async {
+          // App Lock antes de aprobar acciones sensibles (si la política lo exige).
+          // "deny" nunca pide verificación.
+          if (choice == 'deny' || !(policy?.requireLock ?? true)) return true;
+          if (lock == null || !lock.enabled) return true;
+          final reason = choice == 'always'
+              ? s.runsAllowAlwaysThis
+              : risk == CommandRisk.high
+              ? s.runsApproveHighRisk
+              : s.runsApproveAction;
+          return LockScreen.verify(context, lock, reason: reason);
+        },
+        resolve: () async {
+          if (!mounted) return false;
+          setState(() => _resolvingApproval = true);
+          await _client.resolveRunApproval(
+            widget.record.runId,
+            choice,
+            requestId: requestId,
+          );
+          return true;
+        },
+      );
+      if (!resolved) return;
+      await _notifications?.cancelApproval(
+        connId: widget.connection.id,
+        profile: widget.record.profile,
+        runId: widget.record.runId,
+        approvalId: requestId,
+      );
       if (!mounted) return;
+      final currentRequestId =
+          (_pendingApproval?['request_id'] ?? _pendingApproval?['approval_id'])
+              ?.toString()
+              .trim();
+      if (currentRequestId != requestId) return;
       setState(() {
         _pendingApproval = null;
         if (choice != 'deny') _status = 'running';

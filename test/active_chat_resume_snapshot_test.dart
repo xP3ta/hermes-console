@@ -165,6 +165,7 @@ class _SnapshotGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   void emit(String type, [Map<String, dynamic> payload = const {}]) {
@@ -189,6 +190,7 @@ class _NativeCompressionGateway extends _SnapshotGateway
   String? compressRuntimeId;
   String? compressFocusTopic;
   Object? compressError;
+  Completer<DesktopCompressionResult>? nativeCompressionGate;
   late DesktopCompressionResult compressionResult;
 
   @override
@@ -200,7 +202,7 @@ class _NativeCompressionGateway extends _SnapshotGateway
     compressRuntimeId = runtimeSessionId;
     compressFocusTopic = focusTopic;
     if (compressError case final error?) throw error;
-    return compressionResult;
+    return nativeCompressionGate?.future ?? compressionResult;
   }
 }
 
@@ -268,6 +270,8 @@ ActiveChat _chat(
   String sessionId = 'stored-chat',
   StoredSessionMessageLoader? storedMessageLoader,
   List<SteerProjection> initialSteerProjections = const [],
+  List<CancelledTurnTombstone> initialCancelledTurnTombstones = const [],
+  Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
 }) => ActiveChat(
   connection: _connection(id),
   sessionId: sessionId,
@@ -285,6 +289,8 @@ ActiveChat _chat(
   desktopGateway: gateway,
   storedMessageLoader: storedMessageLoader,
   initialSteerProjections: initialSteerProjections,
+  initialCancelledTurnTombstones: initialCancelledTurnTombstones,
+  onCancelledTurn: onCancelledTurn,
 );
 
 List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
@@ -348,15 +354,141 @@ void main() {
   });
 
   test(
+    'loadMessages adopta turn_started_at top-level del Gateway real',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-top-level-turn',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'running': true,
+          'turn_started_at': 100.25,
+          'inflight': {
+            'user': 'turno vivo',
+            'assistant': '',
+            'streaming': true,
+          },
+        });
+      final chat = _chat('resume-top-level-turn', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(
+        chat.desktopTurnStartedAt,
+        DateTime.fromMillisecondsSinceEpoch(100250, isUtc: true),
+      );
+    },
+  );
+
+  test('ensureDesktopRuntime adopta turn_started_at top-level', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-ensure-top-level-turn',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+        'running': true,
+        'turn_started_at': 200.5,
+        'inflight': {'user': 'turno vivo', 'assistant': '', 'streaming': true},
+      });
+    final chat = _chat('ensure-top-level-turn', gateway);
+    addTearDown(chat.dispose);
+
+    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      chat.desktopTurnStartedAt,
+      DateTime.fromMillisecondsSinceEpoch(200500, isUtc: true),
+    );
+  });
+
+  test(
+    'messages_omitted vacío sin contador conserva completitud desconocida',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-omitted-empty',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'messages_omitted': true,
+        });
+      final chat = _chat('resume-omitted-empty', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(chat.messages, isEmpty);
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'recovery rechaza inicios de turno contradictorios sin fallback previo',
+    () async {
+      const toolTail = <Map<String, dynamic>>[
+        {
+          'message_id': 'conflicting-turn-user',
+          'role': 'user',
+          'content': 'continúa el trabajo',
+        },
+        {
+          'message_id': 'conflicting-turn-call',
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'conflicting-turn-tool-call',
+              'function': {'name': 'status', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'message_id': 'conflicting-turn-result',
+          'role': 'tool',
+          'tool_call_id': 'conflicting-turn-tool-call',
+          'content': 'trabajo parcial',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-conflicting-recovery-turn',
+          'session_key': 'stored-chat',
+          'messages': toolTail,
+          'running': true,
+          'turn_started_at': 300,
+          'inflight': {
+            'user': 'continúa el trabajo',
+            'assistant': '',
+            'streaming': true,
+            'started_at': 301,
+          },
+        });
+      final chat = _chat(
+        'recovery-conflicting-turn',
+        gateway,
+        storedMessageLoader: (_, _) async => toolTail,
+      );
+      addTearDown(chat.dispose);
+      chat.messages = toolTail.reversed
+          .map(Map<String, dynamic>.of)
+          .toList(growable: false);
+      chat.messagesLoaded = true;
+      chat.state = ChatPipelineState.completed;
+
+      expect(await chat.reconcileAfterResume(), isTrue);
+      expect(chat.desktopTurnStartedAt, isNull);
+    },
+  );
+
+  test(
     'reconexión conserva redirected y queued sin pérdida ni duplicado',
     () async {
       final gateway = _SnapshotGateway()
         ..snapshot = _snapshot({
           'session_id': 'runtime-reconnect-corrections',
           'session_key': 'stored-chat',
-          'messages': [
-            {'role': 'user', 'text': 'haz la auditoría'},
-          ],
+          // Desktop mantiene el turno vivo en `inflight`; no publica además
+          // una fila durable sin ID para que Console la fusione por texto.
+          'messages': <Map<String, dynamic>>[],
           'inflight': {
             'user': 'haz la auditoría',
             'corrections': ['y documéntala'],
@@ -534,6 +666,7 @@ void main() {
           'message_count': 2,
           'messages': [
             {
+              'message_id': 'deleg-real-user',
               'role': 'user',
               'content': raw,
               'display_kind': 'async_delegation_complete',
@@ -544,7 +677,11 @@ void main() {
                 'duration_seconds': 18,
               },
             },
-            {'role': 'assistant', 'content': 'Respuesta snapshot'},
+            {
+              'message_id': 'deleg-real-answer',
+              'role': 'assistant',
+              'content': 'Respuesta snapshot',
+            },
           ],
         })
         // El Gateway real cumple omit_messages: no devuelve precisamente la
@@ -561,8 +698,12 @@ void main() {
         'resume-display-metadata',
         gateway,
         storedMessageLoader: (_, _) async => [
-          {'role': 'user', 'content': raw},
-          {'role': 'assistant', 'content': 'Respuesta REST autoritativa'},
+          {'message_id': 'deleg-real-user', 'role': 'user', 'content': raw},
+          {
+            'message_id': 'deleg-real-answer',
+            'role': 'assistant',
+            'content': 'Respuesta REST autoritativa',
+          },
         ],
       );
       addTearDown(chat.dispose);
@@ -914,7 +1055,7 @@ void main() {
           'user': 'haz la tarea',
           'assistant': 'respuesta parcial',
           'streaming': false,
-          'error': 'model call failed: 500',
+          'error': 'StateError: /home/private-user/secret failed: 500',
           'status': 'error',
           'recoverable': true,
         },
@@ -935,7 +1076,15 @@ void main() {
       'assistant',
       'user',
     ]);
-    expect(chat.messages.first['content'], 'model call failed: 500');
+    expect(
+      chat.messages.first['content'],
+      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+    );
+    expect(
+      chat.messages.first['content'],
+      isNot(contains('/home/private-user')),
+    );
+    expect(chat.messages.first['error'], isNot(contains('/home/private-user')));
     expect(chat.messages.first['recoverable'], isTrue);
     expect(chat.messages[1]['content'], 'respuesta parcial');
     expect(chat.messages[1]['_cancelled'], isTrue);
@@ -964,6 +1113,261 @@ void main() {
       expect(chat.messages, hasLength(2));
     },
   );
+
+  test(
+    'reapertura tras tools reatacha el runtime y recibe el assistant final',
+    () async {
+      const toolTail = <Map<String, dynamic>>[
+        {
+          'message_id': 'reopen-tools-user',
+          'role': 'user',
+          'content': 'busca las noticias',
+        },
+        {
+          'message_id': 'reopen-tools-call',
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'reopen-search-call',
+              'function': {'name': 'web_search', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'message_id': 'reopen-tools-result',
+          'role': 'tool',
+          'tool_call_id': 'reopen-search-call',
+          'content': 'resultados encontrados',
+        },
+      ];
+      var canonicalTranscript = toolTail;
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-reopen-tools',
+          'session_key': 'stored-chat',
+          'messages': toolTail,
+          'inflight': {
+            'user': 'busca las noticias',
+            'assistant': '',
+            'streaming': true,
+          },
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'resume-tools-live',
+        gateway,
+        storedMessageLoader: (_, _) async => canonicalTranscript,
+      );
+      addTearDown(chat.dispose);
+      chat.messages = toolTail.reversed
+          .map(Map<String, dynamic>.of)
+          .toList(growable: false);
+      chat.messagesLoaded = true;
+      chat.state = ChatPipelineState.completed;
+
+      final changed = await chat.reconcileAfterResume();
+
+      expect(changed, isTrue);
+      expect(gateway.resumeExistingCalls, 1);
+      expect(chat.isStreaming, isTrue);
+
+      canonicalTranscript = const <Map<String, dynamic>>[
+        ...toolTail,
+        {
+          'message_id': 'reopen-tools-final',
+          'role': 'assistant',
+          'content': 'Aquí tienes las noticias completas.',
+        },
+      ];
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit('message.complete', {
+        'text': 'Aquí tienes las noticias completas.',
+      });
+      await done.timeout(const Duration(seconds: 1));
+
+      expect(chat.assistantContent, 'Aquí tienes las noticias completas.');
+      expect(chat.state, ChatPipelineState.completed);
+    },
+  );
+
+  test(
+    'reapertura Desktop no consulta un terminal canónico tool-only',
+    () async {
+      const toolOnly = <Map<String, dynamic>>[
+        {
+          'message_id': 'tool-only-user',
+          'role': 'user',
+          'content': 'consulta el estado',
+        },
+        {
+          'message_id': 'tool-only-result',
+          'role': 'tool',
+          'name': 'status',
+          'content': 'ok',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-tool-only',
+          'session_key': 'stored-chat',
+          'messages': toolOnly,
+          'running': false,
+        });
+      final chat = _chat(
+        'resume-tool-only',
+        gateway,
+        storedMessageLoader: (_, _) async => toolOnly,
+      );
+      addTearDown(chat.dispose);
+      chat.messages = toolOnly.reversed
+          .map(Map<String, dynamic>.of)
+          .toList(growable: false);
+      chat.messagesLoaded = true;
+      chat.state = ChatPipelineState.completed;
+
+      final changed = await chat.reconcileAfterResume();
+
+      expect(changed, isFalse);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.messages.first['role'], 'tool');
+    },
+  );
+
+  test(
+    'Stop asentado no reatacha un snapshot running obsoleto tras tools',
+    () async {
+      const toolTail = <Map<String, dynamic>>[
+        {
+          'message_id': 'cancelled-tool-user',
+          'role': 'user',
+          'content': 'busca las noticias',
+        },
+        {
+          'message_id': 'cancelled-tool-call',
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'cancelled-search-call',
+              'function': {'name': 'web_search', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'message_id': 'cancelled-tool-result',
+          'role': 'tool',
+          'tool_call_id': 'cancelled-search-call',
+          'content': 'resultado parcial',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-cancelled-tools',
+          'session_key': 'stored-chat',
+          'messages': toolTail,
+          'inflight': {
+            'user': 'busca las noticias',
+            'assistant': '',
+            'streaming': true,
+          },
+          'running': true,
+        });
+      final chat = _chat(
+        'resume-cancelled-tools',
+        gateway,
+        storedMessageLoader: (_, _) async => toolTail,
+      );
+      addTearDown(chat.dispose);
+      chat.messages = toolTail.reversed
+          .map(Map<String, dynamic>.of)
+          .toList(growable: false);
+      chat.messagesLoaded = true;
+      chat.state = ChatPipelineState.completed;
+      await chat.cancel();
+      expect(chat.state, ChatPipelineState.cancelled);
+      expect(
+        chat.messages.singleWhere(
+          (message) => message['message_id'] == 'cancelled-tool-user',
+        )['_cancelledUser'],
+        isTrue,
+      );
+
+      final changed = await chat.reconcileAfterResume();
+
+      expect(changed, isFalse);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(chat.state, ChatPipelineState.cancelled);
+    },
+  );
+
+  test('Stop invalida el reconcile lifecycle pendiente tras tools', () async {
+    const toolTail = <Map<String, dynamic>>[
+      {
+        'message_id': 'race-tool-user',
+        'role': 'user',
+        'content': 'busca las noticias',
+      },
+      {
+        'message_id': 'race-tool-call',
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [
+          {
+            'id': 'race-search-call',
+            'function': {'name': 'web_search', 'arguments': '{}'},
+          },
+        ],
+      },
+      {
+        'message_id': 'race-tool-result',
+        'role': 'tool',
+        'tool_call_id': 'race-search-call',
+        'content': 'resultado parcial',
+      },
+    ];
+    final resumeGate = Completer<DesktopSessionSnapshot>();
+    final gateway = _SnapshotGateway()..resumeGate = resumeGate;
+    final chat = _chat(
+      'resume-stop-race',
+      gateway,
+      storedMessageLoader: (_, _) async => toolTail,
+    );
+    addTearDown(chat.dispose);
+    chat.messages = toolTail.reversed
+        .map(Map<String, dynamic>.of)
+        .toList(growable: false);
+    chat.messagesLoaded = true;
+    chat.state = ChatPipelineState.completed;
+
+    final staleReconcile = chat.reconcileAfterResume();
+    while (gateway.resumeExistingCalls == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await chat.cancel();
+    resumeGate.complete(
+      _snapshot({
+        'session_id': 'runtime-stop-race',
+        'session_key': 'stored-chat',
+        'messages': toolTail,
+        'running': false,
+      }),
+    );
+
+    expect(await staleReconcile, isFalse);
+    expect(gateway.resumeExistingCalls, 1);
+    expect(chat.state, ChatPipelineState.cancelled);
+    expect(
+      chat.messages.singleWhere(
+        (message) => message['message_id'] == 'race-tool-user',
+      )['_cancelledUser'],
+      isTrue,
+    );
+  });
 
   test(
     'message.start gobierna el reloj de turno y terminal lo limpia',
@@ -1260,6 +1664,174 @@ void main() {
   );
 
   test(
+    'compresión espera y reintenta la migración durable del tombstone',
+    () async {
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-compress-durable-tombstone',
+          'session_key': 'stored-chat',
+          'messages': [
+            {
+              'message_id': 'cancelled-user-id',
+              'role': 'user',
+              'content': 'turno cancelado',
+            },
+            {
+              'message_id': 'cancelled-answer-id',
+              'role': 'assistant',
+              'content': 'respuesta que Stop oculta',
+            },
+          ],
+        })
+        ..compressionResult = _nativeCompressionResult();
+      final retryGate = Completer<void>();
+      final persisted = <CancelledTurnTombstone>[];
+      var persistCalls = 0;
+      final chat = _chat(
+        'compression-durable-tombstone',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(content: 'turno cancelado', firstUser: true),
+        ],
+        onCancelledTurn: (tombstone) async {
+          persistCalls++;
+          persisted.add(tombstone);
+          if (persistCalls == 1) {
+            throw StateError('secure storage temporarily unavailable');
+          }
+          await retryGate.future;
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      while (persistCalls < 1) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      final compression = chat.compressDesktopSession();
+      while (persistCalls < 2) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(gateway.compressSessionCalls, 0);
+      retryGate.complete();
+
+      final result = await compression;
+      expect(result.accepted, DesktopCommandAcceptance.accepted);
+      expect(gateway.compressSessionCalls, 1);
+      expect(persisted.last.cancelledMessageId, 'cancelled-user-id');
+    },
+  );
+
+  test('compresión acepta un Stop durable ligado solo por row id', () async {
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-compress-row-tombstone',
+        'session_key': 'stored-chat',
+        'messages': [
+          {'row_id': 73, 'role': 'user', 'content': 'turno detenido'},
+          {'row_id': 74, 'role': 'assistant', 'content': 'respuesta cancelada'},
+        ],
+      })
+      ..compressionResult = _nativeCompressionResult();
+    final chat = _chat(
+      'compression-row-tombstone',
+      gateway,
+      initialCancelledTurnTombstones: const [
+        CancelledTurnTombstone(content: 'turno detenido', cancelledRowId: 73),
+      ],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    final result = await chat.compressDesktopSession();
+
+    expect(result.accepted, DesktopCommandAcceptance.accepted);
+    expect(gateway.compressSessionCalls, 1);
+  });
+
+  test(
+    'resultado de compresión no pisa un refresh nuevo mientras persiste metadata',
+    () async {
+      const initialRows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'uno'},
+        {'role': 'assistant', 'content': 'dos'},
+      ];
+      const refreshedRows = <Map<String, dynamic>>[
+        {
+          'message_id': 'refresh-user',
+          'role': 'user',
+          'content': 'estado posterior al refresh',
+        },
+        {
+          'message_id': 'refresh-answer',
+          'role': 'assistant',
+          'content': 'respuesta posterior al refresh',
+        },
+      ];
+      var storedRows = initialRows;
+      final compressionGate = Completer<DesktopCompressionResult>();
+      final persisted = <CancelledTurnTombstone>[];
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-compression-refresh-race',
+          'session_key': 'stored-chat',
+          'messages': initialRows,
+        })
+        ..compressionResult = _nativeCompressionResult()
+        ..nativeCompressionGate = compressionGate;
+      final chat = _chat(
+        'compression-refresh-race',
+        gateway,
+        storedMessageLoader: (_, _) async => storedRows,
+        onCancelledTurn: (tombstone) async => persisted.add(tombstone),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages(expectedMessageCount: initialRows.length);
+
+      final compression = chat.compressDesktopSession();
+      while (gateway.compressSessionCalls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // Simula un tombstone creado mientras el RPC remoto ya está en curso.
+      // El resultado viejo no puede invalidarlo ni publicarse por encima de un
+      // Refresh que ya ganó el epoch mientras el RPC seguía pendiente.
+      await chat.cancel();
+      expect(persisted, hasLength(1));
+      expect(persisted.single.invalidated, isFalse);
+
+      storedRows = refreshedRows;
+      gateway.snapshot = _snapshot({
+        'session_id': 'runtime-compression-refresh-race',
+        'session_key': 'stored-chat',
+        'messages': refreshedRows,
+      });
+      await chat.loadMessages(expectedMessageCount: refreshedRows.length);
+      expect(
+        chat.messages.map((message) => message['content']),
+        contains('respuesta posterior al refresh'),
+      );
+
+      compressionGate.complete(gateway.compressionResult);
+      await compression;
+
+      expect(
+        chat.messages.map((message) => message['content']),
+        containsAll(const [
+          'respuesta posterior al refresh',
+          'estado posterior al refresh',
+        ]),
+      );
+      expect(chat.storedSessionId, 'stored-chat');
+      expect(persisted, hasLength(1));
+      expect(persisted.single.invalidated, isFalse);
+      expect(persisted.single.cancelledMessageId, isNull);
+    },
+  );
+
+  test(
     'timeout ambiguo de session.compress no reintenta por otra ruta',
     () async {
       final gateway = _NativeCompressionGateway()
@@ -1323,6 +1895,79 @@ void main() {
       expect(gateway.compressSessionCalls, 1);
       expect(gateway.slashExecCalls, 1);
       expect(gateway.commandDispatchCalls, 0);
+    },
+  );
+
+  test(
+    'refresh durante method-not-found nativo cancela el fallback remoto',
+    () async {
+      const initialRows = <Map<String, dynamic>>[
+        {'message_id': 'initial-user', 'role': 'user', 'content': 'uno'},
+        {'message_id': 'initial-answer', 'role': 'assistant', 'content': 'dos'},
+      ];
+      const refreshedRows = <Map<String, dynamic>>[
+        {
+          'message_id': 'refreshed-user',
+          'role': 'user',
+          'content': 'estado nuevo',
+        },
+        {
+          'message_id': 'refreshed-answer',
+          'role': 'assistant',
+          'content': 'respuesta nueva',
+        },
+      ];
+      var storedRows = initialRows;
+      final nativeGate = Completer<DesktopCompressionResult>();
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-fallback-race',
+          'session_key': 'stored-chat',
+          'messages': initialRows,
+        })
+        ..compressionResult = _nativeCompressionResult()
+        ..nativeCompressionGate = nativeGate;
+      final chat = _chat(
+        'native-fallback-race',
+        gateway,
+        storedMessageLoader: (_, _) async => storedRows,
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages(expectedMessageCount: initialRows.length);
+
+      final compression = chat.compressDesktopSession();
+      while (gateway.compressSessionCalls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      storedRows = refreshedRows;
+      gateway.snapshot = _snapshot({
+        'session_id': 'runtime-native-fallback-race',
+        'session_key': 'stored-chat',
+        'messages': refreshedRows,
+      });
+      await chat.loadMessages(expectedMessageCount: refreshedRows.length);
+
+      nativeGate.completeError(
+        const TuiGatewayRpcError(
+          'session.compress',
+          'Method not found',
+          code: -32601,
+        ),
+      );
+      await expectLater(
+        compression,
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+
+      expect(gateway.slashExecCalls, 0);
+      expect(gateway.commandDispatchCalls, 0);
+      expect(
+        chat.messages.map((message) => message['content']),
+        containsAll(const ['estado nuevo', 'respuesta nueva']),
+      );
     },
   );
 

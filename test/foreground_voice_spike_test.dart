@@ -258,7 +258,7 @@ void main() {
     final idempotentBranch = listener.substring(
       idempotentBranchStart,
       listener.indexOf(
-        'if (running) await FlutterForegroundTask.stopService()',
+        'if (running) await _hardStopFlutterRuntime()',
         idempotentBranchStart,
       ),
     );
@@ -371,7 +371,7 @@ void main() {
     expect(
       manifest,
       contains(
-        'android:foregroundServiceType="dataSync|microphone|mediaPlayback"',
+        'android:foregroundServiceType="dataSync|remoteMessaging|microphone|mediaPlayback"',
       ),
     );
     expect(

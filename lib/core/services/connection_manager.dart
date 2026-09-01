@@ -104,6 +104,13 @@ class ConnectionManager {
     null,
   );
 
+  /// Revisión monotónica de la configuración material de instancias.
+  ///
+  /// A diferencia de [activeConnectionId], también cambia al editar/borrar una
+  /// instancia o rotar credenciales. Los consumidores de background usan solo
+  /// esta señal; los secretos nunca se proyectan en el notifier ni en prefs.
+  final ValueNotifier<int> connectionsRevision = ValueNotifier<int>(0);
+
   ConnectionManager._(
     this.prefs,
     this._secure, {
@@ -475,6 +482,7 @@ class ConnectionManager {
     await _secure.writeApiKey(connId, apiKey);
     _apiKeyCache[connId] = apiKey;
     // SharedPrefs metadata does not include api_key — no update needed there
+    connectionsRevision.value += 1;
   }
 
   /// Updates the metadata (label, host, port, kind) of an existing connection.
@@ -554,15 +562,20 @@ class ConnectionManager {
     String? username,
     String? password,
   }) async {
+    var changed = false;
     if (sessionToken != null) {
       await _secure.writeDashboardSecret(connId, 'token', sessionToken);
+      changed = true;
     }
     if (username != null) {
       await _secure.writeDashboardSecret(connId, 'user', username);
+      changed = true;
     }
     if (password != null) {
       await _secure.writeDashboardSecret(connId, 'pass', password);
+      changed = true;
     }
+    if (changed) connectionsRevision.value += 1;
   }
 
   // ── Mobile Bridge (Keystore) ──────────────────────────────────────────
@@ -821,10 +834,13 @@ class ConnectionManager {
     }
   }
 
-  Future<void> _saveAll(List<SavedConnection> list) => prefs.setStringList(
-    _key,
-    list.map((c) => jsonEncode(c.toMap())).toList(),
-  );
+  Future<void> _saveAll(List<SavedConnection> list) async {
+    await prefs.setStringList(
+      _key,
+      list.map((c) => jsonEncode(c.toMap())).toList(),
+    );
+    connectionsRevision.value += 1;
+  }
 }
 
 /// HTTP client for the Hermes Gateway API Server (port 8642).
@@ -837,25 +853,130 @@ class ConnectionManager {
 class SessionMessagesPage {
   final List<Map<String, dynamic>> messages;
 
-  /// `pagination.limit` de la respuesta; null cuando el gateway es antiguo y
-  /// devolvió el transcript completo one-shot (sin metadata).
+  /// Número de filas que devolvió realmente el servidor antes de validar su
+  /// forma. El cursor se calcula con este valor: omitir una fila malformada no
+  /// puede desplazar la siguiente página ni hacer que una página llena parezca
+  /// corta.
+  final int rawMessageCount;
+
+  /// `false` cuando al menos una fila de la respuesta no pudo proyectarse como
+  /// mensaje. Esa página sigue siendo útil para avanzar el cursor, pero nunca
+  /// demuestra por sí sola que el transcript esté completo.
+  final bool messagesFullyParsed;
+
+  /// `pagination.limit` de la respuesta. Es null tanto para un gateway legacy
+  /// sin metadata como para metadata presente pero inválida; los dos casos se
+  /// distinguen mediante [paginationProvided] y [paginationFullyParsed].
   final int? limit;
 
-  /// `pagination.offset` de la respuesta (0 si no hay metadata).
+  /// `pagination.offset` de la respuesta (0 si no hay metadata válida).
   final int offset;
 
-  SessionMessagesPage({required this.messages, required Object? pagination})
-    : limit = _pageInt(pagination, 'limit'),
-      offset = _pageInt(pagination, 'offset') ?? 0;
+  /// Distingue un transcript legacy one-shot de una respuesta moderna que sí
+  /// anunció `pagination`, aunque su contenido estuviera incompleto o corrupto.
+  final bool paginationProvided;
 
-  bool get hasPagination => limit != null;
+  /// Solo es true si la metadata ausente es realmente legacy o si `limit` y
+  /// `offset` son enteros válidos (limit positivo y offset no negativo).
+  final bool paginationFullyParsed;
+
+  SessionMessagesPage({
+    required this.messages,
+    required Object? pagination,
+    bool? paginationProvided,
+    int? rawMessageCount,
+    bool? messagesFullyParsed,
+  }) : rawMessageCount = rawMessageCount ?? messages.length,
+       messagesFullyParsed =
+           (messagesFullyParsed ?? true) &&
+           (rawMessageCount == null || rawMessageCount == messages.length),
+       paginationProvided = paginationProvided ?? pagination != null,
+       paginationFullyParsed = _paginationFullyParsed(
+         pagination,
+         paginationProvided ?? pagination != null,
+       ),
+       limit =
+           _paginationFullyParsed(
+             pagination,
+             paginationProvided ?? pagination != null,
+           )
+           ? _pageInt(pagination, 'limit')
+           : null,
+       offset =
+           (paginationProvided ?? pagination != null) &&
+               _paginationFullyParsed(
+                 pagination,
+                 paginationProvided ?? pagination != null,
+               )
+           ? _pageInt(pagination, 'offset')!
+           : 0;
+
+  factory SessionMessagesPage.fromRaw({
+    required Object? rawMessages,
+    required Object? pagination,
+    bool? paginationProvided,
+  }) {
+    if (rawMessages is! List) {
+      throw const FormatException('Invalid session transcript page');
+    }
+    final messages = <Map<String, dynamic>>[];
+    var fullyParsed = true;
+    for (final rawMessage in rawMessages) {
+      if (rawMessage is! Map) {
+        fullyParsed = false;
+        continue;
+      }
+      try {
+        messages.add(Map<String, dynamic>.from(rawMessage));
+      } on Object {
+        fullyParsed = false;
+      }
+    }
+    return SessionMessagesPage(
+      messages: List.unmodifiable(messages),
+      pagination: pagination,
+      paginationProvided: paginationProvided,
+      rawMessageCount: rawMessages.length,
+      messagesFullyParsed: fullyParsed,
+    );
+  }
+
+  bool get hasPagination => paginationProvided && paginationFullyParsed;
+
+  static bool _paginationFullyParsed(
+    Object? pagination,
+    bool paginationProvided,
+  ) {
+    if (!paginationProvided) return true;
+    final limit = _pageInt(pagination, 'limit');
+    final offset = _pageInt(pagination, 'offset');
+    return limit != null && limit > 0 && offset != null;
+  }
 
   static int? _pageInt(Object? pagination, String key) {
     if (pagination is! Map) return null;
     final value = pagination[key];
-    if (value is! num || !value.isFinite || value < 0) return null;
-    return value.toInt();
+    if (value is! int || value < 0) return null;
+    return value;
   }
+}
+
+List<Map<String, dynamic>> _strictTranscriptMessages(Object? rawMessages) {
+  if (rawMessages is! List) {
+    throw const FormatException('Invalid session transcript');
+  }
+  final messages = <Map<String, dynamic>>[];
+  for (final rawMessage in rawMessages) {
+    if (rawMessage is! Map) {
+      throw const FormatException('Invalid session transcript row');
+    }
+    try {
+      messages.add(Map<String, dynamic>.from(rawMessage));
+    } on Object {
+      throw const FormatException('Invalid session transcript row');
+    }
+  }
+  return List.unmodifiable(messages);
 }
 
 class ApiClient {
@@ -929,8 +1050,7 @@ class ApiClient {
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     }
     final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final list = data['data'] as List? ?? [];
-    return list.whereType<Map<String, dynamic>>().toList();
+    return _strictTranscriptMessages(data['data']);
   }
 
   /// Una página del transcript con la semántica `order=latest` de Hermes
@@ -957,10 +1077,10 @@ class ApiClient {
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     }
     final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final list = data['data'] as List? ?? [];
-    return SessionMessagesPage(
-      messages: list.whereType<Map<String, dynamic>>().toList(),
+    return SessionMessagesPage.fromRaw(
+      rawMessages: data['data'],
       pagination: data['pagination'],
+      paginationProvided: data.containsKey('pagination'),
     );
   }
 
@@ -1306,9 +1426,14 @@ class ApiClient {
     String runId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) => apiPost(
     'v1/runs/$runId/approval',
-    body: {'choice': choice, if (resolveAll) 'resolve_all': true},
+    body: {
+      'choice': choice,
+      if (resolveAll) 'resolve_all': true,
+      if (requestId != null && requestId.isNotEmpty) 'request_id': requestId,
+    },
   );
 
   /// POST /v1/runs/{id}/stop — interrumpe la ejecución.
@@ -2768,13 +2893,7 @@ class DashboardClient {
       'sessions/${Uri.encodeComponent(sessionId)}/messages$query',
     );
     final raw = data['messages'] ?? data['data'];
-    if (raw is! List) {
-      throw const FormatException('Invalid Dashboard session transcript');
-    }
-    return raw
-        .whereType<Map>()
-        .map((message) => Map<String, dynamic>.from(message))
-        .toList(growable: false);
+    return _strictTranscriptMessages(raw);
   }
 
   /// Variante paginada (`order=latest`, offset hacia atrás desde el mensaje
@@ -2800,15 +2919,10 @@ class DashboardClient {
       'sessions/${Uri.encodeComponent(sessionId)}/messages?$query',
     );
     final raw = data['messages'] ?? data['data'];
-    if (raw is! List) {
-      throw const FormatException('Invalid Dashboard session transcript');
-    }
-    return SessionMessagesPage(
-      messages: raw
-          .whereType<Map>()
-          .map((message) => Map<String, dynamic>.from(message))
-          .toList(growable: false),
+    return SessionMessagesPage.fromRaw(
+      rawMessages: raw,
       pagination: data['pagination'],
+      paginationProvided: data.containsKey('pagination'),
     );
   }
 

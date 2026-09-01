@@ -463,10 +463,10 @@ class _FakeGateway extends http.BaseClient {
     );
   }
 
-  void approval(int run, {String command = 'rm archivo'}) {
+  void approval(int run, {String command = 'rm archivo', String? requestId}) {
     _events['run_$run']?.add(
       utf8.encode(
-        'data: ${jsonEncode({'event': 'approval.request', 'command': command, 'pattern_key': 'rm'})}\n\n',
+        'data: ${jsonEncode({'event': 'approval.request', 'request_id': requestId ?? 'approval-$run', 'command': command, 'pattern_key': 'rm'})}\n\n',
       ),
     );
   }
@@ -2807,11 +2807,9 @@ void main() {
       h.gateway.token(2, 'Ahora mismo hay veintidós grados.');
       await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      expect(
-        h.voice.spoken,
-        ['Estas son las noticias de hoy.'],
-        reason: 'el siguiente TTS debe esperar al ACK del drain anterior',
-      );
+      expect(h.voice.spoken, [
+        'Estas son las noticias de hoy.',
+      ], reason: 'el siguiente TTS debe esperar al ACK del drain anterior');
 
       h.voice.releaseStopSpeaking();
       await _waitFor(() => h.voice.spoken.length == 2);

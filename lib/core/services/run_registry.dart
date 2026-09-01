@@ -42,6 +42,10 @@ class RunRecord {
   /// si no está presente).
   final String? connId;
 
+  /// Perfil propietario del runtime. Los registros legacy que no lo guardaban
+  /// pertenecen a `default` para mantener una migración determinista.
+  final String profile;
+
   const RunRecord({
     required this.runId,
     required this.prompt,
@@ -54,6 +58,7 @@ class RunRecord {
     this.lastEvent,
     this.updatedAt,
     this.connId,
+    this.profile = 'default',
   });
 
   RunRecord copyWith({
@@ -63,20 +68,21 @@ class RunRecord {
     String? progressLabel,
     String? lastEvent,
     double? updatedAt,
-  }) =>
-      RunRecord(
-        runId: runId,
-        prompt: prompt,
-        sessionId: sessionId,
-        createdAt: createdAt,
-        lastStatus: lastStatus ?? this.lastStatus,
-        output: output ?? this.output,
-        error: error ?? this.error,
-        progressLabel: progressLabel ?? this.progressLabel,
-        lastEvent: lastEvent ?? this.lastEvent,
-        updatedAt: updatedAt ?? this.updatedAt,
-        connId: connId,
-      );
+    String? profile,
+  }) => RunRecord(
+    runId: runId,
+    prompt: prompt,
+    sessionId: sessionId,
+    createdAt: createdAt,
+    lastStatus: lastStatus ?? this.lastStatus,
+    output: output ?? this.output,
+    error: error ?? this.error,
+    progressLabel: progressLabel ?? this.progressLabel,
+    lastEvent: lastEvent ?? this.lastEvent,
+    updatedAt: updatedAt ?? this.updatedAt,
+    connId: connId,
+    profile: profile ?? this.profile,
+  );
 
   bool get isTerminal => const {
     'completed',
@@ -97,6 +103,7 @@ class RunRecord {
     if (lastEvent != null) 'last_event': lastEvent,
     if (updatedAt != null) 'updated_at': updatedAt,
     if (connId != null) 'conn_id': connId,
+    'profile': profile,
   };
 
   factory RunRecord.fromJson(Map<String, dynamic> json) => RunRecord(
@@ -111,6 +118,10 @@ class RunRecord {
     lastEvent: json['last_event'] as String?,
     updatedAt: (json['updated_at'] as num?)?.toDouble(),
     connId: json['conn_id'] as String?,
+    profile: switch ((json['profile'] ?? '').toString().trim()) {
+      final value when value.isNotEmpty => value,
+      _ => 'default',
+    },
   );
 }
 
@@ -139,7 +150,9 @@ class RunRegistry {
             .where((r) => r.runId.isNotEmpty)
             .toList();
       } catch (e) {
-        debugPrint('[run-registry] excepción silenciada (fallback: records = []): $e');
+        debugPrint(
+          '[run-registry] excepción silenciada (fallback: records = []): $e',
+        );
         records = [];
       }
     }
@@ -154,8 +167,14 @@ class RunRegistry {
   }
 
   Future<void> add(RunRecord record) async {
-    _records.removeWhere((r) => r.runId == record.runId);
-    _records.add(record);
+    final profile = _normalizeRunProfile(record.profile);
+    final owned = profile == record.profile
+        ? record
+        : record.copyWith(profile: profile);
+    _records.removeWhere(
+      (r) => r.runId == owned.runId && r.profile == owned.profile,
+    );
+    _records.add(owned);
     // Mantener el registro acotado: los más antiguos salen primero.
     if (_records.length > _maxRecords) {
       _records.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -166,6 +185,7 @@ class RunRegistry {
 
   Future<void> update(
     String runId, {
+    String profile = 'default',
     String? lastStatus,
     String? output,
     String? error,
@@ -173,7 +193,10 @@ class RunRegistry {
     String? lastEvent,
     double? updatedAt,
   }) async {
-    final i = _records.indexWhere((r) => r.runId == runId);
+    final ownerProfile = _normalizeRunProfile(profile);
+    final i = _records.indexWhere(
+      (r) => r.runId == runId && r.profile == ownerProfile,
+    );
     if (i < 0) return;
     _records[i] = _records[i].copyWith(
       lastStatus: lastStatus,
@@ -186,8 +209,9 @@ class RunRegistry {
     await _persist();
   }
 
-  Future<void> remove(String runId) async {
-    _records.removeWhere((r) => r.runId == runId);
+  Future<void> remove(String runId, {String profile = 'default'}) async {
+    final ownerProfile = _normalizeRunProfile(profile);
+    _records.removeWhere((r) => r.runId == runId && r.profile == ownerProfile);
     await _persist();
   }
 
@@ -202,4 +226,9 @@ class RunRegistry {
     _key,
     jsonEncode(_records.map((r) => r.toJson()).toList()),
   );
+}
+
+String _normalizeRunProfile(String value) {
+  final normalized = value.trim();
+  return normalized.isEmpty ? 'default' : normalized;
 }

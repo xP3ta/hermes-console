@@ -315,6 +315,61 @@ void main() {
       }
     });
 
+    test(
+      'confirmed durable alias explicitly rebases the exact event scope',
+      () {
+        final runtimeOne = _scope(runtime: 'runtime-1', epoch: 7);
+        final runtimeTwo = _scope(runtime: 'runtime-2', epoch: 7);
+        var state = SubagentActivityReducer.reduce(
+          SubagentActivityState.empty(runtimeOne),
+          _native('subagent.start', runtimeOne, const {
+            'subagent_id': 'child-a',
+            'goal': 'preserved',
+            'event_id': 'start-a',
+            'event_revision': 1,
+          }),
+        );
+
+        state = state.rebaseScope(runtimeTwo);
+        expect(state.scope, runtimeTwo);
+        expect(state.activities.single.key.scope, runtimeTwo);
+        expect(state.activities.single.goalPreview, 'preserved');
+
+        final stale = SubagentActivityReducer.reduce(
+          state,
+          _native('subagent.progress', runtimeOne, const {
+            'subagent_id': 'child-a',
+            'event_revision': 2,
+          }),
+        );
+        expect(identical(stale, state), isTrue);
+
+        final completed = SubagentActivityReducer.reduce(
+          state,
+          _native('subagent.complete', runtimeTwo, const {
+            'subagent_id': 'child-a',
+            'event_id': 'complete-a',
+            'event_revision': 2,
+            'status': 'completed',
+          }),
+        );
+        expect(
+          completed.activities.single.phase,
+          SubagentActivityPhase.completed,
+        );
+      },
+    );
+
+    test('rebase rejects a different durable lineage', () {
+      final state = SubagentActivityState.empty(_scope(runtime: 'runtime-1'));
+      expect(
+        () => state.rebaseScope(
+          _scope(parent: 'foreign-parent', runtime: 'runtime-2'),
+        ),
+        throwsStateError,
+      );
+    });
+
     test('missing or overlong identity never creates a durable row', () {
       final scope = _scope();
       final empty = SubagentActivityState.empty(scope);

@@ -144,6 +144,9 @@ Keystore; la caché en memoria no se persiste.
 | RECORD_AUDIO         | Dictado y conversación iniciados por el usuario |
 | FOREGROUND_SERVICE_MICROPHONE | Continuidad de Voz con opt-in y notificación |
 | FOREGROUND_SERVICE_MEDIA_PLAYBACK | TTS y respuestas de Voz solicitados |
+| FOREGROUND_SERVICE_DATA_SYNC | SSH/SFTP y fallback de escucha opt-in en API ≤34 |
+| FOREGROUND_SERVICE_REMOTE_MESSAGING | Escucha persistente opt-in en API ≥35 |
+| RECEIVE_BOOT_COMPLETED | Restaurar solo esa escucha si seguía activa; nunca audio ni SSH/SFTP |
 
 ### NO añadir sin revisión explícita
 
@@ -162,13 +165,15 @@ Keystore; la caché en memoria no se persiste.
 
 ### Conversación por voz y segundo plano
 
-- La lectura manual/automática adquiere `mediaPlayback` en el único foreground
-  service antes del primer audio. Su notificación solo dice
+- La lectura manual/automática adquiere `mediaPlayback` en el servicio Flutter
+  compartido antes del primer audio. Su notificación solo dice
   “Leyendo respuesta”/“Lectura en pausa”: nunca incluye conversación, URL,
   herramienta, error ni texto sintetizado.
 - Pausar, reanudar y terminar ReadAloud no llaman a STT ni abren el micrófono.
   La conversación de voz conserva prioridad y sus controles propios. Al quedar
-  idle se degrada a `dataSync`; tras process death no se promete reanudación.
+  idle se degrada al tipo de red que conserve demanda (`remoteMessaging` para
+  escucha opt-in en API ≥35; `dataSync` para esa escucha en API ≤34 o para
+  SSH/SFTP); tras process death no se promete reanudación del audio.
 - El modo conversación es opcional e independiente del STT/TTS del chat.
 - La elección `En este móvil`/`Servidor Hermes` se guarda por identidad del
   Dashboard y se aplica al iniciar Voz manualmente. En la investigación interna
@@ -187,7 +192,7 @@ Keystore; la caché en memoria no se persiste.
 - Antes del primer uso se muestra un aviso destacado. Cancelar, pulsar atrás o
   cerrar no guarda consentimiento ni activa el micrófono.
 - Por defecto una conversación iniciada manualmente pausa micrófono y TTS al
-  dejar el primer plano. Su continuidad usa el único FGS con tipos
+  dejar el primer plano. Su continuidad usa el servicio Flutter compartido con tipos
   `microphone|mediaPlayback`, iniciado desde una Activity visible después de
   `RECORD_AUDIO`, con notificación persistente y controles para
   Pausar/Continuar/Abrir/Terminar. Nunca arranca desde boot ni desde un receiver
@@ -311,7 +316,7 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
 |----------------------|---------------------------------------------------------|--------|
 | qr_code_scanner_plus / ZXing | QR íntegramente on-device; sin servicios de Google ni telemetría | BSD-2-Clause + Apache-2.0 verificadas |
 | sherpa_onnx / whisper_ggml_plus | STT/TTS local mediante modelos descargables; sin enviar conversación | Verificar hashes/origen de modelos |
-| flutter_foreground_task | Mantiene dataSync, voz y lectura opt-in mediante una notificación Android local | Declarar los tres tipos FGS en Play |
+| flutter_foreground_task | Mantiene mensajería remota, Voz, lectura y el fallback dataSync de API ≤34 mediante una notificación Android local | Declarar sus cuatro tipos FGS en Play; SSH/SFTP API ≥35 usa el servicio nativo separado |
 | package_info_plus    | Lee metadatos del paquete (versión, etc.) — sin red    | OK |
 
 ### No añadir sin auditoría previa
