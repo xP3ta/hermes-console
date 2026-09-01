@@ -745,6 +745,19 @@ class _SubmissionGateway
   }
 }
 
+class _ReasonedPromptRejection extends TuiGatewayRpcError {
+  const _ReasonedPromptRejection({required this.reason})
+    : super(
+        'prompt.submit',
+        'Session private-id already has a live owner '
+            '(desktop, pid 123456, running 33m)',
+        code: 4090,
+      );
+
+  @override
+  final String reason;
+}
+
 class _RecoverableSubmissionGateway extends _SubmissionGateway
     implements HermesDesktopIdempotentGateway {
   int statusCalls = 0;
@@ -4597,6 +4610,117 @@ void main() {
     expect(secureStore.containsKey('chat_turn_outbox_v1'), isFalse);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'un error owner guardado por una build anterior nunca revela el RPC',
+    (tester) async {
+      const prompt = 'continúa esta conversación desde el móvil';
+      const raw =
+          'TuiGatewayRpcError(prompt.submit, 4090): Session private-id '
+          'already has a live owner (desktop, pid 1234)';
+
+      await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'assistant_error', 'content': raw, '_prompt': prompt},
+          {'role': 'user', 'content': prompt},
+        ],
+      );
+
+      expect(
+        find.text(
+          'Hermes no pudo reservar esta conversación. '
+          'Revisa otras sesiones activas y vuelve a intentarlo.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('TuiGatewayRpcError'), findsNothing);
+      expect(find.textContaining('private-id'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'rechazo por owner muestra copia segura y reintenta sin duplicar el turno',
+    (tester) async {
+      const prompt = 'continúa esta conversación desde el móvil';
+      const safeMessage =
+          'Esta conversación está abierta en otra ventana o dispositivo. '
+          'Ciérrala allí y vuelve a intentarlo.';
+      final connection = _remoteConn('conn-owned-elsewhere');
+      final gateway = _SubmissionGateway()
+        ..submitError = const _ReasonedPromptRejection(
+          reason: 'SESSION_NOT_OWNED',
+        );
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+
+      final field = find.byType(TextField).last;
+      await tester.enterText(field, prompt);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (
+        var frame = 0;
+        frame < 40 && chat.state != ChatPipelineState.failed;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(chat.state, ChatPipelineState.failed);
+      expect(find.text(safeMessage), findsOneWidget);
+      expect(find.textContaining('TuiGatewayRpcError'), findsNothing);
+      expect(find.textContaining('private-id'), findsNothing);
+      expect(
+        chat.messages.where((message) => message['role'] == 'user'),
+        hasLength(1),
+      );
+      var stored =
+          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+              as Map<String, dynamic>;
+      expect(
+        (stored.values.single as Map<String, dynamic>)['state'],
+        PreparedTurnState.failedBeforeAcceptance.name,
+      );
+
+      // El rechazo conserva el lote en el composer. Pulsar la flecha verde es
+      // también un retry explícito y no debe apilar otra copia local del mismo
+      // user/error antes de volver a intentar el RPC.
+      expect(tester.widget<TextField>(field).controller?.text, prompt);
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (
+        var frame = 0;
+        frame < 40 && gateway.submissions.length < 2;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await tester.pump();
+
+      expect(gateway.submissions, [prompt, prompt]);
+      expect(
+        chat.messages.where((message) => message['role'] == 'user'),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.where((message) => message['role'] == 'assistant_error'),
+        hasLength(1),
+      );
+      expect(find.text(safeMessage), findsOneWidget);
+      expect(find.textContaining('TuiGatewayRpcError'), findsNothing);
+      stored =
+          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+              as Map<String, dynamic>;
+      expect(
+        (stored.values.single as Map<String, dynamic>)['state'],
+        PreparedTurnState.failedBeforeAcceptance.name,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'submit vivo limpia el input y no permite doble envío o steering',

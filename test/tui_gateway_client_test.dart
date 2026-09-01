@@ -258,6 +258,51 @@ void main() {
     },
   );
 
+  test('conserva el motivo estructurado de un rechazo JSON-RPC', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': frame['id'],
+            'error': {
+              'code': 4090,
+              'message': 'private remote ownership detail',
+              'data': {'reason': 'SESSION_NOT_OWNED'},
+            },
+          }),
+        );
+      }
+    });
+
+    final client = TuiGatewayClient(
+      SavedConnection(
+        id: 'conn-structured-error',
+        label: 'Structured error',
+        host: '127.0.0.1',
+        port: 8642,
+        apiKey: 'gateway-key',
+        dashboardUrl: 'http://127.0.0.1:${server.port}',
+      ),
+      dashboard: _TicketDashboardClient(),
+    );
+    addTearDown(client.close);
+
+    Object? captured;
+    try {
+      await client.submitPrompt('runtime-owned', 'continúa');
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured, isA<TuiGatewayRpcError>());
+    expect((captured as dynamic).reason, 'SESSION_NOT_OWNED');
+  });
+
   test(
     'no ancla eventos legacy tras ligar dos runtimes en el mismo socket',
     () async {

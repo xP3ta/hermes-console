@@ -3,8 +3,11 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## 1.2.9 (4963)
+## 1.2.9 (4964)
 
+- Replaced raw Desktop session-owner rejections with private, actionable UI,
+  preserved the server's structured rejection reason and made safe retries
+  replace the failed local turn instead of duplicating it.
 - Fixed chat history disappearing, reordering or losing visible content during
   overlapping refreshes, pagination, reconnection and Desktop snapshot
   recovery.
