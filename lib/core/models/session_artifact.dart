@@ -11,24 +11,30 @@ enum SessionArtifactAvailability { ready, missing, expired, unknown }
 
 final class SessionArtifactSource {
   final String? messageId;
+  final int? rowId;
   final int messageOrdinal;
 
-  const SessionArtifactSource({required this.messageOrdinal, this.messageId});
+  const SessionArtifactSource({
+    required this.messageOrdinal,
+    this.messageId,
+    this.rowId,
+  });
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is SessionArtifactSource &&
           messageId == other.messageId &&
+          rowId == other.rowId &&
           messageOrdinal == other.messageOrdinal;
 
   @override
-  int get hashCode => Object.hash(messageId, messageOrdinal);
+  int get hashCode => Object.hash(messageId, rowId, messageOrdinal);
 
   @override
   String toString() =>
       'SessionArtifactSource(ordinal: $messageOrdinal, hasId: '
-      '${messageId != null})';
+      '${messageId != null}, hasRowId: ${rowId != null})';
 }
 
 /// Safe metadata projection. It never owns artifact bytes or transcript text.

@@ -335,6 +335,30 @@ void main() {
   });
 
   group('ApiClient', () {
+    test('getMessages rechaza un transcript one-shot truncado', () async {
+      final client = ApiClient(
+        baseUrl: 'http://hermes.local:8642',
+        apiKey: 'gateway-key',
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': [
+                {'id': 'valid-row', 'role': 'user', 'content': 'hola'},
+                'invalid-row',
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.getMessages('stored-chat'),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test(
       'includeChildren serializa include_children=true solo en Gateway API',
       () async {
@@ -744,6 +768,33 @@ void main() {
   });
 
   group('DashboardClient', () {
+    test(
+      'getSessionMessages rechaza un transcript one-shot truncado',
+      () async {
+        final client = DashboardClient(
+          host: 'hermes.local',
+          manualToken: 'test-token',
+          httpClientOverride: MockClient(
+            (_) async => http.Response(
+              jsonEncode({
+                'messages': [
+                  {'id': 'valid-row', 'role': 'user', 'content': 'hola'},
+                  42,
+                ],
+              }),
+              200,
+            ),
+          ),
+        );
+        addTearDown(client.close);
+
+        await expectLater(
+          client.getSessionMessages('stored-chat'),
+          throwsA(isA<FormatException>()),
+        );
+      },
+    );
+
     test('el refresco manual fuerza una comprobación sin caché', () async {
       final calls = <http.Request>[];
       final client = DashboardClient(
@@ -1331,6 +1382,35 @@ void main() {
 
       expect(fixture.prefs.containsKey('capabilities_$id'), isTrue);
     });
+
+    test(
+      'metadata and dashboard secret rotation publish distinct revisions',
+      () async {
+        final fixture = await managerWithCapabilities();
+        final revisions = <int>[];
+        fixture.manager.connectionsRevision.addListener(
+          () => revisions.add(fixture.manager.connectionsRevision.value),
+        );
+
+        await fixture.manager.upsertConnection(
+          SavedConnection(
+            id: id,
+            label: 'Server editado',
+            host: 'hermes.example.test',
+            port: 443,
+            apiKey: '',
+            useHttps: true,
+          ),
+        );
+        await fixture.manager.setDashboardSecrets(
+          id,
+          sessionToken: 'rotated-token',
+        );
+
+        expect(revisions, hasLength(2));
+        expect(revisions[1], greaterThan(revisions[0]));
+      },
+    );
   });
 
   group('ConnectionManager instancia predeterminada', () {

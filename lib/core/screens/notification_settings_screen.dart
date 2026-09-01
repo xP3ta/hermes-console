@@ -26,8 +26,10 @@ class _NotificationSettingsScreenState
   SharedPreferences? _prefs;
   bool _granted = false;
   ChannelStatus _channel = ChannelStatus.missing;
+  ChannelStatus _fgsChannel = ChannelStatus.missing;
   bool _bgRunning = false;
   bool _bgBusy = false;
+  bool _bgStartFailed = false;
   bool _loading = true;
 
   @override
@@ -42,18 +44,30 @@ class _NotificationSettingsScreenState
   Future<void> _refresh() async {
     final granted = await _notif?.permissionGranted() ?? false;
     final channel = await _notif?.alertChannelStatus() ?? ChannelStatus.missing;
+    final fgsChannel =
+        await _notif?.foregroundServiceChannelStatus() ?? ChannelStatus.missing;
     final bg = await BackgroundListener.isRunning();
+    await _prefs?.reload();
+    final automationOptIn = _prefs?.getBool(BackgroundListener.prefKey) == true;
     if (!mounted) return;
     setState(() {
       _granted = granted;
       _channel = channel;
-      _bgRunning = bg;
+      _fgsChannel = fgsChannel;
+      _bgRunning = backgroundAutomationRunningForUi(
+        serviceRunning: bg,
+        automationOptIn: automationOptIn,
+      );
       _loading = false;
     });
   }
 
   Future<void> _toggleBackground(bool v) async {
-    setState(() => _bgBusy = true);
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    setState(() {
+      _bgBusy = true;
+      _bgStartFailed = false;
+    });
     if (v && !_granted) {
       final granted = await _requestPermission();
       if (!granted) {
@@ -64,17 +78,29 @@ class _NotificationSettingsScreenState
         return;
       }
     }
+    if (v) {
+      await _prefs?.setBool(BackgroundListener.prefKey, true);
+      if (app != null) {
+        await BackgroundCronWatch.syncConnections(
+          app.connManager.getConnections(),
+        );
+      }
+    }
     final ok = v ? await BackgroundListener.startForAutomation() : true;
     if (!v) {
-      await BackgroundListener.stop();
+      await BackgroundListener.stopAutomation();
       await _notif?.setNotifyCronResults(false);
       await _notif?.setNotifyKanbanResults(false);
     }
     await _prefs?.setBool(BackgroundListener.prefKey, v && ok);
+    if (v && !ok) {
+      await BackgroundCronWatch.syncConnections(const []);
+    }
     if (!mounted) return;
     setState(() {
       _bgRunning = v && ok;
       _bgBusy = false;
+      _bgStartFailed = v && !ok;
     });
     if (v && !ok) {
       // Mensaje propio del arranque del servicio, no el de la notificación
@@ -86,6 +112,7 @@ class _NotificationSettingsScreenState
   }
 
   Future<void> _toggleCronResults(NotificationService notif, bool value) async {
+    final app = context.findAncestorStateOfType<HermesAppState>();
     setState(() => _bgBusy = true);
     if (value && !_granted) {
       final granted = await _requestPermission();
@@ -99,7 +126,7 @@ class _NotificationSettingsScreenState
     if (!mounted) return;
     var enabled = value;
     if (value) {
-      final app = context.findAncestorStateOfType<HermesAppState>();
+      await _prefs?.setBool(BackgroundListener.prefKey, true);
       if (app != null) {
         await BackgroundCronWatch.syncConnections(
           app.connManager.getConnections(),
@@ -107,6 +134,7 @@ class _NotificationSettingsScreenState
       }
       enabled = await BackgroundListener.startForAutomation();
       await _prefs?.setBool(BackgroundListener.prefKey, enabled);
+      if (!enabled) await BackgroundCronWatch.syncConnections(const []);
     }
     await notif.setNotifyCronResults(enabled);
     if (!mounted) return;
@@ -127,6 +155,7 @@ class _NotificationSettingsScreenState
     NotificationService notif,
     bool value,
   ) async {
+    final app = context.findAncestorStateOfType<HermesAppState>();
     setState(() => _bgBusy = true);
     if (value && !_granted) {
       final granted = await _requestPermission();
@@ -140,8 +169,15 @@ class _NotificationSettingsScreenState
     if (!mounted) return;
     var enabled = value;
     if (value) {
+      await _prefs?.setBool(BackgroundListener.prefKey, true);
+      if (app != null) {
+        await BackgroundCronWatch.syncConnections(
+          app.connManager.getConnections(),
+        );
+      }
       enabled = await BackgroundListener.startForAutomation();
       await _prefs?.setBool(BackgroundListener.prefKey, enabled);
+      if (!enabled) await BackgroundCronWatch.syncConnections(const []);
     }
     await notif.setNotifyKanbanResults(enabled);
     if (!mounted) return;
@@ -383,6 +419,17 @@ class _NotificationSettingsScreenState
       subtitle: s.notifMasterSub,
       value: notif.enabled,
       onChanged: (v) async {
+        if (!v) {
+          await BackgroundListener.stopAutomation();
+          await notif.setNotifyCronResults(false);
+          await notif.setNotifyKanbanResults(false);
+          if (mounted) {
+            setState(() {
+              _bgRunning = false;
+              _bgStartFailed = false;
+            });
+          }
+        }
         await notif.setEnabled(v);
         if (v && !_granted) await _requestPermission();
         if (mounted) setState(() {});
@@ -493,6 +540,11 @@ class _NotificationSettingsScreenState
     Strings s,
   ) {
     final on = notif.enabled;
+    final fgsChannelLabel = switch (_fgsChannel) {
+      ChannelStatus.active => s.notifChannelActive,
+      ChannelStatus.blocked => s.notifChannelBlocked,
+      ChannelStatus.missing => s.notifChannelMissing,
+    };
     return HermesPanel(
       child: Column(
         children: [
@@ -512,18 +564,40 @@ class _NotificationSettingsScreenState
             value: _bgRunning && on,
             onChanged: (on && !_bgBusy) ? _toggleBackground : null,
           ),
-          if (_bgRunning)
+          HermesBackgroundNotificationStatus(
+            state: _bgBusy
+                ? BackgroundNotificationUiState.activating
+                : _bgStartFailed
+                ? BackgroundNotificationUiState.error
+                : _bgRunning && on
+                ? BackgroundNotificationUiState.active
+                : BackgroundNotificationUiState.idle,
+            activatingLabel: s.notifBgActivating,
+            activeLabel: s.notifBgActive,
+            pausedLabel: s.notifBgPaused,
+            errorLabel: s.notifBgError,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: HermesNotificationDiagnosticRow(
+              label: s.notifFgsChannelLabel,
+              value: fgsChannelLabel,
+              good: _fgsChannel == ChannelStatus.active,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Text(
+              s.notifBgFiniteNotice,
+              style: TextStyle(fontSize: 11, color: colors.textSecondary),
+            ),
+          ),
+          if (_bgRunning || _bgStartFailed)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  Icon(Icons.circle, size: 9, color: colors.success),
-                  const SizedBox(width: 8),
-                  Text(
-                    s.notifBgActive,
-                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
-                  ),
-                ],
+              child: Text(
+                s.notifBgRestartNotice,
+                style: TextStyle(fontSize: 11, color: colors.textSecondary),
               ),
             ),
         ],
@@ -553,6 +627,72 @@ class _NotificationSettingsScreenState
         padding: const EdgeInsets.symmetric(vertical: 14),
         side: BorderSide(color: colors.accent.withValues(alpha: 0.4)),
         foregroundColor: colors.accentHover,
+      ),
+    );
+  }
+}
+
+enum BackgroundNotificationUiState { idle, activating, active, paused, error }
+
+class HermesBackgroundNotificationStatus extends StatelessWidget {
+  const HermesBackgroundNotificationStatus({
+    required this.state,
+    required this.activatingLabel,
+    required this.activeLabel,
+    required this.pausedLabel,
+    required this.errorLabel,
+    super.key,
+  });
+
+  final BackgroundNotificationUiState state;
+  final String activatingLabel;
+  final String activeLabel;
+  final String pausedLabel;
+  final String errorLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state == BackgroundNotificationUiState.idle) {
+      return const SizedBox.shrink();
+    }
+    final colors = Theme.of(context).hermes;
+    final (icon, label, color) = switch (state) {
+      BackgroundNotificationUiState.activating => (
+        const SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        activatingLabel,
+        colors.textSecondary,
+      ),
+      BackgroundNotificationUiState.active => (
+        Icon(Icons.circle, size: 9, color: colors.success),
+        activeLabel,
+        colors.textSecondary,
+      ),
+      BackgroundNotificationUiState.paused => (
+        Icon(Icons.pause_circle_outline, size: 16, color: colors.warning),
+        pausedLabel,
+        colors.warning,
+      ),
+      BackgroundNotificationUiState.error => (
+        Icon(Icons.error_outline_rounded, size: 16, color: colors.error),
+        errorLabel,
+        colors.error,
+      ),
+      BackgroundNotificationUiState.idle => throw StateError('unreachable'),
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Row(
+        children: [
+          icon,
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(label, style: TextStyle(fontSize: 11, color: color)),
+          ),
+        ],
       ),
     );
   }

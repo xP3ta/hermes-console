@@ -46,12 +46,14 @@ abstract final class SubagentPayloadLimits {
 
 final class SubagentActivityScope {
   final String connectionId;
+  final String profile;
   final String parentSessionId;
   final String runtimeSessionId;
   final int turnEpoch;
 
   factory SubagentActivityScope({
     required String connectionId,
+    String profile = '',
     required String parentSessionId,
     required String runtimeSessionId,
     required int turnEpoch,
@@ -66,6 +68,7 @@ final class SubagentActivityScope {
     }
     return SubagentActivityScope._(
       connectionId: connectionId,
+      profile: profile,
       parentSessionId: parentSessionId,
       runtimeSessionId: runtimeSessionId,
       turnEpoch: turnEpoch,
@@ -74,26 +77,63 @@ final class SubagentActivityScope {
 
   const SubagentActivityScope._({
     required this.connectionId,
+    required this.profile,
     required this.parentSessionId,
     required this.runtimeSessionId,
     required this.turnEpoch,
   });
+
+  SubagentActivityLineageKey get durableLineageKey =>
+      SubagentActivityLineageKey(
+        connectionId: connectionId,
+        profile: profile,
+        parentSessionId: parentSessionId,
+      );
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is SubagentActivityScope &&
           connectionId == other.connectionId &&
+          profile == other.profile &&
           parentSessionId == other.parentSessionId &&
           runtimeSessionId == other.runtimeSessionId &&
           turnEpoch == other.turnEpoch;
 
   @override
-  int get hashCode =>
-      Object.hash(connectionId, parentSessionId, runtimeSessionId, turnEpoch);
+  int get hashCode => Object.hash(
+    connectionId,
+    profile,
+    parentSessionId,
+    runtimeSessionId,
+    turnEpoch,
+  );
 
   @override
   String toString() => 'SubagentActivityScope(epoch: $turnEpoch)';
+}
+
+final class SubagentActivityLineageKey {
+  final String connectionId;
+  final String profile;
+  final String parentSessionId;
+
+  const SubagentActivityLineageKey({
+    required this.connectionId,
+    required this.profile,
+    required this.parentSessionId,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SubagentActivityLineageKey &&
+          connectionId == other.connectionId &&
+          profile == other.profile &&
+          parentSessionId == other.parentSessionId;
+
+  @override
+  int get hashCode => Object.hash(connectionId, profile, parentSessionId);
 }
 
 final class SubagentActivityKey {
@@ -345,6 +385,7 @@ final class SubagentActivityEvent {
       delegationId: _opaqueId(json['delegation_id']),
       childSessionId: _opaqueId(json['child_session_id']),
       legacyToolCallId:
+          _opaqueId(json['tool_id']) ??
           _opaqueId(json['tool_call_id']) ??
           _opaqueId(json['call_id']) ??
           _opaqueId(fallbackToolCallId),
@@ -423,6 +464,13 @@ final class SubagentActivityEvent {
     };
     if (kind == null) return null;
 
+    final result = _stringKeyedMap(json['result']);
+    final dispatchedSubagentIds = _boundedStringList(
+      result?['subagent_ids'],
+      maxItems: 64,
+      maxCharacters: SubagentPayloadLimits.opaqueIdCharacters,
+    );
+
     return SubagentActivityEvent._(
       scope: scope,
       kind: kind,
@@ -430,8 +478,15 @@ final class SubagentActivityEvent {
       phase: kind == SubagentActivityEventKind.legacyToolStart
           ? SubagentActivityPhase.running
           : _legacyCompletionPhase(json),
+      subagentId: dispatchedSubagentIds.length == 1
+          ? _opaqueId(dispatchedSubagentIds.single)
+          : null,
+      delegationId:
+          _opaqueId(result?['delegation_id']) ??
+          _opaqueId(json['delegation_id']),
       legacyToolCallId:
           _opaqueId(toolCallId) ??
+          _opaqueId(json['tool_id']) ??
           _opaqueId(json['tool_call_id']) ??
           _opaqueId(json['call_id']),
       eventId: _opaqueId(eventId) ?? _opaqueId(json['event_id']),
@@ -525,6 +580,34 @@ final class SubagentActivityState {
 
   SubagentActivity? operator [](SubagentActivityKey key) => _entries[key];
 
+  SubagentActivityState rebaseScope(SubagentActivityScope rebasedScope) {
+    if (scope == rebasedScope) return this;
+    if (scope.durableLineageKey != rebasedScope.durableLineageKey) {
+      throw StateError('Cannot rebase subagent activity across lineages');
+    }
+    final rebased = <SubagentActivityKey, SubagentActivity>{};
+    for (final activity in activities) {
+      final key = SubagentActivityKey(
+        scope: rebasedScope,
+        identityKind: activity.key.identityKind,
+        stableId: activity.key.stableId,
+      );
+      rebased[key] = SubagentActivity(
+        key: key,
+        source: activity.source,
+        phase: activity.phase,
+        subagentId: activity.subagentId,
+        delegationId: activity.delegationId,
+        childSessionId: activity.childSessionId,
+        legacyToolCallId: activity.legacyToolCallId,
+        eventRevision: activity.eventRevision,
+        seenEventIds: activity.seenEventIds,
+        details: activity.details,
+      );
+    }
+    return SubagentActivityState.withEntries(rebasedScope, rebased);
+  }
+
   @override
   String toString() => 'SubagentActivityState(count: ${_entries.length})';
 }
@@ -587,6 +670,14 @@ SubagentActivityPhase _legacyCompletionPhase(Map<String, dynamic> json) {
   if (json['success'] == false || json['error'] != null) {
     return SubagentActivityPhase.failed;
   }
+  final result = _stringKeyedMap(json['result']);
+  if (result != null) {
+    if (result['success'] == false || result['error'] != null) {
+      return SubagentActivityPhase.failed;
+    }
+    final resultPhase = _phaseFromStatus(result['status']);
+    if (resultPhase != null) return resultPhase;
+  }
   if (json['success'] == true) return SubagentActivityPhase.completed;
   final explicit = _phaseFromStatus(json['status']);
   if (explicit == SubagentActivityPhase.failed) return explicit!;
@@ -598,7 +689,10 @@ SubagentActivityPhase _legacyCompletionPhase(Map<String, dynamic> json) {
 SubagentActivityPhase? _phaseFromStatus(Object? value) {
   if (value is! String) return null;
   return switch (value.trim().toLowerCase()) {
-    'requested' || 'pending' || 'queued' => SubagentActivityPhase.requested,
+    'requested' ||
+    'pending' ||
+    'queued' ||
+    'dispatched' => SubagentActivityPhase.requested,
     'running' || 'active' || 'started' => SubagentActivityPhase.running,
     'thinking' || 'reasoning' => SubagentActivityPhase.thinking,
     'tool' || 'using_tool' => SubagentActivityPhase.tool,

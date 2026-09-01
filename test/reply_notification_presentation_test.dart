@@ -55,10 +55,8 @@ void main() {
         surface: NotificationChatSurface.bot,
         profile: 'builder',
       );
-      await service.reassertRecent();
-
       final shown = calls.where((call) => call.method == 'show').toList();
-      expect(shown, hasLength(2));
+      expect(shown, hasLength(1));
       for (final call in shown) {
         final args = Map<String, dynamic>.from(call.arguments as Map);
         final android = Map<String, dynamic>.from(

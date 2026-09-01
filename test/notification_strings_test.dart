@@ -9,8 +9,8 @@ void main() {
     test('es=true devuelve español; es=false inglés (sin idioma mezclado)', () {
       const es = NotifL10n(true);
       const en = NotifL10n(false);
-      expect(es.approvalTitle, 'Hermes necesita tu permiso');
-      expect(en.approvalTitle, 'Hermes needs your permission');
+      expect(es.approvalTitle, 'Hermes necesita tu atención');
+      expect(en.approvalTitle, 'Hermes needs your attention');
       expect(es.runCompleted, 'Ejecución completada');
       expect(en.runCompleted, 'Run completed');
       expect(es.cronCompleted, 'Cron completado');

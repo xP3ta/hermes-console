@@ -18,6 +18,7 @@ final class CompressionDispatcher {
     String focusTopic = '',
     required int connectionEpoch,
     required int sessionEpoch,
+    bool Function()? fallbackStillValid,
   }) async {
     final sessionId = _validateSessionId(runtimeSessionId);
     final argument = _validateArgument(focusTopic);
@@ -37,9 +38,23 @@ final class CompressionDispatcher {
         route: DesktopCommandRoute.slashExec,
         fallbackUsed: false,
       );
-    } catch (_) {
+    } catch (error) {
       // Desktop usa el error como única señal para probar command.dispatch.
       // No se conserva el error primario porque podría incluir texto remoto.
+      if (fallbackStillValid != null && !fallbackStillValid()) {
+        return DesktopCommandDispatch(
+          commandName: 'compress',
+          arg: argument,
+          sessionId: sessionId,
+          connectionEpoch: connectionEpoch,
+          sessionEpoch: sessionEpoch,
+          attemptedRoute: DesktopCommandRoute.slashExec,
+          fallbackUsed: false,
+          dispatchKind: DesktopCommandDispatchKind.error,
+          accepted: DesktopCommandAcceptance.unknown,
+          failure: _safeFailure(error),
+        );
+      }
     }
 
     try {

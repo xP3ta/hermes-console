@@ -157,7 +157,7 @@ void main() {
         realUser,
       ]);
 
-      expect(projection.units[1], isA<ChatMessageUnitPlan>());
+      expect(projection.units.whereType<ChatMessageUnitPlan>(), hasLength(2));
       expect(projection.userOrdinalFor(event), isNull);
       expect(projection.userOrdinalFor(realUser), 0);
       expect(projection.visibleUserCount, 1);
@@ -178,10 +178,14 @@ void main() {
   });
 
   test('solo repara el sentinel ASYNC reservado exacto', () {
-    const marker =
-        '[ASYNC DELEGATION BATCH COMPLETE — deleg_8980456e]';
-    for (final content in [marker, '$marker\nPayload interno']) {
-      final event = _message('user', content);
+    const batchMarker = '[ASYNC DELEGATION BATCH COMPLETE — deleg_8980456e]';
+    const singleMarker = '[ASYNC DELEGATION COMPLETE — deleg_0123abcd]';
+    for (final content in [
+      batchMarker,
+      '$batchMarker\nPayload interno',
+      singleMarker,
+    ]) {
+      final event = _message('user', content)..['row_id'] = 42;
       expect(
         effectiveUserDisplayKind(event),
         'async_delegation_complete',
@@ -191,12 +195,14 @@ void main() {
     }
 
     for (final content in [
-      '$marker ¿Qué significa?',
-      marker.toLowerCase(),
+      '$batchMarker ¿Qué significa?',
+      batchMarker.toLowerCase(),
       '[ASYNC DELEGATION BATCH COMPLETE - deleg_8980456e]',
-      ' $marker',
+      ' $batchMarker',
+      '[ASYNC DELEGATION BATCH COMPLETE — deleg_nothex12]',
+      '[ASYNC DELEGATION BATCH COMPLETE — deleg_8980456e] citado',
     ]) {
-      final user = _message('user', content);
+      final user = _message('user', content)..['row_id'] = 42;
       expect(effectiveUserDisplayKind(user), isEmpty, reason: content);
       expect(isRealUserTurn(user), isTrue, reason: content);
       final projection = ChatRenderProjection.build([user]);
@@ -207,6 +213,30 @@ void main() {
         reason: content,
       );
     }
+
+    for (final optimistic in [
+      _message('user', batchMarker)..['_optimistic'] = true,
+      _message('user', batchMarker)..['_optimistic'] = true,
+    ]) {
+      expect(effectiveUserDisplayKind(optimistic), isEmpty);
+      expect(isRealUserTurn(optimistic), isTrue);
+    }
+
+    const quoted =
+        '¿Por qué aparece [ASYNC DELEGATION BATCH COMPLETE — deleg_8980456e]?';
+    final userQuote = _message('user', quoted)..['row_id'] = 43;
+    expect(effectiveUserDisplayKind(userQuote), isEmpty);
+    expect(userQuote['content'], quoted);
+  });
+
+  test('display_kind hidden no crea una burbuja de usuario cruda', () {
+    final hidden = _message('user', 'payload interno')
+      ..['display_kind'] = 'hidden';
+
+    final projection = ChatRenderProjection.build([hidden]);
+
+    expect(projection.units, isEmpty);
+    expect(projection.visibleUserCount, 0);
   });
 
   test(

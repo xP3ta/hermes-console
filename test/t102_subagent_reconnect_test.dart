@@ -19,7 +19,7 @@ class _ReconnectGateway
   int resumeExistingCalls = 0;
   int createCalls = 0;
 
-  static const runtimeSessionId = 'runtime-parent';
+  String get runtimeSessionId => 'runtime-parent-$resumeExistingCalls';
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -94,15 +94,16 @@ class _ReconnectGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
-  void emit(
-    String type,
-    Map<String, dynamic> payload, {
-    String sessionId = runtimeSessionId,
-  }) {
+  void emit(String type, Map<String, dynamic> payload, {String? sessionId}) {
     _events.add(
-      TuiGatewayEvent(type: type, sessionId: sessionId, payload: payload),
+      TuiGatewayEvent(
+        type: type,
+        sessionId: sessionId ?? runtimeSessionId,
+        payload: payload,
+      ),
     );
   }
 
@@ -170,6 +171,7 @@ void main() {
       gateway.emit('subagent.start', const {
         'subagent_id': 'child-before-disconnect',
         'child_session_id': 'child-session-a',
+        'goal': 'goal preserved across runtime aliases',
         'event_id': 'child-a-start',
         'event_revision': 1,
         'status': 'running',
@@ -232,6 +234,10 @@ void main() {
       expect(
         byId['child-before-disconnect']?.phase,
         SubagentActivityPhase.completed,
+      );
+      expect(
+        byId['child-before-disconnect']?.goalPreview,
+        'goal preserved across runtime aliases',
       );
       expect(byId['child-terminal-only']?.phase, SubagentActivityPhase.failed);
       expect(restCalls, 1);

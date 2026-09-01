@@ -9,6 +9,7 @@ class DesktopSessionSnapshot {
   final bool created;
   final List<DesktopSessionMessage> messages;
   final bool messagesProvided;
+  final bool messagesFullyParsed;
   final int? messageCount;
 
   /// `session.resume` con `defer_history:true` (Hermes Agent 0.20): el ack es
@@ -21,6 +22,7 @@ class DesktopSessionSnapshot {
   final bool running;
   final String? status;
   final DateTime? startedAt;
+  final DateTime? turnStartedAt;
   final DesktopSessionRuntimeInfo info;
   final Map<String, dynamic> raw;
   final Map<String, dynamic>? pendingClarify;
@@ -32,6 +34,7 @@ class DesktopSessionSnapshot {
     required this.created,
     this.messages = const [],
     this.messagesProvided = false,
+    this.messagesFullyParsed = true,
     this.messageCount,
     this.hydrating = false,
     this.inflight,
@@ -39,6 +42,7 @@ class DesktopSessionSnapshot {
     this.running = false,
     this.status,
     this.startedAt,
+    this.turnStartedAt,
     this.info = const DesktopSessionRuntimeInfo(),
     this.raw = const {},
     this.pendingClarify,
@@ -71,13 +75,21 @@ class DesktopSessionSnapshot {
 
     final rawMessages = json['messages'];
     final messages = <DesktopSessionMessage>[];
+    var messagesFullyParsed = true;
     if (rawMessages is List) {
       for (var index = 0; index < rawMessages.length; index++) {
         final parsed = DesktopSessionMessage.tryParse(
           rawMessages[index],
           serverOrdinal: index,
         );
-        if (parsed != null) messages.add(parsed);
+        if (parsed == null) {
+          messagesFullyParsed = false;
+        } else {
+          messages.add(parsed);
+          if (!parsed.identityAliasesConsistent) {
+            messagesFullyParsed = false;
+          }
+        }
       }
     }
 
@@ -86,7 +98,8 @@ class DesktopSessionSnapshot {
       storedSessionId: storedSessionId,
       created: created,
       messages: List.unmodifiable(messages),
-      messagesProvided: rawMessages is List,
+      messagesProvided: rawMessages is List && json['messages_omitted'] != true,
+      messagesFullyParsed: messagesFullyParsed,
       messageCount: _nonNegativeInt(json['message_count']),
       hydrating: json['hydrating'] == true,
       inflight: DesktopInflightTurn.tryParse(json['inflight']),
@@ -94,6 +107,7 @@ class DesktopSessionSnapshot {
       running: json['running'] is bool && json['running'] == true,
       status: _nonEmptyString(json['status']),
       startedAt: _epochSeconds(json['started_at']),
+      turnStartedAt: _epochSeconds(json['turn_started_at']),
       info: DesktopSessionRuntimeInfo.fromJson(json['info']),
       pendingClarify: _stringKeyedMap(json['pending_clarify']),
       pendingClarifyProvided: json.containsKey('pending_clarify'),
@@ -104,12 +118,30 @@ class DesktopSessionSnapshot {
       raw: _freezeExtras(json, _snapshotParsedKeys),
     );
   }
+
+  /// Inicio exacto del turno vivo anunciado por el Gateway.
+  ///
+  /// Hermes Agent actual lo publica como `turn_started_at` en el snapshot;
+  /// versiones experimentales lo incluyeron dentro de `inflight.started_at`.
+  /// Si ambas coordenadas existen y discrepan, no se inventa una equivalencia.
+  DateTime? get resolvedTurnStartedAt {
+    final nested = inflight?.startedAt;
+    final topLevel = turnStartedAt;
+    if (nested != null &&
+        topLevel != null &&
+        !nested.isAtSameMomentAs(topLevel)) {
+      return null;
+    }
+    return nested ?? topLevel;
+  }
 }
 
 enum DesktopSessionMessageRole { system, user, assistant, tool, unknown }
 
 class DesktopSessionMessage {
   final String? stableId;
+  final int? rowId;
+  final bool identityAliasesConsistent;
   final int? serverOrdinal;
   final Map<String, dynamic> artifactContainers;
   final DesktopSessionMessageRole role;
@@ -133,6 +165,8 @@ class DesktopSessionMessage {
     required this.role,
     required this.rawRole,
     this.stableId,
+    this.rowId,
+    this.identityAliasesConsistent = true,
     this.serverOrdinal,
     this.artifactContainers = const {},
     this.content,
@@ -171,9 +205,11 @@ class DesktopSessionMessage {
         _stringValue(json['text']) ??
         (json['content'] is String ? json['content'] as String : null);
     final name = _nonEmptyString(json['name']);
+    final identity = _desktopTranscriptIdentity(json);
     return DesktopSessionMessage(
-      stableId:
-          _stableOpaqueId(json['message_id']) ?? _stableOpaqueId(json['id']),
+      stableId: identity.messageId,
+      rowId: identity.rowId,
+      identityAliasesConsistent: identity.consistent,
       serverOrdinal: serverOrdinal != null && serverOrdinal >= 0
           ? serverOrdinal
           : null,
@@ -580,11 +616,33 @@ String? _nonEmptyString(Object? value) {
 
 String? _stableOpaqueId(Object? value) {
   if (value is! String) return null;
-  final trimmed = value.trim();
-  if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$').hasMatch(trimmed)) {
+  if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$').hasMatch(value)) {
     return null;
   }
-  return trimmed;
+  return value;
+}
+
+({String? messageId, int? rowId, bool consistent}) _desktopTranscriptIdentity(
+  Map<String, dynamic> json,
+) {
+  final messageIds = <String>{};
+  for (final key in const ['_desktopMessageId', 'message_id', 'id']) {
+    final parsed = _stableOpaqueId(json[key]);
+    if (parsed != null) messageIds.add(parsed);
+  }
+  final rowIds = <int>{};
+  for (final key in const ['_desktopRowId', 'row_id', '_row_id', 'id']) {
+    final raw = json[key];
+    if (raw is int && raw > 0) rowIds.add(raw);
+  }
+  if (messageIds.length > 1 || rowIds.length > 1) {
+    return (messageId: null, rowId: null, consistent: false);
+  }
+  return (
+    messageId: messageIds.firstOrNull,
+    rowId: rowIds.firstOrNull,
+    consistent: true,
+  );
 }
 
 int? _nonNegativeInt(Object? value) {
@@ -746,6 +804,7 @@ const _snapshotParsedKeys = <String>{
   'session_key',
   'resumed',
   'messages',
+  'messages_omitted',
   'message_count',
   'hydrating',
   'inflight',
@@ -753,12 +812,17 @@ const _snapshotParsedKeys = <String>{
   'running',
   'status',
   'started_at',
+  'turn_started_at',
   'info',
   'pending_clarify',
 };
 
 const _messageParsedKeys = <String>{
+  '_desktopMessageId',
+  '_desktopRowId',
   'message_id',
+  'row_id',
+  '_row_id',
   'id',
   'role',
   'content',

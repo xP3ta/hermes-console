@@ -1,4 +1,9 @@
-# Open-source release checklist
+# Open-source release checklist — historical 1.2.8 gate
+
+> Historical record: this checklist belongs to the superseded `1.2.8+4943`
+> candidate and is not the active release gate for `1.2.9`. Its checked items
+> must not be read as evidence for the current source tree or a future signed
+> artifact.
 
 Candidate version: `1.2.8+4943`, integrated from the published `v1.2.7` source.
 Record the final public SHA after all audit commits are complete. This checklist

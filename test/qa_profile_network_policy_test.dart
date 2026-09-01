@@ -91,7 +91,14 @@ void main() {
         releaseVerifier,
         contains('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'),
       );
-      expect(releaseVerifier, contains('dataSync|microphone|mediaPlayback'));
+      expect(
+        releaseVerifier,
+        contains('android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING'),
+      );
+      expect(
+        releaseVerifier,
+        contains('dataSync|remoteMessaging|microphone|mediaPlayback'),
+      );
     });
 
     test('el verificador resuelve la referencia compilada del resource', () {

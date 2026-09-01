@@ -30,7 +30,7 @@ SavedConnection _conn() => SavedConnection(
 void main() {
   group('Gateway — resiliencia de red', () {
     test(
-      '1a. timeout en el stream del run: error legible, sin stack crudo',
+      '1a. timeout en el stream del run: error seguro, sin detalle privado',
       () async {
         // startRun responde (con ~200ms de latencia), pero el SSE de eventos se
         // cuelga y lanza TimeoutException en el primer (y único) intento.
@@ -69,9 +69,9 @@ void main() {
         final top = chat.messages.first;
         expect(top['role'], 'assistant_error');
         final msg = (top['content'] as String?) ?? '';
-        // El error se propaga como texto legible…
-        expect(msg, contains('Timeout'));
-        // …y no como un volcado de stack crudo.
+        expect(msg, 'No se pudo recuperar el turno. Inténtalo de nuevo.');
+        expect(msg, isNot(contains('Timeout')));
+        expect(msg, isNot(contains('sin respuesta del gateway')));
         expect(msg, isNot(contains('#0')));
         expect(msg.trim(), isNotEmpty);
 
@@ -197,7 +197,8 @@ void main() {
 
       chat.send(fullText: 'hola', model: 'm', history: const []);
       final deadline = DateTime.now().add(const Duration(seconds: 8));
-      while (chat.messages.first['content'] != 'La respuesta final.' &&
+      while ((chat.messages.isEmpty ||
+              chat.messages.first['content'] != 'La respuesta final.') &&
           DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }

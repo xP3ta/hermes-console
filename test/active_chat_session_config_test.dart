@@ -280,6 +280,7 @@ class _ConfiguredCreateGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override

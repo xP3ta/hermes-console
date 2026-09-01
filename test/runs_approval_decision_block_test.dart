@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -51,6 +53,52 @@ RunApprovalDecisionBlock _block({
 );
 
 void main() {
+  test('A sustituida por B durante App Lock no emite ningún RPC', () async {
+    var pendingRequestId = 'request-a';
+    final unlocked = Completer<bool>();
+    final resolved = <String>[];
+
+    final operation = resolveRunApprovalWithLockFence(
+      requestId: 'request-a',
+      currentRequestId: () => pendingRequestId,
+      verify: () => unlocked.future,
+      resolve: () async {
+        resolved.add('request-a');
+        return true;
+      },
+    );
+    pendingRequestId = 'request-b';
+    unlocked.complete(true);
+
+    expect(await operation, isFalse);
+    expect(resolved, isEmpty);
+    expect(pendingRequestId, 'request-b');
+  });
+
+  test('App Lock reintenta la apertura pendiente exacta al desbloquear', () {
+    final main = File('lib/main.dart').readAsStringSync();
+    final start = main.indexOf('void _onAppLockNoticeGateChanged()');
+    final end = main.indexOf(
+      'final Set<String> _hydratingNotificationRuns',
+      start,
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final gate = main.substring(start, end);
+    expect(gate, contains('widget.notifications.retryPendingOpen()'));
+  });
+
+  test('todos los terminales, incluido run.cancelled, cancelan approval', () {
+    for (final event in const [
+      'run.completed',
+      'run.failed',
+      'run.cancelled',
+    ]) {
+      expect(runTerminalCancelsApproval(event), isTrue);
+    }
+    expect(runTerminalCancelsApproval('message.delta'), isFalse);
+  });
+
   testWidgets(
     'riesgo bajo usa HermesDecisionBlock y conserva los 4 callbacks',
     (tester) async {
@@ -294,5 +342,189 @@ void main() {
     expect(statusRequests, greaterThanOrEqualTo(1));
     expect(find.textContaining('El gateway ya no conserva'), findsOneWidget);
     expect(find.byType(RunApprovalDecisionBlock), findsNothing);
+  });
+
+  testWidgets('cold/warm routing espera approval B exacta e ignora A retrasada', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    var ready = 0;
+    final connection = SavedConnection(
+      id: 'runs-route-b',
+      label: 'Test',
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'k',
+    );
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/events')) {
+        return http.Response(
+          'data: ${jsonEncode({'event': 'approval.request', 'request_id': 'request-a', 'command': 'ls a'})}\n\n'
+          'data: ${jsonEncode({'event': 'approval.request', 'request_id': 'request-b', 'command': 'ls b'})}\n\n',
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }
+      if (request.url.path == '/v1/runs/run-route-b') {
+        return http.Response(
+          jsonEncode({'status': 'waiting_for_approval'}),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.hermesRedDark,
+        home: RunDetailScreen(
+          connection: connection,
+          record: const RunRecord(
+            runId: 'run-route-b',
+            prompt: 'Ruta B',
+            createdAt: 1,
+            lastStatus: 'running',
+          ),
+          initialApprovalId: 'request-b',
+          onInitialApprovalReady: () => ready++,
+          client: ApiClient(
+            baseUrl: connection.baseUrl,
+            apiKey: connection.apiKey,
+            httpClient: client,
+          ),
+        ),
+      ),
+    );
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 25));
+    }
+
+    expect(ready, 1);
+    expect(find.text('ls b'), findsWidgets);
+    expect(find.text('ls a'), findsNothing);
+  });
+
+  testWidgets('tras enfocar approval A deja pasar approval B posterior', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    var ready = 0;
+    final connection = SavedConnection(
+      id: 'runs-route-a-then-b',
+      label: 'Test',
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'test-key',
+    );
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/events')) {
+        return http.Response(
+          'data: ${jsonEncode({'event': 'approval.request', 'request_id': 'request-a', 'command': 'ls a'})}\n\n'
+          'data: ${jsonEncode({'event': 'approval.request', 'request_id': 'request-b', 'command': 'ls b'})}\n\n',
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }
+      if (request.url.path == '/v1/runs/run-route-a-then-b') {
+        return http.Response(
+          jsonEncode({'status': 'waiting_for_approval'}),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.hermesRedDark,
+        home: RunDetailScreen(
+          connection: connection,
+          record: const RunRecord(
+            runId: 'run-route-a-then-b',
+            prompt: 'Ruta A luego B',
+            createdAt: 1,
+            lastStatus: 'running',
+          ),
+          initialApprovalId: 'request-a',
+          onInitialApprovalReady: () => ready++,
+          client: ApiClient(
+            baseUrl: connection.baseUrl,
+            apiKey: connection.apiKey,
+            httpClient: client,
+          ),
+        ),
+      ),
+    );
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 25));
+    }
+
+    expect(ready, 1);
+    expect(find.text('ls b'), findsWidgets);
+  });
+
+  testWidgets('approval.responded sin request_id falla cerrado y conserva B', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final httpClient = MockClient((request) async {
+      if (request.url.path.endsWith('/events')) {
+        return http.Response(
+          'data: ${jsonEncode({'event': 'approval.request', 'request_id': 'request-b', 'command': 'ls b'})}\n\n'
+          'data: ${jsonEncode({'event': 'approval.responded', 'choice': 'once'})}\n\n',
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }
+      if (request.url.path == '/v1/runs/run-b') {
+        return http.Response(
+          jsonEncode({'status': 'waiting_for_approval'}),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    final connection = SavedConnection(
+      id: 'runs-approval-b',
+      label: 'Test',
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'k',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.hermesRedDark,
+        home: RunDetailScreen(
+          connection: connection,
+          record: const RunRecord(
+            runId: 'run-b',
+            prompt: 'Prueba B',
+            createdAt: 1,
+            lastStatus: 'running',
+          ),
+          client: ApiClient(
+            baseUrl: connection.baseUrl,
+            apiKey: connection.apiKey,
+            httpClient: httpClient,
+          ),
+        ),
+      ),
+    );
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 25));
+    }
+
+    expect(find.byType(RunApprovalDecisionBlock), findsOneWidget);
+    expect(find.text('ls b'), findsWidgets);
   });
 }
