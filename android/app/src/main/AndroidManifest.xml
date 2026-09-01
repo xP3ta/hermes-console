@@ -9,7 +9,7 @@
          lo mate) viven en src/full/AndroidManifest.xml: así el flavor `play`
          (Google Play, solo-remoto) NO los declara. Ver docs/PLAY_PERMISSIONS.md. -->
     <!-- Dictado y conversación iniciados por el usuario. La conversación puede
-         usar el único FGS microphone fuera de la app tras una elección separada.
+         usar el FGS Flutter compartido con microphone tras una elección separada.
          Ningún audio arranca desde boot ni desde un receiver; una conversación
          nunca se restaura tras process death. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -24,27 +24,24 @@
         android:required="false" />
     <uses-feature android:name="android.hardware.microphone"
         android:required="false" />
-    <!-- Notificaciones locales (Android 13+). Sin FCM/push: en 1.2.8 cubren
-         respuestas completadas mientras el proceso sigue vivo y controles de
-         Voz/Read Aloud. Las automatizaciones durables están diferidas. -->
+    <!-- Notificaciones locales (Android 13+). Sin FCM/push: cubren respuestas,
+         aprobaciones, ejecuciones y transiciones Cron/Kanban descubiertas por
+         la escucha opt-in, además de los controles de Voz/Read Aloud. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- El tipo dataSync mantiene únicamente trabajo de red iniciado por el
-         usuario (SSH/SFTP). No habilita escucha de automatizaciones ni avisos
-         con la app cerrada en 1.2.8. -->
+    <!-- dataSync mantiene SSH/SFTP y el fallback de escucha en API <=34.
+         remoteMessaging mantiene la escucha persistente en API >=35. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Lectura TTS iniciada por el usuario o por su ajuste de autolectura.
          Permiso normal (sin diálogo runtime); evita que Android/GrapheneOS
          silencie AudioTrack al bloquear o enviar la app a segundo plano. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- 1.2.8 no restaura automatizaciones, SSH/SFTP, micrófono ni reproducción
-         tras reiniciar. Retira también cualquier permiso de boot aportado por
-         flutter_foreground_task. -->
-    <uses-permission
-        android:name="android.permission.RECEIVE_BOOT_COMPLETED"
-        tools:node="remove" />
+    <!-- Solo la automatización opt-in se restaura: remoteMessaging en API >=35
+         o dataSync en API <=34. Nunca Voz, Read Aloud, SSH ni SFTP. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Guardar en la galería las imágenes que el agente genera y el usuario
          pide exportar. Android 13+ NO requiere permiso
          para la media propia de la app; este WRITE se limita a Android <=9
@@ -135,20 +132,45 @@
         <meta-data
             android:name="dev.xpetalab.hermesconsole.voice.NOTIFICATION_ICON_PAUSED"
             android:resource="@drawable/ic_stat_voice_orb_paused" />
-        <!-- Único foreground service de la app. dataSync protege transferencias
-             SFTP y sesiones SSH iniciadas por el usuario; microphone continúa
-             una conversación iniciada desde una Activity visible; mediaPlayback
-             protege TTS solicitado. En la 1.2.8 las automatizaciones no arrancan
-             este servicio, ningún tipo de audio arranca desde boot o un receiver
-             y una conversación no se restaura tras process death. -->
+        <!-- Servicio Flutter de automatización y audio. La escucha usa
+             remoteMessaging en API >=35 y dataSync en API <=34;
+             microphone/mediaPlayback protegen Voz/TTS y nunca se restauran. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="dataSync|microphone|mediaPlayback"
+            android:foregroundServiceType="dataSync|remoteMessaging|microphone|mediaPlayback"
             android:exported="false" />
+        <!-- En Android 15+ SSH/SFTP viven en un servicio efímero distinto. Así
+             el timeout acumulado de dataSync nunca derriba la escucha opt-in
+             remoteMessaging, que permanece hasta que el usuario la desactive. -->
+        <service
+            android:name=".HermesExternalDataSyncService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <!-- Receptor propio: antes de boot/package-replaced sanea el estado a
+             automation-only (remoteMessaging >=35, dataSync <=34). Voz, Read
+             Aloud y leases SSH/SFTP nunca se restauran desde background. -->
+        <receiver
+            android:name="com.pravera.flutter_foreground_task.service.RebootReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name=".HermesAutomationRebootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.pravera.flutter_foreground_task.service.RestartReceiver"
+            tools:node="remove" />
 
         <!-- Receiver no exportado requerido por flutter_local_notifications.
-             En la 1.2.8 las tarjetas de automatización están desactivadas y las
-             aprobaciones solo abren la app; no se ejecutan desde la notificación. -->
+             Las acciones solo abren la superficie autenticada correspondiente;
+             nunca autorizan ni ejecutan trabajo sensible desde el receiver. -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
             android:exported="false" />

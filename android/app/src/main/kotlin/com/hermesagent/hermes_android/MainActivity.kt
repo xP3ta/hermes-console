@@ -47,14 +47,33 @@ class MainActivity : FlutterFragmentActivity() {
     private val fullDuplexCaptureEventsName = "hermes/full_duplex_capture_events"
     private val documentPreviewChannelName = "hermes/document_preview"
     private val memoryChannelName = "hermes/memory"
+    private val platformInfoChannelName = "hermes/platform_info"
+    private val foregroundRestartContractChannelName =
+        "hermes/foreground_restart_contract"
+    private val foregroundExternalDataSyncChannelName =
+        "hermes/foreground_external_data_sync"
     private var shareChannel: MethodChannel? = null
     private var newSessionLaunchChannel: MethodChannel? = null
     private var memoryChannel: MethodChannel? = null
+    private var externalDataSyncChannel: MethodChannel? = null
     private var pcmStreamHandler: HermesPcmStreamHandler? = null
     private var fullDuplexCaptureHandler: HermesFullDuplexCaptureHandler? = null
     private var documentPreviewHandler: HermesDocumentPreviewHandler? = null
     private var pendingShare: Map<String, Any?>? = null
     private var pendingNewSessionLaunch: Map<String, Any?>? = null
+    private var pendingExternalDataSyncStop = false
+    private var externalDataSyncStopReceiverRegistered = false
+    private val externalDataSyncStopReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action !=
+                    HermesExternalDataSyncService.ACTION_OWNER_STOP_REQUIRED
+                ) {
+                    return
+                }
+                deliverExternalDataSyncStop()
+            }
+        }
 
     // Permiso (dangerous) que exige el RunCommandService de Termux. Se
     // auto-concede si la Consola se instala DESPUÉS de Termux, pero al reinstalar
@@ -63,17 +82,29 @@ class MainActivity : FlutterFragmentActivity() {
     private val termuxPermissionRequestCode = 4242
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val externalDataSyncStop =
+            HermesExternalDataSyncService.consumeStopRequest(intent)
         val launchPayload = NewSessionLaunchContract.parse(intent)
         // Estos URI son un contrato interno del widget, no deep links de la
         // aplicación. Flutter debe recibir el Intent ya neutralizado para que
         // WidgetsApp no intente resolver /open_app/... como una ruta nombrada.
         NewSessionLaunchContract.neutralize(intent)
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(
+            this,
+            externalDataSyncStopReceiver,
+            IntentFilter(HermesExternalDataSyncService.ACTION_OWNER_STOP_REQUIRED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        externalDataSyncStopReceiverRegistered = true
         pendingShare = parseShareIntent(intent)
         pendingNewSessionLaunch = launchPayload
+        pendingExternalDataSyncStop = externalDataSyncStop
     }
 
     override fun onNewIntent(intent: Intent) {
+        val externalDataSyncStop =
+            HermesExternalDataSyncService.consumeStopRequest(intent)
         val launchPayload = NewSessionLaunchContract.parse(intent)
         NewSessionLaunchContract.neutralize(intent)
         super.onNewIntent(intent)
@@ -86,6 +117,9 @@ class MainActivity : FlutterFragmentActivity() {
         }
         launchPayload?.let { payload ->
             deliverNewSessionLaunch(payload)
+        }
+        if (externalDataSyncStop) {
+            deliverExternalDataSyncStop()
         }
     }
 
@@ -125,6 +159,91 @@ class MainActivity : FlutterFragmentActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             memoryChannelName,
         )
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            platformInfoChannelName,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getSdkInt" -> result.success(Build.VERSION.SDK_INT)
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            foregroundRestartContractChannelName,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "persist" -> {
+                    HermesForegroundRestartContract.persist(applicationContext)
+                    result.success(null)
+                }
+                "prepareRuntimeService" -> {
+                    val applied =
+                        try {
+                            HermesForegroundServiceGate.prepareRuntimeService(
+                                applicationContext,
+                            )
+                            true
+                        } catch (_: Exception) {
+                            false
+                        }
+                    result.success(applied)
+                }
+                "hardStopRuntimeService" -> {
+                    val applied =
+                        try {
+                            HermesForegroundServiceGate.hardStopRuntimeService(
+                                applicationContext,
+                            )
+                            true
+                        } catch (_: Exception) {
+                            false
+                        }
+                    result.success(applied)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        externalDataSyncChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            foregroundExternalDataSyncChannelName,
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setRequired" -> {
+                        val required = call.argument<Boolean>("required") ?: false
+                        val applied =
+                            try {
+                                if (required) {
+                                    HermesExternalDataSyncService.start(applicationContext)
+                                } else {
+                                    HermesExternalDataSyncService.stop(applicationContext)
+                                }
+                                true
+                            } catch (_: Exception) {
+                                false
+                            }
+                        result.success(applied)
+                    }
+                    "takePendingStopRequested" -> {
+                        val pending =
+                            pendingExternalDataSyncStop ||
+                                HermesExternalDataSyncService.hasPendingOwnerStop(
+                                    applicationContext,
+                                )
+                        result.success(pending)
+                    }
+                    "acknowledgeStopRequested" -> {
+                        pendingExternalDataSyncStop = false
+                        HermesExternalDataSyncService.acknowledgeOwnerStop(
+                            applicationContext,
+                        )
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
         shareChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             shareChannelName,
@@ -265,6 +384,11 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onDestroy() {
+        if (externalDataSyncStopReceiverRegistered) {
+            unregisterReceiver(externalDataSyncStopReceiver)
+            externalDataSyncStopReceiverRegistered = false
+        }
+        externalDataSyncChannel = null
         newSessionLaunchChannel = null
         memoryChannel = null
         documentPreviewHandler?.close()
@@ -274,6 +398,34 @@ class MainActivity : FlutterFragmentActivity() {
         pcmStreamHandler?.close()
         pcmStreamHandler = null
         super.onDestroy()
+    }
+
+    private fun deliverExternalDataSyncStop() {
+        pendingExternalDataSyncStop = true
+        val channel = externalDataSyncChannel ?: return
+        channel.invokeMethod(
+            "stopRequested",
+            null,
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    // El handler Dart ya canceló SSH/SFTP. Consumir la orden
+                    // solo ahora evita que una recreación de Activity aplique
+                    // este Stop antiguo a una transferencia posterior.
+                    pendingExternalDataSyncStop = false
+                    HermesExternalDataSyncService.acknowledgeOwnerStop(
+                        applicationContext,
+                    )
+                }
+
+                override fun error(
+                    errorCode: String,
+                    errorMessage: String?,
+                    errorDetails: Any?,
+                ) = Unit
+
+                override fun notImplemented() = Unit
+            },
+        )
     }
 
     // Flutter solo expone didHaveMemoryPressure (señal binaria que también se

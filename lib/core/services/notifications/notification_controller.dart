@@ -18,10 +18,6 @@ class NotificationController {
   /// notificaciones para que el tap pueda navegar al run correcto.
   final String? _connId;
 
-  // runId del run que emitió la última notificación de aprobación.
-  // Solo se cancela la aprobación si el run que termina es el mismo.
-  String? _pendingApprovalRunId;
-
   NotificationController(this._notif, {this._connId});
 
   // ── API pública ─────────────────────────────────────────────────────────────
@@ -36,15 +32,17 @@ class NotificationController {
 
   /// Llamado cuando llega approval.request por SSE.
   /// Siempre bypassa la supresión en foreground (accionable + sensible al tiempo).
-  void notifyRunWaitingApproval(RunRecord run) {
+  void notifyRunWaitingApproval(RunRecord run, {required String approvalId}) {
     _clearTimers(run.runId);
-    _pendingApprovalRunId = run.runId;
+
     _notif.approvalPending(
       tool: run.progressLabel ?? 'herramienta',
       connId: _connId,
       sessionId: run.sessionId,
       sessionTitle: _truncate(run.prompt),
       runId: run.runId,
+      approvalId: approvalId,
+      profile: run.profile,
     );
   }
 
@@ -59,7 +57,7 @@ class NotificationController {
   void notifyRunCancelled(RunRecord run) {
     _clearTimers(run.runId);
     _notif.cancelRun(run.runId);
-    _cancelApprovalIfOwner(run.runId);
+    _cancelApprovalIfOwner(run);
   }
 
   /// Cancela cualquier notificación activa para el run (progreso o live).
@@ -69,31 +67,32 @@ class NotificationController {
   }
 
   /// Libera el estado efímero de la pantalla.
-  void dispose() {
-    _pendingApprovalRunId = null;
-  }
+  void dispose() {}
 
   // ── Internos ─────────────────────────────────────────────────────────────────
 
   void _notifyTerminal(RunRecord run, {required bool ok}) {
     _clearTimers(run.runId);
     _notif.cancelRun(run.runId);
-    _cancelApprovalIfOwner(run.runId);
+    _cancelApprovalIfOwner(run);
     _notif.runFinished(
       title: _truncate(run.prompt),
       ok: ok,
       connId: _connId,
       sessionId: run.sessionId,
       runId: run.runId,
+      profile: run.profile,
     );
   }
 
-  /// Cancela la notificación de aprobación solo si este run la emitió.
-  void _cancelApprovalIfOwner(String runId) {
-    if (_pendingApprovalRunId == runId) {
-      _pendingApprovalRunId = null;
-      _notif.cancelApproval();
-    }
+  /// A terminal run state is authoritative for the whole approval scope.
+  void _cancelApprovalIfOwner(RunRecord run) {
+    _notif.cancelApproval(
+      connId: _connId,
+      profile: run.profile,
+      runId: run.runId,
+      terminal: true,
+    );
   }
 
   void _clearTimers(String runId) {}

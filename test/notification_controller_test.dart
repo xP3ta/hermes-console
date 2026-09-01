@@ -12,6 +12,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeNotif implements RunNotificationFacade {
   final List<String> calls = [];
+  final List<({String? connId, String? profile, String? runId})>
+  approvalPendingOwners = [];
+  final List<
+    ({
+      String? connId,
+      String? profile,
+      String? runId,
+      String? approvalId,
+      bool terminal,
+    })
+  >
+  approvalCancelledOwners = [];
   bool _notifyRuns = true;
 
   @override
@@ -44,17 +56,36 @@ class _FakeNotif implements RunNotificationFacade {
     String? sessionId,
     String? sessionTitle,
     String? runId,
+    String? approvalId,
     String? base,
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
-  }) async => calls.add('approvalPending:$tool');
+  }) async {
+    calls.add('approvalPending:$tool');
+    approvalPendingOwners.add((connId: connId, profile: profile, runId: runId));
+  }
 
   @override
   Future<void> cancelRun(String runId) async => calls.add('cancelRun:$runId');
 
   @override
-  Future<void> cancelApproval() async => calls.add('cancelApproval');
+  Future<void> cancelApproval({
+    String? connId,
+    String? profile,
+    String? runId,
+    String? approvalId,
+    bool terminal = false,
+  }) async {
+    calls.add('cancelApproval');
+    approvalCancelledOwners.add((
+      connId: connId,
+      profile: profile,
+      runId: runId,
+      approvalId: approvalId,
+      terminal: terminal,
+    ));
+  }
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -65,6 +96,7 @@ RunRecord _run({
   String status = 'running',
   String? progressLabel,
   String? sessionId,
+  String profile = 'default',
 }) => RunRecord(
   runId: id,
   prompt: prompt,
@@ -72,6 +104,7 @@ RunRecord _run({
   lastStatus: status,
   progressLabel: progressLabel,
   sessionId: sessionId,
+  profile: profile,
 );
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -252,7 +285,10 @@ void main() {
 
   group('notifyRunFinished', () {
     test('cancela progreso, cancela approval y emite runFinished ok', () async {
-      ctrl.notifyRunWaitingApproval(_run(status: 'waiting_for_approval'));
+      ctrl.notifyRunWaitingApproval(
+        _run(status: 'waiting_for_approval'),
+        approvalId: 'request-1',
+      );
       notif.calls.clear();
       ctrl.notifyRunFinished(_run(status: 'completed'));
       expect(
@@ -278,7 +314,10 @@ void main() {
     test(
       'cancela progreso, cancela approval y emite runFinished err',
       () async {
-        ctrl.notifyRunWaitingApproval(_run(status: 'waiting_for_approval'));
+        ctrl.notifyRunWaitingApproval(
+          _run(status: 'waiting_for_approval'),
+          approvalId: 'request-1',
+        );
         notif.calls.clear();
         ctrl.notifyRunFailed(_run(status: 'failed'));
         expect(
@@ -295,7 +334,10 @@ void main() {
 
   group('notifyRunCancelled', () {
     test('cancela la notificación sin emitir nueva', () async {
-      ctrl.notifyRunWaitingApproval(_run(status: 'waiting_for_approval'));
+      ctrl.notifyRunWaitingApproval(
+        _run(status: 'waiting_for_approval'),
+        approvalId: 'request-1',
+      );
       notif.calls.clear();
       ctrl.notifyRunCancelled(_run(status: 'cancelled'));
       expect(notif.calls, equals(['cancelRun:run-1', 'cancelApproval']));
@@ -306,32 +348,81 @@ void main() {
   group('aislamiento de approvals cross-run', () {
     test('terminal de otro run no cancela la approval del run activo', () {
       // run-1 está esperando aprobación
-      ctrl.notifyRunWaitingApproval(_run(status: 'waiting_for_approval'));
+      ctrl.notifyRunWaitingApproval(
+        _run(status: 'waiting_for_approval'),
+        approvalId: 'request-1',
+      );
       notif.calls.clear();
-      // run-2 termina — NO debe cancelar la approval de run-1
+      // El terminal autoritativo cancela solo el scope durable de run-2.
       ctrl.notifyRunFinished(_run(id: 'run-2', status: 'completed'));
-      expect(notif.calls, isNot(contains('cancelApproval')));
+      expect(notif.calls, contains('cancelApproval'));
+      expect(notif.approvalCancelledOwners.single.runId, 'run-2');
       expect(notif.calls, contains('cancelRun:run-2'));
       expect(notif.calls, contains('runFinished:ok'));
     });
 
     test('cancel de otro run no cancela la approval del run activo', () {
-      ctrl.notifyRunWaitingApproval(_run(status: 'waiting_for_approval'));
+      ctrl.notifyRunWaitingApproval(
+        _run(status: 'waiting_for_approval'),
+        approvalId: 'request-1',
+      );
       notif.calls.clear();
       ctrl.notifyRunCancelled(_run(id: 'run-2', status: 'cancelled'));
-      expect(notif.calls, isNot(contains('cancelApproval')));
+      expect(notif.calls, contains('cancelApproval'));
+      expect(notif.approvalCancelledOwners.single.runId, 'run-2');
       expect(notif.calls, contains('cancelRun:run-2'));
     });
   });
 
+  test('same run id in different profiles keeps exact approval owner', () {
+    final alpha = _run(
+      id: 'shared-run',
+      status: 'waiting_for_approval',
+      profile: 'room-alpha',
+    );
+    final beta = _run(
+      id: 'shared-run',
+      status: 'completed',
+      profile: 'room-beta',
+    );
+
+    ctrl.notifyRunWaitingApproval(alpha, approvalId: 'request-alpha');
+    expect(notif.approvalPendingOwners.single, (
+      connId: null,
+      profile: 'room-alpha',
+      runId: 'shared-run',
+    ));
+
+    ctrl.notifyRunFinished(beta);
+    expect(notif.approvalCancelledOwners.single, (
+      connId: null,
+      profile: 'room-beta',
+      runId: 'shared-run',
+      approvalId: null,
+      terminal: true,
+    ));
+
+    ctrl.notifyRunFinished(alpha.copyWith(lastStatus: 'completed'));
+    expect(notif.approvalCancelledOwners.last, (
+      connId: null,
+      profile: 'room-alpha',
+      runId: 'shared-run',
+      approvalId: null,
+      terminal: true,
+    ));
+  });
+
   group('notifyRunWaitingApproval', () {
     test('emite approvalPending con la herramienta del progressLabel', () {
-      ctrl.notifyRunWaitingApproval(_run(progressLabel: 'bash'));
+      ctrl.notifyRunWaitingApproval(
+        _run(progressLabel: 'bash'),
+        approvalId: 'request-1',
+      );
       expect(notif.calls, contains('approvalPending:bash'));
     });
 
     test('usa fallback "herramienta" si progressLabel es null', () {
-      ctrl.notifyRunWaitingApproval(_run());
+      ctrl.notifyRunWaitingApproval(_run(), approvalId: 'request-1');
       expect(notif.calls, contains('approvalPending:herramienta'));
     });
 
@@ -339,7 +430,10 @@ void main() {
       // El progreso ya no crea push; la aprobación sí interrumpe.
       ctrl.notifyRunProgress(_run(progressLabel: 'tool: read_file'));
       expect(notif.calls.where((c) => c.startsWith('runLive')), isEmpty);
-      ctrl.notifyRunWaitingApproval(_run(progressLabel: 'bash'));
+      ctrl.notifyRunWaitingApproval(
+        _run(progressLabel: 'bash'),
+        approvalId: 'request-1',
+      );
       expect(notif.calls, contains('approvalPending:bash'));
       await Future.delayed(const Duration(seconds: 6));
       expect(notif.calls.where((c) => c.startsWith('runLive:run-1')), isEmpty);

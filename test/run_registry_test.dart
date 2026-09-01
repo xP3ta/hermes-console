@@ -2,9 +2,22 @@
 // Fase 1 (progressLabel, lastEvent, updatedAt) y retrocompatibilidad con
 // registros anteriores que no los tienen.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/screens/task_center_screen.dart';
 import 'package:hermes_android/core/services/run_registry.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('Task Center ephemeral owner includes normalized profile', () {
+    expect(
+      taskCenterRunOwnerKey(' Alpha ', 'shared-run'),
+      isNot(taskCenterRunOwnerKey('beta', 'shared-run')),
+    );
+    expect(
+      taskCenterRunOwnerKey(' Alpha ', 'shared-run'),
+      taskCenterRunOwnerKey('alpha', 'shared-run'),
+    );
+  });
+
   group('RunRecord — campos nuevos y JSON', () {
     test('toJson incluye campos opcionales cuando están presentes', () {
       const r = RunRecord(
@@ -73,6 +86,75 @@ void main() {
       expect(r.progressLabel, 'tool: bash');
       expect(r.lastEvent, 'tool.completed');
       expect(r.updatedAt, 1718000020.0);
+    });
+
+    test('profile roundtrip is exact and legacy records default safely', () {
+      const owned = RunRecord(
+        runId: 'run-owned',
+        prompt: 'owned',
+        createdAt: 1718000000.0,
+        lastStatus: 'running',
+        profile: 'room-alpha',
+      );
+
+      final restored = RunRecord.fromJson(owned.toJson());
+      final legacy = RunRecord.fromJson({
+        'run_id': 'run-legacy',
+        'prompt': 'legacy',
+        'created_at': 1718000000.0,
+        'last_status': 'running',
+      });
+
+      expect(restored.profile, 'room-alpha');
+      expect(restored.copyWith(lastStatus: 'completed').profile, 'room-alpha');
+      expect(legacy.profile, 'default');
+    });
+
+    test('same run id is updated and removed by exact profile', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final registry = await RunRegistry.load(prefs, 'conn-a');
+
+      for (final profile in ['room-alpha', 'room-beta']) {
+        await registry.add(
+          RunRecord(
+            runId: 'shared-run',
+            prompt: profile,
+            createdAt: profile == 'room-alpha' ? 1 : 2,
+            lastStatus: 'queued',
+            connId: 'conn-a',
+            profile: profile,
+          ),
+        );
+      }
+
+      expect(registry.records.map((record) => record.profile).toSet(), {
+        'room-alpha',
+        'room-beta',
+      });
+
+      await registry.update(
+        'shared-run',
+        profile: 'room-alpha',
+        lastStatus: 'completed',
+      );
+      expect(
+        registry.records
+            .singleWhere((r) => r.profile == 'room-alpha')
+            .lastStatus,
+        'completed',
+      );
+      expect(
+        registry.records
+            .singleWhere((r) => r.profile == 'room-beta')
+            .lastStatus,
+        'queued',
+      );
+
+      await registry.remove('shared-run', profile: 'room-alpha');
+      final reopened = await RunRegistry.load(prefs, 'conn-a');
+      expect(reopened.records, hasLength(1));
+      expect(reopened.records.single.profile, 'room-beta');
     });
 
     test('fromJson — ida y vuelta preserva todos los campos', () {

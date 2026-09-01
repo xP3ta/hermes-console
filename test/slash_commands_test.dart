@@ -102,6 +102,8 @@ class _SlashGateway
       runtimeSessionId: 'runtime-slash-test',
       storedSessionId: storedSessionId,
       created: false,
+      messagesProvided: true,
+      messageCount: 0,
     );
   }
 
@@ -133,6 +135,7 @@ class _SlashGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override

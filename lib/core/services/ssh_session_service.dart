@@ -100,7 +100,16 @@ class SshSessionService {
     SSHClient? candidate;
     try {
       candidate = await _ssh.connect(connectionId, onHostKey: onHostKey);
+      s.client = candidate;
+      if (!identical(_sessions[connectionId], s)) {
+        candidate.close();
+        return s;
+      }
       await candidate.authenticated.timeout(const Duration(seconds: 15));
+      if (!identical(_sessions[connectionId], s)) {
+        candidate.close();
+        return s;
+      }
       final shell = await candidate
           .shell(
             pty: SSHPtyConfig(
@@ -109,8 +118,12 @@ class SshSessionService {
             ),
           )
           .timeout(const Duration(seconds: 15));
-      s.client = candidate;
       s.shell = shell;
+      if (!identical(_sessions[connectionId], s)) {
+        shell.close();
+        candidate.close();
+        return s;
+      }
       terminal.onOutput = (data) {
         s.touch();
         shell.write(Uint8List.fromList(utf8.encode(data)));
@@ -135,6 +148,7 @@ class SshSessionService {
       onNeedForeground?.call();
     } catch (e) {
       candidate?.close();
+      if (!identical(_sessions[connectionId], s)) return s;
       s.error = SshManager.describeError(e);
       s.phase.value = SshSessionPhase.error;
       _refresh();
@@ -160,6 +174,14 @@ class SshSessionService {
     }
     _refresh();
     onMaybeRelease?.call();
+  }
+
+  /// Acción global de usuario desde la notificación dataSync. Copiar primero
+  /// las claves hace seguro cerrar callbacks que mutan el mismo mapa.
+  void closeAll() {
+    for (final connectionId in _sessions.keys.toList(growable: false)) {
+      close(connectionId);
+    }
   }
 
   /// U-11 (spec 028): cierra las sesiones vivas sin tráfico desde hace más de

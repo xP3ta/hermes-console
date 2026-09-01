@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models/desktop_session_snapshot.dart';
+import '../utils/chat_turn.dart';
 
 /// Pure projection of a Hermes Desktop 0.19 resume/activate snapshot into the
 /// newest-first message shape consumed by [ActiveChat].
@@ -26,13 +27,24 @@ class DesktopSessionProjection {
   });
 }
 
+TranscriptMessageIdentity? _desktopTranscriptIdentity(
+  DesktopSessionMessage message,
+) {
+  if (!message.identityAliasesConsistent) return null;
+  final identity = TranscriptMessageIdentity(
+    messageId: message.stableId,
+    rowId: message.rowId,
+  );
+  return identity.isDurable ? identity : null;
+}
+
 class DesktopSessionReconciler {
   const DesktopSessionReconciler();
 
   /// REST 0.19 conserva el contenido autoritativo pero puede omitir los campos
   /// editoriales que sí entrega `session.resume`. Superpone esos campos solo
-  /// cuando el mismo mensaje se identifica por id estable o por una coincidencia
-  /// única y exacta de rol + contenido. No clasifica texto mediante heurísticas.
+  /// cuando el mismo mensaje se identifica por id estable. El contenido no es
+  /// identidad: dos turnos legítimos pueden tener exactamente el mismo texto.
   List<Map<String, dynamic>> overlayDurableDisplayMetadata(
     List<Map<String, dynamic>> fallbackNewestFirst,
     List<DesktopSessionMessage> persistedChronological,
@@ -48,25 +60,51 @@ class DesktopSessionReconciler {
       return fallbackNewestFirst;
     }
 
-    final byId = <String, DesktopSessionMessage>{};
-    final bySignature = <String, List<DesktopSessionMessage>>{};
+    final identities = <DesktopSessionMessage, TranscriptMessageIdentity>{};
+    final ambiguous = <DesktopSessionMessage>{};
     for (final candidate in candidates) {
-      final stableId = candidate.stableId;
-      if (stableId != null) byId[stableId] = candidate;
-      final signature = _persistedMessageSignature(candidate);
-      (bySignature[signature] ??= []).add(candidate);
+      final identity = _desktopTranscriptIdentity(candidate);
+      if (identity == null) continue;
+      for (final entry in identities.entries) {
+        if (!identity.sharesExactCoordinate(entry.value)) continue;
+        ambiguous
+          ..add(candidate)
+          ..add(entry.key);
+      }
+      identities[candidate] = identity;
+    }
+    final fallbackIdentities =
+        <Map<String, dynamic>, TranscriptMessageIdentity>{};
+    final ambiguousFallback = <Map<String, dynamic>>{};
+    for (final message in fallbackNewestFirst) {
+      final identity = canonicalTranscriptIdentity(message);
+      if (identity == null) continue;
+      for (final entry in fallbackIdentities.entries) {
+        if (!identity.sharesExactCoordinate(entry.value)) continue;
+        ambiguousFallback
+          ..add(message)
+          ..add(entry.key);
+      }
+      fallbackIdentities[message] = identity;
     }
 
     return fallbackNewestFirst
         .map((message) {
-          final stableId =
-              message['_desktopMessageId']?.toString() ??
-              message['message_id']?.toString() ??
-              message['id']?.toString();
-          var candidate = stableId == null ? null : byId[stableId];
-          if (candidate == null) {
-            final matches = bySignature[_fallbackMessageSignature(message)];
-            if (matches?.length == 1) candidate = matches!.single;
+          if (ambiguousFallback.contains(message)) return message;
+          final identity = canonicalTranscriptIdentity(message);
+          DesktopSessionMessage? candidate;
+          if (identity != null) {
+            for (final entry in identities.entries) {
+              if (ambiguous.contains(entry.key) ||
+                  !identity.matches(entry.value)) {
+                continue;
+              }
+              if (candidate != null) {
+                candidate = null;
+                break;
+              }
+              candidate = entry.key;
+            }
           }
           if (candidate == null || message['_steer'] == true) return message;
 
@@ -118,54 +156,28 @@ class DesktopSessionReconciler {
     final inflightStatus = inflight?.status?.trim().toLowerCase() ?? '';
     final inflightFailed =
         inflightError.isNotEmpty || inflightStatus == 'error';
-    final latestUserRun = _latestContiguousUserRun(chronological);
-    final unmatchedLatestUsers = List<bool>.filled(latestUserRun.length, true);
-    int consumeFromLatestUserRun(String text) {
-      for (var index = 0; index < latestUserRun.length; index++) {
-        if (unmatchedLatestUsers[index] &&
-            latestUserRun[index]['content'] == text) {
-          unmatchedLatestUsers[index] = false;
-          return index;
-        }
-      }
-      return -1;
-    }
-
     if (inflightUser != null && inflightUser.trim().isNotEmpty) {
-      if (consumeFromLatestUserRun(inflightUser) < 0) {
-        chronological.add(
-          Map<String, dynamic>.unmodifiable({
-            'role': 'user',
-            'content': inflightUser,
-            '_desktopSnapshotKey': 'user-inflight-${snapshot.runtimeSessionId}',
-            '_desktopSnapshotKind': 'inflight',
-          }),
-        );
-      }
+      // `inflight.user` no comparte una identidad protocolaria con las filas
+      // persistidas. El upstream mantiene ambos planos separados: el history
+      // durable puede acabar en un user histórico/cancelado y el inflight ser
+      // un turno nuevo con el mismo texto. Fusionarlos por contenido haría que
+      // Stop anclase el turno nuevo al ID del histórico.
+      chronological.add(
+        Map<String, dynamic>.unmodifiable({
+          'role': 'user',
+          'content': inflightUser,
+          '_desktopSnapshotKey': 'user-inflight-${snapshot.runtimeSessionId}',
+          '_desktopSnapshotKind': 'inflight',
+        }),
+      );
     }
 
     final inflightCorrections =
         inflight?.corrections ?? const <DesktopInflightCorrection>[];
     for (var index = 0; index < inflightCorrections.length; index++) {
       final correction = inflightCorrections[index];
-      final existingIndex = consumeFromLatestUserRun(correction.text);
-      if (existingIndex >= 0) {
-        final existing = latestUserRun[existingIndex];
-        if (existing['_steer'] != true) {
-          final projected = Map<String, dynamic>.unmodifiable({
-            ...existing,
-            '_steer': true,
-          });
-          final chronologicalIndex = chronological.indexWhere(
-            (message) => identical(message, existing),
-          );
-          if (chronologicalIndex >= 0) {
-            chronological[chronologicalIndex] = projected;
-            latestUserRun[existingIndex] = projected;
-          }
-        }
-        continue;
-      }
+      // Igual que el prompt original, una corrección sin ID explícito nunca
+      // adquiere la identidad de una fila durable solo porque coincida el texto.
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'user',
@@ -357,14 +369,13 @@ class DesktopSessionReconciler {
     // deja una burbuja de usuario vacía.
     final dropMain =
         role == 'user' && content.isEmpty && toolResultMessages.isNotEmpty;
-    final rowId = message.raw['row_id'];
     final main = Map<String, dynamic>.unmodifiable({
       'role': role,
       'content': content,
       '_desktopSnapshotKey': 'message-$runtimeSessionId-$ordinal',
       '_desktopSnapshotKind': 'persisted',
       '_desktopMessageOrdinal': ordinal,
-      if (rowId is int) '_desktopRowId': rowId,
+      if (message.rowId != null) '_desktopRowId': message.rowId,
       if (message.stableId != null) '_desktopMessageId': message.stableId,
       if (displayKind.isNotEmpty) 'display_kind': displayKind,
       'display_metadata': ?displayMetadata,
@@ -391,40 +402,6 @@ class DesktopSessionReconciler {
     return dropMain ? toolResultMessages : [main, ...toolResultMessages];
   }
 }
-
-List<Map<String, dynamic>> _latestContiguousUserRun(
-  List<Map<String, dynamic>> chronological,
-) {
-  final latestUserIndex = chronological.lastIndexWhere(
-    (message) => message['role'] == 'user',
-  );
-  if (latestUserIndex < 0) return const [];
-  var firstUserIndex = latestUserIndex;
-  while (firstUserIndex > 0 &&
-      chronological[firstUserIndex - 1]['role'] == 'user') {
-    firstUserIndex--;
-  }
-  return chronological.sublist(firstUserIndex, latestUserIndex + 1);
-}
-
-String _persistedMessageSignature(DesktopSessionMessage message) {
-  final role = switch (message.role) {
-    DesktopSessionMessageRole.system => 'system',
-    DesktopSessionMessageRole.user => 'user',
-    DesktopSessionMessageRole.assistant => 'assistant',
-    DesktopSessionMessageRole.tool => 'tool',
-    DesktopSessionMessageRole.unknown => message.rawRole.toLowerCase(),
-  };
-  final content =
-      message.text ??
-      desktopSessionDisplayText(message.content) ??
-      desktopSessionDisplayText(message.context) ??
-      '';
-  return '$role\u0000$content';
-}
-
-String _fallbackMessageSignature(Map<String, dynamic> message) =>
-    '${message['role'] ?? 'assistant'}\u0000${message['content'] ?? ''}';
 
 /// Conserva únicamente el pequeño contrato editorial que Hermes Desktop usa
 /// para resumir eventos duraderos. Algunos gateways antiguos serializan el
@@ -456,6 +433,13 @@ Map<String, dynamic>? _sanitizeDisplayMetadata(Object? raw) {
       duration >= 0 &&
       duration <= 604800) {
     safe['duration_seconds'] = duration;
+  }
+  final delegationId = decoded['delegation_id'];
+  if (delegationId is String &&
+      delegationId.isNotEmpty &&
+      delegationId.length <= 180 &&
+      RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(delegationId)) {
+    safe['delegation_id'] = delegationId;
   }
   return safe.isEmpty ? null : Map<String, dynamic>.unmodifiable(safe);
 }

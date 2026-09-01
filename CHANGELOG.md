@@ -3,6 +3,31 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.9 (4963)
+
+- Fixed chat history disappearing, reordering or losing visible content during
+  overlapping refreshes, pagination, reconnection and Desktop snapshot
+  recovery.
+- Restored the final assistant reply automatically after reopening a chat that
+  was backgrounded or closed while tools such as web search were still running.
+- Unified the exact Desktop and Console message identities used by refresh,
+  backfill and Stop, so cancelled replies stay cancelled without hiding or
+  reviving legitimate responses.
+- Preserved partial transcripts conservatively until the server proves they are
+  complete, including long conversations and compacted histories.
+- Improved WebSocket heartbeat recovery after Android suspends the app, avoiding
+  false Gateway disconnects when returning from the background.
+- Added optional persistent background listening that remains active until the
+  user turns it off and can privately notify about replies, runs, Cron and
+  Kanban transitions.
+- Hardened notification deduplication and cross-isolate persistence across app
+  restarts, package updates and process death.
+- Kept Voice, dictation, read-aloud, SSH and SFTP foreground ownership isolated
+  from the persistent Android 15+ messaging listener.
+- Expanded deterministic coverage for transcript identity, pagination races,
+  Stop tombstones, Desktop recovery, subagents, Gateway suspension and
+  background automation.
+
 ## 1.2.8 (4943)
 
 - Improved chat recovery across network loss, backgrounding and reopening,

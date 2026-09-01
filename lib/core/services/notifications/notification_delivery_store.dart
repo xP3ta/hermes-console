@@ -8,7 +8,33 @@ import 'package:uuid/uuid.dart';
 typedef DeliveryClock = int Function();
 typedef LeaseTokenFactory = String Function();
 typedef DeliveryDigest = List<int> Function(List<int> input);
-typedef IngestFaultInjector = void Function(int index, DeliveryEventSpec event);
+typedef IngestFaultInjector =
+    FutureOr<void> Function(int index, DeliveryEventSpec event);
+typedef MarkPresentedFaultInjector = void Function();
+typedef NotificationDeliveryPragmaQuery =
+    Future<List<Map<String, Object?>>> Function(String sql);
+
+/// Android's sqflite classifies PRAGMA statements as queries. Sending them
+/// through `execute`/`execSQL` aborts database open before the schema exists.
+Future<void> configureNotificationDeliveryPragmas(
+  NotificationDeliveryPragmaQuery rawQuery,
+) async {
+  await rawQuery(
+    'PRAGMA busy_timeout = ${NotificationDeliveryStore.busyTimeoutMilliseconds}',
+  );
+  final journalRows = await rawQuery('PRAGMA journal_mode = WAL');
+  final journalValue = journalRows.isEmpty
+      ? null
+      : journalRows.first['journal_mode'] ??
+            (journalRows.first.values.isEmpty
+                ? null
+                : journalRows.first.values.first);
+  if (journalValue?.toString().trim().toLowerCase() != 'wal') {
+    throw StateError('notification delivery WAL unavailable');
+  }
+  await rawQuery('PRAGMA foreign_keys = ON');
+  await rawQuery('PRAGMA synchronous = FULL');
+}
 
 enum DeliveryStatus {
   pending,
@@ -71,6 +97,7 @@ class DeliveryEventSpec {
     this.runId,
     this.taskId,
     this.jobId,
+    this.requestId,
   });
 
   final NotificationEventIdentity identity;
@@ -79,6 +106,7 @@ class DeliveryEventSpec {
   final String? runId;
   final String? taskId;
   final String? jobId;
+  final String? requestId;
 }
 
 class SourceCursorUpdate {
@@ -128,6 +156,7 @@ class DeliveryEventRecord {
     this.runId,
     this.taskId,
     this.jobId,
+    this.requestId,
     this.leaseToken,
     this.leaseUntil,
     this.presentedAt,
@@ -148,6 +177,7 @@ class DeliveryEventRecord {
   final String? runId;
   final String? taskId;
   final String? jobId;
+  final String? requestId;
   final DeliveryStatus status;
   final int androidId;
   final String androidTag;
@@ -176,6 +206,7 @@ class DeliveryEventRecord {
       runId: row['run_id'] as String?,
       taskId: row['task_id'] as String?,
       jobId: row['job_id'] as String?,
+      requestId: row['request_id'] as String?,
       status: DeliveryStatus.fromDatabase(row['status']! as String),
       androidId: row['android_id']! as int,
       androidTag: row['android_tag']! as String,
@@ -238,14 +269,15 @@ class NotificationDeliveryStore {
     LeaseTokenFactory? tokenFactory,
     DeliveryDigest? digest,
     this.ingestFaultInjector,
+    this.markPresentedFaultInjector,
     this.pendingCapacity = 512,
     this.leaseDuration = const Duration(seconds: 30),
     this.maximumFutureLease = const Duration(minutes: 2),
     this.mappingRetention = const Duration(days: 30),
-  }) : _databaseFactory = databaseFactory ?? sqflite.databaseFactory,
-       _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
+  }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        _tokenFactory = tokenFactory ?? const Uuid().v4,
        _digest = digest ?? ((input) => sha256.convert(input).bytes) {
+    _databaseFactory = databaseFactory;
     if (pendingCapacity <= 0) {
       throw ArgumentError.value(pendingCapacity, 'pendingCapacity');
     }
@@ -264,9 +296,11 @@ class NotificationDeliveryStore {
     }
   }
 
-  static const databaseFileName = 'notification_delivery_v1.db';
-  static const schemaVersionNumber = 1;
+  static const databaseFileName = 'notification_delivery_v2.db';
+  static const schemaVersionNumber = 2;
   static const busyTimeoutMilliseconds = 2000;
+  static const transactionRetryWindow = Duration(seconds: 3);
+  static const transactionRetryBackoff = Duration(milliseconds: 10);
 
   /// Closed routing vocabulary: presentation text has no place here.
   static const destinationKinds = <String>{
@@ -276,44 +310,86 @@ class NotificationDeliveryStore {
     'approval',
     'chat_reply',
   };
+  static const sourceKinds = <String>{
+    'approval',
+    'run',
+    'cron',
+    'kanban',
+    'chat_reply',
+  };
+  static const eventKindsBySource = <String, Set<String>>{
+    'approval': <String>{'pending'},
+    'run': <String>{'terminal'},
+    'cron': <String>{'terminal'},
+    'kanban': <String>{'done', 'blocked', 'triage'},
+    'chat_reply': <String>{'terminal'},
+  };
+  static const lastStatesBySource = <String, Set<String>>{
+    'approval': <String>{'pending', 'responded', 'cancelled'},
+    'run': <String>{
+      'queued',
+      'pending',
+      'running',
+      'waiting_for_approval',
+      'completed',
+      'failed',
+      'cancelled',
+      'expired',
+    },
+    'cron': <String>{'snapshot', 'running', 'completed', 'failed', 'unknown'},
+    'kanban': <String>{
+      'triage',
+      'todo',
+      'scheduled',
+      'ready',
+      'running',
+      'blocked',
+      'review',
+      'done',
+    },
+    'chat_reply': <String>{'completed', 'failed', 'cancelled'},
+  };
   static const presentationSurfaces = <String>{'alert', 'inline'};
 
   static final RegExp _identifierPattern = RegExp(
     r'^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$',
   );
   static final RegExp _scopeKeyPattern = RegExp(
-    r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$',
+    r'^[^\u0000-\u001f\u007f]{1,512}$',
   );
   static final RegExp _codePattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
   static final RegExp _tokenPattern = RegExp(
     r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$',
   );
-
-  static const _secretPrefixes = <String>{
-    'sk-',
-    'api_key',
-    'apikey',
-    'token',
-    'bearer',
-    'secret',
-    'password',
-    'private',
-  };
+  static final RegExp _githubTokenShape = RegExp(
+    r'^gh[pousr]_[A-Za-z0-9]{20,}$',
+  );
+  static final RegExp _slackTokenShape = RegExp(
+    r'^xox[baprs]-[A-Za-z0-9-]{10,}$',
+  );
+  static final RegExp _jwtShape = RegExp(
+    r'^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$',
+  );
 
   static void _requireIdentifier(String? value, String name) {
     if (value == null) return;
-    if (!_identifierPattern.hasMatch(value)) {
-      throw ArgumentError.value(value, name, 'not an opaque identifier');
+    if (_identifierPattern.stringMatch(value) != value) {
+      throw ArgumentError.value(value, name, 'not a bounded opaque identifier');
     }
     final lower = value.toLowerCase();
-    for (final prefix in _secretPrefixes) {
-      if (lower.startsWith(prefix) || lower.contains(' $prefix')) {
-        throw ArgumentError.value(
-          value,
-          name,
-          'resembles a secret-bearing value',
-        );
-      }
+    if (_githubTokenShape.hasMatch(value) ||
+        _slackTokenShape.hasMatch(value) ||
+        _jwtShape.hasMatch(value) ||
+        lower.contains('api_key') ||
+        lower.contains('password') ||
+        lower.contains('redacted:')) {
+      throw ArgumentError.value(value, name, 'has a credential-shaped value');
+    }
+  }
+
+  static void _requireDedupeValue(String value, String name) {
+    if (!_scopeKeyPattern.hasMatch(value)) {
+      throw ArgumentError.value(value, name, 'not a bounded dedupe value');
     }
   }
 
@@ -321,18 +397,41 @@ class NotificationDeliveryStore {
     if (!_tokenPattern.hasMatch(value)) {
       throw ArgumentError.value(value, name, 'not a machine token');
     }
+    final lower = value.toLowerCase();
+    if (_githubTokenShape.hasMatch(value) ||
+        _slackTokenShape.hasMatch(value) ||
+        _jwtShape.hasMatch(value) ||
+        lower.contains('api_key') ||
+        lower.contains('password') ||
+        lower.contains('redacted:')) {
+      throw ArgumentError.value(value, name, 'has a credential-shaped value');
+    }
   }
 
   static void _validateCursorUpdate(SourceCursorUpdate update) {
-    if (!_scopeKeyPattern.hasMatch(update.scopeKey)) {
-      throw ArgumentError.value(update.scopeKey, 'scopeKey');
-    }
+    _requireDedupeValue(update.scopeKey, 'scopeKey');
     _requireIdentifier(update.connId, 'connId');
     _requireIdentifier(update.profile.trim().toLowerCase(), 'profile');
     _requireIdentifier(update.sourceKind, 'sourceKind');
+    if (!sourceKinds.contains(update.sourceKind)) {
+      throw ArgumentError.value(
+        update.sourceKind,
+        'sourceKind',
+        'outside the closed source vocabulary',
+      );
+    }
     _requireIdentifier(update.objectId, 'objectId');
     _requireToken(update.lastState, 'lastState');
-    _requireToken(update.lastVersion, 'lastVersion');
+    if (!(lastStatesBySource[update.sourceKind] ?? const <String>{}).contains(
+      update.lastState,
+    )) {
+      throw ArgumentError.value(
+        update.lastState,
+        'lastState',
+        'outside the closed state vocabulary for sourceKind',
+      );
+    }
+    _requireDedupeValue(update.lastVersion, 'lastVersion');
     for (final event in update.events) {
       final identity = event.identity;
       _requireIdentifier(identity.connId, 'identity.connId');
@@ -340,7 +439,24 @@ class NotificationDeliveryStore {
       _requireIdentifier(identity.sourceKind, 'identity.sourceKind');
       _requireIdentifier(identity.objectId, 'identity.objectId');
       _requireIdentifier(identity.eventKind, 'identity.eventKind');
-      _requireIdentifier(identity.sourceVersion, 'identity.sourceVersion');
+      if (!(eventKindsBySource[identity.sourceKind] ?? const <String>{})
+          .contains(identity.eventKind)) {
+        throw ArgumentError.value(
+          identity.eventKind,
+          'identity.eventKind',
+          'outside the closed event vocabulary for source',
+        );
+      }
+      _requireDedupeValue(identity.sourceVersion, 'identity.sourceVersion');
+      if (identity.connId != update.connId ||
+          identity.normalizedProfile != update.profile.trim().toLowerCase() ||
+          identity.sourceKind != update.sourceKind) {
+        throw ArgumentError.value(
+          identity.canonical,
+          'event.identity',
+          'must match cursor connection/profile/source',
+        );
+      }
       if (!destinationKinds.contains(event.destinationKind)) {
         throw ArgumentError.value(
           event.destinationKind,
@@ -352,14 +468,65 @@ class NotificationDeliveryStore {
       _requireIdentifier(event.runId, 'runId');
       _requireIdentifier(event.taskId, 'taskId');
       _requireIdentifier(event.jobId, 'jobId');
+      _requireIdentifier(event.requestId, 'requestId');
+      switch (event.destinationKind) {
+        case 'approval':
+          final runOwner = event.runId?.isNotEmpty == true;
+          final sessionOwner = event.sessionId?.isNotEmpty == true;
+          final ownerId = runOwner ? event.runId : event.sessionId;
+          if (identity.eventKind != 'pending' ||
+              runOwner == sessionOwner ||
+              event.requestId == null ||
+              event.requestId!.isEmpty ||
+              identity.objectId != ownerId ||
+              identity.sourceVersion != event.requestId) {
+            throw ArgumentError(
+              'approval requires one matching owner and authoritative requestId',
+            );
+          }
+          break;
+        case 'kanban_transition':
+          if (event.taskId == null ||
+              event.taskId!.isEmpty ||
+              identity.objectId != event.taskId) {
+            throw ArgumentError('kanban transition requires taskId');
+          }
+          break;
+        case 'run_terminal':
+          if (identity.eventKind != 'terminal' ||
+              event.runId == null ||
+              event.runId!.isEmpty ||
+              identity.objectId != event.runId) {
+            throw ArgumentError('run terminal requires runId');
+          }
+          break;
+        case 'cron_terminal':
+          if (identity.eventKind != 'terminal' ||
+              ((event.sessionId == null || event.sessionId!.isEmpty) ==
+                  (event.jobId == null || event.jobId!.isEmpty))) {
+            throw ArgumentError(
+              'cron terminal requires exactly one session or job destination',
+            );
+          }
+          break;
+        case 'chat_reply':
+          if (event.sessionId == null || event.sessionId!.isEmpty) {
+            throw ArgumentError('chat reply requires sessionId');
+          }
+          break;
+      }
     }
   }
 
-  final sqflite.DatabaseFactory _databaseFactory;
+  static String _privacyDigest(String value) =>
+      sha256.convert(utf8.encode(value)).toString();
+
+  late sqflite.DatabaseFactory? _databaseFactory;
   final DeliveryClock _clock;
   final LeaseTokenFactory _tokenFactory;
   final DeliveryDigest _digest;
   final IngestFaultInjector? ingestFaultInjector;
+  final MarkPresentedFaultInjector? markPresentedFaultInjector;
   final String? databasePath;
   final int pendingCapacity;
   final Duration leaseDuration;
@@ -371,8 +538,9 @@ class NotificationDeliveryStore {
   Future<void> open() async {
     return _lifecycleLock.withLock(() async {
       if (_database != null) return;
-      final path = databasePath ?? await _defaultDatabasePath();
-      _database = await _databaseFactory.openDatabase(
+      final factory = _databaseFactory ??= sqflite.databaseFactory;
+      final path = databasePath ?? await _defaultDatabasePath(factory);
+      _database = await factory.openDatabase(
         path,
         options: sqflite.OpenDatabaseOptions(
           version: schemaVersionNumber,
@@ -385,17 +553,14 @@ class NotificationDeliveryStore {
     });
   }
 
-  Future<String> _defaultDatabasePath() async {
-    final directory = await _databaseFactory.getDatabasesPath();
+  Future<String> _defaultDatabasePath(sqflite.DatabaseFactory factory) async {
+    final directory = await factory.getDatabasesPath();
     final separator = directory.endsWith('/') ? '' : '/';
     return '$directory$separator$databaseFileName';
   }
 
   Future<void> _configure(sqflite.Database database) async {
-    await database.execute('PRAGMA journal_mode = WAL');
-    await database.execute('PRAGMA foreign_keys = ON');
-    await database.execute('PRAGMA synchronous = FULL');
-    await database.execute('PRAGMA busy_timeout = $busyTimeoutMilliseconds');
+    await configureNotificationDeliveryPragmas((sql) => database.rawQuery(sql));
   }
 
   Future<void> _ensureSchema(sqflite.Database database) async {
@@ -413,6 +578,7 @@ CREATE TABLE IF NOT EXISTS delivery_event (
   run_id TEXT,
   task_id TEXT,
   job_id TEXT,
+  request_id TEXT,
   status TEXT NOT NULL CHECK (status IN (
     'pending', 'leased', 'presented', 'cancel_pending', 'cancelled',
     'suppressed', 'expired'
@@ -441,6 +607,7 @@ CREATE TABLE IF NOT EXISTS source_cursor (
   object_id TEXT NOT NULL,
   last_state TEXT NOT NULL,
   last_version TEXT NOT NULL,
+  snapshot_digest TEXT NOT NULL,
   generation INTEGER NOT NULL,
   initialized INTEGER NOT NULL CHECK (initialized IN (0, 1)),
   updated_at INTEGER NOT NULL,
@@ -476,7 +643,7 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
 ''');
     await database.insert('delivery_meta', const <String, Object?>{
       'key': 'schema_version',
-      'value': '1',
+      'value': '2',
     }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
   }
 
@@ -498,11 +665,10 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
       } on sqflite.DatabaseException catch (error) {
         final primaryCode = (error.getResultCode() ?? -1) & 0xff;
         final locked = primaryCode == 5 || primaryCode == 6;
-        if (!locked ||
-            stopwatch.elapsedMilliseconds >= busyTimeoutMilliseconds) {
+        if (!locked || stopwatch.elapsed >= transactionRetryWindow) {
           rethrow;
         }
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+        await Future<void>.delayed(transactionRetryBackoff);
       }
     }
   }
@@ -511,49 +677,134 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
     for (final update in updates) {
       _validateCursorUpdate(update);
     }
-    final now = _clock();
-    await _exclusive((transaction) async {
-      var eventIndex = 0;
-      for (final update in updates) {
-        final cursors = await transaction.query(
-          'source_cursor',
-          where: 'scope_key = ?',
-          whereArgs: <Object?>[update.scopeKey],
-          limit: 1,
-        );
-        var storedGeneration = -1;
-        if (cursors.isNotEmpty) {
-          final cursor = cursors.single;
-          final sameIdentity =
-              cursor['conn_id']! as String == update.connId &&
-              cursor['profile']! as String ==
-                  update.profile.trim().toLowerCase() &&
-              cursor['source_kind']! as String == update.sourceKind &&
-              cursor['object_id']! as String == update.objectId;
-          if (!sameIdentity) {
-            throw ArgumentError.value(
-              update.scopeKey,
-              'scopeKey',
-              'cursor identity mismatch for scope',
-            );
-          }
-          storedGeneration = cursor['generation']! as int;
-        }
+    await _exclusive(
+      (transaction) =>
+          _ingestUpdates(transaction, updates, suppressEvents: false),
+    );
+  }
 
-        for (final event in update.events) {
-          ingestFaultInjector?.call(eventIndex, event);
-          eventIndex += 1;
-          await _insertEvent(transaction, event, now);
+  Future<bool> ingestDiscovery({
+    required String scopeKey,
+    required SourceCursorUpdate Function(int? previousGeneration) buildUpdate,
+    SourceCursorUpdate Function(int?, String?)? buildUpdateWithPrevious,
+    required bool suppressByPolicy,
+    bool suppressEventsWhenVersionUnchanged = false,
+    bool suppressInitialEvents = true,
+  }) async {
+    _requireDedupeValue(scopeKey, 'scopeKey');
+    return _exclusive((transaction) async {
+      final rows = await transaction.query(
+        'source_cursor',
+        columns: const <String>['generation', 'last_version'],
+        where: 'scope_key = ?',
+        whereArgs: <Object?>[_privacyDigest(scopeKey)],
+        limit: 1,
+      );
+      final previousGeneration = rows.isEmpty
+          ? null
+          : rows.single['generation']! as int;
+      final previousVersion = rows.isEmpty
+          ? null
+          : rows.single['last_version']! as String;
+      final update =
+          buildUpdateWithPrevious?.call(previousGeneration, previousVersion) ??
+          buildUpdate(previousGeneration);
+      if (update.scopeKey != scopeKey) {
+        throw ArgumentError('discovery update must match scopeKey');
+      }
+      _validateCursorUpdate(update);
+      final unchangedVersion =
+          rows.isNotEmpty &&
+          _privacyDigest(update.lastVersion) == previousVersion;
+      final effectiveUpdate =
+          suppressEventsWhenVersionUnchanged &&
+              unchangedVersion &&
+              update.events.isNotEmpty
+          ? SourceCursorUpdate(
+              scopeKey: update.scopeKey,
+              connId: update.connId,
+              profile: update.profile,
+              sourceKind: update.sourceKind,
+              objectId: update.objectId,
+              lastState: update.lastState,
+              lastVersion: update.lastVersion,
+              generation: update.generation,
+              initialized: update.initialized,
+              events: const <DeliveryEventSpec>[],
+            )
+          : update;
+      final suppressed =
+          (previousGeneration == null && suppressInitialEvents) ||
+          suppressByPolicy;
+      await _ingestUpdates(transaction, <SourceCursorUpdate>[
+        effectiveUpdate,
+      ], suppressEvents: suppressed);
+      return suppressed;
+    });
+  }
+
+  Future<void> _ingestUpdates(
+    sqflite.Transaction transaction,
+    List<SourceCursorUpdate> updates, {
+    required bool suppressEvents,
+  }) async {
+    final now = _clock();
+    var eventIndex = 0;
+    for (final update in updates) {
+      final cursors = await transaction.query(
+        'source_cursor',
+        where: 'scope_key = ?',
+        whereArgs: <Object?>[_privacyDigest(update.scopeKey)],
+        limit: 1,
+      );
+      var storedGeneration = -1;
+      String? storedSnapshotDigest;
+      if (cursors.isNotEmpty) {
+        final cursor = cursors.single;
+        final sameIdentity =
+            cursor['conn_id']! as String == update.connId &&
+            cursor['profile']! as String ==
+                update.profile.trim().toLowerCase() &&
+            cursor['source_kind']! as String == update.sourceKind &&
+            cursor['object_id']! as String == update.objectId;
+        if (!sameIdentity) {
+          throw ArgumentError.value(
+            update.scopeKey,
+            'scopeKey',
+            'cursor identity mismatch for scope',
+          );
         }
-        if (update.generation < storedGeneration) {
-          continue;
+        storedGeneration = cursor['generation']! as int;
+        storedSnapshotDigest = cursor['snapshot_digest']! as String;
+      }
+
+      final snapshotDigest = _snapshotDigest(update);
+      if (update.generation < storedGeneration) continue;
+      if (update.generation == storedGeneration) {
+        if (storedSnapshotDigest != snapshotDigest) {
+          throw StateError('source_cursor_generation_conflict');
         }
-        await transaction.rawInsert(
-          '''
+        continue;
+      }
+
+      for (final event in update.events) {
+        await _insertEvent(
+          transaction,
+          event,
+          now,
+          initialStatus: suppressEvents
+              ? DeliveryStatus.suppressed
+              : DeliveryStatus.pending,
+        );
+        await ingestFaultInjector?.call(eventIndex, event);
+        eventIndex += 1;
+      }
+      await transaction.rawInsert(
+        '''
 INSERT INTO source_cursor (
   scope_key, conn_id, profile, source_kind, object_id, last_state,
-  last_version, generation, initialized, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  last_version, snapshot_digest, generation, initialized, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scope_key) DO UPDATE SET
   conn_id = excluded.conn_id,
   profile = excluded.profile,
@@ -561,32 +812,34 @@ ON CONFLICT(scope_key) DO UPDATE SET
   object_id = excluded.object_id,
   last_state = excluded.last_state,
   last_version = excluded.last_version,
+  snapshot_digest = excluded.snapshot_digest,
   generation = excluded.generation,
   initialized = excluded.initialized,
   updated_at = excluded.updated_at
 ''',
-          <Object?>[
-            update.scopeKey,
-            update.connId,
-            update.profile.trim().toLowerCase(),
-            update.sourceKind,
-            update.objectId,
-            update.lastState,
-            update.lastVersion,
-            update.generation,
-            update.initialized ? 1 : 0,
-            now,
-          ],
-        );
-      }
-    });
+        <Object?>[
+          _privacyDigest(update.scopeKey),
+          update.connId,
+          update.profile.trim().toLowerCase(),
+          update.sourceKind,
+          update.objectId,
+          update.lastState,
+          _privacyDigest(update.lastVersion),
+          snapshotDigest,
+          update.generation,
+          update.initialized ? 1 : 0,
+          now,
+        ],
+      );
+    }
   }
 
   Future<void> _insertEvent(
     sqflite.DatabaseExecutor executor,
     DeliveryEventSpec event,
-    int now,
-  ) async {
+    int now, {
+    DeliveryStatus initialStatus = DeliveryStatus.pending,
+  }) async {
     final digestBytes = _digest(utf8.encode(event.identity.canonical));
     if (digestBytes.length < 8) {
       throw StateError('Delivery digest must contain at least 8 bytes');
@@ -635,13 +888,14 @@ WHERE status IN ('pending', 'leased', 'cancel_pending')
       'source_kind': identity.sourceKind,
       'object_id': identity.objectId,
       'event_kind': identity.eventKind,
-      'source_version': identity.sourceVersion,
+      'source_version': _privacyDigest(identity.sourceVersion),
       'destination_kind': event.destinationKind,
       'session_id': event.sessionId,
       'run_id': event.runId,
       'task_id': event.taskId,
       'job_id': event.jobId,
-      'status': DeliveryStatus.pending.databaseValue,
+      'request_id': event.requestId,
+      'status': initialStatus.databaseValue,
       'android_id': allocation.$1,
       'android_tag': allocation.$2,
       'attempt_count': 0,
@@ -805,6 +1059,7 @@ WHERE event_key = ? AND status = 'leased' AND lease_token = ?
     String token,
     String presentationSurface,
   ) async {
+    markPresentedFaultInjector?.call();
     if (!presentationSurfaces.contains(presentationSurface)) {
       throw ArgumentError.value(
         presentationSurface,
@@ -878,9 +1133,11 @@ WHERE event_key = ? AND status = 'leased' AND lease_token = ?
       final changed = await transaction.rawUpdate(
         '''
 UPDATE delivery_event
-SET status = 'cancel_pending', lease_token = NULL, lease_until = NULL,
+SET status = 'cancel_pending',
+    lease_token = CASE WHEN status = 'leased' THEN lease_token ELSE NULL END,
+    lease_until = CASE WHEN status = 'leased' THEN lease_until ELSE NULL END,
     updated_at = ?
-WHERE event_key = ? AND status IN ('pending', 'presented')
+WHERE event_key = ? AND status IN ('pending', 'presented', 'leased')
 ''',
         <Object?>[now, eventKey],
       );
@@ -893,20 +1150,104 @@ WHERE event_key = ? AND status IN ('pending', 'presented')
     required String profile,
     required String runId,
   }) async {
+    _requireIdentifier(connId, 'connId');
+    _requireIdentifier(profile.trim().toLowerCase(), 'profile');
+    _requireIdentifier(runId, 'runId');
     final now = _clock();
     return _exclusive((transaction) async {
       return transaction.rawUpdate(
         '''
 UPDATE delivery_event
-SET status = 'cancel_pending', lease_token = NULL, lease_until = NULL,
+SET status = 'cancel_pending',
+    lease_token = CASE WHEN status = 'leased' THEN lease_token ELSE NULL END,
+    lease_until = CASE WHEN status = 'leased' THEN lease_until ELSE NULL END,
     updated_at = ?
 WHERE conn_id = ? AND profile = ? AND run_id = ?
   AND destination_kind = 'approval'
-  AND status IN ('pending', 'presented')
+  AND status IN ('pending', 'presented', 'leased')
 ''',
         <Object?>[now, connId, profile.trim().toLowerCase(), runId],
       );
     });
+  }
+
+  Future<int> markApprovalCancelPending({
+    required String connId,
+    required String profile,
+    required String runId,
+    required String requestId,
+  }) async {
+    _requireIdentifier(connId, 'connId');
+    _requireIdentifier(profile.trim().toLowerCase(), 'profile');
+    _requireIdentifier(runId, 'runId');
+    _requireIdentifier(requestId, 'requestId');
+    final now = _clock();
+    return _exclusive(
+      (transaction) => transaction.rawUpdate(
+        '''
+UPDATE delivery_event
+SET status = 'cancel_pending',
+    lease_token = CASE WHEN status = 'leased' THEN lease_token ELSE NULL END,
+    lease_until = CASE WHEN status = 'leased' THEN lease_until ELSE NULL END,
+    updated_at = ?
+WHERE conn_id = ? AND profile = ? AND run_id = ? AND request_id = ?
+  AND destination_kind = 'approval'
+  AND status IN ('pending', 'presented', 'leased')
+''',
+        <Object?>[now, connId, profile.trim().toLowerCase(), runId, requestId],
+      ),
+    );
+  }
+
+  Future<int> markApprovalCancelPendingForSession({
+    required String connId,
+    required String profile,
+    required String sessionId,
+    required String requestId,
+  }) async {
+    _requireIdentifier(connId, 'connId');
+    _requireIdentifier(profile.trim().toLowerCase(), 'profile');
+    _requireIdentifier(sessionId, 'sessionId');
+    _requireIdentifier(requestId, 'requestId');
+    final now = _clock();
+    return _exclusive(
+      (transaction) => transaction.rawUpdate(
+        '''
+UPDATE delivery_event
+SET status = 'cancel_pending',
+    lease_token = CASE WHEN status = 'leased' THEN lease_token ELSE NULL END,
+    lease_until = CASE WHEN status = 'leased' THEN lease_until ELSE NULL END,
+    updated_at = ?
+WHERE conn_id = ? AND profile = ? AND session_id = ? AND request_id = ?
+  AND destination_kind = 'approval'
+  AND status IN ('pending', 'presented', 'leased')
+''',
+        <Object?>[
+          now,
+          connId,
+          profile.trim().toLowerCase(),
+          sessionId,
+          requestId,
+        ],
+      ),
+    );
+  }
+
+  Future<List<DeliveryEventRecord>> cancelPendingEvents() async {
+    final now = _clock();
+    final futureLimit = now + maximumFutureLease.inMilliseconds;
+    final rows = await _db.query(
+      'delivery_event',
+      where:
+          "status = ? AND (lease_token IS NULL OR lease_until <= ? OR lease_until > ?)",
+      whereArgs: <Object?>[
+        DeliveryStatus.cancelPending.databaseValue,
+        now,
+        futureLimit,
+      ],
+      orderBy: 'updated_at, event_key',
+    );
+    return rows.map(DeliveryEventRecord.fromRow).toList(growable: false);
   }
 
   Future<bool> markCancelled(String eventKey) async {
@@ -915,8 +1256,9 @@ WHERE conn_id = ? AND profile = ? AND run_id = ?
       final changed = await transaction.rawUpdate(
         '''
 UPDATE delivery_event
-SET status = 'cancelled', cancelled_at = ?, updated_at = ?
-WHERE event_key = ? AND status = 'cancel_pending'
+SET status = 'cancelled', cancelled_at = ?, updated_at = ?,
+    lease_token = NULL, lease_until = NULL
+WHERE event_key = ? AND status = 'cancel_pending' AND lease_token IS NULL
 ''',
         <Object?>[now, now, eventKey],
       );
@@ -924,8 +1266,57 @@ WHERE event_key = ? AND status = 'cancel_pending'
     });
   }
 
+  Future<bool> markCancelledByLease(String eventKey, String token) async {
+    final now = _clock();
+    return _exclusive((transaction) async {
+      final changed = await transaction.rawUpdate(
+        '''
+UPDATE delivery_event
+SET status = 'cancelled', cancelled_at = ?, updated_at = ?,
+    lease_token = NULL, lease_until = NULL
+WHERE event_key = ? AND status = 'cancel_pending' AND lease_token = ?
+''',
+        <Object?>[now, now, eventKey, token],
+      );
+      return changed == 1;
+    });
+  }
+
+  Future<bool> markExpiredCancellationCancelled(String eventKey) async {
+    final now = _clock();
+    final futureLimit = now + maximumFutureLease.inMilliseconds;
+    return _exclusive((transaction) async {
+      final changed = await transaction.rawUpdate(
+        '''
+UPDATE delivery_event
+SET status = 'cancelled', cancelled_at = ?, updated_at = ?,
+    lease_token = NULL, lease_until = NULL
+WHERE event_key = ? AND status = 'cancel_pending' AND lease_token IS NOT NULL
+  AND (lease_until <= ? OR lease_until > ?)
+''',
+        <Object?>[now, now, eventKey, now, futureLimit],
+      );
+      return changed == 1;
+    });
+  }
+
   Future<bool> suppress(String eventKey) =>
       _markPendingOutcome(eventKey, DeliveryStatus.suppressed);
+
+  Future<bool> suppressLease(String eventKey, String token) async {
+    final now = _clock();
+    return _exclusive((transaction) async {
+      final changed = await transaction.rawUpdate(
+        '''
+UPDATE delivery_event
+SET status = 'suppressed', lease_token = NULL, lease_until = NULL, updated_at = ?
+WHERE event_key = ? AND status = 'leased' AND lease_token = ?
+''',
+        <Object?>[now, eventKey, token],
+      );
+      return changed == 1;
+    });
+  }
 
   Future<bool> expire(String eventKey) =>
       _markPendingOutcome(eventKey, DeliveryStatus.expired);
@@ -1066,7 +1457,7 @@ LIMIT -1 OFFSET ?
       'source_cursor',
       columns: const <String>['generation'],
       where: 'scope_key = ?',
-      whereArgs: <Object?>[scopeKey],
+      whereArgs: <Object?>[_privacyDigest(scopeKey)],
       limit: 1,
     );
     return rows.isEmpty ? null : rows.single['generation']! as int;
@@ -1079,6 +1470,32 @@ LIMIT -1 OFFSET ?
         <Object?>[status.databaseValue],
       ),
     )!;
+  }
+
+  static String _snapshotDigest(SourceCursorUpdate update) {
+    final canonicalEvents =
+        update.events
+            .map(
+              (event) => <String>[
+                event.identity.canonical,
+                event.destinationKind,
+                event.sessionId ?? '',
+                event.runId ?? '',
+                event.taskId ?? '',
+                event.jobId ?? '',
+                event.requestId ?? '',
+              ].map((value) => '${utf8.encode(value).length}:$value').join('|'),
+            )
+            .toList(growable: false)
+          ..sort();
+    return _privacyDigest(
+      <String>[
+        update.lastState,
+        update.lastVersion,
+        update.initialized ? '1' : '0',
+        ...canonicalEvents,
+      ].join('\u001f'),
+    );
   }
 
   static String _hex(List<int> bytes) =>

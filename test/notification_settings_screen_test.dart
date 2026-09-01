@@ -37,4 +37,41 @@ void main() {
     expect(value.top, greaterThanOrEqualTo(label.bottom));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('el estado background refleja activación y error persistente', (
+    tester,
+  ) async {
+    Future<void> pump(BackgroundNotificationUiState state) {
+      return tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.fromId('dark'),
+          home: Scaffold(
+            body: HermesBackgroundNotificationStatus(
+              state: state,
+              activatingLabel: 'Activando…',
+              activeLabel: 'Activo',
+              pausedLabel: 'En pausa',
+              errorLabel: 'Error al iniciar',
+            ),
+          ),
+        ),
+      );
+    }
+
+    await pump(BackgroundNotificationUiState.activating);
+    expect(find.text('Activando…'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await pump(BackgroundNotificationUiState.error);
+    expect(find.text('Error al iniciar'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+
+    await pump(BackgroundNotificationUiState.active);
+    expect(find.text('Activo'), findsOneWidget);
+    expect(find.byIcon(Icons.circle), findsOneWidget);
+
+    await pump(BackgroundNotificationUiState.paused);
+    expect(find.text('En pausa'), findsOneWidget);
+    expect(find.byIcon(Icons.pause_circle_outline), findsOneWidget);
+  });
 }

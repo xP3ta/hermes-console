@@ -1,9 +1,10 @@
 # Ficha de Google Play — Hermes Console
 
-Texto candidato para `1.2.8 (4943)`. Idioma predeterminado: español. No está
-autorizado para envío hasta verificar el AAB firmado, la política de privacidad
-desplegada, Data Safety, los vídeos FGS, las capturas y la QA física. Los
-recursos gráficos mantienen su propio gate al final del documento.
+Texto candidato para `1.2.9 (4963)`. Idioma predeterminado: español. No está
+autorizado para envío hasta verificar el AAB firmado, la
+política de privacidad desplegada, Data Safety, los vídeos FGS, las capturas y
+la QA física. Los recursos gráficos mantienen su propio gate al final del
+documento.
 
 ## Identidad
 
@@ -92,25 +93,26 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.8 (4943)`
+## Novedades — `1.2.9 (4963)`
 
 ### Español (máximo 500 caracteres)
 
-Los chats y mensajes en cola se recuperan mejor, se ordenan por actividad real
-y admiten composición multilínea. Las preguntas interactivas vuelven a mostrarse
-y responderse con seguridad, incluso por lotes. Las respuestas completadas pueden
-avisar de forma privada mientras la app sigue activa en segundo plano.
+Los chats conservan mejor su historial al refrescar, reconectar o continuar
+desde Desktop, incluso después de usar Parar. La escucha opcional en segundo
+plano permanece activa hasta que la desactivas y puede avisarte de respuestas,
+runs, Cron y Kanban. Mejoras adicionales refuerzan la reconexión y los controles
+de Voz, lectura, SSH y SFTP.
 
 ### English (maximum 500 characters)
 
-Chats and queued messages recover more reliably, sort by real activity, and
-support multiline composing. Interactive questions are visible and safe to
-answer again, including batches. Completed replies can notify privately while
-the app remains active in the background.
+Chats preserve history more reliably across refreshes, reconnects, Desktop
+handoffs, and Stop. Optional background listening now stays active until you
+turn it off and can notify you about replies, runs, Cron, and Kanban. Additional
+hardening improves reconnection and Voice, read-aloud, SSH, and SFTP controls.
 
 ## Recursos gráficos
 
-- Para `1.2.8`, conservar el icono, la feature graphic y las capturas que ya
+- Para `1.2.9`, conservar el icono, la feature graphic y las capturas que ya
   están publicadas y aprobadas en Google Play. Esta actualización no requiere
   nuevos recursos gráficos ni cambia los flujos declarados en Data Safety.
 - Cualquier recurso nuevo conserva su gate independiente de privacidad,

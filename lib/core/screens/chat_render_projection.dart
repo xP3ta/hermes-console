@@ -118,12 +118,17 @@ final class ChatRenderProjection {
 
       if (role == 'user') {
         flushTools();
-        final displayKind = message['display_kind']?.toString().trim() ?? '';
+        final displayKind = effectiveUserDisplayKind(message);
         // Hermes persiste algunos eventos editoriales con role=user para que
         // formen parte del transcript. Desktop los proyecta como sistema; no
         // deben agruparse, numerarse ni editarse como prompts reales.
         if (displayKind.isNotEmpty && message['_steer'] != true) {
-          chronologicalUnits.add(ChatMessageUnitPlan(index));
+          // Son envelopes durables del runtime, no texto escrito por el
+          // usuario. `hidden` se omite; async_delegation_complete conserva su
+          // tarjeta editorial dedicada, que nunca imprime el payload raw.
+          if (displayKind != 'hidden') {
+            chronologicalUnits.add(ChatMessageUnitPlan(index));
+          }
           continue;
         }
         final isRealUser = isRealUserTurn(message);

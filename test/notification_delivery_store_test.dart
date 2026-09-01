@@ -10,6 +10,47 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   sqfliteFfiInit();
 
+  test(
+    'Android-compatible database configuration uses query pragmas',
+    () async {
+      final configured = <String>[];
+
+      await configureNotificationDeliveryPragmas((sql) async {
+        configured.add(sql);
+        if (sql == 'PRAGMA journal_mode = WAL') {
+          return const <Map<String, Object?>>[
+            {'journal_mode': 'wal'},
+          ];
+        }
+        return const <Map<String, Object?>>[];
+      });
+
+      expect(configured, [
+        'PRAGMA busy_timeout = 2000',
+        'PRAGMA journal_mode = WAL',
+        'PRAGMA foreign_keys = ON',
+        'PRAGMA synchronous = FULL',
+      ]);
+    },
+  );
+
+  test(
+    'database configuration fails closed when WAL is not effective',
+    () async {
+      await expectLater(
+        configureNotificationDeliveryPragmas((sql) async {
+          if (sql == 'PRAGMA journal_mode = WAL') {
+            return const <Map<String, Object?>>[
+              {'journal_mode': 'delete'},
+            ];
+          }
+          return const <Map<String, Object?>>[];
+        }),
+        throwsA(isA<StateError>()),
+      );
+    },
+  );
+
   group('canonical event identity', () {
     test('separates connections and normalized profiles', () {
       const base = NotificationEventIdentity(
@@ -121,6 +162,61 @@ void main() {
         );
         expect(await first.countByStatus(DeliveryStatus.leased), 1);
         expect((await first.eventByKey(identity.eventKey))!.attemptCount, 1);
+      },
+    );
+  });
+
+  group('SQLITE_BUSY lease recovery', () {
+    test(
+      'retries a lease after another handle releases BEGIN EXCLUSIVE',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-busy-lease-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final path = '${directory.path}/notification_delivery_v1.db';
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: path,
+          tokenFactory: () => 'busy-retry-owner',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const identity = NotificationEventIdentity(
+          connId: 'conn-busy',
+          profile: 'work',
+          sourceKind: 'run',
+          objectId: 'run-busy',
+          eventKind: 'terminal',
+          sourceVersion: 'v1',
+        );
+        await store.ingestSourceBatch(<SourceCursorUpdate>[
+          _updateFor(identity),
+        ]);
+
+        final lockHolder = await databaseFactoryFfi.openDatabase(
+          path,
+          options: sqflite.OpenDatabaseOptions(singleInstance: false),
+        );
+        addTearDown(lockHolder.close);
+        await lockHolder.execute('PRAGMA busy_timeout = 0');
+        await lockHolder.execute('BEGIN EXCLUSIVE');
+
+        final leased = store.leaseNext();
+        await Future<void>.delayed(
+          const Duration(
+            milliseconds:
+                NotificationDeliveryStore.busyTimeoutMilliseconds + 100,
+          ),
+        );
+        await lockHolder.execute('COMMIT');
+
+        final lease = await leased;
+        expect(lease, isNotNull);
+        expect(lease!.token, 'busy-retry-owner');
+        expect(await store.countByStatus(DeliveryStatus.leased), 1);
+        expect((await store.eventByKey(identity.eventKey))!.attemptCount, 1);
       },
     );
   });
@@ -408,7 +504,7 @@ void main() {
 
   group('lossless source ingestion', () {
     test(
-      'stale cursor generations still ingest unseen material events',
+      'stale cursor generations are rejected before event insertion',
       () async {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-generation-',
@@ -447,7 +543,7 @@ void main() {
             profile: 'work',
             sourceKind: 'run',
             objectId: 'snapshot',
-            lastState: 'complete',
+            lastState: 'completed',
             lastVersion: 'v$generation',
             generation: generation,
             initialized: true,
@@ -464,7 +560,7 @@ void main() {
         await store.ingestSourceBatch(<SourceCursorUpdate>[update(2, newer)]);
         await store.ingestSourceBatch(<SourceCursorUpdate>[update(1, older)]);
 
-        expect(await store.eventCount(), 2);
+        expect(await store.eventCount(), 1);
         expect(
           await store.sourceCursorGeneration(
             'conn-generation/work/run/snapshot',
@@ -508,7 +604,7 @@ void main() {
             profile: 'work',
             sourceKind: 'run',
             objectId: objectId,
-            lastState: 'complete',
+            lastState: 'completed',
             lastVersion: 'v$generation',
             generation: generation,
             initialized: true,
@@ -696,20 +792,32 @@ void main() {
         final lease = (await store.leaseNext())!;
         expect(lease.event.destinationKind, 'approval');
 
-        expect(await store.markCancelPending(lease.event.eventKey), isFalse);
-        expect(lease.event.status, DeliveryStatus.leased);
+        expect(await store.markCancelPending(lease.event.eventKey), isTrue);
+        final cancelPending = (await store.eventByKey(lease.event.eventKey))!;
+        expect(cancelPending.status, DeliveryStatus.cancelPending);
+        expect(cancelPending.androidId, lease.event.androidId);
+        expect(cancelPending.androidTag, lease.event.androidTag);
 
+        expect(cancelPending.leaseToken, lease.token);
+        expect(cancelPending.leaseUntil, isNotNull);
         expect(
           await store.markPresented(lease.event.eventKey, lease.token, 'alert'),
-          isTrue,
-        );
-        expect(
-          (await store.eventByKey(lease.event.eventKey))!.status,
-          DeliveryStatus.presented,
+          isFalse,
         );
 
-        expect(await store.markCancelPending(lease.event.eventKey), isTrue);
-        expect(await store.markCancelled(lease.event.eventKey), isTrue);
+        expect(await store.markCancelPending(lease.event.eventKey), isFalse);
+        expect(await store.markCancelled(lease.event.eventKey), isFalse);
+        expect(
+          await store.markCancelledByLease(
+            lease.event.eventKey,
+            'different-owner',
+          ),
+          isFalse,
+        );
+        expect(
+          await store.markCancelledByLease(lease.event.eventKey, lease.token),
+          isTrue,
+        );
         expect(
           (await store.eventByKey(lease.event.eventKey))!.status,
           DeliveryStatus.cancelled,
@@ -759,6 +867,101 @@ void main() {
 
   group('privacy boundary', () {
     test(
+      'JWT-shaped lastState is rejected before DB access while machine states are allowed',
+      () async {
+        const jwtUpdate = SourceCursorUpdate(
+          scopeKey: 'conn-a/work/run/run-jwt',
+          connId: 'conn-a',
+          profile: 'work',
+          sourceKind: 'run',
+          objectId: 'run-jwt',
+          lastState:
+              'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature8',
+          lastVersion: 'v1',
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[],
+        );
+        final unopened = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '/must-not-be-opened/notification_delivery_v1.db',
+        );
+
+        await expectLater(
+          unopened.ingestSourceBatch(const <SourceCursorUpdate>[jwtUpdate]),
+          throwsArgumentError,
+        );
+
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-machine-state-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+        for (final state in const <String>[
+          'pending',
+          'running',
+          'completed',
+          'failed',
+        ]) {
+          await store.ingestSourceBatch(<SourceCursorUpdate>[
+            SourceCursorUpdate(
+              scopeKey: 'conn-a/work/run/$state',
+              connId: 'conn-a',
+              profile: 'work',
+              sourceKind: 'run',
+              objectId: state,
+              lastState: state,
+              lastVersion: 'v1',
+              generation: 1,
+              initialized: true,
+              events: const <DeliveryEventSpec>[],
+            ),
+          ]);
+        }
+      },
+    );
+
+    test(
+      'lastState usa vocabulario cerrado específico por sourceKind',
+      () async {
+        SourceCursorUpdate update(String sourceKind, String state) =>
+            SourceCursorUpdate(
+              scopeKey: 'conn-a/work/$sourceKind/object-$state',
+              connId: 'conn-a',
+              profile: 'work',
+              sourceKind: sourceKind,
+              objectId: 'object-$state',
+              lastState: state,
+              lastVersion: 'v1',
+              generation: 1,
+              initialized: true,
+              events: const <DeliveryEventSpec>[],
+            );
+
+        final unopened = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '/must-not-be-opened/notification_delivery_v2.db',
+        );
+        for (final invalid in <SourceCursorUpdate>[
+          update('run', 'blocked'),
+          update('cron', 'ready'),
+          update('approval', 'running'),
+          update('chat_reply', 'arbitrary_token'),
+        ]) {
+          await expectLater(
+            unopened.ingestSourceBatch(<SourceCursorUpdate>[invalid]),
+            throwsArgumentError,
+          );
+        }
+      },
+    );
+
+    test(
       'secret-bearing or free-text values are rejected before persistence',
       () async {
         final directory = await Directory.systemTemp.createTemp(
@@ -782,7 +985,7 @@ void main() {
         );
         SourceCursorUpdate update({
           String destinationKind = 'run_terminal',
-          String lastState = 'complete',
+          String lastState = 'completed',
           String lastVersion = 'v1',
           String? runId = 'run-1',
         }) {
@@ -876,9 +1079,368 @@ void main() {
         expect(await store.eventCount(), 1);
       },
     );
+    test('secret-shaped cursor values persist only as digests', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'delivery-shape-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/notification_delivery_v1.db';
+      final store = NotificationDeliveryStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePath: path,
+      );
+      await store.open();
+      const approvalId = 'request-safe';
+      final sourceVersion = <String>[
+        'xoxb',
+        '123456789012',
+        '123456789012',
+        'abcdefghijklmnopqrstuvwx',
+      ].join('-');
+      const scopeKey =
+          'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzY29wZSJ9.abcdefghijklmnop';
+      const identity = NotificationEventIdentity(
+        connId: 'conn-safe',
+        profile: 'work',
+        sourceKind: 'approval',
+        objectId: 'run-safe',
+        eventKind: 'pending',
+        sourceVersion: approvalId,
+      );
+      await store.ingestSourceBatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey: scopeKey,
+          connId: 'conn-safe',
+          profile: 'work',
+          sourceKind: 'approval',
+          objectId: 'snapshot',
+          lastState: 'pending',
+          lastVersion: sourceVersion,
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(
+              identity: identity,
+              destinationKind: 'approval',
+              runId: 'run-safe',
+              requestId: 'request-safe',
+            ),
+          ],
+        ),
+      ]);
+      await store.close();
+
+      final bytes = <int>[
+        ...await File(path).readAsBytes(),
+        if (await File('$path-wal').exists())
+          ...await File('$path-wal').readAsBytes(),
+      ];
+      final persisted = latin1.decode(bytes, allowInvalid: true);
+      expect(persisted, contains(approvalId));
+      expect(persisted, isNot(contains(sourceVersion)));
+      expect(persisted, isNot(contains(scopeKey)));
+    });
   });
 
   group('retention and policy outcomes', () {
+    test(
+      'cron job seen running dispatches its later terminal transition',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-cron-running-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const scope = 'conn-a/default/cron/job/job-running';
+        SourceCursorUpdate update(
+          int? generation, {
+          required String state,
+          required String version,
+          NotificationEventIdentity? event,
+        }) => SourceCursorUpdate(
+          scopeKey: scope,
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'job-running',
+          lastState: state,
+          lastVersion: version,
+          generation: (generation ?? 0) + 1,
+          initialized: true,
+          events: event == null
+              ? const <DeliveryEventSpec>[]
+              : <DeliveryEventSpec>[
+                  DeliveryEventSpec(
+                    identity: event,
+                    destinationKind: 'cron_terminal',
+                    jobId: 'job-running',
+                  ),
+                ],
+        );
+
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          buildUpdate: (generation) => update(
+            generation,
+            state: 'running',
+            version: 'execution-1.running',
+          ),
+        );
+        const terminal = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'execution-1',
+          eventKind: 'terminal',
+          sourceVersion: 'execution-1.completed',
+        );
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          buildUpdate: (generation) => update(
+            generation,
+            state: 'completed',
+            version: terminal.sourceVersion,
+            event: terminal,
+          ),
+        );
+
+        final events = await store.allEvents();
+        expect(events, hasLength(1));
+        expect(events.single.status, DeliveryStatus.pending);
+      },
+    );
+
+    test(
+      'global cron baseline permits a newly discovered terminal job',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-cron-new-terminal-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const identity = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'execution-fast',
+          eventKind: 'terminal',
+          sourceVersion: 'execution-fast.completed',
+        );
+        await store.ingestDiscovery(
+          scopeKey: 'conn-a/default/cron/job/job-fast',
+          suppressByPolicy: false,
+          suppressInitialEvents: false,
+          buildUpdate: (generation) => SourceCursorUpdate(
+            scopeKey: 'conn-a/default/cron/job/job-fast',
+            connId: 'conn-a',
+            profile: 'default',
+            sourceKind: 'cron',
+            objectId: 'job-fast',
+            lastState: 'completed',
+            lastVersion: identity.sourceVersion,
+            generation: (generation ?? 0) + 1,
+            initialized: true,
+            events: const <DeliveryEventSpec>[
+              DeliveryEventSpec(
+                identity: identity,
+                destinationKind: 'cron_terminal',
+                jobId: 'job-fast',
+              ),
+            ],
+          ),
+        );
+
+        final events = await store.allEvents();
+        expect(events, hasLength(1));
+        expect(events.single.status, DeliveryStatus.pending);
+      },
+    );
+
+    test(
+      'initial unhydrated cron terminal stays silent after hydration',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-cron-unhydrated-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const scope = 'conn-a/default/cron/job/job-unhydrated';
+        const identity = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'execution-old',
+          eventKind: 'terminal',
+          sourceVersion: 'execution-old.completed',
+        );
+        SourceCursorUpdate update(
+          int? generation,
+          List<DeliveryEventSpec> events,
+        ) => SourceCursorUpdate(
+          scopeKey: scope,
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'job-unhydrated',
+          lastState: 'snapshot',
+          lastVersion: identity.sourceVersion,
+          generation: (generation ?? 0) + 1,
+          initialized: true,
+          events: events,
+        );
+
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          suppressEventsWhenVersionUnchanged: true,
+          buildUpdate: (generation) =>
+              update(generation, const <DeliveryEventSpec>[]),
+        );
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          suppressEventsWhenVersionUnchanged: true,
+          buildUpdate: (generation) =>
+              update(generation, const <DeliveryEventSpec>[
+                DeliveryEventSpec(
+                  identity: identity,
+                  destinationKind: 'cron_terminal',
+                  jobId: 'job-unhydrated',
+                ),
+              ]),
+        );
+
+        expect(await store.eventCount(), 0);
+      },
+    );
+
+    test(
+      'prune then same cron snapshot never redelivers an old execution',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'delivery-cron-retention-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final clock = _MutableClock(
+          DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
+        );
+        final store = NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: '${directory.path}/notification_delivery_v1.db',
+          clock: clock.call,
+          tokenFactory: () => 'cron-retention-owner',
+        );
+        await store.open();
+        addTearDown(store.close);
+
+        const scope = 'conn-a/default/cron/job/job-1';
+        SourceCursorUpdate update(
+          int? previousGeneration,
+          NotificationEventIdentity? identity,
+        ) => SourceCursorUpdate(
+          scopeKey: scope,
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'job-1',
+          lastState: 'snapshot',
+          lastVersion: identity?.sourceVersion ?? 'empty',
+          generation: (previousGeneration ?? 0) + 1,
+          initialized: true,
+          events: identity == null
+              ? const <DeliveryEventSpec>[]
+              : <DeliveryEventSpec>[
+                  DeliveryEventSpec(
+                    identity: identity,
+                    destinationKind: 'cron_terminal',
+                    jobId: 'job-1',
+                  ),
+                ],
+        );
+
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          suppressEventsWhenVersionUnchanged: true,
+          buildUpdate: (generation) => update(generation, null),
+        );
+        const first = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'execution-1',
+          eventKind: 'terminal',
+          sourceVersion: 'execution-1.completed',
+        );
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          suppressEventsWhenVersionUnchanged: true,
+          buildUpdate: (generation) => update(generation, first),
+        );
+        final lease = (await store.leaseNext())!;
+        expect(
+          await store.markPresented(first.eventKey, lease.token, 'alert'),
+          isTrue,
+        );
+
+        clock.advance(const Duration(days: 31));
+        await store.pruneRetention(
+          maxAge: const Duration(days: 30),
+          maxTombstones: 0,
+        );
+        expect(await store.eventCount(), 0);
+        expect(await store.androidMappingCount(), 0);
+
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          suppressEventsWhenVersionUnchanged: true,
+          buildUpdate: (generation) => update(generation, first),
+        );
+        expect(await store.eventCount(), 0);
+
+        const next = NotificationEventIdentity(
+          connId: 'conn-a',
+          profile: 'default',
+          sourceKind: 'cron',
+          objectId: 'execution-2',
+          eventKind: 'terminal',
+          sourceVersion: 'execution-2.completed',
+        );
+        await store.ingestDiscovery(
+          scopeKey: scope,
+          suppressByPolicy: false,
+          suppressEventsWhenVersionUnchanged: true,
+          buildUpdate: (generation) => update(generation, next),
+        );
+        final events = await store.allEvents();
+        expect(events, hasLength(1));
+        expect(events.single.eventKey, next.eventKey);
+        expect(events.single.status, DeliveryStatus.pending);
+      },
+    );
+
     test(
       'suppression is explicit and retention preserves active work',
       () async {
@@ -1001,7 +1563,9 @@ void main() {
         expect(await store.androidMappingCount(), 0);
 
         await store.ingestSourceBatch(<SourceCursorUpdate>[update]);
-        expect(await store.eventCount(), 1);
+        // The source cursor remains authoritative after Android mapping
+        // retention: an identical generation/snapshot is still a replay.
+        expect(await store.eventCount(), 0);
       },
     );
 
@@ -1162,7 +1726,7 @@ void main() {
   });
 
   group('NotificationDeliveryStore schema', () {
-    test('opens schema v1 idempotently without sensitive columns', () async {
+    test('opens schema v2 idempotently without sensitive columns', () async {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-store-',
       );
@@ -1175,7 +1739,7 @@ void main() {
       );
       await first.open();
 
-      expect(await first.schemaVersion(), 1);
+      expect(await first.schemaVersion(), 2);
       expect(
         await first.tableNames(),
         containsAll(<String>[
@@ -1196,6 +1760,7 @@ void main() {
           'object_id',
           'event_kind',
           'source_version',
+          'request_id',
           'destination_kind',
           'status',
           'android_id',
@@ -1231,7 +1796,7 @@ void main() {
         databasePath: path,
       );
       await reopened.open();
-      expect(await reopened.schemaVersion(), 1);
+      expect(await reopened.schemaVersion(), 2);
       expect(await reopened.tableColumns('delivery_event'), columns);
       await reopened.close();
     });
@@ -1247,7 +1812,7 @@ SourceCursorUpdate _updateFor(NotificationEventIdentity identity) {
     profile: identity.profile,
     sourceKind: identity.sourceKind,
     objectId: identity.objectId,
-    lastState: 'material',
+    lastState: 'completed',
     lastVersion: identity.sourceVersion,
     generation: 1,
     initialized: true,
@@ -1282,7 +1847,7 @@ SourceCursorUpdate _batchUpdate(int count) {
     profile: 'work',
     sourceKind: 'cron',
     objectId: 'snapshot-$count',
-    lastState: 'complete',
+    lastState: 'completed',
     lastVersion: 'v1',
     generation: 1,
     initialized: true,
@@ -1297,7 +1862,7 @@ SourceCursorUpdate _collisionUpdate() {
     profile: 'work',
     sourceKind: 'cron',
     objectId: 'collision-snapshot',
-    lastState: 'complete',
+    lastState: 'completed',
     lastVersion: 'v1',
     generation: 1,
     initialized: true,
@@ -1312,6 +1877,7 @@ SourceCursorUpdate _collisionUpdate() {
           sourceVersion: 'v1',
         ),
         destinationKind: 'cron_terminal',
+        jobId: 'job-a',
       ),
       DeliveryEventSpec(
         identity: NotificationEventIdentity(
@@ -1323,6 +1889,7 @@ SourceCursorUpdate _collisionUpdate() {
           sourceVersion: 'v1',
         ),
         destinationKind: 'cron_terminal',
+        jobId: 'job-b',
       ),
     ],
   );
@@ -1353,7 +1920,7 @@ _approvalUpdate() {
       profile: 'work',
       sourceKind: 'approval',
       objectId: 'snapshot',
-      lastState: 'waiting',
+      lastState: 'pending',
       lastVersion: 'v1',
       generation: 1,
       initialized: true,
@@ -1362,11 +1929,13 @@ _approvalUpdate() {
           identity: approvalA,
           destinationKind: 'approval',
           runId: 'run-a',
+          requestId: 'request-a',
         ),
         DeliveryEventSpec(
           identity: approvalB,
           destinationKind: 'approval',
           runId: 'run-b',
+          requestId: 'request-b',
         ),
       ],
     ),
@@ -1382,7 +1951,7 @@ SourceCursorUpdate _retentionUpdate() {
     profile: 'work',
     sourceKind: 'run',
     objectId: 'retention-snapshot',
-    lastState: 'complete',
+    lastState: 'completed',
     lastVersion: 'v1',
     generation: 1,
     initialized: true,

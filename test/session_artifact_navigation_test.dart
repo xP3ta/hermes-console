@@ -53,6 +53,79 @@ void main() {
     );
   });
 
+  test('artifact source uses the canonical exact aliases for opaque ids', () {
+    for (final alias in const ['_desktopMessageId', 'message_id', 'id']) {
+      final messages = <Map<String, dynamic>>[
+        {
+          'role': 'assistant',
+          'content': 'source by $alias',
+          alias: 'artifact-42',
+        },
+      ];
+
+      expect(
+        messageIndexForArtifactSource(
+          messages,
+          const SessionArtifactSource(
+            messageId: 'artifact-42',
+            messageOrdinal: 99,
+          ),
+        ),
+        0,
+        reason: alias,
+      );
+    }
+  });
+
+  test('numeric aliases never acquire a fabricated string identity', () {
+    for (final alias in const ['_desktopMessageId', 'message_id', 'id']) {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'source by $alias', alias: 42},
+      ];
+
+      expect(
+        messageIndexForArtifactSource(
+          messages,
+          const SessionArtifactSource(messageId: '42', messageOrdinal: 99),
+        ),
+        isNull,
+        reason: alias,
+      );
+    }
+  });
+
+  test('artifact Desktop enriquecido navega a su fila REST numérica', () {
+    final messages = <Map<String, dynamic>>[
+      {'id': 74, 'role': 'assistant', 'content': 'artifact durable'},
+    ];
+
+    expect(
+      messageIndexForArtifactSource(
+        messages,
+        const SessionArtifactSource(
+          messageId: 'message-74',
+          rowId: 74,
+          messageOrdinal: 99,
+        ),
+      ),
+      0,
+    );
+  });
+
+  test('artifact no confunde row numérico con message id string homónimo', () {
+    final messages = <Map<String, dynamic>>[
+      {'id': '74', 'role': 'assistant', 'content': 'otro artifact'},
+    ];
+
+    expect(
+      messageIndexForArtifactSource(
+        messages,
+        const SessionArtifactSource(rowId: 74, messageOrdinal: 0),
+      ),
+      isNull,
+    );
+  });
+
   test(
     'server ordinal ignores synthetic steer, pipeline and inflight rows',
     () {

@@ -79,6 +79,56 @@ void main() {
     },
   );
 
+  test('conserva juntas las coordenadas tipadas de la fuente', () {
+    final message = _message({
+      'role': 'assistant',
+      'message_id': 'message-row-artifact',
+      'row_id': 74,
+      'content': 'resultado',
+      'attachments': [
+        {'attachment_id': 'attachment-row', 'name': 'row.txt'},
+      ],
+    });
+
+    final snapshot = ArtifactIndex.resolve(
+      scope: _scope(),
+      transcriptRevision: 1,
+      transcript: [_entry(message, ordinal: 5)],
+      policy: _policy(),
+    );
+
+    expect(
+      snapshot.artifacts.single.primarySource.messageId,
+      'message-row-artifact',
+    );
+    expect(snapshot.artifacts.single.primarySource.rowId, 74);
+  });
+
+  test('row id mantiene estable el artefacto aunque cambie el ordinal', () {
+    final message = _message({
+      'role': 'assistant',
+      'row_id': 74,
+      'content': [
+        {'type': 'file', 'name': 'stable-row.txt'},
+      ],
+    });
+
+    final before = ArtifactIndex.resolve(
+      scope: _scope(),
+      transcriptRevision: 1,
+      transcript: [_entry(message, ordinal: 0)],
+      policy: _policy(),
+    );
+    final after = ArtifactIndex.resolve(
+      scope: _scope(),
+      transcriptRevision: 2,
+      transcript: [_entry(message, ordinal: 99, revision: 1)],
+      policy: _policy(),
+    );
+
+    expect(after.artifacts.single.id, before.artifacts.single.id);
+  });
+
   test('indexa un adjunto estructurado y nunca escanea el texto', () {
     final message = _message({
       'role': 'user',

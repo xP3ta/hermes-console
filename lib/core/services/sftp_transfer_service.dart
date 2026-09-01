@@ -63,10 +63,37 @@ class SftpTransferService {
 
   int _seq = 0;
   int _notifBaseId = 8100;
+  final Map<String, SSHClient> _activeClients = <String, SSHClient>{};
+  final Set<String> _cancelRequested = <String>{};
   static const int _chunk = 64 * 1024;
   static const Duration _operationTimeout = Duration(seconds: 30);
 
   bool get hasActive => transfers.value.any((t) => t.isRunning);
+
+  /// Cancela todas las operaciones vivas por una acción explícita del usuario
+  /// (botón Stop de la notificación dataSync). Marca el estado antes de cerrar
+  /// sockets para liberar inmediatamente el lease de foreground; cada Future
+  /// conserva su cleanup normal de parciales y notificación terminal.
+  void cancelAll() {
+    var changed = false;
+    for (final transfer in transfers.value.where((item) => item.isRunning)) {
+      _cancelRequested.add(transfer.id);
+      transfer
+        ..status = TransferStatus.error
+        ..error = 'Cancelado por el usuario';
+      _activeClients[transfer.id]?.close();
+      changed = true;
+    }
+    if (!changed) return;
+    _emit();
+    onMaybeRelease?.call();
+  }
+
+  void _throwIfCancelled(String transferId) {
+    if (_cancelRequested.contains(transferId)) {
+      throw const _SftpTransferCancelled();
+    }
+  }
 
   void _emit() => transfers.value = List.unmodifiable(transfers.value);
 
@@ -110,24 +137,31 @@ class SftpTransferService {
     _add(t);
     SSHClient? client;
     File? partial;
+    IOSink? sink;
     try {
       client = await _ssh
           .connect(connectionId, onHostKey: _refuseUnknownHostKey)
           .timeout(_operationTimeout);
+      _activeClients[t.id] = client;
+      _throwIfCancelled(t.id);
       await client.authenticated.timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       final sftp = await client.sftp().timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       final file = await sftp
           .open(remotePath, mode: SftpFileOpenMode.read)
           .timeout(_operationTimeout);
       final dir = await getApplicationDocumentsDirectory();
       final out = File('${dir.path}/$fileName');
       partial = File('${out.path}.part-${t.id}');
-      final sink = partial.openWrite();
+      sink = partial.openWrite();
       var offset = 0;
       while (totalBytes <= 0 || offset < totalBytes) {
+        _throwIfCancelled(t.id);
         final data = await file
             .readBytes(length: _chunk, offset: offset)
             .timeout(_operationTimeout);
+        _throwIfCancelled(t.id);
         if (data.isEmpty) break;
         sink.add(data);
         offset += data.length;
@@ -136,7 +170,9 @@ class SftpTransferService {
         await _progressNotif(notifId, t);
       }
       await sink.close();
+      sink = null;
       await file.close().timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       if (await out.exists()) await out.delete();
       await partial.rename(out.path);
       partial = null;
@@ -145,13 +181,20 @@ class SftpTransferService {
       await _doneNotif(notifId, t);
     } catch (e) {
       t.status = TransferStatus.error;
-      t.error = SshManager.describeError(e);
+      t.error = _cancelRequested.contains(t.id)
+          ? 'Cancelado por el usuario'
+          : SshManager.describeError(e);
       await _doneNotif(notifId, t);
     } finally {
+      try {
+        await sink?.close();
+      } catch (_) {}
       if (partial != null && await partial.exists()) {
         await partial.delete();
       }
       client?.close();
+      _activeClients.remove(t.id);
+      _cancelRequested.remove(t.id);
       _finish(t);
     }
     return t;
@@ -180,8 +223,12 @@ class SftpTransferService {
       client = await _ssh
           .connect(connectionId, onHostKey: _refuseUnknownHostKey)
           .timeout(_operationTimeout);
+      _activeClients[t.id] = client;
+      _throwIfCancelled(t.id);
       await client.authenticated.timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       sftp = await client.sftp().timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       final file = await sftp
           .open(
             partialRemote,
@@ -194,6 +241,7 @@ class SftpTransferService {
       final input = File(localPath).openRead();
       var offset = 0;
       await for (final chunk in input) {
+        _throwIfCancelled(t.id);
         var chunkOffset = 0;
         while (chunkOffset < chunk.length) {
           final end = min(chunkOffset + _chunk, chunk.length);
@@ -207,6 +255,7 @@ class SftpTransferService {
                 offset: offset,
               )
               .timeout(_operationTimeout);
+          _throwIfCancelled(t.id);
           offset += end - chunkOffset;
           chunkOffset = end;
         }
@@ -215,7 +264,9 @@ class SftpTransferService {
         await _progressNotif(notifId, t);
       }
       await file.close().timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       await sftp.rename(partialRemote, remotePath).timeout(_operationTimeout);
+      _throwIfCancelled(t.id);
       t.status = TransferStatus.done;
       await _doneNotif(notifId, t);
     } catch (e) {
@@ -223,10 +274,14 @@ class SftpTransferService {
         await sftp?.remove(partialRemote).timeout(_operationTimeout);
       } catch (_) {}
       t.status = TransferStatus.error;
-      t.error = SshManager.describeError(e);
+      t.error = _cancelRequested.contains(t.id)
+          ? 'Cancelado por el usuario'
+          : SshManager.describeError(e);
       await _doneNotif(notifId, t);
     } finally {
       client?.close();
+      _activeClients.remove(t.id);
+      _cancelRequested.remove(t.id);
       _finish(t);
     }
     return t;
@@ -259,4 +314,8 @@ class SftpTransferService {
       ok: ok,
     );
   }
+}
+
+class _SftpTransferCancelled implements Exception {
+  const _SftpTransferCancelled();
 }

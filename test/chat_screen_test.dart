@@ -266,6 +266,7 @@ class _UiRewindGateway
   Object? connectError;
   bool connected = true;
   bool _compressionAccepted = false;
+  DesktopSessionSnapshot? compressedSnapshot;
   int contextBreakdownCalls = 0;
 
   @override
@@ -308,7 +309,7 @@ class _UiRewindGateway
     final error = resumeExistingError;
     if (error != null) throw error;
     return _compressionAccepted
-        ? _uiCompressedSnapshot()
+        ? compressedSnapshot ?? _uiCompressedSnapshot()
         : DesktopSessionSnapshot(
             runtimeSessionId: 'runtime-ui-test',
             storedSessionId: storedSessionId,
@@ -451,6 +452,7 @@ class _UiRewindGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   void emit(String type, [Map<String, dynamic> payload = const {}]) {
@@ -734,6 +736,7 @@ class _SubmissionGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override
@@ -1330,6 +1333,7 @@ void main() {
   List<Map<String, dynamic>> scrollableChatHistory(String scope) =>
       List.generate(12, (index) {
         return {
+          'id': '$scope-message-$index',
           'role': index.isEven ? 'assistant' : 'user',
           'content':
               '$scope histórico $index. '
@@ -1341,6 +1345,19 @@ void main() {
     of: find.byType(ChatScrollInteractionGuard),
     matching: find.byType(ListView),
   );
+
+  Future<void> triggerChatRefresh(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    final dialog = find.byKey(const ValueKey('chat-control-dialog'));
+    expect(dialog, findsOneWidget);
+    await tester.tap(
+      find.descendant(of: dialog, matching: find.byIcon(Icons.refresh_rounded)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+  }
 
   Future<void> pumpDesktopDelta(
     WidgetTester tester,
@@ -1482,22 +1499,18 @@ void main() {
     });
   }
 
-  attachmentValidationFenceTest(
-    'de fichero ausente',
-    (temp) async {
-      final file = File('${temp.path}/ausente.pdf');
-      await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
-      return AttachmentDraft(
-        localId: 'missing',
-        type: AttachmentType.document,
-        name: 'ausente.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: await file.length(),
-        localPath: file.path,
-      );
-    },
-    invalidateBeforeSend: (attachment) => File(attachment.localPath).delete(),
-  );
+  attachmentValidationFenceTest('de fichero ausente', (temp) async {
+    final file = File('${temp.path}/ausente.pdf');
+    await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
+    return AttachmentDraft(
+      localId: 'missing',
+      type: AttachmentType.document,
+      name: 'ausente.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: await file.length(),
+      localPath: file.path,
+    );
+  }, invalidateBeforeSend: (attachment) => File(attachment.localPath).delete());
 
   attachmentValidationFenceTest('de imagen corrupta', (temp) async {
     final image = File('${temp.path}/corrupta.gif');
@@ -1720,6 +1733,327 @@ void main() {
     expect(historicalFiles.single.readAsBytesSync(), file.readAsBytesSync());
     gateway.emitComplete();
     await tester.pump(const Duration(milliseconds: 50));
+  });
+
+  testWidgets(
+    'refresh pendiente conserva las burbujas existentes sin un frame vacío',
+    (tester) async {
+      final refresh = Completer<List<Map<String, dynamic>>>();
+      const existingNewestFirst = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'Respuesta visible durante refresh'},
+        {'role': 'user', 'content': 'Pregunta visible durante refresh'},
+      ];
+
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-keeps-transcript'),
+        messages: existingNewestFirst,
+        messagesLoaded: false,
+        storedMessageLoader: (_, _) => refresh.future,
+      );
+
+      expect(find.text('Respuesta visible durante refresh'), findsOneWidget);
+      expect(find.text('Pregunta visible durante refresh'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-refresh-progress')),
+        findsOneWidget,
+      );
+
+      refresh.complete(existingNewestFirst.reversed.toList(growable: false));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Respuesta visible durante refresh'), findsOneWidget);
+      expect(find.text('Pregunta visible durante refresh'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'refresh rechazado por streaming no invalida el vuelo pendiente',
+    (tester) async {
+      final refresh = Completer<List<Map<String, dynamic>>>();
+      const existingNewestFirst = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'Respuesta previa al streaming'},
+        {'role': 'user', 'content': 'Pregunta previa al streaming'},
+      ];
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-rejected-streaming'),
+        messages: existingNewestFirst,
+        messagesLoaded: false,
+        storedMessageLoader: (_, _) => refresh.future,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-refresh-progress')),
+        findsOneWidget,
+      );
+
+      chat.state = ChatPipelineState.streaming;
+      await triggerChatRefresh(tester);
+      chat.state = ChatPipelineState.idle;
+
+      refresh.complete(existingNewestFirst.reversed.toList(growable: false));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('chat-refresh-progress')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-refresh-error')), findsNothing);
+      expect(find.text('Respuesta previa al streaming'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'refresh fallido conserva las burbujas y superpone un error seguro',
+    (tester) async {
+      final refresh = Completer<List<Map<String, dynamic>>>();
+      const existingNewestFirst = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'Respuesta visible tras error'},
+        {'role': 'user', 'content': 'Pregunta visible tras error'},
+      ];
+
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-error-keeps-transcript'),
+        messages: existingNewestFirst,
+        messagesLoaded: false,
+        storedMessageLoader: (_, _) => refresh.future,
+      );
+      refresh.completeError(StateError('raw injected refresh failure'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Respuesta visible tras error'), findsOneWidget);
+      expect(find.text('Pregunta visible tras error'), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-refresh-error')), findsOneWidget);
+      expect(find.textContaining('raw injected'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'solo el refresh vigente puede publicar estado al resolverse en orden inverso',
+    (tester) async {
+      final first = Completer<List<Map<String, dynamic>>>();
+      final second = Completer<List<Map<String, dynamic>>>();
+      final loads = [first, second];
+      var loadCalls = 0;
+
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-latest-wins'),
+        messages: const [
+          {'role': 'assistant', 'content': 'Transcript previo'},
+          {'role': 'user', 'content': 'Pregunta previa'},
+        ],
+        messagesLoaded: false,
+        storedMessageLoader: (_, _) => loads[loadCalls++].future,
+      );
+      expect(loadCalls, 1);
+
+      await triggerChatRefresh(tester);
+      expect(loadCalls, 2);
+
+      second.complete(const [
+        {'role': 'user', 'content': 'Pregunta vigente'},
+        {'role': 'assistant', 'content': 'Respuesta vigente'},
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('Respuesta vigente'), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-refresh-progress')), findsNothing);
+
+      first.completeError(StateError('refresh obsoleto'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Respuesta vigente'), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-refresh-error')), findsNothing);
+      expect(find.textContaining('refresh obsoleto'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'refresh con inserciones nuevas conserva la burbuja visible del lector',
+    (tester) async {
+      final refresh = Completer<List<Map<String, dynamic>>>();
+      final history = scrollableChatHistory('ancla refresh');
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-visible-anchor'),
+        messages: history,
+        storedMessageLoader: (_, _) => refresh.future,
+      );
+
+      final list = chatListFinder();
+      final controller = tester.widget<ListView>(list).controller!;
+      controller.jumpTo(controller.position.maxScrollExtent * 0.55);
+      await tester.pump();
+      expect(controller.position.pixels, greaterThan(100));
+
+      final viewport = tester.getRect(list);
+      Finder? marker;
+      int? markerIndex;
+      for (var index = 0; index < history.length; index++) {
+        final candidate = find.textContaining(
+          'ancla refresh histórico $index.',
+        );
+        if (candidate.evaluate().isEmpty) continue;
+        final rect = tester.getRect(candidate.first);
+        if (rect.top >= viewport.top && rect.bottom <= viewport.bottom) {
+          marker = candidate.first;
+          markerIndex = index;
+          break;
+        }
+      }
+      expect(marker, isNotNull, reason: 'el historial debe exponer un ancla');
+      final markerY = tester.getTopLeft(marker!).dy;
+
+      await triggerChatRefresh(tester);
+      refresh.complete([
+        ...history.reversed.map(Map<String, dynamic>.from),
+        const {'role': 'user', 'content': 'Pregunta nueva del refresh'},
+        const {
+          'role': 'assistant',
+          'content':
+              'Respuesta nueva insertada. Respuesta nueva insertada. '
+              'Respuesta nueva insertada. Respuesta nueva insertada.',
+        },
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump();
+
+      final refreshedMarker = find.textContaining(
+        'ancla refresh histórico $markerIndex.',
+      );
+      expect(refreshedMarker, findsOneWidget);
+      expect(
+        tester.getTopLeft(refreshedMarker).dy,
+        closeTo(markerY, 1),
+        reason: 'la burbuja visible, no el offset bruto, debe quedar anclada',
+      );
+    },
+  );
+
+  testWidgets(
+    'desplazamiento voluntario durante refresh reemplaza el ancla inicial',
+    (tester) async {
+      final refresh = Completer<List<Map<String, dynamic>>>();
+      final history = List.generate(24, (index) {
+        return {
+          'id': 'reader-refresh-message-$index',
+          'role': index.isEven ? 'assistant' : 'user',
+          'content':
+              'lector durante refresh histórico $index. '
+              '${List.filled(18, 'Contenido estable.').join(' ')}',
+        };
+      });
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-user-scroll'),
+        messages: history,
+        storedMessageLoader: (_, _) => refresh.future,
+      );
+
+      final list = chatListFinder();
+      final controller = tester.widget<ListView>(list).controller!;
+      controller.jumpTo(controller.position.maxScrollExtent * 0.65);
+      await tester.pump();
+      final offsetBeforeGesture = controller.position.pixels;
+      expect(offsetBeforeGesture, greaterThan(100));
+      await triggerChatRefresh(tester);
+      chat.debugEmitMessagesHydrated();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.drag(list, const Offset(0, -220));
+      await tester.pump();
+      expect(
+        (controller.position.pixels - offsetBeforeGesture).abs(),
+        greaterThan(100),
+      );
+
+      final viewport = tester.getRect(list);
+      Finder? marker;
+      int? markerIndex;
+      for (var index = 0; index < history.length; index++) {
+        final candidate = find.textContaining(
+          'lector durante refresh histórico $index.',
+        );
+        if (candidate.evaluate().isEmpty) continue;
+        final rect = tester.getRect(candidate.first);
+        if (rect.top >= viewport.top && rect.bottom <= viewport.bottom) {
+          marker = candidate.first;
+          markerIndex = index;
+          break;
+        }
+      }
+      expect(
+        marker,
+        isNotNull,
+        reason: 'el gesto debe dejar una burbuja visible',
+      );
+      final markerYAfterGesture = tester.getTopLeft(marker!).dy;
+
+      refresh.complete([
+        ...history.reversed.map(Map<String, dynamic>.from),
+        const {'role': 'user', 'content': 'Pregunta llegada tras el gesto'},
+        const {
+          'role': 'assistant',
+          'content':
+              'Respuesta llegada tras el gesto. Respuesta llegada tras el gesto. '
+              'Respuesta llegada tras el gesto.',
+        },
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump();
+
+      final refreshedMarker = find.textContaining(
+        'lector durante refresh histórico $markerIndex.',
+      );
+      expect(refreshedMarker, findsOneWidget);
+      expect(
+        tester.getTopLeft(refreshedMarker).dy,
+        closeTo(markerYAfterGesture, 1),
+        reason: 'el refresh no puede deshacer el scroll posterior del lector',
+      );
+    },
+  );
+
+  testWidgets('éxito stale no publica sobre el refresh vigente pendiente', (
+    tester,
+  ) async {
+    final first = Completer<List<Map<String, dynamic>>>();
+    final second = Completer<List<Map<String, dynamic>>>();
+    final loads = [first, second];
+    var loadCalls = 0;
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-refresh-stale-success'),
+      messages: const [
+        {'role': 'assistant', 'content': 'Transcript previo al stale'},
+        {'role': 'user', 'content': 'Pregunta previa al stale'},
+      ],
+      messagesLoaded: false,
+      storedMessageLoader: (_, _) => loads[loadCalls++].future,
+    );
+    await triggerChatRefresh(tester);
+
+    first.complete(const [
+      {'role': 'user', 'content': 'Pregunta stale'},
+      {'role': 'assistant', 'content': 'Respuesta stale'},
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byKey(const ValueKey('chat-refresh-progress')), findsOneWidget);
+
+    second.complete(const [
+      {'role': 'user', 'content': 'Pregunta vigente final'},
+      {'role': 'assistant', 'content': 'Respuesta vigente final'},
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('Respuesta vigente final'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-refresh-progress')), findsNothing);
   });
 
   testWidgets('renderiza el campo de entrada y el botón de acción', (
@@ -3912,6 +4246,64 @@ void main() {
     },
   );
 
+  testWidgets('/compress no reemplaza el chat por un snapshot parcial', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()
+      ..compressedSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-ui-test',
+        storedSessionId: 'stored-ui-compressed',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'message_id': 'partial-compression-row',
+            'role': 'assistant',
+            'content': 'fila parcial',
+          })!,
+        ],
+        messageCount: 20,
+      );
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-compress-partial'),
+      messagesLoaded: false,
+    );
+    chat.messages.addAll(const [
+      {
+        'id': 'visible-answer',
+        'role': 'assistant',
+        'content': 'respuesta visible preservada',
+      },
+      {
+        'id': 'visible-user',
+        'role': 'user',
+        'content': 'pregunta visible preservada',
+      },
+    ]);
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), '/compress parcial');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(
+      chat.messages.any((message) => message['id'] == 'visible-answer'),
+      isTrue,
+    );
+    expect(
+      chat.messages.any(
+        (message) => message['_desktopMessageId'] == 'partial-compression-row',
+      ),
+      isFalse,
+    );
+    expect(gateway.submissions, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('/compress usa command.dispatch solo si slash.exec falla', (
     tester,
   ) async {
@@ -5693,6 +6085,34 @@ void main() {
       await tester.pump(const Duration(milliseconds: 33));
     }
     expect(chat.isStreaming, isFalse);
+  });
+
+  testWidgets('rewind usa directamente el id numérico de una fila REST', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-rest-row-rewrite'),
+      messages: const [
+        {'id': 74, 'role': 'assistant', 'content': 'respuesta durable'},
+        {'id': 73, 'role': 'user', 'content': 'pregunta durable'},
+      ],
+    );
+
+    await chat.rewrite(
+      userOrdinal: 0,
+      text: 'pregunta durable corregida',
+      model: 'test-model',
+    );
+
+    expect(gateway.resolutionCalls, isEmpty);
+    expect(gateway.rewindRowIds, [73]);
+    gateway.emit('message.complete', {'text': 'respuesta corregida'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
   });
 
   testWidgets(

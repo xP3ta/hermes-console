@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -8,9 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
+import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/utils/chat_turn.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -109,6 +112,7 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override
@@ -205,6 +209,9 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   Object? createForFirstSubmitError;
   Completer<DesktopSessionSnapshot>? recoveryExistingGate;
   Object? resumeExistingError;
+  DesktopSessionSnapshot? initialSnapshot;
+  DesktopSessionSnapshot? recoverySnapshot;
+  final List<({String runtimeId, String text})> steers = [];
 
   @override
   Future<DesktopSessionSnapshot> resumeExisting(
@@ -216,11 +223,12 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
     resumeExistingCalls++;
     resumeExistingStoredIds.add(storedSessionId);
     if (resumeExistingError case final error?) throw error;
-    return DesktopSessionBinding(
-      runtimeSessionId: 'runtime-existing-$resumeExistingCalls',
-      storedSessionId: storedSessionId,
-      created: false,
-    );
+    return initialSnapshot ??
+        DesktopSessionBinding(
+          runtimeSessionId: 'runtime-existing-$resumeExistingCalls',
+          storedSessionId: storedSessionId,
+          created: false,
+        );
   }
 
   @override
@@ -248,17 +256,23 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
     if (resumeExistingError case final error?) return Future.error(error);
     return recoveryExistingGate?.future ??
         Future.value(
-          DesktopSessionBinding(
-            runtimeSessionId: 'runtime-recovery-$resumeExistingCalls',
-            storedSessionId: storedSessionId,
-            created: false,
-          ),
+          recoverySnapshot ??
+              DesktopSessionBinding(
+                runtimeSessionId: 'runtime-recovery-$resumeExistingCalls',
+                storedSessionId: storedSessionId,
+                created: false,
+              ),
         );
   }
 
   @override
   void commitRecoveryRuntime(String runtimeSessionId) {
     committedRecoveryRuntimeIds.add(runtimeSessionId);
+  }
+
+  @override
+  Future<void> steer(String runtimeSessionId, String text) async {
+    steers.add((runtimeId: runtimeSessionId, text: text));
   }
 }
 
@@ -313,6 +327,16 @@ class _ControlledApiClient extends ApiClient {
   }
 
   @override
+  Future<SessionMessagesPage> getMessagesPage(
+    String sessionId, {
+    int limit = 120,
+    int offset = 0,
+  }) async => SessionMessagesPage(
+    messages: await getMessages(sessionId),
+    pagination: null,
+  );
+
+  @override
   void close() {
     closed = true;
   }
@@ -332,6 +356,88 @@ class _CompletedTranscriptApi extends ApiClient {
   Future<List<Map<String, dynamic>>> getMessages(String sessionId) async {
     calls++;
     return transcript;
+  }
+
+  @override
+  void close() {}
+}
+
+class _ToolThenFinalTranscriptApi extends ApiClient {
+  _ToolThenFinalTranscriptApi()
+    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+
+  final firstRead = Completer<void>();
+  final finalReady = Completer<void>();
+  int calls = 0;
+
+  @override
+  Future<List<Map<String, dynamic>>> getMessages(String sessionId) async {
+    calls++;
+    if (calls == 1) {
+      if (!firstRead.isCompleted) firstRead.complete();
+      return const [
+        {'message_id': 'tool-user', 'role': 'user', 'content': 'usa tool'},
+        {
+          'message_id': 'tool-call',
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'call-1', 'name': 'lookup'},
+          ],
+        },
+        {
+          'message_id': 'tool-result',
+          'role': 'tool',
+          'content': 'resultado intermedio',
+        },
+      ];
+    }
+    await finalReady.future;
+    return const [
+      {'message_id': 'tool-user', 'role': 'user', 'content': 'usa tool'},
+      {
+        'message_id': 'tool-call',
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [
+          {'id': 'call-1', 'name': 'lookup'},
+        ],
+      },
+      {
+        'message_id': 'tool-result',
+        'role': 'tool',
+        'content': 'resultado intermedio',
+      },
+      {
+        'message_id': 'tool-final',
+        'role': 'assistant',
+        'content': 'respuesta final durable',
+      },
+    ];
+  }
+
+  @override
+  void close() {}
+}
+
+class _PartialTailApi extends ApiClient {
+  _PartialTailApi(this.rows)
+    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+
+  final List<Map<String, dynamic>> rows;
+  final List<int> requestedOffsets = [];
+
+  @override
+  Future<SessionMessagesPage> getMessagesPage(
+    String sessionId, {
+    int limit = 120,
+    int offset = 0,
+  }) async {
+    requestedOffsets.add(offset);
+    return SessionMessagesPage(
+      messages: rows,
+      pagination: {'limit': limit, 'offset': offset},
+    );
   }
 
   @override
@@ -424,6 +530,16 @@ Future<void> _expectRecoveryErrorClassification(
       terminal ? ChatPipelineState.failed : ChatPipelineState.connecting,
     );
     expect(gateway.connectCalls, 2);
+    if (terminal) {
+      final failure = chat.messages.firstWhere(
+        (message) => message['role'] == 'assistant_error',
+      );
+      expect(
+        failure['content'],
+        'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      );
+      expect(failure['content'], isNot(contains(error.toString())));
+    }
   } finally {
     chat.dispose();
   }
@@ -472,9 +588,1789 @@ ActiveChat _recoverableChat(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('turno reanudado sin outbox reconecta tras socket drop', () async {
+    final recoveryGate = Completer<DesktopSessionSnapshot>();
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-desktop-1',
+        storedSessionId: 'session-desktop-owned',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'role': 'user',
+            'content': 'turno iniciado en Desktop',
+          })!,
+        ],
+        inflight: DesktopInflightTurn(
+          user: 'turno iniciado en Desktop',
+          streaming: true,
+        ),
+        running: true,
+      )
+      ..recoveryExistingGate = recoveryGate;
+    final chat = _recoverableChat('desktop-owned', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    expect(chat.isStreaming, isTrue);
+    expect(chat.desktopRuntimeSessionId, 'runtime-desktop-1');
+    gateway.emit(
+      'tool.start',
+      sessionId: 'runtime-desktop-1',
+      payload: const {'name': 'terminal'},
+    );
+    await _waitUntil(() => chat.trace.isNotEmpty);
+
+    gateway.drop();
+    await _waitUntil(() => gateway.resumeExistingCalls == 2);
+    expect(chat.state, ChatPipelineState.connecting);
+
+    final steer = chat.steer('ajuste durante recovery');
+    await Future<void>.delayed(Duration.zero);
+    expect(gateway.steers, isEmpty);
+    recoveryGate.complete(
+      DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-desktop-2',
+        storedSessionId: 'session-desktop-owned',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'role': 'user',
+            'content': 'turno iniciado en Desktop',
+          })!,
+        ],
+        inflight: DesktopInflightTurn(
+          user: 'turno iniciado en Desktop',
+          streaming: true,
+        ),
+        running: true,
+      ),
+    );
+    await steer.timeout(const Duration(seconds: 1));
+    expect(gateway.connectCalls, 2);
+    expect(gateway.committedRecoveryRuntimeIds, ['runtime-desktop-2']);
+    expect(gateway.steers, [
+      (runtimeId: 'runtime-desktop-2', text: 'ajuste durante recovery'),
+    ]);
+
+    gateway.emit(
+      'tool.complete',
+      sessionId: 'runtime-desktop-2',
+      payload: const {'name': 'terminal', 'preview': 'ok'},
+    );
+    gateway.emit(
+      'message.complete',
+      sessionId: 'runtime-desktop-2',
+      payload: const {'text': 'respuesta tras reconectar'},
+    );
+    await _waitUntil(() => chat.state == ChatPipelineState.completed);
+    expect(chat.assistantContent, 'respuesta tras reconectar');
+    expect(
+      chat.messages.any(
+        (message) => message['content'].toString().contains('StateError'),
+      ),
+      isFalse,
+    );
+  });
+
+  test(
+    'snapshot terminal de recovery backfillea y sella actividad viva',
+    () async {
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-1',
+          storedSessionId: 'session-terminal-snapshot',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'role': 'user',
+              'content': 'termina fuera del socket',
+            })!,
+          ],
+          inflight: DesktopInflightTurn(
+            user: 'termina fuera del socket',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-2',
+          storedSessionId: 'session-terminal-snapshot',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'role': 'user',
+              'content': 'termina fuera del socket',
+            })!,
+            DesktopSessionMessage.tryParse(const {
+              'role': 'assistant',
+              'content': 'respuesta durable final',
+            })!,
+          ],
+          running: false,
+          status: 'completed',
+        );
+      final chat = _recoverableChat('terminal-snapshot', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      gateway.emit(
+        'tool.start',
+        sessionId: 'runtime-terminal-1',
+        payload: const {'name': 'terminal'},
+      );
+      gateway.emit(
+        'subagent.start',
+        sessionId: 'runtime-terminal-1',
+        payload: const {
+          'subagent_id': 'child-terminal-snapshot',
+          'status': 'running',
+        },
+      );
+      await _waitUntil(
+        () => chat.trace.isNotEmpty && chat.subagentActivities.isNotEmpty,
+      );
+
+      gateway.drop();
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
+
+      expect(chat.assistantContent, 'respuesta durable final');
+      expect(chat.trace.single.status, 'completed');
+      expect(
+        chat.subagentActivities.single.phase,
+        SubagentActivityPhase.completed,
+      );
+      expect(
+        chat.messages.any(
+          (message) => message['content'].toString().contains('StateError'),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'snapshot terminal parcial espera el transcript durable y no sella el parcial',
+    () async {
+      var transcriptCalls = 0;
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-partial-1',
+          storedSessionId: 'session-terminal-partial',
+          created: false,
+          messagesProvided: true,
+          messages: const [],
+          inflight: DesktopInflightTurn(
+            user: 'termina con snapshot parcial',
+            assistant: 'respuesta local incompleta',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-partial-2',
+          storedSessionId: 'session-terminal-partial',
+          created: false,
+          messagesProvided: true,
+          messageCount: 300,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'terminal-partial-user',
+              'role': 'user',
+              'content': 'termina con snapshot parcial',
+            })!,
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'terminal-partial-answer',
+              'role': 'assistant',
+              'content': 'respuesta durable definitiva',
+            })!,
+          ],
+          running: false,
+          status: 'completed',
+        );
+      final chat = _recoverableChat(
+        'terminal-partial',
+        gateway,
+        storedMessageLoader: (_, _) async {
+          if (transcriptCalls++ == 0) return const [];
+          return const [
+            {
+              'message_id': 'terminal-partial-user',
+              'role': 'user',
+              'content': 'termina con snapshot parcial',
+            },
+            {
+              'message_id': 'terminal-partial-answer',
+              'role': 'assistant',
+              'content': 'respuesta durable definitiva',
+            },
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+      expect(chat.assistantContent, 'respuesta local incompleta');
+
+      gateway.drop();
+      await _waitUntil(
+        () => chat.state == ChatPipelineState.completed,
+        timeout: const Duration(seconds: 6),
+      );
+
+      expect(chat.assistantContent, 'respuesta durable definitiva');
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'respuesta local incompleta',
+        ),
+        isFalse,
+      );
+      expect(chat.hasEarlierMessages, isFalse);
+    },
+  );
+
+  test(
+    'snapshot terminal parcial sin user conserva el prompt hasta REST completo',
+    () async {
+      final transcriptGate = Completer<List<Map<String, dynamic>>>();
+      var transcriptCalls = 0;
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-no-user-1',
+          storedSessionId: 'session-terminal-no-user',
+          created: false,
+          messagesProvided: true,
+          messages: const [],
+          inflight: DesktopInflightTurn(
+            user: 'prompt que no puede desaparecer',
+            assistant: 'parcial todavía visible',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-no-user-2',
+          storedSessionId: 'session-terminal-no-user',
+          created: false,
+          messagesProvided: true,
+          messageCount: 300,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'terminal-no-user-final',
+              'role': 'assistant',
+              'content': 'final cuya página omitió el user',
+            })!,
+          ],
+          running: false,
+          status: 'completed',
+        );
+      final chat = _recoverableChat(
+        'terminal-no-user',
+        gateway,
+        storedMessageLoader: (_, _) {
+          if (transcriptCalls++ == 0) {
+            return Future.value(const []);
+          }
+          return transcriptGate.future;
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-terminal-no-user-2',
+        ),
+      );
+
+      expect(chat.state, isNot(ChatPipelineState.completed));
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'prompt que no puede desaparecer',
+        ),
+        isTrue,
+      );
+      transcriptGate.complete(const [
+        {
+          'message_id': 'terminal-no-user-current',
+          'role': 'user',
+          'content': 'prompt que no puede desaparecer',
+        },
+        {
+          'message_id': 'terminal-no-user-final',
+          'role': 'assistant',
+          'content': 'final cuya página omitió el user',
+        },
+      ]);
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
+      expect(chat.assistantContent, 'final cuya página omitió el user');
+    },
+  );
+
+  test(
+    'snapshot terminal parcial sin assistant final no sella un tool intermedio',
+    () async {
+      final transcriptGate = Completer<List<Map<String, dynamic>>>();
+      var transcriptCalls = 0;
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-tool-tail-1',
+          storedSessionId: 'session-terminal-tool-tail',
+          created: false,
+          messagesProvided: true,
+          messages: const [],
+          inflight: DesktopInflightTurn(
+            user: 'espera el assistant final',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-tool-tail-2',
+          storedSessionId: 'session-terminal-tool-tail',
+          created: false,
+          messagesProvided: true,
+          messageCount: 300,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'terminal-tool-tail-user',
+              'role': 'user',
+              'content': 'espera el assistant final',
+            })!,
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'terminal-tool-tail-call',
+              'role': 'assistant',
+              'content': '',
+              'tool_calls': [
+                {
+                  'id': 'call-intermediate',
+                  'function': {'name': 'search', 'arguments': '{}'},
+                },
+              ],
+            })!,
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'terminal-tool-tail-result',
+              'role': 'tool',
+              'tool_call_id': 'call-intermediate',
+              'content': 'resultado aún intermedio',
+            })!,
+          ],
+          running: false,
+          status: 'completed',
+        );
+      final chat = _recoverableChat(
+        'terminal-tool-tail',
+        gateway,
+        storedMessageLoader: (_, _) {
+          if (transcriptCalls++ == 0) {
+            return Future.value(const []);
+          }
+          return transcriptGate.future;
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-terminal-tool-tail-2',
+        ),
+      );
+
+      expect(chat.state, isNot(ChatPipelineState.completed));
+      transcriptGate.complete(const [
+        {
+          'message_id': 'terminal-tool-tail-user',
+          'role': 'user',
+          'content': 'espera el assistant final',
+        },
+        {
+          'message_id': 'terminal-tool-tail-final',
+          'role': 'assistant',
+          'content': 'assistant final ya durable',
+        },
+      ]);
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
+      expect(chat.assistantContent, 'assistant final ya durable');
+    },
+  );
+
+  test('snapshot fallido de recovery no expone el error técnico', () async {
+    const secret = '/home/private-user/session-token';
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-private-failure-1',
+        storedSessionId: 'session-private-failure',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'message_id': 'private-failure-user',
+            'role': 'user',
+            'content': 'turno privado',
+          })!,
+        ],
+        inflight: DesktopInflightTurn(user: 'turno privado', streaming: true),
+        running: true,
+      )
+      ..recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-private-failure-2',
+        storedSessionId: 'session-private-failure',
+        created: false,
+        messagesProvided: false,
+        inflight: DesktopInflightTurn(
+          user: 'turno privado',
+          error: 'StateError: $secret',
+          status: 'error',
+          recoverable: true,
+        ),
+        running: false,
+        status: 'error',
+      );
+    final chat = _recoverableChat('private-recovery-failure', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    gateway.drop();
+    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+
+    final error = chat.messages.firstWhere(
+      (message) => message['role'] == 'assistant_error',
+    );
+    expect(
+      error['content'],
+      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+    );
+    expect(
+      chat.messages.expand((message) => message.values).join(' '),
+      isNot(contains(secret)),
+    );
+  });
+
+  test(
+    'recovery sin mensajes no trata una cola parcial como transcript completo',
+    () async {
+      final partialTail = <Map<String, dynamic>>[
+        const {
+          'id': 'partial-oldest-user',
+          'role': 'user',
+          'content': 'prompt repetido en una cola parcial',
+        },
+        const {
+          'id': 'legitimate-tail-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima visible',
+        },
+        for (var index = 0; index < 118; index++)
+          {
+            'id': 'partial-system-$index',
+            'role': 'system',
+            'content': 'contexto parcial $index',
+          },
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-partial-1',
+          storedSessionId: 'session-recovery-partial',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-partial-2',
+          storedSessionId: 'session-recovery-partial',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'recovery-partial',
+        gateway,
+        api: _PartialTailApi(partialTail),
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido en una cola parcial',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any(
+          (message) => message['id'] == 'legitimate-tail-answer',
+        ),
+        isTrue,
+      );
+
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains('runtime-partial-2'),
+      );
+
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any(
+          (message) => message['id'] == 'legitimate-tail-answer',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere((message) => message['id'] == 'partial-oldest-user')
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'snapshot con fila descartada no aplica firstUser al prompt repetido visible',
+    () async {
+      final snapshot = DesktopSessionSnapshot.fromJson(
+        const {
+          'session_id': 'runtime-malformed-transcript',
+          'session_key': 'session-malformed-transcript',
+          'messages': [
+            {
+              'message_id': 'cancelled-user-malformed',
+              'content': 'prompt repetido',
+            },
+            {
+              'message_id': 'old-answer',
+              'role': 'assistant',
+              'content': 'respuesta del turno anterior',
+            },
+            {
+              'message_id': 'legitimate-user',
+              'role': 'user',
+              'content': 'prompt repetido',
+            },
+            {
+              'message_id': 'legitimate-answer',
+              'role': 'assistant',
+              'content': 'respuesta legítima que debe seguir visible',
+            },
+          ],
+        },
+        requestedStoredSessionId: 'session-malformed-transcript',
+        created: false,
+        method: 'session.resume',
+      );
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = snapshot;
+      final chat = _recoverableChat(
+        'malformed-transcript',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(content: 'prompt repetido', firstUser: true),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['_desktopMessageId'] == 'legitimate-answer' &&
+              message['content'] ==
+                  'respuesta legítima que debe seguir visible',
+        ),
+        isTrue,
+      );
+      final repeatedUser = chat.messages.singleWhere(
+        (message) => message['_desktopMessageId'] == 'legitimate-user',
+      );
+      expect(repeatedUser.containsKey('_cancelledUser'), isFalse);
+    },
+  );
+
+  test(
+    'recovery hydrating conserva la cola parcial hasta tener historial completo',
+    () async {
+      final partialTail = <Map<String, dynamic>>[
+        const {
+          'id': 'hydrating-oldest-user',
+          'role': 'user',
+          'content': 'prompt visible durante hydration',
+        },
+        const {
+          'id': 'hydrating-legitimate-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima durante hydration',
+        },
+        for (var index = 0; index < 118; index++)
+          {
+            'id': 'hydrating-system-$index',
+            'role': 'system',
+            'content': 'contexto hydrating $index',
+          },
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-hydrating-1',
+          storedSessionId: 'session-recovery-hydrating',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo durante hydration',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-hydrating-2',
+          storedSessionId: 'session-recovery-hydrating',
+          created: false,
+          messagesProvided: true,
+          messageCount: 300,
+          hydrating: true,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo durante hydration',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'recovery-hydrating',
+        gateway,
+        api: _PartialTailApi(partialTail),
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt visible durante hydration',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+      gateway.drop();
+      await _waitUntil(
+        () =>
+            gateway.committedRecoveryRuntimeIds.contains('runtime-hydrating-2'),
+      );
+
+      expect(chat.isHydratingDesktopHistory, isTrue);
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any(
+          (message) => message['id'] == 'hydrating-legitimate-answer',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere((message) => message['id'] == 'hydrating-oldest-user')
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+
+      partialTail.add(const {
+        'id': 'hydrated-final-tail-answer',
+        'role': 'assistant',
+        'content': 'cola final adoptada tras recovery',
+      });
+      gateway.emit(
+        'session.resume_progress',
+        sessionId: 'runtime-hydrating-2',
+        payload: const {'status': 'complete', 'message_count': 301},
+      );
+      await _waitUntil(
+        () => chat.messages.any(
+          (message) => message['id'] == 'hydrated-final-tail-answer',
+        ),
+      );
+
+      expect(chat.isHydratingDesktopHistory, isFalse);
+      expect(
+        chat.messages.firstWhere(
+          (message) => message['id'] == 'hydrated-final-tail-answer',
+        )['content'],
+        'cola final adoptada tras recovery',
+      );
+    },
+  );
+
+  test(
+    'recovery hydrating degrada un fallback antes completo sin borrarlo',
+    () async {
+      final initialRows = <DesktopSessionMessage>[
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-complete-user',
+          'role': 'user',
+          'content': 'pregunta durable anterior',
+        })!,
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-complete-answer',
+          'role': 'assistant',
+          'content': 'respuesta durable anterior',
+        })!,
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-complete-before-hydrating',
+          storedSessionId: 'session-complete-before-hydrating',
+          created: false,
+          messagesProvided: true,
+          messages: initialRows,
+          messageCount: 2,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-recovery-now-hydrating',
+          storedSessionId: 'session-complete-before-hydrating',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'partial-during-recovery',
+              'role': 'user',
+              'content': 'ventana parcial durante recovery',
+            })!,
+          ],
+          messageCount: 300,
+          hydrating: true,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat('complete-to-hydrating', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+      expect(chat.hasEarlierMessages, isFalse);
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-recovery-now-hydrating',
+        ),
+      );
+
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['_desktopMessageId'] == 'recovery-complete-answer',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'recovery omitido con count menor degrada el fallback completo',
+    () async {
+      final initialRows = <DesktopSessionMessage>[
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-compacted-user',
+          'role': 'user',
+          'content': 'prompt original',
+        })!,
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-compacted-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima tras recovery',
+        })!,
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-before-recovery-compaction',
+          storedSessionId: 'session-recovery-smaller-count',
+          created: false,
+          messagesProvided: true,
+          messages: initialRows,
+          messageCount: 2,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-after-recovery-compaction',
+          storedSessionId: 'session-recovery-smaller-count',
+          created: false,
+          messagesProvided: false,
+          messageCount: 1,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'recovery-smaller-count',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido tras compactación',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+      expect(chat.hasEarlierMessages, isFalse);
+      final userIndex = chat.messages.indexWhere(
+        (message) => message['_desktopMessageId'] == 'recovery-compacted-user',
+      );
+      chat.messages[userIndex] = {
+        ...chat.messages[userIndex],
+        'content': 'prompt repetido tras compactación',
+      };
+
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-after-recovery-compaction',
+        ),
+      );
+
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['_desktopMessageId'] == 'recovery-compacted-answer' &&
+              message['content'] == 'respuesta legítima tras recovery',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere(
+              (message) =>
+                  message['_desktopMessageId'] == 'recovery-compacted-user',
+            )
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'recovery omitido no acredita count contra una fila durable sin id',
+    () async {
+      final initialRows = <DesktopSessionMessage>[
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-idless-coverage-user',
+          'role': 'user',
+          'content': 'prompt original',
+        })!,
+        DesktopSessionMessage.tryParse(const {
+          'role': 'assistant',
+          'content': 'respuesta legítima idless tras recovery',
+        })!,
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-before-idless-recovery',
+          storedSessionId: 'session-idless-recovery',
+          created: false,
+          messagesProvided: true,
+          messages: initialRows,
+          messageCount: 2,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-after-idless-recovery',
+          storedSessionId: 'session-idless-recovery',
+          created: false,
+          messagesProvided: false,
+          messageCount: 1,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'recovery-idless-coverage',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido tras recovery idless',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+      expect(chat.hasEarlierMessages, isFalse);
+      final userIndex = chat.messages.indexWhere(
+        (message) =>
+            message['_desktopMessageId'] == 'recovery-idless-coverage-user',
+      );
+      chat.messages[userIndex] = {
+        ...chat.messages[userIndex],
+        'content': 'prompt repetido tras recovery idless',
+      };
+
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-after-idless-recovery',
+        ),
+      );
+
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['content'] == 'respuesta legítima idless tras recovery',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere(
+              (message) =>
+                  message['_desktopMessageId'] ==
+                  'recovery-idless-coverage-user',
+            )
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'recovery provisto con count distinto no acredita transcript completo',
+    () async {
+      final initialRows = <DesktopSessionMessage>[
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-provided-mismatch-user',
+          'role': 'user',
+          'content': 'prompt original',
+        })!,
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-provided-mismatch-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima con mismatch en recovery',
+        })!,
+      ];
+      final mismatchedRows = <DesktopSessionMessage>[
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-provided-mismatch-user',
+          'role': 'user',
+          'content': 'prompt repetido con mismatch en recovery',
+        })!,
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-provided-mismatch-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima con mismatch en recovery',
+        })!,
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-before-provided-mismatch',
+          storedSessionId: 'session-provided-mismatch',
+          created: false,
+          messagesProvided: true,
+          messages: initialRows,
+          messageCount: 2,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-after-provided-mismatch',
+          storedSessionId: 'session-provided-mismatch',
+          created: false,
+          messagesProvided: true,
+          messages: mismatchedRows,
+          messageCount: 1,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'recovery-provided-mismatch',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido con mismatch en recovery',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-after-provided-mismatch',
+        ),
+      );
+
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['_desktopMessageId'] ==
+                  'recovery-provided-mismatch-answer' &&
+              message['content'] ==
+                  'respuesta legítima con mismatch en recovery',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere(
+              (message) =>
+                  message['_desktopMessageId'] ==
+                  'recovery-provided-mismatch-user',
+            )
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'recovery provisto vacío degrada el fallback visible que conserva',
+    () async {
+      final initialRows = <DesktopSessionMessage>[
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-provided-empty-user',
+          'role': 'user',
+          'content': 'prompt original',
+        })!,
+        DesktopSessionMessage.tryParse(const {
+          'message_id': 'recovery-provided-empty-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima antes del recovery vacío',
+        })!,
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-before-recovery-provided-empty',
+          storedSessionId: 'session-recovery-provided-empty',
+          created: false,
+          messagesProvided: true,
+          messages: initialRows,
+          messageCount: 2,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo anterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-recovery-provided-empty',
+          storedSessionId: 'session-recovery-provided-empty',
+          created: false,
+          messagesProvided: true,
+          messages: [],
+          messageCount: 0,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'recovery-provided-empty',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido antes del recovery vacío',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+      final userIndex = chat.messages.indexWhere(
+        (message) =>
+            message['_desktopMessageId'] == 'recovery-provided-empty-user',
+      );
+      chat.messages[userIndex] = {
+        ...chat.messages[userIndex],
+        'content': 'prompt repetido antes del recovery vacío',
+      };
+
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-recovery-provided-empty',
+        ),
+      );
+
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['_desktopMessageId'] ==
+                  'recovery-provided-empty-answer' &&
+              message['content'] ==
+                  'respuesta legítima antes del recovery vacío',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere(
+              (message) =>
+                  message['_desktopMessageId'] ==
+                  'recovery-provided-empty-user',
+            )
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'recovery hydrating omitido no aplica firstUser sobre fallback viejo',
+    () async {
+      final durableRows = <Map<String, dynamic>>[
+        {
+          'message_id': 'recovery-stale-user',
+          'role': 'user',
+          'content': 'prompt aún no cancelado',
+        },
+        {
+          'message_id': 'recovery-stale-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima mientras recovery hidrata',
+        },
+      ];
+      final initialMessages = durableRows
+          .map((row) => DesktopSessionMessage.tryParse(row)!)
+          .toList(growable: false);
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-stale-recovery-1',
+          storedSessionId: 'session-stale-recovery',
+          created: false,
+          messagesProvided: true,
+          messages: initialMessages,
+          messageCount: 2,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-stale-recovery-2',
+          storedSessionId: 'session-stale-recovery',
+          created: false,
+          messagesProvided: false,
+          messageCount: 2,
+          hydrating: true,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo posterior',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final api = _PartialTailApi(durableRows);
+      final chat = _recoverableChat(
+        'stale-recovery-hydrating',
+        gateway,
+        api: api,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(content: 'prompt repetido', firstUser: true),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+      final userIndex = chat.messages.indexWhere(
+        (message) => message['message_id'] == 'recovery-stale-user',
+      );
+      chat.messages[userIndex] = {
+        ...chat.messages[userIndex],
+        'content': 'prompt repetido',
+      };
+      durableRows[0] = {...durableRows[0], 'content': 'prompt repetido'};
+
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-stale-recovery-2',
+        ),
+      );
+
+      expect(chat.isHydratingDesktopHistory, isTrue);
+      expect(
+        chat.messages.any(
+          (message) => message['message_id'] == 'recovery-stale-answer',
+        ),
+        isTrue,
+      );
+      expect(chat.messages[userIndex].containsKey('_cancelledUser'), isFalse);
+
+      gateway.emit(
+        'session.resume_progress',
+        sessionId: 'runtime-stale-recovery-2',
+        payload: const {'status': 'complete', 'message_count': 2},
+      );
+      await _waitUntil(
+        () => !chat.messages.any(
+          (message) => message['message_id'] == 'recovery-stale-answer',
+        ),
+      );
+
+      expect(chat.isHydratingDesktopHistory, isFalse);
+      expect(
+        chat.messages.singleWhere(
+          (message) => message['message_id'] == 'recovery-stale-user',
+        )['_cancelledUser'],
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'recovery con snapshot parcial conserva la cola visible como fallback',
+    () async {
+      final partialTail = <Map<String, dynamic>>[
+        const {
+          'id': 'partial-snapshot-oldest-user',
+          'role': 'user',
+          'content': 'usuario visible antes del snapshot parcial',
+        },
+        const {
+          'id': 'partial-snapshot-legitimate-answer',
+          'role': 'assistant',
+          'content': 'respuesta visible antes del snapshot parcial',
+        },
+        for (var index = 0; index < 118; index++)
+          {
+            'id': 'partial-snapshot-system-$index',
+            'role': 'system',
+            'content': 'contexto parcial de snapshot $index',
+          },
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-partial-snapshot-1',
+          storedSessionId: 'session-recovery-partial-snapshot',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo sobre cola visible',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-partial-snapshot-2',
+          storedSessionId: 'session-recovery-partial-snapshot',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'only-partial-desktop-row',
+              'role': 'user',
+              'content': 'fila parcial no autoritativa',
+            })!,
+          ],
+          messageCount: 300,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo sobre cola visible',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final api = _PartialTailApi(partialTail);
+      final chat = _recoverableChat(
+        'recovery-partial-snapshot',
+        gateway,
+        api: api,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-partial-snapshot-2',
+        ),
+      );
+
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any(
+          (message) => message['id'] == 'partial-snapshot-legitimate-answer',
+        ),
+        isTrue,
+      );
+
+      partialTail.add(const {
+        'id': 'only-partial-desktop-row',
+        'role': 'user',
+        'content': 'fila parcial no autoritativa',
+      });
+      expect(await chat.loadEarlierMessages(), isTrue);
+
+      expect(api.requestedOffsets.last, 0);
+      expect(
+        chat.messages.any(
+          (message) => message['id'] == 'only-partial-desktop-row',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('recovery con snapshot vacío no borra el historial visible', () async {
+    final partialTail = <Map<String, dynamic>>[
+      const {
+        'id': 'visible-user-before-empty-recovery',
+        'role': 'user',
+        'content': 'pregunta visible antes de reconectar',
+      },
+      const {
+        'id': 'visible-answer-before-empty-recovery',
+        'role': 'assistant',
+        'content': 'respuesta visible antes de reconectar',
+      },
+      for (var index = 0; index < 118; index++)
+        {
+          'id': 'visible-context-$index',
+          'role': 'system',
+          'content': 'contexto visible $index',
+        },
+    ];
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-empty-recovery-1',
+        storedSessionId: 'session-empty-recovery',
+        created: false,
+        messagesProvided: false,
+        messageCount: 300,
+        inflight: DesktopInflightTurn(
+          user: 'turno activo antes de reconectar',
+          streaming: true,
+        ),
+        running: true,
+      )
+      ..recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-empty-recovery-2',
+        storedSessionId: 'session-empty-recovery',
+        created: false,
+        messagesProvided: true,
+        messages: const [],
+        messageCount: 0,
+        inflight: DesktopInflightTurn(
+          user: 'turno activo antes de reconectar',
+          streaming: true,
+        ),
+        running: true,
+      );
+    final chat = _recoverableChat(
+      'empty-recovery',
+      gateway,
+      api: _PartialTailApi(partialTail),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: 300);
+    gateway.drop();
+    await _waitUntil(
+      () => gateway.committedRecoveryRuntimeIds.contains(
+        'runtime-empty-recovery-2',
+      ),
+    );
+
+    expect(chat.hasEarlierMessages, isTrue);
+    expect(
+      chat.messages.any(
+        (message) => message['id'] == 'visible-answer-before-empty-recovery',
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'snapshot terminal vacío conserva parcial el fallback durante recovery',
+    () async {
+      final partialTail = <Map<String, dynamic>>[
+        const {
+          'id': 'terminal-empty-partial-user',
+          'role': 'user',
+          'content': 'prompt repetido en cola parcial',
+        },
+        const {
+          'id': 'terminal-empty-partial-answer',
+          'role': 'assistant',
+          'content': 'respuesta legítima visible',
+        },
+        for (var index = 0; index < 118; index++)
+          {
+            'id': 'terminal-empty-context-$index',
+            'role': 'system',
+            'content': 'contexto parcial $index',
+          },
+      ];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-empty-1',
+          storedSessionId: 'session-terminal-empty',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+          inflight: DesktopInflightTurn(
+            user: 'turno activo antes del terminal vacío',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-terminal-empty-2',
+          storedSessionId: 'session-terminal-empty',
+          created: false,
+          messagesProvided: true,
+          messages: [],
+          messageCount: 0,
+        );
+      final chat = _recoverableChat(
+        'terminal-empty-partial-fallback',
+        gateway,
+        api: _PartialTailApi(partialTail),
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido en cola parcial',
+            firstUser: true,
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+      expect(chat.hasEarlierMessages, isTrue);
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains(
+          'runtime-terminal-empty-2',
+        ),
+      );
+
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any(
+          (message) => message['id'] == 'terminal-empty-partial-answer',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages
+            .singleWhere(
+              (message) => message['id'] == 'terminal-empty-partial-user',
+            )
+            .containsKey('_cancelledUser'),
+        isFalse,
+      );
+    },
+  );
+
+  test('recovery completo retira el backfill de una cola anterior', () async {
+    final partialTail = <Map<String, dynamic>>[
+      for (var index = 0; index < 120; index++)
+        {
+          'id': 'old-partial-$index',
+          'role': index.isEven ? 'user' : 'assistant',
+          'content': 'fila parcial anterior $index',
+        },
+    ];
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-complete-bookkeeping-1',
+        storedSessionId: 'session-complete-bookkeeping',
+        created: false,
+        messagesProvided: false,
+        messageCount: 300,
+        inflight: DesktopInflightTurn(
+          user: 'turno que completará el snapshot',
+          streaming: true,
+        ),
+        running: true,
+      )
+      ..recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-complete-bookkeeping-2',
+        storedSessionId: 'session-complete-bookkeeping',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'message_id': 'complete-user',
+            'role': 'user',
+            'content': 'historial completo',
+          })!,
+          DesktopSessionMessage.tryParse(const {
+            'message_id': 'complete-answer',
+            'role': 'assistant',
+            'content': 'respuesta completa',
+          })!,
+        ],
+        messageCount: 2,
+        running: true,
+      );
+    final chat = _recoverableChat(
+      'complete-bookkeeping',
+      gateway,
+      api: _PartialTailApi(partialTail),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: 300);
+    expect(chat.hasEarlierMessages, isTrue);
+
+    gateway.drop();
+    await _waitUntil(
+      () => gateway.committedRecoveryRuntimeIds.contains(
+        'runtime-complete-bookkeeping-2',
+      ),
+    );
+
+    expect(chat.hasEarlierMessages, isFalse);
+    expect(
+      chat.messages
+          .map((message) => message['_desktopMessageId'])
+          .whereType<String>(),
+      ['complete-answer', 'complete-user'],
+    );
+  });
+
+  test('Stop no inventa firstUser desde un snapshot parcial', () async {
+    final recorded = <CancelledTurnTombstone>[];
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-partial-stop',
+        storedSessionId: 'session-partial-stop',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'role': 'user',
+            'content': 'turno sin ancla en snapshot parcial',
+          })!,
+        ],
+        messageCount: 300,
+        inflight: DesktopInflightTurn(
+          user: 'turno sin ancla en snapshot parcial',
+          streaming: true,
+        ),
+        running: true,
+      );
+    final chat = _recoverableChat(
+      'partial-stop',
+      gateway,
+      onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: 300);
+    expect(chat.isStreaming, isTrue);
+
+    await expectLater(chat.cancel(), throwsStateError);
+    expect(recorded, isEmpty);
+    expect(chat.isStreaming, isTrue);
+  });
+
+  test(
+    'Stop no enlaza por texto un inflight nuevo al user canónico anterior',
+    () async {
+      final recorded = <CancelledTurnTombstone>[];
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-homonymous-inflight-stop',
+          storedSessionId: 'session-homonymous-inflight-stop',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'historical-user-a',
+              'role': 'user',
+              'content': 'prompt repetido sin identidad compartida',
+              'timestamp': 90,
+            })!,
+          ],
+          messageCount: 1,
+          inflight: DesktopInflightTurn(
+            user: 'prompt repetido sin identidad compartida',
+            assistant: 'respuesta parcial del turno nuevo B',
+            streaming: true,
+            startedAt: DateTime.fromMillisecondsSinceEpoch(100000, isUtc: true),
+          ),
+          running: true,
+        );
+      final chat = _recoverableChat(
+        'homonymous-inflight-stop',
+        gateway,
+        onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'historical-user-a',
+            'role': 'user',
+            'content': 'prompt repetido sin identidad compartida',
+            'timestamp': 90,
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 1);
+
+      final repeatedUsers = chat.messages
+          .where(
+            (message) =>
+                isRealUserTurn(message) &&
+                message['content'] ==
+                    'prompt repetido sin identidad compartida',
+          )
+          .toList(growable: false);
+      expect(repeatedUsers, hasLength(2));
+      expect(
+        repeatedUsers.any(
+          (message) =>
+              canonicalTranscriptMessageId(message) == 'historical-user-a',
+        ),
+        isTrue,
+      );
+      expect(
+        repeatedUsers.any(
+          (message) => message['_desktopSnapshotKind'] == 'inflight',
+        ),
+        isTrue,
+      );
+
+      await expectLater(chat.cancel(), throwsStateError);
+      expect(recorded, isEmpty);
+      expect(chat.isStreaming, isTrue);
+      expect(
+        chat.messages.singleWhere(
+          (message) =>
+              canonicalTranscriptMessageId(message) == 'historical-user-a',
+        )['_cancelledUser'],
+        isNot(true),
+      );
+      expect(
+        chat.messages.singleWhere(
+          (message) =>
+              isRealUserTurn(message) &&
+              message['_desktopSnapshotKind'] == 'inflight',
+        )['_cancelledUser'],
+        isNot(true),
+      );
+    },
+  );
+
+  test(
+    'Stop liga el user actual por sus aliases aunque haya un user id-less anterior',
+    () async {
+      for (final alias in const ['_desktopMessageId', 'message_id', 'id']) {
+        final recorded = <CancelledTurnTombstone>[];
+        final gateway = _LifecycleRecoverableGateway()
+          ..initialSnapshot = DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-target-id-$alias',
+            storedSessionId: 'session-target-id-$alias',
+            created: false,
+            messagesProvided: true,
+            messages: [
+              DesktopSessionMessage.tryParse(const {
+                'role': 'user',
+                'content': 'turno histórico sin identidad',
+              })!,
+              DesktopSessionMessage.tryParse({
+                'message_id': 'source-current-$alias',
+                'role': 'user',
+                'content': 'turno actual identificado por $alias',
+              })!,
+            ],
+            messageCount: 300,
+            inflight: DesktopInflightTurn(
+              user: 'turno actual identificado por $alias',
+              assistant: 'respuesta parcial $alias',
+              streaming: true,
+            ),
+            running: true,
+          );
+        final chat = _recoverableChat(
+          'target-id-$alias',
+          gateway,
+          onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+        );
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages(expectedMessageCount: 300);
+        final userIndex = chat.messages.indexWhere(
+          (message) =>
+              message['content'] == 'turno actual identificado por $alias',
+        );
+        expect(userIndex, greaterThanOrEqualTo(0), reason: alias);
+        final exactId = '  current-target-$alias  ';
+        chat.messages[userIndex] =
+            Map<String, dynamic>.of(chat.messages[userIndex])
+              ..remove('_desktopMessageId')
+              ..remove('message_id')
+              ..remove('id')
+              ..[alias] = exactId;
+
+        await chat.cancel();
+
+        expect(recorded, hasLength(1), reason: alias);
+        expect(recorded.single.cancelledMessageId, exactId, reason: alias);
+        expect(recorded.single.anchorMessageId, isNull, reason: alias);
+        expect(recorded.single.firstUser, isFalse, reason: alias);
+        expect(
+          CancelledTurnTombstone.fromJson(
+            recorded.single.stamped(123).toJson(),
+          )?.cancelledMessageId,
+          exactId,
+          reason: alias,
+        );
+      }
+    },
+  );
+
   test('reconciliar transcript oculta la respuesta del turno detenido', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
       durableTombstones: const [
         CancelledTurnTombstone(
           content: 'QA4931_OFFLINE_CANCEL_OLD',
@@ -482,23 +2378,28 @@ void main() {
         ),
       ],
       incomingNewestFirst: const [
-        {'role': 'assistant', 'content': 'QA4931_OFFLINE_CANCEL_OLD'},
-        {'role': 'user', 'content': 'QA4931_OFFLINE_CANCEL_OLD'},
+        {
+          'id': 'cancelled-answer',
+          'role': 'assistant',
+          'content': 'QA4931_OFFLINE_CANCEL_OLD',
+        },
+        {
+          'id': 'cancelled-user',
+          'role': 'user',
+          'content': 'QA4931_OFFLINE_CANCEL_OLD',
+        },
       ],
     );
 
-    expect(projected, [
-      {
-        'role': 'user',
-        'content': 'QA4931_OFFLINE_CANCEL_OLD',
-        '_cancelledUser': true,
-      },
-    ]);
+    expect(projected, hasLength(1));
+    expect(projected.single['id'], 'cancelled-user');
+    expect(projected.single['_cancelledUser'], isTrue);
   });
 
   test('tombstone distingue prompts repetidos por ancla durable', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
       durableTombstones: const [
         CancelledTurnTombstone(
           content: 'mismo prompt',
@@ -527,17 +2428,173 @@ void main() {
     expect(projected[2]['_cancelledUser'], isTrue);
   });
 
+  test('tombstone reaplica el ancla al cruzar aliases de identidad', () {
+    for (final anchorKey in const ['_desktopMessageId', 'message_id', 'id']) {
+      final projected = projectCancelledTurnTombstones(
+        existingNewestFirst: const [],
+        incomingTranscriptComplete: true,
+        durableTombstones: const [
+          CancelledTurnTombstone(
+            content: 'turno detenido por alias',
+            anchorMessageId: 'anchor-cross-alias',
+          ),
+        ],
+        incomingNewestFirst: [
+          const {
+            'id': 'cancelled-answer',
+            'role': 'assistant',
+            'content': 'respuesta cancelada',
+          },
+          const {
+            'message_id': 'cancelled-user',
+            'role': 'user',
+            'content': 'turno detenido por alias',
+          },
+          {
+            anchorKey: 'anchor-cross-alias',
+            'role': 'assistant',
+            'content': 'respuesta anterior',
+          },
+        ],
+      );
+
+      expect(projected.map((message) => message['content']), [
+        'turno detenido por alias',
+        'respuesta anterior',
+      ], reason: 'alias $anchorKey');
+      expect(projected.first['_cancelledUser'], isTrue);
+    }
+  });
+
+  test('tombstone reaplica un ancla de fila entre REST y Desktop', () {
+    for (final anchorAlias in const ['_desktopRowId', 'row_id', 'id']) {
+      final projected = projectCancelledTurnTombstones(
+        existingNewestFirst: const [],
+        incomingTranscriptComplete: false,
+        durableTombstones: const [
+          CancelledTurnTombstone(
+            content: 'turno detenido por ancla de fila',
+            anchorRowId: 73,
+          ),
+        ],
+        incomingNewestFirst: [
+          const {
+            'id': 75,
+            'role': 'assistant',
+            'content': 'respuesta cancelada',
+          },
+          const {
+            'id': 74,
+            'role': 'user',
+            'content': 'turno detenido por ancla de fila',
+          },
+          {
+            anchorAlias: 73,
+            'role': 'assistant',
+            'content': 'respuesta anterior',
+          },
+        ],
+      );
+
+      expect(projected.map((message) => message['content']), [
+        'turno detenido por ancla de fila',
+        'respuesta anterior',
+      ], reason: anchorAlias);
+      expect(projected.first['_cancelledUser'], isTrue, reason: anchorAlias);
+    }
+  });
+
+  test('tombstone ligado reaplica el target cruzando aliases exactos', () {
+    for (final userAlias in const ['_desktopMessageId', 'message_id', 'id']) {
+      const targetId = '  cancelled-target-opaque  ';
+      final projected = projectCancelledTurnTombstones(
+        existingNewestFirst: const [],
+        incomingTranscriptComplete: false,
+        durableTombstones: const [
+          CancelledTurnTombstone(
+            content: 'prompt repetido',
+            cancelledMessageId: targetId,
+          ),
+        ],
+        incomingNewestFirst: [
+          const {
+            'id': 'new-answer',
+            'role': 'assistant',
+            'content': 'respuesta legítima nueva',
+          },
+          const {
+            'id': 'new-user',
+            'role': 'user',
+            'content': 'prompt repetido',
+          },
+          const {
+            'id': 'cancelled-answer',
+            'role': 'assistant',
+            'content': 'respuesta cancelada',
+          },
+          {userAlias: targetId, 'role': 'user', 'content': 'prompt repetido'},
+          const {
+            'id': 'older-answer',
+            'role': 'assistant',
+            'content': 'respuesta anterior intacta',
+          },
+        ],
+      );
+
+      expect(projected.map((message) => message['content']), [
+        'respuesta legítima nueva',
+        'prompt repetido',
+        'prompt repetido',
+        'respuesta anterior intacta',
+      ], reason: userAlias);
+      expect(projected[2]['_cancelledUser'], isTrue, reason: userAlias);
+    }
+  });
+
+  test('tombstone no equipara un id numérico con el string homónimo', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      incomingTranscriptComplete: false,
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'prompt legítimo',
+          cancelledMessageId: '42',
+        ),
+      ],
+      incomingNewestFirst: const [
+        {
+          'id': 'answer-42',
+          'role': 'assistant',
+          'content': 'respuesta legítima',
+        },
+        {'id': 42, 'role': 'user', 'content': 'prompt legítimo'},
+      ],
+    );
+
+    expect(canonicalTranscriptMessageId(projected.last), isNull);
+    expect(projected.map((message) => message['content']), [
+      'respuesta legítima',
+      'prompt legítimo',
+    ]);
+    expect(projected.last.containsKey('_cancelledUser'), isFalse);
+  });
+
   test('tombstone ignora filas steer al contar turnos de usuario', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
       durableTombstones: const [
         CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
       ],
       incomingNewestFirst: const [
-        {'role': 'assistant', 'content': 'respuesta nueva'},
-        {'role': 'user', 'content': 'turno nuevo'},
-        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
-        {'role': 'user', 'content': 'turno detenido'},
+        {'id': 'answer-new', 'role': 'assistant', 'content': 'respuesta nueva'},
+        {'id': 'user-new', 'role': 'user', 'content': 'turno nuevo'},
+        {
+          'id': 'answer-cancelled',
+          'role': 'assistant',
+          'content': 'respuesta que debe ocultarse',
+        },
+        {'id': 'user-cancelled', 'role': 'user', 'content': 'turno detenido'},
       ],
     );
 
@@ -549,20 +2606,104 @@ void main() {
     expect(projected.last['_cancelledUser'], isTrue);
   });
 
+  test('firstUser no se proyecta sobre una ventana parcial', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      incomingTranscriptComplete: false,
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'prompt repetido', firstUser: true),
+      ],
+      incomingNewestFirst: const [
+        {
+          'id': 'answer-tail',
+          'role': 'assistant',
+          'content': 'respuesta válida',
+        },
+        {'id': 'user-tail', 'role': 'user', 'content': 'prompt repetido'},
+      ],
+    );
+
+    expect(projected.map((message) => message['id']), [
+      'answer-tail',
+      'user-tail',
+    ]);
+    expect(projected.last.containsKey('_cancelledUser'), isFalse);
+  });
+
+  test('firstUser nunca cae sobre un inflight sintético del mismo texto', () {
+    final incoming = <Map<String, dynamic>>[
+      {
+        '_desktopMessageId': 'synthetic-inflight',
+        '_desktopSnapshotKind': 'inflight',
+        'role': 'user',
+        'content': 'prompt repetido',
+      },
+    ];
+
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      incomingNewestFirst: incoming,
+      incomingTranscriptComplete: true,
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'prompt repetido', firstUser: true),
+      ],
+    );
+
+    expect(projected, incoming);
+    expect(projected.single.containsKey('_cancelledUser'), isFalse);
+  });
+
+  test('tombstone anclado no salta a inflight si falta el user durable', () {
+    final incoming = <Map<String, dynamic>>[
+      {
+        '_desktopMessageId': 'synthetic-inflight',
+        '_desktopSnapshotKind': 'inflight',
+        'role': 'user',
+        'content': 'prompt repetido',
+      },
+      {
+        'message_id': 'cancel-anchor',
+        'role': 'assistant',
+        'content': 'respuesta anterior',
+      },
+    ];
+
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      incomingNewestFirst: incoming,
+      incomingTranscriptComplete: true,
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'prompt repetido',
+          anchorMessageId: 'cancel-anchor',
+        ),
+      ],
+    );
+
+    expect(projected, incoming);
+    expect(projected.first.containsKey('_cancelledUser'), isFalse);
+  });
+
   test('tombstone conserva metadatos user del turno cancelado', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
       durableTombstones: const [
         CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
       ],
       incomingNewestFirst: const [
-        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
         {
+          'id': 'cancelled-answer',
+          'role': 'assistant',
+          'content': 'respuesta que debe ocultarse',
+        },
+        {
+          'id': 'metadata-user',
           'role': 'user',
           'content': 'cambio de modelo',
           'display_kind': 'model_switch',
         },
-        {'role': 'user', 'content': 'turno detenido'},
+        {'id': 'cancelled-user', 'role': 'user', 'content': 'turno detenido'},
       ],
     );
 
@@ -576,11 +2717,16 @@ void main() {
   test('tombstone conserva tool y artefactos del turno cancelado', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
       durableTombstones: const [
         CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
       ],
       incomingNewestFirst: const [
-        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
+        {
+          'id': 'cancelled-answer',
+          'role': 'assistant',
+          'content': 'respuesta que debe ocultarse',
+        },
         {
           'role': 'tool',
           'content': 'resultado estructurado',
@@ -591,7 +2737,7 @@ void main() {
           'content': 'informe.pdf',
           'artifact_id': 'artifact-1',
         },
-        {'role': 'user', 'content': 'turno detenido'},
+        {'id': 'cancelled-user', 'role': 'user', 'content': 'turno detenido'},
       ],
     );
 
@@ -606,12 +2752,17 @@ void main() {
   test('tombstone durable sobrevive sin mensajes locales', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
       durableTombstones: const [
         CancelledTurnTombstone(content: 'turno detenido', firstUser: true),
       ],
       incomingNewestFirst: const [
-        {'role': 'assistant', 'content': 'respuesta que debe ocultarse'},
-        {'role': 'user', 'content': 'turno detenido'},
+        {
+          'id': 'cancelled-answer',
+          'role': 'assistant',
+          'content': 'respuesta que debe ocultarse',
+        },
+        {'id': 'cancelled-user', 'role': 'user', 'content': 'turno detenido'},
       ],
     );
 
@@ -619,9 +2770,100 @@ void main() {
     expect(projected.single['_cancelledUser'], isTrue);
   });
 
+  test('cold open conserva transcript si el tombstone perdió su ancla', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      incomingTranscriptComplete: true,
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'prompt compactado',
+          anchorMessageId: 'anchor-eliminada',
+        ),
+      ],
+      incomingNewestFirst: const [
+        {'id': 'answer-new', 'role': 'assistant', 'content': 'respuesta nueva'},
+        {'id': 'user-new', 'role': 'user', 'content': 'pregunta nueva'},
+      ],
+    );
+
+    expect(projected.map((message) => message['content']), [
+      'respuesta nueva',
+      'pregunta nueva',
+    ]);
+  });
+
+  test(
+    'firstUser invalidado por compactación no oculta un prompt repetido nuevo',
+    () {
+      final projected = projectCancelledTurnTombstones(
+        existingNewestFirst: const [],
+        incomingTranscriptComplete: true,
+        durableTombstones: const [
+          CancelledTurnTombstone(
+            content: 'mismo prompt',
+            firstUser: true,
+            invalidated: true,
+          ),
+        ],
+        incomingNewestFirst: const [
+          {
+            'id': 'new-answer-after-compaction',
+            'role': 'assistant',
+            'content': 'respuesta legítima post-compaction',
+          },
+          {
+            'id': 'new-user-after-compaction',
+            'role': 'user',
+            'content': 'mismo prompt',
+          },
+        ],
+      );
+
+      expect(projected.map((message) => message['content']), [
+        'respuesta legítima post-compaction',
+        'mismo prompt',
+      ]);
+      expect(projected.last.containsKey('_cancelledUser'), isFalse);
+    },
+  );
+
+  test('refresh canónico reemplaza el snapshot viejo pese al tombstone', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [
+        {'id': 'old-answer', 'role': 'assistant', 'content': 'respuesta vieja'},
+        {'id': 'old-user', 'role': 'user', 'content': 'pregunta vieja'},
+      ],
+      incomingTranscriptComplete: true,
+      durableTombstones: const [
+        CancelledTurnTombstone(
+          content: 'turno ya compactado',
+          anchorMessageId: 'anchor-eliminada',
+        ),
+      ],
+      incomingNewestFirst: const [
+        {
+          'id': 'canonical-answer',
+          'role': 'assistant',
+          'content': 'respuesta canónica',
+        },
+        {
+          'id': 'canonical-user',
+          'role': 'user',
+          'content': 'pregunta canónica',
+        },
+      ],
+    );
+
+    expect(projected.map((message) => message['id']), [
+      'canonical-answer',
+      'canonical-user',
+    ]);
+  });
+
   test('tombstone no cae por texto sobre una ventana parcial', () {
     final projected = projectCancelledTurnTombstones(
       existingNewestFirst: const [],
+      incomingTranscriptComplete: false,
       durableTombstones: const [
         CancelledTurnTombstone(
           content: 'prompt repetido',
@@ -634,7 +2876,11 @@ void main() {
       ],
     );
 
-    expect(projected, isEmpty);
+    expect(projected.map((message) => message['content']), [
+      'respuesta legítima reciente',
+      'prompt repetido',
+    ]);
+    expect(projected.last.containsKey('_cancelledUser'), isFalse);
   });
 
   test(
@@ -676,6 +2922,43 @@ void main() {
     },
   );
 
+  test(
+    'close/reopen tras compactación conserva el transcript canónico',
+    () async {
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'restore-compacted',
+        gateway,
+        initialCancelledTurnTombstones: const [
+          CancelledTurnTombstone(
+            content: 'turno compactado',
+            anchorMessageId: 'anchor-eliminada',
+          ),
+        ],
+        storedMessageLoader: (_, _) async => const [
+          {
+            'id': 'compacted-user',
+            'role': 'user',
+            'content': 'resumen tras compactar',
+          },
+          {
+            'id': 'compacted-answer',
+            'role': 'assistant',
+            'content': 'historial canónico preservado',
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+
+      expect(chat.messages.map((message) => message['content']), [
+        'historial canónico preservado',
+        'resumen tras compactar',
+      ]);
+    },
+  );
+
   test('Stop publica un tombstone durable anclado', () async {
     final recorded = <CancelledTurnTombstone>[];
     final gateway = _LifecycleRecoverableGateway();
@@ -685,6 +2968,7 @@ void main() {
       onCancelledTurn: (tombstone) async => recorded.add(tombstone),
     );
     addTearDown(chat.dispose);
+    chat.markStoredSessionMissing();
 
     await chat.send(
       fullText: 'turno que se detiene',
@@ -699,6 +2983,105 @@ void main() {
     expect(recorded.single.firstUser, isTrue);
     expect(recorded.single.anchorMessageId, isNull);
   });
+
+  test(
+    'dos Stop consecutivos rehidratan el ancla durable entre turnos',
+    () async {
+      final recorded = <CancelledTurnTombstone>[];
+      final durable = <Map<String, dynamic>>[];
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'two-durable-stops',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 30),
+        storedMessageLoader: (_, _) async => List.of(durable),
+        onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+      );
+      addTearDown(chat.dispose);
+      chat.markStoredSessionMissing();
+
+      await chat.send(
+        fullText: 'primer turno detenido',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('two-durable-stops-1', _NoopOutbox()),
+      );
+      await chat.cancel();
+      durable.add(const {
+        'message_id': 'first-cancelled-user',
+        'role': 'user',
+        'content': 'primer turno detenido',
+        'timestamp': 50,
+      });
+
+      final accepted = await chat.send(
+        fullText: 'segundo turno detenido',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+        delivery: _delivery('two-durable-stops-2', _NoopOutbox()),
+      );
+      expect(accepted, isTrue);
+      gateway.initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: chat.desktopRuntimeSessionId!,
+        storedSessionId: chat.serverSessionId,
+        created: false,
+        messagesProvided: false,
+        messageCount: durable.length,
+        running: true,
+        inflight: DesktopInflightTurn(
+          user: 'segundo turno detenido',
+          streaming: true,
+          startedAt: DateTime.fromMillisecondsSinceEpoch(100000, isUtc: true),
+        ),
+      );
+      await chat.cancel();
+
+      final created = recorded
+          .where((tombstone) => tombstone.cancelledMessageId == null)
+          .toList(growable: false);
+      expect(created, hasLength(2));
+      expect(created.first.firstUser, isTrue);
+      expect(created.last.firstUser, isFalse);
+      expect(created.last.anchorMessageId, 'first-cancelled-user');
+      expect(recorded[1].cancelledMessageId, 'first-cancelled-user');
+    },
+  );
+
+  test(
+    'resume 4007 más REST vacío autoriza firstUser del primer Stop',
+    () async {
+      final recorded = <CancelledTurnTombstone>[];
+      final gateway = _LifecycleRecoverableGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'session not found',
+          code: 4007,
+        );
+      final chat = _recoverableChat(
+        'missing-before-first-stop',
+        gateway,
+        storedMessageLoader: (_, _) async => const [],
+        onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.storedSessionKnownMissing, isTrue);
+
+      gateway.resumeExistingError = null;
+      await chat.send(
+        fullText: 'primer turno tras confirmar que no existe',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('missing-before-first-stop-1', _NoopOutbox()),
+      );
+      await chat.cancel();
+
+      expect(recorded, hasLength(1));
+      expect(recorded.single.firstUser, isTrue);
+      expect(recorded.single.anchorMessageId, isNull);
+    },
+  );
 
   test('Stop usa el id durable anterior como ancla', () async {
     final recorded = <CancelledTurnTombstone>[];
@@ -728,6 +3111,318 @@ void main() {
     expect(recorded.single.firstUser, isFalse);
   });
 
+  test('Stop usa una fila SQLite numérica como ancla exacta', () async {
+    final recorded = <CancelledTurnTombstone>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'persist-numeric-row-anchor',
+      gateway,
+      onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+    );
+    addTearDown(chat.dispose);
+    // `/api/sessions/:id/messages` entrega el `messages.id` de SQLite como
+    // número. No debe convertirse al string "73", pero sí es una identidad
+    // durable exacta que Desktop también proyecta como `_desktopRowId`.
+    chat.messages.add(const {
+      'id': 73,
+      'role': 'assistant',
+      'content': 'respuesta anterior con row id',
+    });
+
+    await chat.send(
+      fullText: 'turno anclado por fila',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('persist-numeric-row-anchor-1', _NoopOutbox()),
+    );
+
+    await chat.cancel();
+
+    expect(recorded, hasLength(1));
+    expect(recorded.single.anchorMessageId, isNull);
+    expect(recorded.single.anchorRowId, 73);
+    expect(recorded.single.cancelledMessageId, isNull);
+    expect(recorded.single.cancelledRowId, isNull);
+    expect(
+      CancelledTurnTombstone.fromJson(
+        recorded.single.stamped(123).toJson(),
+      )?.anchorRowId,
+      73,
+    );
+    expect(chat.isStreaming, isFalse);
+  });
+
+  test(
+    'Stop tolera que el ancla se ligue a un target mientras se guarda',
+    () async {
+      final firstWriteStarted = Completer<void>();
+      final firstWriteGate = Completer<void>();
+      final recorded = <CancelledTurnTombstone>[];
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'persist-identity-upgrade-race',
+        gateway,
+        onCancelledTurn: (tombstone) {
+          recorded.add(tombstone);
+          if (!firstWriteStarted.isCompleted) {
+            firstWriteStarted.complete();
+            return firstWriteGate.future;
+          }
+          return Future<void>.value();
+        },
+      );
+      addTearDown(chat.dispose);
+      chat.messages.add(const {
+        'message_id': 'durable-before-upgrade',
+        'role': 'assistant',
+        'content': 'respuesta anterior',
+      });
+
+      await chat.send(
+        fullText: 'turno cuya identidad se hidrata',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('persist-identity-upgrade-race-1', _NoopOutbox()),
+      );
+      final cancellation = chat.cancel();
+      await firstWriteStarted.future;
+
+      final userIndex = chat.messages.indexWhere(isRealUserTurn);
+      expect(userIndex, greaterThanOrEqualTo(0));
+      // Simula la sustitución autoritativa que puede publicar REST/snapshot
+      // mientras FlutterSecureStorage confirma el tombstone anclado.
+      chat.messages[userIndex] = const {
+        'message_id': 'durable-current-after-upgrade',
+        'role': 'user',
+        'content': 'turno cuya identidad se hidrata',
+      };
+      firstWriteGate.complete();
+
+      await cancellation;
+
+      expect(chat.isStreaming, isFalse);
+      expect(
+        chat.messages.singleWhere(isRealUserTurn)['_cancelledUser'],
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'Stop no cruza un usuario histórico sin id para buscar un ancla',
+    () async {
+      final recorded = <CancelledTurnTombstone>[];
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'persist-anchor-across-idless-user',
+        gateway,
+        onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+      );
+      addTearDown(chat.dispose);
+      chat.messages.addAll(const [
+        {
+          'role': 'assistant',
+          'content': 'respuesta legítima del turno repetido anterior',
+        },
+        {'role': 'user', 'content': 'mismo prompt'},
+        {
+          'id': 'too-old-to-anchor-current-turn',
+          'role': 'assistant',
+          'content': 'respuesta todavía más antigua',
+        },
+      ]);
+
+      await chat.send(
+        fullText: 'mismo prompt',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery(
+          'persist-anchor-across-idless-user-1',
+          _NoopOutbox(),
+        ),
+      );
+
+      await expectLater(chat.cancel(), throwsStateError);
+      expect(recorded, isEmpty);
+      expect(chat.isStreaming, isTrue);
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['content'] ==
+                  'respuesta legítima del turno repetido anterior' &&
+              message['_cancelled'] != true,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('Stop crea el tombstone desde todos los aliases exactos', () async {
+    for (final alias in const ['_desktopMessageId', 'message_id', 'id']) {
+      final recorded = <CancelledTurnTombstone>[];
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'persist-anchor-$alias',
+        gateway,
+        onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+      );
+      addTearDown(chat.dispose);
+      final durableId = '  durable-$alias  ';
+      chat.messages.add({
+        alias: durableId,
+        'role': 'assistant',
+        'content': 'respuesta anterior por $alias',
+      });
+
+      await chat.send(
+        fullText: 'turno anclado por $alias',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('persist-anchor-$alias-1', _NoopOutbox()),
+      );
+      await chat.cancel();
+
+      expect(recorded, hasLength(1), reason: alias);
+      expect(recorded.single.anchorMessageId, durableId, reason: alias);
+      expect(recorded.single.firstUser, isFalse, reason: alias);
+    }
+  });
+
+  test('Stop no crea un ancla desde un row id decimal malformado', () async {
+    final recorded = <CancelledTurnTombstone>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'numeric-anchor',
+      gateway,
+      onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+    );
+    addTearDown(chat.dispose);
+    chat.messages.add(const {
+      'id': 42.0,
+      'role': 'assistant',
+      'content': 'respuesta anterior sin identidad válida',
+    });
+
+    await chat.send(
+      fullText: 'turno sin ancla durable',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('numeric-anchor-1', _NoopOutbox()),
+    );
+
+    await expectLater(chat.cancel(), throwsStateError);
+    expect(recorded, isEmpty);
+    expect(chat.isStreaming, isTrue);
+  });
+
+  test('tombstone por row id cruza los aliases numéricos sin normalizar', () {
+    for (final rowAlias in const ['_desktopRowId', 'row_id', 'id']) {
+      final projected = projectCancelledTurnTombstones(
+        existingNewestFirst: const [],
+        incomingTranscriptComplete: false,
+        durableTombstones: const [
+          CancelledTurnTombstone(
+            content: 'turno detenido por row id',
+            cancelledRowId: 74,
+          ),
+        ],
+        incomingNewestFirst: [
+          const {
+            'id': 75,
+            'role': 'assistant',
+            'content': 'respuesta cancelada',
+          },
+          {
+            rowAlias: 74,
+            'role': 'user',
+            'content': 'turno detenido por row id',
+          },
+        ],
+      );
+
+      expect(projected, hasLength(1), reason: rowAlias);
+      expect(projected.single['_cancelledUser'], isTrue, reason: rowAlias);
+      expect(
+        canonicalTranscriptMessageId(projected.single),
+        isNull,
+        reason: rowAlias,
+      );
+      expect(canonicalTranscriptRowId(projected.single), 74, reason: rowAlias);
+    }
+  });
+
+  test('tombstone row id nunca coincide con message id string homónimo', () {
+    final projected = projectCancelledTurnTombstones(
+      existingNewestFirst: const [],
+      incomingTranscriptComplete: false,
+      durableTombstones: const [
+        CancelledTurnTombstone(content: 'prompt legítimo', cancelledRowId: 42),
+      ],
+      incomingNewestFirst: const [
+        {
+          'message_id': 'answer-42',
+          'role': 'assistant',
+          'content': 'respuesta legítima',
+        },
+        {'id': '42', 'role': 'user', 'content': 'prompt legítimo'},
+      ],
+    );
+
+    expect(projected, hasLength(2));
+    expect(projected.last.containsKey('_cancelledUser'), isFalse);
+    expect(canonicalTranscriptMessageId(projected.last), '42');
+    expect(canonicalTranscriptRowId(projected.last), isNull);
+  });
+
+  test(
+    'tombstone enriquecido no cae al ancla ante una coordenada conflictiva',
+    () {
+      for (final conflictingUser in const [
+        {
+          'message_id': 'cancelled-message',
+          'row_id': 43,
+          'role': 'user',
+          'content': 'prompt repetido',
+        },
+        {
+          'message_id': 'otro-message',
+          'row_id': 42,
+          'role': 'user',
+          'content': 'prompt repetido',
+        },
+      ]) {
+        final projected = projectCancelledTurnTombstones(
+          existingNewestFirst: const [],
+          incomingTranscriptComplete: true,
+          durableTombstones: const [
+            CancelledTurnTombstone(
+              content: 'prompt repetido',
+              anchorMessageId: 'older-anchor',
+              cancelledMessageId: 'cancelled-message',
+              cancelledRowId: 42,
+            ),
+          ],
+          incomingNewestFirst: [
+            const {
+              'message_id': 'answer-current',
+              'role': 'assistant',
+              'content': 'respuesta legítima',
+            },
+            conflictingUser,
+            const {
+              'message_id': 'older-anchor',
+              'role': 'assistant',
+              'content': 'respuesta anterior',
+            },
+          ],
+        );
+
+        expect(projected, hasLength(3));
+        expect(projected[1].containsKey('_cancelledUser'), isFalse);
+      }
+    },
+  );
+
   test('Stop espera confirmación del almacenamiento durable', () async {
     final gate = Completer<void>();
     final events = <ActiveChatEvent>[];
@@ -739,6 +3434,7 @@ void main() {
       onEvent: events.add,
     );
     addTearDown(chat.dispose);
+    chat.markStoredSessionMissing();
 
     await chat.send(
       fullText: 'turno durable',
@@ -783,6 +3479,28 @@ void main() {
     expect(persisted, 0);
     expect(chat.isStreaming, isTrue);
     expect(events, isNot(contains(ActiveChatEvent.cancelled)));
+  });
+
+  test('Stop no infiere firstUser si la sesión aún no se hidrató', () async {
+    final recorded = <CancelledTurnTombstone>[];
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'unknown-empty-session',
+      gateway,
+      onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(
+      fullText: 'turno antes de cargar historial',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('unknown-empty-session-1', _NoopOutbox()),
+    );
+
+    await expectLater(chat.cancel(), throwsStateError);
+    expect(recorded, isEmpty);
+    expect(chat.isStreaming, isTrue);
   });
 
   test('fallo durable bloquea envío pero permite reintentar Stop', () async {
@@ -907,6 +3625,317 @@ void main() {
     expect(restored.single.matchesContent('turno detenido'), isTrue);
     expect(restored.single.anchorMessageId, 'anchor-3');
   });
+
+  test('reinicio frío migra un scope legacy con tombstone singleton', () async {
+    final scope = jsonEncode(const [
+      'conn',
+      'generation',
+      'default',
+      'session',
+    ]);
+    final payload = jsonEncode({
+      scope: const {
+        'content': 'turno detenido',
+        'anchor_message_id': 'anchor-legacy',
+        'first_user': false,
+        'created_at_ms': 1000,
+      },
+    });
+    final store = CancelledTurnTombstoneStore(
+      read: () async => payload,
+      write: (_) async {},
+    );
+
+    await store.initialize();
+
+    final restored = store.load(
+      connectionId: 'conn',
+      generation: 'generation',
+      profile: 'default',
+      sessionId: 'session',
+    );
+    expect(restored, hasLength(1));
+    expect(restored.single.anchorMessageId, 'anchor-legacy');
+  });
+
+  test(
+    'reinicio frío descarta solo el scope ilegible y conserva los válidos',
+    () async {
+      final invalidScope = jsonEncode(const [
+        'conn',
+        'generation',
+        'default',
+        'invalid-session',
+      ]);
+      final validScope = jsonEncode(const [
+        'conn',
+        'generation',
+        'default',
+        'valid-session',
+      ]);
+      final payload = jsonEncode({
+        invalidScope: const {'unexpected': true},
+        validScope: const [
+          {
+            'content': 'otro turno detenido',
+            'anchor_message_id': 'valid-anchor',
+            'first_user': false,
+            'created_at_ms': 1001,
+          },
+        ],
+      });
+      var writes = 0;
+      final store = CancelledTurnTombstoneStore(
+        read: () async => payload,
+        write: (_) async => writes++,
+      );
+
+      await store.initialize();
+
+      expect(
+        store.load(
+          connectionId: 'conn',
+          generation: 'generation',
+          profile: 'default',
+          sessionId: 'invalid-session',
+        ),
+        isEmpty,
+      );
+      expect(
+        store
+            .load(
+              connectionId: 'conn',
+              generation: 'generation',
+              profile: 'default',
+              sessionId: 'valid-session',
+            )
+            .single
+            .anchorMessageId,
+        'valid-anchor',
+      );
+      expect(writes, 0);
+    },
+  );
+
+  test(
+    'reinicio frío descarta un scope mixto sin reaplicar su tombstone',
+    () async {
+      final mixedScope = jsonEncode(const [
+        'conn',
+        'generation',
+        'default',
+        'mixed-session',
+      ]);
+      final validScope = jsonEncode(const [
+        'conn',
+        'generation',
+        'default',
+        'valid-session',
+      ]);
+      final payload = jsonEncode({
+        mixedScope: const [
+          {
+            'content': 'turno que pudo invalidarse',
+            'anchor_message_id': 'mixed-anchor',
+            'first_user': false,
+            'created_at_ms': 1000,
+          },
+          {'invalidated': 'corrupt'},
+        ],
+        validScope: const [
+          {
+            'content': 'turno válido',
+            'anchor_message_id': 'valid-anchor',
+            'first_user': false,
+            'created_at_ms': 1001,
+          },
+        ],
+      });
+      final store = CancelledTurnTombstoneStore(
+        read: () async => payload,
+        write: (_) async {},
+      );
+
+      await store.initialize();
+
+      expect(
+        store.load(
+          connectionId: 'conn',
+          generation: 'generation',
+          profile: 'default',
+          sessionId: 'mixed-session',
+        ),
+        isEmpty,
+      );
+      expect(
+        store.load(
+          connectionId: 'conn',
+          generation: 'generation',
+          profile: 'default',
+          sessionId: 'valid-session',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'store persiste los aliases exactos de sesión en una sola escritura',
+    () async {
+      String? encryptedPayload;
+      var writes = 0;
+      final store = CancelledTurnTombstoneStore(
+        read: () async => encryptedPayload,
+        write: (value) async {
+          writes++;
+          encryptedPayload = value;
+        },
+        nowMs: () => 1000,
+      );
+      await store.initialize();
+
+      await store.addAliases(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionIds: const [
+          'mobile-route',
+          'desktop-stored',
+          'mobile-route',
+          '',
+        ],
+        tombstone: const CancelledTurnTombstone(
+          content: 'turno detenido',
+          firstUser: true,
+        ),
+      );
+
+      expect(writes, 1);
+      for (final sessionId in const ['mobile-route', 'desktop-stored']) {
+        final restored = store.load(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: sessionId,
+        );
+        expect(restored, hasLength(1), reason: sessionId);
+        expect(restored.single.createdAtMs, 1000, reason: sessionId);
+      }
+      expect(encryptedPayload, isNotNull);
+    },
+  );
+
+  test('tombstone persistido conserva el id opaco sin normalizarlo', () {
+    final restored = CancelledTurnTombstone.fromJson(const {
+      'content': 'turno detenido',
+      'anchor_message_id': '  opaque-anchor  ',
+      'first_user': false,
+      'created_at_ms': 1000,
+    });
+
+    expect(restored, isNotNull);
+    expect(restored!.anchorMessageId, '  opaque-anchor  ');
+  });
+
+  test('store conserva row ids tipados y separados de message ids', () async {
+    String? encryptedPayload;
+    final store = CancelledTurnTombstoneStore(
+      read: () async => encryptedPayload,
+      write: (value) async => encryptedPayload = value,
+      nowMs: () => 1000,
+    );
+    await store.initialize();
+
+    await store.add(
+      connectionId: 'conn',
+      profile: 'default',
+      sessionId: 'session',
+      tombstone: const CancelledTurnTombstone(
+        content: 'mismo prompt',
+        cancelledRowId: 42,
+      ),
+    );
+    await store.add(
+      connectionId: 'conn',
+      profile: 'default',
+      sessionId: 'session',
+      tombstone: const CancelledTurnTombstone(
+        content: 'mismo prompt',
+        cancelledMessageId: '42',
+      ),
+    );
+
+    final restored = store.load(
+      connectionId: 'conn',
+      profile: 'default',
+      sessionId: 'session',
+    );
+    expect(restored, hasLength(2));
+    expect(
+      restored.any(
+        (item) => item.cancelledRowId == 42 && item.cancelledMessageId == null,
+      ),
+      isTrue,
+    );
+    expect(
+      restored.any(
+        (item) =>
+            item.cancelledMessageId == '42' && item.cancelledRowId == null,
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'store distingue tombstones target-only con prompts repetidos',
+    () async {
+      String? encryptedPayload;
+      var now = 1000;
+      final store = CancelledTurnTombstoneStore(
+        read: () async => encryptedPayload,
+        write: (value) async => encryptedPayload = value,
+        nowMs: () => now++,
+      );
+      await store.initialize();
+
+      for (final id in const ['target-repeat-1', 'target-repeat-2']) {
+        await store.add(
+          connectionId: 'conn',
+          profile: 'default',
+          sessionId: 'session',
+          tombstone: CancelledTurnTombstone(
+            content: 'mismo prompt',
+            cancelledMessageId: id,
+          ),
+        );
+      }
+      await store.add(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+        tombstone: const CancelledTurnTombstone(
+          content: 'mismo prompt',
+          cancelledMessageId: 'target-repeat-1',
+          invalidated: true,
+        ),
+      );
+
+      final restored = store.load(
+        connectionId: 'conn',
+        profile: 'default',
+        sessionId: 'session',
+      );
+      expect(restored, hasLength(2));
+      expect(restored.map((item) => item.cancelledMessageId).toSet(), {
+        'target-repeat-1',
+        'target-repeat-2',
+      });
+      expect(
+        restored
+            .singleWhere((item) => item.cancelledMessageId == 'target-repeat-1')
+            .invalidated,
+        isTrue,
+      );
+    },
+  );
 
   test(
     'store falla cerrado y puede reintentar tras error de lectura',
@@ -1240,6 +4269,13 @@ void main() {
 
       gateway.drop();
       await _waitUntil(() => chat.state == ChatPipelineState.failed);
+
+      expect(chat.messages.first['role'], 'assistant_error');
+      expect(
+        chat.messages.first['content'],
+        'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      );
+      expect(chat.messages.first['content'], isNot(contains('socket dropped')));
 
       chat.send(fullText: 'segundo', model: 'hermes-agent', history: const []);
       await _waitUntil(() => gateway.submitCalls == 2);
@@ -1892,6 +4928,108 @@ void main() {
     expect(chat.trace.last.id, 'new-turn-tool');
   });
 
+  test(
+    'refresh nuevo vence a un GET terminal antiguo que termina después',
+    () async {
+      final gateway = _DroppingDesktopGateway();
+      final api = _ControlledApiClient();
+      final chat = ActiveChat(
+        connection: _connection('terminal-refresh-epoch'),
+        sessionId: 'session-terminal-refresh-epoch',
+        sessionTitle: 'terminal-refresh-epoch',
+        notifications: null,
+        onTerminal: () {},
+        api: api,
+        desktopGateway: gateway,
+        terminalReconcileBudget: const Duration(seconds: 1),
+      );
+      addTearDown(chat.dispose);
+
+      final initialLoad = chat.loadMessages(expectedMessageCount: 2);
+      await _waitUntil(() => api.requests.length == 1);
+      api.requests[0].complete(const [
+        {
+          'message_id': 'anchor-user',
+          'role': 'user',
+          'content': 'turno previo estable',
+        },
+        {
+          'message_id': 'anchor-answer',
+          'role': 'assistant',
+          'content': 'respuesta previa estable',
+        },
+      ]);
+      await initialLoad;
+
+      await chat.send(
+        fullText: 'turno original',
+        model: 'hermes-agent',
+        history: const [],
+      );
+
+      gateway.emit(
+        'message.complete',
+        payload: const {'text': 'respuesta visible del stream'},
+      );
+      await _waitUntil(() => api.requests.length == 2);
+
+      final refresh = chat.loadMessages(expectedMessageCount: 4);
+      await _waitUntil(() => api.requests.length == 3);
+      api.requests[2].complete(const [
+        {
+          'message_id': 'anchor-user',
+          'role': 'user',
+          'content': 'turno previo estable',
+        },
+        {
+          'message_id': 'anchor-answer',
+          'role': 'assistant',
+          'content': 'respuesta previa estable',
+        },
+        {
+          'message_id': 'new-user',
+          'role': 'user',
+          'content': 'turno más nuevo',
+        },
+        {
+          'message_id': 'new-answer',
+          'role': 'assistant',
+          'content': 'respuesta más nueva',
+        },
+      ]);
+      await refresh;
+
+      api.requests[1].complete(const [
+        {
+          'message_id': 'anchor-user',
+          'role': 'user',
+          'content': 'turno previo estable',
+        },
+        {
+          'message_id': 'anchor-answer',
+          'role': 'assistant',
+          'content': 'respuesta previa estable',
+        },
+        {'message_id': 'old-user', 'role': 'user', 'content': 'turno original'},
+        {
+          'message_id': 'old-answer',
+          'role': 'assistant',
+          'content': 'respuesta terminal obsoleta',
+        },
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(chat.messages.first['message_id'], 'new-answer');
+      expect(chat.messages[1]['message_id'], 'new-user');
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'respuesta terminal obsoleta',
+        ),
+        isFalse,
+      );
+    },
+  );
+
   test('un GET terminal colgado respeta el presupuesto total', () async {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
@@ -2530,6 +5668,51 @@ void main() {
     expect(chat.messages.first['role'], 'assistant');
     expect(chat.messages.first['content'], 'Aquí están las noticias.');
   });
+
+  test(
+    'recovery legacy no sella un tool intermedio antes del assistant final',
+    () async {
+      final gateway = _DroppingDesktopGateway();
+      final api = _ToolThenFinalTranscriptApi();
+      final chat = ActiveChat(
+        connection: _connection('drop-tool-then-final'),
+        sessionId: 'session-drop-tool-then-final',
+        sessionTitle: 'drop-tool-then-final',
+        notifications: null,
+        onTerminal: () {},
+        api: api,
+        desktopGateway: gateway,
+        terminalReconcileBudget: const Duration(seconds: 2),
+      );
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'usa tool',
+        model: 'hermes-agent',
+        history: const [],
+      );
+
+      gateway.drop();
+      await api.firstRead.future;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(api.calls, 1);
+      expect(chat.state, isNot(ChatPipelineState.completed));
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'respuesta final durable',
+        ),
+        isFalse,
+      );
+
+      api.finalReady.complete();
+      await _waitUntil(
+        () => chat.state == ChatPipelineState.completed,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(api.calls, greaterThanOrEqualTo(2));
+      expect(chat.messages.first['content'], 'respuesta final durable');
+    },
+  );
 }
 
 class _NoopOutbox implements TurnOutboxPersistence {

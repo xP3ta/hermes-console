@@ -135,8 +135,10 @@ manifest() {
     fail "falta el permiso FGS de micrófono declarado en Play"
   grep -q '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"' "$merged" ||
     fail "falta el permiso FGS de reproducción declarado en Play"
-  grep -q 'android:foregroundServiceType="dataSync|microphone|mediaPlayback"' "$merged" ||
-    fail "el servicio Play no declara exactamente dataSync|microphone|mediaPlayback"
+  grep -q '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"' "$merged" ||
+    fail "falta el permiso FGS de mensajería remota declarado en Play"
+  grep -q 'android:foregroundServiceType="dataSync|remoteMessaging|microphone|mediaPlayback"' "$merged" ||
+    fail "el servicio Play no declara exactamente dataSync|remoteMessaging|microphone|mediaPlayback"
   for forbidden_permission in \
     android.permission.READ_PHONE_STATE \
     android.permission.READ_EXTERNAL_STORAGE; do

@@ -2,10 +2,11 @@
 
 ## Current status
 
-`1.2.8+4943` is the source-current publication candidate. Its QA profile build
-is for internal validation only and still requires the final physical release
-gate before a production AAB or APK is published. `1.2.7` is the latest version
-already delivered through Google Play and GitHub Releases/Obtainium.
+`1.2.9` is the source-current publication candidate. Its final build number and
+signed distribution artifacts remain pending until the automated, independent
+review and physical release gates close. Any QA profile build is for internal
+validation only. `1.2.7` is the latest version already delivered through Google
+Play and GitHub Releases/Obtainium.
 
 Do not install or share a `qa`, `debug`, or `profile` APK outside the internal
 validation flow. Those builds use different guarantees and, in the QA flavor,

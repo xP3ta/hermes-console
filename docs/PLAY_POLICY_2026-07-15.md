@@ -3,7 +3,8 @@
 Fuente oficial:
 <https://support.google.com/googleplay/android-developer/answer/17134731>
 
-Revisado el 19-07-2026 para la candidata `1.1.6+903`.
+Revisado el 01-09-2026 para el candidato fuente `1.2.9`. La inspección del AAB
+firmado final continúa pendiente; este documento no la da por realizada.
 
 | Cambio anunciado | ¿Afecta? | Acción para Hermes Console |
 |---|---:|---|
@@ -21,10 +22,10 @@ Revisado el 19-07-2026 para la candidata `1.1.6+903`.
 - [ ] Actualizar Data Safety para mensajes, audio, adjuntos y terceros; el
   escáner ZXing no añade recopilación ni compartición de datos.
 - [ ] Revisar IARC/Content rating y Target audience (la app no se dirige a niños).
-- [ ] Declarar FGS `dataSync`, `microphone` y `mediaPlayback`, cada uno con
-  texto, impacto y vídeo.
-- [x] Verificado en el AAB final: no existen permisos de llamadas/SMS ni
-  `USE_FULL_SCREEN_INTENT`.
+- [ ] Declarar FGS `dataSync`, `remoteMessaging`, `microphone` y
+  `mediaPlayback`, cada uno con texto, impacto y vídeo.
+- [ ] Verificar en el AAB firmado final que no existan permisos de llamadas/SMS
+  ni `USE_FULL_SCREEN_INTENT` (los manifests fuente actuales no los declaran).
 
 ## Conclusión
 

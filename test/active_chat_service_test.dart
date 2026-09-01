@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -175,6 +176,56 @@ Future<void> _waitFor(bool Function() condition) async {
   expect(condition(), isTrue);
 }
 
+class _ApprovalRaceClient extends http.BaseClient {
+  final events = StreamController<List<int>>();
+  final releaseA = Completer<void>();
+  final releaseB = Completer<void>();
+  final approvalBodies = <Map<String, dynamic>>[];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final path = request.url.path;
+    if (request.method == 'POST' && path == '/v1/runs') {
+      return _response({'run_id': 'run_1'});
+    }
+    if (request.method == 'GET' && path == '/v1/runs/run_1/events') {
+      return http.StreamedResponse(
+        events.stream,
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    }
+    if (request.method == 'POST' && path == '/v1/runs/run_1/approval') {
+      final body =
+          jsonDecode((request as http.Request).body) as Map<String, dynamic>;
+      approvalBodies.add(body);
+      if (body['request_id'] == 'request-a') await releaseA.future;
+      if (body['request_id'] == 'request-b') await releaseB.future;
+      return _response({'ok': true});
+    }
+    return _response({}, statusCode: 404);
+  }
+
+  http.StreamedResponse _response(
+    Map<String, dynamic> body, {
+    int statusCode = 200,
+  }) => http.StreamedResponse(
+    Stream<List<int>>.value(utf8.encode(jsonEncode(body))),
+    statusCode,
+    headers: {'content-type': 'application/json'},
+  );
+
+  void emit(Map<String, dynamic> event) {
+    events.add(utf8.encode('data: ${jsonEncode(event)}\n\n'));
+  }
+
+  @override
+  void close() {
+    events.close();
+    super.close();
+  }
+}
+
 class _WidgetRecordingStore implements HomeWidgetStore {
   final values = <String, Object?>{};
   final snapshots = <Map<String, Object?>>[];
@@ -323,6 +374,7 @@ class _AttachmentDesktopGateway
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   void emit(String type, [Map<String, dynamic> payload = const {}]) {
@@ -454,6 +506,33 @@ Session _widgetSession() => const Session(
 );
 
 void main() {
+  test('desktop recovery never exposes technical errors in UI', () {
+    final secrets = <Object>[
+      StateError('state-secret'),
+      SocketException('socket-secret'),
+      TuiGatewayRpcError('session.resume', 'rpc-secret', code: 4999),
+    ];
+
+    for (final error in secrets) {
+      final ui = activeChatDesktopRecoveryUiMessage(error);
+      final diagnostic = activeChatDesktopRecoveryDiagnostic(error);
+      expect(ui, 'No se pudo recuperar el turno. Inténtalo de nuevo.');
+      expect(ui, isNot(contains('secret')));
+      expect(diagnostic, isNot(contains('secret')));
+      expect(diagnostic, contains(error.runtimeType.toString()));
+    }
+    expect(
+      activeChatDesktopRecoveryDiagnostic(secrets.last),
+      contains('code=4999'),
+    );
+    expect(
+      activeChatDesktopSnapshotFailureUiMessage(
+        'model call failed: 500 private-upstream-detail',
+      ),
+      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -1256,6 +1335,84 @@ void main() {
   });
 
   test(
+    'reapertura durable restaura Stop desde el alias lógico del primer chat',
+    () async {
+      String? payload;
+      final store = CancelledTurnTombstoneStore(
+        read: () async => payload,
+        write: (value) async => payload = value,
+        nowMs: () => 1000,
+      );
+      await store.initialize();
+      final connection = _conn(id: 'conn-stop-logical-alias');
+      final generation = sha256
+          .convert(
+            utf8.encode(
+              jsonEncode([
+                connection.id,
+                connection.kind.name,
+                connection.host,
+                connection.port,
+                connection.useHttps,
+                connection.gatewayAuthMode.storageKey,
+                connection.apiKey,
+              ]),
+            ),
+          )
+          .toString();
+      await store.add(
+        connectionId: connection.id,
+        profile: 'default',
+        sessionId: 'mobile-first-route',
+        generation: generation,
+        tombstone: const CancelledTurnTombstone(
+          content: 'cuento cancelado',
+          firstUser: true,
+        ),
+      );
+
+      final service = ActiveChatService(cancelledTurnStore: store);
+      addTearDown(service.dispose);
+      final chat = service.attach(
+        connection: connection,
+        sessionId: 'stored-desktop-route',
+        logicalSessionId: 'mobile-first-route',
+        sessionTitle: 'Cuento',
+        sessionProfile: 'default',
+        initialStoredSessionId: 'stored-desktop-route',
+        api: ApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          apiKey: 'test-key',
+          httpClient: _gateway(events: '', finalMessages: const []),
+        ),
+        storedMessageLoader: (_, _) async => const [
+          {'id': 1, 'role': 'user', 'content': 'cuento cancelado'},
+          {
+            'id': 2,
+            'role': 'assistant',
+            'content': 'respuesta que no debe resucitar',
+          },
+        ],
+      );
+
+      await chat.loadMessages(expectedMessageCount: 2);
+
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'respuesta que no debe resucitar',
+        ),
+        isFalse,
+      );
+      expect(
+        chat.messages.singleWhere(
+          (message) => message['content'] == 'cuento cancelado',
+        )['_cancelledUser'],
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'TTFT persistido queda aislado por perfil y migra solo default',
     () async {
       final prefs = await SharedPreferences.getInstance();
@@ -1533,7 +1690,7 @@ void main() {
               {'event': 'tool.started', 'tool': 'shell'},
               {
                 'event': 'approval.request',
-                'id': 'approval-1',
+                'request_id': 'approval-1',
                 'command': 'echo ok',
               },
               {'event': 'message.delta', 'delta': 'Hola'},
@@ -2188,33 +2345,91 @@ void main() {
     );
   });
 
-  group(
-    'ActiveChat — política de aprobaciones (YOLO se aplica en el chat)',
-    () {
-      Future<ApprovalPolicyService> policyWith(ApprovalMode mode) async {
-        final prefs = await SharedPreferences.getInstance();
-        final policy = ApprovalPolicyService(prefs);
-        await policy.setGlobalMode(mode);
-        return policy;
-      }
+  group('ActiveChat — política de aprobaciones (YOLO se aplica en el chat)', () {
+    Future<ApprovalPolicyService> policyWith(ApprovalMode mode) async {
+      final prefs = await SharedPreferences.getInstance();
+      final policy = ApprovalPolicyService(prefs);
+      await policy.setGlobalMode(mode);
+      return policy;
+    }
 
-      ActiveChat chatWithPolicy(
-        ApprovalPolicyService policy, {
-        required String events,
-        List<String>? hits,
-      }) {
+    ActiveChat chatWithPolicy(
+      ApprovalPolicyService policy, {
+      required String events,
+      List<String>? hits,
+    }) {
+      final api = ApiClient(
+        baseUrl: 'http://hermes.local:8642',
+        apiKey: 'k',
+        httpClient: _gateway(
+          hitLog: hits,
+          events: events,
+          finalMessages: const [
+            {'role': 'assistant', 'content': 'ok'},
+          ],
+        ),
+      );
+      return ActiveChat(
+        connection: _conn(),
+        sessionId: 'sess-1',
+        sessionTitle: 'X',
+        notifications: null,
+        onTerminal: () {},
+        policy: policy,
+        api: api,
+      );
+    }
+
+    test('YOLO auto-aprueba sin tarjeta ni notificación', () async {
+      final policy = await policyWith(ApprovalMode.yolo);
+      final hits = <String>[];
+      final chat = chatWithPolicy(
+        policy,
+        hits: hits,
+        events: _sse([
+          {
+            'event': 'approval.request',
+            'request_id': 'request-yolo',
+            'command': 'ls -la',
+            'pattern_key': 'ls',
+          },
+          {'event': 'run.completed', 'output': 'ok'},
+        ]),
+      );
+      final events = <ActiveChatEvent>[];
+      chat.changes.listen(events.add);
+
+      chat.send(fullText: 'lista', model: 'm', history: const []);
+      await chat.changes
+          .firstWhere((e) => e == ActiveChatEvent.done)
+          .timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        hits,
+        contains('POST /v1/runs/run_1/approval'),
+        reason: 'YOLO debe resolver la aprobación automáticamente',
+      );
+      expect(
+        events.contains(ActiveChatEvent.approvalRequest),
+        isFalse,
+        reason: 'YOLO no debe mostrar la tarjeta de aprobación',
+      );
+      expect(chat.pendingApproval, isNull);
+      chat.dispose();
+    });
+
+    test(
+      'YOLO resuelve A por request_id sin borrar B que llega durante el await',
+      () async {
+        final policy = await policyWith(ApprovalMode.yolo);
+        final race = _ApprovalRaceClient();
         final api = ApiClient(
           baseUrl: 'http://hermes.local:8642',
           apiKey: 'k',
-          httpClient: _gateway(
-            hitLog: hits,
-            events: events,
-            finalMessages: const [
-              {'role': 'assistant', 'content': 'ok'},
-            ],
-          ),
+          httpClient: race,
         );
-        return ActiveChat(
+        final chat = ActiveChat(
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -2223,141 +2438,89 @@ void main() {
           policy: policy,
           api: api,
         );
-      }
-
-      test('YOLO auto-aprueba sin tarjeta ni notificación', () async {
-        final policy = await policyWith(ApprovalMode.yolo);
-        final hits = <String>[];
-        final chat = chatWithPolicy(
-          policy,
-          hits: hits,
-          events: _sse([
-            {
-              'event': 'approval.request',
-              'command': 'ls -la',
-              'pattern_key': 'ls',
-            },
-            {'event': 'run.completed', 'output': 'ok'},
-          ]),
-        );
-        final events = <ActiveChatEvent>[];
-        chat.changes.listen(events.add);
+        addTearDown(chat.dispose);
 
         chat.send(fullText: 'lista', model: 'm', history: const []);
-        await chat.changes
-            .firstWhere((e) => e == ActiveChatEvent.done)
-            .timeout(const Duration(seconds: 5));
+        await _waitFor(() => chat.currentRunId == 'run_1');
+        race.emit(const {
+          'event': 'approval.request',
+          'request_id': 'request-a',
+          'command': 'ls a',
+        });
+        race.emit(const {
+          'event': 'approval.request',
+          'request_id': 'request-b',
+          'command': 'ls b',
+        });
+        await _waitFor(() => race.approvalBodies.length == 2);
+        expect(race.approvalBodies.map((body) => body['request_id']), [
+          'request-a',
+          'request-b',
+        ]);
+        expect(chat.pendingApproval?['request_id'], 'request-b');
+
+        race.releaseA.complete();
         await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(chat.pendingApproval?['request_id'], 'request-b');
+        race.releaseB.complete();
+      },
+    );
 
-        expect(
-          hits,
-          contains('POST /v1/runs/run_1/approval'),
-          reason: 'YOLO debe resolver la aprobación automáticamente',
-        );
-        expect(
-          events.contains(ActiveChatEvent.approvalRequest),
-          isFalse,
-          reason: 'YOLO no debe mostrar la tarjeta de aprobación',
-        );
-        expect(chat.pendingApproval, isNull);
-        chat.dispose();
-      });
-
-      test(
-        'Preguntar (interactive) muestra la tarjeta y NO auto-resuelve',
-        () async {
-          final policy = await policyWith(ApprovalMode.interactive);
-          final hits = <String>[];
-          final chat = chatWithPolicy(
-            policy,
-            hits: hits,
-            events: _sse([
-              {
-                'event': 'approval.request',
-                'command': 'rm archivo',
-                'pattern_key': 'rm',
-              },
-            ]),
-          );
-          final events = <ActiveChatEvent>[];
-          chat.changes.listen(events.add);
-
-          chat.send(fullText: 'borra', model: 'm', history: const []);
-          await chat.changes
-              .firstWhere((e) => e == ActiveChatEvent.approvalRequest)
-              .timeout(const Duration(seconds: 5));
-
-          expect(
-            hits.any((h) => h.contains('/approval')),
-            isFalse,
-            reason: 'modo Preguntar no debe auto-resolver',
-          );
-          expect(chat.pendingApproval, isNotNull);
-          chat.dispose();
-        },
-      );
-
-      test(
-        'la aprobación del id persistido sigue perteneciendo al chat visible',
-        () async {
-          final prefs = await SharedPreferences.getInstance();
-          final policy = ApprovalPolicyService(prefs);
-          await policy.setGlobalMode(ApprovalMode.interactive);
-          final notifications = NotificationService(prefs)
-            ..appInForeground = true
-            ..visibleSessionId = 'sess-persistida';
-          final inAppNotices = <InAppNotice>[];
-          final noticeSub = notifications.inAppNotices.listen(inAppNotices.add);
-          final api = ApiClient(
-            baseUrl: 'http://hermes.local:8642',
-            apiKey: 'k',
-            httpClient: _gateway(
-              events: _sse([
+    test('solo lectura resuelve exactamente el request recibido', () async {
+      final policy = await policyWith(ApprovalMode.readOnly);
+      Map<String, dynamic>? approvalBody;
+      final api = ApiClient(
+        baseUrl: 'http://hermes.local:8642',
+        apiKey: 'k',
+        httpClient: MockClient((request) async {
+          if (request.method == 'POST' && request.url.path == '/v1/runs') {
+            return http.Response(jsonEncode({'run_id': 'run_1'}), 200);
+          }
+          if (request.method == 'GET' &&
+              request.url.path == '/v1/runs/run_1/events') {
+            return http.Response(
+              _sse(const [
                 {
                   'event': 'approval.request',
-                  'command': 'curl ejemplo.test',
-                  'pattern_key': 'curl',
+                  'request_id': 'request-read-only',
+                  'command': 'rm x',
                 },
               ]),
-              finalMessages: const [],
-            ),
-          );
-          final chat = ActiveChat(
-            connection: _conn(),
-            sessionId: 'mob-provisional',
-            sessionTitle: 'Noticias',
-            notifications: notifications,
-            onTerminal: () {},
-            policy: policy,
-            api: api,
-          );
-
-          chat.send(
-            fullText: 'busca noticias',
-            model: 'm',
-            history: const [],
-            serverSessionId: 'sess-persistida',
-          );
-          await chat.changes
-              .firstWhere((e) => e == ActiveChatEvent.approvalRequest)
-              .timeout(const Duration(seconds: 5));
-          await Future<void>.delayed(const Duration(milliseconds: 30));
-
-          expect(chat.serverSessionId, 'sess-persistida');
-          expect(
-            inAppNotices,
-            isEmpty,
-            reason:
-                'la aprobación del chat visible no puede desviarse al banner '
-                'de "otro chat"',
-          );
-          await noticeSub.cancel();
-          chat.dispose();
-        },
+              200,
+              headers: {'content-type': 'text/event-stream'},
+            );
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/v1/runs/run_1/approval') {
+            approvalBody = jsonDecode(request.body) as Map<String, dynamic>;
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          return http.Response('{}', 404);
+        }),
       );
+      final chat = ActiveChat(
+        connection: _conn(),
+        sessionId: 'sess-1',
+        sessionTitle: 'X',
+        notifications: null,
+        onTerminal: () {},
+        policy: policy,
+        api: api,
+      );
+      addTearDown(chat.dispose);
 
-      test('Solo lectura deniega automáticamente', () async {
-        final policy = await policyWith(ApprovalMode.readOnly);
+      chat.send(fullText: 'borra', model: 'm', history: const []);
+      await _waitFor(() => approvalBody != null);
+      expect(approvalBody, {
+        'choice': 'deny',
+        'request_id': 'request-read-only',
+      });
+    });
+
+    test(
+      'Preguntar (interactive) muestra la tarjeta y NO auto-resuelve',
+      () async {
+        final policy = await policyWith(ApprovalMode.interactive);
         final hits = <String>[];
         final chat = chatWithPolicy(
           policy,
@@ -2365,10 +2528,10 @@ void main() {
           events: _sse([
             {
               'event': 'approval.request',
-              'command': 'rm x',
+              'request_id': 'request-interactive',
+              'command': 'rm archivo',
               'pattern_key': 'rm',
             },
-            {'event': 'run.completed', 'output': 'ok'},
           ]),
         );
         final events = <ActiveChatEvent>[];
@@ -2376,17 +2539,110 @@ void main() {
 
         chat.send(fullText: 'borra', model: 'm', history: const []);
         await chat.changes
-            .firstWhere((e) => e == ActiveChatEvent.done)
+            .firstWhere((e) => e == ActiveChatEvent.approvalRequest)
             .timeout(const Duration(seconds: 5));
-        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        expect(hits, contains('POST /v1/runs/run_1/approval'));
-        expect(events.contains(ActiveChatEvent.approvalRequest), isFalse);
-        expect(chat.pendingApproval, isNull);
+        expect(
+          hits.any((h) => h.contains('/approval')),
+          isFalse,
+          reason: 'modo Preguntar no debe auto-resolver',
+        );
+        expect(chat.pendingApproval, isNotNull);
         chat.dispose();
-      });
-    },
-  );
+      },
+    );
+
+    test(
+      'la aprobación del id persistido sigue perteneciendo al chat visible',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        final policy = ApprovalPolicyService(prefs);
+        await policy.setGlobalMode(ApprovalMode.interactive);
+        final notifications = NotificationService(prefs)
+          ..appInForeground = true
+          ..visibleSessionId = 'sess-persistida';
+        final inAppNotices = <InAppNotice>[];
+        final noticeSub = notifications.inAppNotices.listen(inAppNotices.add);
+        final api = ApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          apiKey: 'k',
+          httpClient: _gateway(
+            events: _sse([
+              {
+                'event': 'approval.request',
+                'request_id': 'request-visible',
+                'command': 'curl ejemplo.test',
+                'pattern_key': 'curl',
+              },
+            ]),
+            finalMessages: const [],
+          ),
+        );
+        final chat = ActiveChat(
+          connection: _conn(),
+          sessionId: 'mob-provisional',
+          sessionTitle: 'Noticias',
+          notifications: notifications,
+          onTerminal: () {},
+          policy: policy,
+          api: api,
+        );
+
+        chat.send(
+          fullText: 'busca noticias',
+          model: 'm',
+          history: const [],
+          serverSessionId: 'sess-persistida',
+        );
+        await chat.changes
+            .firstWhere((e) => e == ActiveChatEvent.approvalRequest)
+            .timeout(const Duration(seconds: 5));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(chat.serverSessionId, 'sess-persistida');
+        expect(
+          inAppNotices,
+          isEmpty,
+          reason:
+              'la aprobación del chat visible no puede desviarse al banner '
+              'de "otro chat"',
+        );
+        await noticeSub.cancel();
+        chat.dispose();
+      },
+    );
+
+    test('Solo lectura deniega automáticamente', () async {
+      final policy = await policyWith(ApprovalMode.readOnly);
+      final hits = <String>[];
+      final chat = chatWithPolicy(
+        policy,
+        hits: hits,
+        events: _sse([
+          {
+            'event': 'approval.request',
+            'request_id': 'request-read-only-old',
+            'command': 'rm x',
+            'pattern_key': 'rm',
+          },
+          {'event': 'run.completed', 'output': 'ok'},
+        ]),
+      );
+      final events = <ActiveChatEvent>[];
+      chat.changes.listen(events.add);
+
+      chat.send(fullText: 'borra', model: 'm', history: const []);
+      await chat.changes
+          .firstWhere((e) => e == ActiveChatEvent.done)
+          .timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(hits, contains('POST /v1/runs/run_1/approval'));
+      expect(events.contains(ActiveChatEvent.approvalRequest), isFalse);
+      expect(chat.pendingApproval, isNull);
+      chat.dispose();
+    });
+  });
 
   group('ActiveChat.reconcileAfterResume', () {
     ActiveChat chatWith(List<Map<String, dynamic>> serverMessages) {
@@ -2427,6 +2683,114 @@ void main() {
       chat.dispose();
     });
 
+    test(
+      'reapertura hidrata el final que llegó después de una cola de tools',
+      () async {
+        final chat = chatWith([
+          {'role': 'user', 'content': 'busca las noticias'},
+          {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [
+              {
+                'id': 'search-call',
+                'function': {'name': 'web_search', 'arguments': '{}'},
+              },
+            ],
+          },
+          {
+            'role': 'tool',
+            'tool_call_id': 'search-call',
+            'content': 'resultados encontrados',
+          },
+          {
+            'role': 'assistant',
+            'content': 'Aquí tienes las noticias completas.',
+          },
+        ]);
+        // La app se cerró cuando el transcript durable todavía acababa en la
+        // herramienta. Al volver no queda placeholder assistant en cabeza: la
+        // proyección visible termina en `tool`, aunque el servidor ya publicó
+        // después la respuesta final.
+        chat.messages = [
+          {
+            'role': 'tool',
+            'tool_call_id': 'search-call',
+            'content': 'resultados encontrados',
+          },
+          {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [
+              {
+                'id': 'search-call',
+                'function': {'name': 'web_search', 'arguments': '{}'},
+              },
+            ],
+          },
+          {'role': 'user', 'content': 'busca las noticias'},
+        ];
+        chat.state = ChatPipelineState.completed;
+
+        final changed = await chat.reconcileAfterResume();
+
+        expect(changed, isTrue);
+        expect(chat.messages.first['role'], 'assistant');
+        expect(
+          chat.messages.first['content'],
+          'Aquí tienes las noticias completas.',
+        );
+        chat.dispose();
+      },
+    );
+
+    test('reapertura conserva un turno canónico realmente tool-only', () async {
+      final serverMessages = [
+        <String, dynamic>{'role': 'user', 'content': 'ejecuta la herramienta'},
+        <String, dynamic>{'role': 'tool', 'name': 'status', 'content': 'ok'},
+      ];
+      final chat = chatWith(serverMessages);
+      chat.messages = serverMessages.reversed
+          .map(Map<String, dynamic>.of)
+          .toList(growable: false);
+      chat.state = ChatPipelineState.completed;
+      final before = chat.messages;
+
+      final changed = await chat.reconcileAfterResume();
+
+      expect(changed, isFalse);
+      expect(chat.messages, same(before));
+      expect(chat.messages.first['role'], 'tool');
+      chat.dispose();
+    });
+
+    test(
+      'reapertura sustituye el placeholder por un terminal tool-only',
+      () async {
+        final chat = chatWith([
+          {'role': 'user', 'content': 'consulta el estado'},
+          {'role': 'tool', 'name': 'status', 'content': 'ok'},
+        ]);
+        chat.messages = [
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'consulta el estado'},
+        ];
+        chat.state = ChatPipelineState.idle;
+
+        final changed = await chat.reconcileAfterResume();
+
+        expect(changed, isTrue);
+        expect(chat.messages.first['role'], 'tool');
+        expect(chat.messages.first['content'], 'ok');
+        expect(
+          chat.messages.any((message) => message['_pipeline'] == true),
+          isFalse,
+        );
+        expect(chat.state, ChatPipelineState.completed);
+        chat.dispose();
+      },
+    );
+
     test('no toca un chat ya finalizado correctamente', () async {
       final chat = chatWith([
         {'role': 'assistant', 'content': 'OTRO contenido del servidor'},
@@ -2458,6 +2822,90 @@ void main() {
       expect(changed, isFalse);
       expect(chat.state, ChatPipelineState.streaming);
       chat.dispose();
+    });
+
+    test('GET de resume obsoleto no borra un turno enviado después', () async {
+      final getStarted = Completer<void>();
+      final oldGet = Completer<http.Response>();
+      final streamGate = Completer<http.Response>();
+      final api = ApiClient(
+        baseUrl: 'http://hermes.local:8642',
+        apiKey: 'k',
+        httpClient: MockClient((request) async {
+          if (request.method == 'GET' &&
+              request.url.path.endsWith('/messages')) {
+            if (!getStarted.isCompleted) getStarted.complete();
+            return oldGet.future;
+          }
+          if (request.method == 'POST' && request.url.path == '/v1/runs') {
+            return http.Response(
+              jsonEncode({'run_id': 'run-after-resume'}),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path.endsWith('/events')) return streamGate.future;
+          return http.Response('not found', 404);
+        }),
+      );
+      final chat = ActiveChat(
+        connection: _conn(),
+        sessionId: 'resume-race',
+        sessionTitle: 'Resume race',
+        notifications: null,
+        onTerminal: () {},
+        api: api,
+      );
+      addTearDown(() {
+        if (!streamGate.isCompleted) {
+          streamGate.complete(http.Response('', 200));
+        }
+        chat.dispose();
+      });
+      chat.messages = [
+        {'role': 'assistant', 'content': '', '_pipeline': true},
+        {'role': 'user', 'content': 'turno anterior'},
+      ];
+      chat.state = ChatPipelineState.idle;
+
+      final staleResume = chat.reconcileAfterResume();
+      await getStarted.future;
+      unawaited(
+        chat.send(
+          fullText: 'turno nuevo que debe sobrevivir',
+          model: 'm',
+          history: const [],
+        ),
+      );
+      while (!chat.isStreaming) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      oldGet.complete(
+        http.Response(
+          jsonEncode({
+            'data': [
+              {'role': 'user', 'content': 'turno anterior'},
+              {'role': 'assistant', 'content': 'respuesta antigua'},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      );
+
+      expect(await staleResume, isFalse);
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'turno nuevo que debe sobrevivir',
+        ),
+        isTrue,
+      );
+      expect(
+        chat.messages.any(
+          (message) => message['content'] == 'respuesta antigua',
+        ),
+        isFalse,
+      );
     });
   });
 

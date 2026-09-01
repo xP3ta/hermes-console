@@ -1,11 +1,15 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Jerarquía de producto (A: acción requerida, B: resultado, C: respuesta,
 /// D: servicio activo) verificada sobre el canal de plataforma real:
@@ -16,6 +20,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// el resumen de grupo se evalúa contra el estado real entre instancias.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  sqfliteFfiInit();
+  sqflite.databaseFactory = databaseFactoryFfi;
 
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   final messenger =
@@ -23,9 +29,22 @@ void main() {
 
   late List<MethodCall> calls;
   late Map<int, Map<String, dynamic>> tray;
+  late String deliveryPath;
 
-  setUp(() {
-    NotificationService.setAutomationNotificationsEnabledForTest(true);
+  NotificationService testService(SharedPreferences prefs) =>
+      NotificationService(
+        prefs,
+        deliveryStore: NotificationDeliveryStore(
+          databaseFactory: databaseFactoryFfi,
+          databasePath: deliveryPath,
+        ),
+      );
+
+  setUp(() async {
+    final directory = await Directory.systemTemp.createTemp(
+      'hierarchy-delivery-',
+    );
+    deliveryPath = '${directory.path}/notification_delivery_v1.db';
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     calls = <MethodCall>[];
@@ -80,7 +99,6 @@ void main() {
   });
 
   tearDown(() {
-    NotificationService.setAutomationNotificationsEnabledForTest(false);
     messenger.setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
   });
@@ -105,34 +123,33 @@ void main() {
           .map((a) => Map<String, dynamic>.from(a as Map)['id'] as String)
           .toList();
 
-  test(
-    'A: aprobación usa canal de máxima prioridad y título de permiso',
-    () async {
-      final prefs = await SharedPreferences.getInstance();
-      final service = NotificationService(prefs)..appInForeground = false;
+  test('A: aprobación usa canal de máxima prioridad y copy privado', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final service = testService(prefs)..appInForeground = false;
 
-      await service.approvalPending(
-        tool: 'bash',
-        connId: 'demo-node',
-        runId: 'run-approval-1',
-        base: 'https://hermes.example',
-      );
+    await service.approvalPending(
+      tool: 'bash',
+      connId: 'demo-node',
+      runId: 'run-approval-1',
+      approvalId: 'request-approval-1',
+      base: 'https://hermes.example',
+    );
 
-      final shown = shownArgs(groupSummary: false);
-      expect(shown, hasLength(1));
-      final android = androidOf(shown.single);
-      expect(shown.single['title'], 'Hermes necesita tu permiso');
-      expect(android['channelId'], 'hermes_approvals');
-      expect(android['importance'], Importance.max.value);
-      expect(android['priority'], Priority.max.value);
-    },
-  );
+    final shown = shownArgs(groupSummary: false);
+    expect(shown, hasLength(1));
+    final android = androidOf(shown.single);
+    expect(shown.single['title'], 'Hermes necesita tu atención');
+    expect(shown.single['body'], isNot(contains('bash')));
+    expect(android['channelId'], 'hermes_approvals');
+    expect(android['importance'], Importance.max.value);
+    expect(android['priority'], Priority.max.value);
+  });
 
   test(
     'B/C: resultado y respuesta usan canales y prioridades separadas',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = NotificationService(prefs)..appInForeground = false;
+      final service = testService(prefs)..appInForeground = false;
 
       await service.runFinished(
         title: 'Copia de seguridad',
@@ -165,13 +182,14 @@ void main() {
     'A: la aprobación nunca resuelve desde la bandeja, solo Abrir',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = NotificationService(prefs)..appInForeground = false;
+      final service = testService(prefs)..appInForeground = false;
 
       // Sin redacción: tampoco hay Aprobar/Rechazar; la decisión exige abrir.
       await service.approvalPending(
         tool: 'bash',
         connId: 'demo-node',
         runId: 'run-unlocked-1',
+        approvalId: 'request-unlocked-1',
         base: 'https://hermes.example',
       );
 
@@ -185,6 +203,7 @@ void main() {
         tool: 'bash',
         connId: 'demo-node',
         runId: 'run-locked-1',
+        approvalId: 'request-locked-1',
         base: 'https://hermes.example',
       );
 
@@ -192,7 +211,7 @@ void main() {
       expect(shown, hasLength(2));
       final locked = shown.last;
       final android = androidOf(locked);
-      expect(locked['title'], 'Nueva actividad en Hermes');
+      expect(locked['title'], 'Hermes necesita tu atención');
       expect(locked['body'], 'Abre la aplicación para ver los detalles.');
       expect(android['visibility'], NotificationVisibility.secret.index);
       expect(actionIdsOf(locked), ['open']);
@@ -201,7 +220,7 @@ void main() {
 
   test('B: cron usa título específico según resultado', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = NotificationService(prefs)..appInForeground = false;
+    final service = testService(prefs)..appInForeground = false;
 
     await service.cronFinished(
       title: 'Fichaje diario',
@@ -231,7 +250,7 @@ void main() {
 
   test('B: kanban bloqueada abre la tarjeta exacta', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = NotificationService(prefs)..appInForeground = false;
+    final service = testService(prefs)..appInForeground = false;
 
     await service.kanbanTransition(
       connId: 'demo-node',
@@ -251,13 +270,15 @@ void main() {
     );
     expect(payload['tid'], 'task-42');
     expect(payload['conn'], 'demo-node');
-    expect(NotificationOpen.tryParse(shown.single['payload'] as String)?.taskId,
-        'task-42');
+    expect(
+      NotificationOpen.tryParse(shown.single['payload'] as String)?.taskId,
+      'task-42',
+    );
   });
 
   test('B: cron y kanban tienen preferencias independientes', () async {
     final prefs = await SharedPreferences.getInstance();
-    final service = NotificationService(prefs)..appInForeground = false;
+    final service = testService(prefs)..appInForeground = false;
 
     // Kanban desactivado, cron activo: cron avisa, kanban calla.
     await service.setNotifyKanbanResults(false);
@@ -304,7 +325,7 @@ void main() {
     'B: kanban no hereda el toggle de cron con la clave aún ausente',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = NotificationService(prefs)..appInForeground = false;
+      final service = testService(prefs)..appInForeground = false;
 
       // Actualización desde una versión sin clave propia de Kanban: el
       // opt-in de automatizaciones (escucha) está activo y la clave
@@ -337,7 +358,7 @@ void main() {
     'varias alertas activas publican un resumen de grupo sin perder el tap',
     () async {
       final prefs = await SharedPreferences.getInstance();
-      final service = NotificationService(prefs)..appInForeground = false;
+      final service = testService(prefs)..appInForeground = false;
 
       await service.runFinished(
         title: 'Primera tarea',
@@ -370,10 +391,7 @@ void main() {
       final childIds = children.map((args) => args['id']).toSet();
       expect(childIds, hasLength(2));
       final childRunIds = children
-          .map(
-            (args) =>
-                (jsonDecode(args['payload'] as String) as Map)['rid'],
-          )
+          .map((args) => (jsonDecode(args['payload'] as String) as Map)['rid'])
           .toSet();
       expect(childRunIds, {'run-group-1', 'run-group-2'});
     },
@@ -384,8 +402,8 @@ void main() {
     () async {
       final prefs = await SharedPreferences.getInstance();
       // UI y listener/FGS son instancias (e isolates) distintas en producción.
-      final ui = NotificationService(prefs)..appInForeground = false;
-      final listener = NotificationService(prefs)..appInForeground = false;
+      final ui = testService(prefs)..appInForeground = false;
+      final listener = testService(prefs)..appInForeground = false;
 
       await ui.runFinished(
         title: 'Vista por la UI',
@@ -405,21 +423,22 @@ void main() {
 
       // Una instancia NUEVA (reinicio de proceso) ve la bandeja real: al
       // cancelar una hija y quedar una sola, el resumen se retira.
-      final restarted = NotificationService(prefs)..appInForeground = false;
-      final firstId = NotificationService.eventNotificationId(
-        base: 7100,
-        span: 1024,
-        parts: ['demo-node', '', 'run-prod-1', 'run_terminal'],
-      );
+      final restarted = testService(prefs)..appInForeground = false;
+      final firstId =
+          shownArgs(groupSummary: false).firstWhere(
+                (args) =>
+                    (jsonDecode(args['payload'] as String) as Map)['rid'] ==
+                    'run-prod-1',
+              )['id']
+              as int;
       await restarted.cancelById(firstId, 'test');
 
-      final cancels = calls
-          .where((call) => call.method == 'cancel')
-          .map((call) {
-            final raw = call.arguments;
-            return raw is Map ? raw['id'] : raw;
-          })
-          .toList();
+      final cancels = calls.where((call) => call.method == 'cancel').map((
+        call,
+      ) {
+        final raw = call.arguments;
+        return raw is Map ? raw['id'] : raw;
+      }).toList();
       expect(cancels, containsAllInOrder([firstId, 500]));
       expect(tray.keys, isNot(contains(500)));
     },

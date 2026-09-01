@@ -382,20 +382,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   int? _messageIndexForArtifactSource(SessionArtifactSource source) {
     final messages = _messages;
     if (messages == null) return null;
-    final stableId = source.messageId;
-    if (stableId != null) {
-      for (var index = 0; index < messages.length; index++) {
-        if (messages[index]['_desktopMessageId'] == stableId ||
-            messages[index]['message_id'] == stableId ||
-            messages[index]['id'] == stableId) {
-          return index;
-        }
-      }
-      return null;
-    }
-    return source.messageOrdinal < messages.length
-        ? source.messageOrdinal
-        : null;
+    return messageIndexForArtifactSource(messages, source);
   }
 
   Future<void> _jumpToArtifactSource(SessionArtifactSource source) async {

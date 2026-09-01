@@ -64,13 +64,17 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     required super.created,
     super.messages,
     super.messagesProvided,
+    super.messagesFullyParsed,
     super.messageCount,
     super.hydrating,
     super.inflight,
     super.queued,
+    super.pendingClarify,
+    super.pendingClarifyProvided,
     super.running,
     super.status,
     super.startedAt,
+    super.turnStartedAt,
     super.info,
     super.raw,
   });
@@ -82,13 +86,17 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       created: snapshot.created,
       messages: snapshot.messages,
       messagesProvided: snapshot.messagesProvided,
+      messagesFullyParsed: snapshot.messagesFullyParsed,
       messageCount: snapshot.messageCount,
       hydrating: snapshot.hydrating,
       inflight: snapshot.inflight,
       queued: snapshot.queued,
+      pendingClarify: snapshot.pendingClarify,
+      pendingClarifyProvided: snapshot.pendingClarifyProvided,
       running: snapshot.running,
       status: snapshot.status,
       startedAt: snapshot.startedAt,
+      turnStartedAt: snapshot.turnStartedAt,
       info: snapshot.info,
       raw: snapshot.raw,
     );
@@ -119,6 +127,7 @@ abstract class HermesDesktopGateway {
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   });
 
   Future<void> close();
@@ -760,6 +769,7 @@ class TuiGatewayClient
   int _socketGeneration = 0;
   int _heartbeatSequence = 0;
   DateTime _lastInboundAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _lastHeartbeatTickAt;
   Timer? _heartbeatTimer;
   Future<void>? _connecting;
   String? _legacyEventRuntimeId;
@@ -1027,7 +1037,9 @@ class TuiGatewayClient
 
   void _startHeartbeat(int generation, WebSocketChannel channel) {
     _stopHeartbeat();
-    _lastInboundAt = DateTime.now();
+    final startedAt = DateTime.now();
+    _lastInboundAt = startedAt;
+    _lastHeartbeatTickAt = startedAt;
     if (_heartbeatInterval <= Duration.zero ||
         _heartbeatDeadline <= Duration.zero) {
       return;
@@ -1038,7 +1050,18 @@ class TuiGatewayClient
           !_connected) {
         return;
       }
-      if (DateTime.now().difference(_lastInboundAt) >= _heartbeatDeadline) {
+      final now = DateTime.now();
+      final previousTick = _lastHeartbeatTickAt;
+      _lastHeartbeatTickAt = now;
+      // Android suspende el isolate al dejar la app en segundo plano. Al
+      // volver, un Timer periódico vencido puede ejecutarse antes de entregar
+      // los frames que el socket dejó en cola. Ese salto no demuestra una
+      // conexión muerta: concede una sonda completa antes de invalidarla.
+      if (previousTick != null &&
+          now.difference(previousTick) >= _heartbeatDeadline) {
+        _lastInboundAt = now;
+      }
+      if (now.difference(_lastInboundAt) >= _heartbeatDeadline) {
         _handleSocketError(
           generation,
           channel,
@@ -1064,6 +1087,7 @@ class TuiGatewayClient
   void _stopHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _lastHeartbeatTickAt = null;
   }
 
   void _failPending(Object error, [StackTrace? stackTrace]) {
@@ -1901,7 +1925,7 @@ class TuiGatewayClient
   }
 
   @override
-  Future<DesktopSessionBinding> resumeExistingForRecovery(
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
     String storedSessionId, {
     String profile = '',
   }) async {
@@ -1910,7 +1934,7 @@ class TuiGatewayClient
       'source': 'mobile',
       if (profile.trim().isNotEmpty) 'profile': profile.trim(),
     });
-    return _parseSessionBinding(
+    return _parseSessionSnapshot(
       result,
       requestedStoredSessionId: storedSessionId,
       created: false,
@@ -1998,20 +2022,34 @@ class TuiGatewayClient
     required bool created,
     required String method,
     bool rememberLegacyRuntime = true,
+  }) => DesktopSessionBinding.fromSnapshot(
+    _parseSessionSnapshot(
+      result,
+      requestedStoredSessionId: requestedStoredSessionId,
+      created: created,
+      method: method,
+      rememberLegacyRuntime: rememberLegacyRuntime,
+    ),
+  );
+
+  DesktopSessionSnapshot _parseSessionSnapshot(
+    Map<String, dynamic> result, {
+    required String requestedStoredSessionId,
+    required bool created,
+    required String method,
+    bool rememberLegacyRuntime = true,
   }) {
     try {
-      final binding = DesktopSessionBinding.fromSnapshot(
-        DesktopSessionSnapshot.fromJson(
-          result,
-          requestedStoredSessionId: requestedStoredSessionId,
-          created: created,
-          method: method,
-        ),
+      final snapshot = DesktopSessionSnapshot.fromJson(
+        result,
+        requestedStoredSessionId: requestedStoredSessionId,
+        created: created,
+        method: method,
       );
       if (rememberLegacyRuntime) {
-        _rememberLegacyEventRuntime(binding.runtimeSessionId);
+        _rememberLegacyEventRuntime(snapshot.runtimeSessionId);
       }
-      return binding;
+      return snapshot;
     } on FormatException {
       throw TuiGatewayRpcError(
         method,
@@ -3429,11 +3467,13 @@ class TuiGatewayClient
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {
     await _request('approval.respond', {
       'session_id': runtimeSessionId,
       'choice': choice,
       if (resolveAll) 'all': true,
+      if (requestId != null && requestId.isNotEmpty) 'request_id': requestId,
     });
   }
 

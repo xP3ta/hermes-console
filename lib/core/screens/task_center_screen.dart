@@ -41,6 +41,62 @@ const _kStatusPriority = {
   'queued': 3,
 };
 
+typedef TaskCenterRunStatusFetcher =
+    Future<Map<String, dynamic>> Function(String runId);
+
+@visibleForTesting
+Future<void> refreshTaskCenterRunStatuses(
+  RunRegistry registry,
+  TaskCenterRunStatusFetcher fetchStatus,
+) async {
+  for (final record in registry.records.where((record) => !record.isTerminal)) {
+    try {
+      final status = await fetchStatus(record.runId);
+      await registry.update(
+        record.runId,
+        profile: record.profile,
+        lastStatus: status['status'] as String?,
+        output: status['output'] as String?,
+        error: status['error'] as String?,
+      );
+    } catch (error) {
+      if (error.toString().contains('404')) {
+        await registry.update(
+          record.runId,
+          profile: record.profile,
+          lastStatus: 'expired',
+        );
+      }
+    }
+  }
+}
+
+@visibleForTesting
+Future<RunRecord> persistTaskCenterRunUpdate(
+  RunRegistry registry,
+  RunRecord record,
+  RunEventUpdate update, {
+  double? updatedAt,
+}) async {
+  if (!update.shouldPersist) return record;
+  final effectiveUpdatedAt =
+      updatedAt ?? DateTime.now().millisecondsSinceEpoch / 1000;
+  await registry.update(
+    record.runId,
+    profile: record.profile,
+    lastStatus: update.lastStatus,
+    progressLabel: update.progressLabel,
+    lastEvent: update.lastEvent,
+    updatedAt: effectiveUpdatedAt,
+  );
+  return record.copyWith(
+    lastStatus: update.lastStatus,
+    progressLabel: update.progressLabel,
+    lastEvent: update.lastEvent,
+    updatedAt: effectiveUpdatedAt,
+  );
+}
+
 class TaskCenterScreen extends StatefulWidget {
   final SavedConnection connection;
   const TaskCenterScreen({required this.connection, super.key});
@@ -48,6 +104,10 @@ class TaskCenterScreen extends StatefulWidget {
   @override
   State<TaskCenterScreen> createState() => _TaskCenterScreenState();
 }
+
+@visibleForTesting
+String taskCenterRunOwnerKey(String profile, String runId) =>
+    '${profile.trim().toLowerCase()}\u0000$runId';
 
 class _TaskCenterScreenState extends State<TaskCenterScreen> {
   late final ApiClient _client;
@@ -63,6 +123,9 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
   // No se persisten en SharedPreferences: solo viven mientras la pantalla esté
   // montada. Evita escritura masiva por cada token de respuesta.
   final Map<String, String> _statusOverrides = {};
+
+  String _runOwnerKey(String profile, String runId) =>
+      taskCenterRunOwnerKey(profile, runId);
 
   ActiveChatService? get _activeChats =>
       context.findAncestorStateOfType<HermesAppState>()?.activeChats;
@@ -111,21 +174,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     final registry = _registry;
     if (registry == null || _refreshing) return;
     setState(() => _refreshing = true);
-    for (final r in registry.records.where((r) => !r.isTerminal)) {
-      try {
-        final status = await _client.getRun(r.runId);
-        await registry.update(
-          r.runId,
-          lastStatus: status['status'] as String?,
-          output: status['output'] as String?,
-          error: status['error'] as String?,
-        );
-      } catch (e) {
-        if (e.toString().contains('404')) {
-          await registry.update(r.runId, lastStatus: 'expired');
-        }
-      }
-    }
+    await refreshTaskCenterRunStatuses(registry, _client.getRun);
     if (!mounted) return;
     setState(() => _refreshing = false);
     // Abrir SSE para runs que siguen no terminales tras el refresh.
@@ -145,7 +194,11 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
 
     final candidates =
         registry.records
-            .where((r) => !r.isTerminal && !_streamedRunIds.contains(r.runId))
+            .where(
+              (r) =>
+                  !r.isTerminal &&
+                  !_streamedRunIds.contains(_runOwnerKey(r.profile, r.runId)),
+            )
             .toList()
           ..sort((a, b) {
             final pa = _kStatusPriority[a.lastStatus] ?? 99;
@@ -155,21 +208,23 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
           });
 
     for (final r in candidates.take(available)) {
-      _openStreamFor(r.runId);
+      _openStreamFor(r);
     }
   }
 
   /// Inicia el SSE para un run. No se awaita: corre en background hasta que
   /// el stream cierra o _client.close() lo aborta.
-  void _openStreamFor(String runId) {
-    if (_streamedRunIds.contains(runId)) return;
-    _streamedRunIds.add(runId);
+  void _openStreamFor(RunRecord record) {
+    final runId = record.runId;
+    final ownerKey = _runOwnerKey(record.profile, runId);
+    if (_streamedRunIds.contains(ownerKey)) return;
+    _streamedRunIds.add(ownerKey);
 
     _client.streamRunEvents(
       runId,
-      onEvent: (event) => _onEvent(runId, event),
-      onDone: () => _onStreamClosed(runId, pollAfter: true),
-      onError: (_) => _onStreamClosed(runId, pollAfter: false),
+      onEvent: (event) => _onEvent(record, event),
+      onDone: () => _onStreamClosed(record, pollAfter: true),
+      onError: (_) => _onStreamClosed(record, pollAfter: false),
     );
     // streamRunEvents es Future<void>; no se awaita intencionalmente.
     // El ApiClient lo cancela en dispose() cerrando la conexión HTTP.
@@ -177,20 +232,21 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
 
   /// Procesa un evento SSE para un run. Persiste solo eventos importantes;
   /// para message.delta actualiza solo el override en memoria.
-  Future<void> _onEvent(String runId, Map<String, dynamic> event) async {
+  Future<void> _onEvent(RunRecord record, Map<String, dynamic> event) async {
+    final runId = record.runId;
+    final ownerKey = _runOwnerKey(record.profile, runId);
     final update = normalizeRunEvent(event);
     if (update == null) return;
 
     final registry = _registry;
+    var notificationRecord = record;
 
     if (update.shouldPersist && registry != null) {
       try {
-        await registry.update(
-          runId,
-          lastStatus: update.lastStatus,
-          progressLabel: update.progressLabel,
-          lastEvent: update.lastEvent,
-          updatedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+        notificationRecord = await persistTaskCenterRunUpdate(
+          registry,
+          record,
+          update,
         );
       } catch (e) {
         if (kDebugMode) debugPrint('TaskCenter registry.update falló: $e');
@@ -201,24 +257,24 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     setState(() {
       if (!update.shouldPersist && update.lastStatus != null) {
         // message.delta: solo override en memoria (sin escritura a prefs).
-        _statusOverrides[runId] = update.lastStatus!;
+        _statusOverrides[ownerKey] = update.lastStatus!;
       }
       if (update.isTerminal) {
         // El run terminó: limpiamos tracking y override de memoria.
-        _streamedRunIds.remove(runId);
-        _statusOverrides.remove(runId);
+        _streamedRunIds.remove(ownerKey);
+        _statusOverrides.remove(ownerKey);
       }
     });
-    _fireNotification(runId, update);
+    _fireNotification(notificationRecord, update, event);
   }
 
-  void _fireNotification(String runId, RunEventUpdate update) {
+  void _fireNotification(
+    RunRecord record,
+    RunEventUpdate update,
+    Map<String, dynamic> rawEvent,
+  ) {
     final ctrl = _notifCtrl;
     if (ctrl == null) return;
-    final record = _registry?.records
-        .where((r) => r.runId == runId)
-        .firstOrNull;
-    if (record == null) return;
 
     final eventType = update.lastEvent;
     if (update.isTerminal) {
@@ -231,7 +287,12 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
           ctrl.notifyRunCancelled(record);
       }
     } else if (eventType == 'approval.request') {
-      ctrl.notifyRunWaitingApproval(record);
+      final approvalId = (rawEvent['request_id'] ?? rawEvent['approval_id'])
+          ?.toString()
+          .trim();
+      if (approvalId != null && approvalId.isNotEmpty) {
+        ctrl.notifyRunWaitingApproval(record, approvalId: approvalId);
+      }
     } else if (eventType == 'tool.started' && update.progressLabel != null) {
       ctrl.notifyRunProgress(record);
     }
@@ -239,25 +300,28 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
 
   /// El stream cerró (onDone = cierre limpio del servidor;
   /// onError = cliente cerrado o error de red).
-  void _onStreamClosed(String runId, {required bool pollAfter}) {
-    _streamedRunIds.remove(runId);
-    _statusOverrides.remove(runId);
+  void _onStreamClosed(RunRecord record, {required bool pollAfter}) {
+    final runId = record.runId;
+    final ownerKey = _runOwnerKey(record.profile, runId);
+    _streamedRunIds.remove(ownerKey);
+    _statusOverrides.remove(ownerKey);
     if (!mounted) return;
     setState(() {});
     // Si el stream cerró limpiamente (el servidor lo terminó), hacemos un
     // GET final para sincronizar el estado exacto (output, uso de tokens…).
-    if (pollAfter) _pollRunStatus(runId);
+    if (pollAfter) _pollRunStatus(record);
   }
 
   /// GET /v1/runs/{runId} puntual para sincronizar el estado final de un run
   /// cuyo SSE se cerró limpiamente desde el servidor.
-  Future<void> _pollRunStatus(String runId) async {
+  Future<void> _pollRunStatus(RunRecord record) async {
     final registry = _registry;
     if (registry == null) return;
     try {
-      final status = await _client.getRun(runId);
+      final status = await _client.getRun(record.runId);
       await registry.update(
-        runId,
+        record.runId,
+        profile: record.profile,
         lastStatus: status['status'] as String?,
         output: status['output'] as String?,
         error: status['error'] as String?,
@@ -265,7 +329,11 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       if (mounted) setState(() {});
     } catch (e) {
       if (e.toString().contains('404')) {
-        await registry.update(runId, lastStatus: 'expired');
+        await registry.update(
+          record.runId,
+          profile: record.profile,
+          lastStatus: 'expired',
+        );
         if (mounted) setState(() {});
       }
     }
@@ -304,7 +372,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       await _registry?.add(record);
       if (!mounted) return;
       setState(() {});
-      _openStreamFor(runId); // abrir SSE de inmediato
+      _openStreamFor(record); // abrir SSE de inmediato
       _openDetail(record);
     } catch (e) {
       if (!mounted) return;
@@ -400,9 +468,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
   /// Elimina una ejecución del historial local (swipe). El run ya no vive en
   /// el servidor; esto solo limpia la lista del móvil.
   Future<void> _deleteRun(RunRecord record) async {
-    _statusOverrides.remove(record.runId);
-    _streamedRunIds.remove(record.runId);
-    await _registry?.remove(record.runId);
+    final ownerKey = _runOwnerKey(record.profile, record.runId);
+    _statusOverrides.remove(ownerKey);
+    _streamedRunIds.remove(ownerKey);
+    await _registry?.remove(record.runId, profile: record.profile);
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(
@@ -563,14 +632,15 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
         itemCount: records.length,
         itemBuilder: (_, i) {
           final r = records[i];
+          final ownerKey = _runOwnerKey(r.profile, r.runId);
           // El status efectivo puede estar sobreescrito en memoria (message.delta).
-          final effectiveStatus = _statusOverrides[r.runId] ?? r.lastStatus;
+          final effectiveStatus = _statusOverrides[ownerKey] ?? r.lastStatus;
           final chatLive =
               r.sessionId != null &&
               (activeChats?.isActive(widget.connection.id, r.sessionId!) ??
                   false);
           return Dismissible(
-            key: ValueKey(r.runId),
+            key: ValueKey(ownerKey),
             direction: DismissDirection.endToStart,
             onDismissed: (_) => _deleteRun(r),
             background: Container(
@@ -601,7 +671,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
               record: r,
               effectiveStatus: effectiveStatus,
               chatLive: chatLive,
-              liveStream: _streamedRunIds.contains(r.runId),
+              liveStream: _streamedRunIds.contains(ownerKey),
               onTap: () => _openDetail(r),
             ),
           );

@@ -7,6 +7,26 @@ import 'package:hermes_android/main.dart';
 
 void main() {
   group('NotificationOpen payload', () {
+    test(
+      'Desktop approval routes by session and request without REST run id',
+      () {
+        const original = NotificationOpen(
+          connId: 'conn-desktop',
+          sessionId: 'stored-session',
+          profile: 'Work',
+          requestId: 'request-desktop-1',
+        );
+
+        final decoded = NotificationOpen.tryParse(original.toPayload());
+
+        expect(decoded, isNotNull);
+        expect(decoded!.sessionId, 'stored-session');
+        expect(decoded.profile, 'Work');
+        expect(decoded.requestId, 'request-desktop-1');
+        expect(decoded.runId, isNull);
+      },
+    );
+
     test('roundtrip conserva superficie Bot y perfil', () {
       const original = NotificationOpen(
         connId: 'conn-1',
@@ -63,6 +83,48 @@ void main() {
       expect(decoded!.taskId, 'task-42');
       expect(decoded.sessionId, isEmpty);
       expect(decoded.runId, isNull);
+    });
+
+    test('roundtrip conserva fallback tipado de Cron por jobId', () {
+      const original = NotificationOpen(connId: 'conn-1', jobId: 'job-42');
+
+      final raw = jsonDecode(original.toPayload()) as Map<String, dynamic>;
+      final decoded = NotificationOpen.tryParse(original.toPayload());
+
+      expect(raw['jid'], 'job-42');
+      expect(decoded?.jobId, 'job-42');
+      expect(NotificationOpen.tryParse('{"conn":"conn-1","jid":42}'), isNull);
+      expect(
+        NotificationOpen.tryParse(
+          '{"conn":"conn-1","jid":"job with free text"}',
+        ),
+        isNull,
+      );
+    });
+
+    test('roundtrip conserva approval exacta y rechaza destinos ambiguos', () {
+      const original = NotificationOpen(
+        connId: 'conn-1',
+        profile: 'research',
+        runId: 'run-42',
+        requestId: 'request-7',
+      );
+
+      final raw = jsonDecode(original.toPayload()) as Map<String, dynamic>;
+      final decoded = NotificationOpen.tryParse(original.toPayload());
+
+      expect(raw['rid'], 'run-42');
+      expect(raw['aid'], 'request-7');
+      expect(decoded?.profile, 'research');
+      expect(decoded?.runId, 'run-42');
+      expect(decoded?.requestId, 'request-7');
+      expect(
+        NotificationOpen.tryParse(
+          '{"conn":"conn-1","profile":"research","rid":"run-42",'
+          '"aid":"request-7","tid":"task-1"}',
+        ),
+        isNull,
+      );
     });
 
     test('payload legacy sin superficie conserva routing normal', () {

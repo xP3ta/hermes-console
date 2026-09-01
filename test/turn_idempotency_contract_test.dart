@@ -75,6 +75,7 @@ class _LegacyGateway implements HermesDesktopGateway {
     String runtimeSessionId,
     String choice, {
     bool resolveAll = false,
+    String? requestId,
   }) async {}
 
   @override
