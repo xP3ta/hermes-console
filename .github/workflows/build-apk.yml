@@ -194,9 +194,13 @@ jobs:
           mapfile -d '' release_files < <(find release-artifacts/release-public \
             -maxdepth 1 -type f -print0 | sort -z)
           test "${#release_files[@]}" -gt 0
+          # This job intentionally has no checkout. Keep the repository
+          # explicit so gh never falls back to Git metadata discovery.
           gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Hermes Console $RELEASE_TAG" \
             --generate-notes \
             "${release_files[@]}" || \
           gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             "${release_files[@]}" --clobber
