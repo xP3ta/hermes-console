@@ -533,6 +533,63 @@ void main() {
     );
   });
 
+  test('prompt admission uses structured reasons without exposing detail', () {
+    const expected = <String, String>{
+      'SESSION_NOT_OWNED':
+          'Esta conversación está abierta en otra ventana o dispositivo. '
+          'Ciérrala allí y vuelve a intentarlo.',
+      'MAX_CONCURRENT_SESSIONS':
+          'Hermes tiene el máximo de sesiones activas. '
+          'Cierra otra sesión y vuelve a intentarlo.',
+      'SESSION_COORDINATION_UNAVAILABLE':
+          'Hermes no pudo reservar esta conversación con seguridad. '
+          'Revisa el servidor y vuelve a intentarlo.',
+    };
+
+    for (final entry in expected.entries) {
+      final error = TuiGatewayRpcError(
+        'prompt.submit',
+        'private session id and process detail',
+        code: 4090,
+        data: {'reason': entry.key},
+      );
+      expect(activeChatPromptWasRejectedBeforeAcceptance(error), isTrue);
+      expect(activeChatPromptFailureUiMessage(error), entry.value);
+      expect(
+        activeChatPromptFailureUiMessage(error),
+        isNot(contains('private')),
+      );
+    }
+
+    const unknown = TuiGatewayRpcError(
+      'prompt.submit',
+      'private provider detail',
+      code: 5001,
+    );
+    expect(activeChatPromptWasRejectedBeforeAcceptance(unknown), isFalse);
+    expect(
+      activeChatPromptFailureUiMessage(unknown),
+      'No se pudo enviar el mensaje. Inténtalo de nuevo.',
+    );
+  });
+
+  test('stored 4090 errors from older builds are redacted for display', () {
+    const legacy =
+        'TuiGatewayRpcError(prompt.submit, 4090): Session private-id '
+        'already has a live owner (desktop, pid 1234)';
+    const ordinary = 'No se pudo conectar con Hermes.';
+
+    final safe = activeChatStoredErrorUiMessage(legacy);
+    expect(
+      safe,
+      'Hermes no pudo reservar esta conversación. '
+      'Revisa otras sesiones activas y vuelve a intentarlo.',
+    );
+    expect(safe, isNot(contains('TuiGatewayRpcError')));
+    expect(safe, isNot(contains('private-id')));
+    expect(activeChatStoredErrorUiMessage(ordinary), ordinary);
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -546,6 +603,23 @@ void main() {
       sizeBytes: 3,
       localPath: '/private/informe.pdf',
     );
+
+    test('rechazo explícito nunca degrada después a entrega ambigua', () async {
+      final store = _AttachmentMemoryOutbox();
+      final delivery = ActiveTurnDelivery(
+        prepared: _attachmentTurn(pending),
+        store: store,
+      );
+
+      expect(
+        await delivery.beginTransport(PreparedTurnTransport.desktop),
+        isTrue,
+      );
+      await delivery.markRejectedBeforeAcceptance();
+      await delivery.markUnaccepted();
+
+      expect(delivery.current.state, PreparedTurnState.failedBeforeAcceptance);
+    });
 
     test(
       'attempt fence impide que un callback tardío reviva removed',

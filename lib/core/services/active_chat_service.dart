@@ -76,6 +76,47 @@ String activeChatDesktopRecoveryDiagnostic(Object error) {
       '(${error.runtimeType}$code)';
 }
 
+const _sessionNotOwnedReason = 'SESSION_NOT_OWNED';
+const _maxConcurrentSessionsReason = 'MAX_CONCURRENT_SESSIONS';
+const _sessionCoordinationUnavailableReason =
+    'SESSION_COORDINATION_UNAVAILABLE';
+
+@visibleForTesting
+bool activeChatPromptWasRejectedBeforeAcceptance(Object error) =>
+    error is TuiGatewayRpcError &&
+    error.method == 'prompt.submit' &&
+    error.code == 4090;
+
+@visibleForTesting
+String activeChatPromptFailureUiMessage(Object error) {
+  if (error is TuiGatewayRpcError && error.method == 'prompt.submit') {
+    return switch (error.reason) {
+      _sessionNotOwnedReason =>
+        'Esta conversación está abierta en otra ventana o dispositivo. '
+            'Ciérrala allí y vuelve a intentarlo.',
+      _maxConcurrentSessionsReason =>
+        'Hermes tiene el máximo de sesiones activas. '
+            'Cierra otra sesión y vuelve a intentarlo.',
+      _sessionCoordinationUnavailableReason =>
+        'Hermes no pudo reservar esta conversación con seguridad. '
+            'Revisa el servidor y vuelve a intentarlo.',
+      _ => 'No se pudo enviar el mensaje. Inténtalo de nuevo.',
+    };
+  }
+  return 'No se pudo enviar el mensaje. Inténtalo de nuevo.';
+}
+
+/// Redacta únicamente el formato técnico que builds antiguas pudieron guardar
+/// en el transcript local. No se usa para decidir entrega ni reintentos: esas
+/// decisiones dependen del código y `error.data.reason` estructurados.
+String activeChatStoredErrorUiMessage(String error) {
+  if (error.trimLeft().startsWith('TuiGatewayRpcError(prompt.submit, 4090):')) {
+    return 'Hermes no pudo reservar esta conversación. '
+        'Revisa otras sesiones activas y vuelve a intentarlo.';
+  }
+  return error;
+}
+
 List<Map<String, dynamic>> _sanitizeDesktopFailureProjection(
   Iterable<Map<String, dynamic>> projected,
 ) => projected
@@ -1691,9 +1732,29 @@ class ActiveTurnDelivery {
     if (_acknowledged) return;
     final next = _current.copyWith(
       updatedAtMs: _nowMs(),
-      state: _transportStarted
+      state: _current.state == PreparedTurnState.failedBeforeAcceptance
+          ? PreparedTurnState.failedBeforeAcceptance
+          : _transportStarted
           ? PreparedTurnState.ambiguous
           : PreparedTurnState.failedBeforeAcceptance,
+    );
+    _current = next;
+    try {
+      await _store.save(next);
+    } catch (_) {
+      _persistenceFailed = true;
+    }
+  });
+
+  /// El servidor respondió con un rechazo que garantiza que no persistió ni
+  /// inició el turno. Aunque el request cruzó el transporte, conservarlo como
+  /// `ambiguous` sería falso y obligaría a tratar un retry seguro como posible
+  /// duplicado.
+  Future<void> markRejectedBeforeAcceptance() => _serializeMutation(() async {
+    if (_acknowledged) return;
+    final next = _current.copyWith(
+      updatedAtMs: _nowMs(),
+      state: PreparedTurnState.failedBeforeAcceptance,
     );
     _current = next;
     try {
@@ -7553,11 +7614,16 @@ class ActiveChat {
       } else {
         debugPrint('[active-chat] Desktop turn failed (${error.runtimeType})');
       }
-      if (idempotentSubmission) {
+      final rejectedBeforeAcceptance =
+          activeChatPromptWasRejectedBeforeAcceptance(error);
+      if (idempotentSubmission && !rejectedBeforeAcceptance) {
         // Anunciada pero incompatible (method-not-found, eco/payload inválido o
         // timeout): se invalida durante esta generación. No hay fallback porque
         // el servidor pudo haber aceptado el turno.
         _turnIdempotencyInvalid = true;
+      }
+      if (rejectedBeforeAcceptance) {
+        await _activeTurnDelivery?.markRejectedBeforeAcceptance();
       }
       _firstTokenTimer?.cancel();
       _firstTokenTimer = null;
@@ -7569,7 +7635,7 @@ class ActiveChat {
       if (!submissionAttempted && sessionConfig.allowTransportFallback) {
         return fallback();
       } else {
-        _failRun(error.toString());
+        _failRun(activeChatPromptFailureUiMessage(error));
         return false;
       }
     }

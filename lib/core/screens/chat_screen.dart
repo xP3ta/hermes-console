@@ -5808,6 +5808,9 @@ class _ChatScreenState extends State<ChatScreen>
           restoresComposer: usesComposerState,
         ) ??
         false;
+    final replacesProvenRejectedProjection =
+        sameRecoveredBatch &&
+        existing!.state == PreparedTurnState.failedBeforeAcceptance;
     final prepared = PreparedTurn(
       connectionId: widget.connection.id,
       sessionId: widget.session.id,
@@ -5850,6 +5853,10 @@ class _ChatScreenState extends State<ChatScreen>
       _observeAttachmentDelivery(null);
       _scheduleDraftSave();
       return false;
+    }
+
+    if (replacesProvenRejectedProjection) {
+      _removeLatestFailedPromptProjection(fullText);
     }
 
     // Historial conversacional para el run (formato OpenAI, orden cronológico).
@@ -6050,16 +6057,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// Retry the last failed send.
   void _retryLastPrompt() {
     if (_lastPrompt.isEmpty) return;
-    // Remove the error entry
-    if (_messages.isNotEmpty && _messages[0]['role'] == 'assistant_error') {
-      _messages.removeAt(0);
-    }
-    // Remove the user message that preceded it
-    if (_messages.isNotEmpty &&
-        _messages[0]['role'] == 'user' &&
-        _messages[0]['content'] == _lastPrompt) {
-      _messages.removeAt(0);
-    }
+    _removeLatestFailedPromptProjection(
+      _lastPrompt,
+      allowLegacyContentPair: true,
+    );
     // En un fallo previo al ACK, el composer ya conserva el texto y todos los
     // adjuntos originales. Solo reconstruimos desde lastPrompt para sesiones
     // antiguas o fallos posteriores al ACK donde el composer sí estaba vacío.
@@ -6068,6 +6069,32 @@ class _ChatScreenState extends State<ChatScreen>
     }
     setState(() => _pipelineState = ChatPipelineState.idle);
     _sendMessage();
+  }
+
+  bool _removeLatestFailedPromptProjection(
+    String prompt, {
+    bool allowLegacyContentPair = false,
+  }) {
+    if (_messages.isEmpty) return false;
+    final error = _messages.first;
+    if (error['role'] != 'assistant_error' ||
+        (error['_prompt'] ?? '').toString() != prompt) {
+      return false;
+    }
+    final projectionId = error['_localTranscriptProjectionId'];
+    _messages.removeAt(0);
+    if (_messages.isEmpty || _messages.first['role'] != 'user') return true;
+    final user = _messages.first;
+    final paired =
+        projectionId is String &&
+        projectionId.isNotEmpty &&
+        user['_localTranscriptPairId'] == projectionId;
+    final legacyPair =
+        allowLegacyContentPair &&
+        projectionId == null &&
+        (user['content'] ?? '').toString() == prompt;
+    if (paired || legacyPair) _messages.removeAt(0);
+    return true;
   }
 
   int? _userOrdinalFor(Map<String, dynamic> target) {
@@ -11162,7 +11189,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (role == 'assistant_error') {
       final prompt = (msg['_prompt'] as String?) ?? _lastPrompt;
       return _ErrorBubble(
-        error: content,
+        error: activeChatStoredErrorUiMessage(content),
         onRetry: () => _retryLastPrompt(),
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,

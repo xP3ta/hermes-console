@@ -36,8 +36,21 @@ class TuiGatewayRpcError implements Exception {
   final String method;
   final int? code;
   final String message;
+  final Map<String, dynamic> data;
 
-  const TuiGatewayRpcError(this.method, this.message, {this.code});
+  const TuiGatewayRpcError(
+    this.method,
+    this.message, {
+    this.code,
+    this.data = const <String, dynamic>{},
+  });
+
+  String? get reason {
+    final value = data['reason'];
+    if (value is! String) return null;
+    final normalized = value.trim();
+    return normalized.isEmpty ? null : normalized;
+  }
 
   @override
   String toString() => 'TuiGatewayRpcError($method, $code): $message';
@@ -926,6 +939,11 @@ class TuiGatewayClient
                   ? 'Hermes rejected the sensitive response'
                   : (map['message'] ?? 'Unknown JSON-RPC error').toString(),
               code: (map['code'] as num?)?.toInt(),
+              data: map['data'] is Map
+                  ? Map<String, dynamic>.unmodifiable(
+                      Map<String, dynamic>.from(map['data'] as Map),
+                    )
+                  : const <String, dynamic>{},
             ),
           );
         } else {
