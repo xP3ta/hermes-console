@@ -355,6 +355,37 @@ void main() {
       expect(profile.botModeUiMeta.containsKey('chat'), isTrue);
       expect(profile.botChatSessionId, isNull);
       expect(profile.hasInvalidBotChatPin, isFalse);
+      expect(profile.desktopClearedBotChatPin, isTrue);
+      expect(profile.gatewayBotChatSessionId, isNull);
+    });
+
+    test('appearance-only hermes-bots is not a Desktop pin reset', () {
+      final profile = AgentProfile.fromJson({
+        'name': 'infra',
+        'ui_meta': {
+          'hermes-bots': {'title': 'Infra', 'shape': 'blobatar'},
+        },
+        'preferred_session': {
+          'id': '20260824_131642_e57b4c',
+          'resolved_id': '20260824_131642_e57b4c--c1',
+          'root_title': 'Bot Chat',
+          'title': 'Bot Chat 2',
+        },
+      });
+
+      expect(profile.botModeMetadataPublished, isTrue);
+      expect(profile.desktopClearedBotChatPin, isFalse);
+      expect(profile.botChatSessionId, isNull);
+      expect(profile.gatewayBotChatSessionId, '20260824_131642_e57b4c--c1');
+    });
+
+    test('preferred_session that is not Bot Chat is not a canonical pin', () {
+      final profile = AgentProfile.fromJson({
+        'name': 'infra',
+        'preferred_session': {'id': 'scratch', 'title': 'Scratch work'},
+      });
+
+      expect(profile.gatewayBotChatSessionId, isNull);
     });
 
     test('ui_meta top-level no-null debe ser un objeto', () {

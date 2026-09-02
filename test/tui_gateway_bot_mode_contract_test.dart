@@ -131,6 +131,69 @@ void main() {
   });
 
   test(
+    'findCanonicalBotChat uses hidden session.list for the profile',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final requests = <Map<String, dynamic>>[];
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        await for (final raw in socket) {
+          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          requests.add(frame);
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'id': frame['id'],
+              'result': {
+                'sessions': [
+                  {
+                    'id': 'scratch',
+                    'title': 'Scratch work',
+                    'message_count': 9,
+                    'started_at': 40,
+                  },
+                  {
+                    'id': 'older-bot-chat',
+                    'title': 'Bot Chat',
+                    'message_count': 2,
+                    'started_at': 10,
+                  },
+                  {
+                    'id': 'canonical-bot-chat',
+                    'title': 'Bot Chat',
+                    'message_count': 163,
+                    'started_at': 20,
+                  },
+                  {
+                    'id': 'mob-bot-infra',
+                    'title': 'Bot Chat',
+                    'message_count': 400,
+                    'started_at': 50,
+                  },
+                ],
+              },
+            }),
+          );
+        }
+      });
+
+      final client = _clientFor(server);
+      addTearDown(client.close);
+      final id = await client.findCanonicalBotChat(profile: 'infra');
+
+      expect(requests, hasLength(1));
+      expect(requests.single['method'], 'session.list');
+      expect(requests.single['params'], {
+        'limit': 50,
+        'include_hidden': true,
+        'profile': 'infra',
+      });
+      expect(id, 'canonical-bot-chat');
+    },
+  );
+
+  test(
     'profile creation uses the native Desktop contract in one write',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
