@@ -665,8 +665,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// (Desktop envía el mismo texto al crear el agente).
   Future<void> _openChat(MissionAgent agent, {String? kickoffPrompt}) async {
     final officialPin = agent.profile.botChatSessionId;
-    final officialMetadata =
-        agent.profile.botModeMetadataPublished || officialPin != null;
+    final desktopCleared = agent.profile.desktopClearedBotChatPin;
+    final gatewayPin = desktopCleared
+        ? null
+        : agent.profile.gatewayBotChatSessionId;
     if (agent.profile.hasInvalidBotChatPin) {
       debugPrint(
         'Mission Control: Bot Chat unavailable for ${agent.profile.name} '
@@ -678,13 +680,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       return;
     }
     String? localPin;
-    if (officialMetadata) {
+    if (officialPin != null || desktopCleared) {
       if (!widget.connection.readOnly) {
         try {
-          // Once Desktop publishes the namespace it is authoritative,
-          // including an explicit absence of `chat`. Removing this fallback
-          // prevents an older Console-only conversation from resurrecting
-          // after a repin. Read-only mode must not mutate local state.
+          // Desktop owns the slot when it publishes a durable id or an
+          // explicit `chat: null` reset. Appearance-only `hermes-bots`
+          // metadata (no chat key) is not a reset — keep the local pin.
           await _botChatStore.clear(
             connectionId: widget.connection.id,
             profile: agent.profile.name,
@@ -716,7 +717,13 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       localPin = lookup.sessionId;
     }
     if (!mounted) return;
-    final pinnedId = officialPin ?? localPin;
+    var pinnedId = officialPin ?? gatewayPin ?? localPin;
+    if (pinnedId == null &&
+        !desktopCleared &&
+        widget.botChatOpenObserver == null) {
+      pinnedId = await _discoverHiddenBotChat(agent.profile.name);
+      if (!mounted) return;
+    }
     final session = Session(
       id: 'mob-bot-${agent.profile.name}',
       lineageRootId: pinnedId,
@@ -759,6 +766,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     // before the next tap so a stale authoritative-null profile cannot dispose
     // the live canonical binding and reopen an empty conversation.
     if (mounted) await _load(refresh: true);
+  }
+
+  Future<String?> _discoverHiddenBotChat(String profile) async {
+    final assets = _profileAssetsGateway;
+    final gateway =
+        _ownedProfileAssetsGateway ??
+        (assets is TuiGatewayClient ? assets : null);
+    if (gateway == null) return null;
+    try {
+      return await gateway.findCanonicalBotChat(profile: profile);
+    } catch (error) {
+      debugPrint(
+        'Mission Control: hidden Bot Chat lookup for $profile failed: $error',
+      );
+      return null;
+    }
   }
 
   void _showBotChatPinUnavailable() {

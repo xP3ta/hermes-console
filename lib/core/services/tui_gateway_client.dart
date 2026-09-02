@@ -1297,6 +1297,52 @@ class TuiGatewayClient
     }
   }
 
+  /// Locates the hidden forever-chat titled `Bot Chat` for [profile].
+  ///
+  /// Stock Hermes Agent often has that row without `ui_meta.hermes-bots.chat`.
+  /// `session.list` omits it unless `include_hidden` is set. Returns null when
+  /// the method is missing or no titled row exists — callers then create on
+  /// first submit.
+  Future<String?> findCanonicalBotChat({required String profile}) async {
+    final owner = profile.trim();
+    if (owner.isNotEmpty &&
+        !RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(owner)) {
+      return null;
+    }
+    await connect();
+    Map<String, dynamic> result;
+    try {
+      result = await _request('session.list', {
+        'limit': 50,
+        'include_hidden': true,
+        if (owner.isNotEmpty) 'profile': owner,
+      });
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == -32601) return null;
+      rethrow;
+    }
+    final sessions = result['sessions'];
+    if (sessions is! List) return null;
+    String? bestId;
+    var bestCount = -1;
+    var bestStarted = -1.0;
+    for (final raw in sessions) {
+      if (raw is! Map) continue;
+      final map = Map<String, dynamic>.from(raw);
+      if ((map['title'] as String?)?.trim() != 'Bot Chat') continue;
+      final id = _safeBotModeId('${map['id'] ?? ''}');
+      if (id == null || id.startsWith('mob-')) continue;
+      final count = (map['message_count'] as num?)?.toInt() ?? 0;
+      final started = (map['started_at'] as num?)?.toDouble() ?? 0;
+      if (count > bestCount || (count == bestCount && started > bestStarted)) {
+        bestId = id;
+        bestCount = count;
+        bestStarted = started;
+      }
+    }
+    return bestId;
+  }
+
   /// Creates a profile through the same native Gateway contract used by
   /// Hermes Desktop Bot Mode.
   ///

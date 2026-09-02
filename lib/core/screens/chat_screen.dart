@@ -9,7 +9,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, visibleForTesting;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -916,6 +917,16 @@ String _stableChatReadAloudHash(String value) {
     hash = (hash * 0x01000193) & 0xffffffff;
   }
   return hash.toRadixString(16).padLeft(8, '0');
+}
+
+/// Pin persist must not block sending unless Desktop owns a conflicting slot.
+@visibleForTesting
+bool botChatPinPersistIsAuthoritativeConflict(Object error) {
+  if (error is! TuiGatewayRpcError) return false;
+  final text = error.message.toLowerCase();
+  return text.contains('changed concurrently') ||
+      text.contains('is malformed') ||
+      text.contains('invalid canonical bot chat identity');
 }
 
 class ChatScreen extends StatefulWidget {
@@ -3998,18 +4009,16 @@ class _ChatScreenState extends State<ChatScreen>
         }
         try {
           // Materialises + hides the row and then performs a fresh namespaced
-          // read-modify-write before prompt.submit. Any ambiguous server failure
-          // propagates so the encrypted draft stays retryable and no unpinned
-          // hidden conversation is started.
+          // read-modify-write. Concurrent Desktop pin changes stay fail-closed.
+          // Other persist failures (pending title, configure, older gateways)
+          // must not block prompt.submit: the turn already has a live runtime.
           await gateway.persistCanonicalBotChat(
             profile: _chat.sessionProfile,
             runtimeSessionId: runtimeId,
             storedSessionId: durableId,
           );
         } on TuiGatewayRpcError catch (error) {
-          // Legacy gateways keep the existing encrypted local fallback. Network,
-          // validation and concurrent-pin failures remain fail-closed.
-          if (error.code != -32601) rethrow;
+          if (botChatPinPersistIsAuthoritativeConflict(error)) rethrow;
           needsLocalFallback = true;
         }
       }

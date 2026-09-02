@@ -188,6 +188,30 @@ class AgentProfile {
           botModeUiMeta['chat'] != null &&
           botChatSessionId == null);
 
+  /// Desktop writes `chat: null` while recreating the forever-chat.
+  /// A missing `chat` key is not a reset: appearance-only `hermes-bots`
+  /// metadata is common on stock Agent installs.
+  bool get desktopClearedBotChatPin =>
+      botModeUiMeta.containsKey('chat') && botModeUiMeta['chat'] == null;
+
+  /// Gateway-native Bot Chat from `profiles.list(include_sessions: true)`.
+  String? get gatewayBotChatSessionId {
+    final preferred = preferredSession;
+    if (preferred == null) return null;
+    final title = preferred.rootTitle.isNotEmpty
+        ? preferred.rootTitle
+        : preferred.title;
+    if (title != 'Bot Chat') return null;
+    final id = (preferred.resolvedId ?? preferred.id).trim();
+    if (id.isEmpty ||
+        id.startsWith('mob-') ||
+        id.length > 512 ||
+        id.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+      return null;
+    }
+    return id;
+  }
+
   String? get botTitle => _botMetaText('title', 128);
 
   String? get botGroup => _botMetaText('group', 128);

@@ -939,16 +939,18 @@ void main() {
       opened = null;
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
-      final officialAbsence = AgentProfile.fromJson({
+      final officialReset = AgentProfile.fromJson({
         'name': 'infra',
-        'ui_meta': {'hermes-bots': <String, dynamic>{}},
+        'ui_meta': {
+          'hermes-bots': {'chat': null, 'title': 'Infra'},
+        },
       });
       await tester.pumpWidget(
         _host(
           manager: manager,
           botChatStore: botStore,
           botChatOpenObserver: (session) => opened = session,
-          snapshot: _snapshot(profiles: [officialAbsence]),
+          snapshot: _snapshot(profiles: [officialReset]),
         ),
       );
       await tester.pumpAndSettle();
@@ -957,6 +959,69 @@ void main() {
       expect(opened?.lineageRootId, isNull);
       expect(opened?.source, 'mobile-bot');
       expect(await botStore.load(_connection.id, 'infra'), isNull);
+    },
+  );
+
+  testWidgets(
+    'appearance-only Bot metadata keeps a local pin and prefers gateway Bot Chat',
+    (tester) async {
+      final manager = await _manager();
+      final botStore = MissionBotChatStore(manager.prefs);
+      await botStore.save(
+        connectionId: _connection.id,
+        profile: 'infra',
+        sessionId: 'stored-local-keep',
+      );
+      Session? opened;
+      final appearanceOnly = AgentProfile.fromJson({
+        'name': 'infra',
+        'ui_meta': {
+          'hermes-bots': {'title': 'Infra'},
+        },
+        'preferred_session': {
+          'id': 'stored-gateway-bot-chat',
+          'root_title': 'Bot Chat',
+          'title': 'Bot Chat',
+        },
+      });
+
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatStore: botStore,
+          botChatOpenObserver: (session) => opened = session,
+          snapshot: _snapshot(profiles: [appearanceOnly]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openBotChat(tester, 'infra');
+
+      expect(opened?.lineageRootId, 'stored-gateway-bot-chat');
+      expect(opened?.source, 'bot-mode-local');
+      expect(await botStore.load(_connection.id, 'infra'), 'stored-local-keep');
+
+      opened = null;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      final noPreferred = AgentProfile.fromJson({
+        'name': 'infra',
+        'ui_meta': {
+          'hermes-bots': {'title': 'Infra'},
+        },
+      });
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatStore: botStore,
+          botChatOpenObserver: (session) => opened = session,
+          snapshot: _snapshot(profiles: [noPreferred]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openBotChat(tester, 'infra');
+
+      expect(opened?.lineageRootId, 'stored-local-keep');
+      expect(opened?.source, 'bot-mode-local');
     },
   );
 
