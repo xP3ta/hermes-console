@@ -912,7 +912,16 @@ void main() {
   var foregroundServiceRunning = false;
 
   test('Chat no conserva superficies que entren desde abajo', () {
-    final source = File('lib/core/screens/chat_screen.dart').readAsStringSync();
+    // The chat screen is a multi-file library; read every part so moving a
+    // surface into one cannot make this ban pass vacuously.
+    final source = Directory('lib/core/screens')
+        .listSync()
+        .whereType<File>()
+        .map((entry) => entry.path)
+        .where((path) => RegExp(r'chat_screen[a-z_]*\.dart$').hasMatch(path))
+        .map(File.new)
+        .map((file) => file.readAsStringSync())
+        .join('\n');
     expect(source, isNot(contains('showModalBottomSheet')));
     for (final key in const [
       'chat-edit-message-dialog',

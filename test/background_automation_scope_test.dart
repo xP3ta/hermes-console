@@ -307,8 +307,10 @@ void main() {
   );
 
   test('chat idle release never clears a live external owner', () {
+    // ActiveChatService lives in the `active_chat_registry.dart` part of the
+    // active_chat_service library.
     final activeChat = File(
-      'lib/core/services/active_chat_service.dart',
+      'lib/core/services/active_chat_registry.dart',
     ).readAsStringSync();
     final start = activeChat.indexOf('Future<void> _maybeStopForeground()');
     final end = activeChat.indexOf('void _rememberSteerProjections', start);
