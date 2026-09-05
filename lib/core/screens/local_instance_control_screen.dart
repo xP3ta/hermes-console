@@ -160,7 +160,7 @@ class _LocalInstanceControlScreenState
     try {
       log = await _termux.readBridgeLog();
     } catch (e) {
-      log = 'No se pudo leer el log: $e';
+      log = 'Could not read the log: $e';
     }
     if (!mounted) return;
     setState(() => _bridgeBusy = false);
@@ -175,8 +175,8 @@ class _LocalInstanceControlScreenState
           child: SingleChildScrollView(
             child: SelectableText(
               log ??
-                  'Sin log todavía (~/.hermes/bridge.out vacío o Termux no '
-                      'respondió). Pulsa "Install & start" y vuelve a intentarlo.',
+                  'No log yet (~/.hermes/bridge.out is empty, or Termux did not '
+                      'respond). Tap "Install & start" and try again.',
               style: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 12,
@@ -829,7 +829,7 @@ class _LocalInstanceControlScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Diagnóstico',
+                      Text('Diagnostics',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,

@@ -76,7 +76,7 @@ void main() {
         expect(script, contains('BRIDGE_PORT=9131'));
         expect(script, contains('BRIDGE_TOKEN=\$KEY'));
         expect(script, isNot(contains('GW_KEY_123')));
-        expect(script, contains('API_SERVER_KEY no está disponible'));
+        expect(script, contains('API_SERVER_KEY is not available'));
         expect(script, contains('NEW="\$TARGET.new"'));
         expect(script, contains('BACKUP="\$TARGET.rollback"'));
         expect(script, contains('ENV_BACKUP="\$HH/bridge.env.rollback"'));

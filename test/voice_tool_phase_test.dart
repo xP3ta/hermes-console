@@ -84,9 +84,9 @@ void main() {
         paused: false,
         pausedLabel: 'En pausa',
         publicCommentary: '',
-        fallbackLabel: 'No se pudo iniciar el micrófono.',
+        fallbackLabel: 'Could not start the microphone.',
       ),
-      'No se pudo iniciar el micrófono.',
+      'Could not start the microphone.',
     );
   });
 }

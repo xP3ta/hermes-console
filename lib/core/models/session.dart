@@ -195,9 +195,9 @@ class Session implements SessionSortKey {
     if (generated.isNotEmpty) return generated;
     // Job/skill sin contenido legible (preview = solo preámbulo, a veces
     // truncado por el servidor): título genérico, no el preámbulo crudo.
-    if (isJob) return 'Tarea programada';
+    if (isJob) return 'Scheduled task';
     if (_looksInternalTitle(humanizedTitle) || syntheticTodoTitle) {
-      return 'Conversación';
+      return 'Conversation';
     }
     return title;
   }

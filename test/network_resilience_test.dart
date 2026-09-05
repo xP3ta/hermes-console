@@ -69,7 +69,7 @@ void main() {
         final top = chat.messages.first;
         expect(top['role'], 'assistant_error');
         final msg = (top['content'] as String?) ?? '';
-        expect(msg, 'No se pudo recuperar el turno. Inténtalo de nuevo.');
+        expect(msg, 'Could not recover the turn. Please try again.');
         expect(msg, isNot(contains('Timeout')));
         expect(msg, isNot(contains('sin respuesta del gateway')));
         expect(msg, isNot(contains('#0')));

@@ -2191,7 +2191,7 @@ void main() {
       final voiceCompatibleHistory = chat.buildHistory(excludeCancelled: true);
       expect(history, voiceCompatibleHistory);
       expect(history, hasLength(2));
-      expect(history[0]['content'], contains('Turno detenido por el usuario'));
+      expect(history[0]['content'], contains('Turn stopped by the user'));
       expect(history[0]['content'], contains('primera'));
       expect(history[1]['content'], contains('respuesta parcial'));
       await Future<void>.delayed(const Duration(milliseconds: 900));

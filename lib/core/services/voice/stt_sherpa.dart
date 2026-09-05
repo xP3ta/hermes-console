@@ -94,7 +94,7 @@ const List<SherpaSttModel> kSherpaSttModels = [
   SherpaSttModel(
     kind: SherpaModelKind.whisperBase,
     displayName: 'Whisper base',
-    quality: 'Equilibrio · RAM baja · recomendado',
+    quality: 'Balanced · low RAM · recommended',
     sizeMb: 210,
     ramMb: 450,
     url: '$_asrRelease/sherpa-onnx-whisper-base.tar.bz2',
@@ -107,7 +107,7 @@ const List<SherpaSttModel> kSherpaSttModels = [
   SherpaSttModel(
     kind: SherpaModelKind.whisperSmall,
     displayName: 'Whisper small',
-    quality: 'Más preciso · RAM media',
+    quality: 'More accurate · medium RAM',
     sizeMb: 640,
     ramMb: 750,
     url: '$_asrRelease/sherpa-onnx-whisper-small.tar.bz2',
@@ -120,7 +120,7 @@ const List<SherpaSttModel> kSherpaSttModels = [
   SherpaSttModel(
     kind: SherpaModelKind.parakeetV3,
     displayName: 'Parakeet v3',
-    quality: 'Máxima precisión · ~1,2 GB RAM',
+    quality: 'Highest accuracy · ~1.2 GB RAM',
     sizeMb: 490,
     ramMb: 1200,
     url: '$_asrRelease/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2',
@@ -326,7 +326,7 @@ void extractSherpaModelArchive(
       requiredFiles.any(
         (name) => !RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$').hasMatch(name),
       )) {
-    throw const FormatException('Catálogo local del modelo STT inválido.');
+    throw const FormatException('Invalid local STT model catalog.');
   }
 
   final root = Directory(destRoot);
@@ -345,7 +345,7 @@ void extractSherpaModelArchive(
   try {
     final decoded = BZip2Decoder().decodeStream(input, output, verify: true);
     if (!decoded) {
-      throw const FormatException('El archivo BZip2 del modelo está dañado.');
+      throw const FormatException('The model BZip2 file is corrupt.');
     }
     output.complete();
     if (target.existsSync()) target.deleteSync(recursive: true);
@@ -428,10 +428,10 @@ class _SelectedModelTarSink extends OutputStream {
   }
 
   void _ensureWritable(int additional) {
-    if (_closed) throw StateError('El extractor STT ya está cerrado.');
+    if (_closed) throw StateError('The STT extractor is already closed.');
     if (additional < 0 ||
         _length + _bufferLength + additional > _maxExpandedTarBytes) {
-      throw const FormatException('El modelo STT expandido supera el límite.');
+      throw const FormatException('The expanded STT model exceeds the limit.');
     }
   }
 
@@ -489,7 +489,7 @@ class _SelectedModelTarSink extends OutputStream {
       actualChecksum += i >= 148 && i < 156 ? 0x20 : _header[i];
     }
     if (actualChecksum != expectedChecksum) {
-      throw const FormatException('Checksum del tar STT inválido.');
+      throw const FormatException('Invalid STT tar checksum.');
     }
 
     final headerName = _normaliseTarName(
@@ -506,7 +506,7 @@ class _SelectedModelTarSink extends OutputStream {
           size <= 0 ||
           size > _maxGnuLongNameBytes) {
         throw const FormatException(
-          'Metadato de nombre largo del modelo STT inválido.',
+          'Invalid STT model long-name metadata.',
         );
       }
       _gnuLongNamePayload = BytesBuilder(copy: false);
@@ -516,7 +516,7 @@ class _SelectedModelTarSink extends OutputStream {
     if (!gnuLongName) _pendingGnuLongName = null;
     if (pendingLongName != null && !regularFile) {
       throw const FormatException(
-        'El nombre largo del modelo STT no precede a un archivo.',
+        'The STT model long name does not precede a file.',
       );
     }
     final name = pendingLongName ?? headerName;
@@ -524,7 +524,7 @@ class _SelectedModelTarSink extends OutputStream {
     if (outputName != null) {
       if (!regularFile || !_extracted.add(name)) {
         throw const FormatException(
-          'Entrada requerida del modelo STT inválida.',
+          'Invalid required STT model entry.',
         );
       }
       _file = File('${_stage.path}/$outputName').openSync(mode: FileMode.write);
@@ -547,13 +547,13 @@ class _SelectedModelTarSink extends OutputStream {
       final zero = raw.indexOf(0);
       if (zero >= 0 && raw.skip(zero + 1).any((byte) => byte != 0)) {
         throw const FormatException(
-          'Metadato de nombre largo del modelo STT inválido.',
+          'Invalid STT model long-name metadata.',
         );
       }
       final encodedName = zero < 0 ? raw : raw.sublist(0, zero);
       if (encodedName.isEmpty) {
         throw const FormatException(
-          'Metadato de nombre largo del modelo STT vacío.',
+          'Empty STT model long-name metadata.',
         );
       }
       _pendingGnuLongName = _normaliseTarName(
@@ -579,7 +579,7 @@ class _SelectedModelTarSink extends OutputStream {
         .trim();
     if (text.isEmpty) return 0;
     if (!RegExp(r'^[0-7]+$').hasMatch(text)) {
-      throw FormatException('Campo tar $field inválido.');
+      throw FormatException('Invalid tar field $field.');
     }
     return int.parse(text, radix: 8);
   }
@@ -615,7 +615,7 @@ class _SelectedModelTarSink extends OutputStream {
         _file != null ||
         _gnuLongNamePayload != null ||
         _pendingGnuLongName != null) {
-      throw const FormatException('El tar del modelo STT está truncado.');
+      throw const FormatException('The STT model tar is truncated.');
     }
     final missing = _required.difference(_extracted);
     if (missing.isNotEmpty) {

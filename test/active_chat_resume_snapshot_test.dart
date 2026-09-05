@@ -1078,7 +1078,7 @@ void main() {
     ]);
     expect(
       chat.messages.first['content'],
-      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      'Could not recover the turn. Please try again.',
     );
     expect(
       chat.messages.first['content'],

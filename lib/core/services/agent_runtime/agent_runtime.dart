@@ -682,7 +682,7 @@ run(){ t="$1"; shift; timeout -k 10 -s TERM "$t" "$@"; };
 # Espera (con tope) a que ningún gestor de paquetes esté ocupado: otro pkg/apt/
 # dpkg corriendo deja el lock tomado y `pkg install` fallaría al instante.
 pgrep_exact(){ pgrep -x "$1" >/dev/null 2>&1 || pgrep "^$1$" >/dev/null 2>&1; };
-wait_pkg(){ i=0; while pgrep_exact pkg || pgrep_exact apt || pgrep_exact apt-get || pgrep_exact dpkg; do [ $i -eq 0 ] && log "Esperando a que termine otra operacion de paquetes..."; i=$((i+1)); [ $i -ge 60 ] && { log "@@NETSTALL otra operacion de paquetes sigue ocupada"; break; }; sleep 2; done; };
+wait_pkg(){ i=0; while pgrep_exact pkg || pgrep_exact apt || pgrep_exact apt-get || pgrep_exact dpkg; do [ $i -eq 0 ] && log "Waiting for another package operation to finish..."; i=$((i+1)); [ $i -ge 60 ] && { log "@@NETSTALL otra operacion de paquetes sigue ocupada"; break; }; sleep 2; done; };
 log "@@STAGE Preparando Termux";
 # Diagnóstico de entorno: si el prefijo/PATH están mal, queda VISIBLE en el log
 # en lugar de fallar mudo (la app pinta estas líneas en el mini-terminal).
@@ -697,7 +697,7 @@ HERMES_BIN="$(command -v hermes 2>/dev/null)"; [ -z "$HERMES_BIN" ] && [ -x "$HO
 # datos (todo vive FUERA de hermes-agent/venv).
 if [ -n "$HERMES_REPAIR" ]; then
   log "@@STAGE Reparando entorno";
-  log "Reparación: reconstruyo el entorno de Python (venv) conservando tus datos.";
+  log "Repair: rebuilding the Python environment (venv), keeping your data.";
   rm -rf "$HOME/.hermes/hermes-agent/venv" "$HOME/.hermes-agent/venv" 2>/dev/null;
   # Matar un dashboard/bridge vivo del intento anterior (por pidfile y por nombre
   # exacto; nunca pkill -f, que se autocorta en `bash -c`) ANTES de borrar nada,
@@ -745,11 +745,11 @@ Always answer in clean, well-structured Markdown. A technical reader must grasp 
 * Separate ideas into short paragraphs with blank lines. Never produce a wall of text.
 * Flag issues by starting the line with `Problema:`, `Advertencia:` or `Error:` so the client highlights them.
 SOULFMT
-    log "SOUL: instrucciones de formato anadidas";
+    log "SOUL: formatting instructions added";
   fi
 }
 if [ -n "$HERMES_BIN" ]; then
-  log "Hermes ya instalado: $($HERMES_BIN version 2>/dev/null || echo version-desconocida)";
+  log "Hermes already installed: $($HERMES_BIN version 2>/dev/null || echo unknown-version)";
   ensure_soul_fmt;
   log "@@STAGE Verificando";
   log "@@EXIT 0"; log "@@DONE";
@@ -759,7 +759,7 @@ fi
 # Arranca el servidor de log cuanto antes (necesita python3) para que la app vea
 # el progreso real, incluido cualquier error de red, sin ventanas ciegas.
 if ! command -v python3 >/dev/null 2>&1; then
-  log "Instalando Python (para el progreso en vivo)...";
+  log "Installing Python (for live progress)...";
   wait_pkg;
   run 150 pkg install -y python -o Dpkg::Options::="--force-confold" >> "$LOG" 2>&1 </dev/null || log "@@NETSTALL pkg install python";
 fi;
@@ -777,7 +777,7 @@ if command -v git >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1 && command
 import PIL
 PY
 then
-  log "Dependencias base ya instaladas — saltando pkg install";
+  log "Base dependencies already installed - skipping pkg install";
 else
   wait_pkg;
   # python-pillow: Pillow precompilado de Termux. Evita que pip compile la wheel,
@@ -795,13 +795,13 @@ fi
 log "@@STAGE Descargando instalador";
 run 45 curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o "$LOGD/inst.sh" 2>>"$LOG";
 if [ ! -s "$LOGD/inst.sh" ]; then
-  log "URL principal fallo; probando fallback raw.githubusercontent (avanzado)";
+  log "Primary URL failed; trying raw.githubusercontent fallback (advanced)";
   run 45 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o "$LOGD/inst.sh" 2>>"$LOG" || log "@@NETSTALL descarga del instalador";
 fi;
 log "@@STAGE Instalando agente";
 wait_pkg;
 if [ -d "$HOME/.hermes/hermes-agent/venv" ] && [ ! -x "$HOME/.hermes/hermes-agent/venv/bin/hermes" ]; then
-  log "Limpiando venv parcial de una instalacion anterior fallida";
+  log "Cleaning up a partial venv from a previous failed install";
   rm -rf "$HOME/.hermes/hermes-agent/venv";
 fi;
 # Instalar SOLO el paquete base (`.`), no el perfil amplio `.[termux-all]`. El
@@ -816,7 +816,7 @@ fi;
 # seguiría con su perfil por defecto).
 if [ -f "$LOGD/inst.sh" ]; then
   sed -i "s/'\.\[termux-all\]'/'.'/g; s/'\.\[termux\]'/'.'/g" "$LOGD/inst.sh" 2>/dev/null \
-    && log "Instalador ajustado a perfil base (sin integraciones de mensajeria)";
+    && log "Installer trimmed to the base profile (no messaging integrations)";
 fi;
 run 1800 bash "$LOGD/inst.sh" --skip-setup >> "$LOG" 2>&1 </dev/null;
 RC=$?;
@@ -835,7 +835,7 @@ security:
   allow_lazy_installs: false
 EOF
     chmod 600 "$HOME/.hermes/config.yaml" 2>/dev/null;
-    log "Config minima creada en ~/.hermes/config.yaml";
+    log "Minimal config created at ~/.hermes/config.yaml";
   fi;
   ensure_soul_fmt;
 fi;
@@ -852,7 +852,7 @@ VVPY="$HOME/.hermes/hermes-agent/venv/bin/python3";
 VHERMES="$HOME/.hermes/hermes-agent/venv/bin/hermes";
 [ -x "$VHERMES" ] || VHERMES="$HOME/.hermes-agent/venv/bin/hermes";
 if [ -x "$VVPY" ] && "$VVPY" -c 'import hermes_cli' >/dev/null 2>&1 && [ -x "$VHERMES" ]; then
-  log "Verificacion OK: hermes_cli importable y ejecutable del venv presente";
+  log "Verification OK: hermes_cli importable and venv executable present";
   # Instalación completa y sana: borrar cualquier marcador/lock de install
   # interrumpido para que el dashboard NO lance la recuperación pesada del perfil
   # completo de extras al arrancar (no hace falta: el entorno ya está bien).
@@ -958,14 +958,14 @@ kill_pat KILL "hermes_bridge.py" bridge;
 kill_pat KILL "$HOME/.hermes/hermes-agent" hermes-agent;
 pkill -KILL -x hermes 2>/dev/null || true;
 kill_ports KILL 9119 8642 9131 11434;
-log "Procesos Hermes detenidos";
+log "Hermes processes stopped";
 log "@@STAGE borrando";
 # Con los procesos ya muertos (no borrar archivos en uso). Orden requerido:
 # binario/symlink del PATH, luego el directorio principal del agente, y por
 # último el temporal de instalación (~/.hermes ANTES de ~/.hermes-install).
-rm -f "$PREFIX/bin/hermes" 2>/dev/null; log "Eliminado binario: $PREFIX/bin/hermes";
-rm -rf "$HOME/.hermes" 2>/dev/null; log "Eliminado: $HOME/.hermes";
-rm -rf "$HOME/.hermes-install" 2>/dev/null; log "Eliminado: $HOME/.hermes-install";
+rm -f "$PREFIX/bin/hermes" 2>/dev/null; log "Removed binary: $PREFIX/bin/hermes";
+rm -rf "$HOME/.hermes" 2>/dev/null; log "Removed: $HOME/.hermes";
+rm -rf "$HOME/.hermes-install" 2>/dev/null; log "Removed: $HOME/.hermes-install";
 log "@@STAGE verificando";
 REMAIN=0;
 [ -d "$HOME/.hermes" ] && { log "@@WARN ~/.hermes sigue presente (permiso denegado)"; REMAIN=1; };
@@ -979,7 +979,7 @@ for port in 9119 8642 9131 11434; do
     break;
   done;
 done;
-[ $REMAIN -eq 0 ] && log "Desinstalacion completa: no quedan restos." || log "Algunos elementos no se pudieron eliminar.";
+[ $REMAIN -eq 0 ] && log "Uninstall complete: nothing left behind." || log "Some items could not be removed.";
 log "@@EXIT $REMAIN";
 log "@@DONE";
 sleep 60;

@@ -139,7 +139,7 @@ class SshSessionService {
       });
       shell.done.then((_) {
         s.phase.value = SshSessionPhase.closed;
-        terminal.write('\r\n\x1b[90m[sesión cerrada]\x1b[0m\r\n');
+        terminal.write('\r\n\x1b[90m[session closed]\x1b[0m\r\n');
         _refresh();
         onMaybeRelease?.call();
       });

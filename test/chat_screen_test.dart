@@ -912,7 +912,16 @@ void main() {
   var foregroundServiceRunning = false;
 
   test('Chat no conserva superficies que entren desde abajo', () {
-    final source = File('lib/core/screens/chat_screen.dart').readAsStringSync();
+    // The chat screen is a multi-file library; read every part so moving a
+    // surface into one cannot make this ban pass vacuously.
+    final source = Directory('lib/core/screens')
+        .listSync()
+        .whereType<File>()
+        .map((entry) => entry.path)
+        .where((path) => RegExp(r'chat_screen[a-z_]*\.dart$').hasMatch(path))
+        .map(File.new)
+        .map((file) => file.readAsStringSync())
+        .join('\n');
     expect(source, isNot(contains('showModalBottomSheet')));
     for (final key in const [
       'chat-edit-message-dialog',
@@ -4629,8 +4638,8 @@ void main() {
 
       expect(
         find.text(
-          'Hermes no pudo reservar esta conversación. '
-          'Revisa otras sesiones activas y vuelve a intentarlo.',
+          'Hermes could not reserve this conversation. '
+          'Check other active sessions and try again.',
         ),
         findsOneWidget,
       );
@@ -4645,8 +4654,8 @@ void main() {
     (tester) async {
       const prompt = 'continúa esta conversación desde el móvil';
       const safeMessage =
-          'Esta conversación está abierta en otra ventana o dispositivo. '
-          'Ciérrala allí y vuelve a intentarlo.';
+          'This conversation is open in another window or device. '
+          'Close it there and try again.';
       final connection = _remoteConn('conn-owned-elsewhere');
       final gateway = _SubmissionGateway()
         ..submitError = const _ReasonedPromptRejection(

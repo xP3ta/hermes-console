@@ -273,13 +273,13 @@ class SshManager {
       return 'SSH handshake failed (is this an SSH server?).';
     }
     final s = e.toString().toLowerCase();
-    if (s.contains('refused')) return 'Conexión rechazada (¿está SSH activo?).';
+    if (s.contains('refused')) return 'Connection refused (is SSH running?).';
     if (s.contains('timed out') || s.contains('timeout')) {
       return 'Tiempo de espera agotado (host/puerto inalcanzable).';
     }
     if (s.contains('failed host lookup') || s.contains('no address')) {
-      return 'No se pudo resolver el host.';
+      return 'Could not resolve the host.';
     }
-    return 'Error de conexión: $e';
+    return 'Connection error: $e';
   }
 }

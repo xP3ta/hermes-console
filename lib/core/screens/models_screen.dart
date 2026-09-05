@@ -727,7 +727,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           profile: _profile,
           baseUrl: providerBaseUrl,
         );
-        if (!done) throw Exception('El Dashboard rechazó el cambio');
+        if (!done) throw Exception('The Dashboard rejected the change');
         await _load();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

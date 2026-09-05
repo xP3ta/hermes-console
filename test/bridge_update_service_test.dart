@@ -77,7 +77,7 @@ void main() {
 
     final result = await BridgeUpdateService.update(connection);
     expect(result.ok, isFalse);
-    expect(result.detail, contains('solo lectura'));
+    expect(result.detail, contains('read-only'));
   });
 
   test('check compara contra la release remota verificada', () async {

@@ -2473,12 +2473,46 @@ class BackgroundListener {
     return start();
   }
 
-  /// Mantiene residente el opt-in ya autorizado. Run start, restore y
-  /// keepalive usan esta ruta sin crear leases temporales.
+  /// Mantiene residente el foreground service mientras el agente responde.
+  ///
+  /// El opt-in permanente lo mantiene siempre; sin él, un turno vivo lo
+  /// adquiere igualmente durante la respuesta ([setActiveTurnRequired]). Sin
+  /// esa lease, Android congela el isolate en cuanto la app pasa a 2º plano y
+  /// el socket del turno muere sin entregar su cierre: la respuesta se pierde
+  /// y el chat se queda "ejecutando" para siempre.
   static Future<bool> ensureAutomationForeground() async {
     final prefs = await SharedPreferences.getInstance();
-    if (!_automationMessagingDemand(prefs)) return false;
+    if (!_automationForegroundDemand(prefs)) return false;
     return start();
+  }
+
+  /// Lease del turno vivo: mientras hay una respuesta en curso, el proceso debe
+  /// seguir ejecutándose aunque el usuario minimice la app. Es transitoria y no
+  /// representa consentimiento: no toca [prefKey], así que nunca habilita el
+  /// re-arranque tras boot ni la escucha permanente.
+  static Future<bool> setActiveTurnRequired(bool required) {
+    final revision = ++_activeTurnRevision;
+    _activeTurnDemand = required ? 1 : 0;
+    return _foregroundMutations.run(
+      () => _applyActiveTurnRequirement(required, revision),
+    );
+  }
+
+  static Future<bool> _applyActiveTurnRequirement(
+    bool required,
+    int revision,
+  ) async {
+    // Una adquisición posterior ya reclamó la lease: esta no puede soltarla.
+    if (revision != _activeTurnRevision) return false;
+    if (!required) {
+      // El opt-in permanente, el audio y SSH/SFTP siguen mandando: soltar la
+      // lease del turno solo puede parar un runtime que ya no tiene dueño.
+      await _releaseIdleRuntimeSerialized();
+      return false;
+    }
+    final started = await start();
+    if (!started && revision == _activeTurnRevision) _activeTurnDemand = 0;
+    return started;
   }
 
   /// Releases only automation demand. Audio and external dataSync owners remain.
@@ -2644,7 +2678,7 @@ class BackgroundListener {
   static Future<_ForegroundNetworkMode> _desiredNetworkMode(
     SharedPreferences prefs,
   ) async {
-    final automation = _automationMessagingDemand(prefs);
+    final automation = _automationForegroundDemand(prefs);
     final external = _externalDataSyncDemand > 0;
     return _networkModeFor(
       automation: automation,
@@ -2747,7 +2781,7 @@ class BackgroundListener {
   static Future<List<ForegroundServiceTypes>> _voiceServiceTypes(
     SharedPreferences prefs,
   ) async => voiceServiceTypesForTest(
-    automation: _automationMessagingDemand(prefs),
+    automation: _automationForegroundDemand(prefs),
     externalDataSync: _externalDataSyncDemand > 0,
     androidSdkInt: await _androidSdkInt(),
   );
@@ -2755,7 +2789,7 @@ class BackgroundListener {
   static Future<List<ForegroundServiceTypes>> _readAloudServiceTypes(
     SharedPreferences prefs,
   ) async => readAloudServiceTypesForTest(
-    automation: _automationMessagingDemand(prefs),
+    automation: _automationForegroundDemand(prefs),
     externalDataSync: _externalDataSyncDemand > 0,
     androidSdkInt: await _androidSdkInt(),
   );
@@ -2916,18 +2950,38 @@ class BackgroundListener {
   static bool? _readAloudPaused;
   static int _externalDataSyncDemand = 0;
   static int _externalDataSyncRevision = 0;
+  static int _activeTurnDemand = 0;
+  static int _activeTurnRevision = 0;
   static _ForegroundNetworkMode _activeNetworkMode =
       _ForegroundNetworkMode.none;
 
+  /// Consentimiento permanente del usuario. Gobierna el re-arranque tras boot
+  /// y la escucha continua; una lease de turno NUNCA lo activa.
   static bool _automationMessagingDemand(SharedPreferences prefs) =>
       prefs.getBool(prefKey) == true;
+
+  /// ¿Debe estar corriendo ahora el servicio de automatización? El opt-in
+  /// permanente o un turno vivo bastan; ambos necesitan la misma red.
+  static bool _automationForegroundDemand(SharedPreferences prefs) =>
+      _automationMessagingDemand(prefs) || _activeTurnDemand > 0;
 
   @visibleForTesting
   static bool automationMessagingDemandForTest(SharedPreferences prefs) =>
       _automationMessagingDemand(prefs);
 
+  @visibleForTesting
+  static bool automationForegroundDemandForTest(SharedPreferences prefs) =>
+      _automationForegroundDemand(prefs);
+
+  /// Mueve solo el contador de la lease, sin tocar el servicio nativo.
+  @visibleForTesting
+  static void setActiveTurnDemandForTest(bool required) {
+    _activeTurnRevision++;
+    _activeTurnDemand = required ? 1 : 0;
+  }
+
   static bool _networkDemand(SharedPreferences prefs) =>
-      _externalDataSyncDemand > 0 || _automationMessagingDemand(prefs);
+      _externalDataSyncDemand > 0 || _automationForegroundDemand(prefs);
 
   static ({
     bool paused,
@@ -3293,6 +3347,8 @@ class BackgroundListener {
     _activeNetworkMode = _ForegroundNetworkMode.none;
     _externalDataSyncRevision++;
     _externalDataSyncDemand = 0;
+    _activeTurnRevision++;
+    _activeTurnDemand = 0;
     await prefs.setInt(externalDataSyncDemandKey, 0);
     if (await _androidSdkInt() >= 35) {
       await _setNativeExternalDataSyncRequired(false);
@@ -3325,6 +3381,8 @@ class BackgroundListener {
     _activeNetworkMode = _ForegroundNetworkMode.none;
     _externalDataSyncRevision++;
     _externalDataSyncDemand = 0;
+    _activeTurnRevision++;
+    _activeTurnDemand = 0;
     await prefs.setInt(externalDataSyncDemandKey, 0);
     if (await _androidSdkInt() >= 35) {
       await _setNativeExternalDataSyncRequired(false);

@@ -61,7 +61,7 @@ RunEventUpdate? normalizeRunEvent(Map<String, dynamic> event) {
 
     case 'approval.request':
       return RunEventUpdate(
-        progressLabel: 'Esperando aprobación',
+        progressLabel: 'Waiting for approval',
         lastEvent: type,
         lastStatus: 'waiting_for_approval',
       );
@@ -69,7 +69,9 @@ RunEventUpdate? normalizeRunEvent(Map<String, dynamic> event) {
     case 'approval.responded':
       final choice = (event['choice'] ?? '').toString();
       return RunEventUpdate(
-        progressLabel: choice.isNotEmpty ? 'Aprobación: $choice' : 'Aprobación respondida',
+        progressLabel: choice.isNotEmpty
+            ? 'Approval: $choice'
+            : 'Approval answered',
         lastEvent: type,
         lastStatus: 'running',
       );
@@ -85,7 +87,7 @@ RunEventUpdate? normalizeRunEvent(Map<String, dynamic> event) {
     case 'run.failed':
       final err = (event['error'] ?? '').toString();
       return RunEventUpdate(
-        progressLabel: err.isNotEmpty ? err : 'Ejecución fallida',
+        progressLabel: err.isNotEmpty ? err : 'Run failed',
         lastEvent: type,
         lastStatus: 'failed',
         isTerminal: true,
