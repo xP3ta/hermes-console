@@ -389,7 +389,7 @@ void main() {
       );
       final h = await c.healthDiagnose();
       expect(h.reach, BridgeReach.refused);
-      expect(h.detail, contains('rechazada'));
+      expect(h.detail, contains('refused'));
     });
 
     test('host no resoluble → reach dns', () async {

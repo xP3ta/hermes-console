@@ -21,16 +21,16 @@ class PromptSafety {
   String sanitize(String raw) {
     final trimmed = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (trimmed.isEmpty) {
-      throw PromptRejectedException('Escribe una descripción para tu mascota.');
+      throw PromptRejectedException('Write a description for your pet.');
     }
     if (trimmed.length > maxLength) {
-      throw PromptRejectedException('La descripción es demasiado larga.');
+      throw PromptRejectedException('The description is too long.');
     }
     final lower = trimmed.toLowerCase();
     for (final term in _blocked) {
       if (lower.contains(term)) {
         throw PromptRejectedException(
-            'Esa descripción no está permitida. Prueba con algo cosmético.');
+            'That description is not allowed. Try something cosmetic.');
       }
     }
     return trimmed;

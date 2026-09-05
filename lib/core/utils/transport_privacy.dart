@@ -66,7 +66,7 @@ class TransportPrivacy {
   static String requireAllowed(String url) {
     if (classify(url) == TransportPrivacyClass.publicCleartext) {
       throw ArgumentError(
-        'HTTP/WS público bloqueado: configura HTTPS/WSS o usa una dirección privada/Tailscale.',
+        'Public HTTP/WS blocked: configure HTTPS/WSS or use a private/Tailscale address.',
       );
     }
     return url;

@@ -686,7 +686,7 @@ class HermesServerTtsEngine implements TtsEngine, PrewarmableTts {
     final match = _dataUrlPattern.firstMatch(raw);
     if (map['ok'] != true || match == null) {
       final detail = map['detail'] ?? map['error'] ?? 'sin data_url';
-      throw Exception('El servidor no devolvió audio ($detail).');
+      throw Exception('The server returned no audio ($detail).');
     }
     final mime = (map['mime_type'] ?? match.group(1) ?? 'audio/mpeg')
         .toString();
@@ -694,7 +694,7 @@ class HermesServerTtsEngine implements TtsEngine, PrewarmableTts {
       (match.group(2) ?? '').replaceAll(RegExp(r'\s+'), ''),
     );
     if (bytes.isEmpty) {
-      throw Exception('El servidor devolvió audio vacío.');
+      throw Exception('The server returned empty audio.');
     }
     return _HermesPreparedAudio(bytes, mime);
   }

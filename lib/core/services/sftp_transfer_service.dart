@@ -305,8 +305,8 @@ class SftpTransferService {
   Future<void> _doneNotif(int id, SftpTransfer t) async {
     final ok = t.status == TransferStatus.done;
     final verb = t.direction == TransferDirection.download
-        ? (ok ? 'Descargado' : 'Falló la descarga')
-        : (ok ? 'Subido' : 'Falló la subida');
+        ? (ok ? 'Descargado' : 'Download failed')
+        : (ok ? 'Subido' : 'Upload failed');
     await _notif?.transferDone(
       id: id,
       title: '$verb · ${t.name}',

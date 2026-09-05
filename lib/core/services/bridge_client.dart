@@ -261,12 +261,12 @@ class BridgeClient {
     if (length <= 0 || length > maxBytes) {
       throw const BridgeException(
         'attachment_too_large',
-        'El adjunto está vacío o supera el límite permitido.',
+        'The attachment is empty or exceeds the allowed limit.',
       );
     }
     final safeName = filename.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     if (safeName.isEmpty || safeName.contains('..')) {
-      throw ArgumentError('nombre de adjunto no válido');
+      throw ArgumentError('invalid attachment name');
     }
 
     final request = http.StreamedRequest(
@@ -293,7 +293,7 @@ class BridgeClient {
       if (!path.startsWith('/')) {
         throw const BridgeException(
           'attachment_invalid_path',
-          'El bridge no devolvió una ruta de adjunto válida.',
+          'The bridge did not return a valid attachment path.',
         );
       }
       return path;
@@ -316,14 +316,14 @@ class BridgeClient {
     if (bytes.isEmpty || bytes.length > 512 * 1024) {
       throw const BridgeException(
         'self_update_size',
-        'La release del Mobile Bridge supera el límite permitido.',
+        'The Mobile Bridge release exceeds the allowed limit.',
       );
     }
     if (!RegExp(r'^\d+\.\d+\.\d+$').hasMatch(version) ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(sha256)) {
       throw const BridgeException(
         'self_update_metadata',
-        'Los metadatos de la release del Mobile Bridge no son válidos.',
+        'The Mobile Bridge release metadata is not valid.',
       );
     }
     final res = await _http
@@ -356,7 +356,7 @@ class BridgeClient {
         return BridgeHealth(
           BridgeReach.httpError,
           httpStatus: res.statusCode,
-          detail: 'El bridge respondió HTTP ${res.statusCode}.',
+          detail: 'The bridge responded HTTP ${res.statusCode}.',
         );
       }
       final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -371,8 +371,8 @@ class BridgeClient {
       return const BridgeHealth(
         BridgeReach.timeout,
         detail:
-            'El bridge no respondió a tiempo (timeout). '
-            '¿Está iniciado y accesible en esta red?',
+            'The bridge did not respond in time (timeout). '
+            'Is it started and reachable on this network?',
       );
     } on SocketException catch (e) {
       // osError.errorCode 111 = connection refused; fallo de DNS no trae osError.
@@ -383,18 +383,18 @@ class BridgeClient {
         return const BridgeHealth(
           BridgeReach.refused,
           detail:
-              'Conexión rechazada: hay host pero nada escucha en ese '
-              'puerto. El bridge no está iniciado o el puerto es otro.',
+              'Connection refused: the host is there but nothing is listening on that '
+              'port. The bridge is not started, or the port is different.',
         );
       }
       return BridgeHealth(
         BridgeReach.dns,
-        detail: 'No se pudo resolver/alcanzar el host: ${e.message}.',
+        detail: 'Could not resolve/reach the host: ${e.message}.',
       );
     } on HandshakeException catch (e) {
       return BridgeHealth(
         BridgeReach.tls,
-        detail: 'Error TLS al conectar con el bridge: ${e.message}.',
+        detail: 'TLS error connecting to the bridge: ${e.message}.',
       );
     } catch (e) {
       return BridgeHealth(
@@ -600,7 +600,7 @@ class BridgeClient {
     if (data['ok'] != true) {
       throw const BridgeException(
         'cron_remove_unconfirmed',
-        'El bridge no confirmó la eliminación del cron.',
+        'The bridge did not confirm the cron deletion.',
       );
     }
   }
@@ -818,7 +818,7 @@ class BridgeClient {
         name.contains('\\') ||
         name.contains('..') ||
         !_imageNameRe.hasMatch(name)) {
-      throw ArgumentError('nombre de imagen no válido');
+      throw ArgumentError('invalid image name');
     }
     final request = http.Request(
       'GET',
@@ -837,14 +837,14 @@ class BridgeClient {
     if (!contentType.startsWith('image/')) {
       throw const BridgeException(
         'image_invalid_type',
-        'El servidor no devolvió una imagen.',
+        'The server did not return an image.',
       );
     }
     final declared = int.tryParse(res.headers['content-length'] ?? '');
     if (declared != null && declared > maxBytes) {
       throw const BridgeException(
         'image_too_large',
-        'La imagen supera el límite permitido.',
+        'The image exceeds the allowed limit.',
       );
     }
     final bytes = BytesBuilder(copy: false);
@@ -852,7 +852,7 @@ class BridgeClient {
       if (bytes.length + chunk.length > maxBytes) {
         throw const BridgeException(
           'image_too_large',
-          'La imagen supera el límite permitido.',
+          'The image exceeds the allowed limit.',
         );
       }
       bytes.add(chunk);

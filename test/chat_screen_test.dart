@@ -4629,8 +4629,8 @@ void main() {
 
       expect(
         find.text(
-          'Hermes no pudo reservar esta conversación. '
-          'Revisa otras sesiones activas y vuelve a intentarlo.',
+          'Hermes could not reserve this conversation. '
+          'Check other active sessions and try again.',
         ),
         findsOneWidget,
       );
@@ -4645,8 +4645,8 @@ void main() {
     (tester) async {
       const prompt = 'continúa esta conversación desde el móvil';
       const safeMessage =
-          'Esta conversación está abierta en otra ventana o dispositivo. '
-          'Ciérrala allí y vuelve a intentarlo.';
+          'This conversation is open in another window or device. '
+          'Close it there and try again.';
       final connection = _remoteConn('conn-owned-elsewhere');
       final gateway = _SubmissionGateway()
         ..submitError = const _ReasonedPromptRejection(

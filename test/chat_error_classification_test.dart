@@ -9,6 +9,42 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/utils/chat_error.dart';
 
 void main() {
+  // Los mensajes que emite la app ahora son ingleses; los españoles se
+  // conservan porque siguen guardados en transcripts de builds anteriores.
+  group('classifyChatError — mensajes ingleses del agente local', () {
+    test('local agent timeout → localColdStart (no model)', () {
+      // Texto real generado por _humanizeBridgeError en active_chat_service.dart.
+      const msg =
+          'The local agent took too long to respond. The model may still '
+          'be loading; wait a few seconds and retry.';
+      expect(classifyChatError(msg), ChatErrorKind.localColdStart);
+    });
+
+    test('local agent killed (process exited) → local', () {
+      const msg =
+          'The local agent stopped mid-response (the process exited, '
+          'usually out of memory). Start the local agent again and retry. If '
+          'it keeps happening, use a smaller model or give the '
+          'device/emulator more RAM.';
+      expect(classifyChatError(msg), ChatErrorKind.local);
+    });
+
+    test('bridge unavailable → local', () {
+      const msg =
+          'Could not connect to the local agent (Mobile Bridge). '
+          'Start the agent and retry.';
+      expect(classifyChatError(msg), ChatErrorKind.local);
+    });
+
+    test('firstTokenTimeout inglés → firstTokenTimeout', () {
+      const msg =
+          'firstTokenTimeout: The server connected but has been idle for '
+          '90 s (no text and no tools). The model may still be loading or '
+          'the server may be overloaded. Retry in a few seconds.';
+      expect(classifyChatError(msg), ChatErrorKind.firstTokenTimeout);
+    });
+  });
+
   group('classifyChatError — local bridge errors', () {
     test('timeout del agente local → localColdStart (no model)', () {
       // Texto real generado por _humanizeBridgeError en active_chat_service.dart.

@@ -44,11 +44,11 @@ class HatchService {
 
     final dims = await _decodeDims(result.imageBytes);
     if (dims == null) {
-      throw HatchException('La imagen generada no es válida.');
+      throw HatchException('The generated image is not valid.');
     }
     final (w, h) = dims;
     if (w <= 0 || h <= 0) {
-      throw HatchException('La imagen generada tiene dimensiones inválidas.');
+      throw HatchException('The generated image has invalid dimensions.');
     }
 
     final slug = _uniqueSlug(_slugFromPrompt(clean), protectedSlugs, existingSlugs);

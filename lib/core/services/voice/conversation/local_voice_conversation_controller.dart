@@ -354,7 +354,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       userPaused = true;
       note = _isEnglish
           ? 'The microphone is still being released.'
-          : 'El micrófono todavía se está liberando.';
+          : 'The microphone is still being released.';
       _notify();
       return;
     }
@@ -417,7 +417,7 @@ class LocalVoiceConversationController extends ChangeNotifier
           }
           note = _isEnglish
               ? 'I could not understand the microphone.'
-              : 'No pude entender el micrófono.';
+              : 'I could not understand the microphone.';
           _notify();
         },
         onDone: () {
@@ -432,7 +432,7 @@ class LocalVoiceConversationController extends ChangeNotifier
               _runtime.finishNormalSilence(captureToken) ||
               _runtime.failTranscription(captureToken);
           if (!finished) return;
-          note = _isEnglish ? 'I did not hear you.' : 'No te he oído.';
+          note = _isEnglish ? 'I did not hear you.' : 'I did not hear you.';
           _notify();
           _scheduleListening();
         },
@@ -448,7 +448,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       _runtime.failNormalCapture(captureToken);
       note = _isEnglish
           ? 'The microphone could not be started.'
-          : 'No se pudo iniciar el micrófono.';
+          : 'Could not start the microphone.';
       _notify();
     }
   }
@@ -540,7 +540,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   }) async {
     if (!_isCurrent(operation) || turn != _turnBinding) return;
     if (text.isEmpty) {
-      note = _isEnglish ? 'I did not hear you.' : 'No te he oído.';
+      note = _isEnglish ? 'I did not hear you.' : 'I did not hear you.';
       _scheduleListening();
       return;
     }
@@ -644,7 +644,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       _runtime.failSubmission(turn);
       note = _isEnglish
           ? 'The message could not be sent.'
-          : 'No se pudo enviar el mensaje.';
+          : 'Could not send the message.';
       _notify();
       _scheduleListening();
     }
@@ -818,7 +818,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         return;
       }
       _bargeRuntimeToken = null;
-      note = _isEnglish ? 'I did not hear you.' : 'No te he oído.';
+      note = _isEnglish ? 'I did not hear you.' : 'I did not hear you.';
       _notify();
       _scheduleListening();
       return;
@@ -1175,7 +1175,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         if (chat.assistantContent.trim().isEmpty) {
           note = _isEnglish
               ? 'The response was interrupted.'
-              : 'La respuesta se interrumpió.';
+              : 'The response was interrupted.';
         }
         final errorRawBefore = narration.rawObserved.length;
         final errorAppendLatency = _latencyTurn?.beginSuffixAppendLatency();
@@ -1662,7 +1662,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         userPaused = true;
         note = _isEnglish
             ? 'Hermes server voice is unavailable. Voice was paused.'
-            : 'La voz del servidor Hermes no está disponible. Voz se ha pausado.';
+            : 'The Hermes server voice is unavailable. Voice has been paused.';
         _notify();
         return;
       } finally {
@@ -1989,10 +1989,10 @@ class LocalVoiceConversationController extends ChangeNotifier
     final message = approval
         ? (_isEnglish
               ? 'Hermes needs your approval. Open the app to review it.'
-              : 'Hermes necesita tu aprobación. Abre la aplicación para revisarla.')
+              : 'Hermes needs your approval. Open the app to review it.')
         : (_isEnglish
               ? 'Hermes needs your response. Open the app to continue.'
-              : 'Hermes necesita tu respuesta. Abre la aplicación para continuar.');
+              : 'Hermes needs your answer. Open the app to continue.');
     await voice.enqueueLocalSpeech(message);
   }
 
@@ -2432,7 +2432,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     } catch (_) {
       if (!_isCurrent(operation)) return;
       paused = true;
-      note = 'No se pudo guardar Stop de forma segura. Reinténtalo.';
+      note = 'Could not save Stop safely. Please try again.';
       _notify();
       return;
     }
@@ -2895,7 +2895,7 @@ class LocalVoiceConversationController extends ChangeNotifier
 
   String _sttUnavailableNote(SttCheck check) => _isEnglish
       ? 'Voice recognition is not ready (${check.status.name}).'
-      : 'El reconocimiento de voz no está listo (${check.status.name}).';
+      : 'Speech recognition is not ready (${check.status.name}).';
 
   static String? _pendingInputKey(ActiveChat? chat) {
     if (chat == null) return null;

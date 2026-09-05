@@ -338,7 +338,7 @@ void main() {
       });
       expect(Session.stripTodoContinuation(s.preview), '');
       expect(s.cleanPreview, '');
-      expect(s.displayTitle, 'Conversación');
+      expect(s.displayTitle, 'Conversation');
     });
 
     test('displayTitle conserva una consulta que empieza citando la cabecera', () {
@@ -362,7 +362,7 @@ void main() {
             '[Your active task list was preserved across context compress...',
         'source': 'mobile',
       });
-      expect(s.displayTitle, 'Conversación');
+      expect(s.displayTitle, 'Conversation');
     });
 
     test('displayTitle de job sin contenido legible → "Tarea programada"', () {
@@ -373,7 +373,7 @@ void main() {
         'source': 'cron',
         'preview': '[IMPORTANT: You are running as a scheduled cron job.]',
       });
-      expect(s.displayTitle, 'Tarea programada');
+      expect(s.displayTitle, 'Scheduled task');
     });
 
     test('worker del Kanban → "Tarea del Kanban" y sin preview crudo', () {

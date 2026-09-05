@@ -131,7 +131,7 @@ final class VoiceServiceFullDuplexCaptureSource
       if (_pendingStartOperation == operation) {
         _pendingStartOperation = null;
       }
-      throw StateError('Android no inició la captura full-duplex.');
+      throw StateError('Android did not start full-duplex capture.');
     }
     if (_disposed || operation != _epoch) {
       await _stopNative(generation);
@@ -180,7 +180,7 @@ final class VoiceServiceFullDuplexCaptureSource
     if (!owner.readyConfirmed) {
       if (!owner.ready.isCompleted) {
         owner.ready.completeError(
-          StateError('Android entregó PCM antes de confirmar la captura.'),
+          StateError('Android delivered PCM before confirming capture.'),
         );
       }
       return;
@@ -207,7 +207,7 @@ final class VoiceServiceFullDuplexCaptureSource
     if (!_owns(owner)) return;
     if (!owner.readyConfirmed && !owner.ready.isCompleted) {
       owner.ready.completeError(
-        StateError('Android cerró la captura antes de confirmarla.'),
+        StateError('Android closed the capture before confirming it.'),
       );
     }
     _closeEvents(owner);

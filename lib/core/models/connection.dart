@@ -37,9 +37,9 @@ enum AuthMode {
 /// [simple] = POST directo sin tools; funciona con cualquier modelo pequeño.
 /// [agent] = agente completo hermes -z; requiere un modelo capaz (>=7B).
 enum LocalChatMode {
-  auto('auto', 'Recomendado', 'Chat simple por defecto (sin tools)'),
-  simple('simple', 'Chat simple', 'Sin tools, para modelos pequeños'),
-  agent('agent', 'Agente completo', 'Requiere un modelo capaz (≥7B)');
+  auto('auto', 'Recommended', 'Simple chat by default (no tools)'),
+  simple('simple', 'Simple chat', 'No tools, for small models'),
+  agent('agent', 'Full agent', 'Requires a capable model (≥7B)');
 
   const LocalChatMode(this.storageKey, this.label, this.description);
 

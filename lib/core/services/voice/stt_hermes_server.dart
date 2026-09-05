@@ -95,7 +95,7 @@ class HermesServerSttRuntime implements WhisperSttRuntime {
     );
     if (response['ok'] != true) {
       final detail = response['detail'] ?? response['error'] ?? 'sin detalle';
-      throw Exception('El servidor no pudo transcribir: $detail');
+      throw Exception('The server could not transcribe: $detail');
     }
     return (response['transcript'] ?? '').toString().trim();
   }

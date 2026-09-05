@@ -281,10 +281,10 @@ class GeneratedImageService {
 
     final bytes = await fetch(basename);
     if (bytes.isEmpty || bytes.length > maxDownloadBytes) {
-      throw const FormatException('imagen vacía o demasiado grande');
+      throw const FormatException('image is empty or too large');
     }
     if (_imageFormat(bytes) == null) {
-      throw const FormatException('el contenido descargado no es una imagen');
+      throw const FormatException('the downloaded content is not an image');
     }
     final digest = sha256.convert(bytes).toString();
     final file = await localFileFor(
@@ -317,7 +317,7 @@ class GeneratedImageService {
   }) async {
     final uri = _safeHttpsUri(source);
     if (uri == null) {
-      throw const FormatException('la fuente de imagen HTTPS no es válida');
+      throw const FormatException('the HTTPS image source is not valid');
     }
     final sourceHash = sha256.convert(utf8.encode(uri.toString())).toString();
     final key = '${_shortHash(connectionId)}::https::$sourceHash';
@@ -412,11 +412,11 @@ class GeneratedImageService {
         final location = response.headers['location'];
         await response.stream.timeout(readTimeout).drain<void>();
         if (location == null || location.trim().isEmpty) {
-          throw http.ClientException('redirección sin destino');
+          throw http.ClientException('redirect without a target');
         }
         final redirected = _safeHttpsUri(uri.resolve(location).toString());
         if (redirected == null) {
-          throw const FormatException('redirección de imagen no segura');
+          throw const FormatException('unsafe image redirect');
         }
         uri = redirected;
         continue;
@@ -424,7 +424,7 @@ class GeneratedImageService {
       if (response.statusCode != HttpStatus.ok) {
         await response.stream.timeout(readTimeout).drain<void>();
         throw http.ClientException(
-          'respuesta de imagen no válida (${response.statusCode})',
+          'invalid image response (${response.statusCode})',
         );
       }
 
@@ -448,12 +448,12 @@ class GeneratedImageService {
       }
       final bytes = builder.takeBytes();
       if (bytes.isEmpty) {
-        throw const FormatException('imagen vacía');
+        throw const FormatException('empty image');
       }
       final actualFormat = _imageFormat(bytes);
       if (actualFormat == null || actualFormat != expectedFormat) {
         throw const FormatException(
-          'el contenido no coincide con el tipo de imagen',
+          'the content does not match the image type',
         );
       }
       return (bytes: bytes, format: actualFormat);

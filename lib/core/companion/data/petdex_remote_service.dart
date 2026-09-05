@@ -99,7 +99,7 @@ class PetdexRemoteService {
       if (pet != null) out.add(pet);
     }
     if (out.isEmpty) {
-      throw PetdexRemoteException('el manifest no contiene mascotas válidas');
+      throw PetdexRemoteException('the manifest contains no valid pets');
     }
     return out;
   }
@@ -154,13 +154,13 @@ class PetdexRemoteService {
       }
       final declared = res.contentLength;
       if (declared != null && declared > maxBytes) {
-        throw PetdexRemoteException('el recurso supera el tamaño máximo');
+        throw PetdexRemoteException('the resource exceeds the maximum size');
       }
       final builder = BytesBuilder(copy: false);
       await for (final chunk in res.stream.timeout(timeout)) {
         builder.add(chunk);
         if (builder.length > maxBytes) {
-          throw PetdexRemoteException('el recurso supera el tamaño máximo');
+          throw PetdexRemoteException('the resource exceeds the maximum size');
         }
       }
       return builder.takeBytes();
