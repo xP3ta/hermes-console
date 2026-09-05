@@ -32,11 +32,11 @@ class CompanionManifestParser {
     try {
       final decoded = json.decode(jsonString);
       if (decoded is! Map<String, dynamic>) {
-        throw CompanionManifestException('la raíz no es un objeto JSON');
+        throw CompanionManifestException('the root is not a JSON object');
       }
       map = decoded;
     } on FormatException catch (e) {
-      throw CompanionManifestException('JSON inválido: ${e.message}');
+      throw CompanionManifestException('invalid JSON: ${e.message}');
     }
 
     final manifestSlug = (map['slug'] as String?)?.trim() ?? '';
@@ -48,7 +48,7 @@ class CompanionManifestParser {
     }
     if (manifestSlug != slug) {
       throw CompanionManifestException(
-          'slug "$manifestSlug" no coincide con la carpeta "$slug"');
+          'slug "$manifestSlug" does not match folder "$slug"');
     }
 
     final grid = map['grid'];
@@ -60,7 +60,7 @@ class CompanionManifestParser {
     final cols = _int(grid['cols'], 'grid.cols');
     final rows = _int(grid['rows'], 'grid.rows');
     if (frameWidth <= 0 || frameHeight <= 0 || cols <= 0 || rows <= 0) {
-      throw CompanionManifestException('dimensiones de "grid" inválidas');
+      throw CompanionManifestException('invalid "grid" dimensions');
     }
 
     final fps = _num(map['fps'], 'fps').toDouble();
@@ -82,7 +82,7 @@ class CompanionManifestParser {
       final state = companionStateFromId(key);
       if (state == null) return; // ignora estados desconocidos (tolerante)
       if (value is! Map<String, dynamic>) {
-        throw CompanionManifestException('el estado "$key" no es un objeto');
+        throw CompanionManifestException('state "$key" is not an object');
       }
       final row = _int(value['row'], 'states.$key.row');
       final frameCount = _int(value['frameCount'], 'states.$key.frameCount');
@@ -155,6 +155,6 @@ class CompanionManifestParser {
 
   static num _num(dynamic value, String field) {
     if (value is num) return value;
-    throw CompanionManifestException('"$field" debe ser numérico');
+    throw CompanionManifestException('"$field" must be numeric');
   }
 }

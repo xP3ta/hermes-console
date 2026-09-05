@@ -4197,7 +4197,7 @@ class _ChatScreenState extends State<ChatScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'No se pudo guardar Stop de forma segura. Reinténtalo.',
+            'Could not save Stop safely. Please try again.',
           ),
         ),
       );
@@ -6032,7 +6032,7 @@ class _ChatScreenState extends State<ChatScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'No se pudo guardar Stop de forma segura. Reinténtalo.',
+              'Could not save Stop safely. Please try again.',
             ),
           ),
         );
@@ -8535,8 +8535,8 @@ class _ChatScreenState extends State<ChatScreen>
       SnackBar(
         content: Text(
           res.ok
-              ? 'Mobile Bridge actualizado.'
-              : 'No se pudo actualizar el bridge: ${res.detail}',
+              ? 'Mobile Bridge updated.'
+              : 'Could not update the bridge: ${res.detail}',
         ),
       ),
     );
@@ -15000,7 +15000,7 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
         case GeneratedImageSourceKind.serverCache:
           final basename = widget.reference.basename;
           if (basename == null) {
-            throw const FormatException('imagen del servidor sin nombre');
+            throw const FormatException('server image has no name');
           }
           final supported = await state.resolveGeneratedImageSupport();
           if (!mounted) return;

@@ -56,10 +56,10 @@ class HermesHatchProvider implements HatchProvider {
     try {
       bytes = await call(request.prompt);
     } catch (e) {
-      throw HatchException('la generación en el gateway falló: $e');
+      throw HatchException('gateway generation failed: $e');
     }
     if (bytes.isEmpty) {
-      throw HatchException('el gateway devolvió una imagen vacía');
+      throw HatchException('the gateway returned an empty image');
     }
     return HatchResult(
       imageBytes: bytes,

@@ -235,7 +235,7 @@ class TtsModelManager {
       return;
     }
     if (_activeDownloads.containsKey(v.id)) {
-      throw StateError('La descarga de esta voz ya está en curso.');
+      throw StateError('This voice is already downloading.');
     }
     final client = http.Client();
     // La reserva se publica antes del siguiente await: dos toques rápidos no
@@ -260,7 +260,7 @@ class TtsModelManager {
       }
       if (res.contentLength != null && res.contentLength != v.archiveBytes) {
         throw const FormatException(
-          'El tamaño publicado del modelo TTS no coincide.',
+          'The published TTS model size does not match.',
         );
       }
       var received = 0;
@@ -275,7 +275,7 @@ class TtsModelManager {
           received += chunk.length;
           if (received > v.archiveBytes) {
             throw const FormatException(
-              'La descarga del modelo TTS supera el tamaño esperado.',
+              'The TTS model download exceeds the expected size.',
             );
           }
           sink.add(chunk);
@@ -294,12 +294,12 @@ class TtsModelManager {
 
       if (received != v.archiveBytes) {
         throw const FormatException(
-          'La descarga del modelo TTS está truncada.',
+          'The TTS model download is truncated.',
         );
       }
       if (digestOutput.value?.toString() != v.archiveSha256) {
         throw const FormatException(
-          'La firma SHA-256 del modelo TTS no coincide.',
+          'The TTS model SHA-256 signature does not match.',
         );
       }
 
@@ -544,10 +544,10 @@ class _TtsModelTarSink extends OutputStream {
   }
 
   void _ensureWritable(int additional) {
-    if (_closed) throw StateError('El extractor TTS ya está cerrado.');
+    if (_closed) throw StateError('The TTS extractor is already closed.');
     if (additional < 0 ||
         _length + _bufferLength + additional > _maxExpandedTarBytes) {
-      throw const FormatException('El modelo TTS expandido supera el límite.');
+      throw const FormatException('The expanded TTS model exceeds the limit.');
     }
   }
 
@@ -606,7 +606,7 @@ class _TtsModelTarSink extends OutputStream {
       actualChecksum += i >= 148 && i < 156 ? 0x20 : _header[i];
     }
     if (actualChecksum != expectedChecksum) {
-      throw const FormatException('Checksum del tar TTS inválido.');
+      throw const FormatException('Invalid TTS tar checksum.');
     }
 
     final name = _normaliseTarName(
@@ -676,7 +676,7 @@ class _TtsModelTarSink extends OutputStream {
     final text = ascii.decode(value, allowInvalid: false).trim();
     if (text.isEmpty) return 0;
     if (!RegExp(r'^[0-7]+$').hasMatch(text)) {
-      throw FormatException('Campo tar $field inválido.');
+      throw FormatException('Invalid tar field $field.');
     }
     return int.parse(text, radix: 8);
   }
@@ -712,7 +712,7 @@ class _TtsModelTarSink extends OutputStream {
   void complete() {
     flush();
     if (!_sawEnd || _entryRemaining != 0 || _file != null) {
-      throw const FormatException('El tar del modelo TTS está truncado.');
+      throw const FormatException('The TTS model tar is truncated.');
     }
     final missing = _required.difference(_extracted);
     if (missing.isNotEmpty) {
@@ -725,7 +725,7 @@ class _TtsModelTarSink extends OutputStream {
         _required
             .where((path) => path.startsWith('espeak-ng-data/'))
             .any((path) => (_sizes[path] ?? 0) == 0)) {
-      throw const FormatException('El modelo TTS contiene archivos vacíos.');
+      throw const FormatException('The TTS model contains empty files.');
     }
   }
 

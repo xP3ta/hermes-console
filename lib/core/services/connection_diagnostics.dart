@@ -345,7 +345,7 @@ class ConnectionDiagnostics {
       return ProbeResult(
         name: name,
         status: ProbeStatus.tlsError,
-        detail: 'certificado TLS inválido: ${e.message}',
+        detail: 'invalid TLS certificate: ${e.message}',
       );
     } on SocketException catch (e) {
       final msg = e.message.toLowerCase();
@@ -355,14 +355,14 @@ class ConnectionDiagnostics {
         return ProbeResult(
           name: name,
           status: ProbeStatus.dnsError,
-          detail: 'el host no se resuelve',
+          detail: 'the host does not resolve',
         );
       }
       if (msg.contains('refused') || os.contains('refused')) {
         return ProbeResult(
           name: name,
           status: ProbeStatus.refused,
-          detail: 'conexión rechazada (¿puerto correcto?)',
+          detail: 'connection refused (is the port correct?)',
         );
       }
       return ProbeResult(
@@ -516,7 +516,7 @@ class ConnectionDiagnostics {
           status: authError != null && authError.contains('login')
               ? ProbeStatus.authRequired
               : ProbeStatus.authInvalid,
-          detail: authError ?? 'revisa el usuario y la contraseña',
+          detail: authError ?? 'check the username and password',
         ),
       );
       return results;

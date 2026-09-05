@@ -177,14 +177,14 @@ class BridgeUpdateService {
         return const BridgeMaintenanceResult(
           checked: true,
           updated: false,
-          detail: 'Mobile Bridge no disponible; no se instaló automáticamente.',
+          detail: 'Mobile Bridge unavailable; it was not installed automatically.',
         );
       }
       if (!check.outdated) {
         return BridgeMaintenanceResult(
           checked: true,
           updated: false,
-          detail: 'Mobile Bridge ${check.installed ?? ''} al día.',
+          detail: 'Mobile Bridge ${check.installed ?? ''} is up to date.',
         );
       }
       final result = updater != null
@@ -297,7 +297,7 @@ class BridgeUpdateService {
     Duration verificationRetryDelay = const Duration(seconds: 2),
   }) async {
     if (conn.readOnly) {
-      return (ok: false, detail: 'La instancia está en modo solo lectura.');
+      return (ok: false, detail: 'The instance is read-only.');
     }
     final bridgeUrl = await _effectiveBridgeUrl(conn);
     late final BridgeReleaseTarget resolvedTarget;
@@ -308,7 +308,7 @@ class BridgeUpdateService {
     } catch (e) {
       return (
         ok: false,
-        detail: 'No se pudo preparar una release válida del Mobile Bridge: $e',
+        detail: 'Could not prepare a valid Mobile Bridge release: $e',
       );
     }
 
@@ -318,7 +318,7 @@ class BridgeUpdateService {
       if (installed != null &&
           installed.isNotEmpty &&
           BridgeVersion.compare(installed, resolvedTarget.version) >= 0) {
-        return (ok: true, detail: 'Mobile Bridge $installed ya está al día.');
+        return (ok: true, detail: 'Mobile Bridge $installed is already up to date.');
       }
     } catch (_) {
       // La acción manual también sirve para reparar un bridge que no responde.
@@ -332,7 +332,7 @@ class BridgeUpdateService {
       if (release.version != resolvedTarget.version ||
           release.sha256 != resolvedTarget.sha256 ||
           release.remote != resolvedTarget.remote) {
-        throw const FormatException('La release no coincide con el target.');
+        throw const FormatException('The release does not match the target.');
       }
     } catch (_) {
       return (
@@ -361,8 +361,8 @@ class BridgeUpdateService {
         return (
           ok: false,
           detail:
-              'Este Mobile Bridge necesita una actualización manual inicial; '
-              'después podrá actualizarse automáticamente.',
+              'This Mobile Bridge needs an initial manual update; '
+              'after that it can update automatically.',
         );
       } else if (legacyInstaller != null) {
         result = await legacyInstaller(release, onProgress);
@@ -396,7 +396,7 @@ class BridgeUpdateService {
       return (
         ok: false,
         detail:
-            'No se confirmó Mobile Bridge ${release.version} tras actualizar.',
+            'Mobile Bridge ${release.version} was not confirmed after updating.',
       );
     }
     ActiveChat.invalidateBridgeProfileCache(conn.id);
@@ -459,7 +459,7 @@ class BridgeUpdateService {
       return (
         supported: true,
         ok: false,
-        detail: 'No se pudo guardar de forma segura el token del Bridge.',
+        detail: 'The Bridge token could not be stored securely.',
       );
     }
 
@@ -503,7 +503,7 @@ class BridgeUpdateService {
           authorized: true,
           supported: false,
           ok: false,
-          detail: 'El Bridge instalado todavía no admite self_update.',
+          detail: 'The installed Bridge does not support self_update yet.',
         );
       }
       onProgress?.call('Enviando la release verificada al Mobile Bridge…');
@@ -513,19 +513,19 @@ class BridgeUpdateService {
         sha256: release.sha256,
       );
       if (response['ok'] == true) {
-        onProgress?.call('Mobile Bridge reiniciándose de forma segura…');
+        onProgress?.call('Mobile Bridge restarting safely…');
         return (
           authorized: true,
           supported: true,
           ok: true,
-          detail: 'Mobile Bridge ${release.version} aceptado y reiniciándose.',
+          detail: 'Mobile Bridge ${release.version} accepted and restarting.',
         );
       }
       return (
         authorized: true,
         supported: true,
         ok: false,
-        detail: 'El Mobile Bridge rechazó la actualización.',
+        detail: 'The Mobile Bridge rejected the update.',
       );
     } on BridgeException catch (error) {
       if (error.kind == BridgeErrorKind.auth) {

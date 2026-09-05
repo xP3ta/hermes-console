@@ -116,7 +116,7 @@ class CompanionRepository {
   }) async {
     if (!_validRemoteSlug(info.slug) ||
         !_validRevision(info.spritesheetRevision)) {
-      throw CompanionImportException('identidad remota inválida');
+      throw CompanionImportException('invalid remote identity');
     }
     final cached = await loadCachedProfilePet(
       connectionId: connectionId,
@@ -127,7 +127,7 @@ class CompanionRepository {
     if (cached != null) return cached;
     if (info.usesCachedSpritesheet || !info.hasSpritesheetPayload) {
       throw CompanionImportException(
-        'el gateway omitió un atlas que no está en caché',
+        'the gateway omitted an atlas that is not cached',
       );
     }
 
@@ -137,7 +137,7 @@ class CompanionRepository {
       create: true,
     );
     if (scopeRoot == null) {
-      throw CompanionImportException('caché de mascotas remotas no disponible');
+      throw CompanionImportException('remote pet cache unavailable');
     }
     final assetRoot = Directory(
       '${scopeRoot.path}/${_profilePetAssetKey(connectionId, profileId, info.slug, info.spritesheetRevision)}',
@@ -148,7 +148,7 @@ class CompanionRepository {
     );
     if (!materialized.isValid || !materialized.isRemote) {
       throw CompanionImportException(
-        'la mascota remota materializada no es válida',
+        'the materialized remote pet is not valid',
       );
     }
     return materialized;
@@ -180,7 +180,7 @@ class CompanionRepository {
       );
       if (cached == null) {
         throw CompanionImportException(
-          'la revisión remota no superó la validación previa a promoción',
+          'the remote revision failed pre-promotion validation',
         );
       }
       final scopeRoot = await _profilePetScopeRoot(
@@ -190,7 +190,7 @@ class CompanionRepository {
       );
       if (scopeRoot == null) {
         throw CompanionImportException(
-          'caché de mascotas remotas no disponible',
+          'remote pet cache unavailable',
         );
       }
       final index = await _readProfilePetIndex(scopeRoot);

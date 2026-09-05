@@ -949,7 +949,7 @@ void main() {
       await _waitFor(() => h.controller.userPaused);
 
       expect(h.controller.phase, VoicePhase.idle);
-      expect(h.controller.note, contains('servidor Hermes'));
+      expect(h.controller.note, contains('Hermes server'));
       expect(h.voice.captures, hasLength(1));
       await h.close();
     },
@@ -1248,7 +1248,7 @@ void main() {
       await _waitFor(() => h.voice.localSpoken.length == 1);
       expect(
         h.voice.localSpoken.single,
-        'Hermes necesita tu aprobación. Abre la aplicación para revisarla.',
+        'Hermes needs your approval. Open the app to review it.',
       );
       expect(h.voice.cancelDictationCalls, greaterThanOrEqualTo(1));
       expect(h.voice.captures, hasLength(1));

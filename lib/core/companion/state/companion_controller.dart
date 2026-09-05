@@ -564,7 +564,7 @@ class CompanionController extends ChangeNotifier {
   }) async {
     final root = await _repository.importedRoot();
     if (root == null) {
-      throw CompanionImportException('importación no disponible');
+      throw CompanionImportException('import unavailable');
     }
     final protected = <String>{
       for (final c in _available)
@@ -587,12 +587,12 @@ class CompanionController extends ChangeNotifier {
     final provider = hatchProvider;
     if (provider == null) {
       return const HatchAvailability.unavailable(
-        'La generación de mascotas no está disponible en esta conexión.',
+        'Pet generation is not available on this connection.',
       );
     }
     if (await _repository.importedRoot() == null) {
       return const HatchAvailability.unavailable(
-        'No hay almacenamiento disponible para guardar la mascota.',
+        'There is no storage available to save the pet.',
       );
     }
     try {
@@ -617,7 +617,7 @@ class CompanionController extends ChangeNotifier {
   Future<Companion> hatch(String prompt) async {
     final provider = hatchProvider;
     if (provider == null) {
-      throw HatchException('La generación de mascotas no está disponible.');
+      throw HatchException('Pet generation is not available.');
     }
     final root = await _repository.importedRoot();
     if (root == null) {

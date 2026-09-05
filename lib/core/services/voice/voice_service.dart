@@ -917,7 +917,7 @@ class VoiceService {
     );
     if (response['ok'] != true) {
       final detail = response['detail'] ?? response['error'] ?? 'sin detalle';
-      throw StateError('El servidor no pudo transcribir: $detail');
+      throw StateError('The server could not transcribe: $detail');
     }
     // Hermes Agent considera un transcript vacío una detección válida de
     // silencio. No recortes, amplifiques ni reenvíes el WAV: además de apartarse
@@ -936,7 +936,7 @@ class VoiceService {
     }
     final engine = _sttEngine();
     if (engine is! CapturedWavSttEngine) {
-      throw StateError('El STT local no admite el WAV ya capturado.');
+      throw StateError('Local STT does not support the WAV already captured.');
     }
     return (engine as CapturedWavSttEngine).transcribeCapturedWav(wavBytes);
   }

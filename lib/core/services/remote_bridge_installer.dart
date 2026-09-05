@@ -58,7 +58,7 @@ class RemoteBridgeInstaller {
             expectedSize > BridgeReleaseChannel.maxPayloadBytes ||
             expectedVersion == null ||
             !RegExp(r'^\d+\.\d+\.\d+$').hasMatch(expectedVersion))) {
-      throw ArgumentError('Metadatos remotos del Mobile Bridge no válidos.');
+      throw ArgumentError('Invalid remote Mobile Bridge metadata.');
     }
     // El bridge se niega a escuchar en 0.0.0.0 sin el flag explícito
     // `--i-know-what-im-doing` (guard de seguridad en hermes_bridge.py, que
@@ -108,7 +108,7 @@ VP="\$HH/hermes-agent/venv/bin/python3"
 [ -x "\$VP" ] || VP="\$(command -v python3)"
 KEY="\$(grep -E '^API_SERVER_KEY=' "\$HH/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
 if [ -z "\$KEY" ]; then
-  echo "API_SERVER_KEY no está disponible en ~/.hermes/.env"
+  echo "API_SERVER_KEY is not available in ~/.hermes/.env"
   echo "$failMarker"
   exit 1
 fi
@@ -296,7 +296,7 @@ fi
       release: release,
     );
     final command = installCommand();
-    onProgress?.call('Lanzando la instalación en el servidor…');
+    onProgress?.call('Launching the installation on the server…');
 
     String runId;
     try {
@@ -304,7 +304,7 @@ fi
     } catch (e) {
       return (
         ok: false,
-        detail: 'No se pudo lanzar la instalación en el agente: $e',
+        detail: 'Could not launch the installation on the agent: $e',
         command: command,
       );
     }
@@ -330,7 +330,7 @@ fi
       if (status.contains('approval') || status.contains('await')) {
         if (!approvedOnce) {
           approvedOnce = true;
-          onProgress?.call('Aprobando la acción de instalación…');
+          onProgress?.call('Approving the installation action…');
           try {
             await _api.resolveRunApproval(runId, 'once');
           } catch (_) {
@@ -364,7 +364,7 @@ fi
               if (running == null ||
                   BridgeVersion.compare(running, expectedVersion) < 0) {
                 onProgress?.call(
-                  'El bridge ha vuelto, esperando la versión $expectedVersion…',
+                  'The bridge is back, waiting for version $expectedVersion…',
                 );
                 continue;
               }
@@ -391,10 +391,10 @@ fi
     return (
       ok: false,
       detail:
-          'No se pudo confirmar el bridge tras la instalación (el servidor '
-          'puede no tener un gestor de servicios disponible, o el agente no '
-          'ejecutó el comando). Abre «Preparar Hermes», elige el sistema del '
-          'servidor y ejecuta su comando nativo.',
+          'Could not confirm the bridge after installation (the server '
+          'may have no service manager available, or the agent did not '
+          'run the command). Open "Prepare Hermes", pick the server system '
+          'and run its native command.',
       command: command,
     );
   }

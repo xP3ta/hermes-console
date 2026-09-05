@@ -73,6 +73,13 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
     _events.addError(StateError('socket dropped'));
   }
 
+  /// Android congela el isolate al minimizar: el socket muere pero su cierre
+  /// nunca se entrega y el heartbeat tampoco corre, así que el chat no recibe
+  /// ninguna señal de error.
+  void dropSilently() {
+    _connected = false;
+  }
+
   void emit(
     String type, {
     String? sessionId,
@@ -536,7 +543,7 @@ Future<void> _expectRecoveryErrorClassification(
       );
       expect(
         failure['content'],
-        'No se pudo recuperar el turno. Inténtalo de nuevo.',
+        'Could not recover the turn. Please try again.',
       );
       expect(failure['content'], isNot(contains(error.toString())));
     }
@@ -1045,7 +1052,7 @@ void main() {
     );
     expect(
       error['content'],
-      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      'Could not recover the turn. Please try again.',
     );
     expect(
       chat.messages.expand((message) => message.values).join(' '),
@@ -4273,7 +4280,7 @@ void main() {
       expect(chat.messages.first['role'], 'assistant_error');
       expect(
         chat.messages.first['content'],
-        'No se pudo recuperar el turno. Inténtalo de nuevo.',
+        'Could not recover the turn. Please try again.',
       );
       expect(chat.messages.first['content'], isNot(contains('socket dropped')));
 
@@ -5713,6 +5720,127 @@ void main() {
       expect(chat.messages.first['content'], 'respuesta final durable');
     },
   );
+
+  group('transporte perdido mientras la app estaba minimizada', () {
+    DesktopSessionSnapshot runningSnapshot(String runtimeId) =>
+        DesktopSessionSnapshot(
+          runtimeSessionId: runtimeId,
+          storedSessionId: 'session-suspended',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'role': 'user',
+              'content': 'turno en curso',
+            })!,
+          ],
+          inflight: DesktopInflightTurn(
+            user: 'turno en curso',
+            streaming: true,
+          ),
+          running: true,
+        );
+
+    _LifecycleRecoverableGateway streamingGateway() =>
+        _LifecycleRecoverableGateway()
+          ..initialSnapshot = runningSnapshot('runtime-desktop-1')
+          ..recoverySnapshot = runningSnapshot('runtime-desktop-2');
+
+    test(
+      'reconcileAfterResume reengancha un turno cuyo socket murió en silencio',
+      () async {
+        final gateway = streamingGateway()
+          ..recoveredState = DesktopTurnState.running;
+        final chat = _recoverableChat('suspended', gateway);
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages();
+        expect(chat.isStreaming, isTrue);
+
+        // Minimizar: el socket muere sin entregar cierre ni error.
+        gateway.dropSilently();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        // Sin la reconciliación, el chat se queda ejecutando para siempre.
+        expect(chat.isStreaming, isTrue);
+        expect(gateway.resumeExistingCalls, 1);
+
+        await chat.reconcileAfterResume();
+        await _waitUntil(() => gateway.resumeExistingCalls == 2);
+
+        // El turno se reengancha sobre el socket nuevo y vuelve a recibir.
+        expect(gateway.connectCalls, greaterThanOrEqualTo(2));
+        expect(gateway.committedRecoveryRuntimeIds, isNotEmpty);
+        final runtimeId = gateway.committedRecoveryRuntimeIds.last;
+        gateway.emit(
+          'message.complete',
+          sessionId: runtimeId,
+          payload: const {'text': 'respuesta recuperada'},
+        );
+        await _waitUntil(() => chat.state == ChatPipelineState.completed);
+        expect(chat.messages.first['content'], 'respuesta recuperada');
+      },
+    );
+
+    test('reabrir el chat también reengancha el turno colgado', () async {
+      final gateway = streamingGateway()
+        ..recoveredState = DesktopTurnState.running;
+      final chat = _recoverableChat('reopened', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.isStreaming, isTrue);
+      gateway.dropSilently();
+
+      // `warmDesktopGateway` es lo que ejecuta la pantalla al volver a abrir.
+      await chat.warmDesktopGateway();
+      await _waitUntil(() => gateway.resumeExistingCalls == 2);
+      expect(gateway.committedRecoveryRuntimeIds, isNotEmpty);
+    });
+
+    test(
+      'un turno que Hermes ya no conoce se cierra en vez de quedarse colgado',
+      () async {
+        final gateway = streamingGateway();
+        final chat = _recoverableChat(
+          'forgotten',
+          gateway,
+          desktopRecoveryBackoff: const [Duration.zero],
+        );
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages();
+        expect(chat.isStreaming, isTrue);
+
+        gateway.resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'unknown session',
+          code: 4007,
+        );
+        gateway.dropSilently();
+        await chat.reconcileAfterResume();
+
+        await _waitUntil(() => !chat.isStreaming);
+        expect(chat.state, ChatPipelineState.failed);
+      },
+    );
+
+    test('un transporte vivo no dispara ninguna recuperación', () async {
+      final gateway = streamingGateway();
+      final chat = _recoverableChat('healthy', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.isStreaming, isTrue);
+      final resumesBefore = gateway.resumeExistingCalls;
+
+      await chat.reconcileAfterResume();
+      await chat.warmDesktopGateway();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(gateway.resumeExistingCalls, resumesBefore);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+    });
+  });
 }
 
 class _NoopOutbox implements TurnOutboxPersistence {

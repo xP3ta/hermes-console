@@ -63,11 +63,11 @@ const activeChatVoiceBargeSettleTimeout = Duration(seconds: 5);
 
 @visibleForTesting
 String activeChatDesktopRecoveryUiMessage(Object _) =>
-    'No se pudo recuperar el turno. Inténtalo de nuevo.';
+    'Could not recover the turn. Please try again.';
 
 @visibleForTesting
 String activeChatDesktopSnapshotFailureUiMessage(String? _) =>
-    'No se pudo recuperar el turno. Inténtalo de nuevo.';
+    'Could not recover the turn. Please try again.';
 
 @visibleForTesting
 String activeChatDesktopRecoveryDiagnostic(Object error) {
@@ -92,18 +92,18 @@ String activeChatPromptFailureUiMessage(Object error) {
   if (error is TuiGatewayRpcError && error.method == 'prompt.submit') {
     return switch (error.reason) {
       _sessionNotOwnedReason =>
-        'Esta conversación está abierta en otra ventana o dispositivo. '
-            'Ciérrala allí y vuelve a intentarlo.',
+        'This conversation is open in another window or device. '
+            'Close it there and try again.',
       _maxConcurrentSessionsReason =>
-        'Hermes tiene el máximo de sesiones activas. '
-            'Cierra otra sesión y vuelve a intentarlo.',
+        'Hermes has reached its maximum number of active sessions. '
+            'Close another session and try again.',
       _sessionCoordinationUnavailableReason =>
-        'Hermes no pudo reservar esta conversación con seguridad. '
-            'Revisa el servidor y vuelve a intentarlo.',
-      _ => 'No se pudo enviar el mensaje. Inténtalo de nuevo.',
+        'Hermes could not reserve this conversation safely. '
+            'Check the server and try again.',
+      _ => 'Could not send the message. Please try again.',
     };
   }
-  return 'No se pudo enviar el mensaje. Inténtalo de nuevo.';
+  return 'Could not send the message. Please try again.';
 }
 
 /// Redacta únicamente el formato técnico que builds antiguas pudieron guardar
@@ -111,8 +111,8 @@ String activeChatPromptFailureUiMessage(Object error) {
 /// decisiones dependen del código y `error.data.reason` estructurados.
 String activeChatStoredErrorUiMessage(String error) {
   if (error.trimLeft().startsWith('TuiGatewayRpcError(prompt.submit, 4090):')) {
-    return 'Hermes no pudo reservar esta conversación. '
-        'Revisa otras sesiones activas y vuelve a intentarlo.';
+    return 'Hermes could not reserve this conversation. '
+        'Check other active sessions and try again.';
   }
   return error;
 }
@@ -2760,6 +2760,10 @@ class ActiveChat {
   bool get hasListeners => _changes.hasListener;
 
   void requestReleaseWhenUnused() => _releaseRequested = true;
+
+  /// La pantalla volvió a enlazar este chat: la salida anterior ya no puede
+  /// liberarlo por debajo de la sesión que ahora lo está mirando.
+  void cancelReleaseRequest() => _releaseRequested = false;
 
   bool get releaseRequested => _releaseRequested;
 
@@ -5985,7 +5989,7 @@ class ActiveChat {
     if (delivery == null) return true;
     final ready = await delivery.beginTransport(transport);
     if (!ready && _turnEpoch == turnEpoch && !_runTerminal) {
-      _failRun('No se pudo conservar el turno antes de enviarlo.');
+      _failRun('Could not save the turn before sending it.');
     }
     return ready;
   }
@@ -6206,6 +6210,10 @@ class ActiveChat {
   /// Dashboard antes de que un seguimiento pueda caer al fallback de cola.
   Future<void> warmDesktopGateway() async {
     if (connection.kind == InstanceKind.localhost) return;
+    // Antes de reconectar: un socket ya caído bajo un turno todavía "vivo" es
+    // la evidencia de que el turno se quedó colgado, y reconectar aquí la
+    // borraría. Reabrir el chat es la ocasión en que el usuario lo ve.
+    recoverTurnIfTransportLost();
     try {
       if (_desktopRuntimeSessionId != null &&
           _desktopGateway?.isConnected != true) {
@@ -7281,7 +7289,7 @@ class ActiveChat {
           if (!alreadyAttached &&
               (attachment.localPath.isEmpty ||
                   !await File(attachment.localPath).exists())) {
-            _failRun('No se pudo leer un adjunto local.');
+            _failRun('Could not read a local attachment.');
             return false;
           }
         }
@@ -7304,9 +7312,9 @@ class ActiveChat {
             );
             if (staged == null) {
               if (delivery.persistenceFailed) {
-                _failRun('No se pudo conservar el estado de un adjunto.');
+                _failRun('Could not save the state of an attachment.');
               } else {
-                _failRun('El lote de adjuntos cambió durante la subida.');
+                _failRun('The attachment batch changed during upload.');
               }
               return false;
             }
@@ -7372,8 +7380,8 @@ class ActiveChat {
               }
               _failRun(
                 delivery.persistenceFailed
-                    ? 'No se pudo conservar el estado de un adjunto.'
-                    : 'El lote de adjuntos cambió durante la subida.',
+                    ? 'Could not save the state of an attachment.'
+                    : 'The attachment batch changed during upload.',
               );
               return false;
             }
@@ -7415,7 +7423,7 @@ class ActiveChat {
               .map((item) => item.localId)
               .toSet();
           if (completedIds.length != expectedIds.length) {
-            _failRun('El lote de adjuntos cambió durante la subida.');
+            _failRun('The attachment batch changed during upload.');
             return false;
           }
           final refs = delivery.current.activeAttachments
@@ -8003,7 +8011,7 @@ class ActiveChat {
               return;
             case DesktopTurnState.failed:
               if (!_canRecoverTurn(turnEpoch)) return;
-              _failRun('Hermes confirmó que el turno falló tras reconectar.');
+              _failRun('Hermes confirmed the turn failed after reconnecting.');
               return;
             case DesktopTurnState.cancelled:
               if (!_canRecoverTurn(turnEpoch)) return;
@@ -8653,8 +8661,8 @@ class ActiveChat {
           if (staged == null) {
             _failRun(
               delivery.persistenceFailed
-                  ? 'No se pudo conservar el estado de un adjunto.'
-                  : 'El lote de adjuntos cambió durante la subida.',
+                  ? 'Could not save the state of an attachment.'
+                  : 'The attachment batch changed during upload.',
             );
             return false;
           }
@@ -8684,7 +8692,7 @@ class ActiveChat {
               errorKind: result.errorKind ?? AttachmentErrorKind.transport,
             );
           }
-          _failRun('No se pudo preparar un adjunto para esta instancia.');
+          _failRun('Could not prepare an attachment for this instance.');
           return false;
         }
         if (delivery == null || attachment.localId.isEmpty) {
@@ -8701,8 +8709,8 @@ class ActiveChat {
         if (!persisted) {
           _failRun(
             delivery.persistenceFailed
-                ? 'No se pudo conservar el estado de un adjunto.'
-                : 'El lote de adjuntos cambió durante la subida.',
+                ? 'Could not save the state of an attachment.'
+                : 'The attachment batch changed during upload.',
           );
           return false;
         }
@@ -8724,7 +8732,7 @@ class ActiveChat {
             )
             .toList(growable: false);
         if (completed.length != expectedIds.length) {
-          _failRun('El lote de adjuntos cambió durante la subida.');
+          _failRun('The attachment batch changed during upload.');
           return false;
         }
         refs.addAll(
@@ -9589,8 +9597,8 @@ class ActiveChat {
       if (token == null || token.isEmpty) {
         if (_turnEpoch != turnEpoch) return;
         _failRun(
-          'No se pudo conectar con el agente local (Mobile Bridge). '
-          'Arranca el agente y reintenta.',
+          'Could not connect to the local agent (Mobile Bridge). '
+          'Start the agent and retry.',
         );
         return;
       }
@@ -9609,7 +9617,7 @@ class ActiveChat {
       // a mano para que en 2º plano se vea que el agente local está procesando.
       await BackgroundListener.updateText(
         title: sessionTitle.isNotEmpty ? sessionTitle : 'Hermes Console',
-        text: 'El agente local está procesando tu mensaje…',
+        text: 'The local agent is processing your message…',
       );
 
       var effectivePrompt = prompt;
@@ -9646,8 +9654,8 @@ class ActiveChat {
               client.close();
               _failRun(
                 delivery.persistenceFailed
-                    ? 'No se pudo conservar el estado de un adjunto.'
-                    : 'El lote de adjuntos cambió durante la subida.',
+                    ? 'Could not save the state of an attachment.'
+                    : 'The attachment batch changed during upload.',
               );
               return;
             }
@@ -9689,7 +9697,7 @@ class ActiveChat {
               );
             }
             client.close();
-            _failRun('No se pudo preparar un adjunto para esta instancia.');
+            _failRun('Could not prepare an attachment for this instance.');
             return;
           }
           if (delivery == null || attachment.localId.isEmpty) {
@@ -9707,8 +9715,8 @@ class ActiveChat {
             client.close();
             _failRun(
               delivery.persistenceFailed
-                  ? 'No se pudo conservar el estado de un adjunto.'
-                  : 'El lote de adjuntos cambió durante la subida.',
+                  ? 'Could not save the state of an attachment.'
+                  : 'The attachment batch changed during upload.',
             );
             return;
           }
@@ -9735,7 +9743,7 @@ class ActiveChat {
             .toList(growable: false);
         if (completed.length != expectedIds.length) {
           client.close();
-          _failRun('El lote de adjuntos cambió durante la subida.');
+          _failRun('The attachment batch changed during upload.');
           return;
         }
         attachmentPaths.addAll(completed.map((item) => item.remoteRef!));
@@ -9879,16 +9887,16 @@ class ActiveChat {
         low.contains('connection reset') ||
         low.contains('connection refused') ||
         low.contains('socketexception')) {
-      return 'El agente local se detuvo durante la respuesta (el proceso se '
-          'cerró, normalmente por falta de memoria). Vuelve a arrancar el '
-          'agente local y reintenta. Si se repite, usa un modelo más pequeño o '
-          'da más RAM al dispositivo/emulador.';
+      return 'The local agent stopped mid-response (the process exited, '
+          'usually out of memory). Start the local agent again and retry. If '
+          'it keeps happening, use a smaller model or give the '
+          'device/emulator more RAM.';
     }
     if (low.contains('timeout') || low.contains('timed out')) {
-      return 'El agente local tardó demasiado en responder. El modelo puede '
-          'estar cargándose; espera unos segundos y reintenta.';
+      return 'The local agent took too long to respond. The model may still '
+          'be loading; wait a few seconds and retry.';
     }
-    return 'Chat local: $s';
+    return 'Local chat: $s';
   }
 
   /// Conserva una indicación que no pudo entrar en el turno vivo. Se enviará
@@ -10120,9 +10128,9 @@ class ActiveChat {
       if (content.trim().isEmpty) continue;
       if (m['_cancelled'] == true || m['_cancelledUser'] == true) {
         content =
-            '[Turno detenido por el usuario. No continúes este trabajo '
-            'automáticamente; úsalo como contexto solo si el usuario vuelve a '
-            'referirse a él.]\n$content';
+            '[Turn stopped by the user. Do not continue this work '
+            'automatically; use it as context only if the user refers to it '
+            'again.]\n$content';
       }
       history.add({'role': role, 'content': content});
     }
@@ -10138,9 +10146,9 @@ class ActiveChat {
     _firstTokenTimer = Timer(_idleTimeout, () {
       if (!_streamingConfirmed && !_runTerminal) {
         _failRun(
-          'firstTokenTimeout: El servidor conectó pero lleva $secs s sin '
-          'actividad (ni texto ni herramientas). El modelo puede estar cargando '
-          'o el servidor sobrecargado. Reintenta en unos segundos.',
+          'firstTokenTimeout: The server connected but has been idle for '
+          '$secs s (no text and no tools). The model may still be loading or '
+          'the server may be overloaded. Retry in a few seconds.',
         );
       }
     });
@@ -10205,7 +10213,7 @@ class ActiveChat {
         final out = (event['output'] ?? '').toString();
         _completeRun(finalOutput: out.isNotEmpty ? out : null);
       case 'run.failed':
-        _failRun((event['error'] ?? 'La ejecución falló').toString());
+        _failRun((event['error'] ?? 'The run failed').toString());
       case 'run.cancelled':
         _cancelRunState();
     }
@@ -12474,13 +12482,48 @@ class ActiveChat {
     debugPrint('[active-chat] live correction accepted');
   }
 
+  /// Un socket puede morir mientras Android tiene el isolate congelado: el
+  /// frame de cierre no se entrega y el heartbeat tampoco corre, así que
+  /// `onError` nunca dispara y el turno se queda en `executing` para siempre.
+  /// Al volver a foreground —y al reabrir el chat— el estado real del
+  /// transporte SÍ es observable, y un transporte caído bajo un turno activo se
+  /// trata exactamente igual que un corte observado en vivo: el recovery normal
+  /// lo reengancha o, si Hermes ya no conoce el turno, lo cierra con un error
+  /// visible en vez de dejarlo colgado. Es idempotente: `_recoveringDesktopTurnEpoch`
+  /// impide arrancar dos recoveries para el mismo turno.
+  void recoverTurnIfTransportLost() {
+    final gateway = _desktopGateway;
+    if (gateway == null ||
+        !_usingDesktopGateway ||
+        _runTerminal ||
+        _disposed ||
+        gateway.isConnected) {
+      return;
+    }
+    debugPrint('[active-chat] transport lost under a live turn; recovering');
+    _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
+    _usingDesktopGateway = false;
+    _retireDesktopRuntime();
+    _scheduleDesktopTurnRecovery(
+      gateway,
+      _turnEpoch,
+      StateError('Hermes Desktop transport closed while suspended'),
+    );
+  }
+
   /// Reconciliación al volver de 2º plano. Si el SSE murió mientras la app
   /// estaba suspendida (caso raro: el SO mató el isolate pese al foreground
   /// service) y quedó un placeholder/parcial sin cerrar, re-sincroniza los
   /// mensajes desde el servidor (el run sigue su curso server-side). Devuelve
   /// true si hubo cambios. No toca un stream vivo.
   Future<bool> reconcileAfterResume() async {
-    if (isStreaming) return false;
+    if (isStreaming) {
+      // Un turno "vivo" cuyo transporte ya no lo está es la única forma en que
+      // el chat puede quedarse ejecutando para siempre. Reengánchalo aquí: sin
+      // esto ni el chat se recupera ni la pantalla vuelve a cargar al reabrirlo.
+      recoverTurnIfTransportLost();
+      return false;
+    }
     final expectedUsers = messages.where(isRealUserTurn).length;
     Map<String, dynamic>? latestVisibleUser;
     for (final message in messages) {
@@ -13468,6 +13511,10 @@ class ActiveChatService {
         initialStoredSessionId,
         authoritative: authoritativeStoredSessionBinding,
       )) {
+        // Reabrir el chat retira la petición de liberación que dejó la salida
+        // anterior; si no, un hueco sin oyentes podría destruirlo bajo la
+        // pantalla recién abierta y dejarla sin eventos.
+        existing.cancelReleaseRequest();
         existing.sessionTitle = sessionTitle;
         existing._bindSessionProfile(owner);
         existing.bindNotificationTarget(
@@ -13533,8 +13580,12 @@ class ActiveChatService {
       onForegroundKeepAlive: disableForegroundKeepAlive
           ? null
           : () async {
-              await BackgroundListener.ensureAutomationForeground();
-              _refreshActiveIds();
+              // Deliberadamente SIN await: este callback corre en el camino
+              // del turno, justo antes de prompt.submit. Arrancar el foreground
+              // service es una ida al SO que puede tardar cientos de ms, y el
+              // prompt no puede esperarla. La lease solo importa cuando la app
+              // pasa a 2º plano, mucho después de este punto.
+              unawaited(_acquireActiveTurnForeground());
             },
       api: api,
       desktopGateway: desktopGateway,
@@ -13743,13 +13794,36 @@ class ActiveChatService {
     }
   }
 
+  /// Toma la lease que mantiene vivo el proceso mientras el agente responde.
+  ///
+  /// Sin ella Android congela el isolate en cuanto la app pasa a 2º plano: el
+  /// socket del turno muere sin entregar su cierre, la respuesta se pierde y el
+  /// chat se queda "ejecutando" para siempre. Es best-effort — un fallo aquí
+  /// nunca puede impedir que el turno arranque.
+  Future<void> _acquireActiveTurnForeground() async {
+    try {
+      await BackgroundListener.setActiveTurnRequired(true);
+      await BackgroundListener.ensureAutomationForeground();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('ActiveChatService foreground keep-alive falló: $e');
+      }
+    }
+    _refreshActiveIds();
+  }
+
   /// Baja el foreground service salvo que (a) el usuario activó la escucha
   /// permanente opt-in, o (b) aún hay otro run en curso.
   Future<void> _maybeStopForeground() async {
     if (_chats.values.any((c) => c.isStreaming)) return;
-    // El modo voz puede seguir hablando en 2º plano tras completar el run.
-    if (keepAliveWhile?.call() ?? false) return;
     try {
+      // Ningún turno sigue vivo: suelta la lease antes que nada. Es idempotente
+      // y no puede parar un runtime que la voz o el opt-in permanente aún
+      // piden. Va dentro del try: este camino corre desde el terminal del
+      // turno, donde un fallo de plataforma no puede propagarse.
+      await BackgroundListener.setActiveTurnRequired(false);
+      // El modo voz puede seguir hablando en 2º plano tras completar el run.
+      if (keepAliveWhile?.call() ?? false) return;
       if (await BackgroundListener.isEnabled()) return;
       await BackgroundListener.releaseIdleRuntime();
     } catch (e) {
@@ -13814,6 +13888,9 @@ class ActiveChatService {
   }
 
   void dispose() {
+    unawaited(
+      BackgroundListener.setActiveTurnRequired(false).catchError((_) => false),
+    );
     for (final chat in _chats.values) {
       chat.dispose();
     }

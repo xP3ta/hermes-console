@@ -23,6 +23,64 @@ void main() {
     expect(BackgroundListener.automationMessagingDemandForTest(prefs), isFalse);
   });
 
+  group('live-turn foreground lease', () {
+    tearDown(() => BackgroundListener.setActiveTurnDemandForTest(false));
+
+    test('a live turn holds the service without the permanent opt-in', () async {
+      SharedPreferences.setMockInitialValues({
+        BackgroundListener.prefKey: false,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        BackgroundListener.automationForegroundDemandForTest(prefs),
+        isFalse,
+      );
+
+      // Sin esta lease Android congela el isolate al minimizar y la respuesta
+      // del agente se pierde a mitad de turno.
+      BackgroundListener.setActiveTurnDemandForTest(true);
+      expect(
+        BackgroundListener.automationForegroundDemandForTest(prefs),
+        isTrue,
+      );
+
+      BackgroundListener.setActiveTurnDemandForTest(false);
+      expect(
+        BackgroundListener.automationForegroundDemandForTest(prefs),
+        isFalse,
+      );
+    });
+
+    test('a live turn never grants the permanent opt-in', () async {
+      SharedPreferences.setMockInitialValues({
+        BackgroundListener.prefKey: false,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      BackgroundListener.setActiveTurnDemandForTest(true);
+
+      // El re-arranque tras boot y la escucha continua siguen dependiendo solo
+      // del consentimiento explícito.
+      expect(
+        BackgroundListener.automationMessagingDemandForTest(prefs),
+        isFalse,
+      );
+      expect(await BackgroundListener.isEnabled(), isFalse);
+    });
+
+    test('the permanent opt-in outlives the lease being released', () async {
+      SharedPreferences.setMockInitialValues({
+        BackgroundListener.prefKey: true,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      BackgroundListener.setActiveTurnDemandForTest(true);
+      BackgroundListener.setActiveTurnDemandForTest(false);
+      expect(
+        BackgroundListener.automationForegroundDemandForTest(prefs),
+        isTrue,
+      );
+    });
+  });
+
   test('Android 15+ automation uses remoteMessaging, not dataSync', () {
     expect(
       BackgroundListener.automationServiceTypeForTest(

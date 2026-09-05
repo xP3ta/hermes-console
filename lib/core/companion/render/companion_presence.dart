@@ -43,7 +43,7 @@ class CompanionPresence extends StatelessWidget {
       case HermesSparkMood.connecting:
         return 'Conectando…';
       case HermesSparkMood.offline:
-        return 'Sin conexión';
+        return 'Offline';
       case HermesSparkMood.idle:
       case HermesSparkMood.success:
       case HermesSparkMood.error:

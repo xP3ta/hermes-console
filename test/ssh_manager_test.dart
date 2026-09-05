@@ -69,7 +69,7 @@ void main() {
     test('mensajes de red reconocibles', () {
       expect(
         SshManager.describeError(Exception('Connection refused')),
-        contains('rechazada'),
+        contains('refused'),
       );
       expect(
         SshManager.describeError(Exception('Connection timed out')),

@@ -516,7 +516,7 @@ void main() {
     for (final error in secrets) {
       final ui = activeChatDesktopRecoveryUiMessage(error);
       final diagnostic = activeChatDesktopRecoveryDiagnostic(error);
-      expect(ui, 'No se pudo recuperar el turno. Inténtalo de nuevo.');
+      expect(ui, 'Could not recover the turn. Please try again.');
       expect(ui, isNot(contains('secret')));
       expect(diagnostic, isNot(contains('secret')));
       expect(diagnostic, contains(error.runtimeType.toString()));
@@ -529,21 +529,21 @@ void main() {
       activeChatDesktopSnapshotFailureUiMessage(
         'model call failed: 500 private-upstream-detail',
       ),
-      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      'Could not recover the turn. Please try again.',
     );
   });
 
   test('prompt admission uses structured reasons without exposing detail', () {
     const expected = <String, String>{
       'SESSION_NOT_OWNED':
-          'Esta conversación está abierta en otra ventana o dispositivo. '
-          'Ciérrala allí y vuelve a intentarlo.',
+          'This conversation is open in another window or device. '
+          'Close it there and try again.',
       'MAX_CONCURRENT_SESSIONS':
-          'Hermes tiene el máximo de sesiones activas. '
-          'Cierra otra sesión y vuelve a intentarlo.',
+          'Hermes has reached its maximum number of active sessions. '
+          'Close another session and try again.',
       'SESSION_COORDINATION_UNAVAILABLE':
-          'Hermes no pudo reservar esta conversación con seguridad. '
-          'Revisa el servidor y vuelve a intentarlo.',
+          'Hermes could not reserve this conversation safely. '
+          'Check the server and try again.',
     };
 
     for (final entry in expected.entries) {
@@ -569,7 +569,7 @@ void main() {
     expect(activeChatPromptWasRejectedBeforeAcceptance(unknown), isFalse);
     expect(
       activeChatPromptFailureUiMessage(unknown),
-      'No se pudo enviar el mensaje. Inténtalo de nuevo.',
+      'Could not send the message. Please try again.',
     );
   });
 
@@ -582,8 +582,8 @@ void main() {
     final safe = activeChatStoredErrorUiMessage(legacy);
     expect(
       safe,
-      'Hermes no pudo reservar esta conversación. '
-      'Revisa otras sesiones activas y vuelve a intentarlo.',
+      'Hermes could not reserve this conversation. '
+      'Check other active sessions and try again.',
     );
     expect(safe, isNot(contains('TuiGatewayRpcError')));
     expect(safe, isNot(contains('private-id')));

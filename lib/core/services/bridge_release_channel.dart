@@ -185,12 +185,12 @@ class BridgeReleaseChannel {
     final packaged = await _packagedRelease();
     if (!target.remote) return packaged;
     if (target.size <= 0 || target.size > maxPayloadBytes) {
-      throw const FormatException('Tamaño remoto del Bridge inválido.');
+      throw const FormatException('Invalid remote Bridge size.');
     }
 
     final payload = await _readBounded(payloadUri, maxBytes: maxPayloadBytes);
     if (payload.length != target.size) {
-      throw const FormatException('Tamaño remoto del Bridge no coincide.');
+      throw const FormatException('Remote Bridge size does not match.');
     }
     final actualHash = sha256.convert(payload).toString();
     if (actualHash != target.sha256) {
@@ -256,7 +256,7 @@ class BridgeReleaseChannel {
     if (decoded is! Map<String, dynamic> ||
         decoded.keys.toSet().length != _manifestKeys.length ||
         !decoded.keys.toSet().containsAll(_manifestKeys)) {
-      throw const FormatException('Manifiesto de Bridge inválido.');
+      throw const FormatException('Invalid Bridge manifest.');
     }
 
     final schema = decoded['schema'];
@@ -274,7 +274,7 @@ class BridgeReleaseChannel {
         size is! int ||
         size <= 0 ||
         size > maxPayloadBytes) {
-      throw const FormatException('Campos de release del Bridge inválidos.');
+      throw const FormatException('Invalid Bridge release fields.');
     }
     return _BridgeReleaseManifest(
       version: version,

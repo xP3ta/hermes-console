@@ -216,7 +216,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (mounted) {
       setState(() {
         _stage = _OllamaStage.starting;
-        _ollamaMsg = 'Arrancando el servidor en :11434…';
+        _ollamaMsg = 'Starting the server on :11434…';
       });
     }
     await _termux.startOllama();
@@ -230,9 +230,9 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     setState(() {
       _stage = _OllamaStage.error;
       _errorFromInstall = false;
-      _ollamaMsg = 'El servidor no respondió en :11434. Suele ser que Android '
-          'congeló Termux: abre Termux, déjalo en primer plano y reintenta. '
-          'Pulsa «Ver log del servidor» para la causa exacta.';
+      _ollamaMsg = 'The server did not respond on :11434. Android usually '
+          'froze Termux: open Termux, leave it in the foreground and retry. '
+          'Tap "View server log" for the exact cause.';
     });
   }
 
@@ -291,16 +291,16 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           ? await _termux.readOllamaServeLog()
           : await _termux.readOllamaInstallLog();
     } catch (e) {
-      log = 'No se pudo leer el log: $e';
+      log = 'Could not read the log: $e';
     }
     if (!mounted) return;
     final colors = Theme.of(context).hermes;
-    final title = server ? 'Log del servidor Ollama' : 'Log de instalación de Ollama';
+    final title = server ? 'Ollama server log' : 'Ollama installation log';
     final empty = server
-        ? 'Sin log del servidor todavía. Pulsa «Arrancar» y vuelve a mirar aquí '
-            'si no levanta.'
-        : 'Sin log todavía. Pulsa "Instalar" y vuelve a mirar aquí si tarda o '
-            'falla.';
+        ? 'No server log yet. Tap "Start" and come back here '
+            'if it does not come up.'
+        : 'No log yet. Tap "Install" and come back here if it is slow or '
+            'fails.';
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -322,7 +322,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -333,7 +333,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (mounted) {
       setState(() {
         _stage = _OllamaStage.installing;
-        _ollamaMsg = 'Descargando Ollama… (pkg install, puede tardar unos minutos)';
+        _ollamaMsg = 'Downloading Ollama… (pkg install, may take a few minutes)';
       });
     }
     await _termux.installOllama();
@@ -356,14 +356,14 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
         setState(() {
           _stage = _OllamaStage.error;
           _errorFromInstall = true;
-          _ollamaMsg = 'La instalación no terminó a tiempo. '
-              'Pulsa "Ver log de instalación" para ver por qué.';
+          _ollamaMsg = 'The installation did not finish in time. '
+              'Tap "View installation log" to see why.';
         });
       }
       return false;
     }
     if (mounted) {
-      setState(() => _ollamaMsg = 'Instalado. Arrancando el servidor en :11434…');
+      setState(() => _ollamaMsg = 'Installed. Starting the server on :11434…');
     }
     await _termux.startOllama();
     if (await _termux.waitUntilOllamaReady(
@@ -380,8 +380,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       setState(() {
         _stage = _OllamaStage.error;
         _errorFromInstall = false;
-        _ollamaMsg = 'Ollama se instaló pero no respondió en :11434. '
-            'Pulsa «Ver log del servidor» para la causa.';
+        _ollamaMsg = 'Ollama installed but did not respond on :11434. '
+            'Tap "View server log" for the cause.';
       });
     }
     return false;
@@ -743,9 +743,9 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             SizedBox(width: 16),
             Expanded(
               child: Text(
-                'Diagnosticando el agente local…\n'
-                'Si el bridge está desactualizado lo reinicio.\n'
-                'Puede tardar hasta ~1 min.',
+                'Diagnosing the local agent…\n'
+                'If the bridge is out of date I will restart it.\n'
+                'This can take up to ~1 min.',
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -761,10 +761,10 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       final token =
           await BridgeClient.provision(base, widget.connection.apiKey.trim());
       if (token == null || token.isEmpty) {
-        summary = 'No se pudo conectar con el bridge local (:9131).\n'
+        summary = 'Could not connect to the local bridge (:9131).\n'
             '${fresh ? '' : 'Además, no pude actualizar el bridge a la versión '
-                'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
-            '¿Está el agente local arrancado? Arráncalo y reintenta.';
+                'of this app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
+            'Is the local agent running? Start it and retry.';
       } else {
         final client = BridgeClient(baseUrl: base, token: token);
         try {
@@ -772,13 +772,13 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           final s = (res['summary'] as String?)?.trim() ?? '';
           summary = s.isNotEmpty
               ? s
-              : 'El diagnóstico no devolvió resumen.\n$res';
+              : 'The diagnostic returned no summary.\n$res';
         } finally {
           client.close();
         }
       }
     } catch (e) {
-      summary = 'No se pudo ejecutar el diagnóstico: $e';
+      summary = 'Could not run the diagnostic: $e';
     }
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
@@ -807,9 +807,9 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             SizedBox(width: 16),
             Expanded(
               child: Text(
-                'Probando la GPU con llama.cpp…\n'
-                'Instalo llama.cpp si falta y mido GPU vs CPU.\n'
-                'Puede tardar VARIOS minutos. No cierres la app.',
+                'Testing the GPU with llama.cpp…\n'
+                'I install llama.cpp if missing and measure GPU vs CPU.\n'
+                'This can take SEVERAL minutes. Do not close the app.',
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -823,27 +823,27 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       final token =
           await BridgeClient.provision(base, widget.connection.apiKey.trim());
       if (token == null || token.isEmpty) {
-        summary = 'No se pudo conectar con el bridge local (:9131).\n'
+        summary = 'Could not connect to the local bridge (:9131).\n'
             '${fresh ? '' : 'Además, no pude actualizar el bridge a la versión '
-                'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
-            '¿Está el agente local arrancado? Arráncalo y reintenta.';
+                'of this app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
+            'Is the local agent running? Start it and retry.';
       } else {
         final client = BridgeClient(baseUrl: base, token: token);
         try {
           final res = await client.llamacppBench();
           final s = (res['summary'] as String?)?.trim() ?? '';
-          summary = s.isNotEmpty ? s : 'El benchmark no devolvió resumen.\n$res';
+          summary = s.isNotEmpty ? s : 'The benchmark returned no summary.\n$res';
         } finally {
           client.close();
         }
       }
     } catch (e) {
-      summary = 'No se pudo ejecutar el benchmark: $e';
+      summary = 'Could not run the benchmark: $e';
     }
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
     setState(() => _benchRunning = false);
-    await _showDiagDialog(summary, title: 'Benchmark GPU (llama.cpp)');
+    await _showDiagDialog(summary, title: 'GPU benchmark (llama.cpp)');
   }
 
   /// Sonda de ALCANCE de la GPU: ¿deja Android ver la GPU (OpenCL/Vulkan) a
@@ -867,9 +867,9 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             SizedBox(width: 16),
             Expanded(
               child: Text(
-                'Sondeando la GPU del sistema…\n'
-                'Instalo clinfo/vulkan-tools y compruebo si OpenCL o Vulkan '
-                'ven tu Mali. Puede tardar un par de minutos.',
+                'Probing the system GPU…\n'
+                'I install clinfo/vulkan-tools and check whether OpenCL or Vulkan '
+                'can see your Mali. This can take a couple of minutes.',
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -883,31 +883,31 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       final token =
           await BridgeClient.provision(base, widget.connection.apiKey.trim());
       if (token == null || token.isEmpty) {
-        summary = 'No se pudo conectar con el bridge local (:9131).\n'
+        summary = 'Could not connect to the local bridge (:9131).\n'
             '${fresh ? '' : 'Además, no pude actualizar el bridge a la versión '
-                'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
-            '¿Está el agente local arrancado? Arráncalo y reintenta.';
+                'of this app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
+            'Is the local agent running? Start it and retry.';
       } else {
         final client = BridgeClient(baseUrl: base, token: token);
         try {
           final res = await client.gpuProbe();
           final s = (res['summary'] as String?)?.trim() ?? '';
-          summary = s.isNotEmpty ? s : 'La sonda no devolvió resumen.\n$res';
+          summary = s.isNotEmpty ? s : 'The probe returned no summary.\n$res';
         } finally {
           client.close();
         }
       }
     } catch (e) {
-      summary = 'No se pudo ejecutar la sonda de GPU: $e';
+      summary = 'Could not run the GPU probe: $e';
     }
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
     setState(() => _gpuProbeRunning = false);
-    await _showDiagDialog(summary, title: 'Sonda de GPU (OpenCL/Vulkan)');
+    await _showDiagDialog(summary, title: 'GPU probe (OpenCL/Vulkan)');
   }
 
   Future<void> _showDiagDialog(String summary,
-      {String title = 'Diagnóstico local'}) async {
+      {String title = 'Local diagnostic'}) async {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -922,13 +922,13 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           TextButton(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: summary));
-              _toast('Diagnóstico copiado');
+              _toast('Diagnostic copied');
             },
-            child: const Text('Copiar'),
+            child: const Text('Copy'),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -945,19 +945,19 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           if (widget.connection.onDeviceLoopback)
             IconButton(
               icon: const Icon(Icons.health_and_safety_outlined),
-              tooltip: 'Diagnóstico local',
+              tooltip: 'Local diagnostic',
               onPressed: _diagRunning ? null : _runDiag,
             ),
           if (widget.connection.onDeviceLoopback)
             IconButton(
               icon: const Icon(Icons.developer_board_outlined),
-              tooltip: '¿GPU disponible? (OpenCL/Vulkan)',
+              tooltip: 'GPU available? (OpenCL/Vulkan)',
               onPressed: _gpuProbeRunning ? null : _runGpuProbe,
             ),
           if (widget.connection.onDeviceLoopback)
             IconButton(
               icon: const Icon(Icons.speed_outlined),
-              tooltip: 'Probar GPU (llama.cpp)',
+              tooltip: 'Test GPU (llama.cpp)',
               onPressed: _benchRunning ? null : _runBench,
             ),
           IconButton(
@@ -991,8 +991,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
   /// motor se aplica al pulsar «Usar» en un modelo del panel correspondiente.
   Widget _engineSelector(HermesThemeColors colors) {
     final caption = _engine == _LocalEngine.gpu
-        ? 'GPU: OlliteRT corre el modelo en la GPU/NPU del móvil (más rápido).'
-        : 'CPU: Ollama on-device. Fallback optimizado «por si acaso».';
+        ? 'GPU: OlliteRT runs the model on the phone GPU/NPU (faster).'
+        : 'CPU: on-device Ollama. Optimized just-in-case fallback.';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1068,24 +1068,24 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     // al re-pulsarlo porque ya había snapshot).
     final probing = _olliteRtProbing;
     final (IconData icon, String title, Color color) = probing
-        ? (Icons.hourglass_empty, 'Comprobando OlliteRT…', colors.accent)
+        ? (Icons.hourglass_empty, 'Checking OlliteRT…', colors.accent)
         : running
             ? (
                 Icons.check_circle_outline,
-                'OlliteRT en marcha (:$kOlliteRtDefaultPort)',
+                'OlliteRT running (:$kOlliteRtDefaultPort)',
                 colors.success
               )
             : (
                 Icons.bolt_outlined,
-                'OlliteRT no responde',
+                'OlliteRT is not responding',
                 colors.warning,
               );
     final modelsLine = running
         ? (snap!.models.isEmpty
-            ? 'Servidor arriba, sin modelos cargados. Arranca uno en OlliteRT.'
-            : '${snap.models.length} modelo(s) servido(s).')
-        : 'Instala OlliteRT y arranca el servidor de un modelo .litertlm para '
-            'usar la GPU. La app llega por loopback a 127.0.0.1:$kOlliteRtDefaultPort.';
+            ? 'Server up, no models loaded. Start one in OlliteRT.'
+            : '${snap.models.length} model(s) served.')
+        : 'Install OlliteRT and start the server for a .litertlm model to '
+            'use the GPU. The app reaches it over loopback at 127.0.0.1:$kOlliteRtDefaultPort.';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
@@ -1136,7 +1136,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
               _pill(
                 colors,
                 icon: Icons.refresh,
-                label: 'Comprobar',
+                label: 'Check',
                 color: colors.accent,
                 onTap: _probeOlliteRt,
                 busy: _olliteRtProbing,
@@ -1144,7 +1144,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
               _pill(
                 colors,
                 icon: running ? Icons.open_in_new : Icons.download_outlined,
-                label: running ? 'Abrir OlliteRT' : 'Instalar OlliteRT (beta)',
+                label: running ? 'Open OlliteRT' : 'Install OlliteRT (beta)',
                 color: colors.accent,
                 onTap: _openOlliteRt,
               ),
@@ -1165,7 +1165,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Modelos en OlliteRT',
+          'Models in OlliteRT',
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
@@ -1246,7 +1246,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       width: double.infinity,
       child: OutlinedButton.icon(
         icon: const Icon(Icons.storefront_outlined, size: 18),
-        label: const Text('Tienda de modelos GPU'),
+        label: const Text('GPU model store'),
         onPressed: () async {
           final picked = await Navigator.of(context).push<String>(
             MaterialPageRoute<String>(
@@ -1287,13 +1287,13 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       );
       if (!ok) throw Exception('launchUrl=false');
       if (mounted) {
-        _toast('Abriendo la descarga de OlliteRT (solo hay versión beta por '
-            'ahora). Instala la última a mano y vuelve a pulsar «Comprobar».');
+        _toast('Opening the OlliteRT download (only a beta exists for '
+            'now). Install the latest one by hand and tap "Check" again.');
       }
     } catch (e) {
       debugPrint('[ollama] excepción silenciada (se avisa al usuario y se sigue): $e');
       if (mounted) {
-        _toast('No se pudo abrir la descarga de OlliteRT '
+        _toast('Could not open the OlliteRT download '
             '($kOlliteRtReleasesUrl).');
       }
     }
@@ -1314,13 +1314,13 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       _OllamaStage.installing => (Icons.downloading, s.ollStageInstalling, colors.accent),
       _OllamaStage.stopped => (
           Icons.pause_circle_outline,
-          'Ollama está instalado pero el servidor no responde en :11434.',
+          'Ollama is installed but the server is not responding on :11434.',
           colors.warning
         ),
       _OllamaStage.notInstalled => (Icons.info_outline, s.ollNotInstalled, colors.warning),
       _OllamaStage.unknown => (
           Icons.help_outline,
-          'No se pudo comprobar Ollama (Termux no respondió).',
+          'Could not check Ollama (Termux did not respond).',
           colors.warning
         ),
       _OllamaStage.error => (Icons.error_outline, s.ollStartError, colors.error),
@@ -1393,16 +1393,16 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
 
     final (String hint, List<Widget> buttons) = switch (_stage) {
       _OllamaStage.stopped => (
-          'El servidor no está arrancado. Pulsa «Arrancar» para levantarlo en :11434.',
+          'The server is not started. Tap "Start" to bring it up on :11434.',
           [
-            logPill('Ver log del servidor', server: true),
-            primary(Icons.play_arrow_rounded, 'Arrancar', _startDaemon),
+            logPill('View server log', server: true),
+            primary(Icons.play_arrow_rounded, 'Start', _startDaemon),
           ],
         ),
       _OllamaStage.notInstalled => (
           s.ollNotInstalledHint,
           [
-            logPill('Ver log', server: false),
+            logPill('View log', server: false),
             primary(Icons.download_rounded, s.ollInstallNow, () async {
               final ok = await _installAndStart();
               if (ok) await _refresh();
@@ -1410,13 +1410,13 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           ],
         ),
       _OllamaStage.unknown => (
-          'Abre Termux (déjalo en primer plano) y reintenta el diagnóstico.',
+          'Open Termux (leave it in the foreground) and retry the diagnostic.',
           [primary(Icons.refresh_rounded, s.ollRetry, _refresh)],
         ),
       _OllamaStage.error => (
           _errorFromInstall ? s.ollNotInstalledHint : '',
           [
-            logPill(_errorFromInstall ? 'Ver log' : 'Ver log del servidor',
+            logPill(_errorFromInstall ? 'View log' : 'View server log',
                 server: !_errorFromInstall),
             primary(Icons.refresh_rounded, s.ollRetry, () async {
               if (_errorFromInstall) {

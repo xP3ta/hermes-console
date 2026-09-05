@@ -49,9 +49,10 @@ ChatErrorKind classifyChatError(String raw) {
     'no search tool',
     'search tool not found',
     'web search not available',
+    'search unavailable',
+    // Transcripts guardados por builds anteriores siguen en español.
     'búsqueda no disponible',
     'herramienta de búsqueda no',
-    'search unavailable',
     'no tiene herramienta de búsqueda',
   ])) {
     return ChatErrorKind.searchToolUnavailable;
@@ -60,12 +61,15 @@ ChatErrorKind classifyChatError(String raw) {
   // 1c. Modelo local en arranque en frío / primer token tardando.
   //    Generado por _humanizeBridgeError en active_chat_service.dart.
   if (has([
-    'tardó demasiado',
+    'took too long',
+    'still be loading',
     'timed out',
-    'cargándose',
     'local model loading',
     'cold start',
     'first token',
+    // Transcripts guardados por builds anteriores siguen en español.
+    'tardó demasiado',
+    'cargándose',
   ])) {
     return ChatErrorKind.localColdStart;
   }
@@ -74,14 +78,19 @@ ChatErrorKind classifyChatError(String raw) {
   if (has([
     'bridge',
     'local agent',
-    'agente local',
     'localhost',
     '127.0.0.1',
     '10.0.2.2',
+    'the process exited',
+    'start the agent',
+    'could not connect to the local agent',
+    'mobile bridge',
+    'out of memory',
+    // Transcripts guardados por builds anteriores siguen en español.
+    'agente local',
     'proceso se cerró',
     'arranca el agente',
     'no se pudo conectar con el agente',
-    'mobile bridge',
     'falta de memoria',
   ])) {
     return ChatErrorKind.local;

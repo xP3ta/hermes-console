@@ -311,7 +311,7 @@ class ApprovalPolicyService extends ChangeNotifier {
     // 1) Solo lectura gana sobre todo.
     if (readOnlyInstance || mode == ApprovalMode.readOnly) {
       return ApprovalDecision.blocked(
-        'Solo lectura: no se pueden aprobar acciones de escritura.',
+        'Read-only: write actions cannot be approved.',
       );
     }
 

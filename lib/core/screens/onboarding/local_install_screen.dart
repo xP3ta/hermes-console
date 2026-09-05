@@ -1465,9 +1465,9 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
   /// log del wrapper.
   Future<void> _copyLog() async {
     final b = StringBuffer()
-      ..writeln('# Hermes — diagnóstico de instalación local')
-      ..writeln('modo: automático')
-      ..writeln('tiempo: $_elapsedLabel');
+      ..writeln('# Hermes — local installation diagnostics')
+      ..writeln('mode: automatic')
+      ..writeln('elapsed: $_elapsedLabel');
     if (_logTail.isNotEmpty) {
       b
         ..writeln('\n## Log (wrapper)')
@@ -2208,7 +2208,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'Requiere tu propia API key · ideal si el modelo local no arranca',
+                    'Requires your own API key · ideal if the local model will not start',
                     style: TextStyle(
                       fontSize: 11.5,
                       color: colors.textSecondary,
@@ -2429,8 +2429,8 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Text(
-                'No hay modelos compatibles con la RAM de este dispositivo. '
-                'Necesitas al menos 1 GB de RAM libre para ejecutar un modelo local.',
+                'No models are compatible with this device RAM. '
+                'You need at least 1 GB of free RAM to run a local model.',
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             )
