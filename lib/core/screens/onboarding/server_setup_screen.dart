@@ -37,7 +37,7 @@ class ServerSetupScreen extends StatefulWidget {
 class _ServerSetupScreenState extends State<ServerSetupScreen> {
   ServerHostPlatform? _platform;
   bool _commandCopied = false;
-  bool _agentAlternativeExpanded = false;
+  bool _agentGuidanceExpanded = false;
 
   // Estado de los desplegables del paso 1.
   bool _detailsExpanded = false;
@@ -175,18 +175,17 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
                 const SizedBox(height: 4),
                 TextButton.icon(
                   onPressed: () => setState(
-                    () =>
-                        _agentAlternativeExpanded = !_agentAlternativeExpanded,
+                    () => _agentGuidanceExpanded = !_agentGuidanceExpanded,
                   ),
                   icon: Icon(
-                    _agentAlternativeExpanded
+                    _agentGuidanceExpanded
                         ? Icons.expand_less_rounded
-                        : Icons.chat_bubble_outline_rounded,
+                        : Icons.help_outline_rounded,
                     size: 18,
                   ),
                   label: Text(str.setupUseHermesInstead),
                 ),
-                if (_agentAlternativeExpanded) ...[
+                if (_agentGuidanceExpanded) ...[
                   Text(
                     str.setupAgentStepBody,
                     style: TextStyle(
@@ -219,6 +218,12 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
                   height: 1.5,
                   color: colors.textSecondary,
                 ),
+              ),
+              const SizedBox(height: 12),
+              HermesInfoBanner(
+                str.setupPairingSecretAtEntry,
+                icon: Icons.key_rounded,
+                key: const ValueKey('setup-pairing-secret-at-entry'),
               ),
               const SizedBox(height: 12),
               HermesPrimaryButton(

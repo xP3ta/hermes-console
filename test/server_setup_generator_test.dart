@@ -64,13 +64,42 @@ void main() {
   group('ServerSetupGenerator.agentPrompt', () {
     final p = ServerSetupGenerator.agentPrompt;
 
-    test('enmarca tarea first-party y apunta al instalador público (U-26)', () {
-      expect(p.toLowerCase(), contains('first-party'));
-      // El agente ejecuta EXACTAMENTE el mismo comando del camino SSH y puede
-      // leer el script antes (misma fuente de verdad, auditable).
-      expect(p, contains(ServerSetupGenerator.curlCommand));
-      expect(p, contains(ServerSetupGenerator.setupScriptUrl));
-      expect(p.toLowerCase(), contains('read the script'));
+    test('la ayuda al agente es solo lectura y no cruza secretos al LLM', () {
+      for (final platform in ServerHostPlatform.values) {
+        final prompt = ServerSetupGenerator.agentPromptFor(platform);
+        final low = prompt.toLowerCase();
+
+        expect(low, contains('read-only'));
+        expect(low, contains('trusted terminal'));
+        expect(low, contains('do not run'));
+        expect(low, contains('do not retrieve'));
+        expect(prompt, isNot(contains(ServerSetupGenerator.setupScriptUrl)));
+        expect(
+          prompt,
+          isNot(contains(ServerSetupGenerator.windowsSetupScriptUrl)),
+        );
+        expect(prompt, isNot(contains('curl ')));
+        expect(prompt, isNot(contains('powershell.exe')));
+        expect(prompt, isNot(contains(' | sh')));
+        expect(prompt, isNot(contains('| iex')));
+        expect(prompt, isNot(contains(ServerSetupGenerator.pairScriptUrl)));
+        expect(
+          prompt,
+          isNot(contains(ServerSetupGenerator.windowsPairScriptUrl)),
+        );
+        expect(low, isNot(contains('reply only')));
+        expect(low, isNot(contains('hermes://pair')));
+        expect(low, isNot(contains('idempotent')));
+        expect(low, isNot(contains('safe on')));
+      }
+    });
+
+    test('limita la ayuda a contexto general sin autorizar cambios', () {
+      final low = p.toLowerCase();
+      expect(low, contains('high level'));
+      expect(low, contains('do not install'));
+      expect(low, contains('do not treat this request as authorization'));
+      expect(low, contains('run all setup commands themselves'));
     });
 
     test('cabe en un mensaje de Telegram (límite ~4096 chars)', () {
@@ -79,22 +108,20 @@ void main() {
       expect(p.length, lessThan(2000));
     });
 
-    test('describe lo que hará: token, los tres servicios, idempotente', () {
+    test('prohíbe leer datos del servidor o pedirlos por chat', () {
       final low = p.toLowerCase();
       expect(low, contains('token'));
-      expect(low, contains('idempotent'));
-      expect(low, contains('dashboard'));
-      expect(low, contains('bridge'));
-      expect(p, contains(':8642'));
-      expect(p, contains(':9119'));
-      expect(p, contains(':9131'));
-      // No pisa credenciales existentes.
-      expect(low, contains('does not reset'));
+      expect(low, contains('environment variables'));
+      expect(low, contains('configuration files'));
+      expect(low, contains('never ask the owner to paste'));
+      expect(low, contains('do not construct or return pairing data'));
     });
 
-    test('instruye responder con el enlace hermes://pair en texto', () {
-      expect(p, contains('hermes://pair'));
-      expect(p.toLowerCase(), contains('plain text'));
+    test('mantiene la salida de emparejado fuera del chat', () {
+      final low = p.toLowerCase();
+      expect(low, contains('between that terminal and hermes console'));
+      expect(low, isNot(contains('reply with')));
+      expect(low, isNot(contains('plain text')));
     });
 
     test('no contiene secretos del repo', () {
@@ -146,10 +173,10 @@ void main() {
       final windowsPrompt = ServerSetupGenerator.agentPromptFor(
         ServerHostPlatform.windows,
       );
-      expect(windowsPrompt, contains('powershell.exe -NoProfile'));
+      expect(windowsPrompt, contains('Windows'));
       expect(
         windowsPrompt,
-        contains(ServerSetupGenerator.powershellShellCommand),
+        isNot(contains(ServerSetupGenerator.powershellShellCommand)),
       );
     });
   });

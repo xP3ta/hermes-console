@@ -431,11 +431,11 @@ void main() {
       expect(tester.widget<ChoiceChip>(linuxOption).selected, isTrue);
       final pageScroll = find.byType(Scrollable).first;
       await tester.scrollUntilVisible(
-        find.text('Copia y ejecuta'),
+        find.text('Copia para una terminal de confianza'),
         160,
         scrollable: pageScroll,
       );
-      expect(find.text('Copia y ejecuta'), findsOneWidget);
+      expect(find.text('Copia para una terminal de confianza'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.textContaining('hermes-mobile-setup.sh'),
         240,

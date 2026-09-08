@@ -1,17 +1,14 @@
 // Generador de artefactos de "setup todo en uno" para el onboarding (paso 1).
 //
-// Produce dos textos (NO ejecuta nada en el móvil) para que el usuario deje su
-// servidor Hermes listo y obtenga el enlace de emparejado:
-//   1) agentPrompt  → para pegar al propio agente (Telegram/TUI/Desktop/CLI);
-//      pide ejecutar el instalador público y responder con el `hermes://pair`.
-//   2) curlCommand  → el mismo instalador para la terminal (SSH).
+// Produce textos (NO ejecuta nada en el móvil) para dos fronteras distintas:
+//   1) agentPrompt → explicación general de solo lectura, sin comandos ni datos
+//      de emparejado.
+//   2) curlCommand/powershellCommand → instalación manual en una terminal de
+//      confianza controlada por el propietario.
 //
-// Ambos caminos convergen en scripts/hermes-mobile-setup.sh (publicado en el
-// repo hermes-setup): todo-en-uno, idempotente, imprime el enlace + QR. Esto
-// sustituye a los blobs autocontenidos de ~60KB (spec 028 U-23/U-26): un texto
-// corto siempre se pega bien (el blob chocaba con MAX_CANON en terminal y con
-// el límite de 4096 chars por mensaje de Telegram), es auditable en GitHub
-// antes de ejecutarlo, y deja UNA sola fuente de verdad del setup.
+// Solo el camino manual usa los instaladores publicados en hermes-setup. Los
+// comandos cortos sustituyen a los blobs autocontenidos de ~60KB (spec 028
+// U-23/U-26) y mantienen una única fuente de verdad del setup.
 //
 // Lógica PURA y testeable sin dispositivo: textos constantes, sin assets ni
 // red. Reutiliza el formato de enlace de PairingLink SIN modificarlo.
@@ -45,9 +42,8 @@ class ServerSetupGenerator {
   static const String windowsSetupScriptUrl =
       'https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-mobile-setup.ps1';
 
-  /// Comando corto de copia-pega para la terminal del servidor: descarga el
-  /// script público (auditable en GitHub) y lo ejecuta. Idempotente: sirve
-  /// igual para un servidor virgen que para reinstalar/actualizar el bridge.
+  /// Comando corto de copia-pega para una terminal de confianza del servidor:
+  /// descarga el script público (auditable en GitHub) y lo ejecuta.
   static const String curlCommand = 'curl -fsSL $setupScriptUrl | sh';
 
   static const String powershellCommand = 'irm $windowsSetupScriptUrl | iex';
@@ -106,48 +102,29 @@ class ServerSetupGenerator {
     ).build();
   }
 
-  /// Prompt para pegar al agente del usuario. Enmarcado como tarea de primera
-  /// parte autorizada por el dueño del dispositivo (para que el agente la
-  /// proponga con aprobación, no la rechace por opaca). Pide ejecutar el MISMO
-  /// instalador público del camino SSH — el agente puede descargarlo y leerlo
-  /// antes — y RESPONDER con el enlace en texto (funciona en cualquier canal,
-  /// incluido Telegram, donde el viejo prompt de 60KB ni siquiera cabía).
+  /// Guía compatible con consumidores que todavía ofrecen ayuda mediante un
+  /// agente. Es deliberadamente de solo lectura: el setup y su salida sensible
+  /// permanecen entre el propietario, su terminal de confianza y la app.
   static String agentPromptFor(ServerHostPlatform platform) {
-    final command = platform == ServerHostPlatform.windows
-        ? powershellShellCommand
-        : setupCommandFor(platform);
-    final shell = platform == ServerHostPlatform.windows
-        ? 'Windows PowerShell'
-        : 'a POSIX shell';
-    final lifecycle = switch (platform) {
-      ServerHostPlatform.windows =>
-        'native Windows Scheduled Tasks (with a per-user startup fallback)',
-      ServerHostPlatform.macos => 'macOS launchd services',
-      ServerHostPlatform.linux =>
-        'systemd user services (with a portable Unix fallback)',
+    final platformName = switch (platform) {
+      ServerHostPlatform.windows => 'Windows',
+      ServerHostPlatform.macos => 'macOS',
+      ServerHostPlatform.linux => 'Linux',
     };
-    return 'First-party setup requested by the device owner from the Hermes '
-        'Console app. Goal: get this Hermes server ready for a remote '
-        'connection and reply with its pairing link.\n\n'
-        'Using $shell on the server (the owner authorized this), run the public '
-        'Hermes Console installer:\n\n'
-        '    $command\n\n'
-        'Feel free to fetch and read the script first — it is short, legible '
-        'and hosted in the public hermes-setup repository. It is idempotent and '
-        'safe on an '
-        'already-configured server: it installs Hermes only if missing, ensures '
-        'an API token on the server, and brings up the '
-        'gateway (:$gatewayPort), the dashboard (:$dashboardPort) and the '
-        'mobile bridge (:$bridgePort) using $lifecycle, listening '
-        'on all interfaces so the phone can reach them over Tailscale/LAN. It '
-        'does not reset any existing password or key. Before printing anything '
-        'sensitive, it verifies the real Gateway, Dashboard and Bridge through '
-        'the exact phone-facing address.\n\n'
-        'When it finishes it prints a pairing link. Reply ONLY with that link '
-        'in plain TEXT (hermes://pair?host=<reachable-ip>&port=$gatewayPort'
-        '&token=…&dashboard=http://<reachable-ip>:$dashboardPort'
-        '&bridge=http://<reachable-ip>:$bridgePort&bridge_token=…). If the '
-        'script fails, reply with the last lines of its output instead.';
+    return 'Read-only setup guidance for Hermes Console on $platformName. '
+        'Explain at a high level how the device owner can prepare their Hermes '
+        'server for a mobile connection using the command displayed inside '
+        'Hermes Console in a trusted terminal.\n\n'
+        'Do not run commands or use tools. Do not install, repair, configure, '
+        'restart or expose services, and do not treat this request as '
+        'authorization to make changes. Do not access server data. Do not '
+        'retrieve links, QR codes, tokens, keys, passwords, environment '
+        'variables, configuration files, logs or other server data. Never ask '
+        'the owner to paste any of '
+        'those items into chat. Do not construct or return pairing data.\n\n'
+        'Provide read-only explanations only. Tell the owner to review and run '
+        'all setup commands themselves in a trusted terminal, and to keep all '
+        'pairing output between that terminal and Hermes Console.';
   }
 
   /// Compatibilidad con consumidores anteriores; Linux sigue siendo el valor

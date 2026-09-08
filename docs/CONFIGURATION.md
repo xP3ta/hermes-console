@@ -16,14 +16,27 @@ Lab does not proxy conversations or operate a conversation backend.
 
 1. In the app, choose **Connect server** and **Scan QR code**.
 2. If you do not have a pairing QR yet, open **Prepare server** and run the
-   command for the system that hosts Hermes.
+   command yourself in a trusted terminal on the system that hosts Hermes.
 3. Keep the QR code on the server screen and scan it, or paste the returned
-   `hermes://pair` link.
+   `hermes://pair` link directly into Hermes Console.
 4. Hermes Console checks Gateway, Dashboard, and Mobile Bridge before saving
    the connection.
 
-The QR code or link may include an address and credentials. Treat it as a
-secret: do not publish it, attach it to an issue, or use it in screenshots.
+The setup and pairing commands can change services or configuration on the
+server. Review them and run them only in a terminal you control. Do not ask an
+LLM or agent to execute them, inspect their output, retrieve files or pairing
+data, or treat a help request as authorization to repair the server.
+
+The QR code and `hermes://pair` URI can contain reusable credentials. Treat the
+whole pairing artifact as a secret: keep it between the trusted terminal and
+Hermes Console, and never put it in a model prompt or transcript, publish it,
+attach it to an issue, or include it in a screenshot.
+
+If you copy the optional agent-help text from the app, it requests read-only,
+high-level guidance only. It contains no setup command and explicitly forbids
+tools, server reads, changes, and retrieval or return of pairing data. It is not
+an alternative execution path; the owner still performs setup in the trusted
+terminal.
 
 ## Manual configuration
 
