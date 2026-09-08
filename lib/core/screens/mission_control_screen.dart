@@ -665,8 +665,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// (Desktop envía el mismo texto al crear el agente).
   Future<void> _openChat(MissionAgent agent, {String? kickoffPrompt}) async {
     final officialPin = agent.profile.botChatSessionId;
-    final officialMetadata =
-        agent.profile.botModeMetadataPublished || officialPin != null;
+    final officialMetadata = agent.profile.botModeUiMeta.containsKey('chat');
     if (agent.profile.hasInvalidBotChatPin) {
       debugPrint(
         'Mission Control: Bot Chat unavailable for ${agent.profile.name} '
@@ -681,10 +680,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (officialMetadata) {
       if (!widget.connection.readOnly) {
         try {
-          // Once Desktop publishes the namespace it is authoritative,
-          // including an explicit absence of `chat`. Removing this fallback
-          // prevents an older Console-only conversation from resurrecting
-          // after a repin. Read-only mode must not mutate local state.
+          // A published pin or explicit `chat: null` reset is authoritative.
+          // Appearance-only metadata does not reset a known conversation.
+          // Read-only mode must not mutate local state.
           await _botChatStore.clear(
             connectionId: widget.connection.id,
             profile: agent.profile.name,

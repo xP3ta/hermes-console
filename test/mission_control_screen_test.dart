@@ -899,7 +899,40 @@ void main() {
   });
 
   testWidgets(
-    'official Bot metadata retires stale local pins, including pin absence',
+    'appearance-only Bot metadata preserves the known local conversation',
+    (tester) async {
+      final manager = await _manager();
+      final botStore = MissionBotChatStore(manager.prefs);
+      await botStore.save(
+        connectionId: _connection.id,
+        profile: 'infra',
+        sessionId: 'stored-local-keep',
+      );
+      Session? opened;
+      final appearanceOnly = AgentProfile.fromJson({
+        'name': 'infra',
+        'ui_meta': {
+          'hermes-bots': {'title': 'Infra', 'shape': 'blobatar'},
+        },
+      });
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatStore: botStore,
+          botChatOpenObserver: (session) => opened = session,
+          snapshot: _snapshot(profiles: [appearanceOnly]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openBotChat(tester, 'infra');
+      expect(opened?.lineageRootId, 'stored-local-keep');
+      expect(opened?.source, 'bot-mode-local');
+      expect(await botStore.load(_connection.id, 'infra'), 'stored-local-keep');
+    },
+  );
+
+  testWidgets(
+    'official Bot metadata with a pin or explicit null reset retires stale local pins',
     (tester) async {
       final manager = await _manager();
       final botStore = MissionBotChatStore(manager.prefs);
@@ -941,7 +974,9 @@ void main() {
       await tester.pump();
       final officialAbsence = AgentProfile.fromJson({
         'name': 'infra',
-        'ui_meta': {'hermes-bots': <String, dynamic>{}},
+        'ui_meta': {
+          'hermes-bots': <String, dynamic>{'chat': null},
+        },
       });
       await tester.pumpWidget(
         _host(
