@@ -229,6 +229,23 @@ void main() {
     expect(userQuote['content'], quoted);
   });
 
+  test('repara continuaciones de goal antiguas como evento del sistema', () {
+    const continuation =
+        '[Continuing toward your standing goal]\n'
+        'Goal: termina las tareas\n\n'
+        'Continue working toward this goal.';
+    final event = _message('user', continuation)..['row_id'] = 44;
+
+    expect(effectiveUserDisplayKind(event), 'auto_continue');
+    expect(isRealUserTurn(event), isFalse);
+
+    const quoted =
+        '¿Qué significa [Continuing toward your standing goal] en Hermes?';
+    final userQuote = _message('user', quoted)..['row_id'] = 45;
+    expect(effectiveUserDisplayKind(userQuote), isEmpty);
+    expect(isRealUserTurn(userQuote), isTrue);
+  });
+
   test('display_kind hidden no crea una burbuja de usuario cruda', () {
     final hidden = _message('user', 'payload interno')
       ..['display_kind'] = 'hidden';

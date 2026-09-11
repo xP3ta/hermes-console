@@ -152,6 +152,11 @@ String effectiveUserDisplayKind(Map<String, dynamic> message) {
   if (_asyncDelegationMarkerPattern.hasMatch(rawContent)) {
     return 'async_delegation_complete';
   }
+  if (RegExp(
+    r'^\[Continuing toward your standing goal(?: — a quality gate failed)?\]\nGoal:',
+  ).hasMatch(rawContent)) {
+    return 'auto_continue';
+  }
   final content = rawContent.trimLeft().toLowerCase();
   final isLegacyModelSwitch =
       content.startsWith('[system:') &&
