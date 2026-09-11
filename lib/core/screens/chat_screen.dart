@@ -13480,7 +13480,7 @@ _timelineSystemEventPresentation(
   BuildContext context,
   Map<String, dynamic> message,
 ) {
-  final kind = message['display_kind']?.toString().trim() ?? '';
+  final kind = effectiveUserDisplayKind(message);
   if (kind.isEmpty) return null;
   final strings = Strings.of(context);
   switch (kind) {
