@@ -1512,18 +1512,22 @@ void main() {
     });
   }
 
-  attachmentValidationFenceTest('de fichero ausente', (temp) async {
-    final file = File('${temp.path}/ausente.pdf');
-    await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
-    return AttachmentDraft(
-      localId: 'missing',
-      type: AttachmentType.document,
-      name: 'ausente.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: await file.length(),
-      localPath: file.path,
-    );
-  }, invalidateBeforeSend: (attachment) => File(attachment.localPath).delete());
+  attachmentValidationFenceTest(
+    'de fichero ausente',
+    (temp) async {
+      final file = File('${temp.path}/ausente.pdf');
+      await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
+      return AttachmentDraft(
+        localId: 'missing',
+        type: AttachmentType.document,
+        name: 'ausente.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: await file.length(),
+        localPath: file.path,
+      );
+    },
+    invalidateBeforeSend: (attachment) => File(attachment.localPath).delete(),
+  );
 
   attachmentValidationFenceTest('de imagen corrupta', (temp) async {
     final image = File('${temp.path}/corrupta.gif');
@@ -6693,6 +6697,28 @@ void main() {
       );
       expect(find.textContaining('[ASYNC DELEGATION'), findsNothing);
       expect(find.textContaining('/home/demo-user'), findsNothing);
+      expect(find.text('Pregunta real'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'continuación legacy se muestra como fila editorial sin payload interno',
+    (tester) async {
+      const raw =
+          '[Continuing toward your standing goal]\n'
+          'Goal: termina las tareas\n\n'
+          'Continue working toward this goal.';
+      await pumpChat(
+        tester,
+        messages: [
+          {'role': 'user', 'content': raw},
+          {'role': 'user', 'content': 'Pregunta real'},
+        ],
+      );
+
+      expect(find.text('Turno reanudado'), findsOneWidget);
+      expect(find.textContaining('[Continuing toward'), findsNothing);
       expect(find.text('Pregunta real'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

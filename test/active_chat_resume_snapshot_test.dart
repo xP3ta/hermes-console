@@ -402,6 +402,149 @@ void main() {
   });
 
   test(
+    'resume no duplica el usuario durable cuando también es inflight',
+    () async {
+      const durable = {
+        'id': 203187,
+        'role': 'user',
+        'content': 'continue',
+        'timestamp': 1789167776.021347,
+      };
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-durable-inflight',
+          'session_key': 'stored-chat',
+          'message_count': 1,
+          'messages': const [durable],
+          'turn_started_at': 1789167775.9676664,
+          'inflight': {'user': 'continue', 'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'durable-inflight',
+        gateway,
+        storedMessageLoader: (_, _) async => const [durable],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 1);
+
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == 'continue',
+        ),
+        hasLength(1),
+      );
+      expect(chat.state, ChatPipelineState.executing);
+    },
+  );
+
+  test(
+    'resume sin reloj no duplica usuario durable seguido solo por tools',
+    () async {
+      const history = [
+        {
+          'id': 203187,
+          'role': 'user',
+          'content': 'continue',
+          'timestamp': 1789167776.021347,
+        },
+        {
+          'id': 203188,
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'call-1',
+              'function': {'name': 'status', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'id': 203189,
+          'role': 'tool',
+          'content': 'still running',
+          'tool_call_id': 'call-1',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-tool-inflight',
+          'session_key': 'stored-chat',
+          'message_count': history.length,
+          'messages': history,
+          'inflight': {'user': 'continue', 'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'tool-inflight',
+        gateway,
+        storedMessageLoader: (_, _) async => history,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: history.length);
+
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == 'continue',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'resume conserva un inflight nuevo que repite texto histórico',
+    () async {
+      const history = [
+        {
+          'id': 203187,
+          'role': 'user',
+          'content': 'continue',
+          'timestamp': 1789167000.0,
+        },
+        {
+          'id': 203188,
+          'role': 'assistant',
+          'content': 'turn finished',
+          'finish_reason': 'stop',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-repeated-inflight',
+          'session_key': 'stored-chat',
+          'message_count': history.length,
+          'messages': history,
+          'inflight': {'user': 'continue', 'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'repeated-inflight',
+        gateway,
+        storedMessageLoader: (_, _) async => history,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: history.length);
+
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == 'continue',
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test(
     'messages_omitted vacío sin contador conserva completitud desconocida',
     () async {
       final gateway = _SnapshotGateway()
