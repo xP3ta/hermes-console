@@ -156,12 +156,20 @@ class DesktopSessionReconciler {
     final inflightStatus = inflight?.status?.trim().toLowerCase() ?? '';
     final inflightFailed =
         inflightError.isNotEmpty || inflightStatus == 'error';
-    if (inflightUser != null && inflightUser.trim().isNotEmpty) {
-      // `inflight.user` no comparte una identidad protocolaria con las filas
-      // persistidas. El upstream mantiene ambos planos separados: el history
-      // durable puede acabar en un user histórico/cancelado y el inflight ser
-      // un turno nuevo con el mismo texto. Fusionarlos por contenido haría que
-      // Stop anclase el turno nuevo al ID del histórico.
+    final durableUserCoversInflight =
+        inflightUser != null &&
+        _durableUserCoversInflight(
+          chronological,
+          inflightUser,
+          snapshot.resolvedTurnStartedAt,
+        );
+    if (inflightUser != null &&
+        inflightUser.trim().isNotEmpty &&
+        !durableUserCoversInflight) {
+      // El texto solo no demuestra identidad: un turno nuevo puede repetir un
+      // prompt histórico. Se omite la proyección sintética únicamente cuando
+      // el último user durable comparte el texto y su timestamp pertenece al
+      // turno vivo anunciado por turn_started_at.
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'user',
@@ -258,6 +266,63 @@ class DesktopSessionReconciler {
       failed: inflightFailed,
       status: inflightFailed ? 'error' : snapshot.status,
     );
+  }
+
+  bool _durableUserCoversInflight(
+    List<Map<String, dynamic>> chronological,
+    String inflightUser,
+    DateTime? turnStartedAt,
+  ) {
+    var lastUserIndex = -1;
+    for (var index = chronological.length - 1; index >= 0; index--) {
+      final message = chronological[index];
+      if (message['role'] == 'user' &&
+          message['_desktopSnapshotKind'] != 'inflight') {
+        lastUserIndex = index;
+        break;
+      }
+    }
+    if (lastUserIndex < 0) return false;
+
+    final lastUser = chronological[lastUserIndex];
+    final durableText = desktopSessionDisplayText(lastUser['content']) ?? '';
+    if (durableText.trim() != inflightUser.trim()) return false;
+
+    if (turnStartedAt != null) {
+      final rawTimestamp = lastUser['timestamp'];
+      final timestamp = rawTimestamp is num && rawTimestamp.isFinite
+          ? DateTime.fromMicrosecondsSinceEpoch(
+              (rawTimestamp.toDouble() * Duration.microsecondsPerSecond)
+                  .round(),
+              isUtc: true,
+            )
+          : null;
+      return timestamp != null && !timestamp.isBefore(turnStartedAt);
+    }
+
+    var hasToolActivity = false;
+    for (var index = lastUserIndex + 1; index < chronological.length; index++) {
+      final message = chronological[index];
+      if (message['role'] == 'tool') {
+        hasToolActivity = true;
+        continue;
+      }
+      if (message['role'] != 'assistant') continue;
+      final finishReason = message['finish_reason']?.toString().toLowerCase();
+      if (finishReason != null &&
+          finishReason.isNotEmpty &&
+          finishReason != 'tool_calls' &&
+          finishReason != 'function_call') {
+        return false;
+      }
+      final toolCalls = message['tool_calls'];
+      final hasToolCalls = toolCalls is List && toolCalls.isNotEmpty;
+      if (hasToolCalls) hasToolActivity = true;
+      final assistantText =
+          desktopSessionDisplayText(message['content'])?.trim() ?? '';
+      if (!hasToolCalls && assistantText.isNotEmpty) return false;
+    }
+    return hasToolActivity;
   }
 
   List<Map<String, dynamic>> _projectPersistedMessage(
