@@ -3,6 +3,12 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## Unreleased
+
+- Rendered automatic standing-goal continuations as compact resumed-turn
+  events when reopening an active Desktop session, including legacy history
+  persisted before display metadata was available.
+
 ## 1.2.10 (9008) — 2026-09-14
 
 - "Reintentar" on a failed turn always does something: it first reconciles
