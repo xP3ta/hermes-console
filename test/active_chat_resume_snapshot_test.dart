@@ -1477,6 +1477,52 @@ void main() {
   });
 
   test(
+    'resume conserva un inflight nuevo que repite texto histórico',
+    () async {
+      const history = [
+        {
+          'id': 203187,
+          'role': 'user',
+          'content': 'continue',
+          'timestamp': 1789167000.0,
+        },
+        {
+          'id': 203188,
+          'role': 'assistant',
+          'content': 'turn finished',
+          'finish_reason': 'stop',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-repeated-inflight',
+          'session_key': 'stored-chat',
+          'message_count': history.length,
+          'messages': history,
+          'inflight': {'user': 'continue', 'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'repeated-inflight',
+        gateway,
+        storedMessageLoader: (_, _) async => history,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: history.length);
+
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == 'continue',
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test(
     'messages_omitted vacío sin contador conserva completitud desconocida',
     () async {
       final gateway = _SnapshotGateway()
