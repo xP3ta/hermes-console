@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -16,6 +17,19 @@ Session childSession(String id, String parentId) => Session.fromJson({
   'source': 'cron',
   'parent_session_id': parentId,
 });
+
+LocalConversationLifecycle localLifecycle({
+  String connectionId = 'instance-a',
+  String profile = 'profile-a',
+  String sessionId = 'session-a',
+}) => LocalConversationCleanupFence.beginLifecycle(
+  connectionId: connectionId,
+  profile: profile,
+  sessionId: sessionId,
+);
+
+Future<void> expectRejected(Future<Object?> write) =>
+    expectLater(write, throwsA(isA<LocalConversationWriteRejected>()));
 
 void main() {
   test('las cuatro superficies delegan en el coordinador compartido', () {
@@ -60,10 +74,58 @@ void main() {
     }
 
     final chat = File('lib/core/screens/chat_screen.dart').readAsStringSync();
-    expect(chat, contains('deleteSession: client.deleteSession'));
+    expect(chat, isNot(contains('deleteSession: client.deleteSession')));
+    expect(chat, contains('final ownerProfile = _chat.sessionProfile;'));
+    expect(
+      chat,
+      matches(
+        RegExp(
+          r'client\.getSessions\(\s*includeChildren: includeChildren,\s*profile: ownerProfile,',
+        ),
+      ),
+    );
+    expect(
+      chat,
+      contains('client.deleteSession(sessionId, profile: ownerProfile)'),
+    );
     expect(chat, contains('remoteSessionId: _chat.serverSessionId'));
     expect(chat, contains('localRecoverySessionId: widget.session.id'));
     expect(chat, contains('clearLocalRecovery: _clearDeletedChatRecovery'));
+
+    final home = File(
+      'lib/core/screens/home_dashboard_screen.dart',
+    ).readAsStringSync();
+    expect(home, isNot(contains('deleteSession: client.deleteSession')));
+    expect(
+      home,
+      contains('final ownerProfile = Session.profileOwner(session.profile);'),
+    );
+    expect(
+      home,
+      contains('client.deleteSession(sessionId, profile: ownerProfile)'),
+    );
+    expect(home, contains('profile: ownerProfile'));
+
+    final detail = File(
+      'lib/core/screens/session_detail_screen.dart',
+    ).readAsStringSync();
+    expect(
+      detail,
+      contains('final ownerProfile = Session.profileOwner(_session.profile);'),
+    );
+    expect(detail, contains('profile: ownerProfile'));
+
+    final list = File(
+      'lib/core/screens/session_list_screen.dart',
+    ).readAsStringSync();
+    expect(
+      list,
+      matches(
+        RegExp(
+          r'_client\.getSessions\(\s*includeChildren: includeChildren,\s*profile: ownerProfile,',
+        ),
+      ),
+    );
 
     final service = File(
       'lib/core/services/session_deletion.dart',
@@ -93,36 +155,26 @@ void main() {
   });
 
   test(
-    'borrado total no cuenta deleted=false como conversación borrada',
+    'borrado remoto confirmado expulsa antes y aísla fallos de limpieza local',
     () async {
-      final result = await deleteRemoteSessions(
-        const ['chat-ok', 'cron-active', 'chat-error'],
-        delete: (id) async => switch (id) {
-          'chat-ok' => true,
-          'cron-active' => false,
-          _ => throw StateError('offline'),
-        },
+      final calls = <String>[];
+      final errors = <Object>[];
+
+      await finalizeConfirmedRemoteDeletion(
+        evict: () => calls.add('evict'),
+        localCleanups: [
+          () async {
+            calls.add('cleanup-fails');
+            throw StateError('local archive unavailable');
+          },
+          () async => calls.add('cleanup-continues'),
+        ],
+        onCleanupError: errors.add,
       );
 
-      expect(result.deleted, 1);
-      expect(result.rejected, 1);
-      expect(result.failed, 1);
-      expect(result.allDeleted, isFalse);
-    },
-  );
-
-  test(
-    'borrado total solo confirma éxito cuando todas fueron eliminadas',
-    () async {
-      final result = await deleteRemoteSessions(const [
-        'chat-a',
-        'cron-b',
-      ], delete: (_) async => true);
-
-      expect(result.deleted, 2);
-      expect(result.rejected, 0);
-      expect(result.failed, 0);
-      expect(result.allDeleted, isTrue);
+      expect(calls, ['evict', 'cleanup-fails', 'cleanup-continues']);
+      expect(errors, hasLength(1));
+      expect(errors.single, isA<StateError>());
     },
   );
 
@@ -171,74 +223,51 @@ void main() {
       connectionId: 'qa',
       scope: HistoryCleanupScope.normalConversations,
     );
-    bus.publish(connectionId: 'qa', scope: HistoryCleanupScope.cronResults);
+    bus.publish(
+      connectionId: 'qa',
+      scope: HistoryCleanupScope.normalConversations,
+    );
 
     expect(events.map((event) => event.connectionId), ['qa', 'qa']);
     expect(events.map((event) => event.scope), [
       HistoryCleanupScope.normalConversations,
-      HistoryCleanupScope.cronResults,
+      HistoryCleanupScope.normalConversations,
     ]);
   });
 
-  test('vaciar limpia borradores aunque falle el listado remoto', () async {
-    var draftsCalled = 0;
-    var transcriptsCalled = 0;
-    var outboxCalled = 0;
+  test(
+    'REGRESSION_CLEANUP_BARRIER continúa stores tras error parcial',
+    () async {
+      final calls = <String>[];
+      final result = await clearProfileLocalConversationState(
+        connectionId: 'instance-a',
+        profile: 'team_alpha',
+        clearDrafts: ({required String profile}) async {
+          calls.add('draft:$profile');
+          return 2;
+        },
+        clearTranscripts: ({required String profile}) async {
+          calls.add('transcript:$profile');
+          throw StateError('sensitive keystore detail');
+        },
+        clearOutbox: ({required String profile}) async {
+          calls.add('outbox:$profile');
+          return 1;
+        },
+      );
 
-    final result = await clearConversationsAndLocalState(
-      loadSessions: ({bool includeChildren = false}) async {
-        expect(includeChildren, isTrue);
-        throw StateError('offline');
-      },
-      deleteSession: (_) async => true,
-      clearDrafts: () async {
-        draftsCalled++;
-        return 2;
-      },
-      clearTranscripts: () async {
-        transcriptsCalled++;
-        return 1;
-      },
-      clearOutbox: () async {
-        outboxCalled++;
-        return 1;
-      },
-    );
-
-    expect(result.remote, isNull);
-    expect(result.remoteListError, isA<StateError>());
-    expect(result.drafts.removed, 2);
-    expect(result.transcripts.removed, 1);
-    expect(result.outbox.removed, 1);
-    expect(draftsCalled, 1);
-    expect(transcriptsCalled, 1);
-    expect(outboxCalled, 1);
-    expect(result.allSucceeded, isFalse);
-  });
-
-  test('vaciar conserva informes y aísla fallos locales', () async {
-    final deleted = <String>[];
-    final result = await clearConversationsAndLocalState(
-      loadSessions: ({bool includeChildren = false}) async => [
-        Session.fromJson({'id': 'chat-a', 'source': 'mobile'}),
-        cronSession('cron_daily_20260721_120000'),
-      ],
-      deleteSession: (id) async {
-        deleted.add(id);
-        return true;
-      },
-      clearDrafts: () async => throw StateError('keystore'),
-      clearTranscripts: () async => 2,
-      clearOutbox: () async => 0,
-    );
-
-    expect(deleted, ['chat-a']);
-    expect(result.remote?.deleted, 1);
-    expect(result.drafts.succeeded, isFalse);
-    expect(result.transcripts.removed, 2);
-    expect(result.outbox.succeeded, isTrue);
-    expect(result.localFailureCount, 1);
-  });
+      expect(calls, [
+        'draft:team_alpha',
+        'transcript:team_alpha',
+        'outbox:team_alpha',
+      ]);
+      expect(result.drafts.removed, 2);
+      expect(result.transcripts.succeeded, isFalse);
+      expect(result.outbox.removed, 1);
+      expect(result.localFailureCount, 1);
+      expect(result.allSucceeded, isFalse);
+    },
+  );
 
   test('borra primero el cron vinculado y después su conversación', () async {
     final calls = <String>[];
@@ -349,6 +378,7 @@ void main() {
       ]);
       expect(requests.first.url.queryParameters, {
         'limit': '200',
+        'offset': '0',
         'include_children': 'true',
       });
       expect(requests[1].url.path, '/api/sessions/leaf-wire');
@@ -577,19 +607,295 @@ void main() {
     expect(calls, ['cron:job123']);
   });
 
-  test('limpieza normal excluye siempre Cron y sesiones tool', () {
-    final normal = Session.fromJson({
-      'id': 'chat-normal',
-      'title': 'Normal',
-      'source': 'chat',
-    });
-    final cron = cronSession('cron_job123_20260715_214800');
-    final tool = Session.fromJson({
-      'id': 'tool-run',
-      'title': 'Tool runtime',
-      'source': 'tool',
-    });
+  test(
+    'rehydrate falla cerrado mientras el cleanup del perfil sigue activo',
+    () async {
+      LocalConversationCleanupFence.resetForTesting();
+      final cleanupEntered = Completer<void>();
+      final releaseCleanup = Completer<void>();
+      final cleanup = LocalConversationCleanupFence.cleanupProfile(
+        connectionId: 'instance-a',
+        profile: 'profile-a',
+        operation: () async {
+          cleanupEntered.complete();
+          await releaseCleanup.future;
+        },
+      );
+      await cleanupEntered.future;
+      final lifecycle = localLifecycle();
+      expect(LocalConversationCleanupFence.rehydrate(lifecycle), isFalse);
+      releaseCleanup.complete();
+      await cleanup;
+    },
+  );
 
-    expect(sessionsSafeForBulkDelete([normal, cron, tool]), [normal]);
+  test(
+    'un owner nuevo rehidratado invalida autosaves del owner anterior',
+    () async {
+      LocalConversationCleanupFence.resetForTesting();
+      await LocalConversationCleanupFence.cleanupProfile(
+        connectionId: 'instance-a',
+        profile: 'profile-a',
+        operation: () async => 0,
+      );
+      final stale = localLifecycle();
+      expect(LocalConversationCleanupFence.rehydrate(stale), isTrue);
+      final current = localLifecycle();
+      expect(LocalConversationCleanupFence.rehydrate(current), isTrue);
+      await expectRejected(
+        LocalConversationCleanupFence.write(
+          lifecycle: stale,
+          operation: () async => null,
+        ),
+      );
+    },
+  );
+
+  test('lifecycle cerrado no puede rehidratar ni admitir autosave', () async {
+    LocalConversationCleanupFence.resetForTesting();
+    final lifecycle = localLifecycle();
+    LocalConversationCleanupFence.endLifecycle(lifecycle);
+
+    expect(LocalConversationCleanupFence.rehydrate(lifecycle), isFalse);
+    await expectRejected(
+      LocalConversationCleanupFence.write(
+        lifecycle: lifecycle,
+        operation: () async => null,
+      ),
+    );
+  });
+
+  test('scope V3 conserva perfiles canónicos con espacios distintos', () {
+    LocalConversationCleanupFence.resetForTesting();
+    final owners = [localLifecycle(), localLifecycle(profile: ' profile-a ')];
+    expect(
+      owners.map(LocalConversationCleanupFence.rehydrate),
+      everyElement(isTrue),
+    );
+  });
+
+  for (final connectionCleanup in [false, true]) {
+    test('cleanups solapados ${connectionCleanup ? 'connection' : 'profile'} '
+        'mantienen cerrado rehydrate hasta el último', () async {
+      LocalConversationCleanupFence.resetForTesting();
+      final enteredFirst = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final enteredSecond = Completer<void>();
+      final releaseSecond = Completer<void>();
+      Future<void> cleanup(Future<void> Function() operation) =>
+          connectionCleanup
+          ? LocalConversationCleanupFence.cleanupConnection(
+              connectionId: 'instance-a',
+              operation: operation,
+            )
+          : LocalConversationCleanupFence.cleanupProfile(
+              connectionId: 'instance-a',
+              profile: 'profile-a',
+              operation: operation,
+            );
+      final first = cleanup(() async {
+        enteredFirst.complete();
+        await releaseFirst.future;
+      });
+      await enteredFirst.future;
+      final second = cleanup(() async {
+        enteredSecond.complete();
+        await releaseSecond.future;
+      });
+      releaseFirst.complete();
+      await first;
+      await enteredSecond.future;
+      final lifecycle = localLifecycle();
+      expect(
+        LocalConversationCleanupFence.rehydrate(lifecycle),
+        isFalse,
+        reason: 'connectionCleanup=$connectionCleanup',
+      );
+      await expectRejected(
+        LocalConversationCleanupFence.write(
+          lifecycle: lifecycle,
+          operation: () async => null,
+        ),
+      );
+      releaseSecond.complete();
+      await second;
+    });
+  }
+
+  test(
+    'aliases de sesión son explícitos y no autorizan ids arbitrarios',
+    () async {
+      LocalConversationCleanupFence.resetForTesting();
+      final lifecycle = LocalConversationCleanupFence.beginLifecycle(
+        connectionId: 'instance-a',
+        profile: 'profile-a',
+        sessionId: 'route-session',
+        sessionAliases: const ['mob-room-room-a'],
+      );
+      expect(
+        await LocalConversationCleanupFence.write(
+          connectionId: 'instance-a',
+          profile: 'profile-a',
+          sessionId: 'mob-room-room-a',
+          lifecycle: lifecycle,
+          operation: () async => 1,
+        ),
+        1,
+      );
+      await expectRejected(
+        LocalConversationCleanupFence.write(
+          connectionId: 'instance-a',
+          profile: 'profile-a',
+          sessionId: 'arbitrary-session',
+          lifecycle: lifecycle,
+          operation: () async => 2,
+        ),
+      );
+    },
+  );
+
+  test('ActiveChat captura y transporta lifecycle antes del primer await', () {
+    final source = File(
+      'lib/core/services/active_chat_service.dart',
+    ).readAsStringSync();
+    final capture = source.indexOf(
+      'final transcriptLifecycle = _localConversationLifecycle;',
+    );
+    final firstPersist = source.indexOf(
+      'await _persistLocalTranscript(transcriptLifecycle);',
+      capture,
+    );
+    expect(capture, greaterThanOrEqualTo(0));
+    expect(firstPersist, greaterThan(capture));
+    expect(source, contains('lifecycle: capturedLifecycle,'));
+  });
+
+  test('dispose revoca un write admitido pero todavía en cola', () async {
+    LocalConversationCleanupFence.resetForTesting();
+    final release = Completer<void>();
+    final blocker = LocalConversationCleanupFence.write(
+      connectionId: 'other',
+      operation: () => release.future,
+    );
+    final lifecycle = localLifecycle();
+    var executed = false;
+    final queued = LocalConversationCleanupFence.write(
+      lifecycle: lifecycle,
+      operation: () async => executed = true,
+    );
+    LocalConversationCleanupFence.endLifecycle(lifecycle);
+    release.complete();
+    await blocker;
+    await expectRejected(queued);
+    expect(executed, isFalse);
+  });
+
+  test(
+    'cleanup connection permite hijo profile cubierto sin deadlock',
+    () async {
+      final result = await LocalConversationCleanupFence.cleanupConnection(
+        connectionId: 'instance-a',
+        operation: () => LocalConversationCleanupFence.cleanupProfile(
+          connectionId: 'instance-a',
+          profile: 'profile-a',
+          operation: () async => 7,
+        ),
+      ).timeout(const Duration(milliseconds: 300));
+      expect(result, 7);
+    },
+  );
+
+  test('cleanup anidado no cubierto se rechaza sin bloquear la cola', () async {
+    await expectLater(
+      LocalConversationCleanupFence.cleanupProfile(
+        connectionId: 'instance-a',
+        profile: 'profile-a',
+        operation: () => LocalConversationCleanupFence.cleanupProfile(
+          connectionId: 'instance-a',
+          profile: 'profile-b',
+          operation: () async => 0,
+        ),
+      ).timeout(const Duration(milliseconds: 300)),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await LocalConversationCleanupFence.cleanupProfile(
+        connectionId: 'other',
+        profile: 'profile',
+        operation: () async => 1,
+      ).timeout(const Duration(milliseconds: 300)),
+      1,
+    );
+  });
+
+  test('identidades tuple son inyectivas para ids opacos', () {
+    LocalConversationCleanupFence.resetForTesting();
+    final first = localLifecycle(
+      connectionId: 'c',
+      profile: 'x\u001fp',
+      sessionId: 's',
+    );
+    final second = localLifecycle(
+      connectionId: 'c\u001fx',
+      profile: 'p',
+      sessionId: 's',
+    );
+    expect(LocalConversationCleanupFence.rehydrate(first), isTrue);
+    expect(LocalConversationCleanupFence.rehydrate(second), isTrue);
+  });
+
+  test(
+    'profile cleanup purges global public activity after local stores',
+    () async {
+      final calls = <String>[];
+      await clearProfileLocalConversationState(
+        connectionId: 'instance-a',
+        profile: 'team_alpha',
+        clearDrafts: ({required profile}) async {
+          calls.add('draft');
+          return 0;
+        },
+        clearTranscripts: ({required profile}) async {
+          calls.add('transcript');
+          return 0;
+        },
+        clearOutbox: ({required profile}) async {
+          calls.add('outbox');
+          return 0;
+        },
+        clearGlobalActivity: ({required connectionId, required profile}) async {
+          calls.add('activity:$connectionId:$profile');
+        },
+      );
+      expect(calls, [
+        'draft',
+        'transcript',
+        'outbox',
+        'activity:instance-a:team_alpha',
+      ]);
+    },
+  );
+
+  test('cleanup local normaliza el perfil vacío al owner default', () async {
+    final owners = <String>[];
+    final summary = await clearProfileLocalConversationState(
+      connectionId: 'instance-a',
+      profile: '',
+      clearDrafts: ({required String profile}) async {
+        owners.add(profile);
+        return 0;
+      },
+      clearTranscripts: ({required String profile}) async {
+        owners.add(profile);
+        return 0;
+      },
+      clearOutbox: ({required String profile}) async {
+        owners.add(profile);
+        return 0;
+      },
+    );
+
+    expect(owners, List.filled(3, 'default'));
+    expect(summary.allSucceeded, isTrue);
   });
 }

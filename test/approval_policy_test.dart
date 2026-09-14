@@ -6,6 +6,37 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   late ApprovalPolicyService policy;
 
+  test('capacidades Desktop sólo restringen choices y nunca añaden scopes', () {
+    final cases = <(Map<String, dynamic>, Set<String>)>[
+      (
+        {
+          'choices': ['once', 'deny'],
+          'allow_session': false,
+          'allow_permanent': false,
+        },
+        {'once', 'deny'},
+      ),
+      (
+        {
+          'choices': ['deny'],
+          'allow_session': true,
+          'allow_permanent': true,
+        },
+        {'deny'},
+      ),
+      (
+        {
+          'choices': ['allow-once', 'allow-session', 'allow-permanent'],
+          'allow_permanent': false,
+        },
+        {'once', 'session'},
+      ),
+    ];
+    for (final entry in cases) {
+      expect(permittedApprovalChoices(entry.$1), entry.$2);
+    }
+  });
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();

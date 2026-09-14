@@ -19,6 +19,7 @@ final class CompressionConfigRepository {
   final String? _profile;
 
   bool _closed = false;
+  bool _ownedDashboardClosed = false;
   int _activeOperations = 0;
 
   factory CompressionConfigRepository(
@@ -44,6 +45,7 @@ final class CompressionConfigRepository {
   factory CompressionConfigRepository.forConnection(
     SavedConnection connection, {
     String? profile,
+    bool writable = true,
     DashboardClientFactory? dashboardFactory,
   }) {
     // Validar el scope antes de construir un cliente o cargar secretos.
@@ -55,7 +57,7 @@ final class CompressionConfigRepository {
       factory(connection),
       normalizedProfile,
       true,
-      !connection.readOnly,
+      writable && !connection.readOnly,
     );
   }
 
@@ -154,10 +156,21 @@ final class CompressionConfigRepository {
   /// Idempotente. Solo cierra el DashboardClient cuando fue creado por
   /// [forConnection]; los clientes inyectados siguen siendo propiedad del
   /// llamante.
-  void close() {
+  /// Cierra el repositorio. La ruta normal deja terminar una operacion ya
+  /// iniciada para no truncar un guardado durante el desmontaje de la vista.
+  ///
+  /// [abortActiveOperations] se reserva para los fences de identidad o de
+  /// acceso a config: cuando cambian credenciales, perfil o configRead/
+  /// configWrite, ningun trabajo autenticado del scope anterior puede
+  /// conservar su cliente.
+  void close({bool abortActiveOperations = false}) {
     if (_closed) return;
     _closed = true;
-    _closeOwnedDashboardIfReady();
+    if (abortActiveOperations) {
+      _closeOwnedDashboard();
+    } else {
+      _closeOwnedDashboardIfReady();
+    }
   }
 
   void _beginOperation() {
@@ -171,9 +184,13 @@ final class CompressionConfigRepository {
   }
 
   void _closeOwnedDashboardIfReady() {
-    if (_closed && _activeOperations == 0 && _ownsDashboard) {
-      _dashboard.close();
-    }
+    if (_closed && _activeOperations == 0) _closeOwnedDashboard();
+  }
+
+  void _closeOwnedDashboard() {
+    if (!_ownsDashboard || _ownedDashboardClosed) return;
+    _ownedDashboardClosed = true;
+    _dashboard.close();
   }
 
   void _requireOpen() {

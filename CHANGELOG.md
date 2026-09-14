@@ -3,6 +3,114 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.10 (9008) — 2026-09-14
+
+- "Reintentar" on a failed turn always does something: it first reconciles
+  with the durable transcript and, when the server has no evidence of the
+  turn, resends the prompt instead of ending silently. The error bubble's own
+  prompt is used when the screen no longer remembers the last one (relaunch).
+- Redesigned the blocking prompt card (clarify, sudo, secret): it now rises as
+  a compact sheet above the composer over the dimmed transcript instead of
+  replacing the whole screen. Choices are full-width option rows with a
+  selection indicator and a "Recommended" tag parsed from the agent's label;
+  free-text answers use an inline field; the question list scrolls under the
+  keyboard instead of overflowing.
+- Fixed the false "Modelo sin respuesta" (`firstTokenTimeout`) while the agent
+  waits on a human: liveness events (`status.update`, `tool.*`,
+  `session.info`) no longer restart the 90 s inactivity watchdog under a
+  pending approval, clarify, sudo or vault card. The budget resumes once the
+  card is answered or withdrawn.
+- Speak the Hermes Agent v7 prompt contract: `approval`, `clarify`, `sudo`,
+  `secret` and `terminal.read` now arrive as JSON-RPC server→client requests
+  and are answered on the same socket with the request id. Batch clarify
+  answers lock through `clarify.lock`, `request.cancel` withdraws the card,
+  and `open_requests` returned by `session.resume` / `session.events.since`
+  re-deliver questions that were waiting across a reconnect. A backend that
+  still emits the legacy `*.request` events keeps working unchanged.
+- A socket drop mid-turn against a gateway without `turn_idempotency_v1` (the
+  official one) now resumes the live session and adopts its inflight turn
+  instead of failing the turn immediately; the turn only degrades to a
+  recoverable failure when the server has no evidence of it.
+- Added a global, privacy-bounded activity projection to the session list for
+  work started from Desktop or another Console. It reconciles active-session
+  and process lists, blocking prompts, reconnects and replay uncertainty without
+  persisting free-form event payloads or acquiring session ownership.
+- Fixed consecutive turns in one Desktop runtime disappearing after a terminal
+  event while preserving ordered Stop evidence against genuinely older roster
+  responses. Unknown runtimes, session-library changes and pull-to-refresh now
+  trigger bounded authoritative reconciliation.
+- Activity reconnect now uses capped backoff and an age ceiling: stale state is
+  presented neutrally and stops claiming current liveness. Session/profile
+  deletion purges the encrypted public journal and lifecycle pauses flush it.
+- Kept ordinary input and edits on the established next-turn FIFO path; this
+  activity display does not add redirect/steer, invent background process
+  events, or claim that queued work is already running.
+- Made the Spanish activity pill fit at 200% text scale and expose one merged
+  accessibility label rather than duplicate row live-region announcements.
+- Approval actions now follow Desktop's exact `choices`, `allow_session` and
+  `allow_permanent` capabilities in both UI and automatic policy paths.
+- Vault unlock, login-save and code requests remain visibly blocked with a safe
+  Desktop-continuation card; Console stores none of their secret payload.
+- Rewrites restore their optimistic transcript rollback whenever submission is
+  not accepted. Queued composer turns are encrypted before clearing, restore in
+  FIFO order, retain rejected heads with bounded retry and expose manual retry.
+- A matching `session.reclaimed` event invalidates only its exact owned binding
+  and performs a cold reattach. Steering automation, `background.complete` and
+  `missing_servers` handling remain deferred to 1.2.11.
+
+- Captured structured `video_generate` results from live Gateway events and
+  durable REST history even when the final assistant prose does not repeat a
+  `MEDIA:` directive. Media cache identity and managed-file downloads are now
+  scoped to the active connection and profile.
+- Rendered generated images and videos inline from Hermes `MEDIA:` responses.
+  Media stays behind an explicit load action, downloads through authenticated
+  bounded streams into app-private cache, validates the file signature and
+  never exposes server paths or signed URLs through chat, copy, speech, link
+  previews or notifications.
+- Mirrored turns started from Desktop, TUI or another Console while they are
+  running, without acquiring session authority or leaving a permanent loader.
+  Durable refresh replaces only the matching live projection and preserves
+  legitimate repeated prompts and replies.
+- Replaced the quadratic JSON-number parser that could block Android's UI thread
+  on large numeric Gateway frames with a grammar-preserving linear scanner.
+- Preserved newest-first chronology when compacted terminal projections and
+  newer durable turns meet during pagination or refresh, including multiple
+  compacted groups whose old identities disappear in the same pass.
+
+- Loaded retained compacted display history through Hermes' existing passive
+  Dashboard API (`include_compacted=true`), accepting both current `messages`
+  and legacy `data` response shapes without merging them. Older servers or
+  rotated lineages that cannot prove full coverage remain explicitly partial.
+- Kept confirmed conversation history visible while refreshing, reconnecting or
+  reopening chats, without reloading a duplicate transcript.
+- Kept an active subagent card mounted when a new human turn is inserted; late
+  completion updates the same stable row once. The card shows only authoritative
+  status, model, duration and aggregate counts, and labels unavailable historical
+  detail instead of inventing an identity, goal, activity or result.
+- Made WebSocket reconnect replay sequence-aware: ordered replay, live-frame
+  fencing, epoch isolation and fail-closed recovery when replay is truncated.
+- Kept malformed replay sequence values from corrupting the monotonic watermark.
+- Queued ordinary Chat and Voice input received during an active turn for the
+  next FIFO turn; these surfaces no longer call `session.redirect` or
+  `session.steer`, and remote queued turns do not fall back to REST.
+- Improved durable recovery of queued turns and safe persisted subagent
+  completion projection.
+- Kept session listing, opening, hydration and pagination passive. Ownership
+  conflicts during explicit mutations fail closed without automatic resume,
+  retry or takeover.
+- Added native `/compress` progress/results and preserved safe persisted
+  subagent history as editorial cards. Public completion events can settle a
+  card without implying current cross-process liveness or exposing internal
+  transport markers in chat or lists.
+- Separated Cron, Kanban and safe persisted subagent history from user chats;
+  Cron delivery failures remain visible while no-op runs and completed Kanban
+  items stay quiet.
+- Preserved conversations already observed by Console when the legacy Gateway
+  returns a later bounded list that omits them, without retaining rows that are
+  explicitly archived or outside the active filter.
+- Kept API-originated conversations — including Console chats — in «Chats»;
+  `api_server` is a transport and is no longer treated as an automation source.
+
 ## 1.2.9 (4964)
 
 - Replaced raw Desktop session-owner rejections with private, actionable UI,
@@ -79,8 +187,8 @@ are not releases.
 - Prepared the project for publication under GPL-3.0-only with a fresh public
   history and preserved upstream notices.
 
-Final signed artifacts are published only after physical-device QA and the
-release gate in [the distribution guide](docs/RELEASE_DISTRIBUTION.md).
+Final signed artifacts are published only after the emulator/Desktop E2E matrix
+and the release gate in [the distribution guide](docs/RELEASE_DISTRIBUTION.md).
 
 ## 1.2.6 (913)
 

@@ -18,6 +18,8 @@ class ChatControlLabels {
   final String? extensions;
   final String delete;
   final String readOnly;
+  final String releaseDesktop;
+  final String releaseUnavailable;
 
   const ChatControlLabels({
     required this.title,
@@ -32,6 +34,8 @@ class ChatControlLabels {
     required this.cron,
     required this.delete,
     required this.readOnly,
+    required this.releaseDesktop,
+    required this.releaseUnavailable,
     this.recovery,
     this.extensions,
   });
@@ -53,6 +57,10 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback? onRecovery;
   final VoidCallback? onExtensions;
   final VoidCallback? onDelete;
+  final bool showReleaseDesktop;
+  final bool releaseDesktopEnabled;
+  final bool releaseInFlight;
+  final VoidCallback? onReleaseDesktop;
 
   const ChatControlSheet({
     required this.labels,
@@ -68,6 +76,10 @@ class ChatControlSheet extends StatelessWidget {
     this.onCron,
     this.onRecovery,
     this.onExtensions,
+    this.showReleaseDesktop = false,
+    this.releaseDesktopEnabled = false,
+    this.releaseInFlight = false,
+    this.onReleaseDesktop,
     super.key,
   });
 
@@ -147,6 +159,24 @@ class ChatControlSheet extends StatelessWidget {
                 title: labels.refresh,
                 onTap: onRefresh,
               ),
+              if (showReleaseDesktop)
+                _ActionRow(
+                  key: const ValueKey('chat-control-release-desktop'),
+                  icon: Icons.desktop_windows_outlined,
+                  title: labels.releaseDesktop,
+                  subtitle: releaseDesktopEnabled
+                      ? null
+                      : labels.releaseUnavailable,
+                  onTap: releaseDesktopEnabled && !releaseInFlight
+                      ? onReleaseDesktop
+                      : null,
+                ),
+              if (releaseInFlight)
+                const Padding(
+                  key: ValueKey('chat-runtime-release-progress'),
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: LinearProgressIndicator(),
+                ),
               if (showCron && onCron != null)
                 _ActionRow(
                   icon: Icons.schedule_outlined,
@@ -204,6 +234,7 @@ class ChatControlSheet extends StatelessWidget {
 class _ActionRow extends StatelessWidget {
   final IconData icon;
   final String title;
+  final String? subtitle;
   final Color? color;
   final VoidCallback? onTap;
 
@@ -211,6 +242,7 @@ class _ActionRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.onTap,
+    this.subtitle,
     this.color,
     super.key,
   });
@@ -236,13 +268,28 @@ class _ActionRow extends StatelessWidget {
                 Icon(icon, size: 20, color: foreground),
                 const SizedBox(width: 14),
                 Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle!,
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 if (enabled) ...[

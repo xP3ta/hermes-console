@@ -166,6 +166,7 @@ final class SessionRepository {
   int? _total;
   bool _exhausted = false;
   Future<SessionLibrarySnapshot>? _nextPageFlight;
+  final Set<String> _deletionTombstones = <String>{};
 
   SessionRepository(this._dashboard, this._gateway) : _ownsDashboard = false;
 
@@ -179,6 +180,32 @@ final class SessionRepository {
 
   SessionLibrarySnapshot get snapshot => _snapshot();
 
+  /// Removes a server-confirmed deletion from the retained bounded snapshot.
+  /// Gateway omissions are otherwise ambiguous and deliberately preserve rows.
+  void evictSessions(Iterable<Session> deleted) {
+    final aliases = <String>{
+      for (final session in deleted) ..._sessionIdentityAliases(session),
+    };
+    if (aliases.isEmpty) return;
+    _deletionTombstones.addAll(aliases);
+    ++_queryEpoch;
+    ++_searchEpoch;
+    if (_sessions.isEmpty) return;
+    final before = _sessions.length;
+    _sessions = List<Session>.unmodifiable(
+      _sessions.where(
+        (session) => _sessionIdentityAliases(
+          session,
+        ).every((alias) => !aliases.contains(alias)),
+      ),
+    );
+    final removed = before - _sessions.length;
+    final total = _total;
+    if (removed > 0 && total != null) {
+      _total = total > removed ? total - removed : 0;
+    }
+  }
+
   Future<SessionLibrarySnapshot> refresh(
     SessionLibraryQuery query, {
     Iterable<String> keepIds = const <String>[],
@@ -186,6 +213,7 @@ final class SessionRepository {
     final previousFingerprint = _query?.fingerprint;
     final previousSource = _source;
     final epoch = ++_queryEpoch;
+    final deletionTombstones = Set<String>.of(_deletionTombstones);
     final fingerprint = query.fingerprint;
     final retainedIds = Set<String>.unmodifiable(keepIds);
     _query = query;
@@ -194,6 +222,7 @@ final class SessionRepository {
       if (!_isCurrent(epoch, fingerprint)) return _snapshot();
       if (previousFingerprint != fingerprint) _sessions = const [];
       _applyPage(page, replace: true, epoch: epoch, keepIds: retainedIds);
+      _deletionTombstones.removeAll(deletionTombstones);
       return _snapshot();
     } catch (error) {
       if (!_isCurrent(epoch, fingerprint)) return _snapshot();
@@ -204,22 +233,48 @@ final class SessionRepository {
           previousSource != SessionLibrarySource.gateway) {
         rethrow;
       }
-      final fallback = await _gateway.getSessions(
+      final rawFallback = await _gateway.getSessions(
         includeChildren: query.includeChildren,
+        profile: query.profile,
       );
       if (!_isCurrent(epoch, fingerprint)) return _snapshot();
+      final fallback = rawFallback
+          .where((row) => !_matchesAliases(row, deletionTombstones))
+          .toList(growable: false);
       if (previousFingerprint != fingerprint) _sessions = const [];
-      _sessions = List<Session>.unmodifiable(
-        _mergeSessionPage(
-          _sessions,
-          _filterFallback(fallback, query),
-          retainedIds,
-        ),
+      final visibleFallback = _filterFallback(fallback, query).toList();
+      final visibleLineages = {
+        for (final row in visibleFallback) row.logicalId,
+      };
+      final explicitlyExcludedLineages = {
+        for (final row in fallback)
+          if (!visibleLineages.contains(row.logicalId)) row.logicalId,
+      };
+      final previousForMerge = _sessions
+          .where((row) => !explicitlyExcludedLineages.contains(row.logicalId))
+          .toList(growable: false);
+      final fallbackRetainedIds =
+          sameScope && previousSource == SessionLibrarySource.gateway
+          ? <String>{
+              ...retainedIds,
+              for (final row in previousForMerge) row.id,
+              for (final row in previousForMerge) row.logicalId,
+            }
+          : retainedIds;
+      final merged = _mergeSessionPage(
+        previousForMerge,
+        visibleFallback,
+        fallbackRetainedIds,
       );
+      if (query.order == SessionLibraryOrder.recent) {
+        merged.sort(compareSessionsByRecentActivity);
+      }
+      _sessions = List<Session>.unmodifiable(merged);
       _source = SessionLibrarySource.gateway;
       _nextOffset = _sessions.length;
       _total = null;
       _exhausted = false;
+      _deletionTombstones.removeAll(deletionTombstones);
       return _snapshot();
     }
   }
@@ -254,6 +309,7 @@ final class SessionRepository {
     SessionLibraryQuery? libraryQuery,
   }) async {
     final epoch = ++_searchEpoch;
+    final deletionTombstones = Set<String>.of(_deletionTombstones);
     final query = text.trim();
     final scope = libraryQuery ?? SessionLibraryQuery(profile: profile?.trim());
     if (query.isEmpty) {
@@ -276,7 +332,9 @@ final class SessionRepository {
         final scoped = parsed == null
             ? null
             : _captureDashboardOwner(parsed, scope);
-        if (scoped != null && _matchesSearchScope(scoped, scope)) {
+        if (scoped != null &&
+            !_matchesAliases(scoped, deletionTombstones) &&
+            _matchesSearchScope(scoped, scope)) {
           byLogicalId.putIfAbsent(scoped.logicalId, () => scoped);
         }
       }
@@ -411,7 +469,13 @@ final class SessionRepository {
             for (final row in _sessions) row.logicalId,
           };
     _sessions = List<Session>.unmodifiable(
-      _mergeSessionPage(_sessions, page.sessions, retained),
+      _mergeSessionPage(
+        _sessions,
+        page.sessions.where(
+          (row) => !_matchesAliases(row, _deletionTombstones),
+        ),
+        retained,
+      ),
     );
     _source = SessionLibrarySource.dashboard;
     _total = page.total;
@@ -422,6 +486,15 @@ final class SessionRepository {
         (page.total != null && _nextOffset >= page.total!) ||
         (page.rawCount > 0 && page.rawCount < page.limit);
   }
+
+  static Set<String> _sessionIdentityAliases(Session session) => {
+    session.id,
+    session.logicalId,
+  };
+
+  static bool _matchesAliases(Session session, Set<String> aliases) =>
+      aliases.isNotEmpty &&
+      _sessionIdentityAliases(session).any(aliases.contains);
 
   static Session _canonicalSessionWinner(Session current, Session candidate) {
     if (current.id == candidate.id &&

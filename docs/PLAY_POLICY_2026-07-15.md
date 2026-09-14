@@ -3,7 +3,7 @@
 Fuente oficial:
 <https://support.google.com/googleplay/android-developer/answer/17134731>
 
-Revisado el 01-09-2026 para el candidato fuente `1.2.9`. La inspección del AAB
+Revisado el 03-09-2026 para el candidato fuente `1.2.10`. La inspección del AAB
 firmado final continúa pendiente; este documento no la da por realizada.
 
 | Cambio anunciado | ¿Afecta? | Acción para Hermes Console |

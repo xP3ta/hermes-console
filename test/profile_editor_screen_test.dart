@@ -16,6 +16,7 @@ import 'package:hermes_android/core/services/profile_pet_service.dart';
 import 'package:hermes_android/core/services/profile_pet_visual_adapter.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 
 const _imageDataUri =
@@ -259,6 +260,8 @@ Future<void> _pumpEditor(
   await tester.pumpWidget(
     MaterialApp(
       locale: const Locale('es'),
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => TextButton(
@@ -711,7 +714,7 @@ void main() {
     await tester.tap(find.byType(BackButton));
     await _pumpUi(tester);
 
-    expect(find.text('Discard changes?'), findsOneWidget);
+    expect(find.text('¿Descartar cambios?'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('profile-editor-keep-editing')));
     await _pumpUi(tester);
     expect(find.byType(ProfileEditorScreen), findsOneWidget);
@@ -738,7 +741,7 @@ void main() {
     );
     await tester.pump();
     expect(assets.savedMeta, hasLength(1));
-    expect(find.text('Saving…'), findsOneWidget);
+    expect(find.text('Guardando…'), findsOneWidget);
 
     gate.complete();
     await tester.pumpAndSettle();

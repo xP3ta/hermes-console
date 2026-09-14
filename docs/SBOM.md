@@ -74,11 +74,16 @@ The short `generate.sh` convenience command is intended for source inventories;
 do not pass a variant-specific artifact to it because it generates both
 variants.
 
-The release workflow writes each split APK inventory to a separate directory so
-no ABI overwrites another. It archives those inventories with `SHA256SUMS` and
-signing-certificate reports. Checked-in SBOMs describe source only; generated
-artifact evidence remains a workflow artifact until the owner approves a
-release.
+The release lane writes each split APK inventory to a separate local/private
+directory so no ABI overwrites another. It archives those inventories with
+`SHA256SUMS` and signing-certificate reports. Checked-in SBOMs describe source
+only; generated artifact evidence never uses a GitHub Actions artifact before
+publication approval.
+
+Packaged native binaries are resolved only through the reviewed
+`tool/sbom/packaged-license-catalog.json`. Its ABI-specific path patterns bind a
+component and SPDX expression to a repository evidence file. Unknown or
+ambiguous paths remain `NOASSERTION`; there is no global native-binary waiver.
 
 ## Release review gate
 

@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
-    show Uint8List, debugPrint, visibleForTesting;
+    show Uint8List, debugPrint, immutable, visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import '../utils/transport_privacy.dart';
@@ -68,6 +68,47 @@ enum BridgeErrorKind {
 
   /// Sin clasificar.
   unknown,
+}
+
+enum _BridgeFailureContext { generic, chatSimple }
+
+enum _ChatSimpleFailure { emptyResponse, toolProtocol, unknown }
+
+enum BridgeProvisionFailure {
+  none,
+  invalidUrl,
+  missingApiKey,
+  timeout,
+  unreachable,
+  tls,
+  authRejected,
+  provisionDisabled,
+  unexpectedHttp,
+  invalidResponse,
+  unexpectedResponse,
+  secureStorage,
+}
+
+@immutable
+class BridgeProvisionResult {
+  final String? token;
+  final BridgeProvisionFailure failure;
+  final int? httpStatus;
+  final String safeDetail;
+
+  const BridgeProvisionResult.success([this.token])
+    : failure = BridgeProvisionFailure.none,
+      httpStatus = null,
+      safeDetail = '';
+
+  const BridgeProvisionResult.failure(
+    this.failure, {
+    this.httpStatus,
+    this.safeDetail = '',
+  }) : token = null;
+
+  bool get ok =>
+      failure == BridgeProvisionFailure.none && token?.isNotEmpty == true;
 }
 
 /// Clasifica un status HTTP en una [BridgeErrorKind].
@@ -396,10 +437,10 @@ class BridgeClient {
         BridgeReach.tls,
         detail: 'Error TLS al conectar con el bridge: ${e.message}.',
       );
-    } catch (e) {
-      return BridgeHealth(
+    } catch (_) {
+      return const BridgeHealth(
         BridgeReach.badResponse,
-        detail: 'Fallo al sondear el bridge: $e.',
+        detail: 'El bridge devolvió una respuesta no válida.',
       );
     }
   }
@@ -433,10 +474,8 @@ class BridgeClient {
       }
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       return BridgeCapabilities.fromJson(data);
-    } catch (e) {
-      debugPrint(
-        '[bridge] excepción silenciada (se continúa sin propagar): $e',
-      );
+    } catch (_) {
+      debugPrint('[bridge] capabilities no devolvió JSON válido');
       return BridgeCapabilities.offline;
     }
   }
@@ -455,6 +494,20 @@ class BridgeClient {
     String baseUrl,
     String gatewayKey, {
     http.Client? httpClient,
+  }) async => (await provisionDetailed(
+    baseUrl,
+    gatewayKey,
+    httpClient: httpClient,
+  )).token;
+
+  /// Variante tipada para reparación. El resultado nunca incluye URL, query,
+  /// body, clave ni token en el detalle seguro.
+  static Future<BridgeProvisionResult> provisionDetailed(
+    String baseUrl,
+    String gatewayKey, {
+    http.Client? httpClient,
+    Duration timeout = const Duration(seconds: 8),
+    bool allowEmptyGatewayKey = false,
   }) async {
     late final String base;
     try {
@@ -464,7 +517,14 @@ class BridgeClient {
             : baseUrl,
       );
     } on ArgumentError {
-      return null;
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.invalidUrl,
+      );
+    }
+    if (gatewayKey.trim().isEmpty && !allowEmptyGatewayKey) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.missingApiKey,
+      );
     }
     final client = httpClient ?? http.Client();
     try {
@@ -476,14 +536,34 @@ class BridgeClient {
               'Content-Type': 'application/json',
             },
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(timeout);
       if (res.statusCode == 200) {
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        final tok = data['token']?.toString().trim();
-        if (tok != null && tok.isNotEmpty) return tok;
+        try {
+          final data = jsonDecode(res.body) as Map<String, dynamic>;
+          final tok = data['token']?.toString().trim();
+          if (tok != null && tok.isNotEmpty) {
+            return BridgeProvisionResult.success(tok);
+          }
+        } catch (_) {}
+        return const BridgeProvisionResult.failure(
+          BridgeProvisionFailure.invalidResponse,
+        );
       }
-
-      if (gatewayKey.trim().isEmpty) return null;
+      if (res.statusCode == 401) {
+        return const BridgeProvisionResult.failure(
+          BridgeProvisionFailure.authRejected,
+          httpStatus: 401,
+        );
+      }
+      if (res.statusCode != 403 && res.statusCode != 404) {
+        return BridgeProvisionResult.failure(
+          BridgeProvisionFailure.unexpectedHttp,
+          httpStatus: res.statusCode,
+        );
+      }
+      final rejected = res.statusCode == 403
+          ? BridgeProvisionFailure.provisionDisabled
+          : BridgeProvisionFailure.unexpectedHttp;
       final caps = await client
           .get(
             Uri.parse('$base/bridge/capabilities'),
@@ -492,9 +572,21 @@ class BridgeClient {
               'Accept': 'application/json',
             },
           )
-          .timeout(const Duration(seconds: 8));
-      if (caps.statusCode != 200) return null;
-      final data = jsonDecode(caps.body) as Map<String, dynamic>;
+          .timeout(timeout);
+      if (caps.statusCode != 200) {
+        return BridgeProvisionResult.failure(
+          rejected,
+          httpStatus: res.statusCode,
+        );
+      }
+      late final Map<String, dynamic> data;
+      try {
+        data = jsonDecode(caps.body) as Map<String, dynamic>;
+      } catch (_) {
+        return const BridgeProvisionResult.failure(
+          BridgeProvisionFailure.invalidResponse,
+        );
+      }
       final scopes = data['scopes'];
       final operations = data['operations'];
       final version = data['version']?.toString().trim() ?? '';
@@ -503,12 +595,25 @@ class BridgeClient {
           scopes is! List ||
           operations is! Map ||
           version.isEmpty) {
-        return null;
+        return const BridgeProvisionResult.failure(
+          BridgeProvisionFailure.invalidResponse,
+        );
       }
-      return gatewayKey.trim();
-    } catch (e) {
-      debugPrint('[bridge] excepción silenciada (se devuelve null): $e');
-      return null;
+      return BridgeProvisionResult.success(gatewayKey.trim());
+    } on TimeoutException {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.timeout,
+      );
+    } on HandshakeException {
+      return const BridgeProvisionResult.failure(BridgeProvisionFailure.tls);
+    } on SocketException {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.unreachable,
+      );
+    } catch (_) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.unexpectedResponse,
+      );
     } finally {
       if (httpClient == null) client.close();
     }
@@ -541,8 +646,8 @@ class BridgeClient {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final v = data['version']?.toString();
       return (v != null && v.isNotEmpty) ? v : null;
-    } catch (e) {
-      debugPrint('[bridge] excepción silenciada (se devuelve null): $e');
+    } catch (_) {
+      debugPrint('[bridge] health no devolvió JSON válido');
       return null;
     } finally {
       if (httpClient == null) client.close();
@@ -673,7 +778,7 @@ class BridgeClient {
           }),
         )
         .timeout(timeout);
-    final data = _decode(res);
+    final data = _decode(res, failureContext: _BridgeFailureContext.chatSimple);
     return (data['response'] ?? '').toString();
   }
 
@@ -703,15 +808,13 @@ class BridgeClient {
       final body = await res.stream.bytesToString();
       final kind = bridgeErrorKindForStatus(res.statusCode);
       var code = 'http_${res.statusCode}';
-      var msg = body.isNotEmpty ? body : 'HTTP ${res.statusCode}';
+      final msg = 'HTTP ${res.statusCode}';
       try {
-        final j = jsonDecode(body);
-        if (j is Map && j['error'] is Map) {
-          code = (j['error']['code'] ?? code).toString();
-          msg = (j['error']['message'] ?? msg).toString();
-        }
-      } catch (e) {
-        debugPrint('[bridge] excepción silenciada (se ignora sin más): $e');
+        // Parse only to validate framing; response fields are intentionally not
+        // reflected into exceptions because the body may contain private data.
+        jsonDecode(body);
+      } catch (_) {
+        debugPrint('[bridge] respuesta de error no JSON (${res.statusCode})');
       }
       final diag = _diagnostic(
         kind: kind,
@@ -739,15 +842,16 @@ class BridgeClient {
       Map<String, dynamic> obj;
       try {
         obj = jsonDecode(payload) as Map<String, dynamic>;
-      } catch (e) {
-        debugPrint(
-          '[bridge] excepción silenciada (se omite este elemento): $e',
-        );
+      } catch (_) {
+        debugPrint('[bridge] elemento SSE no JSON omitido');
         continue; // línea SSE no-JSON: ignorar
       }
       final err = obj['error'];
       if (err != null) {
-        throw BridgeException('chat_stream_failed', err.toString());
+        throw const BridgeException(
+          'chat_stream_failed',
+          'El stream del bridge informó un error.',
+        );
       }
       final delta = obj['delta'];
       if (delta is String && delta.isNotEmpty) yield delta;
@@ -1034,7 +1138,10 @@ class BridgeClient {
     return _decode(res);
   }
 
-  Map<String, dynamic> _decode(http.Response res) {
+  Map<String, dynamic> _decode(
+    http.Response res, {
+    _BridgeFailureContext failureContext = _BridgeFailureContext.generic,
+  }) {
     final status = res.statusCode;
     if (status < 200 || status >= 300) {
       final kind = bridgeErrorKindForStatus(status);
@@ -1046,36 +1153,88 @@ class BridgeClient {
         body: res.body,
       );
       _emit(diag);
-      // Intenta extraer el error JSON del servidor; si no es JSON (p.ej. 404
-      // devuelve HTML), genera un mensaje legible en vez de un FormatException.
-      try {
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        throw BridgeException(
-          (data['error'] ?? 'http_$status').toString(),
-          (data['message'] ?? 'HTTP $status').toString(),
-          kind: kind,
-          status: status,
-          diagnostic: diag,
-        );
-      } on BridgeException {
-        rethrow;
-      } catch (e) {
-        debugPrint(
-          '[bridge] excepción silenciada (se agrega una pista al mensaje de error): $e',
-        );
-        final hint = status == 404
-            ? ' — endpoint no disponible en esta versión del bridge'
-            : '';
-        throw BridgeException(
-          'http_$status',
-          'HTTP $status$hint',
-          kind: kind,
-          status: status,
-          diagnostic: diag,
-        );
+      final hint = status == 404
+          ? ' — endpoint no disponible en esta versión del bridge'
+          : '';
+      if (failureContext == _BridgeFailureContext.chatSimple) {
+        final failure = _classifyChatSimpleFailure(res.body);
+        if (failure != _ChatSimpleFailure.unknown) {
+          final code = failure == _ChatSimpleFailure.emptyResponse
+              ? 'chat_simple_empty_response'
+              : 'chat_simple_tool_protocol';
+          final message = failure == _ChatSimpleFailure.emptyResponse
+              ? 'el modelo no devolvió texto. Reintenta o elige otro modelo.'
+              : 'El modelo intentó usar herramientas en modo simple. Usa el modo agente o elige otro modelo.';
+          throw BridgeException(
+            code,
+            message,
+            kind: kind,
+            status: status,
+            diagnostic: diag,
+          );
+        }
       }
+      throw BridgeException(
+        'http_$status',
+        'HTTP $status$hint',
+        kind: kind,
+        status: status,
+        diagnostic: diag,
+      );
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    try {
+      final decoded = jsonDecode(res.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {
+      // Converted below to a body-free typed error.
+    }
+    final diag = _diagnostic(
+      kind: BridgeErrorKind.unknown,
+      status: status,
+      method: res.request?.method,
+      url: res.request?.url.toString(),
+    );
+    _emit(diag);
+    throw BridgeException(
+      'invalid_response',
+      'El bridge devolvió una respuesta no válida.',
+      status: status,
+      diagnostic: diag,
+    );
+  }
+
+  _ChatSimpleFailure _classifyChatSimpleFailure(String body) {
+    Object? decoded;
+    try {
+      decoded = jsonDecode(body);
+    } catch (_) {
+      return _ChatSimpleFailure.unknown;
+    }
+    if (decoded is! Map) return _ChatSimpleFailure.unknown;
+    final code = decoded['error'];
+    if (code == 'chat_simple_empty_response') {
+      return _ChatSimpleFailure.emptyResponse;
+    }
+    if (code == 'chat_simple_tool_protocol') {
+      return _ChatSimpleFailure.toolProtocol;
+    }
+    if (code != 'chat_simple_failed') return _ChatSimpleFailure.unknown;
+
+    // Legacy bridges used one closed code for both branches. Inspect only for
+    // fixed protocol markers and map to local copy; server text is never shown.
+    final legacy = decoded['message'];
+    if (legacy is! String) return _ChatSimpleFailure.unknown;
+    final normalized = legacy.toLowerCase();
+    if (normalized.contains('herramient') ||
+        normalized.contains('tool_call') ||
+        normalized.contains('tool call')) {
+      return _ChatSimpleFailure.toolProtocol;
+    }
+    if (normalized.contains('no devolvió texto') ||
+        normalized.contains('empty response')) {
+      return _ChatSimpleFailure.emptyResponse;
+    }
+    return _ChatSimpleFailure.unknown;
   }
 
   // --- Diagnóstico de errores HTTP (TASK-016) -------------------------------
@@ -1098,52 +1257,36 @@ class BridgeClient {
     }
   }
 
-  /// Resumen de una línea, SANITIZADO, de un fallo HTTP. Incluye categoría,
-  /// status, método+endpoint (con la URL redactada) y un trozo del body. Nunca
-  /// incluye cabeceras (donde vive `Authorization: Bearer …`).
+  /// Resumen de una línea de un fallo HTTP. Incluye solo categoría, status y
+  /// método+endpoint. Nunca serializa query, cabeceras ni body.
   static String _diagnostic({
     required BridgeErrorKind kind,
     required int status,
     String? method,
     String? url,
+    // Kept as an ignored named parameter for source compatibility with internal
+    // callers while enforcing a body-free diagnostic boundary.
     String? body,
   }) {
     final where = url == null
         ? ''
         : ' ${method ?? 'HTTP'} ${redactUrlForLog(url)}';
-    final b = (body == null || body.trim().isEmpty)
-        ? ''
-        : ' body=${truncateForLog(body)}';
-    return '[bridge] ${kind.name} $status:$where$b';
+    return '[bridge] ${kind.name} $status:$where';
   }
 
-  /// Redacta una URL para logs: quita el userinfo (`user:pass@`) y enmascara
-  /// cualquier query sensible (token/key/secret/password/auth/sig/cookie).
+  /// Elimina userinfo y la query completa antes de registrar una URL.
   @visibleForTesting
   static String redactUrlForLog(String url) {
     try {
       final u = Uri.parse(url);
-      final qp = <String, String>{};
-      u.queryParameters.forEach((k, v) {
-        final lk = k.toLowerCase();
-        final sensitive =
-            lk.contains('token') ||
-            lk.contains('key') ||
-            lk.contains('secret') ||
-            lk.contains('password') ||
-            lk.contains('passwd') ||
-            lk.contains('auth') ||
-            lk.contains('sig') ||
-            lk.contains('cookie');
-        qp[k] = sensitive ? 'REDACTED' : v;
-      });
-      return u
-          .replace(userInfo: '', queryParameters: qp.isEmpty ? null : qp)
-          .toString();
-    } catch (e) {
-      debugPrint(
-        '[bridge] excepción silenciada (se continúa sin propagar): $e',
-      );
+      return Uri(
+        scheme: u.scheme,
+        host: u.host,
+        port: u.hasPort ? u.port : null,
+        path: u.path,
+      ).toString();
+    } catch (_) {
+      debugPrint('[bridge] URL diagnóstica no válida');
       return '<url>';
     }
   }

@@ -9,7 +9,7 @@ Read `docs/PROJECT_BRIEF.md`, `docs/SECURITY_POLICY.md` and
   a GitHub Release, or upload it as a public workflow artifact.
 - GitHub Releases and Obtainium accept only signed `full` release APKs. Never
   publish `play`, `qa`, `debug` or `profile` artifacts there.
-- The `qa` flavor is internal physical-test evidence and must never be public.
+- The `qa` flavor is internal emulator-test evidence and must never be public.
 - Never commit or expose `key.properties`, keystores, passwords, tokens,
   mappings, diagnostic bundles, pairing payloads or private server details.
 - Build outputs stay ignored. A request to build does not authorize upload,

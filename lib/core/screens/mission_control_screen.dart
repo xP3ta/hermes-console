@@ -2,9 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../models/agent_profile.dart';
+import '../models/bot_mode_v13.dart';
+import '../models/hosted_groups.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../models/mission_room.dart';
@@ -25,7 +29,10 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
+import '../widgets/bot_mode_dock.dart';
+import '../widgets/chat_surface_coordinator.dart';
 import '../widgets/mission_profile_avatar.dart';
+import '../widgets/room_avatar_stack.dart';
 import 'bot_create_screen.dart';
 import 'chat_screen.dart';
 import 'cron_screen.dart';
@@ -43,6 +50,24 @@ import 'tasks_screen.dart';
 /// sends the user to the existing authoritative surfaces for chat, approvals,
 /// profile management and task mutations.
 enum MissionControlOwnedSurface { bot, room }
+
+/// Bot Chat remains a history destination in 1.2.10, but its write contract is
+/// deferred. Reusing ChatScreen with an isolated read-only connection preserves
+/// canonical history without exposing composer, dictation or voice submission.
+@visibleForTesting
+ChatScreen buildReadOnlyBotChatDestination({
+  required SavedConnection connection,
+  required Session session,
+  required String? initialStoredSessionId,
+  required AgentProfile profile,
+  MissionProfileAvatarCache? avatarCache,
+}) => ChatScreen(
+  connection: connection.copyWith(readOnly: true),
+  session: session,
+  initialStoredSessionId: initialStoredSessionId,
+  missionBotProfile: profile,
+  missionAvatarCache: avatarCache,
+);
 
 final class MissionControlOpenTarget {
   final MissionControlOwnedSurface surface;
@@ -150,6 +175,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   bool _disposed = false;
   bool _initialOpenDispatched = false;
   _MissionDestination _destination = _MissionDestination.bots;
+  late final ChatSurfaceCoordinator _surfaceCoordinator;
+  final Map<WorkItem, int> _workItemGenerations = Map.identity();
+  final Map<String, WorkDestination> _validatedWorkDestinations = {};
 
   MissionOrganization? get _selectedOrganization {
     final id = _selectedOrganizationId;
@@ -163,6 +191,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void initState() {
     super.initState();
+    _surfaceCoordinator = ChatSurfaceCoordinator(routeOwner: widget);
     _dataSource =
         widget.dataSource ??
         MissionControlRepository.forConnection(widget.connection);
@@ -229,11 +258,13 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _profileAvatarCache?.clear();
     unawaited(_ownedProfileAssetsGateway?.close());
     if (widget.dataSource == null) _dataSource.close();
+    _surfaceCoordinator.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _surfaceCoordinator.handleLifecycle(state);
     switch (state) {
       case AppLifecycleState.resumed:
         if (!_lifecyclePaused) return;
@@ -375,6 +406,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final kanbanFailed =
         incoming.failures.containsKey('kanban') &&
         incoming.kanbanCapability == MissionCapabilityState.unavailable;
+    final hostedGroupsFailed =
+        incoming.failures.containsKey('hostedGroups') &&
+        incoming.hostedGroupsCapability == MissionCapabilityState.unavailable;
     return MissionBackendSnapshot(
       profiles: profilesFailed ? previous.profiles : incoming.profiles,
       sessions: sessionsFailed ? previous.sessions : incoming.sessions,
@@ -382,6 +416,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       profilesCapability: incoming.profilesCapability,
       sessionsCapability: incoming.sessionsCapability,
       kanbanCapability: incoming.kanbanCapability,
+      hostedGroups: hostedGroupsFailed
+          ? previous.hostedGroups
+          : incoming.hostedGroups,
+      hostedGroupsCapability: incoming.hostedGroupsCapability,
       failures: incoming.failures,
       loadedAt: incoming.loadedAt,
     );
@@ -553,6 +591,308 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         organization: _selectedOrganization,
       );
 
+  RouteCapabilities _workCapabilities(MissionBackendSnapshot snapshot) {
+    final availability = <OfficialCapability, CapabilityAvailability>{};
+    final kanbanRead = switch (snapshot.kanbanCapability) {
+      MissionCapabilityState.available => CapabilityAvailability.available,
+      MissionCapabilityState.unavailable
+          when snapshot.failures.containsKey('kanban') =>
+        CapabilityAvailability.stale,
+      MissionCapabilityState.unavailable => CapabilityAvailability.offline,
+      MissionCapabilityState.unsupported => CapabilityAvailability.unsupported,
+    };
+    availability[OfficialCapability.kanbanRead] = kanbanRead;
+    availability[OfficialCapability.kanbanTaskCrud] =
+        !widget.connection.readOnly &&
+            kanbanRead == CapabilityAvailability.available
+        ? CapabilityAvailability.available
+        : CapabilityAvailability.readOnly;
+    availability[OfficialCapability.kanbanBoardCrud] =
+        availability[OfficialCapability.kanbanTaskCrud]!;
+    availability[OfficialCapability.approvalRespond] =
+        widget.connection.readOnly
+        ? CapabilityAvailability.readOnly
+        : CapabilityAvailability.available;
+    return RouteCapabilities(
+      connectionId: widget.connection.id,
+      generation: _loadGeneration,
+      availabilityByCapability: availability,
+    );
+  }
+
+  CanonicalHandoffRoute? _approvalRoute(
+    MissionApproval approval,
+    int generation,
+  ) {
+    final requestId = approval.requestId;
+    if (requestId == null || requestId.isEmpty) return null;
+    final live = _activeChats?.of(
+      widget.connection.id,
+      approval.sessionId,
+      profile: approval.profileName,
+    );
+    final pending = live?.pendingApproval;
+    final pendingRequest =
+        pending?['request_id'] ?? pending?['approval_id'] ?? pending?['id'];
+    if (live == null || pendingRequest != requestId) return null;
+    return CanonicalHandoffRoute(
+      connectionId: widget.connection.id,
+      profile: approval.profileName,
+      runtimeSessionId: approval.sessionId,
+      requestId: requestId,
+      kind: HandoffKind.approval,
+      sourceGeneration: generation,
+    );
+  }
+
+  List<WorkItem> _projectWorkItems(
+    MissionBackendSnapshot snapshot,
+    MissionProjection mission,
+  ) {
+    final generation = _loadGeneration;
+    final capabilities = _workCapabilities(snapshot);
+    final items = <WorkItem>[];
+    final currentKeys = <String>{};
+    for (final approval in mission.approvals) {
+      final route = _approvalRoute(approval, generation);
+      final source = ApprovalSourcePrivate(
+        approval: approval,
+        candidateRoute: route,
+        sourceGeneration: generation,
+      );
+      final view = projectApprovalPublic(source);
+      final stableKey =
+          'approval:${approval.profileName}:${approval.sessionId}:${approval.requestId}';
+      final draft = WorkItem.approval(stableKey: stableKey, view: view);
+      final destination = resolveWorkDestination(
+        item: draft,
+        privateSource: source,
+        snapshot: snapshot,
+        mission: mission,
+        capabilities: capabilities,
+        liveHandoffs: route == null ? const [] : [route],
+        previouslyValidatedDestination: _validatedWorkDestinations[stableKey],
+      );
+      if (destination == null) continue;
+      final item = WorkItem.approval(
+        stableKey: stableKey,
+        view: view,
+        destination: destination,
+      );
+      items.add(item);
+      currentKeys.add(stableKey);
+      _validatedWorkDestinations[stableKey] = destination;
+      _workItemGenerations[item] = generation;
+    }
+    final boardId = snapshot.board == null ? null : snapshot.currentBoardId;
+    if (boardId != null && boardId.trim().isNotEmpty) {
+      for (final task in snapshot.tasks) {
+        if (!const {
+          'ready',
+          'running',
+          'blocked',
+          'review',
+        }.contains(task.status)) {
+          continue;
+        }
+        final stableKey = 'task:$boardId:${task.id}';
+        final attention = switch (task.status) {
+          'blocked' => WorkAttention.blocked,
+          'review' => WorkAttention.review,
+          'running' => WorkAttention.running,
+          _ => WorkAttention.ready,
+        };
+        final source = BoardTaskSourcePrivate(
+          connectionId: widget.connection.id,
+          boardId: boardId,
+          taskId: task.id,
+          sourceGeneration: generation,
+        );
+        final draft = WorkItem.task(
+          stableKey: stableKey,
+          title: task.title,
+          decisionCopy: MissionControlCopy.of(context).taskStatus(task.status),
+          attention: attention,
+          taskRef: BoardTaskRef(boardId: boardId, taskId: task.id),
+        );
+        final destination = resolveWorkDestination(
+          item: draft,
+          privateSource: source,
+          snapshot: snapshot,
+          mission: mission,
+          capabilities: capabilities,
+          liveHandoffs: const [],
+          previouslyValidatedDestination: _validatedWorkDestinations[stableKey],
+        );
+        if (destination == null) continue;
+        final item = WorkItem.task(
+          stableKey: stableKey,
+          title: draft.title,
+          decisionCopy: draft.decisionCopy,
+          attention: attention,
+          taskRef: draft.taskRef!,
+          destination: destination,
+        );
+        items.add(item);
+        currentKeys.add(stableKey);
+        _validatedWorkDestinations[stableKey] = destination;
+        _workItemGenerations[item] = generation;
+      }
+      final boardKey = 'board:$boardId';
+      final boardSource = BoardSourcePrivate(
+        connectionId: widget.connection.id,
+        boardId: boardId,
+        sourceGeneration: generation,
+      );
+      final boardDraft = WorkItem.board(
+        stableKey: boardKey,
+        title: MissionControlCopy.of(context).openKanban,
+        decisionCopy: MissionControlCopy.of(context).work,
+        attention: WorkAttention.ready,
+        boardRef: BoardRef(boardId: boardId),
+      );
+      final boardDestination = resolveWorkDestination(
+        item: boardDraft,
+        privateSource: boardSource,
+        snapshot: snapshot,
+        mission: mission,
+        capabilities: capabilities,
+        liveHandoffs: const [],
+        previouslyValidatedDestination: _validatedWorkDestinations[boardKey],
+      );
+      if (boardDestination != null) {
+        final item = WorkItem.board(
+          stableKey: boardKey,
+          title: boardDraft.title,
+          decisionCopy: boardDraft.decisionCopy,
+          attention: WorkAttention.ready,
+          boardRef: boardDraft.boardRef!,
+          destination: boardDestination,
+        );
+        items.add(item);
+        currentKeys.add(boardKey);
+        _validatedWorkDestinations[boardKey] = boardDestination;
+        _workItemGenerations[item] = generation;
+      }
+    }
+    _validatedWorkDestinations.removeWhere(
+      (key, _) => !currentKeys.contains(key),
+    );
+    _workItemGenerations.removeWhere(
+      (item, itemGeneration) =>
+          itemGeneration != generation || !items.contains(item),
+    );
+    return List.unmodifiable(items);
+  }
+
+  Future<void> _openWorkItem(WorkItem item, WorkDestination destination) async {
+    if (!identical(item.destination, destination) ||
+        _workItemGenerations[item] != _loadGeneration) {
+      return;
+    }
+    switch (destination) {
+      case ApprovalDestination():
+        await _openApprovalWorkDestination(destination);
+      case TaskDestination():
+        final snapshot = _snapshot;
+        if (snapshot == null ||
+            snapshot.currentBoardId != destination.boardId ||
+            !snapshot.tasks.any((task) => task.id == destination.taskId)) {
+          return;
+        }
+        final connection = destination.mode == WorkRouteMode.read
+            ? widget.connection.copyWith(readOnly: true)
+            : widget.connection;
+        final observer = widget.roomTaskOpenObserver;
+        if (observer != null) {
+          observer(
+            MissionRoomTaskLink(
+              boardId: destination.boardId,
+              taskId: destination.taskId,
+            ),
+          );
+          return;
+        }
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => TasksScreen(
+              connection: connection,
+              initialBoard: destination.boardId,
+              initialTaskId: destination.taskId,
+            ),
+          ),
+        );
+      case BoardDestination():
+        if (_snapshot?.currentBoardId != destination.boardId) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => TasksScreen(
+              connection: destination.mode == WorkRouteMode.read
+                  ? widget.connection.copyWith(readOnly: true)
+                  : widget.connection,
+              initialBoard: destination.boardId,
+            ),
+          ),
+        );
+    }
+  }
+
+  Future<void> _openApprovalWorkDestination(
+    ApprovalDestination destination,
+  ) async {
+    final route = destination.route;
+    if (route.sourceGeneration != _loadGeneration ||
+        route.connectionId != widget.connection.id) {
+      return;
+    }
+    if (destination.mode == WorkRouteMode.read) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(Strings.of(context).missionApprovalPending),
+          content: Text(Strings.of(context).missionApprovalDecisionHint),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final live = _activeChats?.of(
+      route.connectionId,
+      route.runtimeSessionId,
+      profile: route.profile,
+    );
+    final pending = live?.pendingApproval;
+    final pendingRequest =
+        pending?['request_id'] ?? pending?['approval_id'] ?? pending?['id'];
+    if (live == null || pendingRequest != route.requestId) return;
+    if (live.notificationSurface == NotificationChatSurface.room) {
+      final roomId = live.notificationRoomId;
+      for (final room in _rooms) {
+        if (room.id == roomId) {
+          await _openRoomChat(room);
+          return;
+        }
+      }
+      return;
+    }
+    if (live.notificationSurface == NotificationChatSurface.bot) {
+      final snapshot = _snapshot;
+      if (snapshot == null) return;
+      for (final agent in _projection(snapshot).agents) {
+        if (agent.profile.name == route.profile) {
+          setState(() => _destination = _MissionDestination.bots);
+          await _openChat(agent);
+          return;
+        }
+      }
+    }
+  }
+
   Future<void> _saveBotRosterMeta(
     MissionAgent agent, {
     bool? hidden,
@@ -660,10 +1000,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     });
   }
 
-  /// Abre el Bot Chat del agente. [kickoffPrompt] reproduce el nacimiento del
-  /// chat canónico de Bot Mode: el bot se presenta solo en su primer turno
-  /// (Desktop envía el mismo texto al crear el agente).
-  Future<void> _openChat(MissionAgent agent, {String? kickoffPrompt}) async {
+  /// Opens the agent's canonical Bot Chat as read-only history.
+  Future<void> _openChat(MissionAgent agent) async {
     final officialPin = agent.profile.botChatSessionId;
     final officialMetadata = agent.profile.botModeUiMeta.containsKey('chat');
     if (agent.profile.hasInvalidBotChatPin) {
@@ -742,200 +1080,105 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     } else {
       await openChatFromSection<void>(
         context,
-        builder: (_) => ChatScreen(
+        builder: (_) => buildReadOnlyBotChatDestination(
           connection: widget.connection,
           session: session,
           initialStoredSessionId: pinnedId,
-          initialPrompt: kickoffPrompt,
-          requestComposerFocus: true,
-          missionBotProfile: agent.profile,
-          missionAvatarCache: _profileAvatarCache,
+          profile: agent.profile,
+          avatarCache: _profileAvatarCache,
         ),
       );
     }
-    // Bot Chat can publish its canonical pin while the route is open. Refresh
-    // before the next tap so a stale authoritative-null profile cannot dispose
-    // the live canonical binding and reopen an empty conversation.
+    // Refresh after the route closes so the next read uses current metadata.
     if (mounted) await _load(refresh: true);
   }
 
   void _showBotChatPinUnavailable() {
     if (!mounted) return;
-    final english = Localizations.localeOf(context).languageCode == 'en';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          english
-              ? 'Bot Chat metadata could not be verified. Refresh the team before sending.'
-              : 'No se pudo verificar el Bot Chat. Actualiza el equipo antes de enviar.',
-        ),
+        content: Text(Strings.of(context).missionBotChatMetadataUnavailable),
       ),
-    );
-  }
-
-  Future<void> _reviewApproval(MissionApproval approval) async {
-    final live = _activeChats?.of(
-      widget.connection.id,
-      approval.sessionId,
-      profile: approval.profileName,
-    );
-    if (live?.notificationSurface == NotificationChatSurface.room) {
-      final roomId = live?.notificationRoomId;
-      for (final room in _rooms) {
-        if (room.id != roomId) continue;
-        if (_destination != _MissionDestination.work) {
-          setState(() => _destination = _MissionDestination.work);
-        }
-        await _openRoomChat(room);
-        return;
-      }
-    }
-
-    final snapshot = _snapshot;
-    MissionAgent? agent;
-    if (snapshot != null) {
-      for (final candidate in _projection(snapshot).agents) {
-        if (candidate.profile.name == approval.profileName) {
-          agent = candidate;
-          break;
-        }
-      }
-    }
-    if (live?.notificationSurface == NotificationChatSurface.bot &&
-        agent != null) {
-      if (_destination != _MissionDestination.bots) {
-        setState(() => _destination = _MissionDestination.bots);
-      }
-      await _openChat(agent);
-      return;
-    }
-
-    // Tras process death no queda ActiveChat, pero los pins duraderos siguen
-    // identificando de forma inequívoca la superficie propietaria.
-    for (final room in _rooms) {
-      if (room.managerProfile == approval.profileName &&
-          room.managerSessionId == approval.sessionId) {
-        if (_destination != _MissionDestination.work) {
-          setState(() => _destination = _MissionDestination.work);
-        }
-        await _openRoomChat(room);
-        return;
-      }
-    }
-    if (agent != null) {
-      var botSessionId = agent.profile.botChatSessionId;
-      if (botSessionId == null && !agent.profile.botModeMetadataPublished) {
-        final lookup = await _botChatStore.lookup(
-          widget.connection.id,
-          agent.profile.name,
-          migrateLegacy: !widget.connection.readOnly,
-        );
-        if (!mounted) return;
-        botSessionId = lookup.sessionId;
-      }
-      if (botSessionId == approval.sessionId) {
-        if (_destination != _MissionDestination.bots) {
-          setState(() => _destination = _MissionDestination.bots);
-        }
-        await _openChat(agent);
-        return;
-      }
-    }
-
-    Session? match;
-    for (final session in _snapshot?.sessions ?? const <Session>[]) {
-      if (session.profile?.trim() == approval.profileName &&
-          (session.id == approval.sessionId ||
-              session.logicalId == approval.sessionId)) {
-        match = session;
-        break;
-      }
-    }
-    match ??= Session(
-      id: approval.sessionId,
-      title: approval.sessionTitle,
-      model: 'hermes-agent',
-      source: 'mobile',
-      messageCount: 0,
-      isActive: true,
-      preview: '',
-      startedAt: DateTime.now().millisecondsSinceEpoch.toDouble() / 1000,
-      profile: approval.profileName,
-    );
-    if (!mounted) return;
-    await openChatFromSection<void>(
-      context,
-      builder: (_) =>
-          ChatScreen(connection: widget.connection, session: match!),
     );
   }
 
   void _openAgent(MissionAgent agent) {
-    showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('mission-agent-detail'),
-      maxWidth: 560,
-      maxHeightFactor: 0.9,
-      builder: (sheetContext) => SizedBox(
-        height: MediaQuery.sizeOf(sheetContext).height * 0.72,
-        child: _AgentDetail(
-          agent: agent,
-          assignedTasks: [
-            for (final column
-                in _snapshot?.board?.columns ?? const <KanbanColumn>[])
-              for (final task in column.tasks)
-                if (task.assignee?.trim() == agent.profile.name) task,
-          ],
-          copy: MissionControlCopy.of(sheetContext),
-          avatarCache: _profileAvatarCache,
-          onChat: () {
-            Navigator.pop(sheetContext);
-            _openChat(agent);
-          },
-          onEditProfile: widget.connection.readOnly
-              ? null
-              : () {
-                  Navigator.pop(sheetContext);
-                  _openProfileEditor(agent.profile);
-                },
-          onRoutines: () {
-            Navigator.pop(sheetContext);
-            _openRoutines(profile: agent.profile.name);
-          },
-          onTasks: () {
-            Navigator.pop(sheetContext);
-            _openTasks(assignee: agent.profile.name);
-          },
-          onMemory: () {
-            Navigator.pop(sheetContext);
-            _openMemory(profile: agent.profile.name);
-          },
-          onSkills: () {
-            Navigator.pop(sheetContext);
-            _openSkills(profile: agent.profile.name);
-          },
-          onSoul: () {
-            Navigator.pop(sheetContext);
-            _openSoul();
-          },
-          onTogglePinned: widget.connection.readOnly
-              ? null
-              : () {
-                  Navigator.pop(sheetContext);
-                  unawaited(
-                    _saveBotRosterMeta(agent, pinned: !agent.profile.botPinned),
-                  );
-                },
-          onToggleHidden: widget.connection.readOnly
-              ? null
-              : () {
-                  Navigator.pop(sheetContext);
-                  unawaited(
-                    _saveBotRosterMeta(agent, hidden: !agent.profile.botHidden),
-                  );
-                },
+    _surfaceCoordinator.setRouteActive(false);
+    unawaited(
+      showHermesFloatingSurface<void>(
+        context: context,
+        surfaceKey: const ValueKey('mission-agent-detail'),
+        maxWidth: 560,
+        maxHeightFactor: 0.9,
+        builder: (sheetContext) => SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.72,
+          child: _AgentDetail(
+            agent: agent,
+            assignedTasks: [
+              for (final column
+                  in _snapshot?.board?.columns ?? const <KanbanColumn>[])
+                for (final task in column.tasks)
+                  if (task.assignee?.trim() == agent.profile.name) task,
+            ],
+            copy: MissionControlCopy.of(sheetContext),
+            avatarCache: _profileAvatarCache,
+            onChat: () {
+              Navigator.pop(sheetContext);
+              _openChat(agent);
+            },
+            onEditProfile: widget.connection.readOnly
+                ? null
+                : () {
+                    Navigator.pop(sheetContext);
+                    _openProfileEditor(agent.profile);
+                  },
+            onRoutines: () {
+              Navigator.pop(sheetContext);
+              _openRoutines(profile: agent.profile.name);
+            },
+            onTasks: () {
+              Navigator.pop(sheetContext);
+              _openTasks(assignee: agent.profile.name);
+            },
+            onMemory: () {
+              Navigator.pop(sheetContext);
+              _openMemory(profile: agent.profile.name);
+            },
+            onSkills: () {
+              Navigator.pop(sheetContext);
+              _openSkills(profile: agent.profile.name);
+            },
+            onSoul: () {
+              Navigator.pop(sheetContext);
+              _openSoul();
+            },
+            onTogglePinned: widget.connection.readOnly
+                ? null
+                : () {
+                    Navigator.pop(sheetContext);
+                    unawaited(
+                      _saveBotRosterMeta(
+                        agent,
+                        pinned: !agent.profile.botPinned,
+                      ),
+                    );
+                  },
+            onToggleHidden: widget.connection.readOnly
+                ? null
+                : () {
+                    Navigator.pop(sheetContext);
+                    unawaited(
+                      _saveBotRosterMeta(
+                        agent,
+                        hidden: !agent.profile.botHidden,
+                      ),
+                    );
+                  },
+          ),
         ),
-      ),
+      ).whenComplete(() {
+        if (mounted) _surfaceCoordinator.setRouteActive(true);
+      }),
     );
   }
 
@@ -971,25 +1214,31 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       );
       return;
     }
-    final result = await showHermesFloatingSurface<_RoomDraft>(
-      context: context,
-      surfaceKey: const ValueKey('mission-room-editor'),
-      maxWidth: 540,
-      maxHeightFactor: 0.92,
-      barrierDismissible: false,
-      systemDismissible: false,
-      builder: (context) => _RoomEditor(
-        copy: MissionControlCopy.of(context),
-        profiles: scopedProfiles,
-        avatarCache: _profileAvatarCache,
-        suggestedManager: organization?.managerProfile,
-        existing: existing,
-        onManageProfiles: () {
-          Navigator.pop(context);
-          unawaited(_openProfiles());
-        },
-      ),
-    );
+    _surfaceCoordinator.setRouteActive(false);
+    final _RoomDraft? result;
+    try {
+      result = await showHermesFloatingSurface<_RoomDraft>(
+        context: context,
+        surfaceKey: const ValueKey('mission-room-editor'),
+        maxWidth: 540,
+        maxHeightFactor: 0.92,
+        barrierDismissible: false,
+        systemDismissible: false,
+        builder: (context) => _RoomEditor(
+          copy: MissionControlCopy.of(context),
+          profiles: scopedProfiles,
+          avatarCache: _profileAvatarCache,
+          suggestedManager: organization?.managerProfile,
+          existing: existing,
+          onManageProfiles: () {
+            Navigator.pop(context);
+            unawaited(_openProfiles());
+          },
+        ),
+      );
+    } finally {
+      if (mounted) _surfaceCoordinator.setRouteActive(true);
+    }
     if (result == null) return;
     if (existing != null && await _roomMutationBlocked(existing)) return;
     final fresh = await _loadAuthoritativeRoomSnapshot();
@@ -1085,15 +1334,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _showRoomRosterUnavailable() {
     if (!mounted) return;
-    final english = Localizations.localeOf(context).languageCode == 'en';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          english
-              ? 'The authoritative profile roster is unavailable or this manager no longer exists. Refresh or manage profiles first.'
-              : 'El roster autoritativo no está disponible o este manager ya no existe. Actualiza o gestiona los perfiles primero.',
-        ),
-      ),
+      SnackBar(content: Text(Strings.of(context).missionRoomRosterUnavailable)),
     );
   }
 
@@ -1359,10 +1601,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
-  /// Creación con paridad Bot Mode: el diálogo materializa el profile con
-  /// `profiles.create` y, como Desktop, el bot recién creado abre su Bot Chat
-  /// con el prompt kickoff para presentarse (primer turno que además
-  /// materializa y fija el chat canónico oculto).
+  /// Creates the profile and opens its empty read-only Bot Chat history.
   Future<void> _createAgentFromMission() async {
     if (widget.connection.readOnly) return;
     final snapshot = _snapshot;
@@ -1391,14 +1630,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final projection = _projection(freshSnapshot);
     for (final agent in projection.agents) {
       if (agent.profile.name != created) continue;
-      // Sin pin canónico todavía: este nacimiento lleva kickoff. Un bot
-      // importado que Desktop ya hubiera nacido abre su chat normal.
-      await _openChat(
-        agent,
-        kickoffPrompt: agent.profile.botChatSessionId == null
-            ? kBotChatKickoffPrompt
-            : null,
-      );
+      await _openChat(agent);
       return;
     }
   }
@@ -1434,6 +1666,157 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _openAttentionOverview() {
     setState(() => _destination = _MissionDestination.work);
+  }
+
+  MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
+    final source = _dataSource;
+    return source is MissionHostedGroupsDataSource
+        ? source as MissionHostedGroupsDataSource
+        : null;
+  }
+
+  bool get _canCreateHostedRoom {
+    final snapshot = _snapshot;
+    final capabilities = snapshot?.hostedGroups.capabilities;
+    return !widget.connection.readOnly &&
+        _hostedGroupsDataSource != null &&
+        snapshot?.hostedGroupsCapability == MissionCapabilityState.available &&
+        capabilities?.supports(GroupMethod.create) == true;
+  }
+
+  Future<void> _createHostedRoom() async {
+    final snapshot = _snapshot;
+    final source = _hostedGroupsDataSource;
+    final capabilities = snapshot?.hostedGroups.capabilities;
+    if (!_canCreateHostedRoom ||
+        snapshot == null ||
+        source == null ||
+        capabilities == null ||
+        !mounted) {
+      return;
+    }
+    final draft = await showDialog<_HostedGroupDraft>(
+      context: context,
+      builder: (dialogContext) => _HostedGroupCreateDialog(
+        copy: MissionControlCopy.of(dialogContext),
+        connectionId: widget.connection.id,
+        profiles: snapshot.profiles,
+      ),
+    );
+    if (draft == null || !mounted) return;
+    final current = _snapshot;
+    final currentCapabilities = current?.hostedGroups.capabilities;
+    if (current == null ||
+        currentCapabilities == null ||
+        currentCapabilities.generation != capabilities.generation ||
+        !currentCapabilities.supports(GroupMethod.create)) {
+      return;
+    }
+    try {
+      final created = await source.createHostedGroup(
+        name: draft.name,
+        members: draft.members,
+        generation: currentCapabilities.generation,
+      );
+      if (!mounted || created.disbanded) return;
+      // The create response acknowledges the mutation, but groups.list/state is
+      // the authority for membership, revision, and lifecycle. Never project an
+      // optimistic local Room as though it were the shared hosted Room.
+      await _load(refresh: true);
+    } catch (error) {
+      debugPrint(
+        'Mission Control: hosted-room action failed (${error.runtimeType})',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(MissionControlCopy.of(context).hostedActionFailed),
+        ),
+      );
+    }
+  }
+
+  Future<HostedGroupWorkspaceReadback> _mutateHostedGroup(
+    int index,
+    Future<HostedGroupWorkspaceReadback> Function(
+      MissionHostedGroupsDataSource source,
+      HostedGroupRoom room,
+      int generation,
+    )
+    action,
+  ) async {
+    final snapshot = _snapshot;
+    final source = _hostedGroupsDataSource;
+    final capabilities = snapshot?.hostedGroups.capabilities;
+    if (snapshot == null ||
+        source == null ||
+        capabilities == null ||
+        index < 0 ||
+        index >= snapshot.hostedGroups.rooms.length) {
+      throw StateError('hosted room authority unavailable');
+    }
+    try {
+      final result = await action(
+        source,
+        snapshot.hostedGroups.rooms[index],
+        capabilities.generation,
+      );
+      if (!mounted ||
+          !identical(snapshot, _snapshot) ||
+          result.capabilityGeneration != capabilities.generation ||
+          result.room.roomId != snapshot.hostedGroups.rooms[index].roomId ||
+          result.room.authorityEpoch !=
+              snapshot.hostedGroups.rooms[index].authorityEpoch ||
+          result.room.revision < snapshot.hostedGroups.rooms[index].revision) {
+        throw StateError('hosted room authority changed');
+      }
+      final rooms = [...snapshot.hostedGroups.rooms];
+      final logs = [...snapshot.hostedGroups.logs];
+      if (result.room.disbanded) {
+        rooms.removeAt(index);
+        if (index < logs.length) logs.removeAt(index);
+      } else {
+        rooms[index] = result.room;
+        if (result.log != null && index < logs.length) {
+          logs[index] = result.log!;
+        }
+      }
+      setState(() {
+        _snapshot = MissionBackendSnapshot(
+          profiles: snapshot.profiles,
+          sessions: snapshot.sessions,
+          board: snapshot.board,
+          profilesCapability: snapshot.profilesCapability,
+          sessionsCapability: snapshot.sessionsCapability,
+          kanbanCapability: snapshot.kanbanCapability,
+          hostedGroups: HostedGroupsSnapshot(
+            capabilities: capabilities,
+            rooms: List.unmodifiable(rooms),
+            logs: List.unmodifiable(logs),
+          ),
+          hostedGroupsCapability: snapshot.hostedGroupsCapability,
+          failures: snapshot.failures,
+          loadedAt: snapshot.loadedAt,
+        );
+      });
+      return HostedGroupWorkspaceReadback(
+        room: result.room,
+        log: result.log,
+        capabilityGeneration: result.capabilityGeneration,
+      );
+    } catch (error) {
+      debugPrint(
+        'Mission Control: hosted-room action failed (${error.runtimeType})',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(MissionControlCopy.of(context).hostedActionFailed),
+          ),
+        );
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -1521,18 +1904,66 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 backgroundColor: Theme.of(
                   context,
                 ).hermes.surfaceVariant.withValues(alpha: 0.44),
-                minimumSize: const Size.square(44),
+                minimumSize: const Size.square(48),
                 shape: const CircleBorder(),
               ),
             ),
         ],
       ),
-      body: _buildBody(copy),
-      bottomNavigationBar: _MissionNavigationBar(
-        selectedIndex: _destination.index,
-        onDestinationSelected: (index) =>
-            setState(() => _destination = _MissionDestination.values[index]),
-        copy: copy,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final media = MediaQuery.of(context);
+          _surfaceCoordinator.updateViewport(
+            postLayoutSize: constraints.biggest,
+            safePadding: media.padding,
+            viewInsets: media.viewInsets,
+            textScale: media.textScaler.scale(1),
+            reducedMotion: media.disableAnimations,
+          );
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Padding(
+                padding: EdgeInsets.only(
+                  bottom: _surfaceCoordinator.scrollReservation,
+                ),
+                child: _buildBody(copy),
+              ),
+              AnimatedBuilder(
+                animation: _surfaceCoordinator,
+                builder: (context, _) => _surfaceCoordinator.dockVisible
+                    ? BotModeDock(
+                        coordinator: _surfaceCoordinator,
+                        selectedIndex: _destination.index,
+                        onDestinationSelected: (index) => setState(
+                          () =>
+                              _destination = _MissionDestination.values[index],
+                        ),
+                        onCreateBot:
+                            widget.connection.readOnly ||
+                                snapshot?.profilesCapability !=
+                                    MissionCapabilityState.available
+                            ? null
+                            : () => unawaited(_createAgentFromMission()),
+                        onCreateRoom: _canCreateHostedRoom
+                            ? () => unawaited(_createHostedRoom())
+                            : widget.connection.readOnly ||
+                                  snapshot?.hostedGroupsCapability ==
+                                      MissionCapabilityState.available ||
+                                  snapshot?.profilesCapability !=
+                                      MissionCapabilityState.available ||
+                                  (snapshot?.profiles.length ?? 0) < 2
+                            ? null
+                            : () => unawaited(_editRoom()),
+                        createRoomLabel: _canCreateHostedRoom
+                            ? null
+                            : copy.createLocalRoom,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1620,13 +2051,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 projection: projection,
                 copy: copy,
                 avatarCache: _profileAvatarCache,
+                hostedGroupsDataSource: _hostedGroupsDataSource,
+                readOnly: widget.connection.readOnly,
+                onHostedMutation: _mutateHostedGroup,
+                onCreateHostedRoom: _canCreateHostedRoom
+                    ? _createHostedRoom
+                    : null,
                 onOpen: _openRoomDetail,
                 onOpenTask: _openRoomTask,
-                onApproval: _reviewApproval,
+                workItems: _projectWorkItems(snapshot, projection),
+                onOpenWorkItem: _openWorkItem,
                 onRefresh: () => _load(refresh: true),
                 onOpenKanban: _openTasks,
                 onCreateRoom:
                     widget.connection.readOnly ||
+                        snapshot.hostedGroupsCapability ==
+                            MissionCapabilityState.available ||
                         snapshot.profilesCapability !=
                             MissionCapabilityState.available ||
                         projection.agents.length < 2
@@ -1648,157 +2088,116 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 }
 
-class _MissionNavigationBar extends StatelessWidget {
-  final int selectedIndex;
-  final ValueChanged<int> onDestinationSelected;
-  final MissionControlCopy copy;
+final class _HostedGroupDraft {
+  final String name;
+  final List<HostedGroupCreateMember> members;
 
-  const _MissionNavigationBar({
-    required this.selectedIndex,
-    required this.onDestinationSelected,
-    required this.copy,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final compact =
-        MediaQuery.sizeOf(context).width < 360 ||
-        MediaQuery.textScalerOf(context).scale(14) > 19;
-    final destinations =
-        <({IconData icon, IconData selectedIcon, String label})>[
-          (
-            icon: Icons.smart_toy_outlined,
-            selectedIcon: Icons.smart_toy_rounded,
-            label: copy.bots,
-          ),
-          (
-            icon: Icons.work_outline_rounded,
-            selectedIcon: Icons.work_rounded,
-            label: copy.work,
-          ),
-        ];
-    return ColoredBox(
-      color: colors.background,
-      child: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(16, 7, 16, 10),
-        child: Center(
-          heightFactor: 1,
-          child: Material(
-            color: colors.surface.withValues(alpha: 0.98),
-            shape: StadiumBorder(
-              side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var index = 0; index < destinations.length; index++)
-                    _MissionDockDestination(
-                      controlKey: ValueKey(
-                        'mission-destination-${_MissionDestination.values[index].name}',
-                      ),
-                      icon: destinations[index].icon,
-                      selectedIcon: destinations[index].selectedIcon,
-                      label: destinations[index].label,
-                      selected: selectedIndex == index,
-                      compact: compact,
-                      onTap: () => onDestinationSelected(index),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  const _HostedGroupDraft({required this.name, required this.members});
 }
 
-class _MissionDockDestination extends StatelessWidget {
-  final Key controlKey;
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-  final bool selected;
-  final bool compact;
-  final VoidCallback onTap;
+class _HostedGroupCreateDialog extends StatefulWidget {
+  final MissionControlCopy copy;
+  final String connectionId;
+  final List<AgentProfile> profiles;
 
-  const _MissionDockDestination({
-    required this.controlKey,
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-    required this.selected,
-    required this.compact,
-    required this.onTap,
+  const _HostedGroupCreateDialog({
+    required this.copy,
+    required this.connectionId,
+    required this.profiles,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: label,
-      onTap: onTap,
-      excludeSemantics: true,
-      child: Tooltip(
-        message: label,
-        child: Material(
-          color: selected
-              ? colors.accent.withValues(alpha: 0.12)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(22),
-          child: InkWell(
-            key: controlKey,
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(22),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              child: AnimatedSize(
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: !compact ? 14 : 12),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        selected ? selectedIcon : icon,
-                        size: 21,
-                        color: selected
-                            ? colors.accentText
-                            : colors.textSecondary,
-                      ),
-                      if (!compact) ...[
-                        const SizedBox(width: 7),
-                        Text(
-                          label,
-                          style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
+  State<_HostedGroupCreateDialog> createState() =>
+      _HostedGroupCreateDialogState();
+}
+
+class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
+  final TextEditingController _name = TextEditingController();
+  final Set<String> _selected = {};
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty || _selected.isEmpty) return;
+    Navigator.pop(
+      context,
+      _HostedGroupDraft(
+        name: name,
+        members: List.unmodifiable([
+          for (final profile in widget.profiles)
+            if (_selected.contains(profile.name))
+              HostedGroupCreateMember.localProfile(
+                profile: profile.name,
+                handle: profile.name,
               ),
-            ),
-          ),
-        ),
+        ]),
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.copy.createSharedRoom),
+    content: SizedBox(
+      width: 420,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              key: const ValueKey('mission-hosted-create-name'),
+              controller: _name,
+              autofocus: true,
+              maxLength: 200,
+              decoration: InputDecoration(
+                labelText: widget.copy.sharedRoomName,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.copy.chooseSharedMembers,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            for (final profile in widget.profiles)
+              CheckboxListTile(
+                key: ValueKey('mission-hosted-create-member-${profile.name}'),
+                value: _selected.contains(profile.name),
+                contentPadding: EdgeInsets.zero,
+                title: Text(profile.botTitle ?? profile.name),
+                subtitle: Text('@${profile.name}'),
+                onChanged: (selected) => setState(() {
+                  if (selected == true) {
+                    _selected.add(profile.name);
+                  } else {
+                    _selected.remove(profile.name);
+                  }
+                }),
+              ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(widget.copy.cancel),
+      ),
+      TextButton(
+        key: const ValueKey('mission-hosted-create-confirm'),
+        onPressed: _name.text.trim().isNotEmpty && _selected.isNotEmpty
+            ? _submit
+            : null,
+        child: Text(widget.copy.save),
+      ),
+    ],
+  );
 }
 
 enum _WorkspaceActionKind { select, create, edit, delete }
@@ -1968,8 +2367,8 @@ class _WorkActivityGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     if (activity.isEmpty) return _MessageCard(text: copy.noActivity);
     final colors = Theme.of(context).hermes;
-    return HermesCard(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       child: Column(
         children: [
           for (var index = 0; index < activity.length; index++) ...[
@@ -2335,7 +2734,7 @@ class _BotsTabState extends State<_BotsTab> {
                 ),
                 style: TextButton.styleFrom(
                   foregroundColor: Theme.of(context).hermes.textSecondary,
-                  minimumSize: const Size(44, 40),
+                  minimumSize: const Size(48, 48),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                 ),
               ),
@@ -2626,7 +3025,7 @@ class _MissionRoomDetailScreen extends StatelessWidget {
                 if (roomWork.approvals.isNotEmpty) ...[
                   const SizedBox(height: 14),
                   for (final approval in roomWork.approvals.take(3))
-                    _GlobalWorkAction(
+                    _RoomApprovalAction(
                       key: ValueKey(
                         'room-approval-${approval.sessionId}-${approval.requestId ?? ''}',
                       ),
@@ -2736,9 +3135,23 @@ class _RoomsTab extends StatelessWidget {
   final MissionProjection projection;
   final MissionControlCopy copy;
   final MissionProfileAvatarCache? avatarCache;
+  final MissionHostedGroupsDataSource? hostedGroupsDataSource;
+  final bool readOnly;
+  final Future<HostedGroupWorkspaceReadback> Function(
+    int index,
+    Future<HostedGroupWorkspaceReadback> Function(
+      MissionHostedGroupsDataSource source,
+      HostedGroupRoom room,
+      int generation,
+    )
+    action,
+  )
+  onHostedMutation;
+  final VoidCallback? onCreateHostedRoom;
   final ValueChanged<MissionRoom> onOpen;
   final ValueChanged<MissionRoomTaskLink> onOpenTask;
-  final ValueChanged<MissionApproval> onApproval;
+  final List<WorkItem> workItems;
+  final Future<void> Function(WorkItem, WorkDestination) onOpenWorkItem;
   final Future<void> Function() onRefresh;
   final VoidCallback onOpenKanban;
   final VoidCallback? onCreateRoom;
@@ -2752,9 +3165,14 @@ class _RoomsTab extends StatelessWidget {
     required this.projection,
     required this.copy,
     required this.avatarCache,
+    required this.hostedGroupsDataSource,
+    required this.readOnly,
+    required this.onHostedMutation,
+    required this.onCreateHostedRoom,
     required this.onOpen,
     required this.onOpenTask,
-    required this.onApproval,
+    required this.workItems,
+    required this.onOpenWorkItem,
     required this.onRefresh,
     required this.onOpenKanban,
     required this.onCreateRoom,
@@ -2804,15 +3222,33 @@ class _RoomsTab extends StatelessWidget {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
         children: [
+          if (snapshot.hostedGroupsCapability !=
+              MissionCapabilityState.unsupported) ...[
+            _HostedRoomsSection(
+              snapshot: snapshot,
+              copy: copy,
+              enabled:
+                  !readOnly &&
+                  hostedGroupsDataSource != null &&
+                  snapshot.hostedGroupsCapability ==
+                      MissionCapabilityState.available,
+              onMutation: onHostedMutation,
+              onCreate: onCreateHostedRoom,
+            ),
+            const SizedBox(height: 18),
+          ],
           KeyedSubtree(
-            key: const ValueKey('mission-rooms'),
-            child: _LoungeSectionHeader(
-              title: copy.rooms,
-              subtitle: copy.roomCount(scoped.length),
-              actionKey: const ValueKey('mission-create-room'),
-              actionLabel: copy.createRoom,
-              actionIcon: Icons.add_rounded,
-              onAction: onCreateRoom,
+            key: const ValueKey('mission-local-rooms'),
+            child: KeyedSubtree(
+              key: const ValueKey('mission-rooms'),
+              child: _LoungeSectionHeader(
+                title: copy.rooms,
+                subtitle: copy.roomCount(scoped.length),
+                actionKey: const ValueKey('mission-create-room'),
+                actionLabel: copy.createLocalRoom,
+                actionIcon: Icons.add_rounded,
+                onAction: onCreateRoom,
+              ),
             ),
           ),
           const SizedBox(height: 7),
@@ -2828,7 +3264,7 @@ class _RoomsTab extends StatelessWidget {
               message: projection.agents.length < 2
                   ? copy.needMoreBots
                   : copy.noRooms,
-              actionLabel: copy.createRoom,
+              actionLabel: copy.createLocalRoom,
               onCreate: projection.agents.length < 2 ? null : onCreateRoom,
             )
           else
@@ -2837,11 +3273,10 @@ class _RoomsTab extends StatelessWidget {
           if (snapshot.kanbanCapability != MissionCapabilityState.available)
             _MessageCard(text: copy.kanbanUnavailable),
           _GlobalWorkTray(
-            work: workSet.unscoped,
+            items: workItems,
             copy: copy,
-            onApproval: onApproval,
-            onOpenKanban: onOpenKanban,
-            onOpenTask: onOpenTask,
+            onDestination: (item, destination) =>
+                unawaited(onOpenWorkItem(item, destination)),
           ),
         ],
       ),
@@ -2849,170 +3284,957 @@ class _RoomsTab extends StatelessWidget {
   }
 }
 
-class _GlobalWorkTray extends StatelessWidget {
-  final UnscopedMissionWorkProjection work;
+class _HostedRoomsSection extends StatelessWidget {
+  final MissionBackendSnapshot snapshot;
   final MissionControlCopy copy;
-  final ValueChanged<MissionApproval> onApproval;
-  final VoidCallback onOpenKanban;
-  final ValueChanged<MissionRoomTaskLink> onOpenTask;
+  final bool enabled;
+  final Future<HostedGroupWorkspaceReadback> Function(
+    int index,
+    Future<HostedGroupWorkspaceReadback> Function(
+      MissionHostedGroupsDataSource source,
+      HostedGroupRoom room,
+      int generation,
+    )
+    action,
+  )
+  onMutation;
+  final VoidCallback? onCreate;
 
-  const _GlobalWorkTray({
-    required this.work,
+  const _HostedRoomsSection({
+    required this.snapshot,
     required this.copy,
-    required this.onApproval,
-    required this.onOpenKanban,
-    required this.onOpenTask,
+    required this.enabled,
+    required this.onMutation,
+    required this.onCreate,
   });
+
+  Future<String?> _promptText(
+    BuildContext context, {
+    required String title,
+    String initial = '',
+  }) async {
+    var value = initial;
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextFormField(
+          initialValue: initial,
+          autofocus: true,
+          maxLength: 200,
+          onChanged: (next) => value = next,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(copy.cancel),
+          ),
+          TextButton(
+            onPressed: () {
+              final result = value.trim();
+              if (result.isNotEmpty) Navigator.pop(dialogContext, result);
+            },
+            child: Text(copy.save),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _confirm(BuildContext context, String title) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(title),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(copy.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(copy.confirm),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _consumePresentedMutation(
+    Future<HostedGroupWorkspaceReadback> Function() mutation,
+  ) async {
+    try {
+      await mutation();
+    } catch (_) {
+      // The owning screen has already surfaced the generic localized failure.
+      // A tap callback must not leak that deliberately rethrown failure into
+      // Flutter's uncaught asynchronous error channel.
+    }
+  }
+
+  Future<void> _renameRoom(
+    BuildContext context,
+    int sourceIndex,
+    String currentName,
+  ) async {
+    final name = await _promptText(
+      context,
+      title: copy.renameSharedRoom,
+      initial: currentName,
+    );
+    if (name == null || !context.mounted) return;
+    await _consumePresentedMutation(
+      () => onMutation(
+        sourceIndex,
+        (source, room, generation) =>
+            source.renameHostedGroup(room, name: name, generation: generation),
+      ),
+    );
+  }
+
+  Future<void> _stopRoom(BuildContext context, int sourceIndex) async {
+    if (!await _confirm(context, copy.stopSharedRoom) || !context.mounted) {
+      return;
+    }
+    await _consumePresentedMutation(
+      () => onMutation(
+        sourceIndex,
+        (source, room, generation) =>
+            source.stopHostedGroup(room, generation: generation),
+      ),
+    );
+  }
+
+  Future<void> _disbandRoom(BuildContext context, int sourceIndex) async {
+    if (!await _confirm(context, copy.disbandSharedRoom) || !context.mounted) {
+      return;
+    }
+    await _consumePresentedMutation(
+      () => onMutation(
+        sourceIndex,
+        (source, room, generation) =>
+            source.disbandHostedGroup(room, generation: generation),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final activeTasks = work.tasks
-        .where(
-          (entry) => const {
-            'ready',
-            'running',
-            'blocked',
-            'review',
-          }.contains(entry.task?.status),
-        )
-        .length;
-    final visibleTasks =
-        work.tasks
-            .where(
-              (entry) => const {
-                'ready',
-                'running',
-                'blocked',
-                'review',
-              }.contains(entry.task?.status),
-            )
-            .toList(growable: true)
-          ..sort(
-            (left, right) => _globalTaskPriority(
-              left.task?.status,
-            ).compareTo(_globalTaskPriority(right.task?.status)),
-          );
-    if (work.approvals.isEmpty && activeTasks == 0) {
-      return Align(
-        alignment: AlignmentDirectional.centerEnd,
-        child: TextButton.icon(
-          key: const ValueKey('mission-open-global-kanban'),
-          onPressed: onOpenKanban,
-          icon: const Icon(Icons.view_kanban_outlined, size: 18),
-          label: Text(copy.openKanban),
-        ),
-      );
-    }
+    final capabilities = snapshot.hostedGroups.capabilities;
+    final rooms = snapshot.hostedGroups.rooms;
+    final logs = snapshot.hostedGroups.logs;
+    final activeRooms =
+        <({int sourceIndex, HostedGroupRoom room, HostedGroupLogPage? log})>[
+          for (var sourceIndex = 0; sourceIndex < rooms.length; sourceIndex++)
+            if (!rooms[sourceIndex].disbanded)
+              (
+                sourceIndex: sourceIndex,
+                room: rooms[sourceIndex],
+                log: sourceIndex < logs.length ? logs[sourceIndex] : null,
+              ),
+        ];
+    final visible =
+        snapshot.hostedGroupsCapability == MissionCapabilityState.available &&
+        capabilities?.hasSharedRoomSurface == true;
     return Semantics(
       container: true,
-      label: copy.globalWorkTray,
-      child: HermesCard(
-        key: const ValueKey('mission-global-work-tray'),
-        padding: const EdgeInsets.fromLTRB(14, 13, 10, 9),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: colors.surfaceVariant.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.inbox_outlined,
-                    size: 18,
-                    color: work.approvals.isNotEmpty
-                        ? colors.warning
-                        : colors.accentText,
+      label: copy.sharedRooms,
+      child: Column(
+        key: const ValueKey('mission-shared-rooms'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _LoungeSectionHeader(
+            title: copy.sharedRooms,
+            subtitle: visible
+                ? copy.roomCount(activeRooms.length)
+                : copy.sharedRoomsUnavailable,
+            actionKey: const ValueKey('mission-hosted-create'),
+            actionLabel: copy.createSharedRoom,
+            actionIcon: Icons.add_rounded,
+            onAction: capabilities?.supports(GroupMethod.create) == true
+                ? onCreate
+                : null,
+          ),
+          if (!visible)
+            _MessageCard(text: copy.sharedRoomsUnavailable)
+          else if (activeRooms.isEmpty)
+            _MessageCard(text: copy.noSharedRooms)
+          else
+            for (var index = 0; index < activeRooms.length; index++)
+              _HostedRoomCard(
+                key: ValueKey('mission-hosted-room-$index'),
+                room: activeRooms[index].room,
+                log: activeRooms[index].log,
+                copy: copy,
+                canSend: enabled && capabilities!.supports(GroupMethod.send),
+                canRename:
+                    enabled && capabilities!.supports(GroupMethod.rename),
+                canStop: enabled && capabilities!.supports(GroupMethod.stop),
+                canDisband:
+                    enabled && capabilities!.supports(GroupMethod.disband),
+                onOpen: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => _HostedRoomWorkspace(
+                      room: activeRooms[index].room,
+                      log: activeRooms[index].log,
+                      copy: copy,
+                      canSend:
+                          enabled && capabilities!.supports(GroupMethod.send),
+                      canRename:
+                          enabled && capabilities!.supports(GroupMethod.rename),
+                      canStop:
+                          enabled && capabilities!.supports(GroupMethod.stop),
+                      canDisband:
+                          enabled &&
+                          capabilities!.supports(GroupMethod.disband),
+                      onSend: (text, attempt) => onMutation(
+                        activeRooms[index].sourceIndex,
+                        (source, room, generation) =>
+                            source.sendHostedGroupText(
+                              room,
+                              text: text,
+                              attempt: attempt,
+                              generation: generation,
+                            ),
+                      ),
+                      onRename: (name) => onMutation(
+                        activeRooms[index].sourceIndex,
+                        (source, room, generation) => source.renameHostedGroup(
+                          room,
+                          name: name,
+                          generation: generation,
+                        ),
+                      ),
+                      onStop: () => onMutation(
+                        activeRooms[index].sourceIndex,
+                        (source, room, generation) => source.stopHostedGroup(
+                          room,
+                          generation: generation,
+                        ),
+                      ),
+                      onDisband: () => onMutation(
+                        activeRooms[index].sourceIndex,
+                        (source, room, generation) => source.disbandHostedGroup(
+                          room,
+                          generation: generation,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                onSend: () async {
+                  final text = await _promptText(
+                    context,
+                    title: copy.sendSharedMessage,
+                  );
+                  if (text == null || !context.mounted) return;
+                  final attempt = HostedGroupSendAttempt.forClientEvent(
+                    const Uuid().v4(),
+                  );
+                  await _consumePresentedMutation(
+                    () => onMutation(
+                      activeRooms[index].sourceIndex,
+                      (source, room, generation) => source.sendHostedGroupText(
+                        room,
+                        text: text,
+                        attempt: attempt,
+                        generation: generation,
+                      ),
+                    ),
+                  );
+                },
+                onRename: () => _renameRoom(
+                  context,
+                  activeRooms[index].sourceIndex,
+                  activeRooms[index].room.name,
+                ),
+                onStop: () =>
+                    _stopRoom(context, activeRooms[index].sourceIndex),
+                onDisband: () =>
+                    _disbandRoom(context, activeRooms[index].sourceIndex),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HostedRoomWorkspace extends StatefulWidget {
+  final HostedGroupRoom room;
+  final HostedGroupLogPage? log;
+  final MissionControlCopy copy;
+  final bool canSend;
+  final bool canRename;
+  final bool canStop;
+  final bool canDisband;
+
+  final Future<HostedGroupWorkspaceReadback> Function(
+    String text,
+    HostedGroupSendAttempt attempt,
+  )
+  onSend;
+  final Future<HostedGroupWorkspaceReadback> Function(String name) onRename;
+  final Future<HostedGroupWorkspaceReadback> Function() onStop;
+  final Future<HostedGroupWorkspaceReadback> Function() onDisband;
+
+  const _HostedRoomWorkspace({
+    required this.room,
+    required this.log,
+    required this.copy,
+    required this.canSend,
+    required this.canRename,
+    required this.canStop,
+    required this.canDisband,
+
+    required this.onSend,
+    required this.onRename,
+    required this.onStop,
+    required this.onDisband,
+  });
+
+  @override
+  State<_HostedRoomWorkspace> createState() => _HostedRoomWorkspaceState();
+}
+
+class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
+  final TextEditingController _composer = TextEditingController();
+  late HostedGroupRoom _room;
+  HostedGroupLogPage? _log;
+  String? _threadId;
+  bool _sending = false;
+  HostedGroupSendAttempt? _pendingAttempt;
+  String? _pendingText;
+  String? _pendingThreadId;
+
+  @override
+  void initState() {
+    super.initState();
+    _room = widget.room;
+    _log = widget.log;
+    _composer.addListener(_retireChangedAttempt);
+  }
+
+  void _retireChangedAttempt() {
+    if (_pendingAttempt != null && _composer.text.trim() != _pendingText) {
+      _pendingAttempt = null;
+      _pendingText = null;
+      _pendingThreadId = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _composer.removeListener(_retireChangedAttempt);
+    _composer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final text = _composer.text.trim();
+    if (text.isEmpty || _sending || !widget.canSend) return;
+    if (_pendingAttempt == null ||
+        _pendingText != text ||
+        _pendingThreadId != _threadId) {
+      _pendingAttempt = HostedGroupSendAttempt.forClientEvent(
+        const Uuid().v4(),
+        threadId: _threadId,
+      );
+      _pendingText = text;
+      _pendingThreadId = _threadId;
+    }
+    final attempt = _pendingAttempt!;
+    final submittedThread = _threadId;
+    setState(() => _sending = true);
+    try {
+      final result = await widget.onSend(text, attempt);
+      if (!mounted) return;
+      setState(() {
+        _room = result.room;
+        _log = result.log;
+        _sending = false;
+        _pendingAttempt = null;
+        _pendingText = null;
+        _pendingThreadId = null;
+        if (_composer.text.trim() == text && _threadId == submittedThread) {
+          _composer.clear();
+          _threadId = null;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<String?> _promptName() async {
+    var value = _room.name;
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(widget.copy.renameSharedRoom),
+        content: TextFormField(
+          initialValue: value,
+          autofocus: true,
+          maxLength: 200,
+          onChanged: (next) => value = next,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(widget.copy.cancel),
+          ),
+          TextButton(
+            onPressed: () {
+              final name = value.trim();
+              if (name.isNotEmpty) Navigator.pop(dialogContext, name);
+            },
+            child: Text(widget.copy.save),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _confirm(String title) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(title),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(widget.copy.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(widget.copy.confirm),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _rename() async {
+    final name = await _promptName();
+    if (name == null || !mounted) return;
+    try {
+      final result = await widget.onRename(name);
+      if (mounted) {
+        setState(() {
+          _room = result.room;
+          _log = result.log;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _stop() async {
+    if (!await _confirm(widget.copy.stopSharedRoom) || !mounted) {
+      return;
+    }
+    try {
+      final result = await widget.onStop();
+      if (mounted) {
+        setState(() {
+          _room = result.room;
+          _log = result.log;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _disband() async {
+    if (!await _confirm(widget.copy.disbandSharedRoom) || !mounted) {
+      return;
+    }
+    try {
+      final result = await widget.onDisband();
+      if (!mounted || !result.room.disbanded) return;
+      Navigator.of(context).pop();
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final events =
+        _log?.events
+            .where((event) => event.publicText != null)
+            .toList(growable: false) ??
+        const <HostedGroupEvent>[];
+
+    final management = <String>[
+      if (widget.canRename) 'rename',
+      if (widget.canStop) 'stop',
+      if (widget.canDisband) 'disband',
+    ];
+    return Scaffold(
+      key: const ValueKey('mission-hosted-room-workspace'),
+      appBar: HermesAppBar(
+        title: Text(_room.name),
+        actions: [
+          if (management.isNotEmpty)
+            PopupMenuButton<String>(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              onSelected: (value) {
+                if (value == 'rename') unawaited(_rename());
+                if (value == 'stop') unawaited(_stop());
+                if (value == 'disband') unawaited(_disband());
+              },
+              itemBuilder: (_) => [
+                if (widget.canRename)
+                  PopupMenuItem(
+                    value: 'rename',
+                    child: Text(widget.copy.renameSharedRoom),
+                  ),
+                if (widget.canStop)
+                  PopupMenuItem(
+                    value: 'stop',
+                    child: Text(widget.copy.stopSharedRoom),
+                  ),
+                if (widget.canDisband)
+                  PopupMenuItem(
+                    value: 'disband',
+                    child: Text(widget.copy.disbandSharedRoom),
+                  ),
+              ],
+            ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            ExpansionTile(
+              key: const ValueKey('mission-hosted-members'),
+              minTileHeight: 48,
+              title: Text(widget.copy.viewMembers),
+              subtitle: Text(widget.copy.roomMemberCount(_room.members.length)),
+              children: [
+                for (final member in _room.members)
+                  ListTile(
+                    minTileHeight: 48,
+                    leading: const Icon(Icons.person_outline_rounded),
+                    title: Text('@${member.handle}'),
+                  ),
+              ],
+            ),
+            if (widget.canSend) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    widget.copy.roomConversation,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+
+              Expanded(
+                child: events.isEmpty
+                    ? Center(child: Text(widget.copy.noRoomMessages))
+                    : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                        itemCount: events.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final event = events[index];
+                          final speaker = event.actor.publicLabel;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  speaker,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                SelectableText(event.publicText!),
+                                if (widget.canSend && event.threadId != null)
+                                  TextButton.icon(
+                                    key: ValueKey(
+                                      'mission-hosted-reply-$index',
+                                    ),
+                                    onPressed: () => setState(() {
+                                      _threadId = event.threadId;
+                                      _pendingAttempt = null;
+                                      _pendingText = null;
+                                      _pendingThreadId = null;
+                                    }),
+                                    icon: const Icon(
+                                      Icons.reply_rounded,
+                                      size: 18,
+                                    ),
+                                    label: Text(widget.copy.replyInThread),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              if (widget.canSend)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                        copy.globalWorkTray,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      Expanded(
+                        child: TextField(
+                          key: const ValueKey('mission-hosted-composer'),
+                          controller: _composer,
+                          minLines: 1,
+                          maxLines: 5,
+                          decoration: InputDecoration(
+                            labelText: _threadId == null
+                                ? widget.copy.sendSharedMessage
+                                : widget.copy.replyInThread,
+                          ),
+                          onSubmitted: (_) => _send(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        key: const ValueKey('mission-hosted-composer-send'),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 48,
+                          height: 48,
+                        ),
+                        onPressed: _sending ? null : _send,
+                        icon: _sending
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.send_rounded),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            for (final approval in work.approvals.take(3))
-              _GlobalWorkAction(
-                key: ValueKey(
-                  'mission-global-approval-${approval.sessionId}-${approval.requestId ?? ''}',
-                ),
-                icon: Icons.approval_outlined,
-                color: colors.warning,
-                title: approval.description,
-                subtitle: '@${approval.profileName}',
-                onTap: () => onApproval(approval),
-              ),
-            for (final entry in visibleTasks.take(
-              work.approvals.length >= 3 ? 0 : 3 - work.approvals.length,
-            ))
-              _GlobalWorkAction(
-                key: ValueKey(
-                  'mission-global-task-${entry.link.boardId}-${entry.link.taskId}',
-                ),
-                icon: switch (entry.task?.status) {
-                  'blocked' => Icons.block_outlined,
-                  'running' => Icons.play_arrow_rounded,
-                  'review' => Icons.rate_review_outlined,
-                  _ => Icons.schedule_outlined,
-                },
-                color: switch (entry.task?.status) {
-                  'blocked' => colors.error,
-                  'running' => colors.success,
-                  'review' => colors.warning,
-                  _ => colors.accentText,
-                },
-                title: entry.task?.title ?? copy.unavailableLinkedWork,
-                subtitle: copy.taskStatus(entry.task?.status ?? 'blocked'),
-                onTap: () => onOpenTask(entry.link),
-              ),
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: TextButton.icon(
-                key: const ValueKey('mission-open-global-kanban'),
-                onPressed: onOpenKanban,
-                icon: const Icon(Icons.view_kanban_outlined, size: 18),
-                label: Text(copy.openKanban),
-              ),
-            ),
+            ],
           ],
         ),
       ),
     );
   }
-
-  static int _globalTaskPriority(String? status) => switch (status) {
-    'blocked' => 0,
-    'running' => 1,
-    'review' => 2,
-    'ready' => 3,
-    _ => 4,
-  };
 }
 
-class _GlobalWorkAction extends StatelessWidget {
+class _HostedRoomCard extends StatelessWidget {
+  final HostedGroupRoom room;
+  final HostedGroupLogPage? log;
+  final MissionControlCopy copy;
+  final bool canSend;
+  final bool canRename;
+  final bool canStop;
+  final bool canDisband;
+  final VoidCallback onOpen;
+  final VoidCallback onSend;
+  final VoidCallback onRename;
+  final VoidCallback onStop;
+  final VoidCallback onDisband;
+
+  const _HostedRoomCard({
+    required this.room,
+    required this.log,
+    required this.copy,
+    required this.canSend,
+    required this.canRename,
+    required this.canStop,
+    required this.canDisband,
+    required this.onOpen,
+    required this.onSend,
+    required this.onRename,
+    required this.onStop,
+    required this.onDisband,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final management = <String>[
+      if (canRename) 'rename',
+      if (canStop) 'stop',
+      if (canDisband) 'disband',
+    ];
+    return Semantics(
+      container: true,
+      label: copy.sharedRoomSemantics(room.name, room.members.length),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(2, 10, 0, 0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RoomAvatarStack.official(
+                  members: room.members.map(
+                    (member) => RoomAvatarOfficialMember(
+                      owner: member.owner,
+                      displayName: member.handle,
+                      handle: member.handle,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsetsDirectional.only(bottom: 10),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: Theme.of(
+                            context,
+                          ).hermes.divider.withValues(alpha: 0.46),
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                room.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                copy.roomMemberCount(room.members.length),
+                                style: TextStyle(
+                                  color: Theme.of(context).hermes.textSecondary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (canSend)
+                          IconButton(
+                            key: ValueKey(
+                              'mission-hosted-send-${_indexFromKey()}',
+                            ),
+                            tooltip: copy.sendSharedMessage,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 48,
+                              height: 48,
+                            ),
+                            onPressed: onSend,
+                            icon: const Icon(Icons.send_outlined),
+                          ),
+                        if (management.isNotEmpty)
+                          PopupMenuButton<String>(
+                            key: ValueKey(
+                              'mission-hosted-more-${_indexFromKey()}',
+                            ),
+                            tooltip: MaterialLocalizations.of(
+                              context,
+                            ).moreButtonTooltip,
+                            constraints: const BoxConstraints(
+                              minWidth: 48,
+                              minHeight: 48,
+                            ),
+                            onSelected: (value) {
+                              if (value == 'rename') onRename();
+                              if (value == 'stop') onStop();
+                              if (value == 'disband') onDisband();
+                            },
+                            itemBuilder: (_) => [
+                              if (canRename)
+                                PopupMenuItem(
+                                  key: ValueKey(
+                                    'mission-hosted-rename-${_indexFromKey()}',
+                                  ),
+                                  value: 'rename',
+                                  child: Text(copy.renameSharedRoom),
+                                ),
+                              if (canStop)
+                                PopupMenuItem(
+                                  key: ValueKey(
+                                    'mission-hosted-stop-${_indexFromKey()}',
+                                  ),
+                                  value: 'stop',
+                                  child: Text(copy.stopSharedRoom),
+                                ),
+                              if (canDisband)
+                                PopupMenuItem(
+                                  key: ValueKey(
+                                    'mission-hosted-disband-${_indexFromKey()}',
+                                  ),
+                                  value: 'disband',
+                                  child: Text(copy.disbandSharedRoom),
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _indexFromKey() {
+    final value = key;
+    if (value is ValueKey<String>) return value.value.split('-').last;
+    return 'unknown';
+  }
+}
+
+class _GlobalWorkTray extends StatelessWidget {
+  final List<WorkItem> items;
+  final MissionControlCopy copy;
+  final void Function(WorkItem, WorkDestination) onDestination;
+
+  const _GlobalWorkTray({
+    required this.items,
+    required this.copy,
+    required this.onDestination,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final approvalItems = items
+        .where((item) => item.destination is ApprovalDestination)
+        .take(3)
+        .toList(growable: false);
+    final taskItems =
+        items
+            .where((item) => item.destination is TaskDestination)
+            .toList(growable: false)
+          ..sort(
+            (left, right) => _globalTaskPriority(
+              left.attention,
+            ).compareTo(_globalTaskPriority(right.attention)),
+          );
+    final boardItems = items
+        .where((item) => item.destination is BoardDestination)
+        .toList(growable: false);
+    if (approvalItems.isEmpty && taskItems.isEmpty) {
+      return Align(
+        alignment: AlignmentDirectional.centerEnd,
+        child: boardItems.isEmpty
+            ? const SizedBox.shrink()
+            : TextButton.icon(
+                key: const ValueKey('mission-open-global-kanban'),
+                onPressed: () => onDestination(
+                  boardItems.first,
+                  boardItems.first.destination!,
+                ),
+                icon: const Icon(Icons.view_kanban_outlined, size: 18),
+                label: Text(copy.openKanban),
+              ),
+      );
+    }
+    final taskLimit = approvalItems.length >= 3 ? 0 : 3 - approvalItems.length;
+    return Semantics(
+      container: true,
+      label: copy.globalWorkTray,
+      child: Column(
+        key: const ValueKey('mission-global-work-tray'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(2, 8, 2, 4),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.inbox_outlined,
+                  size: 18,
+                  color: approvalItems.isNotEmpty
+                      ? colors.warning
+                      : colors.accentText,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    copy.globalWorkTray,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (var index = 0; index < approvalItems.length; index++)
+            MissionWorkItemAction(
+              key: ValueKey('mission-global-approval-$index'),
+              item: approvalItems[index],
+              icon: Icons.approval_outlined,
+              color: colors.warning,
+              onDestination: (destination) =>
+                  onDestination(approvalItems[index], destination),
+            ),
+          for (final item in taskItems.take(taskLimit))
+            MissionWorkItemAction(
+              key: ValueKey(
+                'mission-global-task-${item.taskRef!.boardId}-${item.taskRef!.taskId}',
+              ),
+              item: item,
+              icon: switch (item.attention) {
+                WorkAttention.blocked => Icons.block_outlined,
+                WorkAttention.running => Icons.play_arrow_rounded,
+                WorkAttention.review => Icons.rate_review_outlined,
+                _ => Icons.schedule_outlined,
+              },
+              color: switch (item.attention) {
+                WorkAttention.blocked => colors.error,
+                WorkAttention.running => colors.success,
+                WorkAttention.review => colors.warning,
+                _ => colors.accentText,
+              },
+              onDestination: (destination) => onDestination(item, destination),
+            ),
+          for (final item in boardItems.take(1))
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton.icon(
+                key: const ValueKey('mission-open-global-kanban'),
+                onPressed: () => onDestination(item, item.destination!),
+                icon: const Icon(Icons.view_kanban_outlined, size: 18),
+                label: Text(copy.openKanban),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static int _globalTaskPriority(WorkAttention attention) =>
+      switch (attention) {
+        WorkAttention.blocked => 0,
+        WorkAttention.running => 1,
+        WorkAttention.review => 2,
+        WorkAttention.ready => 3,
+        _ => 4,
+      };
+}
+
+class _RoomApprovalAction extends StatelessWidget {
   final IconData icon;
   final Color color;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
 
-  const _GlobalWorkAction({
+  const _RoomApprovalAction({
     required this.icon,
     required this.color,
     required this.title,
@@ -3022,11 +4244,12 @@ class _GlobalWorkAction extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return InkWell(
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: '$title, $subtitle',
+    excludeSemantics: true,
+    child: InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(9),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 48),
         child: Padding(
@@ -3049,20 +4272,81 @@ class _GlobalWorkAction extends StatelessWidget {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 11.5,
-                      ),
                     ),
                   ],
                 ),
               ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: colors.textDisabled,
-                size: 19,
-              ),
+              const Icon(Icons.chevron_right_rounded, size: 19),
             ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class MissionWorkItemAction extends StatelessWidget {
+  final WorkItem item;
+  final IconData icon;
+  final Color color;
+  final ValueChanged<WorkDestination> onDestination;
+
+  const MissionWorkItemAction({
+    required this.item,
+    required this.icon,
+    required this.color,
+    required this.onDestination,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final destination = item.destination;
+    if (destination == null) return const SizedBox.shrink();
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      button: true,
+      label: '${item.title}, ${item.decisionCopy}',
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: () => onDestination(destination),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+            child: Row(
+              children: [
+                Icon(icon, size: 17, color: color),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        item.decisionCopy,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: colors.textDisabled,
+                  size: 19,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -3130,49 +4414,39 @@ class _RoomFirstCard extends StatelessWidget {
         '#${room.name}',
         ?stateLabel,
         room.purposeLabel,
-        '@${room.managerProfile}',
       ].where((part) => part.isNotEmpty).join(', '),
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Material(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(13),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            excludeFromSemantics: true,
-            onTap: onOpen,
-            child: IntrinsicHeight(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          excludeFromSemantics: true,
+          onTap: onOpen,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(2, 12, 0, 12),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    key: ValueKey('room-spine-${room.id}'),
-                    width: 4,
-                    color: stateColor,
+                  RoomAvatarStack(
+                    connectionId: room.connectionId,
+                    profiles: room.memberProfiles
+                        .map((name) => profiles[name])
+                        .whereType<AgentProfile>(),
+                    avatarCache: avatarCache,
                   ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Container(
+                      padding: const EdgeInsetsDirectional.only(
+                        end: 4,
+                        bottom: 12,
+                      ),
                       decoration: BoxDecoration(
                         border: Border(
-                          top: BorderSide(
-                            color: colors.divider.withValues(alpha: 0.58),
-                          ),
                           bottom: BorderSide(
-                            color: colors.divider.withValues(alpha: 0.58),
-                          ),
-                          right: BorderSide(
-                            color: colors.divider.withValues(alpha: 0.58),
+                            color: colors.divider.withValues(alpha: 0.46),
                           ),
                         ),
-                        borderRadius: const BorderRadiusDirectional.horizontal(
-                          end: Radius.circular(13),
-                        ),
-                      ),
-                      padding: const EdgeInsetsDirectional.fromSTEB(
-                        13,
-                        12,
-                        7,
-                        12,
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3180,14 +4454,6 @@ class _RoomFirstCard extends StatelessWidget {
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              ExcludeSemantics(
-                                child: _RoomMemberStack(
-                                  room: room,
-                                  profiles: profiles,
-                                  avatarCache: avatarCache,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3204,13 +4470,28 @@ class _RoomFirstCard extends StatelessWidget {
                                     ),
                                     if (stateLabel != null) ...[
                                       const SizedBox(height: 2),
-                                      Text(
-                                        stateLabel,
-                                        style: TextStyle(
-                                          color: stateColor,
-                                          fontSize: 11.5,
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                      Row(
+                                        children: [
+                                          Container(
+                                            width: 6,
+                                            height: 6,
+                                            decoration: BoxDecoration(
+                                              color: stateColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Flexible(
+                                            child: Text(
+                                              stateLabel,
+                                              style: TextStyle(
+                                                color: stateColor,
+                                                fontSize: 11.5,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ],
@@ -3221,6 +4502,10 @@ class _RoomFirstCard extends StatelessWidget {
                                   tooltip: onEdit != null
                                       ? copy.editRoom
                                       : copy.deleteRoomTitle,
+                                  constraints: const BoxConstraints(
+                                    minWidth: 48,
+                                    minHeight: 48,
+                                  ),
                                   icon: const Icon(
                                     Icons.more_horiz_rounded,
                                     size: 21,
@@ -3244,7 +4529,7 @@ class _RoomFirstCard extends StatelessWidget {
                                 ),
                             ],
                           ),
-                          const SizedBox(height: 11),
+                          const SizedBox(height: 7),
                           Text(
                             room.purposeLabel.isEmpty
                                 ? copy.roomNoPurpose
@@ -3260,7 +4545,7 @@ class _RoomFirstCard extends StatelessWidget {
                               height: 1.32,
                             ),
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 7),
                           Container(
                             key: ValueKey('room-work-${room.id}'),
                             alignment: AlignmentDirectional.centerStart,
@@ -3288,27 +4573,9 @@ class _RoomFirstCard extends StatelessWidget {
                                     ),
                                   ),
                           ),
-                          const SizedBox(height: 9),
-                          Container(
+                          SizedBox(
                             key: ValueKey('room-footer-${room.id}'),
-                            padding: const EdgeInsetsDirectional.only(top: 9),
-                            decoration: BoxDecoration(
-                              border: Border(
-                                top: BorderSide(
-                                  color: colors.divider.withValues(alpha: 0.46),
-                                ),
-                              ),
-                            ),
-                            child: Wrap(
-                              spacing: 18,
-                              runSpacing: 8,
-                              children: [
-                                _RoomInlineFact(
-                                  label: copy.roomCoordinatorShort,
-                                  value: '@${room.managerProfile}',
-                                ),
-                              ],
-                            ),
+                            height: 0,
                           ),
                         ],
                       ),
@@ -3457,7 +4724,7 @@ class _LoungeSectionHeader extends StatelessWidget {
               style: IconButton.styleFrom(
                 foregroundColor: colors.accentText,
                 backgroundColor: colors.surfaceVariant.withValues(alpha: 0.5),
-                minimumSize: const Size.square(44),
+                minimumSize: const Size.square(48),
                 shape: const CircleBorder(),
               ),
             ),
@@ -3515,7 +4782,7 @@ class _LoungeEmptyState extends StatelessWidget {
                     onPressed: onAction,
                     style: TextButton.styleFrom(
                       padding: EdgeInsets.zero,
-                      minimumSize: const Size(44, 40),
+                      minimumSize: const Size(48, 48),
                       alignment: AlignmentDirectional.centerStart,
                     ),
                     child: Text(actionLabel),
@@ -3724,8 +4991,8 @@ class _BotRow extends StatelessWidget {
                   icon: const Icon(Icons.more_horiz_rounded, size: 21),
                   color: colors.textSecondary,
                   constraints: const BoxConstraints(
-                    minWidth: 44,
-                    minHeight: 44,
+                    minWidth: 48,
+                    minHeight: 48,
                   ),
                 ),
               ],
@@ -4078,7 +5345,7 @@ class _RoomEditorState extends State<_RoomEditor> {
                     children: [
                       Text(
                         widget.existing == null
-                            ? widget.copy.createRoom
+                            ? widget.copy.createLocalRoom
                             : widget.copy.editRoom,
                         key: const ValueKey('room-editor-title'),
                         style: titleStyle,
@@ -4369,7 +5636,7 @@ class _RoomEditorState extends State<_RoomEditor> {
                         onPressed: _canSave ? _save : null,
                         child: Text(
                           widget.existing == null
-                              ? widget.copy.createRoom
+                              ? widget.copy.createLocalRoom
                               : widget.copy.save,
                         ),
                       ),
@@ -4832,7 +6099,8 @@ class _UsageCard extends StatelessWidget {
           value: _compact(usage.reasoningTokens!),
         ),
     ];
-    return HermesCard(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4878,7 +6146,10 @@ class _MessageCard extends StatelessWidget {
   const _MessageCard({required this.text});
 
   @override
-  Widget build(BuildContext context) => HermesCard(child: Text(text));
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 12),
+    child: Text(text),
+  );
 }
 
 class _InlineNotice extends StatelessWidget {

@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
@@ -355,7 +358,13 @@ void main() {
 
       await expectLater(
         client.getMessages('stored-chat'),
-        throwsA(isA<FormatException>()),
+        throwsA(
+          isA<CoreReadException>().having(
+            (error) => error.kind,
+            'kind',
+            CoreReadErrorKind.malformed,
+          ),
+        ),
       );
     });
 
@@ -398,6 +407,7 @@ void main() {
         expect(requests.single.url.path, '/api/sessions');
         expect(requests.single.url.queryParameters, {
           'limit': '200',
+          'offset': '0',
           'include_children': 'true',
         });
         expect(sessions.map((session) => session.id), [
@@ -1411,6 +1421,338 @@ void main() {
         expect(revisions[1], greaterThan(revisions[0]));
       },
     );
+    test(
+      'upsert material publica ambas revisiones una vez y solo tras persistir',
+      () async {
+        final fixture = await managerWithCapabilities();
+        final connectionRevision = fixture.manager.connectionRevisionFor(id);
+        final observed = <String>[];
+        var fenceSawOldState = false;
+
+        fixture.manager.connectionWillChangeFor(id).addListener(() {
+          final persisted = fixture.manager.getConnections().single;
+          fenceSawOldState = persisted.label == 'Server';
+          expect(connectionRevision.value, 0);
+          expect(fixture.manager.connectionsRevision.value, 0);
+        });
+        connectionRevision.addListener(() {
+          observed.add('connection');
+          final persisted = fixture.manager.getConnections().single;
+          expect(persisted.label, 'Server editado');
+          expect(persisted.dashboardUrl, 'https://dashboard.example.test');
+        });
+        fixture.manager.connectionsRevision.addListener(() {
+          observed.add('global');
+          final persisted = fixture.manager.getConnections().single;
+          expect(persisted.label, 'Server editado');
+          expect(persisted.dashboardUrl, 'https://dashboard.example.test');
+        });
+
+        final saving = fixture.manager.upsertConnection(
+          SavedConnection(
+            id: id,
+            label: 'Server editado',
+            host: 'hermes.example.test',
+            port: 443,
+            apiKey: '',
+            useHttps: true,
+            dashboardUrl: 'https://dashboard.example.test',
+          ),
+        );
+
+        expect(fenceSawOldState, isTrue);
+        expect(observed, isEmpty);
+        await saving;
+
+        expect(observed, const ['connection', 'global']);
+        expect(connectionRevision.value, 1);
+        expect(fixture.manager.connectionsRevision.value, 1);
+      },
+    );
+    test(
+      'un probe rutinario no invalida el lifecycle general ni un turno activo',
+      () async {
+        final fixture = await managerWithCapabilities();
+        final connectionRevision = fixture.manager.connectionRevisionFor(id);
+        final configAccessRevision = fixture.manager.configAccessRevisionFor(
+          id,
+        );
+        var generalFences = 0;
+        var generalRevisions = 0;
+        var globalRevisions = 0;
+        var configAccessFences = 0;
+        var configAccessRevisions = 0;
+        var activeTurnInvalidated = false;
+
+        // Un turno vivo se cuelga del fence general porque URL/auth/perfil sí
+        // invalidan su cliente. Un probe no relacionado no puede dispararlo.
+        fixture.manager.connectionWillChangeFor(id).addListener(() {
+          generalFences += 1;
+          activeTurnInvalidated = true;
+        });
+        connectionRevision.addListener(() => generalRevisions += 1);
+        fixture.manager.connectionsRevision.addListener(
+          () => globalRevisions += 1,
+        );
+        fixture.manager
+            .configAccessWillChangeFor(id)
+            .addListener(() => configAccessFences += 1);
+        configAccessRevision.addListener(() => configAccessRevisions += 1);
+
+        final saving = fixture.manager.saveCapabilities(
+          id,
+          const CapabilityMatrix(modelsRead: CapState.yes, checkedAtMs: 42),
+        );
+
+        expect(generalFences, 0);
+        expect(activeTurnInvalidated, isFalse);
+        expect(generalRevisions, 0);
+        expect(globalRevisions, 0);
+        expect(configAccessFences, 0);
+        expect(configAccessRevisions, 0);
+        await saving;
+
+        expect(generalFences, 0);
+        expect(activeTurnInvalidated, isFalse);
+        expect(generalRevisions, 0);
+        expect(globalRevisions, 0);
+        expect(configAccessFences, 0);
+        expect(configAccessRevisions, 0);
+        expect(fixture.manager.loadCapabilities(id).modelsRead, CapState.yes);
+      },
+    );
+
+    test(
+      'una transición config usa su fence aislado y omite matrices iguales',
+      () async {
+        final fixture = await managerWithCapabilities();
+        final connectionRevision = fixture.manager.connectionRevisionFor(id);
+        final configAccessRevision = fixture.manager.configAccessRevisionFor(
+          id,
+        );
+        var generalFences = 0;
+        var generalRevisions = 0;
+        var globalRevisions = 0;
+        var configAccessFences = 0;
+        var configAccessRevisions = 0;
+
+        fixture.manager
+            .connectionWillChangeFor(id)
+            .addListener(() => generalFences += 1);
+        connectionRevision.addListener(() => generalRevisions += 1);
+        fixture.manager.connectionsRevision.addListener(
+          () => globalRevisions += 1,
+        );
+        fixture.manager
+            .configAccessWillChangeFor(id)
+            .addListener(() => configAccessFences += 1);
+        configAccessRevision.addListener(() => configAccessRevisions += 1);
+
+        const configAccess = CapabilityMatrix(
+          configRead: CapState.yes,
+          configWrite: CapState.no,
+          checkedAtMs: 43,
+        );
+        final saving = fixture.manager.saveCapabilities(id, configAccess);
+
+        // El fence llega antes de persistir para cerrar el repositorio y su
+        // debounce, pero la revisión solo expone el nuevo permiso confirmado.
+        expect(configAccessFences, 1);
+        expect(configAccessRevision.value, 0);
+        expect(generalFences, 0);
+        expect(generalRevisions, 0);
+        expect(globalRevisions, 0);
+        await saving;
+
+        expect(configAccessRevision.value, 1);
+        expect(configAccessRevisions, 1);
+        expect(generalFences, 0);
+        expect(generalRevisions, 0);
+        expect(globalRevisions, 0);
+
+        await fixture.manager.saveCapabilities(
+          id,
+          const CapabilityMatrix(
+            configRead: CapState.yes,
+            configWrite: CapState.no,
+            modelsRead: CapState.yes,
+            checkedAtMs: 44,
+          ),
+        );
+        expect(configAccessFences, 1);
+        expect(configAccessRevisions, 1);
+
+        await fixture.manager.saveCapabilities(
+          id,
+          const CapabilityMatrix(
+            configRead: CapState.yes,
+            configWrite: CapState.no,
+            modelsRead: CapState.yes,
+            checkedAtMs: 44,
+          ),
+        );
+        expect(configAccessFences, 1);
+        expect(configAccessRevisions, 1);
+        expect(generalFences, 0);
+        expect(generalRevisions, 0);
+        expect(globalRevisions, 0);
+      },
+    );
+
+    test('cambios materiales publican el fence antes de persistir', () async {
+      final fixture = await managerWithCapabilities();
+      var fences = 0;
+      fixture.manager.connectionWillChangeFor(id).addListener(() {
+        fences += 1;
+      });
+
+      final metadata = fixture.manager.upsertConnection(
+        SavedConnection(
+          id: id,
+          label: 'Server editado',
+          host: 'hermes.example.test',
+          port: 443,
+          apiKey: '',
+          useHttps: true,
+        ),
+      );
+      expect(fences, 1);
+      await metadata;
+
+      final profile = fixture.manager.setActiveProfile(id, 'coding');
+      expect(fences, 2);
+      await profile;
+
+      final capabilities = fixture.manager.saveCapabilities(
+        id,
+        const CapabilityMatrix(configWrite: CapState.no),
+      );
+      expect(fences, 2);
+      await capabilities;
+
+      final apiKey = fixture.manager.updateApiKey(id, 'rotated-gateway-key');
+      expect(fences, 3);
+      await apiKey;
+
+      final dashboardSecret = fixture.manager.setDashboardSecrets(
+        id,
+        sessionToken: 'rotated-dashboard-token',
+      );
+      expect(fences, 4);
+      await dashboardSecret;
+
+      final revocation = fixture.manager.wipeAllApiKeys();
+      expect(fences, 5);
+      await revocation;
+
+      final deletion = fixture.manager.deleteConnection(id);
+      expect(fences, 6);
+      await deletion;
+    });
+    test(
+      'deleteConnection dispone notifiers por id y un reemplazo empieza limpio',
+      () async {
+        final fixture = await managerWithCapabilities();
+        final profileRevision = fixture.manager.activeProfileRevisionFor(id);
+        final connectionRevision = fixture.manager.connectionRevisionFor(id);
+        final willChange = fixture.manager.connectionWillChangeFor(id);
+        final configAccessRevision = fixture.manager.configAccessRevisionFor(
+          id,
+        );
+        final configAccessWillChange = fixture.manager
+            .configAccessWillChangeFor(id);
+
+        await fixture.manager.deleteConnection(id);
+
+        expect(
+          () => profileRevision.addListener(() {}),
+          throwsA(isA<FlutterError>()),
+        );
+        expect(
+          () => connectionRevision.addListener(() {}),
+          throwsA(isA<FlutterError>()),
+        );
+        expect(
+          () => willChange.addListener(() {}),
+          throwsA(isA<FlutterError>()),
+        );
+        expect(
+          () => configAccessRevision.addListener(() {}),
+          throwsA(isA<FlutterError>()),
+        );
+        expect(
+          () => configAccessWillChange.addListener(() {}),
+          throwsA(isA<FlutterError>()),
+        );
+
+        final replacementProfile = fixture.manager.activeProfileRevisionFor(id);
+        final replacementConnection = fixture.manager.connectionRevisionFor(id);
+        final replacementWillChange = fixture.manager.connectionWillChangeFor(
+          id,
+        );
+        final replacementConfigAccess = fixture.manager.configAccessRevisionFor(
+          id,
+        );
+        final replacementConfigAccessWillChange = fixture.manager
+            .configAccessWillChangeFor(id);
+        expect(identical(replacementProfile, profileRevision), isFalse);
+        expect(identical(replacementConnection, connectionRevision), isFalse);
+        expect(identical(replacementWillChange, willChange), isFalse);
+        expect(
+          identical(replacementConfigAccess, configAccessRevision),
+          isFalse,
+        );
+        expect(
+          identical(replacementConfigAccessWillChange, configAccessWillChange),
+          isFalse,
+        );
+        expect(replacementProfile.value, 0);
+        expect(replacementConnection.value, 0);
+        expect(replacementConfigAccess.value, 0);
+      },
+    );
+    test('dispose libera todos los notifiers administrados', () async {
+      final fixture = await managerWithCapabilities();
+      final profileRevision = fixture.manager.activeProfileRevisionFor(id);
+      final connectionRevision = fixture.manager.connectionRevisionFor(id);
+      final willChange = fixture.manager.connectionWillChangeFor(id);
+      final configAccessRevision = fixture.manager.configAccessRevisionFor(id);
+      final configAccessWillChange = fixture.manager.configAccessWillChangeFor(
+        id,
+      );
+
+      fixture.manager.dispose();
+
+      for (final notifier in <Listenable>[
+        profileRevision,
+        connectionRevision,
+        willChange,
+        configAccessRevision,
+        configAccessWillChange,
+        fixture.manager.activeProfile,
+        fixture.manager.activeConnectionId,
+        fixture.manager.connectionsRevision,
+      ]) {
+        expect(() => notifier.addListener(() {}), throwsA(isA<FlutterError>()));
+      }
+      expect(
+        () => fixture.manager.activeProfileRevisionFor(id),
+        throwsStateError,
+      );
+      expect(() => fixture.manager.connectionRevisionFor(id), throwsStateError);
+      expect(
+        () => fixture.manager.connectionWillChangeFor(id),
+        throwsStateError,
+      );
+      expect(
+        () => fixture.manager.configAccessRevisionFor(id),
+        throwsStateError,
+      );
+      expect(
+        () => fixture.manager.configAccessWillChangeFor(id),
+        throwsStateError,
+      );
+    });
   });
 
   group('ConnectionManager instancia predeterminada', () {
@@ -1599,50 +1941,44 @@ void main() {
   });
 
   group('DashboardClient.deleteCronJob', () {
-    test(
-      'confirma global aunque el perfil responda éxito idempotente',
-      () async {
-        final calls = <Uri>[];
-        final client = DashboardClient(
-          host: 'hermes.local',
-          port: 9119,
-          manualToken: 'test-token',
-          httpClientOverride: MockClient((request) async {
-            calls.add(request.url);
-            expect(request.method, 'DELETE');
-            if (request.url.queryParameters['profile'] == 'wrong-profile') {
-              return http.Response('', 204);
-            }
-            return http.Response('', 204);
-          }),
-        );
-
-        await client.deleteCronJob('job-qa', profile: 'wrong-profile');
-
-        expect(calls, hasLength(2));
-        expect(calls.first.path, '/api/cron/jobs/job-qa');
-        expect(calls.first.queryParameters['profile'], 'wrong-profile');
-        expect(calls.last.path, '/api/cron/jobs/job-qa');
-        expect(calls.last.queryParameters, isEmpty);
-        client.close();
-      },
-    );
-
-    test('404 también global es éxito idempotente', () async {
-      var calls = 0;
+    test('named-profile deletion never also deletes default', () async {
+      final calls = <Uri>[];
       final client = DashboardClient(
         host: 'hermes.local',
         port: 9119,
         manualToken: 'test-token',
-        httpClientOverride: MockClient((_) async {
-          calls++;
+        httpClientOverride: MockClient((request) async {
+          calls.add(request.url);
+          expect(request.method, 'DELETE');
+          return http.Response('', 204);
+        }),
+      );
+
+      await client.deleteCronJob('job-qa', profile: 'work-profile');
+
+      expect(calls, hasLength(1));
+      expect(calls.single.path, '/api/cron/jobs/job-qa');
+      expect(calls.single.queryParameters['profile'], 'work-profile');
+      client.close();
+    });
+
+    test('unprofiled deletion targets only default route', () async {
+      final calls = <Uri>[];
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((request) async {
+          calls.add(request.url);
           return http.Response('already gone', 404);
         }),
       );
 
-      await client.deleteCronJob('job-gone', profile: 'old-profile');
+      await client.deleteCronJob('job-gone');
 
-      expect(calls, 2);
+      expect(calls, hasLength(1));
+      expect(calls.single.path, '/api/cron/jobs/job-gone');
+      expect(calls.single.queryParameters, isEmpty);
       client.close();
     });
 
@@ -1925,7 +2261,8 @@ void main() {
 
         expect(bridgeDeletes, 0);
         expect(provisions, 0);
-        expect(dashboardCalls, hasLength(2));
+        expect(dashboardCalls, hasLength(1));
+        expect(dashboardCalls.single.queryParameters['profile'], 'work_bot');
       },
     );
 

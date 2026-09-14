@@ -52,6 +52,37 @@ class _WsTestServer {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('error público STT nunca incorpora el body remoto', () {
+    final message = serverSttPublicErrorMessage({
+      'message': 'PRIVATE_STT_FRAME /home/server/model',
+    });
+
+    expect(message, 'Server speech recognition failed.');
+    expect(message, isNot(contains('PRIVATE_STT_FRAME')));
+    expect(message, isNot(contains('/home/server')));
+  });
+
+  test('metadata pública STT usa allowlist numérica finita', () {
+    expect(
+      serverSttPublicMeta({
+        'voiced_secs': 1.25,
+        'avg_logprob': -0.3,
+        'no_speech_prob': 0.2,
+        'gate': 'PRIVATE_GATE',
+        'trace': 'PRIVATE_TRACE',
+        'path': '/home/server/model',
+      }),
+      {'voiced_secs': 1.25, 'avg_logprob': -0.3, 'no_speech_prob': 0.2},
+    );
+    expect(
+      serverSttPublicMeta({
+        'voiced_secs': double.nan,
+        'avg_logprob': 'PRIVATE_STRING',
+      }),
+      isNull,
+    );
+  });
+
   test('auth moderno recibe ready sin exponer el token en la URL', () async {
     final authFrames = <Map<String, dynamic>>[];
     final uris = <Uri>[];

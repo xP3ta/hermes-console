@@ -245,11 +245,96 @@ void main() {
       expect(r.answer, 'Hola.');
     });
 
+    test('streaming retiene prefijos Harmony incompletos', () {
+      expect(streamingPublicAssistantText('<|chan'), isEmpty);
+      expect(
+        streamingPublicAssistantText(
+          '<|channel|>analysis<|message|>PRIVATE_HARMONY',
+        ),
+        isEmpty,
+      );
+    });
+
     test('texto sin delimitadores Harmony sigue intacto', () {
       const input = 'Respuesta normal <| sin tokens de control.';
       final r = splitReasoning(input);
       expect(r.reasoning, isEmpty);
       expect(r.answer, input);
+    });
+
+    test('parser secuencial acepta cada combinación de barras por token', () {
+      const bars = ['|', '｜'];
+      for (final left in bars) {
+        for (final right in bars) {
+          String token(String name) => '<$left$name$right>';
+          final raw =
+              '${token('channel')}analysis${token('message')}PRIVATE_MIXED'
+              '${token('end')}${token('channel')}final${token('message')}'
+              'PUBLIC ｜ tip${token('end')}';
+          for (var boundary = 0; boundary <= raw.length; boundary++) {
+            expect(
+              streamingPublicAssistantText(raw.substring(0, boundary)),
+              isNot(contains('PRIVATE_MIXED')),
+              reason: '$left/$right boundary=$boundary',
+            );
+          }
+          expect(streamingPublicAssistantText(raw), 'PUBLIC ｜ tip');
+        }
+      }
+    });
+
+    test('start y channel anidados cambian autoridad sin perder límites', () {
+      const cases = <String, String>{
+        '<｜start｜>assistant<｜channel｜>final<｜message｜>PUBLIC'
+                '<｜start｜>assistant<｜channel｜>analysis<｜message｜>PRIVATE<｜end｜>':
+            'PUBLIC',
+        '<｜start｜>assistant<｜channel｜>analysis<｜message｜>PRIVATE'
+                '<｜start｜>assistant<｜channel｜>final<｜message｜>PUBLIC<｜end｜>':
+            'PUBLIC',
+        '<｜channel｜>final<｜message｜>PUBLIC'
+                '<｜channel｜>analysis<｜message｜>PRIVATE<｜end｜>':
+            'PUBLIC',
+        '<｜channel｜>analysis<｜message｜>PRIVATE'
+                '<｜channel｜>final<｜message｜>PUBLIC<｜end｜>':
+            'PUBLIC',
+      };
+      for (final entry in cases.entries) {
+        for (var boundary = 0; boundary <= entry.key.length; boundary++) {
+          expect(
+            streamingPublicAssistantText(entry.key.substring(0, boundary)),
+            isNot(contains('PRIVATE')),
+            reason: 'boundary=$boundary',
+          );
+        }
+        expect(streamingPublicAssistantText(entry.key), entry.value);
+      }
+    });
+
+    test(
+      'streaming retiene candidato pero finalizado libera literal inválido',
+      () {
+        const unterminated = 'PUBLIC <｜start｜>not an envelope';
+        const terminated = 'PUBLIC <｜start｜>not an envelope<｜end｜>';
+        expect(streamingPublicAssistantText(unterminated), 'PUBLIC');
+        expect(finalizedPublicAssistantText(unterminated), unterminated);
+        expect(finalizedPublicAssistantText(terminated), terminated);
+        expect(
+          finalizedPublicAssistantText(
+            'PUBLIC<｜channel｜>analysis<｜message｜>PRIVATE_UNCLOSED',
+          ),
+          'PUBLIC',
+        );
+      },
+    );
+
+    test('commentary público conserva tips y bytes de prosa', () {
+      const raw =
+          '<|channel｜> CoMmEnTaRy <｜message|>Tip: usa PUBLIC ｜ literalmente.'
+          '<｜end|>';
+      expect(
+        finalizedPublicAssistantText(raw),
+        'Tip: usa PUBLIC ｜ literalmente.',
+      );
     });
   });
 

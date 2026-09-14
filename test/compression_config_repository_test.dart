@@ -83,6 +83,25 @@ final class _TrackingClient extends http.BaseClient {
   }
 }
 
+/// Deliberately permits a late `send` after `close` so this test proves the
+/// Dashboard client fence itself, rather than relying on a transport detail.
+final class _CloseIgnoringClient extends http.BaseClient {
+  _CloseIgnoringClient(Future<http.Response> Function(http.Request) handler)
+    : _delegate = MockClient(handler);
+
+  final MockClient _delegate;
+  int closeCalls = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _delegate.send(request);
+
+  @override
+  void close() {
+    closeCalls += 1;
+  }
+}
+
 void main() {
   group('CompressionConfigRepository load', () {
     test('lee los cuatro campos y limites del fixture en el perfil', () async {
@@ -804,6 +823,59 @@ void main() {
     );
 
     test(
+      'forConnection sin permiso de escritura conserva GET y rechaza PUT',
+      () async {
+        final fixture = _fixture();
+        final requests = <http.Request>[];
+        final tracking = _TrackingClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode(
+              request.url.path == '/api/config'
+                  ? fixture['config']
+                  : fixture['schema'],
+            ),
+            200,
+          );
+        });
+        final dashboard = _dashboard(tracking);
+        final repository = CompressionConfigRepository.forConnection(
+          SavedConnection(
+            id: 'capability-read-only-instance',
+            label: 'Capability read only',
+            host: '127.0.0.1',
+            port: 8642,
+            apiKey: 'synthetic-gateway-key',
+          ),
+          profile: 'synthetic-profile',
+          writable: false,
+          dashboardFactory: (_) => dashboard,
+        );
+        final base = await repository.load();
+
+        final readOnlyError = await _failure(
+          repository.save(base, base.configuration!),
+        );
+
+        expect(readOnlyError.code, CompressionConfigFailureCode.readOnly);
+        expect(
+          requests.where((request) => request.method == 'GET'),
+          hasLength(2),
+        );
+        expect(
+          requests.every(
+            (request) =>
+                request.url.queryParameters['profile'] == 'synthetic-profile',
+          ),
+          isTrue,
+        );
+        expect(requests.where((request) => request.method == 'PUT'), isEmpty);
+        repository.close();
+        expect(tracking.closed, isTrue);
+      },
+    );
+
+    test(
       'close espera un PUT ya iniciado antes de cerrar su cliente',
       () async {
         final fixture = _fixture();
@@ -849,6 +921,95 @@ void main() {
         expect(tracking.closed, isTrue);
         final closedError = await _failure(repository.load());
         expect(closedError.code, CompressionConfigFailureCode.closed);
+      },
+    );
+
+    test(
+      'close con abort cierra de inmediato el cliente propio en un PUT activo',
+      () async {
+        final fixture = _fixture();
+        final putStarted = Completer<void>();
+        final putResult = Completer<http.Response>();
+        final tracking = _TrackingClient((request) async {
+          if (request.method == 'PUT') {
+            if (!putStarted.isCompleted) putStarted.complete();
+            return putResult.future;
+          }
+          return http.Response(
+            jsonEncode(
+              request.url.path == '/api/config'
+                  ? fixture['config']
+                  : fixture['schema'],
+            ),
+            200,
+          );
+        });
+        final dashboard = _dashboard(tracking);
+        final repository = CompressionConfigRepository.forConnection(
+          SavedConnection(
+            id: 'fenced-writable-instance',
+            label: 'Fenced writable',
+            host: '127.0.0.1',
+            port: 8642,
+            apiKey: 'synthetic-gateway-key',
+          ),
+          profile: 'synthetic-profile',
+          dashboardFactory: (_) => dashboard,
+        );
+        final base = await repository.load();
+        final changed = base.configuration!.copyWith(threshold: 0.72);
+
+        final saving = repository.save(base, changed);
+        await putStarted.future;
+        repository.close(abortActiveOperations: true);
+
+        expect(repository.isClosed, isTrue);
+        expect(tracking.closed, isTrue);
+        putResult.complete(http.Response('{"ok":true}', 200));
+        expect((await saving).configuration, changed);
+      },
+    );
+
+    test(
+      'close con abort bloquea un PUT que seguía esperando autenticación',
+      () async {
+        final fixture = _fixture();
+        var putCount = 0;
+        final tracking = _CloseIgnoringClient((request) async {
+          if (request.method == 'PUT') putCount += 1;
+          return http.Response(
+            jsonEncode(
+              request.url.path == '/api/config'
+                  ? fixture['config']
+                  : fixture['schema'],
+            ),
+            200,
+          );
+        });
+        final dashboard = _dashboard(tracking);
+        final repository = CompressionConfigRepository.forConnection(
+          SavedConnection(
+            id: 'fenced-before-put-instance',
+            label: 'Fenced before PUT',
+            host: '127.0.0.1',
+            port: 8642,
+            apiKey: 'synthetic-gateway-key',
+          ),
+          profile: 'synthetic-profile',
+          dashboardFactory: (_) => dashboard,
+        );
+        final base = await repository.load();
+        final saving = repository.save(
+          base,
+          base.configuration!.copyWith(threshold: 0.72),
+        );
+
+        repository.close(abortActiveOperations: true);
+        final failure = await _failure(saving);
+
+        expect(failure.code, CompressionConfigFailureCode.transport);
+        expect(putCount, 0);
+        expect(tracking.closeCalls, 1);
       },
     );
 

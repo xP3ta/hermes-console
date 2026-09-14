@@ -154,7 +154,7 @@ class SbomGeneratorTest(unittest.TestCase):
         self.assertTrue(all(entry["sha256"] for entry in entries))
         self.assertTrue(all(entry["kind"] == "native-binary" for entry in entries))
 
-    def test_checked_in_source_sboms_cover_all_139_gradle_coordinates(self):
+    def test_checked_in_source_sboms_cover_all_153_gradle_coordinates(self):
         coordinate_sets = []
         for variant in ("playRelease", "fullRelease"):
             bom = json.loads((ROOT / f"sbom/{variant}.cdx.json").read_text())
@@ -163,8 +163,8 @@ class SbomGeneratorTest(unittest.TestCase):
                 for component in bom["components"]
                 if component.get("purl", "").startswith("pkg:maven/")
             ]
-            self.assertEqual(len(components), 139, variant)
-            self.assertEqual(len({component["bom-ref"] for component in components}), 139)
+            self.assertEqual(len(components), 153, variant)
+            self.assertEqual(len({component["bom-ref"] for component in components}), 153)
             for component in components:
                 self.assertNotIn("hashes", component)
                 self.assertNotIn("hermes.gradle.binary", properties(component))

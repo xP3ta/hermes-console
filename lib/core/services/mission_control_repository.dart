@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math';
 
 import '../models/agent_profile.dart';
+import '../models/hosted_groups.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import 'connection_manager.dart';
@@ -15,6 +17,273 @@ typedef MissionDashboardGet =
     Future<Map<String, dynamic>> Function(String endpoint);
 typedef MissionProfileAvatarLoader =
     Future<AgentProfileAvatar?> Function(String profileName);
+
+typedef MissionGroupsList =
+    Future<List<HostedGroupRoom>> Function({required int generation});
+typedef MissionGroupsState =
+    Future<HostedGroupRoom> Function(String roomId, {required int generation});
+typedef MissionGroupsLog =
+    Future<HostedGroupLogPage> Function(
+      String roomId, {
+      required int generation,
+    });
+typedef MissionGroupsCreate =
+    Future<HostedGroupRoom> Function({
+      required String name,
+      required List<HostedGroupCreateMember> members,
+      required int generation,
+    });
+typedef MissionGroupsSend =
+    Future<HostedGroupLogPage> Function(
+      String roomId, {
+      required String text,
+      required HostedGroupSendAttempt attempt,
+      required int generation,
+    });
+typedef MissionGroupsRename =
+    Future<HostedGroupRoom> Function(
+      String roomId, {
+      required String name,
+      required int generation,
+    });
+typedef MissionGroupsRoomMutation =
+    Future<HostedGroupRoom> Function(String roomId, {required int generation});
+typedef MissionGroupsRetry =
+    Future<HostedGroupRoom> Function(
+      String roomId, {
+      required String taskId,
+      required int generation,
+    });
+
+abstract interface class MissionHostedGroupsGateway {
+  factory MissionHostedGroupsGateway.callbacks({
+    required Future<GroupsCapabilities> Function() capabilities,
+    required MissionGroupsList list,
+    required MissionGroupsState state,
+    required MissionGroupsLog log,
+    MissionGroupsCreate? create,
+    MissionGroupsSend? send,
+    MissionGroupsRename? rename,
+    MissionGroupsRoomMutation? stop,
+    MissionGroupsRoomMutation? disband,
+    MissionGroupsRetry? retry,
+  }) = _CallbackMissionHostedGroupsGateway;
+
+  Future<GroupsCapabilities> capabilities();
+  Future<List<HostedGroupRoom>> list({required int generation});
+  Future<HostedGroupRoom> state(String roomId, {required int generation});
+  Future<HostedGroupLogPage> log(String roomId, {required int generation});
+  Future<HostedGroupRoom> create({
+    required String name,
+    required List<HostedGroupCreateMember> members,
+    required int generation,
+  });
+  Future<HostedGroupLogPage> send(
+    String roomId, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  });
+  Future<HostedGroupRoom> rename(
+    String roomId, {
+    required String name,
+    required int generation,
+  });
+  Future<HostedGroupRoom> stop(String roomId, {required int generation});
+  Future<HostedGroupRoom> disband(String roomId, {required int generation});
+  Future<HostedGroupRoom> retry(
+    String roomId, {
+    required String taskId,
+    required int generation,
+  });
+}
+
+final class _CallbackMissionHostedGroupsGateway
+    implements MissionHostedGroupsGateway {
+  final Future<GroupsCapabilities> Function() _capabilities;
+  final MissionGroupsList _list;
+  final MissionGroupsState _state;
+  final MissionGroupsLog _log;
+  final MissionGroupsCreate? _create;
+  final MissionGroupsSend? _send;
+  final MissionGroupsRename? _rename;
+  final MissionGroupsRoomMutation? _stop;
+  final MissionGroupsRoomMutation? _disband;
+
+  const _CallbackMissionHostedGroupsGateway({
+    required Future<GroupsCapabilities> Function() capabilities,
+    required MissionGroupsList list,
+    required MissionGroupsState state,
+    required MissionGroupsLog log,
+    MissionGroupsCreate? create,
+    MissionGroupsSend? send,
+    MissionGroupsRename? rename,
+    MissionGroupsRoomMutation? stop,
+    MissionGroupsRoomMutation? disband,
+    MissionGroupsRetry? retry,
+  }) : // The public redirecting factory fixes these parameter names.
+       // ignore: prefer_initializing_formals
+       _capabilities = capabilities,
+       // ignore: prefer_initializing_formals
+       _list = list,
+       // ignore: prefer_initializing_formals
+       _state = state,
+       // ignore: prefer_initializing_formals
+       _log = log,
+       // ignore: prefer_initializing_formals
+       _create = create,
+       // ignore: prefer_initializing_formals
+       _send = send,
+       // ignore: prefer_initializing_formals
+       _rename = rename,
+       // ignore: prefer_initializing_formals
+       _stop = stop,
+       // ignore: prefer_initializing_formals
+       _disband = disband;
+
+  Never _unsupported() =>
+      throw StateError('unsupported hosted group operation');
+
+  @override
+  Future<GroupsCapabilities> capabilities() => _capabilities();
+  @override
+  Future<List<HostedGroupRoom>> list({required int generation}) =>
+      _list(generation: generation);
+  @override
+  Future<HostedGroupRoom> state(String roomId, {required int generation}) =>
+      _state(roomId, generation: generation);
+  @override
+  Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
+      _log(roomId, generation: generation);
+  @override
+  Future<HostedGroupRoom> create({
+    required String name,
+    required List<HostedGroupCreateMember> members,
+    required int generation,
+  }) =>
+      _create?.call(name: name, members: members, generation: generation) ??
+      _unsupported();
+  @override
+  Future<HostedGroupLogPage> send(
+    String roomId, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) =>
+      _send?.call(
+        roomId,
+        text: text,
+        attempt: attempt,
+        generation: generation,
+      ) ??
+      _unsupported();
+  @override
+  Future<HostedGroupRoom> rename(
+    String roomId, {
+    required String name,
+    required int generation,
+  }) =>
+      _rename?.call(roomId, name: name, generation: generation) ??
+      _unsupported();
+  @override
+  Future<HostedGroupRoom> stop(String roomId, {required int generation}) =>
+      _stop?.call(roomId, generation: generation) ?? _unsupported();
+  @override
+  Future<HostedGroupRoom> disband(String roomId, {required int generation}) =>
+      _disband?.call(roomId, generation: generation) ?? _unsupported();
+  @override
+  Future<HostedGroupRoom> retry(
+    String roomId, {
+    required String taskId,
+    required int generation,
+  }) => throw UnsupportedError(
+    'groups.retry is retired until upstream provides atomic retry authority',
+  );
+}
+
+final class _TuiMissionHostedGroupsGateway
+    implements MissionHostedGroupsGateway {
+  final TuiGatewayClient client;
+
+  const _TuiMissionHostedGroupsGateway(this.client);
+
+  String _nonce(String prefix) {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return '$prefix-${bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  @override
+  Future<GroupsCapabilities> capabilities() => client.groupCapabilities();
+  @override
+  Future<List<HostedGroupRoom>> list({required int generation}) =>
+      client.listGroups(generation: generation);
+  @override
+  Future<HostedGroupRoom> state(String roomId, {required int generation}) =>
+      client.groupState(roomId, generation: generation);
+  @override
+  Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
+      client.groupLog(roomId, generation: generation);
+  @override
+  Future<HostedGroupRoom> create({
+    required String name,
+    required List<HostedGroupCreateMember> members,
+    required int generation,
+  }) => client.createGroup(
+    roomId: _nonce('room'),
+    name: name,
+    members: [
+      for (final member in members) member.toWire(memberId: _nonce('member')),
+    ],
+    generation: generation,
+  );
+  @override
+  Future<HostedGroupLogPage> send(
+    String roomId, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) => client.sendGroupText(
+    roomId: roomId,
+    text: text,
+    threadId: attempt.threadId,
+    eventId: attempt.clientEventId,
+    generation: generation,
+  );
+  @override
+  Future<HostedGroupRoom> rename(
+    String roomId, {
+    required String name,
+    required int generation,
+  }) => client.renameGroup(
+    roomId: roomId,
+    eventId: _nonce('event'),
+    name: name,
+    generation: generation,
+  );
+  @override
+  Future<HostedGroupRoom> stop(String roomId, {required int generation}) =>
+      client.stopGroup(
+        roomId: roomId,
+        cancelId: _nonce('cancel'),
+        generation: generation,
+      );
+  @override
+  Future<HostedGroupRoom> disband(String roomId, {required int generation}) =>
+      client.disbandGroup(
+        roomId: roomId,
+        cancelId: _nonce('cancel'),
+        generation: generation,
+      );
+  @override
+  Future<HostedGroupRoom> retry(
+    String roomId, {
+    required String taskId,
+    required int generation,
+  }) => throw UnsupportedError(
+    'groups.retry is retired until upstream provides atomic retry authority',
+  );
+}
 
 Future<List<AgentProfile>> loadMissionControlProfiles({
   required MissionProfilesLoader desktopLoader,
@@ -98,13 +367,44 @@ abstract interface class MissionProfileAvatarDataSource {
   Future<AgentProfileAvatar?> loadProfileAvatar(String profileName);
 }
 
+abstract interface class MissionHostedGroupsDataSource {
+  Future<HostedGroupRoom> createHostedGroup({
+    required String name,
+    required List<HostedGroupCreateMember> members,
+    required int generation,
+  });
+  Future<HostedGroupWorkspaceReadback> sendHostedGroupText(
+    HostedGroupRoom room, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  });
+  Future<HostedGroupWorkspaceReadback> renameHostedGroup(
+    HostedGroupRoom room, {
+    required String name,
+    required int generation,
+  });
+  Future<HostedGroupWorkspaceReadback> stopHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  });
+  Future<HostedGroupWorkspaceReadback> disbandHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  });
+}
+
 final class MissionControlRepository
-    implements MissionControlDataSource, MissionProfileAvatarDataSource {
+    implements
+        MissionControlDataSource,
+        MissionProfileAvatarDataSource,
+        MissionHostedGroupsDataSource {
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
   final MissionKanbanEventsLoader? kanbanEventsLoader;
   final MissionProfileAvatarLoader? profileAvatarLoader;
+  final MissionHostedGroupsGateway? hostedGroupsGateway;
   final void Function()? onClose;
   bool _closed = false;
 
@@ -114,6 +414,7 @@ final class MissionControlRepository
     required this.boardLoader,
     this.kanbanEventsLoader,
     this.profileAvatarLoader,
+    this.hostedGroupsGateway,
     this.onClose,
   });
 
@@ -141,6 +442,7 @@ final class MissionControlRepository
       boardLoader: kanban.getCurrentBoard,
       kanbanEventsLoader: (since) => kanban.events(since: since),
       profileAvatarLoader: desktop.profileAvatar,
+      hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
       onClose: () {
         unawaited(desktop.close());
         kanban.close();
@@ -170,14 +472,17 @@ final class MissionControlRepository
       _capture(profilesLoader),
       _capture(sessionsLoader),
       _capture(boardLoader),
+      _capture(_loadHostedGroups),
     ]);
     final profilesResult = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessionsResult = results[1] as _MissionLoadResult<List<Session>>;
     final boardResult = results[2] as _MissionLoadResult<KanbanBoard>;
+    final groupsResult = results[3] as _MissionLoadResult<HostedGroupsSnapshot>;
     final failures = <String, Object>{
       'profiles': ?profilesResult.error,
       'sessions': ?sessionsResult.error,
       'kanban': ?boardResult.error,
+      'hostedGroups': ?groupsResult.error,
     };
     return MissionBackendSnapshot(
       profiles: profilesResult.value ?? const [],
@@ -186,8 +491,169 @@ final class MissionControlRepository
       profilesCapability: _capability(profilesResult),
       sessionsCapability: _capability(sessionsResult),
       kanbanCapability: _capability(boardResult),
+      hostedGroups: groupsResult.value ?? HostedGroupsSnapshot.empty,
+      hostedGroupsCapability: hostedGroupsGateway == null
+          ? MissionCapabilityState.unsupported
+          : _capability(groupsResult),
       failures: failures,
       loadedAt: DateTime.now(),
+    );
+  }
+
+  Future<HostedGroupsSnapshot> _loadHostedGroups() async {
+    final gateway = hostedGroupsGateway;
+    if (gateway == null) return HostedGroupsSnapshot.empty;
+    final capabilities = await gateway.capabilities();
+    if (!capabilities.hasSharedRoomSurface) {
+      return HostedGroupsSnapshot(capabilities: capabilities);
+    }
+    final listed = await gateway.list(generation: capabilities.generation);
+    final states = <HostedGroupRoom>[];
+    final logs = <HostedGroupLogPage>[];
+    for (final listedRoom in listed) {
+      final state = await gateway.state(
+        listedRoom.roomId,
+        generation: capabilities.generation,
+      );
+      if (state.roomId != listedRoom.roomId ||
+          state.revision < listedRoom.revision) {
+        throw const FormatException('incoherent hosted room state');
+      }
+      final log = await gateway.log(
+        state.roomId,
+        generation: capabilities.generation,
+      );
+      states.add(state);
+      logs.add(log);
+    }
+    return HostedGroupsSnapshot(
+      capabilities: capabilities,
+      rooms: List.unmodifiable(states),
+      logs: List.unmodifiable(logs),
+    );
+  }
+
+  Future<MissionHostedGroupsGateway> _requireHosted(
+    GroupMethod method,
+    int generation,
+  ) async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final gateway = hostedGroupsGateway;
+    if (gateway == null) throw StateError('hosted groups unsupported');
+    final capabilities = await gateway.capabilities();
+    if (capabilities.generation != generation ||
+        !capabilities.supports(method)) {
+      throw StateError('hosted group capability unavailable');
+    }
+    return gateway;
+  }
+
+  @override
+  Future<HostedGroupRoom> createHostedGroup({
+    required String name,
+    required List<HostedGroupCreateMember> members,
+    required int generation,
+  }) async {
+    final gateway = await _requireHosted(GroupMethod.create, generation);
+    return gateway.create(name: name, members: members, generation: generation);
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> sendHostedGroupText(
+    HostedGroupRoom room, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) async {
+    final gateway = await _requireHosted(GroupMethod.send, generation);
+    final log = await gateway.send(
+      room.roomId,
+      text: text,
+      attempt: attempt,
+      generation: generation,
+    );
+    final current = await gateway.state(room.roomId, generation: generation);
+    return _verifiedWorkspaceReadback(
+      previous: room,
+      current: current,
+      log: log,
+      generation: generation,
+    );
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> renameHostedGroup(
+    HostedGroupRoom room, {
+    required String name,
+    required int generation,
+  }) async {
+    final gateway = await _requireHosted(GroupMethod.rename, generation);
+    final current = await gateway.rename(
+      room.roomId,
+      name: name,
+      generation: generation,
+    );
+    final log = await gateway.log(room.roomId, generation: generation);
+    return _verifiedWorkspaceReadback(
+      previous: room,
+      current: current,
+      log: log,
+      generation: generation,
+    );
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> stopHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  }) async {
+    final gateway = await _requireHosted(GroupMethod.stop, generation);
+    final current = await gateway.stop(room.roomId, generation: generation);
+    final log = await gateway.log(room.roomId, generation: generation);
+    return _verifiedWorkspaceReadback(
+      previous: room,
+      current: current,
+      log: log,
+      generation: generation,
+    );
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> disbandHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  }) async {
+    final gateway = await _requireHosted(GroupMethod.disband, generation);
+    final current = await gateway.disband(room.roomId, generation: generation);
+    if (!current.disbanded ||
+        current.roomId != room.roomId ||
+        current.revision < room.revision ||
+        current.authorityEpoch != room.authorityEpoch) {
+      throw const FormatException('unverified hosted room disband readback');
+    }
+    return HostedGroupWorkspaceReadback(
+      room: current,
+      log: null,
+      capabilityGeneration: generation,
+    );
+  }
+
+  HostedGroupWorkspaceReadback _verifiedWorkspaceReadback({
+    required HostedGroupRoom previous,
+    required HostedGroupRoom current,
+    required HostedGroupLogPage log,
+    required int generation,
+  }) {
+    if (current.roomId != previous.roomId ||
+        current.revision < previous.revision ||
+        current.authorityEpoch != previous.authorityEpoch ||
+        log.authority.epoch != current.authorityEpoch) {
+      throw const FormatException('incoherent hosted room mutation readback');
+    }
+    return HostedGroupWorkspaceReadback(
+      room: current,
+      log: log,
+      capabilityGeneration: generation,
     );
   }
 

@@ -77,7 +77,8 @@ final class MissionRoomWorkSet {
 ///
 /// It performs no I/O, persistence, subscription, polling, or inference from
 /// Room members/task assignees. Room ownership comes only from an explicit
-/// [MissionRoomTaskLink] or the durable manager session identity.
+/// [MissionRoomTaskLink]. Local manager fields are presentation preferences,
+/// never shared GroupChat authority.
 abstract final class MissionRoomWorkProjector {
   static const _activeStatuses = <String>{
     'blocked',
@@ -102,13 +103,6 @@ abstract final class MissionRoomWorkProjector {
       currentTasksById.putIfAbsent(task.id, () => task);
     }
 
-    final managerIdentitiesByRoom = <MissionRoom, Set<String>>{
-      for (final room in roomList)
-        room: _managerSessionIdentities(room, snapshot.sessions),
-    };
-    final scopedApprovalSessions = <String>{
-      for (final identities in managerIdentitiesByRoom.values) ...identities,
-    };
     final linkedOnCurrentBoard = <String>{
       for (final room in ownershipRoomList)
         for (final link in room.linkedTasks)
@@ -151,22 +145,13 @@ abstract final class MissionRoomWorkProjector {
         for (final entry in linked)
           if (entry.link.boardId == currentBoardId) entry.link.taskId,
       };
-      final managerIdentities = managerIdentitiesByRoom[room]!;
       final activity = mission.activity
           .where((event) {
-            if (event.kind == MissionActivityKind.sessionUpdated) {
-              return managerIdentities.contains(event.sourceId);
-            }
+            if (event.kind == MissionActivityKind.sessionUpdated) return false;
             return currentTaskIds.contains(event.sourceId);
           })
           .toList(growable: false);
-      final approvals = mission.approvals
-          .where(
-            (approval) =>
-                approval.profileName == room.managerProfile &&
-                managerIdentities.contains(approval.sessionId),
-          )
-          .toList(growable: false);
+      const approvals = <MissionApproval>[];
       final blockedCount = active
           .where((entry) => entry.task!.status == 'blocked')
           .length;
@@ -181,7 +166,7 @@ abstract final class MissionRoomWorkProjector {
           approvals: List.unmodifiable(approvals),
           attentionCount: blockedCount + approvals.length,
           spineState: _spineState(linked),
-          workerSession: _managerSession(snapshot.sessions, managerIdentities),
+          workerSession: null,
         ),
       );
     }
@@ -194,11 +179,7 @@ abstract final class MissionRoomWorkProjector {
             task: task,
           ),
     ];
-    final unscopedApprovals = mission.approvals
-        .where(
-          (approval) => !scopedApprovalSessions.contains(approval.sessionId),
-        )
-        .toList(growable: false);
+    final unscopedApprovals = mission.approvals.toList(growable: false);
 
     return MissionRoomWorkSet._(
       rooms: List.unmodifiable(projections),
@@ -207,54 +188,6 @@ abstract final class MissionRoomWorkProjector {
         approvals: List.unmodifiable(unscopedApprovals),
       ),
     );
-  }
-
-  static Set<String> _managerSessionIdentities(
-    MissionRoom room,
-    List<Session> sessions,
-  ) {
-    if (!room.hasDurableManagerSession) return const <String>{};
-    final matchingSessions = sessions.where(
-      (session) => session.profile == room.managerProfile,
-    );
-    final hasManagerRoot = matchingSessions.any(
-      (session) =>
-          session.id == room.managerSessionId ||
-          session.logicalId == room.managerSessionId,
-    );
-    if (!hasManagerRoot) return const <String>{};
-    final identities = <String>{room.managerSessionId};
-    var changed = true;
-    while (changed) {
-      changed = false;
-      for (final session in matchingSessions) {
-        if (!identities.contains(session.id) &&
-            !identities.contains(session.logicalId)) {
-          continue;
-        }
-        changed = identities.add(session.id) || changed;
-        changed = identities.add(session.logicalId) || changed;
-      }
-    }
-    return Set.unmodifiable(identities);
-  }
-
-  static Session? _managerSession(
-    List<Session> sessions,
-    Set<String> identities,
-  ) {
-    Session? selected;
-    for (final session in sessions) {
-      if (!identities.contains(session.id) &&
-          !identities.contains(session.logicalId)) {
-        continue;
-      }
-      if (selected == null ||
-          session.lastActivityAt > selected.lastActivityAt) {
-        selected = session;
-      }
-    }
-    return selected;
   }
 
   static MissionRoomSpineState _spineState(

@@ -9,6 +9,63 @@ enum SubagentActivityPhase {
   unknown,
 }
 
+enum SubagentAggregatePhase { idle, active, terminalOnly, unknown }
+
+final class SubagentActivityAggregate {
+  static const int _maximumCount = 99;
+
+  final SubagentAggregatePhase phase;
+  final int activeCount;
+  final int terminalCount;
+  final int unknownCount;
+
+  const SubagentActivityAggregate({
+    required this.phase,
+    required this.activeCount,
+    required this.terminalCount,
+    required this.unknownCount,
+  });
+
+  const SubagentActivityAggregate.idle()
+    : phase = SubagentAggregatePhase.idle,
+      activeCount = 0,
+      terminalCount = 0,
+      unknownCount = 0;
+
+  factory SubagentActivityAggregate.fromActivities(
+    Iterable<SubagentActivity> activities,
+  ) {
+    var active = 0;
+    var terminal = 0;
+    var unknown = 0;
+    for (final activity in activities) {
+      if (activity.isTerminal) {
+        terminal += 1;
+      } else if (activity.phase == SubagentActivityPhase.unknown) {
+        unknown += 1;
+      } else {
+        active += 1;
+      }
+    }
+    active = active.clamp(0, _maximumCount);
+    terminal = terminal.clamp(0, _maximumCount);
+    unknown = unknown.clamp(0, _maximumCount);
+    final phase = active > 0
+        ? SubagentAggregatePhase.active
+        : unknown > 0
+        ? SubagentAggregatePhase.unknown
+        : terminal > 0
+        ? SubagentAggregatePhase.terminalOnly
+        : SubagentAggregatePhase.idle;
+    return SubagentActivityAggregate(
+      phase: phase,
+      activeCount: active,
+      terminalCount: terminal,
+      unknownCount: unknown,
+    );
+  }
+}
+
 extension SubagentActivityPhaseLifecycle on SubagentActivityPhase {
   bool get isTerminal =>
       this == SubagentActivityPhase.completed ||
@@ -31,6 +88,28 @@ enum SubagentActivityEventKind {
   legacyToolComplete,
 }
 
+/// Safe, terminal and read-only projection attached to one durable editorial
+/// completion row. Opaque identities are keys only and must never be rendered.
+final class SubagentCompletionCardData {
+  final String completionKey;
+  final String delegationId;
+  final int? taskCount;
+  final int? completedCount;
+  final int? failedCount;
+  final double? durationSeconds;
+  final List<String> subagentIds;
+
+  SubagentCompletionCardData({
+    required this.completionKey,
+    required this.delegationId,
+    this.taskCount,
+    this.completedCount,
+    this.failedCount,
+    this.durationSeconds,
+    List<String> subagentIds = const [],
+  }) : subagentIds = List<String>.unmodifiable(subagentIds);
+}
+
 abstract final class SubagentPayloadLimits {
   static const int opaqueIdCharacters = 256;
   static const int goalCharacters = 512;
@@ -42,6 +121,7 @@ abstract final class SubagentPayloadLimits {
   static const int toolsetCharacters = 128;
   static const int toolsetCount = 24;
   static const int rememberedEventIds = 32;
+  static const int activeActivities = 32;
 }
 
 final class SubagentActivityScope {
@@ -243,6 +323,7 @@ final class SubagentActivityDetails {
   final int? filesWrittenCount;
   final String? activeToolName;
   final String? activeToolPreview;
+  final bool? acceptingSteer;
   final SubagentUsage? usage;
   final double? durationSeconds;
   final DateTime? startedAt;
@@ -263,6 +344,7 @@ final class SubagentActivityDetails {
     this.filesWrittenCount,
     this.activeToolName,
     this.activeToolPreview,
+    this.acceptingSteer,
     this.usage,
     this.durationSeconds,
     this.startedAt,
@@ -286,6 +368,7 @@ final class SubagentActivityDetails {
       filesWrittenCount == null &&
       activeToolName == null &&
       activeToolPreview == null &&
+      acceptingSteer == null &&
       usage == null &&
       durationSeconds == null &&
       startedAt == null &&
@@ -430,6 +513,9 @@ final class SubagentActivityEvent {
           json['tool_preview'],
           SubagentPayloadLimits.toolPreviewCharacters,
         ),
+        acceptingSteer: json['accepting_steer'] is bool
+            ? json['accepting_steer'] as bool
+            : null,
         usage: parsedUsage.isEmpty ? null : parsedUsage,
         durationSeconds: _nonNegativeDouble(json['duration_seconds']),
         startedAt: _timestamp(json['started_at']),
@@ -658,8 +744,9 @@ SubagentActivityPhase _nativePhase(
     SubagentActivityEventKind.tool => SubagentActivityPhase.tool,
     SubagentActivityEventKind.progress =>
       explicit ?? SubagentActivityPhase.running,
-    SubagentActivityEventKind.complete =>
-      explicit ?? SubagentActivityPhase.completed,
+    // The event type is the authoritative child terminal edge. Parent
+    // completion is handled separately and never synthesizes this event.
+    SubagentActivityEventKind.complete => SubagentActivityPhase.completed,
     SubagentActivityEventKind.legacyToolStart ||
     SubagentActivityEventKind.legacyToolComplete =>
       SubagentActivityPhase.unknown,
@@ -674,6 +761,9 @@ SubagentActivityPhase _legacyCompletionPhase(Map<String, dynamic> json) {
   if (result != null) {
     if (result['success'] == false || result['error'] != null) {
       return SubagentActivityPhase.failed;
+    }
+    if (result['status']?.toString().trim().toLowerCase() == 'dispatched') {
+      return SubagentActivityPhase.unknown;
     }
     final resultPhase = _phaseFromStatus(result['status']);
     if (resultPhase != null) return resultPhase;

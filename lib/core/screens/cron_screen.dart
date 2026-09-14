@@ -19,7 +19,7 @@ import '../models/cron_job.dart';
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/cron_repository.dart';
-import '../services/session_deletion.dart';
+
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
@@ -33,7 +33,6 @@ import '../widgets/read_only.dart';
 import 'bridge_file_editor_screen.dart';
 import 'chat_screen.dart';
 import 'instance_edit_screen.dart';
-import 'lock_screen.dart';
 
 @visibleForTesting
 const cronBackstopRefreshInterval = Duration(seconds: 60);
@@ -46,8 +45,6 @@ class CronScreen extends StatefulWidget {
   final SavedConnection connection;
   final DashboardClient? clientOverride;
   final Stream<TuiGatewayEvent>? eventStreamOverride;
-  @visibleForTesting
-  final Future<bool> Function()? verifyHistoryCleanupForTesting;
   final String? initialJobId;
   final String? profileOverride;
 
@@ -55,7 +52,6 @@ class CronScreen extends StatefulWidget {
     required this.connection,
     @visibleForTesting this.clientOverride,
     @visibleForTesting this.eventStreamOverride,
-    @visibleForTesting this.verifyHistoryCleanupForTesting,
     this.initialJobId,
     this.profileOverride,
     super.key,
@@ -86,7 +82,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   bool _foreground = true;
   bool _initialJobOpened = false;
   bool _legacyAllProfilesFallback = false;
-  bool _cleaningConversations = false;
+
   DashboardDependencyFailure _dependencyFailure =
       DashboardDependencyFailure.other;
 
@@ -385,105 +381,6 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> Function() _captureHistoryCleanupVerifier() {
-    final override = widget.verifyHistoryCleanupForTesting;
-    if (override != null) return override;
-    final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
-    final reason = Strings.of(context).setVerifyToClear;
-    return () => lock == null
-        ? Future<bool>.value(true)
-        : LockScreen.verify(context, lock, reason: reason);
-  }
-
-  Future<bool> _authorizeHistoryCleanup({
-    required bool readOnly,
-    required Future<bool> Function() verifier,
-  }) async {
-    final allowed = await authorizeHistoryCleanup(
-      readOnly: readOnly,
-      verifyAppLock: verifier,
-    );
-    if (!mounted) return false;
-    if (!allowed && readOnly) {
-      showReadOnlyNotice(context);
-    }
-    return allowed;
-  }
-
-  Future<void> _cleanCronConversations() async {
-    if (_cleaningConversations) return;
-    final readOnly = _mutationsDisabled;
-    final verifier = _captureHistoryCleanupVerifier();
-    setState(() => _cleaningConversations = true);
-
-    try {
-      if (!await _authorizeHistoryCleanup(
-        readOnly: readOnly,
-        verifier: verifier,
-      )) {
-        return;
-      }
-      final preview = await _repository.previewConversationCleanup();
-      if (!mounted) return;
-      final s = Strings.of(context);
-      if (preview.isEmpty) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(s.crnCleanupEmpty)));
-        return;
-      }
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          scrollable: true,
-          title: Text(s.crnCleanupTitle),
-          content: Text(s.crnCleanupBody(preview.count)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(s.commonCancel),
-            ),
-            FilledButton(
-              key: const ValueKey('cron-cleanup-confirm'),
-              onPressed: () => Navigator.pop(dialogContext, true),
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(dialogContext).hermes.error,
-              ),
-              child: Text(s.commonDelete),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-
-      final result = await _repository.deleteCronConversations(preview);
-      if (!mounted) return;
-      if (result.deleted > 0) {
-        historyCleanupInvalidations.publish(
-          connectionId: widget.connection.id,
-          scope: HistoryCleanupScope.cronResults,
-        );
-      }
-      final message = result.preserved == 0
-          ? s.crnCleanupDone(result.deleted)
-          : s.crnCleanupPartial(result.deleted, result.preserved);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    } catch (error) {
-      if (!mounted) return;
-      final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(s.crnCleanupFailed(localizedApiError(s, error))),
-          backgroundColor: Theme.of(context).hermes.warning,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _cleaningConversations = false);
-    }
-  }
-
   Future<void> _showEditor({CronJob? job}) async {
     if (_mutationsDisabled) return showReadOnlyNotice(context);
     final result = await showDialog<_CronEditorResult>(
@@ -641,20 +538,6 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
           ],
         ),
         actions: [
-          if (_profileScope == CronProfileScope.active)
-            IconButton(
-              key: const ValueKey('cron-cleanup-conversations'),
-              tooltip: s.crnCleanupTooltip,
-              onPressed: _mutationsDisabled || _cleaningConversations
-                  ? null
-                  : _cleanCronConversations,
-              icon: _cleaningConversations
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.delete_sweep_outlined),
-            ),
           if (_profileScope == CronProfileScope.active)
             PopupMenuButton<String>(
               tooltip: MaterialLocalizations.of(context).moreButtonTooltip,

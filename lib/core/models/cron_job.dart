@@ -39,6 +39,7 @@ class CronJob {
   final String scheduleExpression;
   final String scheduleDisplay;
   final String? lastError;
+  final String lastStatus;
   final Object? lastRunAt;
   final Object? nextRunAt;
   final bool enabled;
@@ -58,6 +59,7 @@ class CronJob {
     required this.scheduleExpression,
     required this.scheduleDisplay,
     required this.lastError,
+    required this.lastStatus,
     required this.lastRunAt,
     required this.nextRunAt,
     required this.enabled,
@@ -82,6 +84,15 @@ class CronJob {
         _text(scheduleMap['display']) ??
         expression;
 
+    final lastStatus = _text(json['last_status']) ?? '';
+    // The scheduler separates execution and delivery failures. Prefer the
+    // fire error, then delivery error, so the operator sees a failing route
+    // instead of a falsely healthy cron row.
+    final lastError =
+        _text(json['last_fire_error']) ??
+        _text(json['last_delivery_error']) ??
+        _text(json['last_error']);
+
     return CronJob(
       id: _text(json['id']) ?? '',
       name: _text(json['name']) ?? '',
@@ -93,7 +104,8 @@ class CronJob {
       profile: _text(json['profile']) ?? '',
       scheduleExpression: expression,
       scheduleDisplay: display,
-      lastError: _text(json['last_error']),
+      lastError: lastError,
+      lastStatus: lastStatus,
       lastRunAt: json['last_run_at'],
       nextRunAt: json['next_run_at'],
       enabled: enabled,

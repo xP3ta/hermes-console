@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "pathPattern": "^lib/(arm64-v8a|armeabi-v7a|x86_64)/libapp\\.so$",
+      "component": "hermes-console application native snapshot",
+      "license": "GPL-3.0-only",
+      "evidence": "LICENSE"
+    },
+    {
+      "pathPattern": "^lib/(arm64-v8a|armeabi-v7a|x86_64)/libflutter\\.so$",
+      "component": "Flutter engine",
+      "license": "BSD-3-Clause",
+      "evidence": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "pathPattern": "^lib/(arm64-v8a|armeabi-v7a|x86_64)/libonnxruntime\\.so$",
+      "component": "ONNX Runtime distributed by sherpa_onnx",
+      "license": "MIT",
+      "evidence": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "pathPattern": "^lib/(arm64-v8a|armeabi-v7a|x86_64)/libsherpa-onnx-(c-api|cxx-api)\\.so$",
+      "component": "sherpa_onnx native runtime",
+      "license": "Apache-2.0",
+      "evidence": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "pathPattern": "^lib/(arm64-v8a|armeabi-v7a|x86_64)/libwhisper_ggml_plus\\.so$",
+      "component": "whisper_ggml_plus native runtime",
+      "license": "MIT",
+      "evidence": "THIRD_PARTY_NOTICES.md"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/profile_pet_service.dart';
 import 'package:hermes_android/core/services/profile_pet_visual_adapter.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 
 const _imageDataUri =
@@ -283,6 +284,8 @@ Future<void> _pumpCreate(
   await tester.pumpWidget(
     MaterialApp(
       locale: const Locale('es'),
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => TextButton(
@@ -401,7 +404,7 @@ void main() {
     expect(petsNeverSelected(log), isTrue);
   });
 
-  testWidgets('crea primero y aplica Blobatar tipado antes de auto-presentar', (
+  testWidgets('crea primero y aplica Blobatar tipado antes de cerrar', (
     tester,
   ) async {
     final log = <String>[];

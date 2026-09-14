@@ -17,7 +17,7 @@ Agent instances.
 
 ## Development checks
 
-Use Flutter 3.44.x, Dart 3.12.x, Java 17, and Android SDK 36.
+Use Flutter 3.47.x, its bundled Dart SDK, Java 17, and Android SDK 36.
 
 ```bash
 flutter pub get

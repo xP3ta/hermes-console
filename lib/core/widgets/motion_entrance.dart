@@ -36,17 +36,20 @@ class _MotionEntranceState extends State<MotionEntrance>
     duration: Motion.base,
   );
   Timer? _delayTimer;
+  bool _entranceStarted = false;
 
   @override
-  void initState() {
-    super.initState();
-    // Tras el primer frame ya podemos leer reduce-motion del contexto.
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_entranceStarted) return;
+    _entranceStarted = true;
+    if (Motion.reduced(context)) {
+      // Avoid painting even one opacity-zero frame when motion is reduced.
+      _controller.value = 1;
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (Motion.reduced(context)) {
-        _controller.value = 1;
-        return;
-      }
       if (widget.delay == Duration.zero) {
         _controller.forward();
       } else {

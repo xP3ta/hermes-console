@@ -91,64 +91,63 @@ void main() {
       expect(result.unscoped.tasks, isEmpty);
     });
 
-    test('filters activity by linked task or durable manager lineage only', () {
-      final managerChild = _session(
-        'manager-child',
-        lineageRootId: 'manager-root',
-        profile: 'manager',
-        updatedAt: 20,
-      );
-      final sameProfileButUnrelated = _session(
-        'other-session',
-        profile: 'manager',
-        updatedAt: 30,
-      );
-      final room = _room(
-        'room-a',
-        managerSessionId: 'manager-root',
-        links: [_link('board-a', 'linked')],
-      );
-      final activities = [
-        _activity('linked'),
-        _activity(
+    test(
+      'filters activity by linked task and ignores local manager lineage',
+      () {
+        final managerChild = _session(
           'manager-child',
-          kind: MissionActivityKind.sessionUpdated,
+          lineageRootId: 'manager-root',
           profile: 'manager',
-        ),
-        _activity(
-          'manager-root',
-          kind: MissionActivityKind.sessionUpdated,
-          profile: 'manager',
-        ),
-        _activity('unlinked', profile: 'manager'),
-        _activity(
+          updatedAt: 20,
+        );
+        final sameProfileButUnrelated = _session(
           'other-session',
-          kind: MissionActivityKind.sessionUpdated,
           profile: 'manager',
-        ),
-      ];
+          updatedAt: 30,
+        );
+        final room = _room(
+          'room-a',
+          managerSessionId: 'manager-root',
+          links: [_link('board-a', 'linked')],
+        );
+        final activities = [
+          _activity('linked'),
+          _activity(
+            'manager-child',
+            kind: MissionActivityKind.sessionUpdated,
+            profile: 'manager',
+          ),
+          _activity(
+            'manager-root',
+            kind: MissionActivityKind.sessionUpdated,
+            profile: 'manager',
+          ),
+          _activity('unlinked', profile: 'manager'),
+          _activity(
+            'other-session',
+            kind: MissionActivityKind.sessionUpdated,
+            profile: 'manager',
+          ),
+        ];
 
-      final result = MissionRoomWorkProjector.build(
-        rooms: [room],
-        snapshot: _snapshot(
-          boardId: 'board-a',
-          tasks: [_task('linked'), _task('unlinked')],
-          sessions: [managerChild, sameProfileButUnrelated],
-        ),
-        mission: MissionProjection(
-          tasks: [_task('linked'), _task('unlinked')],
-          activity: activities,
-        ),
-      );
-      final projection = result.rooms.single;
+        final result = MissionRoomWorkProjector.build(
+          rooms: [room],
+          snapshot: _snapshot(
+            boardId: 'board-a',
+            tasks: [_task('linked'), _task('unlinked')],
+            sessions: [managerChild, sameProfileButUnrelated],
+          ),
+          mission: MissionProjection(
+            tasks: [_task('linked'), _task('unlinked')],
+            activity: activities,
+          ),
+        );
+        final projection = result.rooms.single;
 
-      expect(projection.activity.map((event) => event.sourceId), [
-        'linked',
-        'manager-child',
-        'manager-root',
-      ]);
-      expect(projection.workerSession, same(managerChild));
-    });
+        expect(projection.activity.map((event) => event.sourceId), ['linked']);
+        expect(projection.workerSession, isNull);
+      },
+    );
 
     test('keeps unattributable approvals and tasks in the global tray', () {
       final room = _room(
@@ -185,8 +184,8 @@ void main() {
         ),
       );
 
-      expect(result.rooms.single.approvals, [scopedApproval]);
-      expect(result.unscoped.approvals, [globalApproval]);
+      expect(result.rooms.single.approvals, isEmpty);
+      expect(result.unscoped.approvals, [scopedApproval, globalApproval]);
       expect(result.unscoped.tasks.single.link.taskId, 'unlinked');
       expect(result.unscoped.tasks.single.link.boardId, 'board-a');
     });
@@ -244,7 +243,7 @@ void main() {
       ]);
       expect(projection.primaryTask!.link.taskId, 'blocked');
       expect(projection.spineState, MissionRoomSpineState.blocked);
-      expect(projection.attentionCount, 2);
+      expect(projection.attentionCount, 1);
     });
 
     test('does not scope a provisional manager session', () {
@@ -300,6 +299,46 @@ void main() {
       expect(result.rooms.single.approvals, isEmpty);
       expect(result.unscoped.approvals, [approval]);
     });
+
+    test(
+      'local manager metadata never scopes shared activity or approvals',
+      () {
+        final room = _room(
+          'room-a',
+          managerSessionId: 'manager-root',
+          links: const [],
+        );
+        const approval = MissionApproval(
+          profileName: 'manager',
+          sessionId: 'manager-root',
+          sessionTitle: 'Local manager session',
+          requestId: 'request-1',
+          description: 'private payload',
+        );
+        final result = MissionRoomWorkProjector.build(
+          rooms: [room],
+          snapshot: _snapshot(
+            boardId: 'board-a',
+            sessions: [_session('manager-root')],
+          ),
+          mission: MissionProjection(
+            approvals: const [approval],
+            activity: [
+              _activity(
+                'manager-root',
+                kind: MissionActivityKind.sessionUpdated,
+                profile: 'manager',
+              ),
+            ],
+          ),
+        );
+
+        expect(result.rooms.single.workerSession, isNull);
+        expect(result.rooms.single.approvals, isEmpty);
+        expect(result.rooms.single.activity, isEmpty);
+        expect(result.unscoped.approvals, [approval]);
+      },
+    );
 
     test('keeps tasks outside the selected scope out of global work', () {
       final local = _task('local', status: 'ready');

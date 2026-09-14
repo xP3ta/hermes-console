@@ -1,4 +1,6 @@
 import 'capability_descriptor.dart';
+import 'desktop_compression_outcome.dart';
+import 'desktop_compression_result.dart';
 
 enum CommandCategory {
   session,
@@ -603,32 +605,45 @@ enum DesktopCommandDispatchKind { output, send, skill, error, none }
 
 enum DesktopCommandAcceptance { accepted, rejected, unknown }
 
+/// Compression certainty is separate from human-facing command acceptance.
+/// No affirmative legacy reply proves completion of the durable operation.
+enum LegacyCompressionEvidence { ambiguous, terminalRejected }
+
 /// Respuesta operacional saneada de `slash.exec` o `command.dispatch`.
 final class DesktopCommandRpcResult {
   final DesktopCommandDispatchKind kind;
   final DesktopCommandAcceptance accepted;
+  final LegacyCompressionEvidence compressionEvidence;
   final String? output;
   final String? message;
   final String? notice;
   final String? target;
   final String? commandName;
+  final DesktopCompressionLegacyEvidence compressionWireEvidence;
 
   const DesktopCommandRpcResult({
     required this.kind,
     required this.accepted,
+    this.compressionEvidence = LegacyCompressionEvidence.ambiguous,
     this.output,
     this.message,
     this.notice,
     this.target,
     this.commandName,
+    this.compressionWireEvidence =
+        const DesktopCompressionLegacyEvidence.unknown(),
   });
 
-  factory DesktopCommandRpcResult.fromJson(Object? value) {
+  factory DesktopCommandRpcResult.fromJson(
+    Object? value, {
+    DesktopCompressionLegacyEvidence compressionWireEvidence =
+        const DesktopCompressionLegacyEvidence.unknown(),
+  }) {
     if (value is! Map) {
       throw const FormatException('invalid command response');
     }
     final json = Map<Object?, Object?>.from(value);
-    final type = json['type']?.toString().trim().toLowerCase();
+    final type = json['type'];
     final output = _boundedText(json['output'], 4000);
     final message = _boundedText(json['message'], 8000);
     final notice = _boundedText(json['notice'] ?? json['warning'], 1000);
@@ -642,7 +657,7 @@ final class DesktopCommandRpcResult {
       _ when output != null => DesktopCommandDispatchKind.output,
       _ => DesktopCommandDispatchKind.none,
     };
-    final status = json['status']?.toString().trim().toLowerCase();
+    final status = json['status'];
     final accepted = switch ((json['accepted'], status, kind)) {
       (false, _, _) => DesktopCommandAcceptance.rejected,
       (_, 'rejected' || 'failed' || 'error', _) =>
@@ -654,12 +669,47 @@ final class DesktopCommandRpcResult {
     return DesktopCommandRpcResult(
       kind: kind,
       accepted: accepted,
+      compressionEvidence: _compressionEvidence(json),
       output: output,
       message: message,
       notice: notice,
       target: target,
       commandName: commandName,
+      compressionWireEvidence: compressionWireEvidence,
     );
+  }
+
+  static LegacyCompressionEvidence _compressionEvidence(
+    Map<Object?, Object?> json,
+  ) {
+    // A closed rejection envelope: execution/output/pending, unknown fields,
+    // malformed values and conflicting positive acceptance all fail closed.
+    // Human message/notice content is never interpreted as protocol authority.
+    const fields = {
+      'accepted',
+      'type',
+      'status',
+      'message',
+      'notice',
+      'warning',
+    };
+    final accepted = json['accepted'];
+    final type = json['type'];
+    final status = json['status'];
+    if (json.keys.any((key) => !fields.contains(key)) ||
+        (json.containsKey('accepted') && accepted != false) ||
+        (json.containsKey('type') && type != 'error' && type != 'none') ||
+        (json.containsKey('status') && status != 'rejected') ||
+        const [
+          'message',
+          'notice',
+          'warning',
+        ].any((key) => json.containsKey(key) && json[key] is! String)) {
+      return LegacyCompressionEvidence.ambiguous;
+    }
+    return accepted == false || status == 'rejected'
+        ? LegacyCompressionEvidence.terminalRejected
+        : LegacyCompressionEvidence.ambiguous;
   }
 }
 
@@ -679,6 +729,8 @@ final class DesktopCommandDispatch {
   final String? output;
   final DesktopCommandAcceptance accepted;
   final CommandFailure? failure;
+  final DesktopCompressionStatus? compressionStatus;
+  final DesktopCompressionResult? compressionResult;
 
   const DesktopCommandDispatch({
     required this.commandName,
@@ -692,6 +744,8 @@ final class DesktopCommandDispatch {
     required this.accepted,
     this.output,
     this.failure,
+    this.compressionStatus,
+    this.compressionResult,
   });
 
   Map<String, Object?> get diagnosticFields => <String, Object?>{
@@ -700,6 +754,8 @@ final class DesktopCommandDispatch {
     'fallback_used': fallbackUsed,
     'dispatch_kind': dispatchKind.name,
     'accepted': accepted.name,
+    if (compressionStatus != null)
+      'compression_status': compressionStatus!.name,
     if (failure?.code != null) 'error_code': failure!.code,
     if (failure != null) 'error_class': failure!.kind.name,
   };

@@ -29,6 +29,55 @@ Widget _host(Widget child, {TextScaler textScaler = TextScaler.noScaling}) {
 }
 
 void main() {
+  testWidgets('approval respeta choices y scopes prohibidos por Desktop', (
+    tester,
+  ) async {
+    final choices = <String>[];
+    await tester.pumpWidget(
+      _host(
+        ChatApprovalCard(
+          approval: const {
+            'request_id': 'approval-limited',
+            'command': 'echo seguro',
+            'choices': ['once', 'deny'],
+            'allow_session': false,
+            'allow_permanent': false,
+          },
+          busy: false,
+          onChoice: choices.add,
+        ),
+      ),
+    );
+
+    expect(find.text('Permitir'), findsOneWidget);
+    expect(find.text('Denegar'), findsOneWidget);
+    expect(find.text('Esta sesión'), findsNothing);
+    expect(find.text('Siempre'), findsNothing);
+    await tester.tap(find.text('Permitir'));
+    await tester.tap(find.text('Denegar'));
+    expect(choices, ['once', 'deny']);
+  });
+
+  testWidgets('choices exactas no inventan permitir una vez', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ChatApprovalCard(
+          approval: const {
+            'request_id': 'approval-deny-only',
+            'choices': ['deny'],
+          },
+          busy: false,
+          onChoice: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.text('Permitir'), findsNothing);
+    expect(find.text('Denegar'), findsOneWidget);
+    expect(find.text('Esta sesión'), findsNothing);
+    expect(find.text('Siempre'), findsNothing);
+  });
+
   testWidgets('scope chips conservan callback, 48 dp y TalkBack con escala 2', (
     tester,
   ) async {
@@ -119,7 +168,7 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('detener subagente expone contexto y conserva callback', (
+  testWidgets('detener subagente oculta contexto y conserva callback', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
@@ -156,16 +205,21 @@ void main() {
 
     await tester.tap(find.text('ver detalles'));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('subagent-row-child')));
+    await tester.pumpAndSettle();
     final stop = find.byKey(const ValueKey('subagent-stop-child'));
     expect(tester.getSize(stop).height, greaterThanOrEqualTo(48));
     expect(tester.getSize(stop).width, greaterThanOrEqualTo(48));
+    expect(find.text('Revisar proyecto'), findsNothing);
     expect(
-      tester.getSemantics(find.bySemanticsLabel('Detener: Revisar proyecto')),
+      tester.getSemantics(stop),
       matchesSemantics(
-        label: 'Detener: Revisar proyecto',
+        label: 'Detener',
         isButton: true,
         hasEnabledState: true,
         isEnabled: true,
+        isFocusable: true,
+        hasFocusAction: true,
         hasTapAction: true,
       ),
     );

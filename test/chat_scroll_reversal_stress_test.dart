@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -43,7 +44,8 @@ ScrollPosition _primaryVerticalScrollPosition(
   return primary.position;
 }
 
-class _StreamingGateway implements HermesDesktopGateway {
+class _StreamingGateway
+    implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
 
@@ -66,6 +68,29 @@ class _StreamingGateway implements HermesDesktopGateway {
     runtimeSessionId: 'runtime-scroll-stress',
     storedSessionId: storedSessionId,
     created: false,
+  );
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async => DesktopSessionSnapshot(
+    runtimeSessionId: 'runtime-scroll-stress',
+    storedSessionId: storedSessionId,
+    created: false,
+  );
+
+  @override
+  Future<DesktopSessionSnapshot> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async => const DesktopSessionSnapshot(
+    runtimeSessionId: 'runtime-scroll-stress',
+    storedSessionId: 'sess-scroll-stress',
+    created: true,
   );
 
   @override
@@ -229,7 +254,7 @@ void main() {
       disableForegroundKeepAlive: true,
     );
     chat
-      ..messages = history ?? _longHistory()
+      ..internalMessagesForTesting = history ?? _longHistory()
       ..messagesLoaded = true;
 
     await tester.pumpWidget(

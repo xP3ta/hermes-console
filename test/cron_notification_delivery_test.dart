@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
+import 'package:hermes_android/core/services/new_session_launch_coordinator.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
@@ -404,7 +405,7 @@ void main() {
     final opened = <NotificationOpen>[];
     service.onOpenSession = (open) {
       opened.add(open);
-      return true;
+      return NavigationDeliveryOutcome.delivered;
     };
     await service.init();
 
@@ -432,7 +433,7 @@ void main() {
     final opened = <NotificationOpen>[];
     service.onOpenSession = (open) {
       opened.add(open);
-      return true;
+      return NavigationDeliveryOutcome.delivered;
     };
 
     await service.init();
@@ -449,9 +450,9 @@ void main() {
     var ready = false;
     var opened = 0;
     service.onOpenSession = (open) {
-      if (!ready) return false;
+      if (!ready) return NavigationDeliveryOutcome.deferred;
       opened++;
-      return true;
+      return NavigationDeliveryOutcome.delivered;
     };
     await service.init();
 
@@ -459,7 +460,10 @@ void main() {
     expect(opened, 0);
 
     ready = true;
-    expect(service.retryPendingOpen(), isTrue);
+    expect(
+      await service.retryPendingOpen(),
+      NavigationDeliveryOutcome.delivered,
+    );
     expect(opened, 1);
   });
 
@@ -471,7 +475,7 @@ void main() {
       final opened = <NotificationOpen>[];
       service.onOpenSession = (open) {
         opened.add(open);
-        return true;
+        return NavigationDeliveryOutcome.delivered;
       };
       await service.init();
 

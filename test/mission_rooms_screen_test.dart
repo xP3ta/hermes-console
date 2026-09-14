@@ -303,7 +303,10 @@ void main() {
     await _openCreateRoom(tester);
     expect(find.byKey(const ValueKey('mission-room-editor')), findsOneWidget);
     final createAction = find.byKey(const ValueKey('room-save'));
-    expect(find.widgetWithText(FilledButton, 'Crear sala'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'Crear sala local'),
+      findsOneWidget,
+    );
     expect(
       find.descendant(
         of: find.byType(SingleChildScrollView).last,
@@ -539,47 +542,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('serialized room keeps manager first and members deterministic', (
-    tester,
-  ) async {
-    final manager = await _manager();
-    final store = MissionRoomStore(manager.prefs, nowMs: () => 123000);
-    await store.save(
-      connectionId: _connection.id,
-      name: 'Order',
-      managerProfile: 'manager',
-      memberProfiles: const ['zeta', 'manager', 'alpha'],
-    );
-    await tester.pumpWidget(
-      _host(
-        manager: manager,
-        roomStore: store,
-        snapshot: _snapshot(
-          profiles: const [
-            AgentProfile(name: 'zeta'),
-            AgentProfile(name: 'manager'),
-            AgentProfile(name: 'alpha'),
-          ],
-          sessions: const [],
+  testWidgets(
+    'serialized room ignores manager and sorts members deterministically',
+    (tester) async {
+      final manager = await _manager();
+      final store = MissionRoomStore(manager.prefs, nowMs: () => 123000);
+      await store.save(
+        connectionId: _connection.id,
+        name: 'Order',
+        managerProfile: 'manager',
+        memberProfiles: const ['zeta', 'manager', 'alpha'],
+      );
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          roomStore: store,
+          snapshot: _snapshot(
+            profiles: const [
+              AgentProfile(name: 'zeta'),
+              AgentProfile(name: 'manager'),
+              AgentProfile(name: 'alpha'),
+            ],
+            sessions: const [],
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openRooms(tester);
+      );
+      await tester.pumpAndSettle();
+      await _openRooms(tester);
 
-    expect(
-      find.byKey(const ValueKey('room-member-avatar-0-manager')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('room-member-avatar-1-alpha')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('room-member-avatar-2-zeta')),
-      findsOneWidget,
-    );
-  });
+      expect(
+        find.byKey(const ValueKey('room-avatar-member-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('room-avatar-member-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('room-avatar-member-2')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets(
     'room mission card prioritizes purpose and real work with a team footer',
@@ -644,8 +648,8 @@ void main() {
       expect(find.byKey(ValueKey('room-work-${room.id}')), findsOneWidget);
       expect(find.text('@infra · en curso · Firmar candidata'), findsOneWidget);
       expect(find.byKey(ValueKey('room-footer-${room.id}')), findsOneWidget);
-      expect(find.text('Coordinador'), findsOneWidget);
-      expect(find.text('@manager'), findsOneWidget);
+      expect(find.text('Coordinador'), findsNothing);
+      expect(find.text('@manager'), findsNothing);
       expect(find.text('3 miembros'), findsNothing);
       expect(
         find.descendant(
@@ -823,7 +827,7 @@ void main() {
 
     expect(find.text('#Homelab'), findsOneWidget);
     expect(find.text('Operar la infraestructura local'), findsOneWidget);
-    expect(find.text('Coordinador'), findsOneWidget);
+    expect(find.text('Coordinador'), findsNothing);
     expect(find.text('2 miembros'), findsNothing);
     expect(find.byKey(const ValueKey('mission-create-agent')), findsNothing);
     expect(find.byKey(const ValueKey('mission-create-room')), findsNothing);
@@ -1119,8 +1123,8 @@ void main() {
       await tester.pumpAndSettle();
       await _openRooms(tester);
 
-      expect(find.text('Coordinator'), findsOneWidget);
-      expect(find.text('@manager'), findsOneWidget);
+      expect(find.text('Coordinator'), findsNothing);
+      expect(find.text('@manager'), findsNothing);
       expect(find.text('1 member'), findsNothing);
       await tester.tap(find.text('#Local room'));
       await tester.pumpAndSettle();
@@ -1402,4 +1406,64 @@ void main() {
     expect(tester.getBottomLeft(save).dy, lessThanOrEqualTo(720));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'V13 room rows are open and use a private-name-free avatar stack',
+    (tester) async {
+      final manager = await _manager();
+      final store = MissionRoomStore(manager.prefs, nowMs: () => 123000);
+      final room = await store.save(
+        connectionId: _connection.id,
+        name: 'Open editorial room',
+        managerProfile: 'zeta',
+        memberProfiles: const ['zeta', 'alpha', 'beta', 'gamma'],
+      );
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          snapshot: _snapshot(
+            profiles: const [
+              AgentProfile(name: 'zeta'),
+              AgentProfile(name: 'alpha'),
+              AgentProfile(name: 'beta'),
+              AgentProfile(name: 'gamma'),
+            ],
+            sessions: const [],
+          ),
+          roomStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openRooms(tester);
+
+      final row = find.byKey(ValueKey('mission-room-${room.id}'));
+      expect(row, findsOneWidget);
+      expect(
+        find.descendant(
+          of: row,
+          matching: find.byKey(ValueKey('room-spine-${room.id}')),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: row,
+          matching: find.byKey(const ValueKey('room-avatar-stack')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('+1'), findsOneWidget);
+      final semantics = tester.ensureSemantics();
+      final data = tester
+          .getSemantics(find.byKey(const ValueKey('room-avatar-stack')))
+          .getSemanticsData();
+      expect(data.label, startsWith('4 miembros'));
+      for (final name in const ['zeta', 'alpha', 'beta', 'gamma']) {
+        expect(data.label, isNot(contains(name)));
+      }
+      semantics.dispose();
+      expect(tester.getSize(row).height, greaterThanOrEqualTo(48));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

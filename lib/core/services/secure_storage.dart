@@ -72,7 +72,13 @@ class SecureStorage {
 
   Future<void> deleteSsh(String connectionId) async {
     for (final f in const [
-      'user', 'host', 'port', 'method', 'password', 'privkey', 'passphrase',
+      'user',
+      'host',
+      'port',
+      'method',
+      'password',
+      'privkey',
+      'passphrase',
       'hostkey',
     ]) {
       await _storage.delete(key: _sshKey(connectionId, f));
@@ -94,13 +100,16 @@ class SecureStorage {
 
   Future<void> clearAllConnectionSecrets() async {
     final all = await _storage.readAll();
-    for (final k in all.keys.where(
-      (k) =>
-          k.startsWith('api_key_') ||
-          k.startsWith('dash_') ||
-          k.startsWith('bridge_') ||
-          k.startsWith('ssh_'),
-    )) {
+    final keys = all.keys
+        .where(
+          (k) =>
+              k.startsWith('api_key_') ||
+              k.startsWith('dash_') ||
+              k.startsWith('bridge_') ||
+              k.startsWith('ssh_'),
+        )
+        .toList(growable: false);
+    for (final k in keys) {
       await _storage.delete(key: k);
     }
   }

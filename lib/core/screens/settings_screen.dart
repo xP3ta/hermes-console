@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../l10n/app_localizations.dart';
+
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -8,7 +10,7 @@ import 'package:http/http.dart' as http;
 import '../app_header_title.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
-import '../services/cron_repository.dart';
+
 import '../services/font_size_service.dart';
 import '../services/local_transcript_store.dart';
 import '../services/session_deletion.dart';
@@ -16,7 +18,7 @@ import '../services/turn_outbox_store.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_profile_adapter.dart';
 import '../theme/theme_profile_store.dart';
-import '../utils/api_error.dart';
+
 import '../services/bridge_update_service.dart';
 import '../../main.dart';
 import '../widgets/hermes_ui.dart';
@@ -34,7 +36,9 @@ import 'security_info_screen.dart';
 import 'themes_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
+
 import 'package:package_info_plus/package_info_plus.dart';
+
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 
@@ -90,7 +94,6 @@ class SettingsScreen extends StatelessWidget {
   final ConnectionManager connManager;
   @visibleForTesting
   final Future<bool> Function()? verifyHistoryCleanupForTesting;
-
   const SettingsScreen({
     required this.connection,
     required this.connManager,
@@ -104,19 +107,42 @@ class SettingsScreen extends StatelessWidget {
     // igual que Voz y Notificaciones: sin estilos locales (spec 028 A-203).
     //
     // La pantalla se reconstruye al cambiar la instancia ACTIVA (mismo patrón
-    // que HomeDashboardScreen): sin esto, `connection` es una foto fija del
-    // constructor y, tras activar otra instancia en "Gestionar instancias",
-    // Ajustes seguía enseñando la config (y el modelo) de la anterior hasta
-    // salir y volver a entrar (spec 028).
+    // que HomeDashboardScreen) y también ante ediciones materiales de una
+    // instancia con el mismo id. La revisión forma parte de la key de
+    // autocompresión para cerrar el cliente anterior y volver a cargar URL,
+    // auth, permisos y schema sin tener que reabrir Ajustes.
     return ValueListenableBuilder<String?>(
       valueListenable: connManager.activeConnectionId,
       builder: (context, activeId, _) {
         final id =
             activeId ??
-            connManager.prefs.getString(ConnectionManager.lastConnKey);
-        final matches = connManager.getConnections().where((c) => c.id == id);
-        final conn = matches.isEmpty ? connection : matches.first;
-        return _buildBody(context, conn);
+            connManager.prefs.getString(ConnectionManager.lastConnKey) ??
+            connection.id;
+        return ValueListenableBuilder<int>(
+          valueListenable: connManager.activeProfileRevisionFor(id),
+          builder: (context, _, _) {
+            return ValueListenableBuilder<int>(
+              valueListenable: connManager.connectionsRevision,
+              builder: (context, _, _) {
+                return ValueListenableBuilder<int>(
+                  valueListenable: connManager.connectionRevisionFor(id),
+                  builder: (context, _, _) {
+                    // The per-connection revision deliberately arrives before
+                    // the global revision. Resolve from persisted state here,
+                    // rather than retaining the connection captured by the
+                    // outer builder, so the first replacement repository has
+                    // the new endpoint/auth/read-only metadata.
+                    final matches = connManager.getConnections().where(
+                      (candidate) => candidate.id == id,
+                    );
+                    final conn = matches.isEmpty ? connection : matches.first;
+                    return _buildBody(context, conn);
+                  },
+                );
+              },
+            );
+          },
+        );
       },
     );
   }
@@ -963,24 +989,9 @@ class HistoryCleanupSection extends StatefulWidget {
 
 class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
   bool _clearingNormal = false;
-  bool _clearingCron = false;
 
-  String _summaryMessage(Strings s, ClearConversationsSummary result) {
+  String _summaryMessage(Strings s, LocalConversationClearSummary result) {
     final parts = <String>[];
-    final remote = result.remote;
-    if (remote == null) {
-      parts.add(s.setRemoteClearUnavailable);
-    } else if (remote.allDeleted) {
-      parts.add(s.setConvosCleared(remote.deleted));
-    } else {
-      parts.add(
-        s.setConvosClearedPartial(
-          remote.deleted,
-          remote.rejected,
-          remote.failed,
-        ),
-      );
-    }
     if (result.transcripts.removed > 0) {
       parts.add(s.setLocalConvosCleared(result.transcripts.removed));
     }
@@ -1020,16 +1031,14 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
   }
 
   Future<void> _clearNormal() async {
-    if (_clearingNormal || _clearingCron) return;
+    if (_clearingNormal) return;
     final targetConnection = widget.connection;
+    final targetProfile = Session.profileOwner(
+      widget.connManager.activeProfileFor(targetConnection.id),
+    );
     final verifier = _captureHistoryCleanupVerifier();
-    final activeChats = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.activeChats;
     setState(() => _clearingNormal = true);
 
-    ApiClient? client;
-    var normalSessions = <Session>[];
     try {
       if (!await _authorizeHistoryCleanup(
         targetConnection: targetConnection,
@@ -1043,7 +1052,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: Text(Strings.of(dialogContext).setClearConvos),
-          content: Text(Strings.of(dialogContext).setClearConvosBody),
+          content: Text(Strings.of(dialogContext).setClearConvosSub),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -1065,42 +1074,28 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         return;
       }
 
-      client = ApiClient(
-        baseUrl: targetConnection.baseUrl,
-        apiKey: targetConnection.apiKey,
+      final result = await clearProfileLocalConversationState(
         connectionId: targetConnection.id,
-      );
-      final prefs = await SharedPreferences.getInstance();
-      final result = await clearConversationsAndLocalState(
-        loadSessions: ({bool includeChildren = false}) async {
-          final sessions = await client!.getSessions(
-            includeChildren: includeChildren,
-          );
-          normalSessions = sessionsSafeForBulkDelete(sessions);
-          return sessions;
+        profile: targetProfile,
+        clearDrafts: ({required String profile}) async {
+          final prefs = await SharedPreferences.getInstance();
+          return ChatDraftStore(
+            prefs,
+          ).deleteForProfile(targetConnection.id, profile);
         },
-        deleteSession: client.deleteSession,
-        clearDrafts: () =>
-            ChatDraftStore(prefs).deleteForConnection(targetConnection.id),
-        clearTranscripts: () =>
-            LocalTranscriptStore.deleteForConnection(targetConnection.id),
-        clearOutbox: () =>
-            TurnOutboxStore().deleteForConnection(targetConnection.id),
-        onRemoteSessionDeleted: (sessionId) async {
-          if (activeChats == null) return;
-          var profile = '';
-          for (final session in normalSessions) {
-            if (session.id == sessionId) {
-              profile = session.profile ?? '';
-              break;
-            }
-          }
-          await activeChats.clearCancelledTurnsForSession(
-            connectionId: targetConnection.id,
-            profile: profile,
-            sessionId: sessionId,
-          );
-        },
+        clearTranscripts: ({required String profile}) =>
+            LocalTranscriptStore.deleteForProfile(targetConnection.id, profile),
+        clearOutbox: ({required String profile}) =>
+            TurnOutboxStore().deleteForProfile(targetConnection.id, profile),
+        clearGlobalActivity:
+            ({required String connectionId, required String profile}) async {
+              final aggregate = context
+                  .findAncestorStateOfType<HermesAppState>()
+                  ?.activeChats
+                  .globalActivity;
+              aggregate?.clearProfile(connectionId, profile);
+              await aggregate?.flushJournal();
+            },
       );
       if (!mounted) return;
       if (result.hasChanges) {
@@ -1115,102 +1110,14 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
           duration: Duration(seconds: result.allSucceeded ? 3 : 5),
         ),
       );
-    } catch (e) {
-      // Las fuentes remotas/locales se aíslan dentro del coordinador. Este
-      // fallback solo cubre fallos inesperados al preparar la operación.
+    } catch (_) {
       if (!mounted) return;
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.setClearError(localizedApiError(s, e)))),
-      );
-    } finally {
-      client?.close();
-      if (mounted) setState(() => _clearingNormal = false);
-    }
-  }
-
-  Future<void> _clearCron() async {
-    if (_clearingNormal || _clearingCron) return;
-    final targetConnection = widget.connection;
-    final targetProfile = widget.connManager.activeProfileFor(
-      targetConnection.id,
-    );
-    final verifier = _captureHistoryCleanupVerifier();
-    setState(() => _clearingCron = true);
-
-    DashboardClient? client;
-    try {
-      if (!await _authorizeHistoryCleanup(
-        targetConnection: targetConnection,
-        verifier: verifier,
-      )) {
-        return;
-      }
-      client = DashboardClient.lazy(targetConnection);
-      final repository = CronRepository(client, profile: targetProfile);
-      final preview = await repository.previewConversationCleanup();
-      if (!mounted) return;
-      final s = Strings.of(context);
-      if (preview.isEmpty) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(s.crnCleanupEmpty)));
-        return;
-      }
-
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          scrollable: true,
-          title: Text(s.crnCleanupTitle),
-          content: Text(s.crnCleanupBody(preview.count)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(s.commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(dialogContext).hermes.error,
-              ),
-              child: Text(s.commonDelete),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true ||
-          !mounted ||
-          widget.connection.id != targetConnection.id) {
-        return;
-      }
-
-      final result = await repository.deleteCronConversations(preview);
-      if (!mounted) return;
-      if (result.deleted > 0) {
-        historyCleanupInvalidations.publish(
-          connectionId: targetConnection.id,
-          scope: HistoryCleanupScope.cronResults,
-        );
-      }
-      final message = result.preserved == 0
-          ? s.crnCleanupDone(result.deleted)
-          : s.crnCleanupPartial(result.deleted, result.preserved);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    } catch (error) {
-      if (!mounted) return;
-      final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(s.crnCleanupFailed(localizedApiError(s, error))),
-          backgroundColor: Theme.of(context).hermes.warning,
-        ),
-      );
+      ).showSnackBar(SnackBar(content: Text(s.setLocalClearFailures(3))));
     } finally {
-      client?.close();
-      if (mounted) setState(() => _clearingCron = false);
+      if (mounted) setState(() => _clearingNormal = false);
     }
   }
 
@@ -1219,9 +1126,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
     return HistoryCleanupActionList(
       readOnly: widget.connection.readOnly,
       clearingNormal: _clearingNormal,
-      clearingCron: _clearingCron,
       onClearNormal: _clearNormal,
-      onClearCron: _clearCron,
     );
   }
 }
@@ -1230,16 +1135,12 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
 class HistoryCleanupActionList extends StatelessWidget {
   final bool readOnly;
   final bool clearingNormal;
-  final bool clearingCron;
   final VoidCallback onClearNormal;
-  final VoidCallback onClearCron;
 
   const HistoryCleanupActionList({
     required this.readOnly,
     required this.clearingNormal,
-    required this.clearingCron,
     required this.onClearNormal,
-    required this.onClearCron,
     super.key,
   });
 
@@ -1254,18 +1155,7 @@ class HistoryCleanupActionList extends StatelessWidget {
           title: s.setClearConvos,
           subtitle: s.setClearConvosSub,
           busy: clearingNormal,
-          onTap: readOnly || clearingNormal || clearingCron
-              ? null
-              : onClearNormal,
-        ),
-        _HistoryCleanupActionRow(
-          actionKey: const ValueKey('history-cleanup-cron'),
-          icon: Icons.schedule_outlined,
-          title: s.crnCleanupTitle,
-          busy: clearingCron,
-          onTap: readOnly || clearingNormal || clearingCron
-              ? null
-              : onClearCron,
+          onTap: readOnly || clearingNormal ? null : onClearNormal,
         ),
       ],
     );

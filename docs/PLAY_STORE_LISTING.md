@@ -1,9 +1,9 @@
 # Ficha de Google Play — Hermes Console
 
-Texto candidato para `1.2.9 (4963)`. Idioma predeterminado: español. No está
+Texto candidato para `1.2.10 (4965)`. Idioma predeterminado: español. No está
 autorizado para envío hasta verificar el AAB firmado, la
 política de privacidad desplegada, Data Safety, los vídeos FGS, las capturas y
-la QA física. Los recursos gráficos mantienen su propio gate al final del
+la QA E2E en emulador y Desktop. Los recursos gráficos mantienen su propio gate al final del
 documento.
 
 ## Identidad
@@ -93,26 +93,26 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.9 (4963)`
+## Novedades — `1.2.10 (4965)`
 
 ### Español (máximo 500 caracteres)
 
-Los chats conservan mejor su historial al refrescar, reconectar o continuar
-desde Desktop, incluso después de usar Parar. La escucha opcional en segundo
-plano permanece activa hasta que la desactivas y puede avisarte de respuestas,
-runs, Cron y Kanban. Mejoras adicionales refuerzan la reconexión y los controles
-de Voz, lectura, SSH y SFTP.
+La continuidad entre Desktop y Console es más fiable tras reconexiones, cambios
+de ownership y turnos interrumpidos. Los envíos no confirmados conservan el
+borrador sin duplicarse. La compactación nativa y el historial persistido de
+subagentes mantienen el chat legible, y los fallos de conexión ya no muestran
+detalles técnicos internos.
 
 ### English (maximum 500 characters)
 
-Chats preserve history more reliably across refreshes, reconnects, Desktop
-handoffs, and Stop. Optional background listening now stays active until you
-turn it off and can notify you about replies, runs, Cron, and Kanban. Additional
-hardening improves reconnection and Voice, read-aloud, SSH, and SFTP controls.
+Desktop-to-Console continuity is more reliable after reconnects, ownership
+changes, and interrupted turns. Unconfirmed sends preserve the draft without
+duplication. Native compression and persisted subagent history keep chats
+readable, while connection failures no longer expose internal technical details.
 
 ## Recursos gráficos
 
-- Para `1.2.9`, conservar el icono, la feature graphic y las capturas que ya
+- Para `1.2.10`, conservar el icono, la feature graphic y las capturas que ya
   están publicadas y aprobadas en Google Play. Esta actualización no requiere
   nuevos recursos gráficos ni cambia los flujos declarados en Data Safety.
 - Cualquier recurso nuevo conserva su gate independiente de privacidad,

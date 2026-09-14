@@ -19,13 +19,17 @@ enum PreparedTurnTransport { desktop, rest, bridgeLocal, unknown }
 /// Lote local recuperable de un único envío. Todo el JSON se guarda cifrado;
 /// IDs, texto, nombres y rutas nunca deben copiarse a logs/diagnósticos.
 class PreparedTurn {
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   final String connectionId;
   final String sessionId;
   final String clientTurnId;
   final int createdAtMs;
   final int updatedAtMs;
+
+  /// Orden de admisión monotónico de la cola durable. `null` solo existe para
+  /// migraciones legacy y bloquea el drain hasta cancelación/reconciliación.
+  final int? queueOrder;
   final String text;
   final String fullText;
   final String? desktopText;
@@ -43,6 +47,7 @@ class PreparedTurn {
     required this.clientTurnId,
     required this.createdAtMs,
     required this.updatedAtMs,
+    this.queueOrder,
     required this.text,
     String? fullText,
     this.desktopText,
@@ -93,6 +98,8 @@ class PreparedTurn {
 
   PreparedTurn copyWith({
     int? updatedAtMs,
+    int? queueOrder,
+    String? text,
     String? profile,
     List<AttachmentDraft>? attachments,
     String? fullText,
@@ -107,7 +114,8 @@ class PreparedTurn {
     clientTurnId: clientTurnId,
     createdAtMs: createdAtMs,
     updatedAtMs: updatedAtMs ?? this.updatedAtMs,
-    text: text,
+    queueOrder: queueOrder ?? this.queueOrder,
+    text: text ?? this.text,
     fullText: fullText ?? this.fullText,
     desktopText: desktopText ?? this.desktopText,
     attachments: attachments ?? this.attachments,
@@ -126,6 +134,7 @@ class PreparedTurn {
     'client_turn_id': clientTurnId,
     'created_at_ms': createdAtMs,
     'updated_at_ms': updatedAtMs,
+    if (queueOrder != null) 'queue_order': queueOrder,
     'text': text,
     'full_text': fullText,
     if (desktopText != null) 'desktop_text': desktopText,
@@ -142,6 +151,7 @@ class PreparedTurn {
     final persistedSchema = (json['schema_version'] as num?)?.toInt();
     if (persistedSchema != 1 &&
         persistedSchema != 2 &&
+        persistedSchema != 3 &&
         persistedSchema != schemaVersion) {
       throw const FormatException('Unsupported prepared turn schema');
     }
@@ -155,6 +165,14 @@ class PreparedTurn {
     final updatedAtMs = (json['updated_at_ms'] as num?)?.toInt() ?? 0;
     if (createdAtMs <= 0 || updatedAtMs < createdAtMs) {
       throw const FormatException('Invalid prepared turn timestamps');
+    }
+    int? queueOrder;
+    if (persistedSchema == schemaVersion && json.containsKey('queue_order')) {
+      final rawQueueOrder = json['queue_order'];
+      if (rawQueueOrder is! int || rawQueueOrder < 0) {
+        throw const FormatException('Invalid prepared turn queue order');
+      }
+      queueOrder = rawQueueOrder;
     }
     final text = (json['text'] ?? '').toString();
     final connectionId = requiredString('connection_id');
@@ -198,11 +216,12 @@ class PreparedTurn {
       clientTurnId: clientTurnId,
       createdAtMs: createdAtMs,
       updatedAtMs: updatedAtMs,
+      queueOrder: queueOrder,
       text: text,
-      fullText: persistedSchema == schemaVersion
+      fullText: persistedSchema != 1 && persistedSchema != 2
           ? (json['full_text'] ?? text).toString()
           : text,
-      desktopText: persistedSchema == schemaVersion
+      desktopText: persistedSchema != 1 && persistedSchema != 2
           ? json['desktop_text']?.toString()
           : null,
       attachments: attachments,
@@ -219,7 +238,7 @@ class PreparedTurn {
         PreparedTurnState.ambiguous,
       ),
       restoresComposer: json['restores_composer'] as bool? ?? true,
-      queued: persistedSchema == schemaVersion
+      queued: persistedSchema != 1 && persistedSchema != 2
           ? json['queued'] as bool? ?? false
           : false,
     );

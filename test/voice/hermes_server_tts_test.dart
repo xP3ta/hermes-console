@@ -154,15 +154,27 @@ void main() {
     },
   );
 
-  test('una respuesta sin audio lanza para activar el fallback', () async {
+  test('una respuesta sin audio lanza sin copiar detalle remoto', () async {
     final engine = HermesServerTtsEngine(
-      synthesize: (text) async => {'ok': false, 'detail': 'TTS caído'},
+      synthesize: (text) async => {
+        'ok': false,
+        'detail': 'PRIVATE_TTS_SERVER_DETAIL /home/server/audio.wav',
+      },
       playback: _Playback(),
       playbackFactory: _Playback.new,
     );
     addTearDown(engine.dispose);
 
-    await expectLater(engine.speak('Hola.'), throwsException);
+    await expectLater(
+      engine.speak('Hola.'),
+      throwsA(
+        predicate<Object>(
+          (error) =>
+              !error.toString().contains('PRIVATE_TTS_SERVER_DETAIL') &&
+              !error.toString().contains('/home/server'),
+        ),
+      ),
+    );
   });
 
   test('un error de red lanza para activar el fallback', () async {

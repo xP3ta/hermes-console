@@ -1,15 +1,19 @@
 import 'package:flutter/widgets.dart';
 
+import '../../l10n/app_localizations.dart';
+
 final class MissionControlCopy {
   final bool _english;
+  final Strings _strings;
 
-  const MissionControlCopy._(this._english);
+  const MissionControlCopy._(this._english, this._strings);
 
   factory MissionControlCopy.of(BuildContext context) => MissionControlCopy._(
     Localizations.localeOf(context).languageCode.toLowerCase() == 'en',
+    Strings.of(context),
   );
 
-  String get title => 'Bots';
+  String get title => _strings.missionTitle;
   String get allAgents => _english ? 'All agents' : 'Todos los agentes';
   String get chooseWorkspace =>
       _english ? 'Choose workspace' : 'Elegir espacio de trabajo';
@@ -26,8 +30,8 @@ final class MissionControlCopy {
   String get organizationHint => _english ? 'e.g. Homelab' : 'p. ej. Homelab';
   String get chooseProfiles =>
       _english ? 'Choose profiles' : 'Selecciona profiles';
-  String get save => _english ? 'Save' : 'Guardar';
-  String get cancel => _english ? 'Cancel' : 'Cancelar';
+  String get save => _strings.missionHostedSave;
+  String get cancel => _strings.missionHostedCancel;
   String get delete => _english ? 'Delete' : 'Eliminar';
   String get deleteOrganizationTitle =>
       _english ? 'Delete workspace?' : '¿Eliminar espacio de trabajo?';
@@ -47,11 +51,42 @@ final class MissionControlCopy {
   String get showAllActivity =>
       _english ? 'Show all activity' : 'Ver toda la actividad';
   String get showLess => _english ? 'Show less' : 'Mostrar menos';
-  String get bots => 'Bots';
+  String get bots => _strings.missionBotsLabel;
   String botCount(int count) =>
       _english ? '$count ${count == 1 ? 'bot' : 'bots'}' : '$count bots';
-  String get rooms => _english ? 'Rooms' : 'Salas';
-  String get work => _english ? 'Work' : 'Trabajo';
+  String get rooms => _english ? 'Local rooms' : 'Salas locales';
+  String get createLocalRoom =>
+      _english ? 'Create local room' : 'Crear sala local';
+  String get localRoomsExplanation => _english
+      ? 'Stored only on this device; this is not a shared Room.'
+      : 'Se guarda solo en este dispositivo; no es una Room compartida.';
+  String get sharedRoomName =>
+      _english ? 'Shared room name' : 'Nombre de la sala compartida';
+  String get chooseSharedMembers =>
+      _english ? 'Choose official members' : 'Elige miembros oficiales';
+  String get viewMembers => _english ? 'View members' : 'Ver miembros';
+  String get roomConversation => _english ? 'Conversation' : 'Conversación';
+  String get replyInThread =>
+      _english ? 'Reply in thread' : 'Responder en hilo';
+  String get noRoomMessages => _english
+      ? 'No messages have been published yet.'
+      : 'Todavía no se han publicado mensajes.';
+  String get sharedRooms => _strings.missionSharedRooms;
+  String get createSharedRoom => _strings.missionCreateSharedRoom;
+  String get noSharedRooms => _strings.missionNoSharedRooms;
+  String get sharedRoomsUnavailable => _strings.missionSharedRoomsUnavailable;
+  String get sendSharedMessage => _strings.missionSendSharedMessage;
+  String get renameSharedRoom => _strings.missionRenameSharedRoom;
+  String get stopSharedRoom => _strings.missionStopSharedRoom;
+  String get disbandSharedRoom => _strings.missionDisbandSharedRoom;
+  String get confirm => _strings.missionConfirm;
+  String get hostedActionFailed => _strings.missionHostedActionFailed;
+  String get retrySharedTaskAvailable => _strings.missionHostedRetryAvailable;
+  String get retrySharedTask => _strings.missionHostedRetryAction;
+  String get retrySharedTaskConfirm => _strings.missionHostedRetryConfirm;
+  String sharedRoomSemantics(String name, int members) =>
+      _strings.missionSharedRoomSemantics(name, members);
+  String get work => _strings.missionWorkLabel;
   String get globalWorkTray =>
       _english ? 'Other pending work' : 'Otros pendientes';
 
@@ -135,15 +170,11 @@ final class MissionControlCopy {
       _english ? 'Talk to @$profile' : 'Hablar con @$profile';
   String get roomNoLinkedWork =>
       _english ? 'No linked work yet' : 'Sin trabajo enlazado todavía';
-  String roomMemberCount(int count) => _english
-      ? '$count ${count == 1 ? 'member' : 'members'}'
-      : '$count ${count == 1 ? 'miembro' : 'miembros'}';
+  String roomMemberCount(int count) => _strings.missionHostedMemberCount(count);
   String roomHomeSummary(int agents, int rooms) => _english
       ? '$agents ${agents == 1 ? 'agent' : 'agents'} · $rooms ${rooms == 1 ? 'room' : 'rooms'}'
       : '$agents ${agents == 1 ? 'agente' : 'agentes'} · $rooms ${rooms == 1 ? 'sala' : 'salas'}';
-  String roomCount(int count) => _english
-      ? '$count ${count == 1 ? 'room' : 'rooms'}'
-      : '$count ${count == 1 ? 'sala' : 'salas'}';
+  String roomCount(int count) => _strings.missionHostedRoomCount(count);
   String attentionSummary(int approvals, int blocked) => _english
       ? '$approvals ${approvals == 1 ? 'approval' : 'approvals'} · $blocked blocked'
       : '$approvals ${approvals == 1 ? 'aprobación' : 'aprobaciones'} · $blocked bloqueados';
@@ -175,20 +206,14 @@ final class MissionControlCopy {
   String get roomsBrowseOnly => _english
       ? 'Hermes cannot verify the team right now. Saved rooms remain visible in browse-only mode.'
       : 'Hermes no puede verificar el equipo ahora. Las salas guardadas siguen visibles en modo consulta.';
-  String get offline => _english
-      ? 'Hermes is unavailable. Existing team data remains visible.'
-      : 'Hermes no está disponible. Los datos existentes del equipo siguen visibles.';
-  String get staleData => _english
-      ? 'Some team data may be out of date.'
-      : 'Algunos datos del equipo pueden estar desactualizados.';
+  String get offline => _strings.missionOffline;
+  String get staleData => _strings.missionStaleData;
   String get noProfiles => _english
       ? 'No bots are available here.'
       : 'No hay bots disponibles aquí.';
   String get noTasks =>
       _english ? 'There are no tasks here yet.' : 'Todavía no hay tareas aquí.';
-  String get kanbanUnavailable => _english
-      ? 'The task board is not available on this Hermes installation.'
-      : 'El tablero de tareas no está disponible en esta instalación de Hermes.';
+  String get kanbanUnavailable => _strings.missionKanbanUnavailable;
   String get noActivity => _english
       ? 'Hermes has not published recent activity for this scope.'
       : 'Hermes no ha publicado actividad reciente para este ámbito.';

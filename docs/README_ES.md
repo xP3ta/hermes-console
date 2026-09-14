@@ -101,14 +101,15 @@ enviar audio silenciosamente por otra.
 
 ## Compilar desde fuente
 
-Necesitas Flutter 3.44.x, el Dart incluido, Java 17 y Android SDK 36.
+Necesitas Flutter 3.47.x, el Dart incluido, Java 17 y Android SDK 36.
 
 ```bash
 flutter pub get
 flutter analyze
 flutter test
 flutter build apk --debug --flavor full \
-  --dart-define=HERMES_FLAVOR=full
+  --dart-define=HERMES_FLAVOR=full \
+  --dart-define=HERMES_LOCAL_AGENT=true
 ```
 
 El APK debug no es distribuible. Los builds release fallan a propósito si no

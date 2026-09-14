@@ -8,8 +8,9 @@ enum SessionCategory { chats, automation, all }
 abstract final class AutomationSessionSources {
   static const List<String> values = <String>[
     'cron',
+    'kanban',
+    'subagent',
     'tool',
-    'api_server',
     'acp',
     'hermes_flow',
     'vulcan_delegate',
@@ -18,8 +19,9 @@ abstract final class AutomationSessionSources {
 
   static const Set<String> _set = <String>{
     'cron',
+    'kanban',
+    'subagent',
     'tool',
-    'api_server',
     'acp',
     'hermes_flow',
     'vulcan_delegate',

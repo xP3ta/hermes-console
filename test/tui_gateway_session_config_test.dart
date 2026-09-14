@@ -38,6 +38,13 @@ void main() {
 
     server.listen((request) async {
       final socket = await WebSocketTransformer.upgrade(request);
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+        }),
+      );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         requests.add(frame);
@@ -45,10 +52,12 @@ void main() {
           jsonEncode({
             'jsonrpc': '2.0',
             'id': frame['id'],
-            'result': {
-              'session_id': 'runtime-created-configured',
-              'stored_session_id': 'stored-created-configured',
-            },
+            'result': frame['method'] == 'gateway.capabilities'
+                ? {'per_session_exclusive_submit': true}
+                : {
+                    'session_id': 'runtime-created-configured',
+                    'stored_session_id': 'stored-created-configured',
+                  },
           }),
         );
       }
@@ -75,9 +84,12 @@ void main() {
 
     expect(snapshot.created, isTrue);
     expect(snapshot.runtimeSessionId, 'runtime-created-configured');
-    expect(requests.single['method'], 'session.create');
-    expect(requests.single['params'], {
-      'source': 'mobile',
+    expect(requests.map((request) => request['method']), [
+      'gateway.capabilities',
+      'session.create',
+    ]);
+    expect(requests[1]['params'], {
+      'source': 'desktop',
       'profile': 'coding',
       'title': 'Bot Chat',
       'hidden': true,
@@ -101,6 +113,13 @@ void main() {
 
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+          }),
+        );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final params = Map<String, dynamic>.from(frame['params'] as Map);
@@ -189,6 +208,13 @@ void main() {
 
     server.listen((request) async {
       final socket = await WebSocketTransformer.upgrade(request);
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+        }),
+      );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final malformed = responseIndex++ == 0
@@ -239,6 +265,13 @@ void main() {
     server.listen((request) async {
       connections += 1;
       final socket = await WebSocketTransformer.upgrade(request);
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+        }),
+      );
       await socket.close();
     });
     final client = _clientFor(server);

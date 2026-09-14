@@ -22,7 +22,10 @@ enum AuthMode {
   final String storageKey;
   final String label;
 
-  static AuthMode fromStorage(String? value, {AuthMode fallback = AuthMode.unknown}) {
+  static AuthMode fromStorage(
+    String? value, {
+    AuthMode fallback = AuthMode.unknown,
+  }) {
     return AuthMode.values.firstWhere(
       (m) => m.storageKey == value,
       orElse: () => fallback,
@@ -101,8 +104,7 @@ bool _checkAndroidEmulator() {
 String _resolveHost(String host, {bool onDeviceLoopback = false}) {
   if (onDeviceLoopback) return host;
   _onAndroidEmulator ??= _checkAndroidEmulator();
-  if (_onAndroidEmulator! &&
-      (host == '127.0.0.1' || host == 'localhost')) {
+  if (_onAndroidEmulator! && (host == '127.0.0.1' || host == 'localhost')) {
     return '10.0.2.2';
   }
   return host;
@@ -258,7 +260,8 @@ class SavedConnection {
 
   /// Reescribe el loopback según el entorno, salvo que la instancia sea
   /// on-device (sus servicios viven en este mismo Android).
-  String _resolved(String h) => _resolveHost(h, onDeviceLoopback: onDeviceLoopback);
+  String _resolved(String h) =>
+      _resolveHost(h, onDeviceLoopback: onDeviceLoopback);
 
   String get baseUrl {
     final scheme = useHttps ? 'https' : 'http';
@@ -271,11 +274,17 @@ class SavedConnection {
   /// Puerto por defecto del Mobile Bridge (servicio opcional del servidor).
   static const int defaultBridgePort = 9131;
 
-  /// URL derivada del Mobile Bridge: mismo host que el gateway, puerto 9131.
-  /// Permite autodetectar el bridge sin que el usuario teclee IP/puerto.
+  /// URL derivada del Mobile Bridge. Los despliegues HTTPS usan el mismo
+  /// origen/ruta externos que Dashboard/Gateway (reverse proxy); HTTP/local usa
+  /// el puerto dedicado 9131. Las URL guardadas se resuelven en
+  /// BridgeEndpointResolver antes de llegar aquí.
   String get derivedBridgeUrl {
-    final scheme = useHttps ? 'https' : 'http';
-    return '$scheme://${_resolved(host)}:$defaultBridgePort';
+    if (useHttps) return effectiveDashboardUrl;
+    return Uri(
+      scheme: 'http',
+      host: _resolved(host),
+      port: defaultBridgePort,
+    ).toString();
   }
 
   /// Dashboard/API-server topology differs between local LAN and HTTPS proxy
@@ -285,7 +294,9 @@ class SavedConnection {
   int get dashboardPort {
     final explicit = dashboardUri;
     if (explicit != null) {
-      return explicit.hasPort ? explicit.port : (explicit.scheme == 'https' ? 443 : 80);
+      return explicit.hasPort
+          ? explicit.port
+          : (explicit.scheme == 'https' ? 443 : 80);
     }
     return useHttps ? port : 9119;
   }
@@ -396,7 +407,8 @@ class SavedConnection {
     final isLoopback = hLower == '127.0.0.1' || hLower == 'localhost';
     // Migración: instancias localhost loopback guardadas antes de este campo
     // son el agente local on-device → no reescribir su loopback.
-    final onDeviceLoopback = map['on_device_loopback'] as bool? ??
+    final onDeviceLoopback =
+        map['on_device_loopback'] as bool? ??
         (kind == InstanceKind.localhost && isLoopback);
     return SavedConnection(
       id: map['id'] as String,

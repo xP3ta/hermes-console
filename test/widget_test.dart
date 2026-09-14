@@ -58,7 +58,10 @@ class _EmptyHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<Session>> getSessions({bool includeChildren = false}) async => [
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) async => [
     Session(
       id: 'mob-aux-voice-old-session',
       title: 'Internal voice session',
@@ -101,7 +104,10 @@ class _DeferredHomeClient extends ApiClient {
   Future<bool> healthCheck() => health.future;
 
   @override
-  Future<List<Session>> getSessions({bool includeChildren = false}) async => [
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) async => [
     Session(
       id: 'chat-loaded',
       title: 'Conversación cargada',

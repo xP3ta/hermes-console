@@ -1,22 +1,71 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
+import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_result.dart';
+import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
+import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/chat_render_projection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
+import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
+import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+class _MemoryCompressionFenceStorage implements DesktopCompressionFenceStorage {
+  String? value;
+  int readCalls = 0;
+  Completer<void>? firstReadGate;
+  int? gatedReadCall;
+  Completer<void>? readEntered;
+  Completer<void>? readGate;
+  int writeCalls = 0;
+  Completer<void>? writeGate;
+  Completer<void>? writeEntered;
+  Set<int> failingWrites = <int>{};
+  Object? readError;
+  bool failAfterWrite = false;
+  void Function()? onRead;
+
+  @override
+  Future<String?> read() async {
+    readCalls += 1;
+    onRead?.call();
+    if (readError case final error?) throw error;
+    if (readCalls == gatedReadCall) {
+      if (readEntered?.isCompleted == false) readEntered!.complete();
+      await readGate?.future;
+    }
+    if (readCalls == 1) await firstReadGate?.future;
+    return value;
+  }
+
+  @override
+  Future<void> write(String value) async {
+    writeCalls += 1;
+    if (writeEntered?.isCompleted == false) writeEntered!.complete();
+    await writeGate?.future;
+    if (failingWrites.contains(writeCalls)) {
+      throw StateError('secure write unavailable');
+    }
+    this.value = value;
+    if (failAfterWrite) throw StateError('uncertain write');
+  }
+}
+
 class _SnapshotGateway
     implements
         HermesDesktopGateway,
         HermesDesktopSessionLifecycleGateway,
+        HermesDesktopSessionActivityGateway,
         HermesDesktopCommandGateway,
         HermesDesktopContextUsageGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -24,19 +73,27 @@ class _SnapshotGateway
   DesktopSessionSnapshot? snapshot;
   DesktopSessionSnapshot? omittedSnapshot;
   DesktopSessionSnapshot? deferredSnapshot;
+  DesktopActiveSessionList? activeSessionList;
   Object? resumeExistingError;
   Completer<DesktopSessionSnapshot>? resumeGate;
+  Completer<void>? resumeEntered;
   final List<Completer<DesktopSessionSnapshot>> resumeGates = [];
   DesktopSessionSnapshot? createSnapshot;
   int resumeExistingCalls = 0;
   int resumeLegacyCalls = 0;
   int createCalls = 0;
+  bool activitySupported = false;
+  int activateCalls = 0;
+  int listActiveCalls = 0;
   int slashExecCalls = 0;
   int commandDispatchCalls = 0;
+  int submitPromptCalls = 0;
   int steerCalls = 0;
   int contextBreakdownCalls = 0;
   String? slashRuntimeId;
   String? slashCommand;
+  Object? slashError;
+  Object? commandDispatchError;
   DesktopSessionSnapshot? snapshotAfterCommand;
   Completer<DesktopCommandRpcResult>? compressionGate;
   String? lastResumeProfile;
@@ -61,6 +118,7 @@ class _SnapshotGateway
     bool deferHistory = false,
   }) async {
     resumeExistingCalls++;
+    if (resumeEntered?.isCompleted == false) resumeEntered!.complete();
     lastResumeProfile = profile;
     lastResumeOmitMessages = omitMessages;
     lastResumeDeferHistory = deferHistory;
@@ -97,7 +155,35 @@ class _SnapshotGateway
   }
 
   @override
-  Future<void> submitPrompt(String runtimeSessionId, String text) async {}
+  DesktopGatewayCapabilityState capabilityState(
+    DesktopGatewayCapability capability,
+  ) => activitySupported
+      ? DesktopGatewayCapabilityState.supported
+      : DesktopGatewayCapabilityState.unsupported;
+
+  @override
+  Future<DesktopSessionSnapshot> activateSession(
+    String runtimeSessionId, {
+    required String storedSessionId,
+  }) async {
+    activateCalls += 1;
+    return snapshot!;
+  }
+
+  @override
+  Future<DesktopActiveSessionList> listActiveSessions({
+    String currentRuntimeSessionId = '',
+  }) async {
+    listActiveCalls += 1;
+    final result = activeSessionList;
+    if (result != null) return result;
+    throw StateError('must not list active sessions while fenced');
+  }
+
+  @override
+  Future<void> submitPrompt(String runtimeSessionId, String text) async {
+    submitPromptCalls += 1;
+  }
 
   @override
   Future<DesktopContextBreakdown> contextBreakdown(
@@ -127,6 +213,7 @@ class _SnapshotGateway
     slashExecCalls += 1;
     slashRuntimeId = runtimeSessionId;
     slashCommand = command;
+    if (slashError case final error?) throw error;
     final gate = compressionGate;
     final result = gate == null
         ? const DesktopCommandRpcResult(
@@ -146,6 +233,7 @@ class _SnapshotGateway
     String arg = '',
   }) async {
     commandDispatchCalls += 1;
+    if (commandDispatchError case final error?) throw error;
     return const DesktopCommandRpcResult(
       kind: DesktopCommandDispatchKind.none,
       accepted: DesktopCommandAcceptance.accepted,
@@ -168,11 +256,38 @@ class _SnapshotGateway
     String? requestId,
   }) async {}
 
-  void emit(String type, [Map<String, dynamic> payload = const {}]) {
+  void emit(
+    String type, [
+    Map<String, dynamic> payload = const {},
+    int? sequence,
+    int? transportGeneration,
+    Object? producerChannel,
+  ]) {
+    emitForRuntime(
+      snapshot!.runtimeSessionId,
+      type,
+      payload,
+      sequence,
+      transportGeneration,
+      producerChannel,
+    );
+  }
+
+  void emitForRuntime(
+    String runtimeId,
+    String type, [
+    Map<String, dynamic> payload = const {},
+    int? sequence,
+    int? transportGeneration,
+    Object? producerChannel,
+  ]) {
     _events.add(
       TuiGatewayEvent(
         type: type,
-        sessionId: snapshot!.runtimeSessionId,
+        sessionId: runtimeId,
+        sequence: sequence,
+        transportGeneration: transportGeneration,
+        producerChannel: producerChannel,
         payload: payload,
       ),
     );
@@ -191,7 +306,9 @@ class _NativeCompressionGateway extends _SnapshotGateway
   String? compressFocusTopic;
   Object? compressError;
   Completer<DesktopCompressionResult>? nativeCompressionGate;
+  Map<String, dynamic>? compressionWireResult;
   late DesktopCompressionResult compressionResult;
+  final compressionEntered = Completer<void>();
 
   @override
   Future<DesktopCompressionResult> compressSession(
@@ -199,10 +316,15 @@ class _NativeCompressionGateway extends _SnapshotGateway
     String focusTopic = '',
   }) async {
     compressSessionCalls += 1;
+    if (!compressionEntered.isCompleted) compressionEntered.complete();
     compressRuntimeId = runtimeSessionId;
     compressFocusTopic = focusTopic;
     if (compressError case final error?) throw error;
-    return nativeCompressionGate?.future ?? compressionResult;
+    final wire = compressionWireResult;
+    return nativeCompressionGate?.future ??
+        (wire == null
+            ? compressionResult
+            : DesktopCompressionResult.fromJson(wire));
   }
 }
 
@@ -262,6 +384,59 @@ DesktopCompressionResult _nativeCompressionResult() =>
       ],
     });
 
+DesktopCompressionResult _nativeAbortedCompressionResult() =>
+    DesktopCompressionResult.fromJson({
+      'status': 'aborted',
+      'removed': 0,
+      'before_messages': 4,
+      'after_messages': 4,
+      'before_tokens': 96022,
+      'after_tokens': 96022,
+      'summary': {
+        'aborted': true,
+        'headline': 'Compression aborted: authoritative transcript preserved',
+      },
+      'info': {'stored_session_id': 'stored-native-aborted'},
+      'messages': [
+        {'role': 'user', 'content': 'Resumen previo'},
+        {'role': 'assistant', 'content': 'Estado abortado autoritativo'},
+        {'role': 'user', 'content': 'Pregunta conservada'},
+        {'role': 'assistant', 'content': 'Respuesta conservada'},
+      ],
+    });
+
+DesktopCompressionResult _nativePendingCompressionResult() =>
+    DesktopCompressionResult.fromJson({
+      'status': 'pending',
+      'turn_isolation': true,
+      'message': 'compression still running in the background',
+    });
+
+DesktopCompressionResult _nativeLockHeldCompressionResult() =>
+    DesktopCompressionResult.fromJson({
+      'compressed': false,
+      'lock_held': true,
+      'message': 'private holder metadata must not reach Console',
+    });
+
+DesktopCompressionFenceStore _lockHeldFenceStore(
+  _MemoryCompressionFenceStorage storage,
+  String attemptId,
+) => DesktopCompressionFenceStore(storage: storage, attemptId: () => attemptId);
+
+_NativeCompressionGateway _lockHeldGateway(String runtimeId) =>
+    _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': runtimeId,
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+      })
+      ..compressionResult = _nativeLockHeldCompressionResult();
+
+final _lockHeldBusy = throwsA(
+  isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+);
+
 ActiveChat _chat(
   String id,
   _SnapshotGateway gateway, {
@@ -269,9 +444,15 @@ ActiveChat _chat(
   String? logicalSessionId,
   String sessionId = 'stored-chat',
   StoredSessionMessageLoader? storedMessageLoader,
+  bool allowUnownedDesktopSnapshotForTesting = true,
+  Duration desktopCompressionReconciliationDelay = const Duration(seconds: 20),
+  Duration desktopCompressionReconciliationWindow = const Duration(minutes: 2),
   List<SteerProjection> initialSteerProjections = const [],
   List<CancelledTurnTombstone> initialCancelledTurnTombstones = const [],
   Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
+  DesktopCompressionFenceStore? compressionFenceStore,
+  int Function()? wallClockMs,
+  void Function(ActiveChatEvent)? onEvent,
 }) => ActiveChat(
   connection: _connection(id),
   sessionId: sessionId,
@@ -287,10 +468,19 @@ ActiveChat _chat(
         MockClient((_) async => http.Response('unexpected REST', 500)),
   ),
   desktopGateway: gateway,
+  compressionFenceStore:
+      compressionFenceStore ??
+      DesktopCompressionFenceStore(storage: _MemoryCompressionFenceStorage()),
+  wallClockMs: wallClockMs,
   storedMessageLoader: storedMessageLoader,
+  allowUnownedDesktopSnapshotForTesting: allowUnownedDesktopSnapshotForTesting,
+  desktopCompressionReconciliationDelay: desktopCompressionReconciliationDelay,
+  desktopCompressionReconciliationWindow:
+      desktopCompressionReconciliationWindow,
   initialSteerProjections: initialSteerProjections,
   initialCancelledTurnTombstones: initialCancelledTurnTombstones,
   onCancelledTurn: onCancelledTurn,
+  onEvent: onEvent,
 );
 
 List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
@@ -304,6 +494,654 @@ List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('confirmed cleanup clears only the exact fence scope', () async {
+    final storage = _MemoryCompressionFenceStorage();
+    final store = DesktopCompressionFenceStore(
+      storage: storage,
+      attemptId: () => 'cleanup-attempt',
+    );
+    final scope = DesktopCompressionFenceScope(
+      connectionId: 'conn-a',
+      profile: 'main',
+      logicalSessionId: 'root-a',
+    );
+    expect(
+      (await store.arm(
+        scope,
+        tipAtStart: 'tip-a',
+        compressionsAtStart: null,
+        createdAtMs: 1,
+        reconcileUntilMs: 2,
+      )).claimed,
+      isTrue,
+    );
+    final service = ActiveChatService(compressionFenceStore: store);
+
+    await service.clearCompressionFenceForSession(
+      connectionId: 'conn-a',
+      profile: 'main',
+      logicalSessionId: 'root-a',
+    );
+
+    expect(
+      (await store.lookup(scope)).status,
+      DesktopCompressionFenceLookupStatus.absent,
+    );
+  });
+
+  test(
+    'snapshot publica solo narración y tarjetas públicas allowlisted',
+    () async {
+      const privateMarker = 'PRIVATE_SNAPSHOT_OWNER_PID_991_/home/private';
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-private-snapshot',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'Pregunta pública', 'row_id': 1},
+            {
+              'role': 'assistant',
+              'content': '<think>$privateMarker</think>Respuesta pública.',
+              'reasoning': privateMarker,
+              'reasoning_content': privateMarker,
+              'trace': privateMarker,
+              'owner_pid': 991,
+              'path': '/home/private',
+              'tool_calls': [
+                {
+                  'id': 'call-private',
+                  'function': {
+                    'name': 'shell',
+                    'arguments': '{"command":"$privateMarker"}',
+                  },
+                },
+              ],
+            },
+            {
+              'role': 'tool',
+              'tool_call_id': 'call-private',
+              'tool_name': 'shell',
+              'content': '{"output":"$privateMarker"}',
+            },
+            {'role': 'analysis', 'content': privateMarker},
+            {
+              'role': 'user',
+              'content': '[ASYNC DELEGATION BATCH COMPLETE — deleg_deadbeef]',
+              'display_kind': 'async_delegation_complete',
+              'display_metadata': {
+                'delegation_id': 'deleg_deadbeef',
+                'task_count': 1,
+                'completed_count': 1,
+                'failed_count': 0,
+                'subagent_ids': ['sa-safe'],
+                'goal': privateMarker,
+                'owner_pid': 991,
+                'path': '/home/private',
+              },
+            },
+          ],
+        });
+      final chat = _chat('private-snapshot', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(chat.messages.map((message) => message['content']), [
+        '[ASYNC DELEGATION BATCH COMPLETE — deleg_deadbeef]',
+        'Respuesta pública.',
+        'Pregunta pública',
+      ]);
+      expect(chat.messages.toString(), isNot(contains(privateMarker)));
+      expect(chat.messages.toString(), isNot(contains('/home/private')));
+      for (final forbidden in const [
+        'reasoning',
+        'reasoning_content',
+        'tool_calls',
+        'tool_name',
+        'tool_call_id',
+        'trace',
+        'owner_pid',
+        'path',
+      ]) {
+        expect(
+          chat.messages.any((message) => message.containsKey(forbidden)),
+          isFalse,
+          reason: forbidden,
+        );
+      }
+      expect(chat.messages.first['display_metadata'], {
+        'delegation_id': 'deleg_deadbeef',
+        'task_count': 1,
+        'completed_count': 1,
+        'failed_count': 0,
+        'subagent_ids': ['sa-safe'],
+      });
+    },
+  );
+
+  test('REST publica narración sin roles ni metadata privados', () async {
+    const privateMarker = 'PRIVATE_REST_TRACE_/srv/hermes/session.jsonl';
+    final gateway = _SnapshotGateway()
+      ..resumeExistingError = const TuiGatewayRpcError(
+        'session.resume',
+        'not found',
+        code: 4007,
+      );
+    final chat = _chat(
+      'private-rest',
+      gateway,
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'data': [
+              {'id': 1, 'role': 'user', 'content': 'Pregunta REST pública'},
+              {
+                'id': 2,
+                'role': 'assistant',
+                'content':
+                    '<think>$privateMarker</think>Respuesta REST pública.',
+                'reasoning': privateMarker,
+                'analysis': privateMarker,
+                'trace': privateMarker,
+                'owner_pid': 744,
+                'tool_calls': [
+                  {
+                    'id': 'rest-call-private',
+                    'function': {
+                      'name': 'terminal',
+                      'arguments': '{"path":"$privateMarker"}',
+                    },
+                  },
+                ],
+              },
+              {
+                'id': 3,
+                'role': 'tool',
+                'tool_call_id': 'rest-call-private',
+                'content': privateMarker,
+              },
+              {'id': 4, 'role': 'analysis', 'content': privateMarker},
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+
+    expect(chat.messages.map((message) => message['content']), [
+      'Respuesta REST pública.',
+      'Pregunta REST pública',
+    ]);
+    expect(chat.messages.toString(), isNot(contains(privateMarker)));
+    expect(
+      chat.messages.any(
+        (message) =>
+            message['role'] == 'tool' || message.containsKey('tool_calls'),
+      ),
+      isFalse,
+    );
+  });
+
+  test(
+    'visible service cold open attaches the exact durable session by default',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..activeSessionList = const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-advertised',
+              storedSessionId: 'stored-chat',
+            ),
+          ],
+        )
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-advertised',
+          'session_key': 'stored-chat',
+          'messages': const <Map<String, dynamic>>[
+            {'role': 'user', 'content': 'pregunta durable'},
+            {'role': 'assistant', 'content': 'respuesta durable'},
+          ],
+        });
+      final service = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: _MemoryCompressionFenceStorage(),
+        ),
+      );
+      addTearDown(service.dispose);
+      final chat = service.attach(
+        connection: _connection('native-cold-open'),
+        sessionId: 'stored-chat',
+        sessionTitle: 'Sesión compartida',
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => const <Map<String, dynamic>>[
+          {'role': 'user', 'content': 'pregunta durable'},
+          {'role': 'assistant', 'content': 'respuesta durable'},
+        ],
+        disableForegroundKeepAlive: true,
+      );
+
+      await chat.loadMessages(profile: 'default');
+
+      expect(gateway.listActiveCalls, 1);
+      expect(gateway.activateCalls, 1);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(chat.desktopRuntimeSessionId, 'runtime-advertised');
+      expect(chat.storedSessionId, 'stored-chat');
+    },
+  );
+
+  test(
+    'visible cold open rejects a mismatched runtime before projection',
+    () async {
+      const privateMarker = 'FOREIGN_RUNTIME_PRIVATE_MARKER';
+      final gateway = _SnapshotGateway()
+        ..activeSessionList = const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-advertised',
+              storedSessionId: 'stored-chat',
+            ),
+          ],
+        )
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-foreign',
+          'session_key': 'stored-chat',
+          'messages': const <Map<String, dynamic>>[
+            {'role': 'assistant', 'content': privateMarker},
+          ],
+        });
+      final service = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: _MemoryCompressionFenceStorage(),
+        ),
+      );
+      addTearDown(service.dispose);
+      final chat = service.attach(
+        connection: _connection('native-runtime-mismatch'),
+        sessionId: 'stored-chat',
+        sessionTitle: 'Sesión compartida',
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => const <Map<String, dynamic>>[
+          {'role': 'assistant', 'content': 'historial durable correcto'},
+        ],
+        disableForegroundKeepAlive: true,
+      );
+
+      await chat.loadMessages(profile: 'default');
+
+      expect(gateway.listActiveCalls, 1);
+      expect(gateway.activateCalls, 1);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(chat.messages.toString(), isNot(contains(privateMarker)));
+      expect(chat.messages.single['content'], 'historial durable correcto');
+      expect(gateway.submitPromptCalls, 0);
+      expect(gateway.createCalls, 0);
+    },
+  );
+
+  test(
+    'visible cold open rejects a mismatched durable snapshot before projection',
+    () async {
+      const privateMarker = 'FOREIGN_SESSION_PRIVATE_MARKER';
+      final gateway = _SnapshotGateway()
+        ..activeSessionList = const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-advertised',
+              storedSessionId: 'stored-chat',
+            ),
+          ],
+        )
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-foreign',
+          'session_key': 'different-stored-session',
+          'messages': const <Map<String, dynamic>>[
+            {'role': 'assistant', 'content': privateMarker},
+          ],
+        });
+      final service = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: _MemoryCompressionFenceStorage(),
+        ),
+      );
+      addTearDown(service.dispose);
+      final chat = service.attach(
+        connection: _connection('native-mismatch'),
+        sessionId: 'stored-chat',
+        sessionTitle: 'Sesión compartida',
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => const <Map<String, dynamic>>[
+          {'role': 'assistant', 'content': 'historial durable correcto'},
+        ],
+        disableForegroundKeepAlive: true,
+      );
+
+      await chat.loadMessages(profile: 'default');
+
+      expect(gateway.listActiveCalls, 1);
+      expect(gateway.activateCalls, 1);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(chat.storedSessionId, isNot('different-stored-session'));
+      expect(chat.messages.toString(), isNot(contains(privateMarker)));
+      expect(chat.messages.single['content'], 'historial durable correcto');
+      expect(gateway.submitPromptCalls, 0);
+      expect(gateway.createCalls, 0);
+    },
+  );
+
+  test(
+    'visible cold open rejects untrusted resume identity evidence',
+    () async {
+      final cases = <String, DesktopSessionSnapshot>{
+        'created': DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-created',
+            'session_key': 'stored-chat',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: 'stored-chat',
+          created: true,
+          method: 'session.resume',
+        ),
+        'contradictory aliases': DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-aliases',
+            'stored_session_id': 'stored-chat',
+            'session_key': 'different-stored-session',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: 'stored-chat',
+          created: false,
+          method: 'session.resume',
+        ),
+        'foreign lineage': DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-lineage',
+            'session_key': 'stored-chat',
+            'lineage_root_id': 'foreign-root',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: 'stored-chat',
+          created: false,
+          method: 'session.resume',
+        ),
+      };
+
+      for (final entry in cases.entries) {
+        final gateway = _SnapshotGateway()..snapshot = entry.value;
+        final service = ActiveChatService(
+          compressionFenceStore: DesktopCompressionFenceStore(
+            storage: _MemoryCompressionFenceStorage(),
+          ),
+        );
+        final chat = service.attach(
+          connection: _connection('native-untrusted-${entry.key}'),
+          sessionId: 'stored-chat',
+          logicalSessionId: 'stored-chat',
+          sessionTitle: 'Sesión compartida',
+          desktopGateway: gateway,
+          storedMessageLoader: (_, _) async => const <Map<String, dynamic>>[
+            {'role': 'assistant', 'content': 'historial durable correcto'},
+          ],
+          disableForegroundKeepAlive: true,
+        );
+
+        await chat.loadMessages(profile: 'default');
+
+        expect(chat.desktopRuntimeSessionId, isNull, reason: entry.key);
+        expect(chat.messages.single['content'], 'historial durable correcto');
+        expect(gateway.submitPromptCalls, 0, reason: entry.key);
+        expect(gateway.createCalls, 0, reason: entry.key);
+        service.dispose();
+      }
+    },
+  );
+
+  test(
+    'explicit passive cold open publishes REST without acquiring a runtime',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-must-not-bind',
+          'session_key': 'stored-chat',
+          'messages': const <Map<String, dynamic>>[
+            {'role': 'user', 'content': 'pregunta durable'},
+            {'role': 'assistant', 'content': 'respuesta durable'},
+          ],
+        });
+      final chat = _chat(
+        'passive-cold-open',
+        gateway,
+        storedMessageLoader: (_, _) async => const <Map<String, dynamic>>[
+          {'role': 'user', 'content': 'pregunta durable'},
+          {'role': 'assistant', 'content': 'respuesta durable'},
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(passiveOnly: true);
+
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.resumeLegacyCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(chat.coreReadIdentity.logicalRootId, 'stored-chat');
+      expect(chat.coreReadIdentity.storedId, 'stored-chat');
+      expect(chat.coreReadIdentity.runtimeId, isNull);
+      expect(chat.messagesLoaded, isTrue);
+      expect(chat.messages.map((message) => message['content']), [
+        'respuesta durable',
+        'pregunta durable',
+      ]);
+    },
+  );
+
+  test(
+    'passiveOnly publica REST aunque el bypass de snapshot este habilitado',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-must-not-bind',
+          'session_key': 'stored-chat',
+          'inflight': {'user': 'no debe proyectarse', 'streaming': true},
+          'running': true,
+        });
+      final chat = _chat(
+        'passive-rest-only',
+        gateway,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'id': 41,
+            'message_id': 'rest-only-user',
+            'role': 'user',
+            'content': 'historial REST',
+          },
+        ],
+        allowUnownedDesktopSnapshotForTesting: true,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(passiveOnly: true);
+
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.resumeLegacyCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(chat.messages.single['content'], 'historial REST');
+    },
+  );
+
+  test('invalidar una lectura pasiva descarta su respuesta tardia', () async {
+    final lateRead = Completer<List<Map<String, dynamic>>>();
+    var loads = 0;
+    final chat = _chat(
+      'passive-late-result',
+      _SnapshotGateway(),
+      storedMessageLoader: (_, _) {
+        loads += 1;
+        if (loads == 1) {
+          return Future.value(const [
+            {
+              'id': 51,
+              'message_id': 'visible-before-background',
+              'role': 'user',
+              'content': 'visible antes de background',
+            },
+          ]);
+        }
+        return lateRead.future;
+      },
+      allowUnownedDesktopSnapshotForTesting: false,
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    final pending = chat.loadMessages(passiveOnly: true);
+    await Future<void>.delayed(Duration.zero);
+    expect(loads, 2);
+    chat.invalidatePassiveRead();
+    lateRead.complete(const [
+      {
+        'id': 52,
+        'message_id': 'late-after-background',
+        'role': 'assistant',
+        'content': 'no debe publicarse',
+      },
+    ]);
+    await pending;
+
+    expect(chat.messages.map((message) => message['content']), [
+      'visible antes de background',
+    ]);
+    expect(chat.hasRecentPassiveRemoteActivity, isFalse);
+  });
+
+  test('cold REST user sin anchor conserva inflight fail-closed', () async {
+    const prompt = 'prompt actual repetido';
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-live-user',
+        'session_key': 'stored-chat',
+        'turn_started_at': 100.0,
+        'inflight': {
+          'user': prompt,
+          'assistant': 'parcial vivo',
+          'streaming': true,
+        },
+        'running': true,
+        'status': 'working',
+      });
+    final chat = _chat(
+      'rest-inflight-same-turn',
+      gateway,
+      storedMessageLoader: (_, _) async => const [
+        {
+          'id': 298292,
+          'message_id': 'durable-current-user',
+          'role': 'user',
+          'content': prompt,
+          'timestamp': 101.0,
+        },
+      ],
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+
+    final users = chat.messages
+        .where((message) => message['role'] == 'user')
+        .toList(growable: false);
+    expect(users, hasLength(2));
+    expect(users.map((message) => message['content']), everyElement(prompt));
+    expect(users.where((message) => message['id'] == 298292), hasLength(1));
+    expect(users.where((message) => message['id'] == null), hasLength(1));
+    expect(
+      chat.messages.where((message) => message['role'] == 'assistant'),
+      contains(
+        predicate<Map<String, dynamic>>(
+          (message) => message['content'] == 'parcial vivo',
+        ),
+      ),
+    );
+  });
+
+  test('warm REST suffix uses the exact previous anchor once', () async {
+    const prompt = 'prompt actual con anchor';
+    var includeCurrent = false;
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-warm-anchor',
+        'session_key': 'stored-chat',
+        'messages_omitted': true,
+        'running': false,
+        'status': 'idle',
+      });
+    final chat = _chat(
+      'rest-inflight-warm-anchor',
+      gateway,
+      storedMessageLoader: (_, _) async {
+        return [
+          const {
+            'id': 101,
+            'message_id': 'previous-user',
+            'role': 'user',
+            'content': 'pregunta previa',
+            'timestamp': 98.0,
+          },
+          const {
+            'id': 102,
+            'message_id': 'previous-final',
+            'role': 'assistant',
+            'content': 'respuesta previa',
+            'timestamp': 99.0,
+          },
+          if (includeCurrent)
+            const {
+              'id': 103,
+              'message_id': 'durable-current-user',
+              'role': 'user',
+              'content': prompt,
+              'timestamp': 101.0,
+            },
+        ];
+      },
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    includeCurrent = true;
+    gateway.snapshot = _snapshot({
+      'session_id': 'runtime-warm-anchor',
+      'session_key': 'stored-chat',
+      'turn_started_at': 100.0,
+      'inflight': {
+        'user': prompt,
+        'assistant': 'parcial vivo',
+        'streaming': true,
+      },
+      'running': true,
+      'status': 'working',
+    });
+
+    await chat.loadMessages();
+
+    final currentUsers = chat.messages
+        .where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == prompt,
+        )
+        .toList(growable: false);
+    expect(currentUsers, hasLength(1));
+    expect(currentUsers.single['id'], 103);
+    expect(currentUsers.single['_desktopSnapshotKind'], isNot('inflight'));
+  });
 
   test('loadMessages aplica resume 0.19 con inflight, queued e info', () async {
     final gateway = _SnapshotGateway()
@@ -381,6 +1219,154 @@ void main() {
     },
   );
 
+  test('default runtime warmup never resumes a stored session', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-must-not-warm',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+      });
+    final chat = _chat(
+      'passive-runtime-warmup',
+      gateway,
+      allowUnownedDesktopSnapshotForTesting: false,
+    );
+    addTearDown(chat.dispose);
+
+    expect(await chat.ensureDesktopRuntime(), isFalse);
+    expect(gateway.resumeExistingCalls, 0);
+    expect(gateway.resumeLegacyCalls, 0);
+    expect(gateway.createCalls, 0);
+    expect(chat.desktopRuntimeSessionId, isNull);
+  });
+
+  test(
+    'compacted transcript rehydrates completion card on every reopen',
+    () async {
+      MockClient client() => MockClient(
+        (_) async => http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'data': [
+                {
+                  'message_id': 'compacted-marker',
+                  'role': 'user',
+                  'content':
+                      '[ASYNC DELEGATION BATCH COMPLETE — deleg_c0ffee12]',
+                  'display_kind': 'async_delegation_complete',
+                  'display_metadata': {
+                    'delegation_id': 'deleg_c0ffee12',
+                    'task_count': 1,
+                    'completed_count': 1,
+                    'failed_count': 0,
+                    'subagent_ids': ['sa-compacted-one'],
+                  },
+                },
+              ],
+            }),
+          ),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+
+      for (var reopen = 0; reopen < 2; reopen++) {
+        final chat = _chat(
+          'compacted-reopen-$reopen',
+          _SnapshotGateway(),
+          allowUnownedDesktopSnapshotForTesting: false,
+          client: client(),
+        );
+        await chat.loadMessages();
+
+        final cards = chat.messages
+            .map(historicalSubagentCompletionOf)
+            .whereType<SubagentCompletionCardData>()
+            .toList(growable: false);
+        expect(cards, hasLength(1));
+        expect(cards.single.subagentIds, ['sa-compacted-one']);
+        expect(chat.subagentActivities, isEmpty);
+        chat.dispose();
+      }
+    },
+  );
+
+  test(
+    'warm loadMessages stays passive after an explicitly acquired runtime',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..createSnapshot = DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-warm-passive',
+            'session_key': 'stored-warm-passive',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: '',
+          created: true,
+          method: 'session.create',
+        )
+        ..snapshot = DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-warm-passive',
+            'session_key': 'stored-warm-passive',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: 'stored-warm-passive',
+          created: false,
+          method: 'session.resume',
+        );
+      final chat = _chat(
+        'warm-passive-refresh',
+        gateway,
+        sessionId: 'mob-warm-passive',
+        allowUnownedDesktopSnapshotForTesting: false,
+        storedMessageLoader: (_, _) async => const [
+          {'id': 1, 'role': 'user', 'content': 'durable'},
+        ],
+      );
+      addTearDown(chat.dispose);
+      chat.markStoredSessionMissing();
+
+      expect(
+        await chat.send(
+          fullText: 'turno explícito',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      final resumesAfterExplicitSubmit = gateway.resumeExistingCalls;
+
+      await chat.loadMessages(expectedMessageCount: 1);
+
+      expect(gateway.resumeExistingCalls, resumesAfterExplicitSubmit);
+      expect(
+        chat.messages.where((message) => message['content'] == 'durable'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'test-only snapshot seam never authorizes passive runtime acquisition',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-test-seam-must-not-bind',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+        });
+      final chat = _chat('passive-test-seam', gateway);
+      addTearDown(chat.dispose);
+
+      expect(await chat.ensureDesktopRuntime(), isFalse);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.resumeLegacyCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(chat.desktopRuntimeSessionId, isNull);
+    },
+  );
+
   test('ensureDesktopRuntime adopta turn_started_at top-level', () async {
     final gateway = _SnapshotGateway()
       ..snapshot = _snapshot({
@@ -394,11 +1380,100 @@ void main() {
     final chat = _chat('ensure-top-level-turn', gateway);
     addTearDown(chat.dispose);
 
-    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     expect(
       chat.desktopTurnStartedAt,
       DateTime.fromMillisecondsSinceEpoch(200500, isUtc: true),
     );
+  });
+
+  test('explicit cold-open compression acquires one runtime', () async {
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-explicit-compress',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+      })
+      ..compressionResult = _nativeCompressionResult();
+    final chat = _chat(
+      'explicit-cold-compress',
+      gateway,
+      allowUnownedDesktopSnapshotForTesting: false,
+      storedMessageLoader: (_, _) async => const <Map<String, dynamic>>[],
+    );
+    addTearDown(chat.dispose);
+
+    final result = await chat.compressDesktopSession();
+
+    expect(result.accepted, DesktopCommandAcceptance.accepted);
+    expect(gateway.resumeExistingCalls, 1);
+    expect(gateway.createCalls, 0);
+    expect(gateway.compressSessionCalls, 1);
+    expect(gateway.compressRuntimeId, 'runtime-explicit-compress');
+  });
+
+  test('durable arm write failure sends zero compression RPCs', () async {
+    final storage = _MemoryCompressionFenceStorage()..failingWrites = {1};
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-arm-write-failure',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+      })
+      ..compressionResult = _nativeCompressionResult();
+    final chat = _chat(
+      'arm-write-failure',
+      gateway,
+      compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    await expectLater(
+      chat.compressDesktopSession(),
+      throwsA(
+        isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+      ),
+    );
+
+    expect(gateway.compressSessionCalls, 0);
+    expect(gateway.slashExecCalls, 0);
+    expect(gateway.commandDispatchCalls, 0);
+  });
+
+  test('legacy snapshot alone cannot resolve its durable attempt', () async {
+    final storage = _MemoryCompressionFenceStorage();
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-legacy-clear',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+      })
+      ..snapshotAfterCommand = _compressedSnapshot();
+    final chat = _chat(
+      'legacy-clear',
+      gateway,
+      compressionFenceStore: DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'legacy-clear-attempt',
+      ),
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    await chat.compressDesktopSession();
+
+    final lookup = await DesktopCompressionFenceStore(storage: storage).lookup(
+      DesktopCompressionFenceScope(
+        connectionId: 'legacy-clear',
+        profile: 'default',
+        logicalSessionId: 'stored-chat',
+      ),
+    );
+    expect(lookup.status, DesktopCompressionFenceLookupStatus.present);
   });
 
   test(
@@ -418,6 +1493,28 @@ void main() {
 
       expect(chat.messages, isEmpty);
       expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'fallo real al cargar página anterior queda marcado para recuperación UI',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-omitted-failure',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'messages_omitted': true,
+        });
+      final chat = _chat('resume-omitted-failure', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(chat.earlierMessagesLoadFailed, isFalse);
+
+      expect(await chat.loadEarlierMessages(), isFalse);
+      expect(chat.earlierMessagesLoadFailed, isTrue);
     },
   );
 
@@ -468,7 +1565,7 @@ void main() {
         storedMessageLoader: (_, _) async => toolTail,
       );
       addTearDown(chat.dispose);
-      chat.messages = toolTail.reversed
+      chat.internalMessagesForTesting = toolTail.reversed
           .map(Map<String, dynamic>.of)
           .toList(growable: false);
       chat.messagesLoaded = true;
@@ -516,14 +1613,110 @@ void main() {
       expect(chat.messages, firstProjection);
       expect(chat.messages.reversed.map((message) => message['content']), [
         'haz la auditoría',
-        'y documéntala',
         'trabajando',
+        'y documéntala',
       ]);
       expect(
         chat.messages.where((message) => message['_steer'] == true),
         hasLength(1),
       );
       expect(chat.queuedMessages, ['después publícala']);
+    },
+  );
+
+  test(
+    'merge local conserva el offset autoritativo de la corrección',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-correction-offset-merge',
+          'session_key': 'stored-chat',
+          'messages': <Map<String, dynamic>>[],
+          'inflight': {
+            'user': 'avanza',
+            'assistant': 'Moving.Still.',
+            'streaming': true,
+            'corrections': ['más rápido'],
+            'correction_offsets': [7],
+          },
+          'running': true,
+        });
+      final chat = _chat(
+        'resume-correction-offset-merge',
+        gateway,
+        initialSteerProjections: const [
+          (anchorUserOrdinal: 0, content: 'más rápido'),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(chat.messages.reversed.map((message) => message['content']), [
+        'avanza',
+        'Moving.',
+        'más rápido',
+        'Still.',
+      ]);
+      expect(
+        chat.messages.where((message) => message['content'] == 'más rápido'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'deduplicación de corrección autoritativa respeta el turno ancla',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-correction-scope',
+          'session_key': 'stored-chat',
+          'message_count': 7,
+          'messages': [
+            {'role': 'user', 'content': 'primer turno'},
+            {'role': 'assistant', 'content': 'Cerrado.'},
+            {'role': 'user', 'content': 'segundo turno'},
+            {
+              'role': 'user',
+              'content': 'cambio interno',
+              'display_kind': 'model_switch',
+            },
+          ],
+          'inflight': {
+            'assistant': 'Moving.Still.',
+            'streaming': true,
+            'corrections': ['igual'],
+            'correction_offsets': [7],
+          },
+          'running': true,
+        });
+      final chat = _chat(
+        'resume-correction-scope',
+        gateway,
+        initialSteerProjections: const [
+          (anchorUserOrdinal: 0, content: 'igual'),
+          (anchorUserOrdinal: 1, content: 'igual'),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(chat.messages.reversed.map((message) => message['content']), [
+        'primer turno',
+        'igual',
+        'Cerrado.',
+        'segundo turno',
+        'cambio interno',
+        'Moving.',
+        'igual',
+        'Still.',
+      ]);
+      expect(
+        chat.messages.where((message) => message['content'] == 'igual'),
+        hasLength(2),
+      );
     },
   );
 
@@ -846,7 +2039,7 @@ void main() {
     expect(gateway.lastResumeProfile, 'research');
     expect(requestedProfiles, ['research']);
 
-    chat.messages = [
+    chat.internalMessagesForTesting = [
       {'role': 'assistant', 'content': '', '_pipeline': true},
       {'role': 'user', 'content': 'perfil'},
     ];
@@ -861,6 +2054,7 @@ void main() {
       ..snapshot = _snapshot({
         'session_id': 'runtime-profile-a',
         'session_key': 'shared-stored-id',
+        'info': {'lineage_root_id': 'mobile-profile-a'},
         'messages': <Object>[],
       });
     final first = service.attach(
@@ -872,6 +2066,10 @@ void main() {
       storedMessageLoader: (_, _) async => <Map<String, dynamic>>[],
     );
 
+    expect(
+      await first.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     await first.loadMessages(profile: 'profile-a');
     expect(first.storedSessionId, 'shared-stored-id');
 
@@ -953,7 +2151,8 @@ void main() {
     final restSecond = Completer<List<Map<String, dynamic>>>();
     var restCalls = 0;
     final gateway = _SnapshotGateway()
-      ..resumeGates.addAll([resumeFirst, resumeSecond]);
+      ..resumeGates.addAll([resumeFirst, resumeSecond])
+      ..resumeEntered = Completer<void>();
     final chat = _chat(
       'resume-epoch',
       gateway,
@@ -965,9 +2164,10 @@ void main() {
     addTearDown(chat.dispose);
 
     final oldLoad = chat.loadMessages(expectedMessageCount: 2);
-    await Future<void>.delayed(Duration.zero);
+    await gateway.resumeEntered!.future;
+    gateway.resumeEntered = Completer<void>();
     final newLoad = chat.loadMessages(expectedMessageCount: 2);
-    await Future<void>.delayed(Duration.zero);
+    await gateway.resumeEntered!.future;
 
     resumeSecond.complete(
       _snapshot({
@@ -1020,7 +2220,7 @@ void main() {
         ],
       );
       addTearDown(chat.dispose);
-      chat.messages = [
+      chat.internalMessagesForTesting = [
         {
           'role': 'assistant_error',
           'content': 'sin conexión',
@@ -1091,6 +2291,44 @@ void main() {
   });
 
   test(
+    'reanudación recupera un turno durable tras agotar la ventana offline',
+    () async {
+      final gateway = _SnapshotGateway();
+      final chat = _chat(
+        'resume-after-offline-budget',
+        gateway,
+        storedMessageLoader: (_, _) async => [
+          {'role': 'user', 'content': 'espera y responde'},
+          {'role': 'assistant', 'content': 'respuesta durable final'},
+        ],
+      );
+      addTearDown(chat.dispose);
+      chat.internalMessagesForTesting = [
+        {
+          'role': 'assistant_error',
+          'content': 'No se pudo recuperar el turno. Inténtalo de nuevo.',
+          '_prompt': 'espera y responde',
+          '_awaitingDurableTurnRecovery': true,
+        },
+        {'role': 'user', 'content': 'espera y responde'},
+      ];
+      chat.messagesLoaded = true;
+      chat.state = ChatPipelineState.failed;
+
+      final changed = await chat.reconcileAfterResume();
+
+      expect(changed, isTrue);
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.messages.first['role'], 'assistant');
+      expect(chat.messages.first['content'], 'respuesta durable final');
+      expect(
+        chat.messages.where((message) => message['role'] == 'assistant_error'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
     'reanudación de app no sustituye el turno local por REST vacío',
     () async {
       final gateway = _SnapshotGateway();
@@ -1100,7 +2338,7 @@ void main() {
         client: MockClient((_) async => http.Response('{"data":[]}', 200)),
       );
       addTearDown(chat.dispose);
-      chat.messages = [
+      chat.internalMessagesForTesting = [
         {'role': 'assistant', 'content': '', '_pipeline': true},
         {'role': 'user', 'content': 'conservar esta conversación'},
       ];
@@ -1161,7 +2399,7 @@ void main() {
         storedMessageLoader: (_, _) async => canonicalTranscript,
       );
       addTearDown(chat.dispose);
-      chat.messages = toolTail.reversed
+      chat.internalMessagesForTesting = toolTail.reversed
           .map(Map<String, dynamic>.of)
           .toList(growable: false);
       chat.messagesLoaded = true;
@@ -1195,6 +2433,72 @@ void main() {
   );
 
   test(
+    'reapertura con assistant call y tool sin call id sigue esperando final',
+    () async {
+      const toolTail = <Map<String, dynamic>>[
+        {
+          'message_id': 'reopen-unlinked-user',
+          'role': 'user',
+          'content': 'busca sin linkage',
+        },
+        {
+          'message_id': 'reopen-unlinked-call',
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'A',
+              'function': {'name': 'web_search', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'message_id': 'reopen-unlinked-result',
+          'role': 'tool',
+          'name': 'web_search',
+          'content': 'resultado todavía intermedio',
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-reopen-unlinked',
+          'session_key': 'stored-chat',
+          'messages': toolTail,
+          'inflight': {
+            'user': 'busca sin linkage',
+            'assistant': '',
+            'streaming': true,
+          },
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'resume-tools-unlinked-live',
+        gateway,
+        storedMessageLoader: (_, _) async => toolTail,
+      );
+      addTearDown(chat.dispose);
+      chat.internalMessagesForTesting = toolTail.reversed
+          .map(Map<String, dynamic>.of)
+          .toList(growable: false);
+      chat.messagesLoaded = true;
+      chat.state = ChatPipelineState.completed;
+
+      final changed = await chat.reconcileAfterResume();
+
+      expect(changed, isTrue);
+      expect(gateway.resumeExistingCalls, 1);
+      expect(chat.isStreaming, isTrue);
+      expect(
+        chat.internalMessagesForTesting.any(
+          (message) => message['role'] == 'tool',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'reapertura Desktop no consulta un terminal canónico tool-only',
     () async {
       const toolOnly = <Map<String, dynamic>>[
@@ -1223,7 +2527,7 @@ void main() {
         storedMessageLoader: (_, _) async => toolOnly,
       );
       addTearDown(chat.dispose);
-      chat.messages = toolOnly.reversed
+      chat.internalMessagesForTesting = toolOnly.reversed
           .map(Map<String, dynamic>.of)
           .toList(growable: false);
       chat.messagesLoaded = true;
@@ -1234,7 +2538,7 @@ void main() {
       expect(changed, isFalse);
       expect(gateway.resumeExistingCalls, 0);
       expect(chat.state, ChatPipelineState.completed);
-      expect(chat.messages.first['role'], 'tool');
+      expect(chat.internalMessagesForTesting.first['role'], 'tool');
     },
   );
 
@@ -1283,7 +2587,7 @@ void main() {
         storedMessageLoader: (_, _) async => toolTail,
       );
       addTearDown(chat.dispose);
-      chat.messages = toolTail.reversed
+      chat.internalMessagesForTesting = toolTail.reversed
           .map(Map<String, dynamic>.of)
           .toList(growable: false);
       chat.messagesLoaded = true;
@@ -1338,7 +2642,7 @@ void main() {
       storedMessageLoader: (_, _) async => toolTail,
     );
     addTearDown(chat.dispose);
-    chat.messages = toolTail.reversed
+    chat.internalMessagesForTesting = toolTail.reversed
         .map(Map<String, dynamic>.of)
         .toList(growable: false);
     chat.messagesLoaded = true;
@@ -1395,6 +2699,118 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(chat.desktopTurnStartedAt, isNull);
       expect(chat.state, ChatPipelineState.failed);
+    },
+  );
+
+  test(
+    'message.start tardío sin corte causal conserva el terminal y herramientas',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-late-start',
+          'session_key': 'stored-chat',
+          'running': true,
+          'inflight': {'assistant': '', 'streaming': true},
+        });
+      final chat = _chat('resume-late-start', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      gateway.emit('tool.start', const {
+        'tool_id': 'terminal-tool',
+        'name': 'terminal',
+        'preview': 'resultado conservado',
+      });
+      gateway.emit('message.complete', const {'text': 'terminal estable'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final terminalTrace = List.of(chat.trace);
+
+      gateway.emit('message.start');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.assistantContent, 'terminal estable');
+      expect(chat.trace, terminalTrace);
+    },
+  );
+
+  test(
+    'message.start secuenciado posterior del mismo productor abre turno externo',
+    () async {
+      final producer = Object();
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-causal-start',
+          'session_key': 'stored-chat',
+          'running': true,
+          'inflight': {'assistant': '', 'streaming': true},
+        });
+      final chat = _chat('resume-causal-start', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      gateway.emit(
+        'message.complete',
+        const {'text': 'terminal anterior'},
+        40,
+        7,
+        producer,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      gateway.emit('message.start', const {}, 41, 7, producer);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.state, ChatPipelineState.waiting);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.desktopTurnStartedAt, isNotNull);
+    },
+  );
+
+  test(
+    'message.start stale o de otro transporte no cruza el terminal causal',
+    () async {
+      for (final candidate in <(int, int, Object)>[
+        (40, 7, Object()),
+        (39, 7, Object()),
+        (41, 8, Object()),
+      ]) {
+        final terminalProducer = candidate.$3;
+        final startProducer = candidate.$1 == 40 ? Object() : terminalProducer;
+        final gateway = _SnapshotGateway()
+          ..snapshot = _snapshot({
+            'session_id': 'runtime-stale-${candidate.$1}-${candidate.$2}',
+            'session_key': 'stored-chat',
+            'running': true,
+            'inflight': {'assistant': '', 'streaming': true},
+          });
+        final chat = _chat(
+          'resume-stale-${candidate.$1}-${candidate.$2}',
+          gateway,
+        );
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+
+        gateway.emit(
+          'message.complete',
+          const {'text': 'terminal estable'},
+          40,
+          7,
+          terminalProducer,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        gateway.emit(
+          'message.start',
+          const {},
+          candidate.$1,
+          candidate.$2,
+          startProducer,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(chat.state, ChatPipelineState.completed);
+        expect(chat.assistantContent, 'terminal estable');
+      }
     },
   );
 
@@ -1566,7 +2982,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(chat.desktopAutoCompacting, isTrue);
 
-    chat.cancel();
+    await chat.cancel();
 
     expect(chat.desktopAutoCompacting, isFalse);
     expect(chat.desktopCompactionLineageId, 'lineage-after-cancel');
@@ -1656,10 +3072,1909 @@ void main() {
       expect(gateway.commandDispatchCalls, 0);
       expect(chat.storedSessionId, 'stored-native-compressed');
       expect(chat.desktopRuntimeInfo.usage?.contextUsed, 4821);
-      expect(chat.messages, hasLength(2));
-      expect(chat.messages.first['content'], 'Contexto nativo listo');
-      expect(chat.messages.last['content'], 'Resumen nativo durable');
+      // Exact, complete terminal authority replaces the stale display transcript
+      // immediately and appends one bounded editorial result for this runtime.
+      expect(chat.messages.map((message) => message['content']), [
+        'Compressed: 4 → 2 messages\nApprox request size: ~96,022 → ~4,821 tokens',
+        'Contexto nativo listo',
+        'Resumen nativo durable',
+      ]);
+      expect(chat.messages.first['display_kind'], 'compression_result');
+      expect(chat.buildHistory(), [
+        {'role': 'user', 'content': 'Resumen nativo durable'},
+        {'role': 'assistant', 'content': 'Contexto nativo listo'},
+      ]);
       expect(chat.desktopCompressionInFlight, isFalse);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_UNCERTAIN malformed post-dispatch ACK survives recreation',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-malformed-ack',
+          'session_key': 'stored-chat',
+        })
+        // The server executed the mutation, then its malformed envelope could
+        // not be parsed by TuiGatewayClient into a typed compression result.
+        ..compressError = const TuiGatewayRpcError(
+          'session.compress',
+          'Hermes returned an invalid session compression result',
+        );
+      final store = DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'malformed-ack-attempt',
+      );
+      final first = _chat(
+        'malformed-ack',
+        gateway,
+        compressionFenceStore: store,
+      );
+      await first.loadMessages();
+
+      await expectLater(
+        first.compressDesktopSession(),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      expect(gateway.compressSessionCalls, 1);
+      first.dispose();
+
+      final recreated = _chat(
+        'malformed-ack',
+        gateway,
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+      );
+      addTearDown(recreated.dispose);
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(
+        recreated.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.compressSessionCalls, 1);
+    },
+  );
+
+  test(
+    'phase update failure leaves the durable armed fence blocking retries',
+    () async {
+      final storage = _MemoryCompressionFenceStorage()..failingWrites = {2};
+      final store = DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'phase-failure-attempt',
+      );
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-phase-failure',
+          'session_key': 'stored-chat',
+        })
+        ..compressionResult = _nativePendingCompressionResult();
+      final chat = _chat(
+        'phase-update-failure',
+        gateway,
+        compressionFenceStore: store,
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      await chat.compressDesktopSession();
+      while (storage.writeCalls < 2) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final persisted = await DesktopCompressionFenceStore(storage: storage)
+          .lookup(
+            DesktopCompressionFenceScope(
+              connectionId: 'phase-update-failure',
+              profile: 'default',
+              logicalSessionId: 'stored-chat',
+            ),
+          );
+
+      expect(persisted.record?.phase, DesktopCompressionFencePhase.armed);
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.compressSessionCalls, 1);
+    },
+  );
+
+  test(
+    'correlated terminal native result clears only its durable attempt',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      var attempt = 0;
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-terminal-clear',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+        })
+        ..compressionResult = _nativeCompressionResult();
+      final chat = _chat(
+        'terminal-compression-clear',
+        gateway,
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: storage,
+          attemptId: () => 'terminal-attempt-${++attempt}',
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      await chat.compressDesktopSession();
+      await chat.compressDesktopSession();
+
+      expect(gateway.compressSessionCalls, 2);
+      expect(storage.value, isNot(contains('terminal-attempt-1')));
+      expect(storage.value, isNot(contains('terminal-attempt-2')));
+    },
+  );
+
+  test('settlement delete failure keeps memory and storage fenced', () async {
+    final storage = _MemoryCompressionFenceStorage()..failingWrites = {2};
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-delete-failure',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+      })
+      ..compressionResult = _nativeCompressionResult();
+    final chat = _chat(
+      'settlement-delete-failure',
+      gateway,
+      compressionFenceStore: DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'delete-failure-attempt',
+      ),
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    await chat.compressDesktopSession();
+
+    expect(chat.desktopCompressionInFlight, isTrue);
+    expect(storage.value, contains('delete-failure-attempt'));
+    await expectLater(
+      chat.compressDesktopSession(),
+      throwsA(
+        isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+      ),
+    );
+    expect(gateway.compressSessionCalls, 1);
+  });
+
+  test(
+    'aborted nativo reconcilia autoridad pero nunca comunica éxito',
+    () async {
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-aborted',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'uno'},
+            {'role': 'assistant', 'content': 'dos'},
+            {'role': 'user', 'content': 'tres'},
+            {'role': 'assistant', 'content': 'cuatro'},
+          ],
+        })
+        ..compressionResult = _nativeAbortedCompressionResult();
+      final chat = _chat('native-compression-aborted', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final result = await chat.compressDesktopSession();
+
+      expect(result.compressionStatus, DesktopCompressionStatus.aborted);
+      expect(result.accepted, DesktopCommandAcceptance.rejected);
+      expect(result.output, isNull);
+      expect(result.failure?.kind, CommandFailureKind.remote);
+      expect(chat.storedSessionId, 'stored-native-aborted');
+      expect(chat.messages.map((message) => message['content']), [
+        'cuatro',
+        'tres',
+        'dos',
+        'uno',
+      ]);
+      expect(gateway.slashExecCalls, 0);
+      expect(gateway.commandDispatchCalls, 0);
+      expect(chat.desktopCompressionInFlight, isFalse);
+    },
+  );
+
+  test(
+    'COMP2 no-progress autoritativo retira pending y conserva el transcript',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-comp2-no-progress',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'pregunta uno'},
+            {'role': 'assistant', 'content': 'respuesta uno'},
+            {'role': 'user', 'content': 'pregunta dos'},
+            {'role': 'assistant', 'content': 'respuesta dos'},
+          ],
+        })
+        // Hermes counts six model-facing rows, while its public transcript
+        // projection authoritatively retains the four displayable rows.
+        ..compressionWireResult = {
+          'status': 'compressed',
+          'removed': 0,
+          'before_messages': 6,
+          'after_messages': 6,
+          'before_tokens': 16618,
+          'after_tokens': 16618,
+          'summary': {
+            'noop': true,
+            'aborted': false,
+            'refused_would_grow': false,
+            'fallback_used': false,
+            'headline': 'No changes from compression: 6 messages',
+            'token_line': 'Approx request size: ~16,618 tokens (unchanged)',
+            'note': null,
+          },
+          'usage': {'context_used': 16618, 'context_max': 272000},
+          'info': {'stored_session_id': 'stored-chat'},
+          'messages': [
+            {'role': 'user', 'content': 'pregunta uno'},
+            {'role': 'assistant', 'content': 'respuesta uno'},
+            {'role': 'user', 'content': 'pregunta dos'},
+            {'role': 'assistant', 'content': 'respuesta dos'},
+          ],
+        };
+      final chat = _chat(
+        'comp2-no-progress',
+        gateway,
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: storage,
+          attemptId: () => 'comp2-no-progress-attempt',
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final before = chat.messages
+          .map((message) => message['content'])
+          .toList(growable: false);
+
+      final presentation = await chat.compressDesktopSessionForPresentation(
+        focusTopic: 'E2E1210COMP2',
+      );
+
+      expect(presentation.failure, isNull);
+      expect(
+        presentation.command?.compressionStatus,
+        DesktopCompressionStatus.noOp,
+      );
+      expect(presentation.command?.accepted, DesktopCommandAcceptance.accepted);
+      expect(presentation.command?.failure, isNull);
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
+      expect(storage.value, isNot(contains('comp2-no-progress-attempt')));
+      expect(
+        chat.messages.map((message) => message['content']),
+        orderedEquals([
+          'Nothing to compress: 6 messages · ~16618 tokens',
+          ...before,
+        ]),
+      );
+      expect(chat.messages.first['display_kind'], 'compression_result');
+      expect(gateway.compressSessionCalls, 1);
+      expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+    },
+  );
+
+  test('lock_held nativo es busy/deferred y no toca el transcript', () async {
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-native-lock-held',
+        'session_key': 'stored-chat',
+        'messages': [
+          {'role': 'user', 'content': 'uno'},
+          {'role': 'assistant', 'content': 'dos'},
+        ],
+      })
+      ..compressionResult = _nativeLockHeldCompressionResult();
+    final chat = _chat('native-compression-lock-held', gateway);
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+    final before = List<Map<String, dynamic>>.from(chat.messages);
+
+    final result = await chat.compressDesktopSession();
+
+    expect(result.compressionStatus, DesktopCompressionStatus.lockHeld);
+    expect(result.accepted, DesktopCommandAcceptance.rejected);
+    expect(result.failure?.kind, CommandFailureKind.conflict);
+    expect(result.output, isNull);
+    expect(chat.messages, before);
+    expect(chat.storedSessionId, 'stored-chat');
+    expect(gateway.slashExecCalls, 0);
+    expect(gateway.commandDispatchCalls, 0);
+    expect(chat.desktopCompressionInFlight, isFalse);
+  });
+
+  for (final stale in [false, true]) {
+    for (final kind in [
+      'settled',
+      'preflight',
+      'format',
+      'unknown',
+      'no-code',
+      'ownership',
+      'malformed',
+    ]) {
+      test('REGRESSION_COMP_TYPED_BOUNDARY $kind stale=$stale', () async {
+        final storage = _MemoryCompressionFenceStorage();
+        final gate = Completer<DesktopCompressionResult>();
+        final gateway = _lockHeldGateway('runtime-boundary')
+          ..nativeCompressionGate = gate;
+        final chat = _chat(
+          'typed-boundary',
+          gateway,
+          compressionFenceStore: _lockHeldFenceStore(
+            storage,
+            'boundary-attempt',
+          ),
+        );
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        final pending = chat.compressDesktopSession();
+        final done = kind == 'settled'
+            ? pending
+            : expectLater(pending, throwsA(anything));
+        await gateway.compressionEntered.future;
+        if (stale) await chat.loadMessages();
+        final before = List<Map<String, dynamic>>.from(chat.messages);
+        if (kind == 'settled') {
+          gate.complete(_nativeAbortedCompressionResult());
+        } else {
+          gate.completeError(switch (kind) {
+            'preflight' => const TuiGatewayRpcError(
+              'session.compress',
+              'denied',
+              origin: CompressionFailureOrigin.localPreflight,
+            ),
+            'ownership' => const TuiGatewayRpcError(
+              'session.compress',
+              'sesión ajena',
+              code: 4090,
+            ),
+            'malformed' => const TuiGatewayRpcError(
+              'session.compress',
+              'invalid',
+              code: 4090,
+              origin: CompressionFailureOrigin.malformed,
+            ),
+            'format' => const FormatException('invalid'),
+            'unknown' => const TuiGatewayRpcError(
+              'session.compress',
+              'neutral',
+              code: 5555,
+            ),
+            _ => const TuiGatewayRpcError('session.compress', 'neutral'),
+          });
+        }
+        await done;
+        final retained = kind != 'settled' && kind != 'preflight';
+        expect(storage.value?.contains('boundary-attempt'), retained);
+        expect(chat.desktopCompressionInFlight, retained);
+        if (stale || kind != 'settled') expect(chat.messages, before);
+        if (retained) {
+          chat.dispose();
+          final recreated = _chat(
+            'typed-boundary',
+            gateway,
+            compressionFenceStore: _lockHeldFenceStore(storage, 'other'),
+          );
+          addTearDown(recreated.dispose);
+          await expectLater(recreated.compressDesktopSession(), _lockHeldBusy);
+          expect(recreated.desktopCompressionInFlight, isTrue);
+        }
+        expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+      });
+    }
+  }
+
+  test(
+    'REGRESSION_COMP_TYPED_ARM_UNCLAIMED preserves B inserted before arm',
+    () async {
+      final storage = _MemoryCompressionFenceStorage(),
+          foreign = _MemoryCompressionFenceStorage();
+      final gateway = _lockHeldGateway('runtime-unclaimed');
+      await _lockHeldFenceStore(foreign, 'B').arm(
+        DesktopCompressionFenceScope(
+          connectionId: 'typed-unclaimed',
+          profile: 'default',
+          logicalSessionId: 'stored-chat',
+        ),
+        tipAtStart: 'stored-chat',
+        compressionsAtStart: null,
+        createdAtMs: 1,
+        reconcileUntilMs: 2,
+      );
+      final chat = _chat(
+        'typed-unclaimed',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'A'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final armRead = storage.readCalls + 2;
+      storage.onRead = () {
+        if (storage.readCalls == armRead) storage.value = foreign.value;
+      };
+      await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+      expect(storage.value, foreign.value);
+      expect(storage.writeCalls, 0);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(
+        gateway.compressSessionCalls +
+            gateway.slashExecCalls +
+            gateway.commandDispatchCalls,
+        0,
+      );
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_TYPED_ARM_UNCERTAIN never deletes an unclaimed record',
+    () async {
+      final storage = _MemoryCompressionFenceStorage()..failAfterWrite = true;
+      final gateway = _lockHeldGateway('runtime-uncertain');
+      final chat = _chat(
+        'typed-uncertain',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(
+          storage,
+          'uncertain-attempt',
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+      expect(storage.value, contains('uncertain-attempt'));
+      expect(storage.writeCalls, 1);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+      expect(
+        gateway.compressSessionCalls +
+            gateway.slashExecCalls +
+            gateway.commandDispatchCalls,
+        0,
+      );
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_TYPED_ARM_ABORT claimed undispatched is cleaned',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _lockHeldGateway('runtime-arm');
+      final chat = _chat(
+        'typed-arm',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'arm-attempt'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      storage.writeGate = Completer<void>();
+      storage.writeEntered = Completer<void>();
+      final pending = expectLater(
+        chat.compressDesktopSession(),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      await storage.writeEntered!.future;
+      await chat.loadMessages();
+      storage.writeGate!.complete();
+      await pending;
+      expect(storage.value, isNot(contains('arm-attempt')));
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(gateway.compressSessionCalls, 0);
+      expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+    },
+  );
+
+  for (final unknown in [false, true]) {
+    test('REGRESSION_COMP_TYPED_STALE_PENDING unknown=$unknown', () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gate = Completer<DesktopCompressionResult>();
+      final gateway = _lockHeldGateway('runtime-stale')
+        ..nativeCompressionGate = gate;
+      final chat = _chat(
+        'typed-stale',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'stale-attempt'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final pending = chat.compressDesktopSession();
+      final completed = unknown
+          ? expectLater(pending, throwsA(isA<TuiGatewayRpcError>()))
+          : pending;
+      await gateway.compressionEntered.future;
+      await chat.loadMessages();
+      final before = List<Map<String, dynamic>>.from(chat.messages);
+      if (unknown) {
+        gate.completeError(
+          const TuiGatewayRpcError('session.compress', 'neutral', code: 5555),
+        );
+      } else {
+        gate.complete(_nativePendingCompressionResult());
+      }
+      await completed;
+      expect(storage.value, contains('stale-attempt'));
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.messages, before);
+      expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+    });
+  }
+
+  for (final message in ['neutral', 'timeout', 'transport', 'sesión ajena']) {
+    test(
+      'REGRESSION_COMP_TYPED_NATIVE_4090 $message retains its attempt without fallback',
+      () async {
+        final storage = _MemoryCompressionFenceStorage();
+        final gateway = _lockHeldGateway('runtime-4090')
+          ..compressError = TuiGatewayRpcError(
+            'session.compress',
+            message,
+            code: 4090,
+          );
+        final chat = _chat(
+          'typed-4090',
+          gateway,
+          compressionFenceStore: _lockHeldFenceStore(storage, 'typed-attempt'),
+        );
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        final before = List<Map<String, dynamic>>.from(chat.messages);
+        final resumes = gateway.resumeExistingCalls;
+        await expectLater(
+          chat.compressDesktopSession(),
+          throwsA(isA<TuiGatewayRpcError>()),
+        );
+        expect(storage.value, contains('typed-attempt'));
+        expect(chat.desktopCompressionInFlight, isTrue);
+        expect(chat.desktopCompressionTransportUncertain, isFalse);
+        expect(chat.messages, before);
+        expect(gateway.compressSessionCalls, 1);
+        expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+        expect(gateway.resumeExistingCalls, resumes);
+        expect(gateway.createCalls, 0);
+        chat.dispose();
+        final recreated = _chat(
+          'typed-4090',
+          gateway,
+          compressionFenceStore: _lockHeldFenceStore(storage, 'other-attempt'),
+        );
+        addTearDown(recreated.dispose);
+        await expectLater(recreated.compressDesktopSession(), _lockHeldBusy);
+        expect(recreated.desktopCompressionInFlight, isTrue);
+        expect(gateway.compressSessionCalls, 1);
+      },
+    );
+  }
+
+  test(
+    'REGRESSION_COMP_FIX1_SERVICE_STALE_LOCK_HELD_RESOLVES_EXACT_ATTEMPT',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gate = Completer<DesktopCompressionResult>();
+      final gateway = _lockHeldGateway('runtime-fix1-service')
+        ..nativeCompressionGate = gate;
+      final chat = _chat(
+        'fix1-service-stale',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'fix1-attempt-A'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final pending = chat.compressDesktopSessionForPresentation();
+      await gateway.compressionEntered.future;
+      expect(storage.value, contains('fix1-attempt-A'));
+      await chat.loadMessages();
+      gate.complete(_nativeLockHeldCompressionResult());
+      final presentation = await pending;
+
+      expect(
+        presentation.command?.compressionStatus,
+        DesktopCompressionStatus.lockHeld,
+      );
+      expect(presentation.failure, isNull);
+      expect(presentation.projection.isCurrent, isFalse);
+      expect(
+        presentation.projection.isCurrent,
+        isFalse,
+        reason: 'an invalidated opaque projection cannot become current again',
+      );
+      expect(storage.value, isNot(contains('fix1-attempt-A')));
+      expect(chat.desktopCompressionInFlight, isFalse);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_FIX3_LEGACY_CONTRADICTION_RETAINS_EXACT_FENCE',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-fix3-legacy',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+        })
+        ..compressionGate = (Completer<DesktopCommandRpcResult>()
+          ..complete(
+            DesktopCommandRpcResult.fromJson({
+              'type': 'exec',
+              'accepted': false,
+              'status': 'pending',
+              'output': 'queued',
+            }),
+          ));
+      final chat = _chat(
+        'fix3-legacy',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'legacy-attempt-A'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final presentation = await chat.compressDesktopSessionForPresentation();
+      expect(presentation.failure, isNull);
+      expect(presentation.projection.isCurrent, isTrue);
+      expect(storage.value, contains('legacy-attempt-A'));
+      expect(chat.desktopCompressionInFlight, isTrue);
+      await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+      expect(gateway.slashExecCalls, 1);
+      expect(gateway.commandDispatchCalls, 0);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_FIX3_LEGACY_REJECTION_DELETES_ONLY_ITS_FENCE',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      await _lockHeldFenceStore(storage, 'foreign-attempt').arm(
+        DesktopCompressionFenceScope(
+          connectionId: 'foreign',
+          profile: 'default',
+          logicalSessionId: 'foreign',
+        ),
+        tipAtStart: 'foreign-tip',
+        compressionsAtStart: null,
+        createdAtMs: 1,
+        reconcileUntilMs: 2,
+      );
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-fix3-rejected',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+        })
+        ..compressionGate = (Completer<DesktopCommandRpcResult>()
+          ..complete(
+            DesktopCommandRpcResult.fromJson({
+              'type': 'error',
+              'accepted': false,
+              'status': 'rejected',
+            }),
+          ));
+      final chat = _chat(
+        'fix3-rejected',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(
+          storage,
+          'rejected-attempt-A',
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final presentation = await chat.compressDesktopSessionForPresentation();
+      expect(presentation.command?.accepted, DesktopCommandAcceptance.rejected);
+      expect(presentation.projection.isCurrent, isTrue);
+      expect(storage.value, isNot(contains('rejected-attempt-A')));
+      expect(storage.value, contains('foreign-attempt'));
+      expect(chat.desktopCompressionInFlight, isFalse);
+      await chat.compressDesktopSession();
+      expect(gateway.slashExecCalls, 2);
+      expect(gateway.commandDispatchCalls, 0);
+      expect(storage.value, contains('foreign-attempt'));
+    },
+  );
+
+  for (final withContextProjection in [true, false]) {
+    test(
+      'REGRESSION_COMP_FIX3_REENTRANT_HYDRATION_NEVER_RECAPTURES_LOAD context=$withContextProjection',
+      () async {
+        final storage = _MemoryCompressionFenceStorage();
+        final gateway = _lockHeldGateway('runtime-fix3-reentrant')
+          ..compressionResult = withContextProjection
+              ? _nativeCompressionResult()
+              : DesktopCompressionResult.fromJson({
+                  'status': 'compressed',
+                  'info': {'stored_session_id': 'stored-native-compressed'},
+                });
+        var armed = false;
+        var callbacks = 0;
+        Future<void>? refresh;
+        late final ActiveChat chat;
+        chat = _chat(
+          'fix3-reentrant',
+          gateway,
+          compressionFenceStore: _lockHeldFenceStore(storage, 'fix3-attempt'),
+          onEvent: (emitted) {
+            if (!armed ||
+                emitted != ActiveChatEvent.sessionInfo ||
+                chat.storedSessionId != 'stored-native-compressed') {
+              return;
+            }
+            armed = false;
+            callbacks++;
+            storage
+              ..gatedReadCall = storage.readCalls + 1
+              ..readEntered = Completer<void>()
+              ..readGate = Completer<void>();
+            refresh = chat.loadMessages();
+          },
+        );
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        armed = true;
+        final presentation = await chat.compressDesktopSessionForPresentation();
+        await storage.readEntered!.future;
+        try {
+          expect(callbacks, 1);
+          expect(gateway.compressSessionCalls, 1);
+          expect(
+            presentation.command?.compressionStatus,
+            DesktopCompressionStatus.compressed,
+          );
+          expect(presentation.failure, isNull);
+          expect(
+            storage.value,
+            isNot(contains('fix3-attempt')),
+            reason: 'durable settlement does not depend on presentation',
+          );
+          expect(
+            presentation.projection.isCurrent,
+            isFalse,
+            reason:
+                'external load epoch must not be recaptured while lookup waits',
+          );
+          expect(presentation.projection.isCurrent, isFalse);
+        } finally {
+          storage.readGate!.complete();
+          await refresh;
+        }
+        expect(
+          presentation.projection.isCurrent,
+          isFalse,
+          reason: 'finishing the refresh cannot revive A',
+        );
+        await chat.loadMessages();
+        expect(presentation.projection.isCurrent, isFalse);
+        chat.dispose();
+        expect(presentation.projection.isCurrent, isFalse);
+      },
+    );
+  }
+
+  test(
+    'REGRESSION_COMP_FIX2_PRESENTATION_STAYS_STALE_AFTER_PREDISPATCH_LOOKUP',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _lockHeldGateway('runtime-fix2-predispatch')
+        ..compressionResult = _nativeCompressionResult();
+      final chat = _chat(
+        'fix2-predispatch-stale',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'fix2-predispatch'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      storage
+        ..gatedReadCall = storage.readCalls + 1
+        ..readEntered = Completer<void>()
+        ..readGate = Completer<void>();
+      final pending = chat.compressDesktopSessionForPresentation();
+      await storage.readEntered!.future;
+
+      await chat.loadMessages();
+      storage.readGate!.complete();
+      final presentation = await pending;
+
+      expect(gateway.compressSessionCalls, 0);
+      expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+      expect(
+        storage.writeCalls,
+        0,
+        reason: 'external load revokes arm authority',
+      );
+      expect(presentation.command, isNull);
+      expect(presentation.failure, isA<TuiGatewayRpcError>());
+      expect(presentation.projection.isCurrent, isFalse);
+      expect(
+        presentation.projection.isCurrent,
+        isFalse,
+        reason: 'a pre-dispatch invalidation must remain sticky',
+      );
+      expect(chat.desktopCompressionInFlight, isFalse);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_FIX2_CURRENT_RUNTIME_ACQUISITION_ERROR_IS_PRESENTABLE',
+    () async {
+      final gateway = _lockHeldGateway('runtime-fix2-acquisition-error')
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'typed acquisition failure',
+          code: 5555,
+        );
+      final chat = _chat(
+        'fix2-current-acquisition-error',
+        gateway,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      addTearDown(chat.dispose);
+
+      final presentation = await chat.compressDesktopSessionForPresentation();
+
+      expect(
+        presentation.failure,
+        isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 5555),
+      );
+      expect(presentation.command, isNull);
+      expect(presentation.projection.isCurrent, isTrue);
+      expect(presentation.projection.isCurrent, isTrue);
+      expect(gateway.compressSessionCalls, 0);
+      expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_FIX2_OVERLAPPED_RUNTIME_ACQUISITION_STAYS_STALE',
+    () async {
+      final acquisitionA = Completer<DesktopSessionSnapshot>();
+      final acquisitionB = Completer<DesktopSessionSnapshot>()
+        ..complete(
+          _snapshot({
+            'session_id': 'runtime-fix2-external-B',
+            'session_key': 'stored-chat',
+            'messages': <Object>[],
+          }),
+        );
+      final gateway = _lockHeldGateway('runtime-fix2-default')
+        ..compressionResult = _nativeCompressionResult()
+        ..resumeEntered = Completer<void>()
+        ..resumeGates.addAll([acquisitionA, acquisitionB]);
+      final chat = _chat(
+        'fix2-overlapped-acquisition',
+        gateway,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      addTearDown(chat.dispose);
+
+      final pending = chat.compressDesktopSessionForPresentation();
+      await gateway.resumeEntered!.future;
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isTrue,
+      );
+      expect(chat.desktopRuntimeSessionId, 'runtime-fix2-external-B');
+
+      acquisitionA.complete(
+        _snapshot({
+          'session_id': 'runtime-fix2-acquisition-A',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+        }),
+      );
+      final presentation = await pending;
+
+      expect(gateway.compressRuntimeId, 'runtime-fix2-external-B');
+      expect(
+        presentation.command?.compressionStatus,
+        DesktopCompressionStatus.compressed,
+      );
+      expect(presentation.failure, isNull);
+      expect(presentation.projection.isCurrent, isFalse);
+      expect(
+        presentation.projection.isCurrent,
+        isFalse,
+        reason: 'A cannot adopt the external acquisition B as its own delta',
+      );
+      expect(chat.desktopCompressionInFlight, isFalse);
+    },
+  );
+
+  test('REGRESSION_COMP_LOCK_HELD validated ACK deletes only its own attempt '
+      'before idle', () async {
+    final storage = _MemoryCompressionFenceStorage();
+    await _lockHeldFenceStore(storage, 'foreign-attempt').arm(
+      DesktopCompressionFenceScope(
+        connectionId: 'foreign-conn',
+        profile: 'default',
+        logicalSessionId: 'foreign-chat',
+      ),
+      tipAtStart: 'foreign-tip',
+      compressionsAtStart: null,
+      createdAtMs: 1,
+      reconcileUntilMs: 2,
+    );
+    final gateway = _lockHeldGateway('runtime-lock-held-own');
+    final chat = _chat(
+      'lock-held-own',
+      gateway,
+      compressionFenceStore: _lockHeldFenceStore(storage, 'own-attempt'),
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    final first = await chat.compressDesktopSession();
+
+    expect(first.compressionStatus, DesktopCompressionStatus.lockHeld);
+    expect(first.accepted, DesktopCommandAcceptance.rejected);
+    expect(first.failure?.kind, CommandFailureKind.conflict);
+    expect(chat.desktopCompressionInFlight, isFalse);
+    expect(storage.value, isNot(contains('own-attempt')));
+    expect(storage.value, contains('foreign-attempt'));
+
+    final second = await chat.compressDesktopSession();
+
+    expect(second.compressionStatus, DesktopCompressionStatus.lockHeld);
+    expect(gateway.compressSessionCalls, 2);
+    expect(storage.value, isNot(contains('own-attempt')));
+    expect(storage.value, contains('foreign-attempt'));
+  });
+
+  test(
+    'REGRESSION_COMP_LOCK_HELD delete failure keeps UI fenced and recreation '
+    'blocked',
+    () async {
+      final storage = _MemoryCompressionFenceStorage()..failingWrites = {2};
+      final gateway = _lockHeldGateway('runtime-lock-held-stuck');
+      final first = _chat(
+        'lock-held-stuck',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'stuck-attempt'),
+      );
+      await first.loadMessages();
+
+      final result = await first.compressDesktopSession();
+
+      expect(result.compressionStatus, DesktopCompressionStatus.lockHeld);
+      expect(first.desktopCompressionInFlight, isTrue);
+      expect(storage.value, contains('stuck-attempt'));
+      await expectLater(first.compressDesktopSession(), _lockHeldBusy);
+      expect(gateway.compressSessionCalls, 1);
+      first.dispose();
+
+      final recreated = _chat(
+        'lock-held-stuck',
+        gateway,
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+      );
+      addTearDown(recreated.dispose);
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(recreated.compressDesktopSession(), _lockHeldBusy);
+      expect(gateway.compressSessionCalls, 1);
+    },
+  );
+
+  test('REGRESSION_COMP_LOCK_HELD recreation with same store is unfenced after '
+      'cleanup', () async {
+    final storage = _MemoryCompressionFenceStorage();
+    final gateway = _lockHeldGateway('runtime-lock-held-recreated');
+    final first = _chat(
+      'lock-held-recreated',
+      gateway,
+      compressionFenceStore: _lockHeldFenceStore(storage, 'first-attempt'),
+    );
+    await first.loadMessages();
+    await first.compressDesktopSession();
+    expect(storage.value, isNot(contains('first-attempt')));
+    first.dispose();
+
+    final recreated = _chat(
+      'lock-held-recreated',
+      gateway,
+      compressionFenceStore: _lockHeldFenceStore(storage, 'second-attempt'),
+    );
+    addTearDown(recreated.dispose);
+    await Future<void>.delayed(Duration.zero);
+
+    final result = await recreated.compressDesktopSession();
+
+    expect(result.compressionStatus, DesktopCompressionStatus.lockHeld);
+    expect(gateway.compressSessionCalls, 2);
+    expect(storage.value, isNot(contains('second-attempt')));
+  });
+
+  test(
+    'REGRESSION_COMP_LOCK_HELD cleanup honors exact ownership and generation',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      var metadataReads = 0;
+      Completer<void>? nextMetadata;
+      final gate = Completer<DesktopCompressionResult>();
+      final gateway = _lockHeldGateway('runtime-lock-held-generation')
+        ..nativeCompressionGate = gate;
+      final chat = _chat(
+        'lock-held-generation',
+        gateway,
+        desktopCompressionReconciliationDelay: const Duration(milliseconds: 1),
+        client: MockClient((_) async {
+          metadataReads++;
+          if (nextMetadata?.isCompleted == false) nextMetadata!.complete();
+          return http.Response('unavailable', 500);
+        }),
+        compressionFenceStore: _lockHeldFenceStore(storage, 'gen-1-attempt'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final pending = chat.compressDesktopSession();
+      await gateway.compressionEntered.future;
+      expect(storage.value, contains('gen-1-attempt'));
+
+      // A newer generation owned by another writer replaces the durable
+      // record while the validated ACK is still in flight.
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'lock-held-generation',
+        profile: 'default',
+        logicalSessionId: 'stored-chat',
+      );
+      final rotated = _lockHeldFenceStore(storage, 'gen-2-attempt');
+      await rotated.clearSession(scope);
+      await rotated.arm(
+        scope,
+        tipAtStart: 'stored-chat',
+        compressionsAtStart: null,
+        createdAtMs: 1,
+        reconcileUntilMs: DateTime.now().millisecondsSinceEpoch + 120000,
+      );
+
+      await chat.loadMessages();
+      final readsBeforeCas = storage.readCalls;
+      nextMetadata = Completer<void>();
+      gate.complete(_nativeLockHeldCompressionResult());
+      final result = await pending;
+
+      expect(result.compressionStatus, DesktopCompressionStatus.lockHeld);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(
+        storage.readCalls,
+        greaterThanOrEqualTo(readsBeforeCas + 2),
+        reason: 'CAS=false must reload B rather than reinstall A',
+      );
+      expect(storage.value, contains('gen-2-attempt'));
+      expect(storage.value, isNot(contains('gen-1-attempt')));
+      final readsBeforeTimer = metadataReads;
+      await nextMetadata.future;
+      expect(
+        metadataReads,
+        greaterThan(readsBeforeTimer),
+        reason: 'B reconciliation must continue',
+      );
+      await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+      expect(gateway.compressSessionCalls, 1);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_LOCK_HELD method-not-found never runs the validated ACK '
+    'cleanup',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _lockHeldGateway('runtime-lock-held-mnf')
+        ..compressError = const TuiGatewayRpcError(
+          'session.compress',
+          'Method not found',
+          code: -32601,
+        )
+        ..slashError = TimeoutException('slash transport timeout');
+      final chat = _chat(
+        'lock-held-mnf',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'mnf-attempt'),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final result = await chat.compressDesktopSession();
+
+      expect(result.attemptedRoute, DesktopCommandRoute.slashExec);
+      expect(result.accepted, DesktopCommandAcceptance.unknown);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(storage.value, contains('mnf-attempt'));
+    },
+  );
+
+  test('REGRESSION_COMP_LOCK_HELD invalidated refresh still deletes its exact '
+      'durable attempt', () async {
+    final storage = _MemoryCompressionFenceStorage();
+    final gate = Completer<DesktopCompressionResult>();
+    final gateway = _lockHeldGateway('runtime-lock-held-invalidated')
+      ..nativeCompressionGate = gate;
+    final chat = _chat(
+      'lock-held-invalidated',
+      gateway,
+      compressionFenceStore: _lockHeldFenceStore(
+        storage,
+        'invalidated-attempt',
+      ),
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    final pending = chat.compressDesktopSession();
+    while (gateway.compressSessionCalls == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(storage.value, contains('invalidated-attempt'));
+
+    // Un refresh posterior incrementa messageLoadEpoch mientras el ACK
+    // lockHeld sigue bloqueado: la validez del fence caduca, pero el
+    // attempt durable propio sigue siendo de este dispatcher y el ACK
+    // validado debe borrarlo con ownership/generation exactos (CAS).
+    await chat.loadMessages();
+
+    gate.complete(_nativeLockHeldCompressionResult());
+    final result = await pending;
+
+    expect(result.compressionStatus, DesktopCompressionStatus.lockHeld);
+    expect(storage.value, isNot(contains('invalidated-attempt')));
+    expect(chat.desktopCompressionInFlight, isFalse);
+
+    // Tras la limpieza durable, un nuevo intento vuelve a armar y borrar
+    // solo su propio attempt aunque la generación anterior caducó.
+    final second = await chat.compressDesktopSession();
+    expect(second.compressionStatus, DesktopCompressionStatus.lockHeld);
+    expect(gateway.compressSessionCalls, 2);
+    expect(storage.value, isNot(contains('invalidated-attempt')));
+  });
+
+  test(
+    'REGRESSION_COMP_TYPED_SETTLEMENT_RACE A cannot project its tip over durable B',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'settlement-race',
+        profile: 'default',
+        logicalSessionId: 'root-race',
+      );
+      final storeA = DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'attempt-a',
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await storeA.arm(
+        scope,
+        tipAtStart: 'tip-before',
+        compressionsAtStart: 4,
+        createdAtMs: now,
+        reconcileUntilMs: now + 120000,
+      );
+      final firstRead = Completer<void>();
+      final releaseA = Completer<void>();
+      final bRead = Completer<void>();
+      var reads = 0;
+      final client = MockClient((_) async {
+        reads += 1;
+        if (reads == 1) {
+          firstRead.complete();
+          await releaseA.future;
+          return http.Response(
+            '{"session":{"id":"tip-from-a","_lineage_root_id":"root-race","info":{"usage":{"compressions":5}}}}',
+            200,
+          );
+        }
+        if (!bRead.isCompleted) bRead.complete();
+        return http.Response(
+          '{"session":{"id":"tip-owned-by-b","_lineage_root_id":"root-race","info":{"usage":{"compressions":4}}}}',
+          200,
+        );
+      });
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-settlement-race',
+          'session_key': 'tip-before',
+        });
+      final chat = _chat(
+        'settlement-race',
+        gateway,
+        client: client,
+        logicalSessionId: 'root-race',
+        sessionId: 'tip-before',
+        compressionFenceStore: storeA,
+        desktopCompressionReconciliationDelay: const Duration(milliseconds: 1),
+      );
+      addTearDown(chat.dispose);
+      await firstRead.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () =>
+            throw StateError('initial reconciliation did not start'),
+      );
+      final storeB = DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'attempt-b',
+      );
+      await storeB.clearSession(scope);
+      await storeB.arm(
+        scope,
+        tipAtStart: 'tip-owned-by-b',
+        compressionsAtStart: 4,
+        createdAtMs: now,
+        reconcileUntilMs: now + 120000,
+      );
+      releaseA.complete();
+      await bRead.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => throw StateError('B reconciliation did not continue'),
+      );
+      expect(storage.value, contains('attempt-b'));
+      expect(storage.value, isNot(contains('attempt-a')));
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.storedSessionId, isNot('tip-from-a'));
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_TYPED_EVENT_SETTLEMENT_RACE waits for exact CAS before projecting tip',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final gateway = _lockHeldGateway('runtime-event-race')
+        ..compressionResult = _nativePendingCompressionResult();
+      final storeA = _lockHeldFenceStore(storage, 'event-attempt-a');
+      final chat = _chat(
+        'event-race',
+        gateway,
+        logicalSessionId: 'root-event-race',
+        sessionId: 'tip-before',
+        compressionFenceStore: storeA,
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.compressDesktopSession();
+      final tipBeforeEvent = chat.storedSessionId;
+
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'event-race',
+        profile: 'default',
+        logicalSessionId: 'root-event-race',
+      );
+      final storeB = _lockHeldFenceStore(storage, 'event-attempt-b');
+      await storeB.clearSession(scope);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await storeB.arm(
+        scope,
+        tipAtStart: 'tip-owned-by-b',
+        compressionsAtStart: 4,
+        createdAtMs: now,
+        reconcileUntilMs: now + 120000,
+      );
+
+      storage.gatedReadCall = storage.readCalls + 1;
+      storage.readEntered = Completer<void>();
+      storage.readGate = Completer<void>();
+      gateway.emit('session.info', const {
+        'info': {
+          'stored_session_id': 'tip-from-a',
+          '_lineage_root_id': 'root-event-race',
+          'usage': {'compressions': 5},
+        },
+      });
+      await storage.readEntered!.future;
+
+      expect(chat.storedSessionId, tipBeforeEvent);
+      expect(storage.value, contains('event-attempt-b'));
+      storage.readGate!.complete();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.storedSessionId, tipBeforeEvent);
+      expect(storage.value, contains('event-attempt-b'));
+      expect(chat.desktopCompressionInFlight, isTrue);
+    },
+  );
+
+  test(
+    'COMP_CONVERGENCE official uncorrelated metadata cannot settle lost reply',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final store = _lockHeldFenceStore(storage, 'lost-wire-attempt');
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-lost-wire',
+          'session_key': 'stored-chat',
+          'info': {
+            'usage': {'compressions': 1},
+          },
+          'messages': [
+            {'role': 'assistant', 'content': 'Historial conservado'},
+          ],
+        })
+        ..compressError = TimeoutException('lost reply');
+      final chat = _chat(
+        'lost-wire',
+        gateway,
+        compressionFenceStore: store,
+        // Official GET detail is a DB row, not a correlated compress receipt.
+        client: MockClient(
+          (_) async => http.Response(
+            '{"id":"stored-chat","profile":"default","message_count":2}',
+            200,
+          ),
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final baselineResumes = gateway.resumeExistingCalls;
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(isA<TimeoutException>()),
+      );
+      // Official session.info has stored_session_id + usage, but no lineage root
+      // or compression attempt identifier. Neither a counter nor ready is proof.
+      gateway.emit('session.info', const {
+        'stored_session_id': 'stored-chat',
+        'usage': {'compressions': 2},
+      });
+      gateway.emit('status.update', const {'kind': 'ready'});
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(storage.value, contains('lost-wire-attempt'));
+      expect(gateway.compressSessionCalls, 1);
+      expect(gateway.slashExecCalls, 0);
+      expect(gateway.commandDispatchCalls, 0);
+      expect(gateway.resumeExistingCalls, baselineResumes);
+      expect(chat.messages.single['content'], 'Historial conservado');
+    },
+  );
+
+  test(
+    'pending nativo suprime duplicados hasta un evento terminal del runtime',
+    () async {
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-pending',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'uno'},
+            {'role': 'assistant', 'content': 'dos'},
+          ],
+        })
+        ..compressionResult = _nativePendingCompressionResult();
+      final chat = _chat('native-compression-pending', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final baselineResumes = gateway.resumeExistingCalls;
+
+      final result = await chat.compressDesktopSession();
+
+      expect(result.compressionStatus, DesktopCompressionStatus.pending);
+      expect(result.accepted, DesktopCommandAcceptance.unknown);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopCompressionAwaitingReconciliation, isTrue);
+      expect(chat.desktopCompressionTransportUncertain, isFalse);
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.compressSessionCalls, 1);
+
+      // A stale session.info cannot complete a pending operation for this
+      // runtime, and an unrelated same-runtime info update is not proof either.
+      gateway.emitForRuntime('runtime-other', 'session.info', const {
+        'info': {'stored_session_id': 'other-tip'},
+      });
+      gateway.emit('session.info', const {
+        'info': {'model': 'unrelated-update'},
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopCompressionAwaitingReconciliation, isTrue);
+      expect(gateway.resumeExistingCalls, baselineResumes);
+
+      // A bare late acknowledgement is not identity-scoped terminal evidence.
+      gateway.emit('status.update', const {'kind': 'compacted'});
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopCompressionAwaitingReconciliation, isTrue);
+
+      // It settles only once the gateway supplies the same root and a resolved
+      // tip change. It does not resume or claim a new runtime, and it is never
+      // rendered as a success result.
+      gateway.emit('session.info', const {
+        'info': {
+          '_lineage_root_id': 'stored-chat',
+          'stored_session_id': 'stored-chat-compacted-tip',
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.storedSessionId, 'stored-chat-compacted-tip');
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
+      expect(gateway.compressSessionCalls, 1);
+      expect(gateway.resumeExistingCalls, baselineResumes);
+    },
+  );
+
+  test(
+    'reconciliación acotada acepta solo root y tip exactos sin session.resume',
+    () async {
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add(request.url.path);
+        if (request.url.path == '/api/sessions/root-native-pending') {
+          return http.Response(
+            '{"session":{"id":"tip-native-pending","_lineage_root_id":"root-native-pending"}}',
+            200,
+          );
+        }
+        return http.Response('unexpected REST', 500);
+      });
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-reconcile',
+          'session_key': 'stored-chat',
+        })
+        ..compressionResult = _nativePendingCompressionResult();
+      final chat = _chat(
+        'native-compression-reconcile',
+        gateway,
+        client: client,
+        logicalSessionId: 'root-native-pending',
+        desktopCompressionReconciliationDelay: const Duration(milliseconds: 1),
+        desktopCompressionReconciliationWindow: const Duration(
+          milliseconds: 200,
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final baselineResumes = gateway.resumeExistingCalls;
+
+      final result = await chat.compressDesktopSession();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(result.compressionStatus, DesktopCompressionStatus.pending);
+      expect(requests, contains('/api/sessions/root-native-pending'));
+      expect(chat.storedSessionId, 'tip-native-pending');
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
+      expect(gateway.resumeExistingCalls, baselineResumes);
+      expect(gateway.compressSessionCalls, 1);
+    },
+  );
+
+  test(
+    'fenced passive attach load refresh and timer never acquire a runtime',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final store = DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'passive-attempt',
+      );
+      await store.arm(
+        DesktopCompressionFenceScope(
+          connectionId: 'passive-fence',
+          profile: 'default',
+          logicalSessionId: 'root-passive',
+        ),
+        tipAtStart: 'tip-passive',
+        compressionsAtStart: 2,
+        createdAtMs: now,
+        reconcileUntilMs: now + 80,
+      );
+      var metadataReads = 0;
+      final client = MockClient((_) async {
+        metadataReads += 1;
+        return http.Response(
+          '{"session":{"id":"tip-passive","_lineage_root_id":"root-passive","info":{"usage":{"compressions":2}}}}',
+          200,
+        );
+      });
+      final gateway = _NativeCompressionGateway()
+        ..activitySupported = true
+        ..snapshot = _snapshot({
+          'session_id': 'must-not-resume-passive',
+          'session_key': 'tip-passive',
+        })
+        ..compressionResult = _nativeCompressionResult();
+      final chat = _chat(
+        'passive-fence',
+        gateway,
+        client: client,
+        logicalSessionId: 'root-passive',
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        desktopCompressionReconciliationDelay: const Duration(milliseconds: 10),
+        desktopCompressionReconciliationWindow: const Duration(
+          milliseconds: 80,
+        ),
+      );
+      addTearDown(chat.dispose);
+
+      await Future<void>.delayed(Duration.zero);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      await Future<void>.delayed(const Duration(milliseconds: 35));
+
+      expect(metadataReads, greaterThan(0));
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.resumeLegacyCalls, 0);
+      expect(gateway.activateCalls, 0);
+      expect(gateway.listActiveCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(gateway.compressSessionCalls, 0);
+    },
+  );
+
+  test(
+    'expired durable fence stops polling but still blocks compression and send',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'expired-fence',
+        profile: 'default',
+        logicalSessionId: 'root-expired',
+      );
+      await DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'expired-attempt',
+      ).arm(
+        scope,
+        tipAtStart: 'tip-expired',
+        compressionsAtStart: 1,
+        createdAtMs: now - 200,
+        reconcileUntilMs: now - 100,
+      );
+      var reads = 0;
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'must-not-resume-expired',
+          'session_key': 'tip-expired',
+        })
+        ..compressionResult = _nativeCompressionResult();
+      final chat = _chat(
+        'expired-fence',
+        gateway,
+        logicalSessionId: 'root-expired',
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        client: MockClient((_) async {
+          reads += 1;
+          return http.Response('not found', 404);
+        }),
+        desktopCompressionReconciliationDelay: const Duration(milliseconds: 1),
+      );
+      addTearDown(chat.dispose);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final readsAfterAttach = reads;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(reads, readsAfterAttach);
+
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      await expectLater(
+        chat.send(fullText: 'blocked', model: 'model-a', history: const []),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.resumeLegacyCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(gateway.compressSessionCalls, 0);
+      expect(gateway.submitPromptCalls, 0);
+      expect(
+        (await DesktopCompressionFenceStore(
+          storage: storage,
+        ).lookup(scope)).isFenced,
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'pending solo acepta usage.compressions creciente con un root exacto',
+    () async {
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-pending-usage',
+          'session_key': 'stored-chat',
+          'info': {
+            'usage': {'compressions': 1},
+          },
+        })
+        ..compressionResult = _nativePendingCompressionResult();
+      final chat = _chat(
+        'native-compression-pending-usage',
+        gateway,
+        logicalSessionId: 'root-pending-usage',
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      await chat.compressDesktopSession();
+      expect(chat.desktopCompressionInFlight, isTrue);
+
+      gateway.emit('session.info', const {
+        'info': {
+          'usage': {'compressions': 2},
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopCompressionAwaitingReconciliation, isTrue);
+
+      gateway.emit('session.info', const {
+        'info': {
+          '_lineage_root_id': 'foreign-pending-usage',
+          'usage': {'compressions': 3},
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.desktopCompressionInFlight, isTrue);
+
+      gateway.emit('session.info', const {
+        'info': {
+          '_lineage_root_id': 'root-pending-usage',
+          'usage': {'compressions': 2},
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
+      expect(gateway.compressSessionCalls, 1);
+    },
+  );
+
+  test(
+    'pending fence survives new service and store before runtime acquisition',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final connection = _connection('durable-restart-connection');
+      final firstGateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-dispose',
+          'session_key': 'tip-before',
+        })
+        ..compressionResult = _nativePendingCompressionResult();
+      final firstService = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: storage,
+          attemptId: () => 'restart-attempt',
+        ),
+      );
+      final first = firstService.attach(
+        connection: connection,
+        sessionId: 'stored-chat',
+        logicalSessionId: 'root-restart',
+        initialStoredSessionId: 'tip-before',
+        sessionProfile: 'default',
+        sessionTitle: 'Restart',
+        desktopGateway: firstGateway,
+        api: ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          httpClient: MockClient(
+            (_) async => http.Response('unavailable', 503),
+          ),
+        ),
+        allowUnownedDesktopSnapshotForTesting: true,
+        disableForegroundKeepAlive: true,
+      );
+      await first.loadMessages();
+      await first.compressDesktopSession();
+      expect(firstGateway.compressSessionCalls, 1);
+      await firstGateway.close();
+      await Future<void>.delayed(Duration.zero);
+      firstService.release(connection.id, 'stored-chat', profile: 'default');
+      final retainedAfterRelease =
+          await DesktopCompressionFenceStore(storage: storage).lookup(
+            DesktopCompressionFenceScope(
+              connectionId: connection.id,
+              profile: 'default',
+              logicalSessionId: 'root-restart',
+            ),
+          );
+      expect(retainedAfterRelease.isFenced, isTrue);
+      firstService.dispose();
+
+      final restartedGateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'must-not-resume',
+          'session_key': 'tip-before',
+        })
+        ..compressionResult = _nativeCompressionResult();
+      final restartedService = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+      );
+      addTearDown(restartedService.dispose);
+      final restarted = restartedService.attach(
+        connection: connection,
+        sessionId: 'stored-chat',
+        logicalSessionId: 'root-restart',
+        initialStoredSessionId: 'tip-before',
+        sessionProfile: 'default',
+        sessionTitle: 'Restart',
+        desktopGateway: restartedGateway,
+        api: ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          httpClient: MockClient(
+            (_) async => http.Response('unavailable', 503),
+          ),
+        ),
+        allowUnownedDesktopSnapshotForTesting: false,
+        disableForegroundKeepAlive: true,
+      );
+
+      expect(restartedGateway.resumeExistingCalls, 0);
+      expect(restartedGateway.createCalls, 0);
+      await expectLater(
+        restarted.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      await expectLater(
+        restarted.send(
+          fullText: 'blocked after restart',
+          model: 'model-a',
+          history: const [],
+        ),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(restartedGateway.resumeExistingCalls, 0);
+      expect(restartedGateway.createCalls, 0);
+      expect(restartedGateway.compressSessionCalls, 0);
+      expect(restartedGateway.submitPromptCalls, 0);
+    },
+  );
+
+  test(
+    'armed crash blocks send and compression before runtime acquisition after restart',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'durable-send-connection',
+        profile: 'private',
+        logicalSessionId: 'root-send',
+      );
+      final seedStore = DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'send-attempt',
+      );
+      final armed = await seedStore.arm(
+        scope,
+        tipAtStart: 'tip-send',
+        compressionsAtStart: null,
+        createdAtMs: 100,
+        reconcileUntilMs: 200,
+      );
+      expect(armed.claimed, isTrue);
+      storage
+        ..readCalls = 0
+        ..firstReadGate = Completer<void>();
+
+      final connection = _connection('durable-send-connection');
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'must-not-resume-send',
+          'session_key': 'tip-send',
+          'messages': <Object>[],
+        });
+      final service = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+      );
+      addTearDown(service.dispose);
+      final chat = service.attach(
+        connection: connection,
+        sessionId: 'stored-chat',
+        logicalSessionId: 'root-send',
+        initialStoredSessionId: 'tip-send',
+        sessionProfile: 'private',
+        sessionTitle: 'Send',
+        desktopGateway: gateway,
+        api: ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          httpClient: MockClient(
+            (_) async => http.Response('unavailable', 503),
+          ),
+        ),
+        disableForegroundKeepAlive: true,
+      );
+
+      final send = chat.send(
+        fullText: 'PRIVATE_TRANSCRIPT_SENTINEL',
+        model: 'model-a',
+        history: const [],
+        profile: 'private',
+      );
+      await expectLater(
+        send,
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.resumeLegacyCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(gateway.submitPromptCalls, 0);
+      expect(chat.internalMessagesForTesting, isEmpty);
+      storage.firstReadGate!.complete();
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'resultado nativo de otro root falla antes de cambiar autoridad',
+    () async {
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-native-foreign-root',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'mantener'},
+            {'role': 'assistant', 'content': 'sin cambio'},
+          ],
+        })
+        ..compressionResult = DesktopCompressionResult.fromJson({
+          'status': 'compressed',
+          'turn_isolation': true,
+          'info': {
+            'stored_session_id': 'foreign-tip',
+            '_lineage_root_id': 'foreign-root',
+          },
+          'messages': [
+            {'role': 'assistant', 'content': 'no debe aplicarse'},
+          ],
+        });
+      final chat = _chat(
+        'native-compression-foreign-root',
+        gateway,
+        logicalSessionId: 'expected-root',
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final before = List<Map<String, dynamic>>.from(chat.messages);
+
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4004),
+        ),
+      );
+
+      expect(chat.messages, before);
+      expect(chat.storedSessionId, 'stored-chat');
+      expect(gateway.slashExecCalls, 0);
+      expect(gateway.commandDispatchCalls, 0);
     },
   );
 
@@ -1862,7 +5177,204 @@ void main() {
       expect(gateway.compressSessionCalls, 1);
       expect(gateway.slashExecCalls, 0);
       expect(gateway.commandDispatchCalls, 0);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopCompressionAwaitingReconciliation, isTrue);
+      expect(chat.desktopCompressionTransportUncertain, isTrue);
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.compressSessionCalls, 1);
+
+      gateway.emit('session.info', const {
+        'info': {
+          '_lineage_root_id': 'stored-chat',
+          'stored_session_id': 'stored-native-timeout-tip',
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.storedSessionId, 'stored-native-timeout-tip');
       expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
+      expect(chat.desktopCompressionTransportUncertain, isFalse);
+    },
+  );
+
+  test('unclassified coded rejection retains its armed attempt', () async {
+    final storage = _MemoryCompressionFenceStorage();
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-definitive-reject',
+        'session_key': 'stored-chat',
+      })
+      ..compressionResult = _nativeCompressionResult()
+      ..compressError = const TuiGatewayRpcError(
+        'session.compress',
+        'request rejected',
+        code: 4004,
+      );
+    final chat = _chat(
+      'definitive-reject',
+      gateway,
+      compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+
+    await expectLater(
+      chat.compressDesktopSession(),
+      throwsA(
+        isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4004),
+      ),
+    );
+    gateway.compressError = null;
+    await expectLater(chat.compressDesktopSession(), _lockHeldBusy);
+
+    expect(gateway.compressSessionCalls, 1);
+  });
+
+  test(
+    'timeout fence survives service and store recreation without a second RPC',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final connection = _connection('timeout-restart-connection');
+      final firstGateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-timeout-restart',
+          'session_key': 'tip-timeout',
+        })
+        ..compressionResult = _nativeCompressionResult()
+        ..compressError = const TuiGatewayRpcError(
+          'session.compress',
+          'Timeout waiting for JSON-RPC response',
+        );
+      final firstService = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(
+          storage: storage,
+          attemptId: () => 'timeout-restart-attempt',
+        ),
+      );
+      final first = firstService.attach(
+        connection: connection,
+        sessionId: 'stored-chat',
+        logicalSessionId: 'root-timeout-restart',
+        initialStoredSessionId: 'tip-timeout',
+        sessionProfile: 'default',
+        sessionTitle: 'Timeout',
+        desktopGateway: firstGateway,
+        api: ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          httpClient: MockClient(
+            (_) async => http.Response('unavailable', 503),
+          ),
+        ),
+        allowUnownedDesktopSnapshotForTesting: true,
+        disableForegroundKeepAlive: true,
+      );
+      await first.loadMessages();
+      await expectLater(
+        first.compressDesktopSession(),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      while (storage.writeCalls < 2) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(storage.value, contains('transport_unknown'));
+      firstService.dispose();
+
+      final restartedGateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'must-not-resume-timeout',
+          'session_key': 'tip-timeout',
+        })
+        ..compressionResult = _nativeCompressionResult();
+      final restarted = ActiveChatService(
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+      );
+      addTearDown(restarted.dispose);
+      final chat = restarted.attach(
+        connection: connection,
+        sessionId: 'stored-chat',
+        logicalSessionId: 'root-timeout-restart',
+        initialStoredSessionId: 'tip-timeout',
+        sessionProfile: 'default',
+        sessionTitle: 'Timeout',
+        desktopGateway: restartedGateway,
+        api: ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          httpClient: MockClient(
+            (_) async => http.Response('unavailable', 503),
+          ),
+        ),
+        disableForegroundKeepAlive: true,
+      );
+
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      await expectLater(
+        chat.send(
+          fullText: 'blocked after timeout restart',
+          model: 'model-a',
+          history: const [],
+        ),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(restartedGateway.resumeExistingCalls, 0);
+      expect(restartedGateway.createCalls, 0);
+      expect(restartedGateway.compressSessionCalls, 0);
+      expect(restartedGateway.submitPromptCalls, 0);
+    },
+  );
+
+  test(
+    'timeout legacy de slash conserva la supresión sin command.dispatch',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-legacy-timeout',
+          'session_key': 'stored-chat',
+        })
+        ..slashError = TimeoutException('transport lost after slash.exec');
+      final chat = _chat('legacy-compression-timeout', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final result = await chat.compressDesktopSession();
+
+      expect(result.accepted, DesktopCommandAcceptance.unknown);
+      expect(result.failure?.kind, CommandFailureKind.timeout);
+      expect(gateway.slashExecCalls, 1);
+      expect(gateway.commandDispatchCalls, 0);
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopCompressionTransportUncertain, isTrue);
+      await expectLater(
+        chat.compressDesktopSession(),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
+        ),
+      );
+      expect(gateway.slashExecCalls, 1);
+
+      gateway.emit('status.update', const {
+        'kind': 'compacted',
+        'info': {
+          '_lineage_root_id': 'stored-chat',
+          'stored_session_id': 'stored-legacy-timeout-tip',
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionTransportUncertain, isFalse);
     },
   );
 
@@ -1895,6 +5407,58 @@ void main() {
       expect(gateway.compressSessionCalls, 1);
       expect(gateway.slashExecCalls, 1);
       expect(gateway.commandDispatchCalls, 0);
+    },
+  );
+
+  test(
+    'reconciliación legacy de compresión sanea error inflight remoto',
+    () async {
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-compression-private-error',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'historial público'},
+          ],
+        })
+        ..snapshotAfterCommand = _snapshot({
+          'session_id': 'runtime-compression-private-error',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'historial público'},
+          ],
+          'inflight': {
+            'user': 'continúa',
+            'assistant': '',
+            'streaming': false,
+            'error': 'PRIVATE_COMPRESSION_SNAPSHOT_ERROR',
+            'status': 'error',
+            'recoverable': true,
+          },
+        })
+        ..compressionResult = _nativeCompressionResult()
+        ..compressError = const TuiGatewayRpcError(
+          'session.compress',
+          'Method not found',
+          code: -32601,
+        );
+      final chat = _chat('compression-private-snapshot', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final result = await chat.compressDesktopSession();
+
+      expect(result.accepted, DesktopCommandAcceptance.accepted);
+      expect(gateway.compressSessionCalls, 1);
+      expect(gateway.slashExecCalls, 1);
+      final serialized = chat.messages.toString();
+      expect(serialized, isNot(contains('PRIVATE_COMPRESSION_SNAPSHOT_ERROR')));
+      expect(serialized, contains('historial público'));
+      expect(
+        chat.messages.where((m) => m['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      expect(chat.desktopCompressionInFlight, isTrue);
     },
   );
 
@@ -1971,44 +5535,40 @@ void main() {
     },
   );
 
-  test(
-    'compresión adopta transcript, métricas e id durable autoritativos',
-    () async {
-      final gateway = _SnapshotGateway()
-        ..snapshot = _snapshot({
-          'session_id': 'runtime-compress',
-          'session_key': 'stored-chat',
-          'messages': [
-            {'role': 'user', 'content': 'uno'},
-            {'role': 'assistant', 'content': 'dos'},
-            {'role': 'user', 'content': 'tres'},
-            {'role': 'assistant', 'content': 'cuatro'},
-          ],
-        })
-        ..snapshotAfterCommand = _compressedSnapshot();
-      final chat = _chat('compression-success', gateway);
-      addTearDown(chat.dispose);
-      await chat.loadMessages();
+  test('legacy acceptance does not project an uncorrelated snapshot', () async {
+    final gateway = _SnapshotGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-compress',
+        'session_key': 'stored-chat',
+        'messages': [
+          {'role': 'user', 'content': 'uno'},
+          {'role': 'assistant', 'content': 'dos'},
+          {'role': 'user', 'content': 'tres'},
+          {'role': 'assistant', 'content': 'cuatro'},
+        ],
+      })
+      ..snapshotAfterCommand = _compressedSnapshot();
+    final chat = _chat('compression-success', gateway);
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
 
-      final result = await chat.compressDesktopSession(
-        focusTopic: 'decisiones de release',
-      );
+    final result = await chat.compressDesktopSession(
+      focusTopic: 'decisiones de release',
+    );
 
-      expect(result.accepted, DesktopCommandAcceptance.accepted);
-      expect(result.attemptedRoute, DesktopCommandRoute.slashExec);
-      expect(result.fallbackUsed, isFalse);
-      expect(gateway.slashExecCalls, 1);
-      expect(gateway.commandDispatchCalls, 0);
-      expect(gateway.slashRuntimeId, 'runtime-compress');
-      expect(gateway.slashCommand, 'compress decisiones de release');
-      expect(chat.storedSessionId, 'stored-compressed');
-      expect(chat.desktopRuntimeInfo.usage?.contextUsed, 3500);
-      expect(chat.messages, hasLength(2));
-      expect(chat.messages.first['content'], 'Contexto listo');
-      expect(chat.messages.last['content'], 'Resumen durable');
-      expect(chat.desktopCompressionInFlight, isFalse);
-    },
-  );
+    expect(result.accepted, DesktopCommandAcceptance.accepted);
+    expect(result.attemptedRoute, DesktopCommandRoute.slashExec);
+    expect(result.fallbackUsed, isFalse);
+    expect(gateway.slashExecCalls, 1);
+    expect(gateway.commandDispatchCalls, 0);
+    expect(gateway.slashRuntimeId, 'runtime-compress');
+    expect(gateway.slashCommand, 'compress decisiones de release');
+    expect(chat.storedSessionId, 'stored-chat');
+    expect(chat.messages, hasLength(4));
+    expect(chat.messages.first['content'], 'cuatro');
+    expect(chat.messages.last['content'], 'uno');
+    expect(chat.desktopCompressionInFlight, isTrue);
+  });
 
   test(
     'comando remoto rechaza argumentos mayores de 500 antes del RPC',
@@ -2089,7 +5649,7 @@ void main() {
       ),
     );
     await running;
-    expect(chat.desktopCompressionInFlight, isFalse);
+    expect(chat.desktopCompressionInFlight, isTrue);
   });
 
   test(
@@ -2137,7 +5697,11 @@ void main() {
       expect(artifacts.single.primarySource.messageId, 'message-artifact');
       expect(firstIndex?.buildStats.inspectedMessages, 1);
       expect(firstIndex?.revision.scope.logicalSessionId, 'lineage-root');
-      expect(chat.messages.first['_desktopMessageId'], 'message-artifact');
+      expect(
+        chat.internalMessagesForTesting.first['_desktopMessageId'],
+        'message-artifact',
+      );
+      expect(chat.messages.first.containsKey('_desktopMessageId'), isFalse);
       expect(chat.resolveSessionArtifacts(), same(artifacts));
       expect(chat.resolvedArtifactIndex, same(firstIndex));
       await chat.loadMessages();
@@ -2241,7 +5805,51 @@ void main() {
       expect(refs, hasLength(1));
       expect(refs.single['basename'], 'peacock.png');
       expect(refs.single['tool_call_id'], 'call-image-1');
+      expect(chat.messages.toString(), isNot(contains('/home/hermes')));
+      expect(chat.messages.toString(), isNot(contains('/sandbox/cache')));
       expect(finalAssistant['content'], 'Aquí tienes la imagen.');
+      expect(
+        chat.messages
+            .where((message) => message['id'] != 4)
+            .expand(_generatedImageRefs),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'REST asocia video_generate por tool_call_id con el asistente final',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'not found',
+          code: 4007,
+        );
+      final chat = _chat(
+        'resume-generated-video-rest',
+        gateway,
+        client: MockClient(
+          (_) async => http.Response(
+            '''{"data":[{"id":1,"role":"user","content":"genera un vídeo"},{"id":2,"role":"assistant","content":"","tool_calls":[{"id":"call-video-1","type":"function","function":{"name":"video_generate","arguments":"{}"}}]},{"id":3,"role":"tool","tool_call_id":"call-video-1","tool_name":"video_generate","content":"{\\"success\\":true,\\"video\\":\\"/home/hermes/.hermes/cache/videos/generated.mp4\\"}"},{"id":4,"role":"assistant","content":"Aquí está el vídeo."}]}''',
+            200,
+          ),
+        ),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      final finalAssistant = chat.messages.singleWhere(
+        (message) => message['id'] == 4,
+      );
+      final refs = _generatedImageRefs(finalAssistant);
+      expect(refs, hasLength(1));
+      expect(refs.single['media_kind'], 'video');
+      expect(refs.single['kind'], 'serverPath');
+      expect(refs.single['source'], endsWith('/cache/videos/generated.mp4'));
+      expect(refs.single['tool_call_id'], 'call-video-1');
+      expect(finalAssistant['content'], 'Aquí está el vídeo.');
       expect(
         chat.messages
             .where((message) => message['id'] != 4)
@@ -2350,7 +5958,7 @@ void main() {
     expect(chat.messages.expand(_generatedImageRefs), isEmpty);
     expect(
       chat.messages.any((message) => message['tool_calls'] is List),
-      isTrue,
+      isFalse,
     );
   });
 
@@ -2358,7 +5966,7 @@ void main() {
     final gate = Completer<DesktopSessionSnapshot>();
     final gateway = _SnapshotGateway()..resumeGate = gate;
     final chat = _chat('resume-dispose', gateway);
-    chat.messages = [
+    chat.internalMessagesForTesting = [
       {'role': 'assistant', 'content': 'conservar'},
     ];
 
@@ -2656,6 +6264,48 @@ void main() {
       final request =
           chat.pendingInteractivePrompt!.request! as ClarifyPromptRequest;
       expect(request.questions.single.qid, 'q0');
+    },
+  );
+
+  test(
+    'REGRESSION_COMP2A arm invalidation cleans only original authority attempt',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final foreign = _lockHeldFenceStore(storage, 'attempt-B');
+      await foreign.arm(
+        DesktopCompressionFenceScope(
+          connectionId: 'authority-arm-profile',
+          profile: 'profile-B',
+          logicalSessionId: 'stored-chat',
+        ),
+        tipAtStart: 'stored-B',
+        compressionsAtStart: null,
+        createdAtMs: 1,
+        reconcileUntilMs: 2,
+      );
+      final gateway = _lockHeldGateway('runtime-authority-arm');
+      final chat = _chat(
+        'authority-arm-profile',
+        gateway,
+        compressionFenceStore: _lockHeldFenceStore(storage, 'attempt-A'),
+      );
+      addTearDown(chat.dispose);
+      storage
+        ..writeGate = Completer<void>()
+        ..writeEntered = Completer<void>();
+
+      final pending = chat.compressDesktopSessionForPresentation();
+      await storage.writeEntered!.future;
+      expect(chat.bindSessionProfile('profile-B'), 'profile-B');
+      storage.writeGate!.complete();
+      final presentation = await pending;
+
+      expect(gateway.compressSessionCalls, 0);
+      expect(gateway.slashExecCalls + gateway.commandDispatchCalls, 0);
+      expect(presentation.failure, isA<TuiGatewayRpcError>());
+      expect(storage.value, isNot(contains('attempt-A')));
+      expect(storage.value, contains('attempt-B'));
+      expect(chat.desktopCompressionInFlight, isFalse);
     },
   );
 }

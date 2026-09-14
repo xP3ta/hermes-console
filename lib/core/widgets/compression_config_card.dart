@@ -16,6 +16,19 @@ typedef CompressionConfigSaver =
       CompressionConfig configuration,
     );
 
+final class CompressionConfigCardController {
+  _CompressionConfigCardState? _state;
+
+  void _attach(_CompressionConfigCardState state) => _state = state;
+
+  void _detach(_CompressionConfigCardState state) {
+    if (identical(_state, state)) _state = null;
+  }
+
+  /// Descarta cualquier escritura pendiente antes de revocar credenciales.
+  void disarmPendingSave() => _state?._disarmPendingSave();
+}
+
 /// Editor acotado de los ajustes nativos de autocompresion de Hermes.
 ///
 /// La tarjeta no inventa defaults ni guarda al montarse. Cada cambio del
@@ -23,16 +36,22 @@ typedef CompressionConfigSaver =
 /// rechaza, el control vuelve al ultimo snapshot confirmado por el servidor.
 class CompressionConfigCard extends StatefulWidget {
   const CompressionConfigCard({
-    required this.load,
-    required this.save,
-    required this.readOnly,
+    required this.canRead,
+    required this.canWrite,
+    this.load,
+    this.save,
+    this.controller,
     this.profile,
     super.key,
-  });
+  }) : assert(!canWrite || canRead),
+       assert(!canRead || load != null),
+       assert(!canWrite || save != null);
 
-  final CompressionConfigLoader load;
-  final CompressionConfigSaver save;
-  final bool readOnly;
+  final CompressionConfigLoader? load;
+  final CompressionConfigSaver? save;
+  final bool canRead;
+  final bool canWrite;
+  final CompressionConfigCardController? controller;
   final String? profile;
 
   @override
@@ -50,6 +69,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
   bool _loadFailed = false;
   bool _saveFailed = false;
   bool _advanced = false;
+  bool _disarmed = false;
   final TextEditingController _thresholdTokensController =
       TextEditingController();
   CompressionConfigSnapshot? _snapshot;
@@ -59,15 +79,44 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    widget.controller?._attach(this);
+    if (widget.canRead) {
+      unawaited(_load());
+    } else {
+      _loading = false;
+    }
   }
 
   @override
   void didUpdateWidget(covariant CompressionConfigCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.profile != widget.profile) {
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller?._detach(this);
+      widget.controller?._attach(this);
+    }
+    if (oldWidget.canWrite && !widget.canWrite) {
+      _disarmPendingSave();
+    }
+    if (oldWidget.profile != widget.profile ||
+        oldWidget.canRead != widget.canRead) {
+      _disarmed = false;
       _saveDebounce?.cancel();
-      unawaited(_load());
+      if (widget.canRead) {
+        unawaited(_load());
+      } else {
+        _loadEpoch++;
+        _syncThresholdTokens(null);
+        setState(() {
+          _loading = false;
+          _saving = false;
+          _saved = false;
+          _loadFailed = false;
+          _saveFailed = false;
+          _snapshot = null;
+          _confirmed = null;
+          _draft = null;
+        });
+      }
     }
   }
 
@@ -77,7 +126,9 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
     final proposed = _draft;
     final shouldFlush =
         !_saving &&
-        !widget.readOnly &&
+        !_disarmed &&
+        widget.canRead &&
+        widget.canWrite &&
         base != null &&
         proposed != null &&
         proposed != _confirmed;
@@ -85,17 +136,30 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
     if (shouldFlush) {
       unawaited(_saveDetached(base, proposed));
     }
+    widget.controller?._detach(this);
     _thresholdTokensController.dispose();
     _loadEpoch++;
     super.dispose();
+  }
+
+  void _disarmPendingSave() {
+    _disarmed = true;
+    _saveDebounce?.cancel();
+    _saveDebounce = null;
+    _loadEpoch++;
+    if (mounted && _saving) {
+      setState(() => _saving = false);
+    }
   }
 
   Future<void> _saveDetached(
     CompressionConfigSnapshot base,
     CompressionConfig proposed,
   ) async {
+    final save = widget.save;
+    if (!widget.canWrite || save == null) return;
     try {
-      await widget.save(base, proposed);
+      await save(base, proposed);
     } catch (_) {
       // La tarjeta ya no existe para mostrar un error. La siguiente apertura
       // vuelve a leer el estado autoritativo de Hermes.
@@ -103,6 +167,8 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
   }
 
   Future<void> _load() async {
+    final load = widget.load;
+    if (!widget.canRead || load == null) return;
     final epoch = ++_loadEpoch;
     _saveDebounce?.cancel();
     _syncThresholdTokens(null);
@@ -119,7 +185,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
       });
     }
     try {
-      final snapshot = await widget.load();
+      final snapshot = await load();
       if (!mounted || epoch != _loadEpoch) return;
       _syncThresholdTokens(snapshot.configuration);
       setState(() {
@@ -138,7 +204,13 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
   }
 
   void _stage(CompressionConfig next) {
-    if (widget.readOnly || _saving || _loading || _snapshot == null) return;
+    if (!widget.canWrite ||
+        _disarmed ||
+        _saving ||
+        _loading ||
+        _snapshot == null) {
+      return;
+    }
     setState(() {
       _draft = next;
       _saved = false;
@@ -153,22 +225,26 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
     _saveDebounce = null;
     final base = _snapshot;
     final proposed = _draft;
+    final save = widget.save;
     if (!mounted ||
-        widget.readOnly ||
+        !widget.canWrite ||
+        _disarmed ||
         _saving ||
         base == null ||
         proposed == null ||
+        save == null ||
         proposed == _confirmed) {
       return;
     }
+    final saveEpoch = _loadEpoch;
     setState(() {
       _saving = true;
       _saved = false;
       _saveFailed = false;
     });
     try {
-      final saved = await widget.save(base, proposed);
-      if (!mounted) return;
+      final saved = await save(base, proposed);
+      if (!mounted || _disarmed || saveEpoch != _loadEpoch) return;
       final effective = saved.configuration ?? proposed;
       _syncThresholdTokens(effective);
       setState(() {
@@ -179,7 +255,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
         _saved = true;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || _disarmed || saveEpoch != _loadEpoch) return;
       _syncThresholdTokens(_confirmed);
       setState(() {
         _draft = _confirmed;
@@ -200,7 +276,9 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
   }
 
   void _commitThresholdTokens() {
-    if (widget.readOnly || _saving || _loading) return;
+    if (!widget.canWrite || _saving || _loading) {
+      return;
+    }
     final configuration = _draft;
     if (configuration == null) return;
     final raw = _thresholdTokensController.text.trim();
@@ -259,6 +337,22 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
               ),
               text: strings.chaCompressionConfigLoading,
             )
+          else if (!widget.canRead)
+            Semantics(
+              key: const ValueKey('compression-config-unavailable'),
+              container: true,
+              excludeSemantics: true,
+              enabled: false,
+              label: strings.chaCompressionConfigUnsupported,
+              child: _StatusLine(
+                icon: Icon(
+                  Icons.info_outline_rounded,
+                  size: 17,
+                  color: colors.textSecondary,
+                ),
+                text: strings.chaCompressionConfigUnsupported,
+              ),
+            )
           else if (_loadFailed)
             _LoadFailure(onRetry: _load)
           else if (_snapshot?.isSupported != true)
@@ -291,7 +385,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
   }) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    final editable = !widget.readOnly && !_saving;
+    final editable = widget.canWrite && !_saving;
     final thresholdPercent = (configuration.threshold * 100).round();
     final targetPercent = (configuration.targetRatio * 100).round();
 
@@ -315,8 +409,9 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
         _SliderLabel(
           text: strings.chaCompressionConfigThreshold(thresholdPercent),
         ),
-        Slider(
-          key: const ValueKey('compression-config-threshold'),
+        _AccessibleSlider(
+          sliderKey: const ValueKey('compression-config-threshold'),
+          semanticsLabel: strings.chaCompressionConfigThresholdSemantics,
           value: configuration.threshold
               .clamp(limits.thresholdMinimum, limits.thresholdMaximum)
               .toDouble(),
@@ -326,7 +421,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
             limits.thresholdMinimum,
             limits.thresholdMaximum,
           ),
-          label: '$thresholdPercent%',
+          formatValue: (value) => '${(value * 100).round()}%',
           onChanged: editable
               ? (value) => _stage(
                   configuration.copyWith(threshold: _twoDecimals(value)),
@@ -348,8 +443,9 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
         ),
         if (_advanced) ...[
           _SliderLabel(text: strings.chaCompressionConfigTarget(targetPercent)),
-          Slider(
-            key: const ValueKey('compression-config-target-ratio'),
+          _AccessibleSlider(
+            sliderKey: const ValueKey('compression-config-target-ratio'),
+            semanticsLabel: strings.chaCompressionConfigTargetSemantics,
             value: configuration.targetRatio
                 .clamp(limits.targetRatioMinimum, limits.targetRatioMaximum)
                 .toDouble(),
@@ -359,7 +455,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
               limits.targetRatioMinimum,
               limits.targetRatioMaximum,
             ),
-            label: '$targetPercent%',
+            formatValue: (value) => '${(value * 100).round()}%',
             onChanged: editable
                 ? (value) => _stage(
                     configuration.copyWith(targetRatio: _twoDecimals(value)),
@@ -371,8 +467,9 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
               configuration.protectLastN,
             ),
           ),
-          Slider(
-            key: const ValueKey('compression-config-protect-last-n'),
+          _AccessibleSlider(
+            sliderKey: const ValueKey('compression-config-protect-last-n'),
+            semanticsLabel: strings.chaCompressionConfigProtectSemantics,
             value: configuration.protectLastN
                 .clamp(limits.protectLastNMinimum, limits.protectLastNMaximum)
                 .toDouble(),
@@ -382,7 +479,7 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
               1,
               limits.protectLastNMaximum - limits.protectLastNMinimum,
             ),
-            label: '${configuration.protectLastN}',
+            formatValue: (value) => '${value.round()}',
             onChanged: editable
                 ? (value) => _stage(
                     configuration.copyWith(protectLastN: value.round()),
@@ -472,15 +569,21 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
               ),
             ),
         ],
-        if (widget.readOnly)
-          _StatusLine(
+        if (!widget.canWrite)
+          Semantics(
             key: const ValueKey('compression-config-read-only'),
-            icon: Icon(
-              Icons.lock_outline_rounded,
-              size: 17,
-              color: colors.warning,
+            container: true,
+            excludeSemantics: true,
+            enabled: false,
+            label: strings.chaCompressionConfigReadOnly,
+            child: _StatusLine(
+              icon: Icon(
+                Icons.lock_outline_rounded,
+                size: 17,
+                color: colors.warning,
+              ),
+              text: strings.chaCompressionConfigReadOnly,
             ),
-            text: strings.chaCompressionConfigReadOnly,
           )
         else if (_saving)
           _StatusLine(
@@ -513,6 +616,58 @@ class _CompressionConfigCardState extends State<CompressionConfigCard> {
             text: strings.chaCompressionConfigSaved,
           ),
       ],
+    );
+  }
+}
+
+class _AccessibleSlider extends StatelessWidget {
+  const _AccessibleSlider({
+    required this.sliderKey,
+    required this.semanticsLabel,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.formatValue,
+    required this.onChanged,
+  });
+
+  final Key sliderKey;
+  final String semanticsLabel;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String Function(double value) formatValue;
+  final ValueChanged<double>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final step = (max - min) / divisions;
+    final increased = math.min(max, value + step);
+    final decreased = math.max(min, value - step);
+    final editable = onChanged != null;
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: semanticsLabel,
+      value: formatValue(value),
+      increasedValue: formatValue(increased),
+      decreasedValue: formatValue(decreased),
+      slider: true,
+      enabled: editable,
+      onIncrease: editable && value < max ? () => onChanged!(increased) : null,
+      onDecrease: editable && value > min ? () => onChanged!(decreased) : null,
+      child: Slider(
+        key: sliderKey,
+        value: value,
+        min: min,
+        max: max,
+        divisions: divisions,
+        label: formatValue(value),
+        semanticFormatterCallback: formatValue,
+        onChanged: onChanged,
+      ),
     );
   }
 }
@@ -626,9 +781,11 @@ class _SliderLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 3),
-    child: Text(
-      text,
-      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+    child: ExcludeSemantics(
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
     ),
   );
 }

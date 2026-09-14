@@ -1,20 +1,32 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
+import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secure = <String, String>{};
+  Completer<void>? blockedWriteEntered;
+  Completer<void>? releaseBlockedWrite;
+  var blockNextOutboxWrite = false;
 
   setUp(() {
     secure.clear();
+    SharedPreferences.setMockInitialValues({});
+    LocalConversationCleanupFence.resetForTesting();
     TurnOutboxStore.resetSerializationForTesting();
+    blockedWriteEntered = null;
+    releaseBlockedWrite = null;
+    blockNextOutboxWrite = false;
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -23,6 +35,12 @@ void main() {
                 (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
             switch (call.method) {
               case 'write':
+                if (args['key'] == 'chat_turn_outbox_v1' &&
+                    blockNextOutboxWrite) {
+                  blockNextOutboxWrite = false;
+                  blockedWriteEntered?.complete();
+                  await releaseBlockedWrite?.future;
+                }
                 secure[args['key'] as String] = args['value'] as String;
               case 'read':
                 return secure[args['key'] as String];
@@ -45,6 +63,8 @@ void main() {
     PreparedTurnState state = PreparedTurnState.prepared,
     String profile = '',
     int? updatedAtMs,
+    int? queueOrder,
+    bool queued = false,
   }) {
     final now = DateTime.now().millisecondsSinceEpoch;
     return PreparedTurn(
@@ -53,11 +73,13 @@ void main() {
       clientTurnId: id,
       createdAtMs: updatedAtMs ?? now,
       updatedAtMs: updatedAtMs ?? now,
+      queueOrder: queueOrder,
       text: text,
       attachments: attachments,
       model: 'modelo',
       profile: profile,
       state: state,
+      queued: queued,
     );
   }
 
@@ -79,13 +101,31 @@ void main() {
   test('recupera todos los turnos queued del chat en orden FIFO', () async {
     final store = TurnOutboxStore();
     final base = DateTime.now().millisecondsSinceEpoch;
-    await store.save(turn(id: 'q2', text: 'segundo', updatedAtMs: base + 2));
-    await store.save(turn(id: 'q1', text: 'primero', updatedAtMs: base + 1));
+    await store.save(
+      turn(
+        id: 'q2',
+        text: 'segundo',
+        updatedAtMs: base,
+        queueOrder: 2,
+        queued: true,
+      ),
+    );
+    await store.save(
+      turn(
+        id: 'q1',
+        text: 'primero',
+        updatedAtMs: base,
+        queueOrder: 1,
+        queued: true,
+      ),
+    );
     await store.save(
       turn(
         id: 'ambiguous',
         text: 'incierto',
-        updatedAtMs: base + 3,
+        updatedAtMs: base,
+        queueOrder: 3,
+        queued: true,
         state: PreparedTurnState.submitting,
       ),
     );
@@ -124,6 +164,92 @@ void main() {
       'turn-b',
     );
   });
+
+  test(
+    'REGRESSION_CLEANUP_BARRIER serializa outbox admitida y rechaza callback tardío',
+    () async {
+      final lifecycle = LocalConversationCleanupFence.beginLifecycle(
+        connectionId: 'c1',
+        profile: 'profile-a',
+        sessionId: 's1',
+      );
+      expect(LocalConversationCleanupFence.rehydrate(lifecycle), isTrue);
+      final store = TurnOutboxStore(lifecycle: lifecycle);
+      blockedWriteEntered = Completer<void>();
+      releaseBlockedWrite = Completer<void>();
+      blockNextOutboxWrite = true;
+
+      final admitted = store.save(turn(id: 'admitted', profile: 'profile-a'));
+      await blockedWriteEntered!.future;
+      final cleanup = store.deleteForProfile('c1', 'profile-a');
+      final late = expectLater(
+        store.save(turn(id: 'late', profile: 'profile-a')),
+        throwsA(isA<LocalConversationWriteRejected>()),
+      );
+
+      releaseBlockedWrite!.complete();
+      await admitted;
+      expect(await cleanup, 1);
+      await late;
+      expect(await store.loadForChat('c1', 's1', profile: 'profile-a'), isNull);
+    },
+  );
+
+  test(
+    'cleanup de alcance falla cerrado ante outbox global corrupta',
+    () async {
+      final store = TurnOutboxStore();
+      for (final clearScope in <Future<int> Function()>[
+        () => store.deleteForChat('c1', 's1', profile: 'profile-a'),
+        () => store.deleteForProfile('c1', 'profile-a'),
+        () => store.deleteForConnection('c1'),
+      ]) {
+        secure['chat_turn_outbox_v1'] = '{not-json';
+        await expectLater(clearScope(), throwsA(isA<FormatException>()));
+        expect(secure['chat_turn_outbox_v1'], '{not-json');
+      }
+    },
+  );
+
+  test('cleanup de perfil borra su outbox y conserva vecinos', () async {
+    final store = TurnOutboxStore();
+    await store.save(turn(connection: 'c1', id: 'a1', profile: 'profile-a'));
+    await store.save(
+      turn(connection: 'c1', session: 's2', id: 'a2', profile: 'profile-a'),
+    );
+    await store.save(turn(connection: 'c1', id: 'b1', profile: 'profile-b'));
+    await store.save(turn(connection: 'c2', id: 'a3', profile: 'profile-a'));
+
+    expect(await store.deleteForProfile('c1', 'profile-a'), 2);
+
+    expect(await store.loadForChat('c1', 's1', profile: 'profile-a'), isNull);
+    expect(await store.loadForChat('c1', 's2', profile: 'profile-a'), isNull);
+    expect(
+      (await store.loadForChat('c1', 's1', profile: 'profile-b'))?.clientTurnId,
+      'b1',
+    );
+    expect(
+      (await store.loadForChat('c2', 's1', profile: 'profile-a'))?.clientTurnId,
+      'a3',
+    );
+  });
+
+  test(
+    'cleanup outbox normaliza owner default y conserva otros perfiles',
+    () async {
+      final store = TurnOutboxStore();
+      await store.save(turn(id: 'default-turn', profile: ''));
+      await store.save(turn(id: 'manager-turn', profile: 'manager'));
+
+      expect(await store.deleteForProfile('c1', ''), 1);
+
+      expect(await store.loadForChat('c1', 's1', profile: 'default'), isNull);
+      expect(
+        (await store.loadForChat('c1', 's1', profile: 'manager'))?.clientTurnId,
+        'manager-turn',
+      );
+    },
+  );
 
   test(
     'default migra owner vacío y conserva identidad al reintentar',
@@ -167,6 +293,36 @@ void main() {
       expect(await store.loadForChat('c1', 's1', profile: 'default'), isNull);
     },
   );
+
+  test('clave ajena a la identidad del payload falla cerrado', () async {
+    final payload = turn(id: 'identity-mismatch', profile: 'default');
+    secure['chat_turn_outbox_v1'] = jsonEncode({
+      'not-the-payload-identity': payload.toJson(),
+    });
+
+    await expectLater(
+      TurnOutboxStore().loadAllForChat('c1', 's1', profile: 'default'),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('colisión canonical y legacy contradictoria falla cerrado', () async {
+    final legacy = turn(id: 'collision', profile: '', text: 'legacy');
+    final canonical = turn(
+      id: 'collision',
+      profile: 'default',
+      text: 'canonical-contradictory',
+    );
+    secure['chat_turn_outbox_v1'] = jsonEncode({
+      legacy.legacyStorageId: legacy.toJson(),
+      canonical.storageId: canonical.toJson(),
+    });
+
+    await expectLater(
+      TurnOutboxStore().loadAllForChat('c1', 's1', profile: 'default'),
+      throwsA(isA<StateError>()),
+    );
+  });
 
   test('conserva el estado ambiguo y elimina el terminal', () async {
     final store = TurnOutboxStore();
@@ -231,7 +387,7 @@ void main() {
     );
   });
 
-  test('descarta adjunto ausente sin perder el texto', () async {
+  test('conserva adjunto ausente como error sin degradar a texto', () async {
     final store = TurnOutboxStore();
     await store.save(
       turn(
@@ -249,7 +405,11 @@ void main() {
 
     final restored = await store.loadForChat('c1', 's1');
     expect(restored?.text, 'mensaje privado');
-    expect(restored?.attachments, isEmpty);
+    expect(restored?.attachments, hasLength(1));
+    expect(
+      restored?.attachments.single.errorKind,
+      AttachmentErrorKind.missingFile,
+    );
   });
 
   test('restaura un adjunto existente', () async {
@@ -408,7 +568,14 @@ void main() {
         .subtract(const Duration(days: 31))
         .millisecondsSinceEpoch;
     final current = turn(id: 'current', attachments: [shared]);
-    await store.save(turn(id: 'old', updatedAtMs: old, attachments: [shared]));
+    await store.save(
+      turn(
+        id: 'old',
+        updatedAtMs: old,
+        attachments: [shared],
+        state: PreparedTurnState.terminal,
+      ),
+    );
     await store.save(current);
 
     expect(await store.prune(), 1);
@@ -446,18 +613,24 @@ void main() {
     expect(cleaned, ['removed-owner']);
   });
 
-  test('poda pendientes caducados y payload corrupto falla cerrado', () async {
-    final store = TurnOutboxStore();
-    final old = DateTime.now()
-        .subtract(const Duration(days: 31))
-        .millisecondsSinceEpoch;
-    await store.save(turn(updatedAtMs: old));
-    expect(await store.prune(), 1);
-    expect(await store.loadForChat('c1', 's1'), isNull);
+  test(
+    'poda conserva activos antiguos y payload corrupto falla cerrado',
+    () async {
+      final store = TurnOutboxStore();
+      final old = DateTime.now()
+          .subtract(const Duration(days: 31))
+          .millisecondsSinceEpoch;
+      await store.save(turn(updatedAtMs: old));
+      expect(await store.prune(), 0);
+      expect((await store.loadForChat('c1', 's1'))?.clientTurnId, 't1');
 
-    secure['chat_turn_outbox_v1'] = '{no-json';
-    expect(await store.loadForChat('c1', 's1'), isNull);
-  });
+      secure['chat_turn_outbox_v1'] = '{no-json';
+      await expectLater(
+        store.loadForChat('c1', 's1'),
+        throwsA(isA<StateError>()),
+      );
+    },
+  );
 
   test('limpia por sesión y conexión sin tocar otros lotes', () async {
     final store = TurnOutboxStore();
@@ -471,6 +644,80 @@ void main() {
     expect(await store.deleteForConnection('c1'), 1);
     expect(await store.loadForChat('c1', 's2'), isNull);
     expect((await store.loadForChat('c2', 's1'))?.clientTurnId, 't3');
+  });
+
+  test(
+    'save outbox admitido antes de deleteForChat no resucita turno',
+    () async {
+      final store = TurnOutboxStore();
+      final release = Completer<void>();
+      final blocker = LocalConversationCleanupFence.write(
+        connectionId: 'other',
+        operation: () => release.future,
+      );
+      final saving = store.save(
+        turn(connection: 'ordered', session: 'session', profile: 'profile'),
+      );
+      await store.deleteForChat('ordered', 'session', profile: 'profile');
+      release.complete();
+      await blocker;
+      await saving;
+      expect(
+        await store.loadForChat('ordered', 'session', profile: 'profile'),
+        isNull,
+      );
+    },
+  );
+
+  test('diferencial outbox conserva orden con IO transcript ajeno', () async {
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+          (call) async {
+            final args =
+                (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
+            if (call.method == 'read' &&
+                (args['key'] as String).startsWith('hermes.transcript.v3.')) {
+              if (!entered.isCompleted) entered.complete();
+              await release.future;
+            }
+            switch (call.method) {
+              case 'write':
+                secure[args['key'] as String] = args['value'] as String;
+                return null;
+              case 'read':
+                return secure[args['key'] as String];
+              case 'delete':
+                secure.remove(args['key'] as String);
+                return null;
+              case 'readAll':
+                return Map<String, String>.from(secure);
+            }
+            return null;
+          },
+        );
+    final store = TurnOutboxStore();
+    final transcript = LocalTranscriptStore.saveFromNewestFirst(
+      'unrelated',
+      'session',
+      const [
+        {'role': 'assistant', 'content': 'unrelated'},
+      ],
+    );
+    await entered.future;
+    final saving = store.save(
+      turn(connection: 'ordered', session: 'session', profile: 'profile'),
+    );
+    await store.deleteForChat('ordered', 'session', profile: 'profile');
+    release.complete();
+    await transcript;
+    await saving;
+    expect(
+      await store.loadForChat('ordered', 'session', profile: 'profile'),
+      isNull,
+    );
   });
 
   test('diagnóstico de outbox solo devuelve contadores y edad', () async {

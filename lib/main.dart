@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'core/app_header_title.dart';
 import 'core/companion/data/companion_preferences.dart';
 import 'core/companion/data/companion_repository.dart';
@@ -32,6 +33,7 @@ import 'core/screens/splash_screen.dart';
 import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
+import 'core/services/desktop_compression_fence_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
@@ -75,6 +77,95 @@ final RouteObserver<PageRoute<dynamic>> hermesRouteObserver =
     RouteObserver<PageRoute<dynamic>>();
 
 @visibleForTesting
+final class AppNavigationRequest {
+  const AppNavigationRequest._(
+    this.navigator,
+    this.intent,
+    this.generation,
+    this.routeRevision,
+    this.route,
+  );
+
+  final NavigatorState navigator;
+  final String intent;
+  final int generation;
+  final int routeRevision;
+  final Route<dynamic>? route;
+}
+
+/// Fences app-level navigation that resolves a destination asynchronously.
+///
+/// A request may commit only if no newer app intent began and the exact route
+/// visible when it began is still current. Normal user navigation invalidates
+/// stale work through the observer without preventing the user action itself.
+@visibleForTesting
+final class AppNavigationIntentFence extends NavigatorObserver {
+  int _generation = 0;
+  int _routeRevision = 0;
+  Route<dynamic>? _topRoute;
+
+  AppNavigationRequest begin(
+    NavigatorState navigator, {
+    required String intent,
+  }) => AppNavigationRequest._(
+    navigator,
+    intent,
+    ++_generation,
+    _routeRevision,
+    _topRoute,
+  );
+
+  bool canCommit(
+    AppNavigationRequest request,
+    NavigatorState navigator, {
+    required String intent,
+  }) =>
+      navigator.mounted &&
+      identical(request.navigator, navigator) &&
+      request.intent == intent &&
+      request.generation == _generation &&
+      request.routeRevision == _routeRevision &&
+      identical(request.route, _topRoute);
+
+  bool canCommitAfterRouteTransition(
+    AppNavigationRequest request,
+    NavigatorState navigator, {
+    required String intent,
+  }) =>
+      navigator.mounted &&
+      identical(request.navigator, navigator) &&
+      request.intent == intent &&
+      request.generation == _generation &&
+      request.routeRevision + 1 == _routeRevision &&
+      !identical(request.route, _topRoute);
+
+  void _changed(Route<dynamic>? topRoute) {
+    _topRoute = topRoute;
+    _routeRevision += 1;
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _changed(route);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _changed(previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    _changed(newRoute);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (identical(route, _topRoute)) _changed(previousRoute);
+  }
+}
+
+@visibleForTesting
 bool shouldReplaceInAppNotice(
   NotificationKind? current,
   NotificationKind incoming,
@@ -102,6 +193,17 @@ MissionControlOpenTarget? missionControlTargetForNotification(
   NotificationChatSurface.normal => null,
 };
 
+MissionControlOpenTarget? missionControlTargetForSession(Session session) {
+  final source = session.source.trim().toLowerCase();
+  if (!const {'mobile-bot', 'bot-mode', 'bot-mode-local'}.contains(source)) {
+    return null;
+  }
+  return MissionControlOpenTarget.bot(
+    sessionId: session.id,
+    profile: Session.profileOwner(session.profile),
+  );
+}
+
 @visibleForTesting
 Future<T?> pushNotificationOwnerRoute<T>(
   NavigatorState navigator,
@@ -118,9 +220,25 @@ void main() async {
   final initialThemeProfiles = await themeProfileStore.load();
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   await cancelledTurnStore.initialize();
+  final compressionFenceStore = DesktopCompressionFenceStore();
   final connManager = await ConnectionManager.create(
     prefs,
-    clearCancelledTurns: cancelledTurnStore.removeConnection,
+    clearCancelledTurns: (connectionId) async {
+      var removed = 0;
+      Object? firstError;
+      StackTrace? firstStack;
+      try {
+        removed += await cancelledTurnStore.removeConnection(connectionId);
+      } catch (error, stackTrace) {
+        firstError = error;
+        firstStack = stackTrace;
+      }
+      removed += await compressionFenceStore.clearConnection(connectionId);
+      if (firstError != null) {
+        Error.throwWithStackTrace(firstError, firstStack!);
+      }
+      return removed;
+    },
   );
   // Arranque en frío: si el usuario fijó una instancia predeterminada, la app
   // abre con ella (sembrándola como activa). El cambio de instancia en caliente
@@ -140,7 +258,9 @@ void main() async {
     policy: approvalPolicy,
     prefs: prefs,
     cancelledTurnStore: cancelledTurnStore,
+    compressionFenceStore: compressionFenceStore,
   );
+  await activeChats.globalActivity.initialize();
   runApp(
     HermesApp(
       connManager: connManager,
@@ -285,6 +405,18 @@ class HermesApp extends StatefulWidget {
   final ActiveChatService activeChats;
   final ThemeProfileStore? themeProfileStore;
   final ThemeProfileStoreSnapshot? initialThemeProfiles;
+  @visibleForTesting
+  final Future<Session?> Function(
+    SavedConnection connection,
+    String sessionId,
+    String profile,
+  )?
+  externalSessionLookupForTesting;
+  @visibleForTesting
+  final Widget Function(SavedConnection connection, RunRecord record)?
+  runDetailBuilderForTesting;
+  @visibleForTesting
+  final Future<void>? missionControlBarrierForTesting;
   const HermesApp({
     required this.connManager,
     required this.appLock,
@@ -298,6 +430,9 @@ class HermesApp extends StatefulWidget {
     required this.activeChats,
     this.themeProfileStore,
     this.initialThemeProfiles,
+    this.externalSessionLookupForTesting,
+    this.runDetailBuilderForTesting,
+    this.missionControlBarrierForTesting,
     super.key,
   });
 
@@ -368,6 +503,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Navigator raíz: el gate de App Lock presenta la pantalla de bloqueo como
   /// ruta sobre este Navigator (no en un Overlay casero).
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final AppNavigationIntentFence _appNavigationFence =
+      AppNavigationIntentFence();
 
   // Deep link hermes://pair (abrir la app ya rellena desde un enlace tocado).
   // La suscripción mantiene viva la instancia de AppLinks mientras escucha.
@@ -485,7 +622,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   /// Único controlador público de conversación. Vive aquí (no en la pantalla)
   /// para sobrevivir a la navegación y usa exclusivamente el ActiveChat visible,
-  /// STT/TTS de la APK y el submit/steer/queue normal del chat.
+  /// STT/TTS de la APK y el submit/queue normal del chat.
   /// Acceso vía `context.findAncestorStateOfType<HermesAppState>()?.voiceConvo`.
   ///
   /// Gate `kVoiceModeEnabled` (spec 027): el inicializador `late final` es
@@ -988,7 +1125,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
           widget.notifications.init().then((_) {
             if (!mounted) return;
             WidgetsBinding.instance.addPostFrameCallback(
-              (_) => widget.notifications.retryPendingOpen(),
+              (_) => unawaited(widget.notifications.retryPendingOpen()),
             );
           });
         },
@@ -1082,6 +1219,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
+      unawaited(widget.activeChats.globalActivity.flushJournal());
       unawaited(updateHomeWidget((snapshot) => snapshot));
     }
     if (kVoiceRuntimeEnabled) {
@@ -1263,9 +1401,14 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 actionLabel: s.inAppGo,
                 dismissLabel: s.inAppDismiss,
                 onOpen: () {
-                  if (_openSessionFromNotification(notice.open)) {
-                    _dismissInAppNotice();
-                  }
+                  unawaited(() async {
+                    final outcome = await _openSessionFromNotification(
+                      notice.open,
+                    );
+                    if (outcome == NavigationDeliveryOutcome.delivered) {
+                      _dismissInAppNotice();
+                    }
+                  }());
                 },
                 onDismissed: _dismissInAppNotice,
               ),
@@ -1298,7 +1441,21 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _dismissInAppNotice();
       return;
     }
-    widget.notifications.retryPendingOpen();
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !navigator.mounted) return;
+    const intent = 'notification:post-unlock';
+    final handoff = _appNavigationFence.begin(navigator, intent: intent);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_appNavigationFence.canCommitAfterRouteTransition(
+            handoff,
+            navigator,
+            intent: intent,
+          )) {
+        return;
+      }
+      unawaited(widget.notifications.retryPendingOpen());
+    });
   }
 
   final Set<String> _hydratingNotificationRuns = <String>{};
@@ -1309,7 +1466,22 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         fallback: widget.connManager.activeProfileFor(connection.id),
       );
 
-  bool _openSessionFromNotification(NotificationOpen open) {
+  @visibleForTesting
+  Future<NavigationDeliveryOutcome> debugOpenNotification(
+    NotificationOpen open,
+  ) => _openSessionFromNotification(open);
+
+  @visibleForTesting
+  void debugInvalidateNavigation() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator != null) {
+      _appNavigationFence.begin(navigator, intent: 'test:invalidate');
+    }
+  }
+
+  Future<NavigationDeliveryOutcome> _openSessionFromNotification(
+    NotificationOpen open,
+  ) async {
     SavedConnection? conn;
     for (final c in widget.connManager.getConnections()) {
       if (c.id == open.connId) {
@@ -1319,21 +1491,37 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     final connection = conn;
     final nav = _navigatorKey.currentState;
-    if (connection == null || nav == null) return false;
-    if (widget.appLock.locked.value) return false;
+    if (connection == null || nav == null) {
+      return NavigationDeliveryOutcome.deferred;
+    }
+    if (widget.appLock.locked.value) {
+      return NavigationDeliveryOutcome.deferred;
+    }
 
     // Si la notificación es de una ejecución (runId presente), navegar a
     // RunDetailScreen; si el run ya expiró, fallback a TaskCenterScreen.
     final runId = open.runId;
     if (runId != null && runId.isNotEmpty) {
       final profile = open.profile?.trim().toLowerCase();
-      if (profile == null || profile.isEmpty) return false;
+      if (profile == null || profile.isEmpty) {
+        return NavigationDeliveryOutcome.deferred;
+      }
+      final intent =
+          'run-detail:${connection.id}:$profile:$runId:${open.requestId ?? ''}';
+      final request = _appNavigationFence.begin(nav, intent: intent);
       final hydrationKey =
           '${connection.id}\u0000$profile\u0000$runId\u0000${open.requestId ?? ''}';
       if (_hydratingNotificationRuns.add(hydrationKey)) {
         unawaited(() async {
           try {
             for (var attempt = 0; mounted && attempt < 20; attempt++) {
+              if (!_appNavigationFence.canCommit(
+                request,
+                nav,
+                intent: intent,
+              )) {
+                return;
+              }
               if (widget.appLock.locked.value) {
                 await Future<void>.delayed(const Duration(milliseconds: 250));
                 continue;
@@ -1344,6 +1532,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 runId,
                 profile: profile,
                 requestId: open.requestId,
+                navigationRequest: request,
+                navigationIntent: intent,
                 onApprovalReady: open.requestId == null
                     ? null
                     : () => _completeApprovalOpenWhenUnlocked(open),
@@ -1361,8 +1551,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
           }
         }());
       }
-      return false;
+      return NavigationDeliveryOutcome.deferred;
     }
+
+    _appNavigationFence.begin(nav, intent: 'notification:${open.toPayload()}');
 
     final taskId = open.taskId;
     if (taskId != null && taskId.isNotEmpty) {
@@ -1372,19 +1564,17 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
               TasksScreen(connection: connection, initialTaskId: taskId),
         ),
       );
-      return true;
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
     }
 
     final ownedTarget = missionControlTargetForNotification(open);
     if (ownedTarget != null) {
-      unawaited(
-        _openMissionControlFromNotification(nav, connection, ownedTarget),
-      );
-      return true;
+      return _openMissionControlFromNotification(nav, connection, ownedTarget);
     }
 
     // Sin runId: comportamiento anterior — abrir la sesión de chat.
-    if (open.sessionId.isEmpty) return false;
+    if (open.sessionId.isEmpty) return NavigationDeliveryOutcome.deferred;
     final liveOwner = activeChats
         .of(open.connId, open.sessionId, profile: open.profile)
         ?.sessionProfile;
@@ -1392,8 +1582,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (owner == null || owner.trim().isEmpty) {
       // Los payloads legacy no llevaban perfil. Resolver la fila autoritativa
       // antes de reconstruir evita abrirla contra el perfil global actual.
-      unawaited(_openWidgetSession(connection, open.sessionId));
-      return true;
+      return _openWidgetSession(connection, open.sessionId);
     }
     final profile = _sessionProfileOwner(connection, owner: owner);
     final session = Session(
@@ -1412,29 +1601,40 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       nav,
       builder: (_) => ChatScreen(connection: connection, session: session),
     );
-    return true;
+    await WidgetsBinding.instance.endOfFrame;
+    return NavigationDeliveryOutcome.delivered;
   }
 
-  Future<void> _openMissionControlFromNotification(
+  Future<NavigationDeliveryOutcome> _openMissionControlFromNotification(
     NavigatorState nav,
     SavedConnection connection,
     MissionControlOpenTarget target,
   ) async {
+    final intent =
+        'mission-control:${connection.id}:${target.sessionId}:${target.profile}';
+    final request = _appNavigationFence.begin(nav, intent: intent);
     if (widget.connManager.activeConnectionId.value != connection.id) {
       await widget.connManager.setActiveConnection(connection.id);
     }
-    if (!nav.mounted) return;
-    await pushNotificationOwnerRoute<void>(
-      nav,
-      MaterialPageRoute<void>(
-        builder: (_) => MissionControlScreen(
-          connection: connection,
-          connManager: widget.connManager,
-          activeChats: activeChats,
-          initialOpenTarget: target,
+    await widget.missionControlBarrierForTesting;
+    if (!_appNavigationFence.canCommit(request, nav, intent: intent)) {
+      return NavigationDeliveryOutcome.deferred;
+    }
+    unawaited(
+      pushNotificationOwnerRoute<void>(
+        nav,
+        MaterialPageRoute<void>(
+          builder: (_) => MissionControlScreen(
+            connection: connection,
+            connManager: widget.connManager,
+            activeChats: activeChats,
+            initialOpenTarget: target,
+          ),
         ),
       ),
     );
+    await WidgetsBinding.instance.endOfFrame;
+    return NavigationDeliveryOutcome.delivered;
   }
 
   /// Si la notificación lleva un runId, navega a RunDetailScreen de ese run.
@@ -1445,6 +1645,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     String runId, {
     required String profile,
     String? requestId,
+    required AppNavigationRequest navigationRequest,
+    required String navigationIntent,
     VoidCallback? onApprovalReady,
   }) async {
     try {
@@ -1452,7 +1654,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         widget.connManager.prefs,
         conn.id,
       );
-      if (!nav.mounted) {
+      if (!_appNavigationFence.canCommit(
+        navigationRequest,
+        nav,
+        intent: navigationIntent,
+      )) {
         return false; // navigator puede haberse desmontado durante await
       }
       final record = registry.records
@@ -1462,12 +1668,14 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         if (widget.appLock.locked.value) return false;
         nav.push(
           MaterialPageRoute(
-            builder: (_) => RunDetailScreen(
-              connection: conn,
-              record: record,
-              initialApprovalId: requestId,
-              onInitialApprovalReady: onApprovalReady,
-            ),
+            builder: (_) =>
+                widget.runDetailBuilderForTesting?.call(conn, record) ??
+                RunDetailScreen(
+                  connection: conn,
+                  record: record,
+                  initialApprovalId: requestId,
+                  onInitialApprovalReady: onApprovalReady,
+                ),
           ),
         );
         return true;
@@ -1621,7 +1829,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _openNewSessionDraft(
+  Future<NavigationDeliveryOutcome> _openNewSessionDraft(
     SavedConnection connection,
     Session draft,
     NewSessionLaunchTarget target,
@@ -1630,8 +1838,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (navigator == null || !navigator.mounted) {
       throw StateError('root navigator unavailable');
     }
+    final intent = 'new-session:${connection.id}:${draft.id}:${target.name}';
+    final request = _appNavigationFence.begin(navigator, intent: intent);
     if (widget.connManager.activeConnectionId.value != connection.id) {
       await widget.connManager.setActiveConnection(connection.id);
+    }
+    if (!_appNavigationFence.canCommit(request, navigator, intent: intent)) {
+      return NavigationDeliveryOutcome.deferred;
     }
     final ownedDraft = draft.copyWith(
       profile: _sessionProfileOwner(connection, owner: draft.profile),
@@ -1653,6 +1866,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       ),
     );
     await WidgetsBinding.instance.endOfFrame;
+    return NavigationDeliveryOutcome.delivered;
   }
 
   Future<void> _openWidgetApp() async {
@@ -1660,6 +1874,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (navigator == null || !navigator.mounted) {
       throw StateError('root navigator unavailable');
     }
+    _appNavigationFence.begin(navigator, intent: 'widget:open-app');
     navigator.popUntil((route) => route.isFirst);
     await WidgetsBinding.instance.endOfFrame;
   }
@@ -1669,6 +1884,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (navigator == null || !navigator.mounted) {
       throw StateError('root navigator unavailable');
     }
+    _appNavigationFence.begin(navigator, intent: 'widget:open-setup');
     if (_showOnboarding) {
       navigator.popUntil((route) => route.isFirst);
     } else {
@@ -1683,7 +1899,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     await WidgetsBinding.instance.endOfFrame;
   }
 
-  Future<void> _openWidgetSession(
+  @visibleForTesting
+  Future<NavigationDeliveryOutcome> debugOpenWidgetSession(
+    SavedConnection connection,
+    String sessionId,
+  ) => _openWidgetSession(connection, sessionId);
+
+  Future<NavigationDeliveryOutcome> _openWidgetSession(
     SavedConnection connection,
     String sessionId,
   ) async {
@@ -1691,25 +1913,38 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (navigator == null || !navigator.mounted) {
       throw StateError('root navigator unavailable');
     }
+    final intent = 'widget:open-session:${connection.id}:$sessionId';
+    final request = _appNavigationFence.begin(navigator, intent: intent);
     if (widget.connManager.activeConnectionId.value != connection.id) {
       await widget.connManager.setActiveConnection(connection.id);
     }
-    final client = ApiClient(
-      baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
-      connectionId: connection.id,
-    );
-    Session? session;
-    try {
-      session = await client.getSession(sessionId);
-    } catch (_) {
-      // El widget conserva el último estado conocido. Si esa sesión ya no
-      // existe, abrir la biblioteca es más útil y seguro que crear un chat
-      // fantasma con el identificador obsoleto.
-    } finally {
-      client.close();
+    if (!_appNavigationFence.canCommit(request, navigator, intent: intent)) {
+      return NavigationDeliveryOutcome.deferred;
     }
-    if (!navigator.mounted) return;
+    Session? session;
+    final profile = widget.connManager.activeProfileFor(connection.id);
+    final lookup = widget.externalSessionLookupForTesting;
+    if (lookup != null) {
+      session = await lookup(connection, sessionId, profile);
+    } else {
+      final client = ApiClient(
+        baseUrl: connection.baseUrl,
+        apiKey: connection.apiKey,
+        connectionId: connection.id,
+      );
+      try {
+        session = await client.getSession(sessionId, profile: profile);
+      } catch (_) {
+        // El widget conserva el último estado conocido. Si esa sesión ya no
+        // existe, abrir la biblioteca es más útil y seguro que crear un chat
+        // fantasma con el identificador obsoleto.
+      } finally {
+        client.close();
+      }
+    }
+    if (!_appNavigationFence.canCommit(request, navigator, intent: intent)) {
+      return NavigationDeliveryOutcome.deferred;
+    }
     final target = session;
     if (target == null) {
       unawaited(
@@ -1723,14 +1958,24 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         ),
       );
     } else {
-      unawaited(
-        openChatFromHomeNavigator<void>(
+      final ownedTarget = missionControlTargetForSession(target);
+      if (ownedTarget != null) {
+        return _openMissionControlFromNotification(
           navigator,
-          builder: (_) => ChatScreen(connection: connection, session: target),
-        ),
-      );
+          connection,
+          ownedTarget,
+        );
+      } else {
+        unawaited(
+          openChatFromHomeNavigator<void>(
+            navigator,
+            builder: (_) => ChatScreen(connection: connection, session: target),
+          ),
+        );
+      }
     }
     await WidgetsBinding.instance.endOfFrame;
+    return NavigationDeliveryOutcome.delivered;
   }
 
   Future<void> setThemeId(String id) async {
@@ -2037,7 +2282,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
               themeAnimationCurve: Curves.easeInOutCubic,
               navigatorKey: _navigatorKey,
               scaffoldMessengerKey: _messengerKey,
-              navigatorObservers: [hermesRouteObserver],
+              navigatorObservers: [hermesRouteObserver, _appNavigationFence],
               // El gate orquesta una ruta de bloqueo sobre el Navigator raíz: cubre
               // también las rutas empujadas, sin Overlay casero.
               builder: (context, navChild) => ListenableBuilder(

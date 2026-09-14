@@ -8,8 +8,13 @@ DesktopSessionMessage _message(Map<String, dynamic> json) =>
 
 ArtifactIndexScope _scope({
   String connection = 'connection-a',
+  String profile = 'default',
   String session = 'logical-session-a',
-}) => ArtifactIndexScope(connectionId: connection, logicalSessionId: session);
+}) => ArtifactIndexScope(
+  connectionId: connection,
+  profileOwner: profile,
+  logicalSessionId: session,
+);
 
 ArtifactAuthorizationPolicy _policy({
   int revision = 0,
@@ -42,6 +47,15 @@ final class _ThrowingTranscript extends Iterable<ArtifactTranscriptEntry> {
 }
 
 void main() {
+  test('artifact index scope isolates equal session IDs across profiles', () {
+    final research = _scope(profile: 'research');
+    final coding = _scope(profile: 'coding');
+
+    expect(research, isNot(coding));
+    expect(research.profileOwner, 'research');
+    expect(coding.profileOwner, 'coding');
+  });
+
   test(
     'conserva ID y contenedores estructurados top-level de forma acotada',
     () {

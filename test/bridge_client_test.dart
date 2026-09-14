@@ -424,6 +424,51 @@ void main() {
     });
   });
 
+  group('provisionDetailed categoriza fallos seguros', () {
+    Future<BridgeProvisionResult> request(
+      Future<http.Response> Function(http.Request) handler,
+    ) => BridgeClient.provisionDetailed(
+      'https://bridge.example.com',
+      'gateway-secret',
+      httpClient: MockClient(handler),
+      timeout: const Duration(milliseconds: 5),
+    );
+
+    test('401 es authRejected y no filtra secretos ni body', () async {
+      final result = await request(
+        (_) async => http.Response('gateway-secret reflected', 401),
+      );
+      expect(result.failure, BridgeProvisionFailure.authRejected);
+      expect(result.safeDetail, isNot(contains('gateway-secret')));
+    });
+
+    test('403 provision deshabilitado queda diferenciado', () async {
+      final result = await request((request) async {
+        if (request.url.path == '/bridge/provision') {
+          return http.Response('{}', 403);
+        }
+        return http.Response('{}', 403);
+      });
+      expect(result.failure, BridgeProvisionFailure.provisionDisabled);
+    });
+
+    test('timeout queda diferenciado', () async {
+      final result = await request((_) => Completer<http.Response>().future);
+      expect(result.failure, BridgeProvisionFailure.timeout);
+    });
+
+    test('HTTP inesperado queda diferenciado', () async {
+      final result = await request((_) async => http.Response('{}', 503));
+      expect(result.failure, BridgeProvisionFailure.unexpectedHttp);
+      expect(result.httpStatus, 503);
+    });
+
+    test('200 sin token válido es respuesta inválida', () async {
+      final result = await request((_) async => http.Response('{}', 200));
+      expect(result.failure, BridgeProvisionFailure.invalidResponse);
+    });
+  });
+
   group('static transport boundary', () {
     test('provision reutiliza la gateway key si provision esta cerrado pero '
         'capabilities la autentica', () async {
@@ -609,21 +654,46 @@ void main() {
       expect(BridgeClient.truncateForLog('a\n\n  b   c'), 'a b c');
     });
 
-    test('redactUrlForLog enmascara token/key/password/auth y el userinfo', () {
+    test('redactUrlForLog elimina userinfo y toda la query', () {
       final r = BridgeClient.redactUrlForLog(
-        'https://user:pass@h:9131/x?token=ABC&key=XYZ&q=ok&password=p',
+        'https://user:pass@h:9131/x?token=ABC&key=XYZ&q=QUERY-MARKER&password=p',
       );
       expect(r, isNot(contains('ABC')));
       expect(r, isNot(contains('XYZ')));
       expect(r, isNot(contains('user:pass')));
-      expect(r, contains('q=ok'));
-      expect(r, contains('REDACTED'));
+      expect(r, isNot(contains('QUERY-MARKER')));
+      expect(r, isNot(contains('?')));
+    });
+
+    test('respuesta 2xx malformada no refleja body en la excepción', () async {
+      final c = clientWith(
+        MockClient((_) async => http.Response('BODY-MARKER malformed', 200)),
+      );
+      await expectLater(
+        c.rollback('b1'),
+        throwsA(
+          isA<BridgeException>()
+              .having((e) => e.code, 'code', 'invalid_response')
+              .having(
+                (e) => e.toString(),
+                'safe exception',
+                isNot(contains('BODY-MARKER')),
+              ),
+        ),
+      );
+      expect(logs.every((line) => !line.contains('BODY-MARKER')), isTrue);
     });
 
     test('ni el diagnóstico ni el log filtran el token Bearer', () async {
       final c = clientWith(
         MockClient(
-          (_) async => http.Response(jsonEncode({'error': 'bad'}), 400),
+          (_) async => http.Response(
+            jsonEncode({
+              'error': 'bad',
+              'message': 'BODY-MARKER must never escape',
+            }),
+            400,
+          ),
         ),
       );
       try {
@@ -633,11 +703,13 @@ void main() {
         expect(e.diagnostic, isNotNull);
         expect(e.diagnostic, isNot(contains('SUPERSECRET-TOKEN')));
         expect(e.toString(), isNot(contains('SUPERSECRET-TOKEN')));
+        expect(e.toString(), isNot(contains('BODY-MARKER')));
         expect(e.kind, BridgeErrorKind.badRequest);
       }
       expect(logs, isNotEmpty);
       expect(logs.every((l) => !l.contains('SUPERSECRET-TOKEN')), isTrue);
       expect(logs.every((l) => !l.toLowerCase().contains('bearer')), isTrue);
+      expect(logs.every((l) => !l.contains('BODY-MARKER')), isTrue);
     });
   });
 }

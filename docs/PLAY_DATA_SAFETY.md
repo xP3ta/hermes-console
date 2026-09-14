@@ -4,7 +4,7 @@ Cómo rellenar el formulario "Seguridad de los datos" en Play Console, coherente
 con `PRIVACY_POLICY.md` y con el comportamiento real de la app. Responde campo a
 campo.
 
-**Revisado 2026-08-29 (candidata 1.2.8, voz manual, lectura, notificaciones
+**Revisado 2026-09-03 (candidata 1.2.10, voz manual, lectura, notificaciones
 locales y aclaración de IA de terceros)**: la
 versión anterior de esta guía declaraba "no se comparten
 datos con terceros" sin matices. Eso era incompleto: hay flujos funcionales y

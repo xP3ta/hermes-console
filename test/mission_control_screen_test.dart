@@ -261,6 +261,8 @@ Widget _host({
   MissionControlDataSource? dataSource,
   double textScale = 1,
   bool disableAnimations = false,
+  EdgeInsets viewInsets = EdgeInsets.zero,
+  EdgeInsets viewPadding = EdgeInsets.zero,
   SavedConnection? connection,
   ValueChanged<Session>? botChatOpenObserver,
   MissionControlOpenTarget? initialOpenTarget,
@@ -276,6 +278,11 @@ Widget _host({
     data: MediaQuery.of(context).copyWith(
       textScaler: TextScaler.linear(textScale),
       disableAnimations: disableAnimations,
+      viewInsets: viewInsets,
+      viewPadding: viewPadding,
+      padding: viewPadding.copyWith(
+        bottom: viewInsets.bottom > 0 ? 0 : viewPadding.bottom,
+      ),
     ),
     child: child!,
   ),
@@ -400,6 +407,36 @@ void main() {
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
           null,
         );
+  });
+
+  test('Bot Chat destinations are read-only for every canonical state', () {
+    const profile = AgentProfile(name: 'infra');
+    for (final fixture in <({Session session, String? storedSessionId})>[
+      (
+        session: _session('existing-bot-chat', 'infra'),
+        storedSessionId: 'existing-bot-chat',
+      ),
+      (
+        session: _session('stored-pinned-bot-chat', 'infra'),
+        storedSessionId: 'stored-pinned-bot-chat',
+      ),
+      (session: _session('mob-bot-infra', 'infra'), storedSessionId: null),
+    ]) {
+      final destination = buildReadOnlyBotChatDestination(
+        connection: _connection,
+        session: fixture.session,
+        initialStoredSessionId: fixture.storedSessionId,
+        profile: profile,
+      );
+
+      expect(destination.connection.readOnly, isTrue);
+      expect(destination.session, same(fixture.session));
+      expect(destination.initialStoredSessionId, fixture.storedSessionId);
+      expect(destination.initialPrompt, isNull);
+      expect(destination.requestComposerFocus, isFalse);
+      expect(destination.missionBotProfile, same(profile));
+      expect(destination.missionRoom, isNull);
+    }
   });
 
   testWidgets('opens on a bots-first roster with rooms and work shell', (
@@ -1278,7 +1315,20 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
-    expect(find.text('Restart Proxmox node'), findsOneWidget);
+    expect(find.text('Aprobación pendiente'), findsOneWidget);
+    expect(find.text('Decide si quieres continuar'), findsOneWidget);
+    expect(find.text('Restart Proxmox node'), findsNothing);
+    expect(find.textContaining('approval-1'), findsNothing);
+    final semantics = tester.ensureSemantics();
+    final publicApproval = tester
+        .getSemantics(find.byKey(const ValueKey('mission-global-approval-0')))
+        .getSemanticsData()
+        .label;
+    expect(publicApproval, contains('Aprobación pendiente'));
+    expect(publicApproval, contains('Decide si quieres continuar'));
+    expect(publicApproval, isNot(contains('Restart Proxmox node')));
+    expect(publicApproval, isNot(contains('approval-1')));
+    semantics.dispose();
     expect(
       find.byKey(const ValueKey('mission-global-work-tray')),
       findsOneWidget,
@@ -1331,13 +1381,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _openWork(tester);
-    await tester.tap(
-      find.byKey(
-        const ValueKey(
-          'mission-global-approval-stored-bot-approval-approval-bot',
-        ),
-      ),
-    );
+    await tester.tap(find.byKey(const ValueKey('mission-global-approval-0')));
     await tester.pumpAndSettle();
 
     expect(opened, isNotNull);
@@ -1404,8 +1448,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
-    expect(find.text('Restart node'), findsOneWidget);
-    expect(find.text('Publish release'), findsOneWidget);
+    expect(find.text('Aprobación pendiente'), findsNWidgets(2));
+    expect(find.text('Decide si quieres continuar'), findsNWidgets(2));
+    expect(find.text('Restart node'), findsNothing);
+    expect(find.text('Publish release'), findsNothing);
   });
 
   testWidgets('empty and incompatible profile states remain actionable', (
@@ -2143,7 +2189,7 @@ void main() {
   });
 
   testWidgets(
-    'creating an agent follows the Bot Mode contract and opens its Bot Chat',
+    'creating an agent keeps the Bot Mode contract and opens Bot Chat history',
     (tester) async {
       final manager = await _manager();
       final gateway = _FakeBotCreateGateway();
@@ -2209,8 +2255,8 @@ void main() {
       expect(gateway.metaProfile, 'research-bot');
       expect(gateway.metaCreatedAtMs, isNotNull);
 
-      // Tras crear, Mission Control abre el Bot Chat del bot (el kickoff lo
-      // envía ChatScreen como initialPrompt, igual que Desktop).
+      // After creation, Mission Control keeps the canonical read-only history
+      // destination without submitting a kickoff turn.
       expect(opened, isNotNull);
       expect(opened?.profile, 'research-bot');
       expect(opened?.title, 'Bot Chat');
@@ -2337,6 +2383,292 @@ void main() {
       );
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets('V13 dock expands real create actions without a route overlay', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final gateway = _FakeBotCreateGateway();
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        botCreateGateway: gateway,
+        snapshot: _snapshot(
+          profiles: const [
+            AgentProfile(name: 'infra'),
+            AgentProfile(name: 'qa'),
+          ],
+          board: const KanbanBoard(columns: []),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('bot-mode-floating-dock')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('bot-mode-dock-create')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('bot-mode-dock-create')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('bot-mode-create-actions')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('bot-mode-create-bot')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-mode-create-room')), findsOneWidget);
+    expect(find.byType(BottomSheet), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('bot-mode-create-bot')));
+    await _pumpCreateUi(tester);
+    expect(find.byKey(const ValueKey('bot-create-form')), findsOneWidget);
+  });
+
+  testWidgets('V13 Nueva sala action opens the existing authoritative editor', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(
+          profiles: const [
+            AgentProfile(name: 'infra'),
+            AgentProfile(name: 'qa'),
+          ],
+          board: const KanbanBoard(columns: []),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-mode-dock-create')));
+    await tester.pumpAndSettle();
+    final roomAction = find.byKey(const ValueKey('bot-mode-create-room'));
+    expect(find.text('Crear sala local'), findsOneWidget);
+    expect(tester.widget<InkWell>(roomAction).onTap, isNotNull);
+    await tester.tap(roomAction);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mission-room-editor')), findsOneWidget);
+  });
+
+  testWidgets(
+    'V13 owning screen create orbs share the painted plus X and a vertical trajectory',
+    (tester) async {
+      final manager = await _manager();
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          snapshot: _snapshot(
+            profiles: const [
+              AgentProfile(name: 'infra'),
+              AgentProfile(name: 'qa'),
+            ],
+            board: const KanbanBoard(columns: []),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final plus = find.byKey(const ValueKey('bot-mode-dock-create'));
+      final plusCenter = tester.getCenter(plus);
+      await tester.tap(plus);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+
+      final bot = find.byKey(const ValueKey('bot-mode-create-bot'));
+      final room = find.byKey(const ValueKey('bot-mode-create-room'));
+      final botCenter = tester.getCenter(bot);
+      final roomCenter = tester.getCenter(room);
+      expect(botCenter.dx, plusCenter.dx);
+      expect(roomCenter.dx, plusCenter.dx);
+      expect(botCenter.dy, lessThan(roomCenter.dy));
+      expect(tester.getRect(bot).overlaps(tester.getRect(room)), isFalse);
+      expect(roomCenter.dy, lessThan(plusCenter.dy));
+
+      await tester.pump(const Duration(milliseconds: 35));
+      final laterBot = tester.getCenter(bot);
+      expect(laterBot.dx, plusCenter.dx);
+      expect(laterBot.dy, lessThan(botCenter.dy));
+      expect(find.byKey(const ValueKey('bot-mode-create-bot')), findsOneWidget);
+
+      await tester.tap(plus);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tap(plus);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('bot-mode-create-actions')),
+        findsOneWidget,
+      );
+      expect(tester.getCenter(bot).dx, plusCenter.dx);
+    },
+  );
+
+  for (final size in const [Size(360, 800), Size(390, 844)]) {
+    for (final scale in const [1.0, 1.3, 2.0]) {
+      testWidgets(
+        'V13 owning screen coordinates safe viewport $size at ${scale}x with IME',
+        (tester) async {
+          final manager = await _manager();
+          await tester.binding.setSurfaceSize(size);
+          addTearDown(() => tester.binding.setSurfaceSize(null));
+          await tester.pumpWidget(
+            _host(
+              manager: manager,
+              textScale: scale,
+              viewInsets: const EdgeInsets.only(bottom: 280),
+              viewPadding: const EdgeInsets.only(top: 24, bottom: 24),
+              snapshot: _snapshot(
+                profiles: const [
+                  AgentProfile(name: 'infra'),
+                  AgentProfile(name: 'qa'),
+                ],
+                board: const KanbanBoard(columns: []),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final dock = find.byKey(const ValueKey('bot-mode-floating-dock'));
+          expect(
+            tester.getRect(dock).bottom,
+            lessThanOrEqualTo(size.height - 290),
+          );
+          for (final key in const ['bots', 'create', 'work']) {
+            final target = find.byKey(ValueKey('bot-mode-dock-$key'));
+            expect(tester.getSize(target).width, greaterThanOrEqualTo(48));
+            expect(tester.getSize(target).height, greaterThanOrEqualTo(48));
+          }
+          await tester.tap(find.byKey(const ValueKey('bot-mode-dock-create')));
+          await tester.pumpAndSettle();
+          final bot = find.byKey(const ValueKey('bot-mode-create-bot'));
+          final room = find.byKey(const ValueKey('bot-mode-create-room'));
+          expect(tester.getRect(bot).overlaps(tester.getRect(room)), isFalse);
+          expect(
+            tester.getRect(room).bottom,
+            lessThan(tester.getRect(dock).top),
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets('V13 dock is absent from detail and modal routes', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(
+          profiles: const [
+            AgentProfile(name: 'infra'),
+            AgentProfile(name: 'qa'),
+          ],
+          board: const KanbanBoard(columns: []),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-mode-floating-dock')), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-mode-dock-create')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-mode-create-room')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mission-room-editor')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-mode-floating-dock')), findsNothing);
+  });
+
+  testWidgets(
+    'V13 mechanical owning-screen slop audit has only allowed surfaces',
+    (tester) async {
+      final manager = await _manager();
+      final roomStore = MissionRoomStore(manager.prefs, nowMs: () => 1000);
+      final room = await roomStore.save(
+        connectionId: _connection.id,
+        name: 'operations',
+        managerProfile: 'infra',
+        memberProfiles: const ['infra', 'qa'],
+      );
+      await roomStore.linkTask(
+        _connection.id,
+        room.id,
+        'task-running',
+        boardId: 'ops',
+      );
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          roomStore: roomStore,
+          snapshot: _snapshot(
+            profiles: const [
+              AgentProfile(name: 'infra'),
+              AgentProfile(name: 'qa'),
+            ],
+            board: const KanbanBoard(
+              boardId: 'ops',
+              columns: [
+                KanbanColumn(
+                  name: 'running',
+                  tasks: [
+                    KanbanTask(
+                      id: 'task-running',
+                      title: 'Deploy services',
+                      body: '',
+                      status: 'running',
+                      assignee: 'infra',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final root = find.byType(MissionControlScreen);
+      expect(
+        find.descendant(of: root, matching: find.byType(GridView)),
+        findsNothing,
+        reason: 'feature-card-grid',
+      );
+      for (final key in const ['mission-bot-row-infra', 'mission-bot-row-qa']) {
+        expect(
+          find.ancestor(
+            of: find.byKey(ValueKey(key)),
+            matching: find.byType(HermesCard),
+          ),
+          findsNothing,
+          reason: 'unearthed-box/wrong-surface: $key',
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('bot-mode-floating-dock')),
+        findsOneWidget,
+        reason: 'allowed contained dock exception',
+      );
+
+      await _openWork(tester);
+      for (final key in const ['mission-room-', 'room-task-ops-task-running']) {
+        final target = key == 'mission-room-'
+            ? find.text('#operations')
+            : find.byKey(ValueKey(key));
+        expect(target, findsOneWidget);
+        expect(
+          find.ancestor(of: target, matching: find.byType(HermesCard)),
+          findsNothing,
+          reason: 'accent-rail/unearthed-box/wrong-surface: $key',
+        );
+      }
     },
   );
 }

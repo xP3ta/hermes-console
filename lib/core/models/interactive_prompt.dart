@@ -352,11 +352,13 @@ abstract final class TerminalReadResponsePolicy {
 final class EphemeralSensitiveValue {
   String? _value;
   bool _disposed = false;
+  int _disposeAttempts = 0;
 
   EphemeralSensitiveValue(String value) : _value = value;
 
   bool get hasValue => !_disposed && _value != null;
   bool get isDisposed => _disposed;
+  int get disposeAttempts => _disposeAttempts;
 
   String take() {
     if (_disposed) {
@@ -375,6 +377,7 @@ final class EphemeralSensitiveValue {
   }
 
   void dispose() {
+    _disposeAttempts += 1;
     if (_disposed) return;
     redact();
     _disposed = true;

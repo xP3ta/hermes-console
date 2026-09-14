@@ -1,11 +1,11 @@
 # Privacy Policy — Hermes Console
 
-**Last updated:** 2026-08-23
+**Last updated:** 2026-09-03
 
-**Release scope:** `1.2.7 (915)`. This file is the canonical policy for the
+**Release scope:** `1.2.10 (4965)`. This file is the canonical policy for the
 candidate source. Before distribution, the deployed Spanish and English pages
 must match this revision and identify the same date. Deployment verification,
-the final signed AAB review and physical permission-flow QA are still pending;
+the final signed AAB review and emulator permission-flow QA are still pending;
 a responding URL alone is not release evidence.
 
 Hermes Console is a client app that connects to a Hermes Agent server that **you

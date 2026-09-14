@@ -1,31 +1,24 @@
-// Estado unificado de la instancia (Gateway / Dashboard / Mobile Bridge /
-// Agente local / Notificaciones), presentado como hoja inferior que se abre
-// al tocar la línea de estado del app bar de Home.
-//
-// Diseño deliberado: sondeo SOLO al abrir + botón ↻; cacheado en el estado de
-// la hoja; NUNCA en bucle. Sondear el bridge de forma agresiva puede despertar
-// Termux en instancias locales y dar falsos "offline".
-//
-// Reutiliza los caminos ya probados: ApiClient.healthCheck (gateway),
-// GET /api/status (dashboard / agente local), BridgeManager.probe (bridge),
-// NotificationService.permissionGranted (notificaciones). No promete
-// "conectado" si solo respondió otra pieza: cada fila refleja su propio sondeo.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../screens/local_instance_control_screen.dart';
+import '../screens/onboarding/server_setup_screen.dart';
+import '../services/bridge_client.dart';
 import '../services/bridge_manager.dart';
+import '../services/bridge_repair_service.dart';
+import '../services/bridge_update_service.dart';
 import '../services/connection_manager.dart';
 import '../services/notifications/notification_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/transport_privacy.dart';
 import 'hermes_premium_ui.dart';
 
-/// Abre la hoja inferior de estado para [connection]. Resuelve los servicios
-/// desde el [HermesAppState] del contexto que la invoca (no desde el árbol del
-/// modal), para no depender de dónde se monte la hoja.
+typedef StatusReachabilityProbe = Future<bool> Function(String url);
+
 Future<void> showInstanceStatusSheet(
   BuildContext context,
   SavedConnection connection,
@@ -36,7 +29,7 @@ Future<void> showInstanceStatusSheet(
     surfaceKey: const ValueKey('instance-status-surface'),
     maxWidth: 520,
     maxHeightFactor: 0.84,
-    builder: (_) => _InstanceStatusSheet(
+    builder: (_) => InstanceStatusPanel(
       connection: connection,
       bridgeManager: appState?.bridgeManager,
       notifications: appState?.notifications,
@@ -67,28 +60,38 @@ class _RawRow {
   const _RawRow(this.label, this.health, this.detail);
 }
 
-class _InstanceStatusSheet extends StatefulWidget {
+class InstanceStatusPanel extends StatefulWidget {
   final SavedConnection connection;
-  final BridgeManager? bridgeManager;
+  final BridgeManagerContract? bridgeManager;
   final NotificationService? notifications;
   final ConnectionManager? connManager;
+  final BridgeRepairUpdater? updater;
+  final StatusReachabilityProbe? reachable;
 
-  const _InstanceStatusSheet({
+  const InstanceStatusPanel({
+    super.key,
     required this.connection,
     required this.bridgeManager,
-    required this.notifications,
-    required this.connManager,
+    this.notifications,
+    this.connManager,
+    this.updater,
+    this.reachable,
   });
 
   @override
-  State<_InstanceStatusSheet> createState() => _InstanceStatusSheetState();
+  State<InstanceStatusPanel> createState() => _InstanceStatusPanelState();
 }
 
-class _InstanceStatusSheetState extends State<_InstanceStatusSheet> {
+class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
   bool _loading = false;
-  bool _provisioning = false; // habilitando el bridge (tryProvision)
-  bool _provisionFailed = false;
+  bool _repairing = false;
   List<_RawRow>? _rows;
+  BridgeState? _bridgeState;
+  BridgeRepairStage? _stage;
+  BridgeRepairResult? _repairResult;
+  int _generation = 0;
+
+  bool _current(int generation) => mounted && generation == _generation;
 
   @override
   void initState() {
@@ -96,158 +99,188 @@ class _InstanceStatusSheetState extends State<_InstanceStatusSheet> {
     _probe();
   }
 
-  /// Habilita el bridge bajo demanda: pide el token al gateway/dashboard
-  /// (`tryProvision`, best-effort) y vuelve a sondear. Cierra el caso de la
-  /// provisión silenciosa que falla tras instalar la instancia local: el
-  /// usuario lo ve "no habilitado" y lo arregla con un toque, sin pasos
-  /// manuales ni tocar el flujo de instalación.
-  Future<void> _provisionBridge() async {
-    final mgr = widget.bridgeManager;
-    if (mgr == null || _provisioning || _loading) return;
-    setState(() {
-      _provisioning = true;
-      _provisionFailed = false;
-    });
-    bool ok;
-    try {
-      ok = await mgr.tryProvision(widget.connection.id);
-    } catch (e) {
-      debugPrint(
-        '[instance-status] excepción silenciada (fallback: ok = false): $e',
-      );
-      ok = false;
-    }
-    if (!mounted) return;
-    setState(() {
-      _provisioning = false;
-      _provisionFailed = !ok;
-    });
-    await _probe();
-  }
-
-  /// Cuando la provisión falla en local, la causa suele ser token o proceso
-  /// caído: reiniciar el agente local re-despliega y re-arranca el bridge con
-  /// la key canónica. Cierra la hoja y abre el control de la instancia local.
-  void _openLocalControl() {
-    final mgr = widget.connManager;
-    if (mgr == null) return;
-    final navigator = Navigator.of(context);
-    navigator.pop();
-    navigator.push(
-      MaterialPageRoute(
-        builder: (_) => LocalInstanceControlScreen(
-          connection: widget.connection,
-          connManager: mgr,
-        ),
-      ),
-    );
+  @override
+  void dispose() {
+    _generation++;
+    super.dispose();
   }
 
   Future<void> _probe() async {
-    if (_loading) return;
+    if (_loading || _repairing) return;
+    final generation = ++_generation;
     setState(() => _loading = true);
-
     final conn = widget.connection;
     final isLocal = conn.kind == InstanceKind.localhost;
+
+    final firstFuture = _reachable(
+      isLocal
+          ? '${conn.effectiveDashboardUrl}/api/status'
+          : '${conn.gatewayUrl}/health',
+    );
+    final dashboardFuture = isLocal
+        ? null
+        : _reachable('${conn.effectiveDashboardUrl}/api/status');
+    final bridgeFuture = widget.bridgeManager
+        ?.probe(conn.id)
+        .timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => BridgeState.unknown,
+        );
+    final notificationFuture = widget.notifications?.permissionGranted();
+
+    final first = await firstFuture;
+    final dashboard = await dashboardFuture;
+    final bridge = await bridgeFuture;
+    final notifications = await notificationFuture;
+    if (!_current(generation)) return;
+
     final rows = <_RawRow>[];
-
-    // 1. Gateway / Agente local ────────────────────────────────────────────
-    if (isLocal) {
-      final ok = await _reachable('${conn.effectiveDashboardUrl}/api/status');
-      rows.add(
-        _RawRow(
-          _LabelKind.localAgent,
-          ok ? _Health.ok : _Health.bad,
-          ok ? _DetailKind.running : _DetailKind.stopped,
-        ),
-      );
-    } else {
-      // El panel solo indica "¿está vivo el servidor?", NO valida el token (de
-      // eso se encarga el alta de la conexión). Antes usaba `healthCheck()`
-      // estricto, que exige `/health`==200 Y `/api/sessions`==200; pero el
-      // dashboard responde **302** en `/health` (redirección a login), así que
-      // una instancia remota perfectamente viva —con el chat funcionando— salía
-      // como "offline". Un `/health` alcanzable (cualquier código < 500, incluido
-      // 302/401) significa que el servidor está ahí.
-      final gw = await _reachable('${conn.gatewayUrl}/health');
-      rows.add(
-        _RawRow(
-          _LabelKind.gateway,
-          gw ? _Health.ok : _Health.bad,
-          gw ? _DetailKind.connected : _DetailKind.offline,
-        ),
-      );
-
-      final dash = await _reachable('${conn.effectiveDashboardUrl}/api/status');
+    rows.add(
+      _RawRow(
+        isLocal ? _LabelKind.localAgent : _LabelKind.gateway,
+        first ? _Health.ok : _Health.bad,
+        isLocal
+            ? (first ? _DetailKind.running : _DetailKind.stopped)
+            : (first ? _DetailKind.connected : _DetailKind.offline),
+      ),
+    );
+    if (!isLocal) {
       rows.add(
         _RawRow(
           _LabelKind.dashboard,
-          dash ? _Health.ok : _Health.bad,
-          dash ? _DetailKind.connected : _DetailKind.offline,
+          dashboard == true ? _Health.ok : _Health.bad,
+          dashboard == true ? _DetailKind.connected : _DetailKind.offline,
         ),
       );
     }
-
-    // 2. Mobile Bridge ─────────────────────────────────────────────────────
-    if (widget.bridgeManager != null) {
-      // El Mobile Bridge es OPCIONAL y en instancias remotas (p.ej. la .40) casi
-      // nunca está desplegado: el puerto 9131 puede estar cerrado y, si el
-      // firewall DESCARTA los paquetes en vez de rechazarlos, el sondeo se cuelga
-      // hasta el timeout del socket. Como las filas se pintan en un único setState
-      // al final, ese cuelgue dejaba TODO el panel en "Comprobando…" sin mostrar
-      // nada. Acotamos el sondeo para que el panel siempre se renderice.
-      final st = await widget.bridgeManager!
-          .probe(conn.id)
-          .timeout(
-            const Duration(seconds: 6),
-            onTimeout: () => BridgeState.unknown,
-          );
-      final (_Health h, _DetailKind d) = switch (st.status) {
+    if (bridge != null) {
+      _bridgeState = bridge;
+      final mapped = switch (bridge.status) {
         BridgeStatus.connected => (_Health.ok, _DetailKind.connected),
         BridgeStatus.needsToken ||
         BridgeStatus.authFailed => (_Health.warn, _DetailKind.needsToken),
         _ => (_Health.unknown, _DetailKind.notEnabled),
       };
-      rows.add(_RawRow(_LabelKind.bridge, h, d));
+      rows.add(_RawRow(_LabelKind.bridge, mapped.$1, mapped.$2));
     }
-
-    // 3. Notificaciones ────────────────────────────────────────────────────
-    if (widget.notifications != null) {
-      final notif = await widget.notifications!.permissionGranted();
+    if (notifications != null) {
       rows.add(
         _RawRow(
           _LabelKind.notifications,
-          notif ? _Health.ok : _Health.warn,
-          notif ? _DetailKind.enabled : _DetailKind.disabled,
+          notifications ? _Health.ok : _Health.warn,
+          notifications ? _DetailKind.enabled : _DetailKind.disabled,
         ),
       );
     }
-
-    if (!mounted) return;
     setState(() {
       _rows = rows;
       _loading = false;
     });
   }
 
-  /// GET de solo lectura: responde (cualquier código) ⇒ alcanzable.
+  Future<void> _repair() async {
+    final manager = widget.bridgeManager;
+    final initial = _bridgeState;
+    if (manager == null || initial == null || _repairing) return;
+    final generation = ++_generation;
+    setState(() {
+      _repairing = true;
+      _stage = BridgeRepairStage.contacting;
+      _repairResult = null;
+    });
+    // Let the immediate contacting state reach the screen before any synchronous
+    // stage callback advances the repair workflow.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!_current(generation)) return;
+    final updater = widget.updater ?? _defaultUpdater;
+    final service = BridgeRepairService(manager: manager, updater: updater);
+    final result = await service.repair(
+      widget.connection,
+      initial: initial,
+      onStage: (stage) {
+        if (_current(generation)) setState(() => _stage = stage);
+      },
+    );
+    if (!_current(generation)) return;
+    setState(() {
+      _repairing = false;
+      _stage = null;
+      _repairResult = result;
+      if (result.success) {
+        _bridgeState = BridgeState(
+          status: BridgeStatus.connected,
+          url: '',
+          urlIsDerived: true,
+          hasToken: true,
+          caps: const BridgeCapabilities(online: true, authValid: true),
+        );
+        final index =
+            _rows?.indexWhere((row) => row.label == _LabelKind.bridge) ?? -1;
+        if (index >= 0) {
+          _rows![index] = const _RawRow(
+            _LabelKind.bridge,
+            _Health.ok,
+            _DetailKind.connected,
+          );
+        }
+      }
+    });
+  }
+
+  Future<BridgeUpdateResult> _defaultUpdater(
+    SavedConnection connection, {
+    void Function(BridgeRepairStage stage)? onProgress,
+  }) => BridgeUpdateService.update(
+    connection,
+    forceRemoteRepair: true,
+    onProgress: (_) => onProgress?.call(BridgeRepairStage.restarting),
+    verificationTimeout: const Duration(seconds: 24),
+    verificationRetryDelay: const Duration(seconds: 2),
+  );
+
   Future<bool> _reachable(String url) async {
+    final injected = widget.reachable;
+    if (injected != null) return injected(url);
     final client = http.Client();
     try {
       final safeUrl = TransportPrivacy.requireAllowed(url);
-      final res = await client
+      final response = await client
           .get(Uri.parse(safeUrl))
           .timeout(const Duration(seconds: 6));
-      return res.statusCode >= 200 && res.statusCode < 500;
-    } catch (e) {
-      debugPrint('[instance-status] excepción silenciada (se asume false): $e');
+      return response.statusCode >= 200 && response.statusCode < 500;
+    } catch (_) {
       return false;
     } finally {
       client.close();
     }
   }
 
-  String _labelText(_LabelKind k, Strings s) => switch (k) {
+  void _openLocalControl() {
+    final manager = widget.connManager;
+    if (manager == null) return;
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => LocalInstanceControlScreen(
+          connection: widget.connection,
+          connManager: manager,
+        ),
+      ),
+    );
+  }
+
+  void _openManualSetup() {
+    final manager = widget.connManager;
+    if (manager == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ServerSetupScreen(connManager: manager),
+      ),
+    );
+  }
+
+  String _label(_LabelKind kind, Strings s) => switch (kind) {
     _LabelKind.gateway => 'Gateway',
     _LabelKind.dashboard => 'Dashboard',
     _LabelKind.bridge => 'Mobile Bridge',
@@ -255,7 +288,7 @@ class _InstanceStatusSheetState extends State<_InstanceStatusSheet> {
     _LabelKind.notifications => s.statusNotifications,
   };
 
-  String _detailText(_DetailKind k, Strings s) => switch (k) {
+  String _detail(_DetailKind kind, Strings s) => switch (kind) {
     _DetailKind.connected => s.statusConnected,
     _DetailKind.offline => s.statusOffline,
     _DetailKind.notEnabled => s.statusNotEnabled,
@@ -264,6 +297,36 @@ class _InstanceStatusSheetState extends State<_InstanceStatusSheet> {
     _DetailKind.stopped => s.statusStopped,
     _DetailKind.enabled => s.statusEnabled,
     _DetailKind.disabled => s.statusDisabled,
+  };
+
+  String _stageText(Strings s) => switch (_stage) {
+    BridgeRepairStage.contacting => s.statusBridgeContacting,
+    BridgeRepairStage.reprovisioning => s.statusBridgeReprovisioning,
+    BridgeRepairStage.installing ||
+    BridgeRepairStage.restarting => s.statusBridgeInstalling,
+    BridgeRepairStage.verifying => s.statusBridgeVerifying,
+    null => '',
+  };
+
+  String _failureText(
+    BridgeRepairFailure failure,
+    Strings s,
+  ) => switch (failure) {
+    BridgeRepairFailure.timeout => s.statusBridgeErrorTimeout,
+    BridgeRepairFailure.unreachable => s.statusBridgeErrorUnreachable,
+    BridgeRepairFailure.tls => s.statusBridgeErrorTls,
+    BridgeRepairFailure.authRejected => s.statusBridgeErrorAuth,
+    BridgeRepairFailure.provisionDisabled =>
+      s.statusBridgeErrorProvisionDisabled,
+    BridgeRepairFailure.unexpectedHttp => s.statusBridgeErrorHttp,
+    BridgeRepairFailure.invalidResponse => s.statusBridgeErrorInvalidResponse,
+    BridgeRepairFailure.secureStorage => s.statusBridgeErrorStorage,
+    BridgeRepairFailure.repairUnsupported => s.statusBridgeErrorUnsupported,
+    BridgeRepairFailure.repairFailed => s.statusBridgeErrorFailed,
+    BridgeRepairFailure.verificationFailed => s.statusBridgeErrorVerification,
+    BridgeRepairFailure.readOnly => s.statusBridgeErrorReadOnly,
+    BridgeRepairFailure.missingApiKey => s.statusBridgeErrorMissingKey,
+    BridgeRepairFailure.localControlRequired => s.statusBridgeLocalControl,
   };
 
   @override
@@ -291,217 +354,157 @@ class _InstanceStatusSheetState extends State<_InstanceStatusSheet> {
                   ),
                 ),
                 if (_loading)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  const SizedBox.square(
+                    dimension: 24,
+                    child: Padding(
+                      padding: EdgeInsets.all(4),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   )
                 else
                   IconButton(
                     icon: const Icon(Icons.refresh, size: 18),
                     tooltip: s.statusRefresh,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(),
-                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(
+                      minWidth: 48,
+                      minHeight: 48,
+                    ),
                     color: colors.accentHover,
-                    onPressed: _probe,
+                    onPressed: _repairing ? null : _probe,
                   ),
               ],
             ),
-            const SizedBox(height: 10),
             if (_rows == null && _loading)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  s.statusChecking,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
+                child: Text(s.statusChecking),
               )
             else
-              for (final r in _rows ?? const <_RawRow>[])
-                _rowTile(r, colors, s),
+              for (final row in _rows ?? const <_RawRow>[])
+                _rowTile(row, colors, s),
           ],
         ),
       ),
     );
   }
 
-  Widget _rowTile(_RawRow r, HermesThemeColors colors, Strings s) {
-    final (IconData icon, Color color) = switch (r.health) {
+  Widget _rowTile(_RawRow row, HermesThemeColors colors, Strings s) {
+    final mapped = switch (row.health) {
       _Health.ok => (Icons.circle, colors.success),
       _Health.warn => (Icons.circle, colors.warning),
       _Health.bad => (Icons.circle, colors.error),
       _Health.unknown => (Icons.circle_outlined, colors.textSecondary),
     };
+    final bridge = row.label == _LabelKind.bridge;
+    final down = bridge && row.health != _Health.ok;
+    final local = widget.connection.kind == InstanceKind.localhost;
+    final result = bridge ? _repairResult : null;
 
-    final isLocal = widget.connection.kind == InstanceKind.localhost;
-    final isBridge = r.label == _LabelKind.bridge;
-    final bridgeDown = isBridge && r.health != _Health.ok;
-
-    // En LOCAL el bridge no conectado se intenta habilitar in situ (provisión);
-    // si ya falló, se ofrece reiniciar el agente. En REMOTO no hay instalador:
-    // solo una nota de que corre en el servidor.
-    final canProvision =
-        bridgeDown &&
-        isLocal &&
-        widget.bridgeManager != null &&
-        !_provisionFailed;
-    final canRestart =
-        bridgeDown && isLocal && _provisionFailed && widget.connManager != null;
-    // REMOTO: no podemos reiniciar un proceso en el servidor, pero sí
-    // "reparar" el enlace re-provisionando el token con la API key del gateway
-    // (el fallo típico: el bridge corre en el servidor pero el token de la app
-    // está caducado/ausente). Análogo al reparador de las instancias locales.
-    final canRepairRemote =
-        bridgeDown &&
-        !isLocal &&
-        widget.bridgeManager != null &&
-        widget.connection.apiKey.trim().isNotEmpty;
-
-    final Widget trailing;
-    if (canProvision && _provisioning) {
-      trailing = Text(
-        s.statusBridgeEnabling,
-        style: TextStyle(fontSize: 12, color: colors.accentHover),
-      );
-    } else if (canProvision) {
-      trailing = Text(
-        s.statusBridgeEnable,
-        style: TextStyle(fontSize: 12, color: colors.accentHover),
-      );
-    } else if (bridgeDown && isLocal && _provisionFailed) {
-      trailing = Text(
-        s.statusBridgeFailed,
-        style: TextStyle(fontSize: 12, color: colors.warning),
-      );
-    } else {
-      trailing = Text(
-        _detailText(r.detail, s),
-        style: TextStyle(fontSize: 12, color: colors.textSecondary),
-      );
-    }
-
-    final mainRow = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, size: 11, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              _labelText(r.label, s),
-              style: const TextStyle(fontSize: 13),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Row(
+              children: [
+                Icon(mapped.$1, size: 11, color: mapped.$2),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _label(row.label, s),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                Text(
+                  _detail(row.detail, s),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ],
             ),
           ),
-          trailing,
-          if (canProvision) ...[
-            const SizedBox(width: 4),
-            Icon(Icons.chevron_right, size: 16, color: colors.accentHover),
+          if (down || result != null) ...[
+            if (_repairing && bridge)
+              Semantics(
+                liveRegion: true,
+                label: _stageText(s),
+                child: Row(
+                  children: [
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_stageText(s))),
+                  ],
+                ),
+              )
+            else if (result?.success == true)
+              Semantics(
+                liveRegion: true,
+                child: Text(s.statusBridgeRepairSuccess),
+              )
+            else if (result?.category != null)
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _failureText(result!.category!, s),
+                  style: TextStyle(color: colors.error),
+                ),
+              ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (!_repairing && !local)
+                  Semantics(
+                    button: true,
+                    label: result == null
+                        ? s.statusBridgeRepair
+                        : s.statusBridgeRetry,
+                    child: FilledButton.tonal(
+                      onPressed: widget.connection.readOnly ? null : _repair,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                      ),
+                      child: Text(
+                        result == null
+                            ? s.statusBridgeRepair
+                            : s.statusBridgeRetry,
+                      ),
+                    ),
+                  ),
+                if (!_repairing && local)
+                  FilledButton.tonal(
+                    onPressed: _bridgeState?.running == true
+                        ? _repair
+                        : _openLocalControl,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    child: Text(
+                      _bridgeState?.running == true
+                          ? s.statusBridgeRepair
+                          : s.statusBridgeLocalControl,
+                    ),
+                  ),
+                if (!_repairing && result?.manualAction == true)
+                  OutlinedButton(
+                    onPressed: widget.connManager == null
+                        ? null
+                        : _openManualSetup,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    child: Text(s.statusBridgeManualSetup),
+                  ),
+              ],
+            ),
           ],
         ],
       ),
-    );
-
-    final row = canProvision
-        ? InkWell(
-            onTap: _provisioning ? null : _provisionBridge,
-            child: mainRow,
-          )
-        : mainRow;
-
-    // Sub-línea: acción de reinicio (local, tras fallo) o nota de servidor
-    // (remoto). Si no aplica, devolvemos solo la fila.
-    Widget? sub;
-    if (canRestart) {
-      sub = Padding(
-        padding: const EdgeInsets.only(left: 21, bottom: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InkWell(
-              onTap: _openLocalControl,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.restart_alt,
-                      size: 15,
-                      color: colors.accentHover,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      s.statusBridgeRestart,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: colors.accentHover,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Text(
-              s.statusBridgeRestartHint,
-              style: TextStyle(fontSize: 11, color: colors.textSecondary),
-            ),
-          ],
-        ),
-      );
-    } else if (bridgeDown && !isLocal) {
-      final repairing = _provisioning;
-      sub = Padding(
-        padding: const EdgeInsets.only(left: 21, bottom: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (canRepairRemote)
-              InkWell(
-                onTap: repairing ? null : _provisionBridge,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        repairing ? Icons.hourglass_top : Icons.healing,
-                        size: 15,
-                        color: colors.accentHover,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        repairing
-                            ? s.statusBridgeRepairing
-                            : s.statusBridgeRepair,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: colors.accentHover,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            Text(
-              // Tras un intento fallido, la causa ya no es el token: el bridge
-              // no está desplegado en el servidor.
-              _provisionFailed
-                  ? s.statusBridgeServerHint
-                  : s.statusBridgeRepairHint,
-              style: TextStyle(fontSize: 11, color: colors.textSecondary),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (sub == null) return row;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [row, sub],
     );
   }
 }

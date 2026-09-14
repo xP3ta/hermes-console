@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'dart:collection';
 
 import '../models/session.dart';
-import '../models/session_category.dart';
 
 typedef DeleteRemoteSession = Future<bool> Function(String sessionId);
 typedef DeleteLinkedCronJob = Future<void> Function(String jobId);
@@ -9,8 +9,715 @@ typedef LoadSessionsForDeletion =
     Future<List<Session>> Function({bool includeChildren});
 typedef ClearLocalSessionRecovery = Future<void> Function(String sessionId);
 typedef ClearConnectionConversationState = Future<int> Function();
+typedef ClearProfileConversationState =
+    Future<int> Function({required String profile});
 
-enum HistoryCleanupScope { normalConversations, cronResults }
+class LocalConversationWriteRejected implements Exception {
+  const LocalConversationWriteRejected();
+}
+
+enum LocalConversationOperationKind {
+  save,
+  clearExact,
+  clearSelector,
+  transfer,
+  retireOwner,
+  projection,
+}
+
+/// Structured identity of one irreversible local-storage effect.
+final class LocalConversationResourceKey {
+  final String connectionId;
+  final String profile;
+  final String sessionId;
+  final String? clientTurnId;
+  final String physicalKey;
+
+  const LocalConversationResourceKey({
+    required this.connectionId,
+    required this.profile,
+    required this.sessionId,
+    this.clientTurnId,
+    required this.physicalKey,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is LocalConversationResourceKey &&
+      other.connectionId == connectionId &&
+      other.profile == profile &&
+      other.sessionId == sessionId &&
+      other.clientTurnId == clientTurnId &&
+      other.physicalKey == physicalKey;
+
+  @override
+  int get hashCode =>
+      Object.hash(connectionId, profile, sessionId, clientTurnId, physicalKey);
+}
+
+final class _LocalConversationEffectReceipt {
+  bool delivered = false;
+  bool confirmed = false;
+  final Completer<void> settled = Completer<void>();
+}
+
+/// Admission token and journal root for one local operation.
+final class LocalConversationOperation {
+  final String operationId;
+  final int admissionSequence;
+  final String connectionId;
+  final String profile;
+  final String sessionId;
+  final String? clientTurnId;
+  final LocalConversationOperationKind kind;
+  final String? _physicalKeyPrefix;
+  final LocalConversationLifecycle? _lifecycle;
+  final int _admittedEpoch;
+  final Set<LocalConversationResourceKey> _resources;
+  final Map<LocalConversationResourceKey, _LocalConversationEffectReceipt>
+  _effects = {};
+  final Completer<void> _settled = Completer<void>();
+  bool _superseded = false;
+
+  LocalConversationOperation._({
+    required this.operationId,
+    required this.admissionSequence,
+    required this.connectionId,
+    required this.profile,
+    required this.sessionId,
+    required this.clientTurnId,
+    required this.kind,
+    this._physicalKeyPrefix,
+    required this._lifecycle,
+    required this._admittedEpoch,
+    required Iterable<LocalConversationResourceKey> resources,
+  }) : _resources = Set.unmodifiable(resources);
+
+  bool _selectsResource(LocalConversationResourceKey resource) =>
+      resource.connectionId == connectionId &&
+      resource.sessionId == sessionId &&
+      (_physicalKeyPrefix == null ||
+          resource.physicalKey.startsWith(_physicalKeyPrefix));
+}
+
+typedef _LocalConversationScope = ({String connectionId, String profile});
+
+final class LocalConversationLifecycle {
+  final String connectionId;
+  final String profile;
+  final String sessionId;
+  final Set<String> _sessionAliases;
+  final int _epoch;
+  bool _acceptingWrites = true;
+
+  LocalConversationLifecycle._({
+    required this.connectionId,
+    required this.profile,
+    required this.sessionId,
+    required Set<String> sessionAliases,
+    required this._epoch,
+  }) : _sessionAliases = Set.of(sessionAliases);
+
+  bool _authorizesSession(String candidate) =>
+      candidate == sessionId || _sessionAliases.contains(candidate);
+}
+
+final class _LocalConversationScopeState {
+  int epoch = 0;
+  bool blocked = false;
+  int pendingCleanups = 0;
+  final Map<String, LocalConversationLifecycle> currentOwners = {};
+  final Set<LocalConversationLifecycle> rehydrated = {};
+}
+
+final class _LocalCleanupContext {
+  final String connectionId;
+  final String? profile;
+  bool active = true;
+
+  _LocalCleanupContext.profile(this.connectionId, this.profile);
+
+  _LocalCleanupContext.connection(this.connectionId) : profile = null;
+
+  bool coversProfile(String connection, String owner) =>
+      active &&
+      connectionId == connection &&
+      (profile == null || profile == owner);
+
+  bool coversConnection(String connection) =>
+      active && connectionId == connection && profile == null;
+}
+
+abstract final class LocalConversationCleanupFence {
+  static final Map<_LocalConversationScope, _LocalConversationScopeState>
+  _states = {};
+  static final Set<String> _blockedConnections = {};
+  static final Map<String, int> _pendingConnectionCleanups = {};
+  static final Queue<Future<void> Function()> _operations = Queue();
+  static bool _operationRunning = false;
+  static final Object _cleanupZoneKey = Object();
+  static int _nextOperationSequence = 0;
+  static final List<LocalConversationOperation> _operationJournal = [];
+  static final Map<LocalConversationResourceKey, int> _confirmedVersions = {};
+
+  static String _owner(String profile) => profile.isEmpty ? 'default' : profile;
+
+  static _LocalConversationScope _scope(String connectionId, String profile) =>
+      (connectionId: connectionId, profile: _owner(profile));
+
+  static _LocalConversationScopeState _stateFor(_LocalConversationScope scope) {
+    final state = _states.putIfAbsent(scope, _LocalConversationScopeState.new);
+    if (_blockedConnections.contains(scope.connectionId)) state.blocked = true;
+    return state;
+  }
+
+  static bool _connectionIsCleaning(String connectionId) =>
+      (_pendingConnectionCleanups[connectionId] ?? 0) > 0;
+
+  static LocalConversationLifecycle beginLifecycle({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    Iterable<String> sessionAliases = const [],
+  }) {
+    final owner = _owner(profile);
+    final state = _stateFor(_scope(connectionId, owner));
+    final lifecycle = LocalConversationLifecycle._(
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: sessionId,
+      sessionAliases: {
+        for (final alias in sessionAliases)
+          if (alias.isNotEmpty) alias,
+      },
+      epoch: state.epoch,
+    );
+    for (final destination in {sessionId, ...lifecycle._sessionAliases}) {
+      state.currentOwners[destination] = lifecycle;
+    }
+    return lifecycle;
+  }
+
+  /// Extend an existing producer only after its create RPC proved the new ID.
+  /// This does not replace/revive a lifecycle or steal a destination owner.
+  static void authorizeCreatedSession(
+    LocalConversationLifecycle lifecycle,
+    String createdSessionId,
+  ) {
+    ensureWriteAllowed(
+      connectionId: lifecycle.connectionId,
+      profile: lifecycle.profile,
+      sessionId: lifecycle.sessionId,
+      lifecycle: lifecycle,
+    );
+    final state = _states[_scope(lifecycle.connectionId, lifecycle.profile)]!;
+    final owner = state.currentOwners[createdSessionId];
+    // A replacement screen may inherit this exact provisional route while its
+    // ActiveChat preserves the create receipt. Transfer only from the retired
+    // owner of that same provisional identity; never from a live owner or a
+    // different route/profile/connection.
+    final replaceRetiredSameRoute =
+        owner != null &&
+        !owner._acceptingWrites &&
+        owner.sessionId == lifecycle.sessionId &&
+        owner._authorizesSession(createdSessionId);
+    if (createdSessionId.isEmpty ||
+        (owner != null &&
+            !identical(owner, lifecycle) &&
+            !replaceRetiredSameRoute)) {
+      throw const LocalConversationWriteRejected();
+    }
+    lifecycle._sessionAliases.add(createdSessionId);
+    state.currentOwners[createdSessionId] = lifecycle;
+  }
+
+  static void endLifecycle(LocalConversationLifecycle lifecycle) {
+    lifecycle._acceptingWrites = false;
+  }
+
+  static LocalConversationLifecycle? currentLifecycle({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+  }) {
+    final lifecycle =
+        _states[_scope(connectionId, profile)]?.currentOwners[sessionId];
+    return lifecycle?._acceptingWrites == true ? lifecycle : null;
+  }
+
+  static bool rehydrate(LocalConversationLifecycle lifecycle) {
+    final state = _states[_scope(lifecycle.connectionId, lifecycle.profile)];
+    if (state == null ||
+        !lifecycle._acceptingWrites ||
+        state.pendingCleanups > 0 ||
+        _connectionIsCleaning(lifecycle.connectionId) ||
+        state.epoch != lifecycle._epoch ||
+        !identical(state.currentOwners[lifecycle.sessionId], lifecycle) ||
+        lifecycle.sessionId.trim().isEmpty) {
+      return false;
+    }
+    state.rehydrated.add(lifecycle);
+    return true;
+  }
+
+  static void ensureWriteAllowed({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    required LocalConversationLifecycle lifecycle,
+  }) {
+    final owner = _owner(profile);
+    final scope = _scope(connectionId, owner);
+    final state = _states[scope];
+    if (connectionId != lifecycle.connectionId ||
+        owner != lifecycle.profile ||
+        !lifecycle._authorizesSession(sessionId) ||
+        !lifecycle._acceptingWrites ||
+        state == null ||
+        state.pendingCleanups != 0 ||
+        _connectionIsCleaning(connectionId) ||
+        state.epoch != lifecycle._epoch ||
+        !identical(state.currentOwners[sessionId], lifecycle) ||
+        (state.blocked && !state.rehydrated.contains(lifecycle)) ||
+        (_blockedConnections.contains(connectionId) &&
+            !state.rehydrated.contains(lifecycle))) {
+      throw const LocalConversationWriteRejected();
+    }
+  }
+
+  static LocalConversationOperation admitOperation({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    String? clientTurnId,
+    LocalConversationLifecycle? lifecycle,
+    required LocalConversationOperationKind kind,
+    Iterable<LocalConversationResourceKey> resources = const [],
+  }) {
+    final owner = _owner(profile);
+    final state = _stateFor(_scope(connectionId, owner));
+    if (lifecycle != null) {
+      ensureWriteAllowed(
+        connectionId: connectionId,
+        profile: owner,
+        sessionId: sessionId,
+        lifecycle: lifecycle,
+      );
+    } else if (state.pendingCleanups != 0 ||
+        _connectionIsCleaning(connectionId) ||
+        state.blocked ||
+        _blockedConnections.contains(connectionId)) {
+      throw const LocalConversationWriteRejected();
+    }
+    final sequence = ++_nextOperationSequence;
+    final operation = LocalConversationOperation._(
+      operationId: 'local-operation-$sequence',
+      admissionSequence: sequence,
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: sessionId,
+      clientTurnId: clientTurnId,
+      kind: kind,
+      lifecycle: lifecycle,
+      admittedEpoch: lifecycle?._epoch ?? state.epoch,
+      resources: resources,
+    );
+    _operationJournal.add(operation);
+    return operation;
+  }
+
+  static LocalConversationOperation admitSessionClear({
+    required String connectionId,
+    required String sessionId,
+    String? physicalKeyPrefix,
+  }) {
+    final sequence = ++_nextOperationSequence;
+    final clear = LocalConversationOperation._(
+      operationId: 'local-operation-$sequence',
+      admissionSequence: sequence,
+      connectionId: connectionId,
+      profile: '',
+      sessionId: sessionId,
+      clientTurnId: null,
+      kind: LocalConversationOperationKind.clearSelector,
+      physicalKeyPrefix: physicalKeyPrefix,
+      lifecycle: null,
+      admittedEpoch: 0,
+      resources: const [],
+    );
+    _operationJournal.add(clear);
+    for (final operation in _operationJournal) {
+      if (identical(operation, clear) ||
+          operation.admissionSequence >= sequence ||
+          operation.connectionId != connectionId ||
+          operation.sessionId != sessionId ||
+          (physicalKeyPrefix != null &&
+              !operation._resources.any(clear._selectsResource)) ||
+          operation.kind != LocalConversationOperationKind.save) {
+        continue;
+      }
+      if (!operation._effects.values.any((effect) => effect.delivered)) {
+        operation._superseded = true;
+      }
+    }
+    return clear;
+  }
+
+  /// Retained confirmed content can outlive its producer, but not a cleanup.
+  /// This is a projection predicate, never permission to deliver a new effect.
+  static bool confirmedProjectionSurvivesCleanup(
+    LocalConversationOperation operation,
+  ) {
+    final state = _states[_scope(operation.connectionId, operation.profile)];
+    return state != null &&
+        state.epoch == operation._admittedEpoch &&
+        state.pendingCleanups == 0 &&
+        !_connectionIsCleaning(operation.connectionId);
+  }
+
+  /// Whether cleanup advanced the operation's scope after admission. Lifecycle
+  /// retirement alone is deliberately not a cleanup and must not erase a
+  /// physical effect that was already handed to storage.
+  static bool wasInvalidatedByCleanup(LocalConversationOperation operation) {
+    final state = _states[_scope(operation.connectionId, operation.profile)];
+    return state != null && state.epoch != operation._admittedEpoch;
+  }
+
+  static void ensureOperationAllowed(LocalConversationOperation operation) {
+    if (operation._lifecycle == null &&
+        (operation.kind == LocalConversationOperationKind.clearSelector ||
+            operation.kind == LocalConversationOperationKind.clearExact)) {
+      return;
+    }
+    final state = _states[_scope(operation.connectionId, operation.profile)];
+    final lifecycle = operation._lifecycle;
+    if (state == null ||
+        state.pendingCleanups != 0 ||
+        _connectionIsCleaning(operation.connectionId) ||
+        state.epoch != operation._admittedEpoch ||
+        (state.blocked &&
+            (lifecycle == null || !state.rehydrated.contains(lifecycle))) ||
+        (_blockedConnections.contains(operation.connectionId) &&
+            (lifecycle == null || !state.rehydrated.contains(lifecycle)))) {
+      throw const LocalConversationWriteRejected();
+    }
+    if (lifecycle != null) {
+      ensureWriteAllowed(
+        connectionId: operation.connectionId,
+        profile: operation.profile,
+        sessionId: operation.sessionId,
+        lifecycle: lifecycle,
+      );
+    }
+  }
+
+  /// Final authorization and handoff share one synchronous turn.
+  static Future<bool> commitEffect({
+    required LocalConversationOperation operation,
+    required LocalConversationResourceKey resource,
+    required Future<void> Function() mutation,
+  }) async {
+    ensureOperationAllowed(operation);
+    if (operation._superseded) return false;
+    if (!operation._selectsResource(resource) ||
+        (operation.kind != LocalConversationOperationKind.clearSelector &&
+            (resource.profile != operation.profile ||
+                resource.clientTurnId != operation.clientTurnId))) {
+      throw const LocalConversationWriteRejected();
+    }
+    if (operation._resources.isNotEmpty &&
+        !operation._resources.contains(resource)) {
+      throw StateError('Effect is outside the admitted write-set');
+    }
+    final receipt = operation._effects.putIfAbsent(
+      resource,
+      _LocalConversationEffectReceipt.new,
+    );
+    if (receipt.delivered) {
+      throw StateError('Local conversation effect was already delivered');
+    }
+    receipt.delivered = true;
+    try {
+      await mutation();
+      receipt.confirmed = true;
+      _confirmedVersions[resource] = operation.admissionSequence;
+      return true;
+    } finally {
+      if (!receipt.settled.isCompleted) receipt.settled.complete();
+    }
+  }
+
+  static Future<void> settleDeliveredEffectsBefore(
+    LocalConversationOperation clear,
+  ) async {
+    final pending = <Future<void>>[];
+    for (final operation in _operationJournal) {
+      if (operation.admissionSequence >= clear.admissionSequence ||
+          operation.connectionId != clear.connectionId ||
+          operation.sessionId != clear.sessionId) {
+        continue;
+      }
+      for (final entry in operation._effects.entries) {
+        if (!clear._selectsResource(entry.key)) continue;
+        final effect = entry.value;
+        if (effect.delivered && !effect.settled.isCompleted) {
+          pending.add(effect.settled.future);
+        }
+      }
+    }
+    if (pending.isNotEmpty) await Future.wait(pending);
+  }
+
+  static Iterable<LocalConversationResourceKey> resourcesBefore(
+    LocalConversationOperation clear,
+  ) sync* {
+    for (final operation in _operationJournal) {
+      if (operation.admissionSequence >= clear.admissionSequence ||
+          operation.connectionId != clear.connectionId ||
+          operation.sessionId != clear.sessionId) {
+        continue;
+      }
+      yield* operation._resources.where(clear._selectsResource);
+    }
+  }
+
+  static bool hasConfirmedCommitAfter(
+    LocalConversationResourceKey resource,
+    int cutoff,
+  ) => (_confirmedVersions[resource] ?? 0) > cutoff;
+
+  static void completeOperation(LocalConversationOperation operation) {
+    if (!operation._settled.isCompleted) operation._settled.complete();
+  }
+
+  static Future<void> waitForSessionClears({
+    required String connectionId,
+    required String sessionId,
+  }) async {
+    final pending = _operationJournal
+        .where(
+          (operation) =>
+              operation.kind == LocalConversationOperationKind.clearSelector &&
+              operation.connectionId == connectionId &&
+              operation.sessionId == sessionId &&
+              !operation._settled.isCompleted,
+        )
+        .map((operation) => operation._settled.future)
+        .toList(growable: false);
+    if (pending.isNotEmpty) await Future.wait(pending);
+  }
+
+  static Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final completer = Completer<T>();
+    _operations.add(() async {
+      try {
+        completer.complete(await operation());
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    _drain();
+    return completer.future;
+  }
+
+  static void _drain() {
+    if (_operationRunning || _operations.isEmpty) return;
+    _operationRunning = true;
+    final operation = _operations.removeFirst();
+    Future<void>.sync(operation).whenComplete(() {
+      _operationRunning = false;
+      _drain();
+    });
+  }
+
+  static Future<T> write<T>({
+    String? connectionId,
+    String? profile,
+    String? sessionId,
+    LocalConversationLifecycle? lifecycle,
+    LocalConversationOperation? admittedOperation,
+    required Future<T> Function() operation,
+  }) {
+    final connection = connectionId ?? lifecycle?.connectionId ?? '';
+    final owner = _owner(profile ?? lifecycle?.profile ?? '');
+    final session = sessionId ?? lifecycle?.sessionId ?? '';
+    if (lifecycle != null &&
+        ((connectionId != null && connection != lifecycle.connectionId) ||
+            (profile != null && owner != lifecycle.profile) ||
+            (sessionId != null && !lifecycle._authorizesSession(session)))) {
+      return Future<T>.error(const LocalConversationWriteRejected());
+    }
+    final scope = _scope(connection, owner);
+    final state = _stateFor(scope);
+    final admittedEpoch = lifecycle?._epoch ?? state.epoch;
+    bool ownerIsValid(_LocalConversationScopeState candidate) =>
+        lifecycle == null ||
+        identical(candidate.currentOwners[session], lifecycle);
+    bool cleanupIsInactive(_LocalConversationScopeState candidate) =>
+        candidate.pendingCleanups == 0 && !_connectionIsCleaning(connection);
+    bool blockedWriteIsAuthorized(_LocalConversationScopeState candidate) =>
+        (!candidate.blocked && !_blockedConnections.contains(connection)) ||
+        (lifecycle != null && candidate.rehydrated.contains(lifecycle));
+    bool lifecycleIsActive() => lifecycle?._acceptingWrites != false;
+    if (!lifecycleIsActive() ||
+        !cleanupIsInactive(state) ||
+        state.epoch != admittedEpoch ||
+        !ownerIsValid(state) ||
+        !blockedWriteIsAuthorized(state)) {
+      return Future<T>.error(const LocalConversationWriteRejected());
+    }
+    late final LocalConversationOperation journalOperation;
+    try {
+      journalOperation =
+          admittedOperation ??
+          admitOperation(
+            connectionId: connection,
+            profile: owner,
+            sessionId: session,
+            lifecycle: lifecycle,
+            kind: LocalConversationOperationKind.save,
+          );
+    } catch (error, stackTrace) {
+      return Future<T>.error(error, stackTrace);
+    }
+    return _enqueue(() {
+      final current = _states[scope];
+      if (current == null ||
+          !lifecycleIsActive() ||
+          !cleanupIsInactive(current) ||
+          current.epoch != admittedEpoch ||
+          !ownerIsValid(current) ||
+          !blockedWriteIsAuthorized(current)) {
+        throw const LocalConversationWriteRejected();
+      }
+      ensureOperationAllowed(journalOperation);
+      return operation();
+    });
+  }
+
+  static _LocalCleanupContext? get _cleanupContext =>
+      Zone.current[_cleanupZoneKey] as _LocalCleanupContext?;
+
+  static Future<T>? _nestedProfileCleanup<T>({
+    required String connectionId,
+    required String profile,
+    required Future<T> Function() operation,
+  }) {
+    final context = _cleanupContext;
+    if (context == null || !context.active) return null;
+    if (context.coversProfile(connectionId, profile)) return operation();
+    return Future<T>.error(
+      StateError('Nested cleanup scope is not covered by its parent'),
+    );
+  }
+
+  static Future<T> cleanupProfile<T>({
+    required String connectionId,
+    required String profile,
+    required Future<T> Function() operation,
+  }) {
+    final owner = _owner(profile);
+    final nested = _nestedProfileCleanup(
+      connectionId: connectionId,
+      profile: owner,
+      operation: operation,
+    );
+    if (nested != null) return nested;
+    final state = _stateFor(_scope(connectionId, owner));
+    state.epoch++;
+    state
+      ..blocked = true
+      ..rehydrated.clear();
+    state.pendingCleanups++;
+    final context = _LocalCleanupContext.profile(connectionId, owner);
+    return _enqueue(() async {
+      try {
+        return await runZoned(
+          operation,
+          zoneValues: {_cleanupZoneKey: context},
+        );
+      } finally {
+        context.active = false;
+        state.pendingCleanups--;
+        if (state.pendingCleanups == 0 &&
+            !_connectionIsCleaning(connectionId) &&
+            state.currentOwners.isEmpty) {
+          state.blocked = false;
+        }
+      }
+    });
+  }
+
+  static Future<T> cleanupConnection<T>({
+    required String connectionId,
+    required Future<T> Function() operation,
+  }) {
+    final parent = _cleanupContext;
+    if (parent != null && parent.active) {
+      if (parent.coversConnection(connectionId)) return operation();
+      return Future<T>.error(
+        StateError('Nested cleanup scope is not covered by its parent'),
+      );
+    }
+    _blockedConnections.add(connectionId);
+    _pendingConnectionCleanups.update(
+      connectionId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    for (final entry in _states.entries.where(
+      (entry) => entry.key.connectionId == connectionId,
+    )) {
+      entry.value.epoch++;
+      entry.value
+        ..blocked = true
+        ..rehydrated.clear();
+    }
+    final context = _LocalCleanupContext.connection(connectionId);
+    return _enqueue(() async {
+      try {
+        return await runZoned(
+          operation,
+          zoneValues: {_cleanupZoneKey: context},
+        );
+      } finally {
+        context.active = false;
+        final remaining = _pendingConnectionCleanups[connectionId]! - 1;
+        if (remaining == 0) {
+          _pendingConnectionCleanups.remove(connectionId);
+          final connectionStates = _states.entries
+              .where((entry) => entry.key.connectionId == connectionId)
+              .map((entry) => entry.value)
+              .toList(growable: false);
+          if (connectionStates.every(
+            (state) =>
+                state.pendingCleanups == 0 && state.currentOwners.isEmpty,
+          )) {
+            _blockedConnections.remove(connectionId);
+            for (final state in connectionStates) {
+              state.blocked = false;
+            }
+          }
+        } else {
+          _pendingConnectionCleanups[connectionId] = remaining;
+        }
+      }
+    });
+  }
+
+  static void resetForTesting() {
+    _states.clear();
+    _blockedConnections.clear();
+    _pendingConnectionCleanups.clear();
+    _operations.clear();
+    _operationRunning = false;
+    _nextOperationSequence = 0;
+    _operationJournal.clear();
+    _confirmedVersions.clear();
+  }
+}
+
+enum HistoryCleanupScope { normalConversations }
 
 class HistoryCleanupInvalidation {
   final String connectionId;
@@ -50,8 +757,8 @@ class HistoryCleanupInvalidationBus {
 final HistoryCleanupInvalidationBus historyCleanupInvalidations =
     HistoryCleanupInvalidationBus();
 
-/// Gate compartido por Settings y Cron. Solo lectura falla antes de invocar App
-/// Lock; un error del verificador también falla cerrado.
+/// Gate de Settings. Solo lectura falla antes de invocar App Lock; un error del
+/// verificador también falla cerrado.
 Future<bool> authorizeHistoryCleanup({
   required bool readOnly,
   required Future<bool> Function() verifyAppLock,
@@ -166,15 +873,6 @@ List<String> sessionLineageDeleteOrder(
   return order;
 }
 
-/// Las limpiezas masivas son solo para conversaciones normales. Un informe
-/// cron requiere confirmación y borrado coordinado individual de su schedule.
-List<Session> sessionsSafeForBulkDelete(Iterable<Session> sessions) => sessions
-    .where(
-      (session) =>
-          !session.isJob && !AutomationSessionSources.contains(session.source),
-    )
-    .toList();
-
 enum RemoteSessionDeleteStatus { deleted, rejected, failed }
 
 class RemoteSessionDeleteResult {
@@ -207,18 +905,23 @@ Future<RemoteSessionDeleteResult> deleteRemoteSession(
   }
 }
 
-class RemoteSessionDeleteSummary {
-  final int deleted;
-  final int rejected;
-  final int failed;
-
-  const RemoteSessionDeleteSummary({
-    required this.deleted,
-    required this.rejected,
-    required this.failed,
-  });
-
-  bool get allDeleted => rejected == 0 && failed == 0;
+/// Finaliza un borrado ya confirmado por el servidor. La expulsión autoritativa
+/// ocurre antes de cualquier limpieza local y cada limpieza es independiente:
+/// un fallo de preferencias/Keystore no puede resucitar la fila ni impedir las
+/// demás tareas locales.
+Future<void> finalizeConfirmedRemoteDeletion({
+  required void Function() evict,
+  required Iterable<Future<void> Function()> localCleanups,
+  void Function(Object error)? onCleanupError,
+}) async {
+  evict();
+  for (final cleanup in localCleanups) {
+    try {
+      await cleanup();
+    } catch (error) {
+      onCleanupError?.call(error);
+    }
+  }
 }
 
 /// Resultado de limpiar una fuente local cifrada. El error se conserva para
@@ -233,20 +936,12 @@ class LocalConversationClearResult {
   bool get succeeded => error == null;
 }
 
-/// Resumen honesto de «vaciar conversaciones»: el listado/borrado remoto y
-/// cada fuente local son independientes. Así un servidor caído no impide
-/// retirar borradores sensibles del dispositivo ni se comunica éxito total si
-/// una de las capas falló.
-class ClearConversationsSummary {
-  final RemoteSessionDeleteSummary? remote;
-  final Object? remoteListError;
+class LocalConversationClearSummary {
   final LocalConversationClearResult drafts;
   final LocalConversationClearResult transcripts;
   final LocalConversationClearResult outbox;
 
-  const ClearConversationsSummary({
-    required this.remote,
-    required this.remoteListError,
+  const LocalConversationClearSummary({
     required this.drafts,
     required this.transcripts,
     required this.outbox,
@@ -256,51 +951,9 @@ class ClearConversationsSummary {
       [drafts, transcripts, outbox].where((result) => !result.succeeded).length;
 
   bool get hasChanges =>
-      (remote?.deleted ?? 0) > 0 ||
-      drafts.removed > 0 ||
-      transcripts.removed > 0 ||
-      outbox.removed > 0;
+      drafts.removed > 0 || transcripts.removed > 0 || outbox.removed > 0;
 
-  bool get allSucceeded =>
-      remoteListError == null &&
-      (remote?.allDeleted ?? false) &&
-      localFailureCount == 0;
-}
-
-Future<RemoteSessionDeleteSummary> deleteRemoteSessions(
-  Iterable<String> sessionIds, {
-  required DeleteRemoteSession delete,
-  Future<void> Function(String sessionId)? onDeleted,
-}) async {
-  var deleted = 0;
-  var rejected = 0;
-  var failed = 0;
-
-  for (final sessionId in sessionIds) {
-    final result = await deleteRemoteSession(sessionId, delete: delete);
-    switch (result.status) {
-      case RemoteSessionDeleteStatus.deleted:
-        deleted++;
-        try {
-          await onDeleted?.call(sessionId);
-        } catch (_) {
-          // El borrado remoto ya es autoridad. El callback encola su cleanup.
-        }
-        break;
-      case RemoteSessionDeleteStatus.rejected:
-        rejected++;
-        break;
-      case RemoteSessionDeleteStatus.failed:
-        failed++;
-        break;
-    }
-  }
-
-  return RemoteSessionDeleteSummary(
-    deleted: deleted,
-    rejected: rejected,
-    failed: failed,
-  );
+  bool get allSucceeded => localFailureCount == 0;
 }
 
 Future<LocalConversationClearResult> _clearLocalConversationState(
@@ -313,40 +966,44 @@ Future<LocalConversationClearResult> _clearLocalConversationState(
   }
 }
 
-/// Elimina conversaciones normales del servidor y toda recuperación local de
-/// la conexión. Los informes cron quedan fuera del borrado remoto, igual que
-/// en el flujo anterior, pero borradores/transcripts/outbox se intentan siempre
-/// aunque [loadSessions] falle.
-Future<ClearConversationsSummary> clearConversationsAndLocalState({
-  required LoadSessionsForDeletion loadSessions,
-  required DeleteRemoteSession deleteSession,
-  required ClearConnectionConversationState clearDrafts,
-  required ClearConnectionConversationState clearTranscripts,
-  required ClearConnectionConversationState clearOutbox,
-  Future<void> Function(String sessionId)? onRemoteSessionDeleted,
+Future<LocalConversationClearSummary> clearProfileLocalConversationState({
+  required String connectionId,
+  required String profile,
+  required ClearProfileConversationState clearDrafts,
+  required ClearProfileConversationState clearTranscripts,
+  required ClearProfileConversationState clearOutbox,
+  Future<void> Function({
+    required String connectionId,
+    required String profile,
+  })?
+  clearGlobalActivity,
 }) async {
-  RemoteSessionDeleteSummary? remote;
-  Object? remoteListError;
-  try {
-    final sessions = await loadSessions(includeChildren: true);
-    remote = await deleteRemoteSessions(
-      sessionsSafeForBulkDelete(sessions).map((session) => session.id),
-      delete: deleteSession,
-      onDeleted: onRemoteSessionDeleted,
-    );
-  } catch (error) {
-    remoteListError = error;
-  }
-
-  final drafts = await _clearLocalConversationState(clearDrafts);
-  final transcripts = await _clearLocalConversationState(clearTranscripts);
-  final outbox = await _clearLocalConversationState(clearOutbox);
-  return ClearConversationsSummary(
-    remote: remote,
-    remoteListError: remoteListError,
-    drafts: drafts,
-    transcripts: transcripts,
-    outbox: outbox,
+  final ownerProfile = Session.profileOwner(profile);
+  return LocalConversationCleanupFence.cleanupProfile(
+    connectionId: connectionId,
+    profile: ownerProfile,
+    operation: () async {
+      final drafts = await _clearLocalConversationState(
+        () => clearDrafts(profile: ownerProfile),
+      );
+      final transcripts = await _clearLocalConversationState(
+        () => clearTranscripts(profile: ownerProfile),
+      );
+      final outbox = await _clearLocalConversationState(
+        () => clearOutbox(profile: ownerProfile),
+      );
+      if (clearGlobalActivity != null) {
+        await clearGlobalActivity(
+          connectionId: connectionId,
+          profile: ownerProfile,
+        );
+      }
+      return LocalConversationClearSummary(
+        drafts: drafts,
+        transcripts: transcripts,
+        outbox: outbox,
+      );
+    },
   );
 }
 

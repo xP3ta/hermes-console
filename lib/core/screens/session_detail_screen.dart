@@ -2,7 +2,6 @@
 //
 // Fuentes (verificadas contra api_server.py del upstream y el servidor vivo):
 //   GET  /api/sessions/{id}            → métricas client-safe (_session_response)
-//   GET  /api/sessions/{id}/messages   → transcript completo
 //   POST /api/sessions/{id}/fork       → ramifica (la original queda "branched")
 //   DELETE /api/sessions/{id}          → borrado real
 //
@@ -11,37 +10,23 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderAbstractViewport, RenderBox;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../main.dart';
 import '../../l10n/app_localizations.dart';
-import '../models/desktop_session_snapshot.dart';
-import '../models/generated_artifact.dart';
-import '../models/session_artifact.dart';
 import '../navigation/chat_route.dart';
-import '../services/artifact_export_service.dart';
-import '../services/artifact_index.dart';
 import '../services/connection_manager.dart';
-import '../services/generated_artifact_registry.dart';
 import '../services/session_archive.dart';
-import '../services/session_artifact_download_service.dart';
 import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../theme/app_theme.dart';
-import '../utils/assistant_content.dart';
-import '../utils/assistant_suggestions.dart';
 import '../utils/relative_time.dart';
-import '../utils/generated_artifact_markdown_scanner.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/hermes_pill.dart';
-import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
-import '../widgets/generated_artifact_viewer.dart';
 import '../widgets/read_only.dart';
 import '../widgets/session_deletion_dialogs.dart';
-import '../widgets/session_artifacts_sheet.dart';
 import '../widgets/session_context_usage.dart';
 import 'chat_screen.dart';
 import 'cron_screen.dart';
@@ -76,17 +61,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   late Session _session;
   bool _refreshing = false;
 
-  List<Map<String, dynamic>>? _messages;
-  String? _messagesError;
-  int _messagesRevision = 0;
-  ArtifactIndexSnapshot? _artifactIndex;
-  final GeneratedArtifactRegistry _generatedArtifactRegistry =
-      GeneratedArtifactRegistry.shared;
-  static const ArtifactExportActions _artifactExporter =
-      PlatformArtifactExportActions();
-  final ScrollController _messagesScrollController = ScrollController();
-  final Map<int, RenderBox> _messageAnchors = {};
-
   SessionArchive? _archive;
   bool _archivePending = false;
   bool? _archiveOptimistic;
@@ -106,7 +80,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       widget.connection,
       gateway: _client,
     );
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 2, vsync: this);
     _loadArchive();
     _refresh(refreshSession: !widget.skipInitialSessionRefresh);
   }
@@ -129,7 +103,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   @override
   void dispose() {
     _tabs.dispose();
-    _messagesScrollController.dispose();
     _repository.close();
     _client.close();
     super.dispose();
@@ -145,59 +118,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     setState(() => _refreshing = true);
     if (refreshSession) {
       try {
-        final fresh = await _client.getSession(_session.id);
+        final fresh = await _client.getSession(
+          _session.id,
+          profile: _session.profile,
+        );
         if (mounted) setState(() => _session = fresh);
       } catch (_) {
         // La copia recibida de la lista sigue siendo válida; no romper la vista.
       }
     }
-    try {
-      final msgs = await _client.getMessages(_session.id);
-      if (mounted) {
-        _indexGeneratedArtifacts(msgs);
-        setState(() {
-          _messages = msgs;
-          _messagesRevision++;
-          _messageAnchors.clear();
-          _messagesError = null;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(
-          () => _messagesError = e.toString().replaceFirst('Exception: ', ''),
-        );
-      }
-    }
     if (mounted) setState(() => _refreshing = false);
-  }
-
-  void _indexGeneratedArtifacts(List<Map<String, dynamic>> messages) {
-    final artifacts = <GeneratedArtifactInput>[];
-    for (final message in messages) {
-      if (message['role']?.toString().trim().toLowerCase() != 'assistant') {
-        continue;
-      }
-      final content = message['content'];
-      if (content is! String || content.trim().isEmpty) continue;
-      final terminalAnswer = projectAssistantSuggestions(
-        splitReasoning(content).answer,
-      ).body;
-      for (final artifact in GeneratedArtifactMarkdownScanner.scan(
-        terminalAnswer,
-      )) {
-        artifacts.add(
-          GeneratedArtifactInput(
-            detection: artifact.detection,
-            content: artifact.content,
-          ),
-        );
-      }
-    }
-    _generatedArtifactRegistry.replaceSession(
-      _generatedArtifactScope,
-      artifacts,
-    );
   }
 
   bool get _archived =>
@@ -206,9 +136,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       _session.archived;
 
   SessionState get _state => _session.stateWithArchive(_archived);
-
-  String get _generatedArtifactScope =>
-      '${widget.connection.id}:${_session.logicalId}';
 
   // ── Acciones ───────────────────────────────────────────────────────────
 
@@ -220,239 +147,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     ).then((_) {
       if (mounted) _refresh();
     });
-  }
-
-  List<SessionArtifact> _resolveSessionArtifacts() {
-    final messages = _messages;
-    if (messages == null) return const [];
-    late final ArtifactIndexScope scope;
-    try {
-      scope = ArtifactIndexScope(
-        connectionId: widget.connection.id,
-        logicalSessionId: _session.logicalId,
-      );
-    } on FormatException {
-      return const [];
-    }
-    final host = Uri.tryParse(widget.connection.baseUrl)?.host.toLowerCase();
-    final policy = ArtifactAuthorizationPolicy(
-      revision: 1,
-      allowedManagedUriSchemes: host == null || host.isEmpty
-          ? const ['hermes']
-          : const ['hermes', 'http', 'https'],
-      allowedManagedHosts: host == null || host.isEmpty ? const [] : [host],
-    );
-    final previous = _artifactIndex;
-    if (previous != null &&
-        previous.revision.scope == scope &&
-        previous.revision.transcriptRevision == _messagesRevision &&
-        previous.revision.policyRevision == policy.revision) {
-      return previous.artifacts;
-    }
-
-    final entries = <ArtifactTranscriptEntry>[];
-    for (var ordinal = 0; ordinal < messages.length; ordinal++) {
-      final raw = messages[ordinal];
-      if (!_messageMapMayContainArtifact(raw)) continue;
-      final message = DesktopSessionMessage.tryParse(
-        raw,
-        serverOrdinal: ordinal,
-      );
-      if (message == null) continue;
-      entries.add(
-        ArtifactTranscriptEntry(
-          message: message,
-          messageOrdinal: ordinal,
-          messageRevision: _messagesRevision,
-          stableMessageId: message.stableId,
-        ),
-      );
-    }
-    _artifactIndex = ArtifactIndex.resolve(
-      previous: previous,
-      scope: scope,
-      transcriptRevision: _messagesRevision,
-      transcript: entries,
-      policy: policy,
-    );
-    return _artifactIndex!.artifacts;
-  }
-
-  bool _messageMapMayContainArtifact(Map<String, dynamic> message) {
-    final content = message['content'];
-    if (content is Map || content is List) return true;
-    final context = message['context'];
-    if (message['role']?.toString().toLowerCase() == 'tool' &&
-        (context is Map || context is List)) {
-      return true;
-    }
-    for (final key in const {
-      'attachment',
-      'attachments',
-      'artifact',
-      'artifacts',
-      'generated_image',
-      'generated_images',
-      'tool_result',
-      'tool_results',
-    }) {
-      final value = message[key];
-      if (value is Map || value is List) return true;
-    }
-    return false;
-  }
-
-  Future<void> _showSessionArtifacts() async {
-    final artifacts = _resolveSessionArtifacts();
-    final downloads = SessionArtifactDownloadService(
-      connection: widget.connection,
-    );
-    await showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('session-artifacts-surface'),
-      maxWidth: 620,
-      maxHeightFactor: 0.82,
-      builder: (sheetContext) => SessionArtifactsSheet(
-        artifacts: artifacts,
-        generatedArtifactRegistry: _generatedArtifactRegistry,
-        generatedArtifactSessionId: _generatedArtifactScope,
-        showDragHandle: false,
-        onOpenGeneratedArtifact: (artifactId) {
-          Navigator.of(sheetContext).pop();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            unawaited(
-              showGeneratedArtifactViewer(
-                context: context,
-                registry: _generatedArtifactRegistry,
-                artifactId: artifactId,
-                exporter: _artifactExporter,
-              ),
-            );
-          });
-        },
-        canDownloadArtifact: downloads.canDownload,
-        onDownloadArtifact: _downloadSessionArtifact,
-        onJumpToSource: (source) {
-          Navigator.of(sheetContext).pop();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) unawaited(_jumpToArtifactSource(source));
-          });
-        },
-      ),
-    );
-  }
-
-  Future<void> _downloadSessionArtifact(SessionArtifact artifact) async {
-    final strings = Strings.of(context);
-    try {
-      final result = await SessionArtifactDownloadService(
-        connection: widget.connection,
-      ).downloadAndSave(artifact, _artifactExporter);
-      if (mounted && result == ArtifactSaveResult.saved) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(strings.artifactDownloadSaved)));
-      }
-    } on SessionArtifactDownloadException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              sessionArtifactDownloadMessage(strings, error.failure),
-            ),
-          ),
-        );
-      }
-    } on ArtifactExportTooLarge {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(strings.artifactDownloadTooLarge)),
-        );
-      }
-    } on Object {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(strings.artifactDownloadFailed)));
-      }
-    }
-  }
-
-  int? _messageIndexForArtifactSource(SessionArtifactSource source) {
-    final messages = _messages;
-    if (messages == null) return null;
-    return messageIndexForArtifactSource(messages, source);
-  }
-
-  Future<void> _jumpToArtifactSource(SessionArtifactSource source) async {
-    final targetIndex = _messageIndexForArtifactSource(source);
-    if (targetIndex == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).artifactSourceUnavailable),
-          ),
-        );
-      }
-      return;
-    }
-    _tabs.animateTo(1);
-    for (var frame = 0; frame < 30; frame++) {
-      await WidgetsBinding.instance.endOfFrame;
-      if (!mounted) return;
-      if (_messagesScrollController.hasClients) break;
-    }
-    if (!_messagesScrollController.hasClients) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).artifactSourceUnavailable),
-          ),
-        );
-      }
-      return;
-    }
-    final position = _messagesScrollController.position;
-
-    Future<bool> alignIfMounted() async {
-      final anchor = _messageAnchors[targetIndex];
-      if (anchor == null || !anchor.attached) return false;
-      final viewport = RenderAbstractViewport.maybeOf(anchor);
-      if (viewport == null) return false;
-      final target = viewport
-          .getOffsetToReveal(anchor, 0)
-          .offset
-          .clamp(position.minScrollExtent, position.maxScrollExtent);
-      await position.animateTo(
-        target,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-      );
-      return true;
-    }
-
-    if (await alignIfMounted()) return;
-    position.jumpTo(position.minScrollExtent);
-    await WidgetsBinding.instance.endOfFrame;
-    if (await alignIfMounted()) return;
-    for (var attempt = 0; attempt < 80; attempt++) {
-      if (!mounted || !_messagesScrollController.hasClients) return;
-      if (position.pixels >= position.maxScrollExtent - 1) break;
-      position.jumpTo(
-        (position.pixels + position.viewportDimension * 0.9).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        ),
-      );
-      await WidgetsBinding.instance.endOfFrame;
-      if (await alignIfMounted()) return;
-    }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
-      );
-    }
   }
 
   void _openLinkedCron() {
@@ -567,7 +261,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     if (confirm != true || !mounted) return;
 
     try {
-      final fork = await _client.forkSession(_session.id);
+      final fork = await _client.forkSession(
+        _session.id,
+        profile: _session.profile,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).sesDuplicated(fork.title))),
@@ -628,12 +325,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             app == null
         ? DashboardClient.lazy(widget.connection)
         : null;
+    final ownerProfile = Session.profileOwner(_session.profile);
     try {
       final result = await deleteSessionWithResolvedLineage(
         _session,
-        loadSessions: ({bool includeChildren = false}) =>
-            _client.getSessions(includeChildren: includeChildren),
-        deleteSession: _client.deleteSession,
+        loadSessions: ({bool includeChildren = false}) => _client.getSessions(
+          includeChildren: includeChildren,
+          profile: ownerProfile,
+        ),
+        deleteSession: (sessionId) =>
+            _client.deleteSession(sessionId, profile: ownerProfile),
         cronDeletion: cronDeletion,
         deleteCronJob:
             !_session.isJob ||
@@ -643,15 +344,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   ? app.connManager.deleteLinkedCronJob(
                       widget.connection,
                       jobId,
-                      profile: app.connManager.activeProfileFor(
-                        widget.connection.id,
-                      ),
+                      profile: ownerProfile,
                     )
-                  : dashboard!.deleteCronJob(jobId),
+                  : dashboard!.deleteCronJob(jobId, profile: ownerProfile),
       );
       if (!mounted) return;
       switch (result.status) {
         case LinkedSessionDeleteStatus.deleted:
+          app?.activeChats.globalActivity.clearSession(
+            widget.connection.id,
+            ownerProfile,
+            _session.id,
+          );
+          await app?.activeChats.globalActivity.flushJournal();
+          if (!mounted) return;
           Navigator.pop(context, true);
           break;
         case LinkedSessionDeleteStatus.cancelled:
@@ -741,11 +447,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.inventory_2_outlined, size: 20),
-            tooltip: str.chaArtifactsAction,
-            onPressed: _messages == null ? null : _showSessionArtifacts,
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh, size: 20),
             tooltip: str.sesRefreshTooltip,
             onPressed: _refreshing ? null : _refresh,
@@ -760,18 +461,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           ),
           tabs: [
             Tab(text: str.sesTabSummary),
-            Tab(text: str.sesTabMessages),
             Tab(text: str.sesTabContext),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabs,
-        children: [
-          _buildSummaryTab(colors),
-          _buildMessagesTab(colors),
-          _buildContextTab(colors),
-        ],
+        children: [_buildSummaryTab(colors), _buildContextTab(colors)],
       ),
     );
   }
@@ -1057,68 +753,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     return '$n';
   }
 
-  // ── Tab: mensajes ──────────────────────────────────────────────────────
-
-  Widget _buildMessagesTab(HermesThemeColors colors) {
-    final str = Strings.of(context);
-    if (_messages == null && _messagesError == null) {
-      return Center(child: TuiLoader(label: str.sesLoadingMessages));
-    }
-    if (_messagesError != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, size: 36, color: colors.error),
-              const SizedBox(height: 12),
-              Text(
-                str.sesMessagesError,
-                style: TextStyle(fontSize: 14, color: colors.textPrimary),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _messagesError!,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-              ),
-              const SizedBox(height: 16),
-              HermesSecondaryButton(
-                label: str.sesMessagesRetry,
-                icon: Icons.refresh,
-                onTap: _refresh,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    final messages = _messages!;
-    if (messages.isEmpty) {
-      return Center(
-        child: Text(
-          str.sesNoMessages,
-          style: TextStyle(fontSize: 12.5, color: colors.textDisabled),
-        ),
-      );
-    }
-    return RefreshIndicator(
-      color: colors.accent,
-      onRefresh: _refresh,
-      child: ListView.builder(
-        controller: _messagesScrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 20),
-        itemCount: messages.length,
-        itemBuilder: (_, i) => ChatAnswerAnchor(
-          onLayout: (anchor) => _messageAnchors[i] = anchor,
-          child: _MessageTile(message: messages[i]),
-        ),
-      ),
-    );
-  }
-
   // ── Tab: contexto ──────────────────────────────────────────────────────
 
   Widget _buildContextTab(HermesThemeColors colors) {
@@ -1248,114 +882,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           style: TextStyle(fontSize: 10, color: colors.textDisabled),
         ),
       ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mensaje del transcript (read-only)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _MessageTile extends StatelessWidget {
-  final Map<String, dynamic> message;
-
-  const _MessageTile({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final role = (message['role'] ?? '').toString();
-    final content = (message['content'] ?? '').toString();
-    final toolName = (message['tool_name'] ?? '').toString();
-    final ts = message['timestamp'];
-
-    final str = Strings.of(context);
-    final isUser = role == 'user';
-    final isTool = role == 'tool' || toolName.isNotEmpty;
-    final label = isTool
-        ? '${str.sesRoleTool}${toolName.isNotEmpty ? ' · $toolName' : ''}'
-        : isUser
-        ? str.sesRoleYou
-        : str.sesRoleAgent;
-    final accent = isUser
-        ? colors.accent
-        : isTool
-        ? colors.textDisabled
-        : colors.success;
-
-    if (content.trim().isEmpty && !isTool) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(9),
-        onLongPress: content.isEmpty
-            ? null
-            : () {
-                Clipboard.setData(ClipboardData(text: content));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(Strings.of(context).sesCopiedMessage)),
-                );
-              },
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(11),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: accent,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 7),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 10,
-                      letterSpacing: 0.6,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                  const Spacer(),
-                  if (ts is num && ts > 0)
-                    Text(
-                      relativeTime(ts.toDouble()),
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        color: colors.textDisabled,
-                      ),
-                    ),
-                ],
-              ),
-              if (content.trim().isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  content.length > 1200
-                      ? '${content.substring(0, 1200)}…'
-                      : content,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.45,
-                    color: colors.textPrimary.withValues(alpha: 0.88),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

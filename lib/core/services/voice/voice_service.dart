@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +34,15 @@ import 'voice_settings.dart';
 /// autenticado que ya instaló la pantalla visible.
 final class HermesServerDictationPreparation {
   const HermesServerDictationPreparation._(this._owner, this._generation);
+
+  final Object _owner;
+  final int _generation;
+}
+
+/// Reserva opaca para una configuración asíncrona de conversación por Hermes.
+/// Solo la generación propietaria puede instalar callbacks al terminar.
+final class NativeVoicePreparation {
+  const NativeVoicePreparation._(this._owner, this._generation);
 
   final Object _owner;
   final int _generation;
@@ -275,7 +285,10 @@ class VoiceService {
         if (previous != null) await previous;
         await engine.dispose();
       } catch (error) {
-        debugPrint('[voice-stab] disposeStt reason=$reason error: $error');
+        debugPrint(
+          '[voice-stab] disposeStt reason=$reason '
+          'error=${error.runtimeType}',
+        );
       } finally {
         if (!completion.isCompleted) completion.complete();
         if (identical(_sttDisposalTail, tail)) _sttDisposalTail = null;
@@ -514,6 +527,8 @@ class VoiceService {
   bool _nativeSpeechStreamingDisabled = false;
   bool _sttNativeVoice = false;
   VoidCallback? _nativeVoiceOnDispose;
+  NativeVoicePreparation? _nativeVoicePreparation;
+  int _nativeVoicePreparationGeneration = 0;
 
   /// Reproductor inyectable del TTS nativo (solo tests).
   @visibleForTesting
@@ -523,6 +538,40 @@ class VoiceService {
       _nativeVoiceSession?.active == true &&
       _nativeSpeak != null &&
       _nativeTranscribe != null;
+
+  NativeVoicePreparation? beginNativeVoicePreparation({required Object owner}) {
+    if (_disposed ||
+        (_voiceConversationActive && _voiceRouteSnapshot != null)) {
+      return null;
+    }
+    disableNativeVoice(force: true);
+    final preparation = NativeVoicePreparation._(
+      owner,
+      ++_nativeVoicePreparationGeneration,
+    );
+    _nativeVoicePreparation = preparation;
+    return preparation;
+  }
+
+  bool cancelNativeVoicePreparation(NativeVoicePreparation preparation) {
+    if (!identical(preparation, _nativeVoicePreparation)) return false;
+    _nativeVoicePreparation = null;
+    _nativeVoicePreparationGeneration += 1;
+    return true;
+  }
+
+  bool cancelNativeVoicePreparationOwnedBy(Object owner) {
+    final preparation = _nativeVoicePreparation;
+    if (preparation == null || !identical(preparation._owner, owner)) {
+      return false;
+    }
+    return cancelNativeVoicePreparation(preparation);
+  }
+
+  void _invalidateNativeVoicePreparation() {
+    _nativeVoicePreparation = null;
+    _nativeVoicePreparationGeneration += 1;
+  }
 
   bool get hermesServerDictationReady =>
       _hermesDictationTranscribe != null &&
@@ -629,9 +678,7 @@ class VoiceService {
       _releaseNativeVoiceResource(release);
       return;
     }
-    unawaited(
-      after.whenComplete(() => _releaseNativeVoiceResource(release)),
-    );
+    unawaited(after.whenComplete(() => _releaseNativeVoiceResource(release)));
   }
 
   Future<Map<String, dynamic>> _guardedHermesDictationTranscribe(
@@ -710,6 +757,45 @@ class VoiceService {
     HermesSpeechStreamSessionFactory? speechStream,
     VoidCallback? onDispose,
   }) {
+    if (_disposed) return false;
+    _invalidateNativeVoicePreparation();
+    return _installNativeVoice(
+      speak: speak,
+      transcribe: transcribe,
+      speechStream: speechStream,
+      onDispose: onDispose,
+    );
+  }
+
+  bool enablePreparedNativeVoice({
+    required Object owner,
+    required NativeVoicePreparation preparation,
+    required HermesSpeakRequest speak,
+    required HermesTranscribeRequest transcribe,
+    HermesSpeechStreamSessionFactory? speechStream,
+    VoidCallback? onDispose,
+  }) {
+    if (_disposed ||
+        !identical(preparation, _nativeVoicePreparation) ||
+        !identical(preparation._owner, owner) ||
+        preparation._generation != _nativeVoicePreparationGeneration) {
+      return false;
+    }
+    _nativeVoicePreparation = null;
+    return _installNativeVoice(
+      speak: speak,
+      transcribe: transcribe,
+      speechStream: speechStream,
+      onDispose: onDispose,
+    );
+  }
+
+  bool _installNativeVoice({
+    required HermesSpeakRequest speak,
+    required HermesTranscribeRequest transcribe,
+    HermesSpeechStreamSessionFactory? speechStream,
+    VoidCallback? onDispose,
+  }) {
     final frozen = _voiceRouteSnapshot;
     if (_voiceConversationActive && frozen != null) {
       debugPrint(
@@ -761,6 +847,7 @@ class VoiceService {
       );
       return false;
     }
+    _invalidateNativeVoicePreparation();
     final hadOnDeviceRoute = _onDeviceConversationRoute;
     _onDeviceConversationRoute = false;
     if (_nativeVoiceSession == null &&
@@ -916,8 +1003,7 @@ class VoiceService {
       'audio/wav',
     );
     if (response['ok'] != true) {
-      final detail = response['detail'] ?? response['error'] ?? 'sin detalle';
-      throw StateError('El servidor no pudo transcribir: $detail');
+      throw StateError('Server transcription failed.');
     }
     // Hermes Agent considera un transcript vacío una detección válida de
     // silencio. No recortes, amplifiques ni reenvíes el WAV: además de apartarse
@@ -1426,8 +1512,8 @@ class VoiceService {
       if (engine is PrewarmableTts) {
         await (engine as PrewarmableTts).prewarm(normalizedText);
       }
-    } catch (e) {
-      debugPrint('[hermes-voice] prewarm silenciado: $e');
+    } catch (error) {
+      debugPrint('[hermes-voice] prewarm unavailable (${error.runtimeType})');
     } finally {
       _scheduleHeavyModelIdleRelease();
     }
@@ -1617,7 +1703,10 @@ class VoiceService {
     try {
       await engine.stop().timeout(const Duration(milliseconds: 900));
     } catch (error) {
-      debugPrint('[hermes-read] cleanup diferido del TTS: $error');
+      debugPrint(
+        '[hermes-read] deferred TTS cleanup unavailable '
+        '(${error.runtimeType})',
+      );
     }
   }
 
@@ -2134,20 +2223,19 @@ class VoiceService {
     try {
       await primary(text);
       return true;
-    } catch (e) {
-      if (e is _TtsBuildCancelled) rethrow;
-      debugPrint(
-        '[hermes-voice] excepción silenciada (se continúa sin propagar): $e',
-      );
+    } catch (error) {
+      if (error is _TtsBuildCancelled) rethrow;
+      debugPrint('[hermes-voice] primary TTS failed (${error.runtimeType})');
       // El aviso funcional ya es local: si falla, no insistimos. Una respuesta
       // en ruta Hermes estricta tampoco puede saltar a un motor del teléfono.
       if (isLocal || !allowFallback) return false;
       try {
         await fallback(text);
         return true;
-      } catch (e) {
+      } catch (fallbackError) {
         debugPrint(
-          '[hermes-voice] excepción silenciada (fallback también falló, ni premium ni sistema): $e',
+          '[hermes-voice] fallback TTS failed '
+          '(${fallbackError.runtimeType})',
         );
         return false; // ni premium ni sistema: best-effort, frase perdida.
       }
@@ -2386,8 +2474,10 @@ class VoiceService {
           ready ? SttStatus.ready : SttStatus.needsMicPermission,
           SttEngineKind.server,
         );
-      } catch (e) {
-        debugPrint('[voice-stab] checkStt nativo falló: $e');
+      } catch (error) {
+        debugPrint(
+          '[voice-stab] native STT check failed (${error.runtimeType})',
+        );
         return const SttCheck(
           SttStatus.needsServerConfig,
           SttEngineKind.server,
@@ -2772,14 +2862,20 @@ class VoiceService {
           try {
             await response.dispose();
           } catch (error) {
-            debugPrint('[voice-stab] dispose TTS error: $error');
+            debugPrint(
+              '[voice-stab] response TTS dispose failed '
+              '(${error.runtimeType})',
+            );
           }
         }
         if (local != null && !identical(local, response)) {
           try {
             await local.dispose();
           } catch (error) {
-            debugPrint('[voice-stab] dispose local TTS error: $error');
+            debugPrint(
+              '[voice-stab] local TTS dispose failed '
+              '(${error.runtimeType})',
+            );
           }
         }
       } finally {

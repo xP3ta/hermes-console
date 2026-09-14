@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/in_memory_compression_fence_storage.dart';
+
 class _InterimGateway implements HermesDesktopGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
@@ -87,6 +89,7 @@ class _InterimFixture {
 Future<_InterimFixture> _startChat() async {
   final gateway = _InterimGateway();
   final chat = ActiveChat(
+    compressionFenceStore: testCompressionFenceStore(),
     connection: SavedConnection(
       id: 'conn-interim',
       label: 'Interim contract',
@@ -122,6 +125,11 @@ Future<_InterimFixture> _startChat() async {
 }
 
 List<Map<String, dynamic>> _assistantMessages(ActiveChat chat) => chat.messages
+    .where((message) => message['role'] == 'assistant')
+    .toList(growable: false);
+
+List<Map<String, dynamic>> _internalAssistantMessages(ActiveChat chat) => chat
+    .internalMessagesForTesting
     .where((message) => message['role'] == 'assistant')
     .toList(growable: false);
 
@@ -190,6 +198,38 @@ void main() {
       expect(fixture.events, isEmpty);
     });
 
+    test('message.delta ignora text no String', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      fixture.gateway.emit('message.delta', const {'text': 19});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(fixture.chat.assistantContent, isEmpty);
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+      expect(fixture.events, isNot(contains(ActiveChatEvent.token)));
+      expect(fixture.chat.messages.toString(), isNot(contains('19')));
+    });
+
+    test('message.complete ignora text no String', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      fixture.gateway.emit('message.complete', const {
+        'text': {'secret': 'PRIVATE_MALFORMED_COMPLETE'},
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
+
+      expect(fixture.chat.assistantContent, isEmpty);
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+      expect(
+        fixture.chat.messages.toString(),
+        isNot(contains('PRIVATE_MALFORMED_COMPLETE')),
+      );
+    });
+
     test('es visual y no termina el turno', () async {
       final fixture = await _startChat();
       addTearDown(fixture.dispose);
@@ -236,63 +276,224 @@ void main() {
       );
     });
 
+    test('classifiers privados no entran en chat ni Voz', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      for (final payload in const <Map<String, dynamic>>[
+        {'text': 'ANALYSIS PRIVADO', 'channel': 'analysis'},
+        {'text': 'INTERNAL PRIVADO', 'channel': 'internal'},
+        {'text': 'DEBUG PRIVADO', 'kind': 'debug'},
+        {'text': 'TRACE PRIVADO', 'content_type': 'trace'},
+        {'text': 'STDOUT PRIVADO', 'channel': 'stdout'},
+        {'text': 'STDERR PRIVADO', 'channel': 'stderr'},
+        {'text': 'PREVIEW PRIVADO', 'channel': 'preview'},
+        {'text': 'NULL PRIVADO', 'channel': null},
+        {'text': 'EMPTY PRIVADO', 'kind': ''},
+        {'text': 'SPACE PRIVADO', 'content_type': '   '},
+        {'text': 'HIDDEN PRIVADO', 'hidden': true},
+        {'text': 'REASONING PRIVADO', 'reasoning': true},
+      ]) {
+        fixture.gateway.emit('message.interim', payload);
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+      expect(fixture.chat.assistantPublicCommentary, isEmpty);
+      final visible = fixture.chat.messages
+          .map((message) => message['content'])
+          .join('\n');
+      for (final marker in const [
+        'ANALYSIS PRIVADO',
+        'INTERNAL PRIVADO',
+        'DEBUG PRIVADO',
+        'TRACE PRIVADO',
+        'STDOUT PRIVADO',
+        'STDERR PRIVADO',
+        'PREVIEW PRIVADO',
+        'NULL PRIVADO',
+        'EMPTY PRIVADO',
+        'SPACE PRIVADO',
+        'HIDDEN PRIVADO',
+        'REASONING PRIVADO',
+      ]) {
+        expect(visible, isNot(contains(marker)), reason: marker);
+      }
+
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Comentario público sin classifier.',
+      });
+      expect(
+        fixture.chat.assistantNarrationContent,
+        'Comentario público sin classifier.',
+      );
+      expect(
+        fixture.chat.assistantPublicCommentary,
+        'Comentario público sin classifier.',
+      );
+    });
+
+    test('reasoning partido entre deltas nunca se publica ni narra', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      fixture.gateway.emit('message.delta', const {'text': '<thi'});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(fixture.chat.assistantContent, isEmpty);
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+      expect(fixture.events, isNot(contains(ActiveChatEvent.token)));
+
+      fixture.gateway.emit('message.delta', const {
+        'text': 'nk>PRIVATE_SPLIT_REASONING',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(fixture.chat.assistantContent, isEmpty);
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+
+      final token = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.token,
+      );
+      fixture.gateway.emit('message.delta', const {
+        'text': '</think>PUBLIC ANSWER',
+      });
+      await token.timeout(const Duration(seconds: 1));
+
+      expect(fixture.chat.assistantContent, 'PUBLIC ANSWER');
+      expect(fixture.chat.assistantNarrationContent, 'PUBLIC ANSWER');
+      expect(
+        fixture.chat.messages.toString(),
+        isNot(contains('PRIVATE_SPLIT_REASONING')),
+      );
+    });
+
     test(
-      'classifiers explícitos se ven en chat pero fallan cerrados para Voz',
+      'ambos terminales proyectan la causa oficial segura y fallan',
       () async {
-        final fixture = await _startChat();
-        addTearDown(fixture.dispose);
-
-        for (final payload in const <Map<String, dynamic>>[
-          {'text': 'ANALYSIS PRIVADO', 'channel': 'analysis'},
-          {'text': 'INTERNAL PRIVADO', 'channel': 'internal'},
-          {'text': 'DEBUG PRIVADO', 'kind': 'debug'},
-          {'text': 'TRACE PRIVADO', 'content_type': 'trace'},
-          {'text': 'STDOUT PRIVADO', 'channel': 'stdout'},
-          {'text': 'STDERR PRIVADO', 'channel': 'stderr'},
-          {'text': 'PREVIEW PRIVADO', 'channel': 'preview'},
-          {'text': 'NULL PRIVADO', 'channel': null},
-          {'text': 'EMPTY PRIVADO', 'kind': ''},
-          {'text': 'SPACE PRIVADO', 'content_type': '   '},
-          {'text': 'HIDDEN PRIVADO', 'hidden': true},
-          {'text': 'REASONING PRIVADO', 'reasoning': true},
+        for (final terminal in <({String type, Map<String, dynamic> payload})>[
+          (
+            type: 'message.complete',
+            payload: const {
+              'status': 'error',
+              'message': 'El modelo solicitado no está disponible.',
+            },
+          ),
+          (
+            type: 'error',
+            payload: const {
+              'message': 'El modelo solicitado no está disponible.',
+            },
+          ),
         ]) {
-          fixture.gateway.emit('message.interim', payload);
-        }
-        await Future<void>.delayed(Duration.zero);
+          final fixture = await _startChat();
+          addTearDown(fixture.dispose);
+          final failed = fixture.chat.changes.firstWhere(
+            (event) => event == ActiveChatEvent.error,
+          );
 
-        expect(fixture.chat.assistantNarrationContent, isEmpty);
-        expect(fixture.chat.assistantPublicCommentary, isEmpty);
-        final visible = fixture.chat.messages
-            .map((message) => message['content'])
-            .join('\n');
-        for (final marker in const [
-          'ANALYSIS PRIVADO',
-          'INTERNAL PRIVADO',
-          'DEBUG PRIVADO',
-          'TRACE PRIVADO',
-          'STDOUT PRIVADO',
-          'STDERR PRIVADO',
-          'PREVIEW PRIVADO',
-          'NULL PRIVADO',
-          'EMPTY PRIVADO',
-          'SPACE PRIVADO',
-          'HIDDEN PRIVADO',
-          'REASONING PRIVADO',
+          fixture.gateway.emit(terminal.type, terminal.payload);
+          await failed.timeout(const Duration(seconds: 1));
+
+          expect(fixture.chat.state, ChatPipelineState.failed);
+          expect(fixture.events, contains(ActiveChatEvent.error));
+          expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
+          final error = fixture.chat.messages.firstWhere(
+            (message) => message['role'] == 'assistant_error',
+          );
+          expect(
+            error['content'],
+            'No se pudo completar la respuesta: '
+            'El modelo solicitado no está disponible.',
+          );
+        }
+      },
+    );
+
+    test(
+      'ambos terminales rechazan secretos rutas y payload lateral',
+      () async {
+        for (final terminal in <({String type, Map<String, dynamic> payload})>[
+          (
+            type: 'message.complete',
+            payload: const {
+              'status': 'error',
+              'message': 'Falló en /home/alice/private/config.yaml',
+              'text': 'PRIVATE_TERMINAL_TEXT',
+              'error': 'PRIVATE_STRUCTURED_ERROR',
+              'billing': {'raw': 'PRIVATE_BILLING'},
+            },
+          ),
+          (
+            type: 'error',
+            payload: const {
+              'message': 'Authorization: Bearer PRIVATE_TOKEN_VALUE',
+              'cause': {'raw': 'PRIVATE_CAUSE'},
+            },
+          ),
         ]) {
-          expect(visible, contains(marker), reason: marker);
-        }
+          final fixture = await _startChat();
+          addTearDown(fixture.dispose);
+          final failed = fixture.chat.changes.firstWhere(
+            (event) => event == ActiveChatEvent.error,
+          );
 
-        await _emitAndSettle(fixture, 'message.interim', const {
-          'text': 'Comentario público sin classifier.',
-        });
-        expect(
-          fixture.chat.assistantNarrationContent,
-          'Comentario público sin classifier.',
-        );
-        expect(
-          fixture.chat.assistantPublicCommentary,
-          'Comentario público sin classifier.',
-        );
+          fixture.gateway.emit(terminal.type, terminal.payload);
+          await failed.timeout(const Duration(seconds: 1));
+
+          expect(fixture.chat.state, ChatPipelineState.failed);
+          final serialized = fixture.chat.messages.toString();
+          expect(serialized, isNot(contains('PRIVATE_')));
+          expect(serialized, isNot(contains('/home/alice')));
+          expect(serialized, isNot(contains('Authorization')));
+          final error = fixture.chat.messages.firstWhere(
+            (message) => message['role'] == 'assistant_error',
+          );
+          expect(
+            error['content'],
+            'No se pudo completar la respuesta. Inténtalo de nuevo.',
+          );
+        }
+      },
+    );
+
+    test(
+      'ambos terminales nunca emiten un secreto partido por el acote',
+      () async {
+        // Prosa corta y sin palabra clave: nada en el prefijo dispara la regla
+        // de opacidad, así que el único riesgo es el propio acote cortando el
+        // secreto y dejando un fragmento demasiado corto para `{24,}`.
+        final filler = List.filled(34, 'el fallo').join(' ').substring(0, 170);
+        const secret = 'AKIAIOSFODNN7EXAMPLEKEYQ1234567890abcdef';
+        for (final terminal in <({String type, Map<String, dynamic> payload})>[
+          (
+            type: 'message.complete',
+            payload: {'status': 'error', 'message': '$filler $secret'},
+          ),
+          (type: 'error', payload: {'message': '$filler $secret'}),
+        ]) {
+          final fixture = await _startChat();
+          addTearDown(fixture.dispose);
+          final failed = fixture.chat.changes.firstWhere(
+            (event) => event == ActiveChatEvent.error,
+          );
+
+          fixture.gateway.emit(terminal.type, terminal.payload);
+          await failed.timeout(const Duration(seconds: 1));
+
+          expect(fixture.chat.state, ChatPipelineState.failed);
+          final error = fixture.chat.messages.firstWhere(
+            (message) => message['role'] == 'assistant_error',
+          );
+          final content = error['content'].toString();
+          // Ni el secreto entero ni ningún prefijo suyo puede sobrevivir.
+          expect(content, isNot(contains(secret)));
+          for (var length = 4; length <= secret.length; length++) {
+            expect(
+              content,
+              isNot(contains(secret.substring(0, length))),
+              reason: 'fragmento de $length caracteres del secreto proyectado',
+            );
+          }
+        }
       },
     );
 
@@ -319,40 +520,36 @@ void main() {
       },
     );
 
-    test(
-      'deltas y final clasificados conservan el chat pero no entran en Voz',
-      () async {
-        final fixture = await _startChat();
-        addTearDown(fixture.dispose);
+    test('deltas y final clasificados no entran en chat ni Voz', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
 
-        final token = fixture.chat.changes.firstWhere(
-          (event) => event == ActiveChatEvent.token,
-        );
-        fixture.gateway.emit('message.delta', const {
-          'text': 'ANALYSIS DELTA PRIVADO',
-          'channel': 'analysis',
-        });
-        await token.timeout(const Duration(seconds: 1));
-        expect(fixture.events, contains(ActiveChatEvent.token));
-        expect(fixture.chat.assistantNarrationContent, isEmpty);
-        expect(
-          fixture.chat.assistantContent,
-          contains('ANALYSIS DELTA PRIVADO'),
-        );
+      fixture.gateway.emit('message.delta', const {
+        'text': 'ANALYSIS DELTA PRIVADO',
+        'channel': 'analysis',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(fixture.events, isNot(contains(ActiveChatEvent.token)));
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+      expect(
+        fixture.chat.assistantContent,
+        isNot(contains('ANALYSIS DELTA PRIVADO')),
+      );
 
-        await _complete(fixture, const {
-          'text': 'TRAZA INTERNA FINAL',
-          'channel': 'trace',
-        });
+      fixture.gateway.emit('message.complete', const {
+        'text': 'TRAZA INTERNA FINAL',
+        'channel': 'trace',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
 
-        expect(fixture.chat.assistantNarrationContent, isEmpty);
-        expect(fixture.chat.assistantContent, 'TRAZA INTERNA FINAL');
-        expect(
-          fixture.chat.messages.map((message) => message['content']).join('\n'),
-          contains('TRAZA INTERNA FINAL'),
-        );
-      },
-    );
+      expect(fixture.chat.assistantNarrationContent, isEmpty);
+      expect(fixture.chat.assistantContent, isEmpty);
+      expect(
+        fixture.chat.messages.map((message) => message['content']).join('\n'),
+        isNot(contains('TRAZA INTERNA FINAL')),
+      );
+    });
 
     test(
       'un final idéntico sin response_previewed se asienta en el mismo segmento',
@@ -363,7 +560,7 @@ void main() {
         await _emitAndSettle(fixture, 'message.interim', const {
           'text': 'Resultado listo.',
         });
-        final interimKey = fixture.chat.messages.firstWhere(
+        final interimKey = fixture.chat.internalMessagesForTesting.firstWhere(
           (message) => message['_desktopInterim'] == true,
         )['_desktopInterimKey'];
         await _complete(fixture, const {'text': 'Resultado listo.'});
@@ -371,7 +568,7 @@ void main() {
         // Paridad con Desktop (#63679): continuidad de prefijo basta para
         // saber que es el MISMO mensaje; duplicarlo en una segunda burbuja
         // pintaba el parcial y el final limpio a la vez.
-        final assistants = _assistantMessages(fixture.chat);
+        final assistants = _internalAssistantMessages(fixture.chat);
         expect(_nonEmptyAssistantTexts(fixture.chat), ['Resultado listo.']);
         expect(assistants, hasLength(1));
         expect(assistants.single['_desktopInterimKey'], interimKey);
@@ -447,7 +644,7 @@ void main() {
       await _emitAndSettle(fixture, 'message.interim', const {
         'text': 'Resultado listo.',
       });
-      final interimKey = fixture.chat.messages.firstWhere(
+      final interimKey = fixture.chat.internalMessagesForTesting.firstWhere(
         (message) => message['_desktopInterim'] == true,
       )['_desktopInterimKey'];
 
@@ -456,7 +653,7 @@ void main() {
         'response_previewed': true,
       });
 
-      final assistants = _assistantMessages(fixture.chat);
+      final assistants = _internalAssistantMessages(fixture.chat);
       expect(_nonEmptyAssistantTexts(fixture.chat), ['Resultado listo.']);
       expect(assistants, hasLength(1));
       expect(assistants.single['_desktopInterimKey'], interimKey);
@@ -472,7 +669,7 @@ void main() {
         await _emitAndSettle(fixture, 'message.interim', const {
           'text': 'He revisado los logs.',
         });
-        final interimKey = fixture.chat.messages.firstWhere(
+        final interimKey = fixture.chat.internalMessagesForTesting.firstWhere(
           (message) => message['_desktopInterim'] == true,
         )['_desktopInterimKey'];
 
@@ -481,7 +678,7 @@ void main() {
           'response_previewed': true,
         });
 
-        final assistants = _assistantMessages(fixture.chat);
+        final assistants = _internalAssistantMessages(fixture.chat);
         expect(assistants, hasLength(1));
         expect(
           assistants.single['content'],
@@ -547,7 +744,7 @@ void main() {
     test('el terminal elimina cualquier pipeline histórico huérfano', () async {
       final fixture = await _startChat();
       addTearDown(fixture.dispose);
-      fixture.chat.messages.addAll(const [
+      fixture.chat.internalMessagesForTesting.addAll(const [
         {'role': 'assistant', 'content': '', '_pipeline': true},
         {'role': 'user', 'content': 'turno anterior'},
       ]);
@@ -561,32 +758,30 @@ void main() {
       expect(fixture.chat.assistantContent, 'Turno actual terminado.');
     });
 
-    test('status error termina fallido y usa el texto como fallback', () async {
+    test('status error termina fallido con causa pública acotada', () async {
       final fixture = await _startChat();
       addTearDown(fixture.dispose);
 
       await _failComplete(fixture, const {
         'status': 'error',
-        'text': 'Error: invalid model slug',
+        'message': 'El modelo no existe.',
         'recoverable': true,
       });
 
       expect(fixture.chat.state, ChatPipelineState.failed);
       expect(fixture.chat.messages.first, {
         'role': 'assistant_error',
-        'content': 'Error: invalid model slug',
+        'content': 'No se pudo completar la respuesta: El modelo no existe.',
         '_prompt': 'prueba de interim',
-        'error': 'Error: invalid model slug',
         'partial': false,
         'recoverable': true,
-        '_localTranscriptProjectionId': 'local-assistant-error-1',
       });
       expect(fixture.events, contains(ActiveChatEvent.error));
       expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
     });
 
     test(
-      'status error conserva el texto parcial y el error estructurado',
+      'status error no conserva texto parcial ni error remoto ambiguo',
       () async {
         final fixture = await _startChat();
         addTearDown(fixture.dispose);
@@ -600,47 +795,63 @@ void main() {
         });
 
         expect(fixture.chat.state, ChatPipelineState.failed);
-        expect(fixture.chat.messages, hasLength(3));
+        expect(fixture.chat.messages, hasLength(2));
         expect(fixture.chat.messages[0], {
           'role': 'assistant_error',
-          'content': 'connection reset mid-stream',
+          'content': 'No se pudo completar la respuesta. Inténtalo de nuevo.',
           '_prompt': 'prueba de interim',
-          'error': 'connection reset mid-stream',
           'partial': true,
           'recoverable': true,
-          '_localTranscriptProjectionId': 'local-assistant-error-1',
         });
-        expect(fixture.chat.messages[1]['role'], 'assistant');
-        expect(fixture.chat.messages[1]['content'], 'half an ans');
-        expect(fixture.chat.messages[1]['_cancelled'], isTrue);
-        expect(fixture.chat.messages[1]['_pipeline'], isFalse);
+        expect(
+          fixture.chat.messages.toString(),
+          isNot(contains('half an ans')),
+        );
+        expect(
+          fixture.chat.messages.toString(),
+          isNot(contains('connection reset mid-stream')),
+        );
         expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
       },
     );
 
-    test('status error conserva el descriptor de facturación', () async {
-      final fixture = await _startChat();
-      addTearDown(fixture.dispose);
-      const billing = {
-        'provider': 'nous',
-        'billing_url': 'https://example.invalid/billing',
-        'message': 'Crédito agotado',
-      };
+    test(
+      'status error no conserva el descriptor remoto de facturación',
+      () async {
+        final fixture = await _startChat();
+        addTearDown(fixture.dispose);
+        const billing = {
+          'provider': 'nous',
+          'billing_url': 'https://example.invalid/billing',
+          'message': 'Crédito agotado',
+        };
 
-      await _failComplete(fixture, const {
-        'status': 'error',
-        'error': 'payment required',
-        'billing': billing,
-        'recoverable': true,
-      });
+        await _failComplete(fixture, const {
+          'status': 'error',
+          'error': 'payment required',
+          'billing': billing,
+          'recoverable': true,
+        });
 
-      expect(fixture.chat.state, ChatPipelineState.failed);
-      expect(fixture.chat.messages.first['role'], 'assistant_error');
-      expect(fixture.chat.messages.first['content'], 'payment required');
-      expect(fixture.chat.messages.first['billing'], billing);
-      expect(fixture.chat.messages.first['recoverable'], isTrue);
-      expect(fixture.events, contains(ActiveChatEvent.error));
-      expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
-    });
+        expect(fixture.chat.state, ChatPipelineState.failed);
+        expect(fixture.chat.messages.first['role'], 'assistant_error');
+        expect(
+          fixture.chat.messages.first['content'],
+          'No se pudo completar la respuesta. Inténtalo de nuevo.',
+        );
+        expect(fixture.chat.messages.first, isNot(contains('billing')));
+        expect(
+          fixture.chat.messages.toString(),
+          isNot(contains('payment required')),
+        );
+        expect(
+          fixture.chat.messages.toString(),
+          isNot(contains('Crédito agotado')),
+        );
+        expect(fixture.chat.messages.first['recoverable'], isTrue);
+        expect(fixture.events, contains(ActiveChatEvent.error));
+        expect(fixture.events, isNot(contains(ActiveChatEvent.done)));
+      },
+    );
   });
 }

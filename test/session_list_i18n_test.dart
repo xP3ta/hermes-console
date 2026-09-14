@@ -29,4 +29,11 @@ void main() {
     expect(es.slRelativeHours(3), 'hace 3h');
     expect(es.slRelativeDays(4), 'hace 4d');
   });
+
+  test('steering ambiguity states that delivery was not confirmed', () {
+    final en = StringsEn();
+    final es = StringsEs();
+    expect(es.chaSteerFailed, contains('No se confirmó el envío'));
+    expect(en.chaSteerFailed, contains('was not confirmed'));
+  });
 }

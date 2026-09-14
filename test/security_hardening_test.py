@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -149,6 +150,73 @@ class SbomXmlSecurityTest(unittest.TestCase):
         self.assertEqual(self.sbom.pom_licences(pom), set())
 
 
+class GatewayMutationFenceSourceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.chat = (ROOT / "lib/core/screens/chat_screen.dart").read_text(
+            encoding="utf-8"
+        )
+        cls.voice = (
+            ROOT
+            / "lib/core/services/voice/conversation/local_voice_conversation_controller.dart"
+        ).read_text(encoding="utf-8")
+        cls.gateway = (ROOT / "lib/core/services/tui_gateway_client.dart").read_text(
+            encoding="utf-8"
+        )
+
+    def _method_body(self, signature, next_signature):
+        start = self.gateway.rindex(signature)
+        end = self.gateway.index(next_signature, start)
+        return self.gateway[start:end]
+
+    def test_chat_and_voice_cannot_reach_live_steering(self):
+        self.assertNotIn("_chat.steer(", self.chat)
+        self.assertNotIn("chat.steer(", self.voice)
+        self.assertNotIn("_chat.redirect(", self.chat)
+        self.assertNotIn("chat.redirect(", self.voice)
+
+    def test_steer_and_redirect_use_the_exclusive_session_fence(self):
+        steer = self._method_body(
+            "Future<void> steer(", "Future<DesktopRedirectDisposition> redirect("
+        )
+        redirect = self._method_body(
+            "Future<DesktopRedirectDisposition> redirect(", "Future<void> interrupt("
+        )
+        for method in (steer, redirect):
+            self.assertIn("_requestExclusiveSessionMutation", method)
+            self.assertNotIn("await _request(", method)
+
+
+class BotOwnedNavigationSourceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.main = (ROOT / "lib/main.dart").read_text(encoding="utf-8")
+        cls.sessions = (
+            ROOT / "lib/core/screens/session_list_screen.dart"
+        ).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _body(source, signature, next_signature):
+        start = source.index(signature)
+        end = source.index(next_signature, start)
+        return source[start:end]
+
+    def test_legacy_and_library_bot_opens_use_mission_control_owner(self):
+        widget_open = self._body(
+            self.main,
+            "Future<NavigationDeliveryOutcome> _openWidgetSession(",
+            "Future<void> setThemeId(",
+        )
+        library_open = self._body(
+            self.sessions,
+            "Future<void> _openChat(Session session)",
+            "Future<void> _openDetail(Session session)",
+        )
+        self.assertIn("missionControlTargetForSession(target)", widget_open)
+        self.assertIn("missionControlTargetForSession(session)", library_open)
+        self.assertIn("MissionControlScreen(", library_open)
+
+
 class ReleaseWorkflowBoundaryTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -156,29 +224,52 @@ class ReleaseWorkflowBoundaryTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-    def test_direct_release_builds_only_full_apks(self):
-        self.assertIn("flutter build apk --release --flavor full", self.workflow)
-        self.assertIn("--split-per-abi", self.workflow)
+    def test_public_workflow_builds_no_signed_channel_artifact(self):
+        self.assertNotIn("flutter build apk", self.workflow)
         self.assertNotIn("flutter build appbundle", self.workflow)
+        self.assertNotIn("--flavor full", self.workflow)
         self.assertNotIn("--flavor play", self.workflow)
         self.assertNotIn("--flavor qa", self.workflow)
+        self.assertIn("CI verification only", self.workflow)
 
-    def test_public_assets_are_staged_without_flattening_abi_evidence(self):
-        self.assertIn("hermes-console-release-evidence.tar.gz", self.workflow)
-        self.assertIn("release-public/**", self.workflow)
-        self.assertIn("release-artifacts/release-public", self.workflow)
-        self.assertNotIn("-name 'fullRelease.artifact.json'", self.workflow)
+    def test_sensitive_builds_and_staging_are_local_only(self):
+        double_build = (ROOT / "tool/release/double_build.sh").read_text(encoding="utf-8")
+        play_stage = (ROOT / "tool/release/stage_play_private.sh").read_text(encoding="utf-8")
+        self.assertIn("flutter build apk --release --flavor full", double_build)
+        self.assertIn("flutter build appbundle --release --flavor play", double_build)
+        self.assertIn("--split-per-abi", double_build)
+        self.assertIn("mv -- \"$STAGING_ROOT\" \"$OUTPUT_ROOT\"", double_build)
+        self.assertIn("mv -- \"$WORK\" \"$DESTINATION_CANONICAL\"", play_stage)
+        self.assertNotIn("gh release", double_build + play_stage)
 
-    def test_public_checksum_manifest_uses_downloadable_basenames(self):
-        self.assertIn("cd release-public", self.workflow)
-        self.assertIn("-printf '%f\\0'", self.workflow)
-        self.assertIn("xargs -0 sha256sum > SHA256SUMS", self.workflow)
-
-    def test_release_commands_have_explicit_repository_context(self):
-        self.assertEqual(
-            self.workflow.count('--repo "$GITHUB_REPOSITORY"'),
-            2,
+    def test_exact_public_basenames_live_in_reviewed_contract(self):
+        contract = json.loads(
+            (ROOT / "tool/release/release_contract.json").read_text(encoding="utf-8")
         )
+        self.assertEqual(
+            contract["channels"]["direct-public"]["publicAssets"],
+            [
+                "SHA256SUMS",
+                "app-arm64-v8a-full-release.apk",
+                "app-armeabi-v7a-full-release.apk",
+                "app-x86_64-full-release.apk",
+                "hermes-console-release-evidence.tar.gz",
+                "provenance.intoto.jsonl",
+            ],
+        )
+        self.assertNotIn(
+            "app-play-release.aab",
+            contract["channels"]["direct-public"]["publicAssets"],
+        )
+
+    def test_workflow_never_exposes_prepublication_candidates(self):
+        self.assertNotIn("actions/upload-artifact", self.workflow)
+        self.assertNotIn("actions/download-artifact", self.workflow)
+        self.assertNotIn("actions/attest", self.workflow)
+        self.assertNotIn("KEYSTORE_BASE64", self.workflow)
+        self.assertNotIn("EXPECTED_CERT_SHA256", self.workflow)
+        self.assertNotIn("contents: write", self.workflow)
+        self.assertNotIn("gh release", self.workflow)
 
 
 if __name__ == "__main__":

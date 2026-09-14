@@ -9,8 +9,6 @@
 //   `profiles.configure disabled_skills` como paso best-effort posterior.
 // - La identidad visible (título + sello `created`) se publica en el
 //   namespace `hermes-bots` de `ui_meta`, como `saveBotMeta` de Desktop.
-// - Al crearse, Mission Control abre el Bot Chat del bot con el prompt
-//   kickoff de Desktop (`kBotChatKickoffPrompt`) para que se presente solo.
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -45,11 +43,6 @@ final class _BotCreateIdentityFailure implements Exception {
 
   const _BotCreateIdentityFailure({required this.uncertain});
 }
-
-/// Prompt de auto-presentación que Hermes Desktop envía al Bot Chat recién
-/// creado (`createCanonicalChat` en el plugin hermes-bots). El texto viaja al
-/// agente tal cual, sin localizar.
-const kBotChatKickoffPrompt = 'Hey, tell me about yourself!';
 
 /// Slug de profile con la misma normalización que `slugify` de Desktop.
 String slugifyBotName(String value) {
@@ -571,8 +564,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
 
   /// Orden autoritativo: `profiles.create` primero y, solo después, identidad
   /// tipada (pet/asset/ui_meta). Si la identidad no queda confirmada la
-  /// pantalla permanece abierta: nunca dispara la auto-presentación como si
-  /// el bot estuviera completamente listo.
+  /// pantalla permanece abierta y no navega como si el bot estuviera listo.
   Future<void> _create() async {
     if (!_valid || _taken || _busy) return;
     final copy = MissionControlCopy.of(context);

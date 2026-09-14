@@ -1,0 +1,36 @@
+{
+  "list": {
+    "subagents": [
+      {
+        "subagent_id": "child-live",
+        "parent_id": "parent-agent",
+        "depth": 2,
+        "goal": "Auditar contrato",
+        "delegation_id": "deleg-live",
+        "model": "hermes-3",
+        "started_at": 1789034400.25,
+        "status": "running",
+        "tool_count": 2,
+        "last_tool": "terminal",
+        "accepting_steer": true
+      }
+    ],
+    "delegations": []
+  },
+  "tail": {
+    "subagent_id": "child-live",
+    "available": true,
+    "text": "producer tail",
+    "truncated": false
+  },
+  "steer_queued": {
+    "status": "queued",
+    "subagent_id": "child-live",
+    "text": "primero"
+  },
+  "steer_rejected": {
+    "status": "rejected",
+    "subagent_id": "child-live",
+    "text": "segundo"
+  }
+}

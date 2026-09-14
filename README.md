@@ -141,7 +141,7 @@ silently sending audio somewhere else.
 
 ## Build from source
 
-Required toolchain: Flutter 3.44.x, its bundled Dart SDK, Java 17 and Android
+Required toolchain: Flutter 3.47.x, its bundled Dart SDK, Java 17 and Android
 SDK 36.
 
 ```bash
@@ -149,7 +149,8 @@ flutter pub get
 flutter analyze
 flutter test
 flutter build apk --debug --flavor full \
-  --dart-define=HERMES_FLAVOR=full
+  --dart-define=HERMES_FLAVOR=full \
+  --dart-define=HERMES_LOCAL_AGENT=true
 ```
 
 The debug build is for development only. Release builds deliberately fail

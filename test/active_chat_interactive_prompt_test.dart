@@ -9,6 +9,8 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/in_memory_compression_fence_storage.dart';
+
 class _InteractiveGateway
     implements
         HermesDesktopGateway,
@@ -22,6 +24,7 @@ class _InteractiveGateway
   bool _connected = false;
   int terminalResponses = 0;
   int sensitiveResponses = 0;
+  Completer<void>? terminalResponseGate;
   String? clarifyRequestId;
   String? clarifyAnswer;
   String? clarifyQuestionId;
@@ -158,6 +161,7 @@ class _InteractiveGateway
   @override
   Future<DesktopPromptResponse> respondToTerminalRead(String requestId) async {
     terminalResponses++;
+    await terminalResponseGate?.future;
     return DesktopPromptResponse.fromJson(const {
       'status': 'ok',
     }, method: 'terminal.read.respond');
@@ -188,6 +192,7 @@ ActiveChat _chat(
   _InteractiveGateway gateway, {
   void Function(ActiveChatEvent)? onEvent,
 }) => ActiveChat(
+  compressionFenceStore: testCompressionFenceStore(),
   connection: SavedConnection(
     id: 'conn-interactive',
     label: 'Interactive',
@@ -208,6 +213,7 @@ ActiveChat _chat(
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   ),
   desktopGateway: gateway,
+  allowUnownedDesktopSnapshotForTesting: true,
 );
 
 Future<ActiveChat> _start(
@@ -583,6 +589,43 @@ void main() {
   });
 
   test(
+    'el vigilante de primer token no se rearma mientras hay una tarjeta pendiente',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      expect(chat.firstTokenWatchdogArmed, isTrue);
+
+      gateway.emit('clarify.request', const {
+        'request_id': 'clarify-wait',
+        'question': '¿Qué color?',
+        'choices': ['rojo', 'azul'],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      expect(chat.firstTokenWatchdogArmed, isFalse);
+
+      // Liveness events keep arriving while the human thinks; none of them may
+      // restart the inactivity budget under the pending card.
+      gateway.emit('status.update', const {
+        'kind': 'status',
+        'text': 'waiting for clarification',
+      });
+      gateway.emit('tool.progress', const {'name': 'clarify'});
+      gateway.emit('session.info', const {
+        'info': {'session_id': 'runtime-interactive', 'running': true},
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(chat.firstTokenWatchdogArmed, isFalse);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'rojo');
+      expect(chat.needsInput, isFalse);
+      // Answered: the server is on the clock again.
+      expect(chat.firstTokenWatchdogArmed, isTrue);
+    },
+  );
+
+  test(
     'terminal.read se responde vacío por política y deduplica replay',
     () async {
       final gateway = _InteractiveGateway();
@@ -626,6 +669,87 @@ void main() {
     expect(chat.pendingInteractivePrompt, isNull);
     expect(gateway.sensitiveResponses, 1);
   });
+
+  for (final expiry
+      in <
+        ({
+          String requestType,
+          String expireType,
+          Map<String, dynamic> Function(String) payload,
+        })
+      >[
+        (
+          requestType: 'clarify.request',
+          expireType: 'clarify.expire',
+          payload: (id) => {'request_id': id, 'question': '¿Continuar?'},
+        ),
+        (
+          requestType: 'sudo.request',
+          expireType: 'sudo.expire',
+          payload: (id) => {'request_id': id},
+        ),
+        (
+          requestType: 'secret.request',
+          expireType: 'secret.expire',
+          payload: (id) => {
+            'request_id': id,
+            'env_var': 'DEPLOY_TOKEN',
+            'prompt': 'Token',
+          },
+        ),
+        (
+          requestType: 'terminal.read.request',
+          expireType: 'terminal.read.expire',
+          payload: (id) => {'request_id': id, 'start': 0, 'count': 20},
+        ),
+      ]) {
+    test(
+      '${expiry.expireType} expira solo request_id exacto sin iniciar RPC',
+      () async {
+        final gateway = _InteractiveGateway();
+        if (expiry.requestType == 'terminal.read.request') {
+          gateway.terminalResponseGate = Completer<void>();
+        }
+        final chat = await _start(gateway);
+        addTearDown(() {
+          final gate = gateway.terminalResponseGate;
+          if (gate != null && !gate.isCompleted) gate.complete();
+          chat.dispose();
+        });
+        gateway.emit(expiry.requestType, expiry.payload('target'));
+        gateway.emit(expiry.requestType, expiry.payload('foreign'));
+        final targetKey = InteractivePromptKey(
+          runtimeSessionId: 'runtime-interactive',
+          requestId: 'target',
+        );
+        final foreignKey = InteractivePromptKey(
+          runtimeSessionId: 'runtime-interactive',
+          requestId: 'foreign',
+        );
+        await _waitUntil(
+          () =>
+              chat.interactivePrompts[targetKey] != null &&
+              chat.interactivePrompts[foreignKey] != null,
+        );
+        final rpcCountBefore =
+            gateway.terminalResponses + gateway.sensitiveResponses;
+
+        gateway.emit(expiry.expireType, const {'request_id': 'target'});
+        await _waitUntil(
+          () =>
+              chat.interactivePrompts[targetKey]?.status ==
+              InteractivePromptStatus.expired,
+        );
+
+        expect(chat.interactivePrompts[targetKey]?.needsInput, isFalse);
+        expect(chat.interactivePrompts[foreignKey]?.needsInput, isTrue);
+        expect(
+          gateway.terminalResponses + gateway.sensitiveResponses,
+          rpcCountBefore,
+        );
+      },
+    );
+  }
 
   test(
     'fallo sensible exige valor nuevo y el holder siempre se dispone',
@@ -1143,6 +1267,39 @@ void main() {
         chat.interactivePrompts[entry.key]?.status,
         InteractivePromptStatus.expired,
       );
+    },
+  );
+
+  test(
+    'authoritative empty clarify snapshot clears stale card but partial does not',
+    () async {
+      final gateway = _InteractiveGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      gateway.emit('clarify.request', const {
+        'request_id': 'stale-snapshot-clarify',
+        'question': '¿Continuar?',
+        'choices': ['Sí', 'No'],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+      );
+      await chat.loadMessages();
+      expect(chat.pendingInteractivePrompt, isNotNull);
+
+      gateway.nextResumeSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-interactive',
+        storedSessionId: 'stored-interactive',
+        created: false,
+        pendingClarifyProvided: true,
+      );
+      await chat.loadMessages();
+
+      expect(chat.pendingInteractivePrompt, isNull);
     },
   );
 

@@ -40,7 +40,9 @@ path = [
   "sbom/**",
   "scripts/**",
   "server-patches/**",
+  "specs/**",
   "test/**",
+  "test_tools/**",
   "tool/**",
 ]
 precedence = "override"

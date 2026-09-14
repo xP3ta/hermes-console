@@ -94,7 +94,7 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
     return strings.agentCenterFailureUnknown;
   }
 
-  Future<void> _showSpawnTree(SpawnTreeEntry entry) async {
+  Future<void> _showSpawnTree(SpawnTreeEntry entry, int ordinal) async {
     showHermesFloatingSurface<void>(
       context: context,
       surfaceKey: const ValueKey('agent-spawn-tree-surface'),
@@ -127,9 +127,7 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          detail.label.isEmpty
-                              ? strings.agentCenterWorkFallback
-                              : detail.label,
+                          '${strings.agentCenterWorkFallback} $ordinal',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleMedium,
@@ -156,9 +154,10 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                           separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (context, index) {
                             final node = detail.subagents[index];
-                            final label = (node['label'] as String?)?.trim();
-                            final status = (node['status'] as String?)?.trim();
                             return HermesCard(
+                              key: ValueKey(
+                                'agent-center-history-$ordinal-subagent-${index + 1}',
+                              ),
                               child: Row(
                                 children: [
                                   const Icon(
@@ -168,22 +167,17 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Text(
-                                      label?.isNotEmpty == true
-                                          ? label!
-                                          : strings.subagentActivityItem(
-                                              index + 1,
-                                            ),
+                                      strings.subagentActivityItem(index + 1),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
-                                  if (status?.isNotEmpty == true)
-                                    HermesBadge(
-                                      _agentStatusLabel(status!, strings),
-                                      color: Theme.of(
-                                        context,
-                                      ).hermes.textSecondary,
-                                    ),
+                                  HermesBadge(
+                                    _agentStatusLabel(node.status, strings),
+                                    color: Theme.of(
+                                      context,
+                                    ).hermes.textSecondary,
+                                  ),
                                 ],
                               ),
                             );
@@ -198,8 +192,10 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
     );
   }
 
-  Future<void> _stopProcess(BackgroundProcessEntry process) async {
-    if (!_hasRuntime || widget.readOnly || _stopping.contains(process.id)) {
+  Future<void> _stopProcess(BackgroundProcessEntry process, int ordinal) async {
+    if (!_hasRuntime ||
+        widget.readOnly ||
+        _stopping.contains(process.opaqueId)) {
       return;
     }
     final strings = Strings.of(context);
@@ -209,9 +205,7 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
         title: Text(strings.agentCenterStopProcessTitle),
         content: Text(
           strings.agentCenterStopProcessBody(
-            process.commandPreview.isEmpty
-                ? process.id
-                : process.commandPreview,
+            strings.agentCenterProcessFallback('$ordinal'),
           ),
         ),
         actions: [
@@ -236,11 +230,11 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
       );
       if (!verified || !mounted || widget.readOnly) return;
     }
-    setState(() => _stopping.add(process.id));
+    setState(() => _stopping.add(process.opaqueId));
     try {
       await widget.gateway.killBackgroundProcess(
         widget.runtimeSessionId,
-        process.id,
+        process.opaqueId,
       );
       await _load();
     } catch (_) {
@@ -249,62 +243,8 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
         SnackBar(content: Text(Strings.of(context).agentCenterStopFailed)),
       );
     } finally {
-      if (mounted) setState(() => _stopping.remove(process.id));
+      if (mounted) setState(() => _stopping.remove(process.opaqueId));
     }
-  }
-
-  Future<void> _stopAllProcesses() async {
-    final processes = _snapshot?.processes ?? const <BackgroundProcessEntry>[];
-    if (!_hasRuntime || widget.readOnly || processes.isEmpty) return;
-    final strings = Strings.of(context);
-    final approved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(strings.agentCenterStopAllTitle),
-        content: Text(strings.agentCenterStopAllBody(processes.length)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(strings.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.agentCenterStopAll),
-          ),
-        ],
-      ),
-    );
-    if (approved != true || !mounted || widget.readOnly) return;
-    final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
-    if (lock != null) {
-      final verified = await LockScreen.verify(
-        context,
-        lock,
-        reason: strings.agentCenterStopAllTitle,
-      );
-      if (!verified || !mounted || widget.readOnly) return;
-    }
-
-    final ids = processes.map((process) => process.id).toSet();
-    setState(() => _stopping.addAll(ids));
-    var failed = false;
-    for (final process in processes) {
-      try {
-        await widget.gateway.killBackgroundProcess(
-          widget.runtimeSessionId,
-          process.id,
-        );
-      } catch (_) {
-        failed = true;
-      }
-    }
-    await _load();
-    if (mounted && failed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).agentCenterStopAllFailed)),
-      );
-    }
-    if (mounted) setState(() => _stopping.removeAll(ids));
   }
 
   Future<void> _startBackgroundTask() async {
@@ -425,23 +365,6 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                     ],
                     if (_hasRuntime) ...[
                       HermesSectionHeader(strings.agentCenterRunningSection),
-                      if (snapshot != null &&
-                          snapshot.processes.length > 1 &&
-                          !widget.readOnly)
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            key: const ValueKey('agent-center-stop-all'),
-                            onPressed: _stopping.isEmpty
-                                ? _stopAllProcesses
-                                : null,
-                            icon: const Icon(
-                              Icons.stop_circle_outlined,
-                              size: 18,
-                            ),
-                            label: Text(strings.agentCenterStopAll),
-                          ),
-                        ),
                       if (snapshot == null || snapshot.processes.isEmpty)
                         _AgentEmpty(
                           icon: Icons.hourglass_empty_rounded,
@@ -450,45 +373,56 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                       else
                         HermesGroup(
                           children: [
-                            for (final process in snapshot.processes)
+                            for (final (index, process)
+                                in snapshot.processes.indexed)
                               Material(
                                 type: MaterialType.transparency,
                                 child: ListTile(
+                                  key: ValueKey(
+                                    'agent-center-process-${index + 1}',
+                                  ),
                                   minTileHeight: 58,
                                   leading: Icon(
-                                    process.status == 'running'
+                                    process.status == AgentCenterStatus.running
                                         ? Icons.play_circle_outline_rounded
                                         : Icons.timelapse_rounded,
                                   ),
                                   title: Text(
-                                    process.commandPreview.isEmpty
-                                        ? strings.agentCenterProcessFallback(
-                                            process.id,
-                                          )
-                                        : process.commandPreview,
+                                    strings.agentCenterProcessFallback(
+                                      '${index + 1}',
+                                    ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   subtitle: Text(
                                     strings.agentCenterProcessStatus(
-                                      process.status.isEmpty
-                                          ? strings.agentCenterActive
-                                          : _agentStatusLabel(
-                                              process.status,
-                                              strings,
-                                            ),
+                                      _agentStatusLabel(
+                                        process.status,
+                                        strings,
+                                      ),
                                       process.uptimeSeconds,
                                     ),
                                   ),
                                   trailing: _hasRuntime && !widget.readOnly
                                       ? IconButton(
+                                          key: ValueKey(
+                                            'agent-center-process-stop-${index + 1}',
+                                          ),
                                           tooltip:
                                               strings.agentCenterStopTooltip,
                                           onPressed:
-                                              _stopping.contains(process.id)
+                                              _stopping.contains(
+                                                process.opaqueId,
+                                              )
                                               ? null
-                                              : () => _stopProcess(process),
-                                          icon: _stopping.contains(process.id)
+                                              : () => _stopProcess(
+                                                  process,
+                                                  index + 1,
+                                                ),
+                                          icon:
+                                              _stopping.contains(
+                                                process.opaqueId,
+                                              )
                                               ? const SizedBox.square(
                                                   dimension: 20,
                                                   child:
@@ -515,16 +449,18 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                     else
                       HermesGroup(
                         children: [
-                          for (final entry in snapshot.snapshots)
+                          for (final (index, entry)
+                              in snapshot.snapshots.indexed)
                             Material(
                               type: MaterialType.transparency,
                               child: ListTile(
+                                key: ValueKey(
+                                  'agent-center-history-${index + 1}',
+                                ),
                                 minTileHeight: 58,
                                 leading: const Icon(Icons.hub_outlined),
                                 title: Text(
-                                  entry.label.isEmpty
-                                      ? strings.agentCenterWorkFallback
-                                      : entry.label,
+                                  '${strings.agentCenterWorkFallback} ${index + 1}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -534,7 +470,7 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
                                 trailing: const Icon(
                                   Icons.chevron_right_rounded,
                                 ),
-                                onTap: () => _showSpawnTree(entry),
+                                onTap: () => _showSpawnTree(entry, index + 1),
                               ),
                             ),
                         ],
@@ -635,16 +571,16 @@ class _AgentSheetMessage extends StatelessWidget {
   );
 }
 
-String _agentStatusLabel(String value, Strings strings) {
-  return switch (value.trim().toLowerCase()) {
-    'requested' || 'pending' => strings.subagentActivityRequested,
-    'running' => strings.statusRunning,
-    'thinking' => strings.subagentActivityThinking,
-    'tool' || 'using_tool' || 'using tool' => strings.subagentActivityTool,
-    'completed' || 'finished' => strings.subagentActivityCompleted,
-    'failed' || 'error' => strings.subagentActivityFailed,
-    'cancelled' || 'canceled' => strings.subagentActivityCancelled,
-    'stopped' => strings.statusStopped,
-    _ => value,
+String _agentStatusLabel(AgentCenterStatus value, Strings strings) {
+  return switch (value) {
+    AgentCenterStatus.requested => strings.subagentActivityRequested,
+    AgentCenterStatus.running => strings.statusRunning,
+    AgentCenterStatus.thinking => strings.subagentActivityThinking,
+    AgentCenterStatus.tool => strings.subagentActivityTool,
+    AgentCenterStatus.completed => strings.subagentActivityCompleted,
+    AgentCenterStatus.failed => strings.subagentActivityFailed,
+    AgentCenterStatus.cancelled => strings.subagentActivityCancelled,
+    AgentCenterStatus.stopped => strings.statusStopped,
+    AgentCenterStatus.unknown => strings.subagentActivityUnknown,
   };
 }

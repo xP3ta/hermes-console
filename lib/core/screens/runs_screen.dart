@@ -94,7 +94,12 @@ Color runStatusColor(String status, HermesThemeColors colors) =>
 
 class RunsTab extends StatefulWidget {
   final SavedConnection connection;
-  const RunsTab({required this.connection, super.key});
+  final String profile;
+  const RunsTab({
+    required this.connection,
+    this.profile = 'default',
+    super.key,
+  });
 
   @override
   State<RunsTab> createState() => _RunsTabState();
@@ -144,7 +149,7 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
     setState(() => _refreshing = true);
     for (final r in registry.records.where((r) => !r.isTerminal)) {
       try {
-        final status = await _client.getRun(r.runId);
+        final status = await _client.getRun(r.runId, profile: r.profile);
         await registry.update(
           r.runId,
           profile: r.profile,
@@ -198,7 +203,7 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
     }
     final s = Strings.of(context);
     try {
-      await _launch(record.prompt);
+      await _launch(record.prompt, profile: record.profile);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -211,17 +216,20 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
   /// siempre. LOCAL: el agente NO expone `/v1/runs` (daba 405); ejecutamos por el
   /// Mobile Bridge (`/bridge/chat`), igual que el chat local, y mostramos el
   /// resultado. El camino remoto queda intacto.
-  Future<void> _launch(String prompt) async {
+  Future<void> _launch(String prompt, {String? profile}) async {
     if (widget.connection.kind == InstanceKind.localhost) {
       await _launchLocalRun(prompt);
       return;
     }
-    final runId = await _client.startRun(input: prompt);
+    final ownerProfile = profile ?? widget.profile;
+    final runId = await _client.startRun(input: prompt, profile: ownerProfile);
     final record = RunRecord(
       runId: runId,
       prompt: prompt,
       createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
       lastStatus: 'queued',
+      connId: widget.connection.id,
+      profile: ownerProfile,
     );
     await _registry?.add(record);
     if (!mounted) return;
@@ -253,6 +261,8 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
       createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
       lastStatus: 'completed',
       output: response,
+      connId: widget.connection.id,
+      profile: widget.profile,
     );
     await _registry?.add(record);
     if (!mounted) return;
@@ -629,7 +639,10 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
 
   Future<void> _pollStatus() async {
     try {
-      final status = await _client.getRun(widget.record.runId);
+      final status = await _client.getRun(
+        widget.record.runId,
+        profile: widget.record.profile,
+      );
       if (!mounted) return;
       setState(() {
         _status = (status['status'] as String?) ?? _status;
@@ -668,6 +681,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
   void _listen() {
     _client.streamRunEvents(
       widget.record.runId,
+      profile: widget.record.profile,
       onEvent: (event) {
         if (!mounted) return;
         final type = (event['event'] ?? '').toString();
@@ -910,6 +924,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         widget.record.runId,
         scope.wire,
         requestId: requestId,
+        profile: widget.record.profile,
       );
       await _notifications?.cancelApproval(
         connId: widget.connection.id,
@@ -1003,6 +1018,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
             widget.record.runId,
             choice,
             requestId: requestId,
+            profile: widget.record.profile,
           );
           return true;
         },
@@ -1150,7 +1166,10 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
       return;
     }
     try {
-      await _client.stopRun(widget.record.runId);
+      await _client.stopRun(
+        widget.record.runId,
+        profile: widget.record.profile,
+      );
       if (!mounted) return;
       setState(() => _status = 'stopping');
       _persist();

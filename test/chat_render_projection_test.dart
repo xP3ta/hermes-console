@@ -229,6 +229,82 @@ void main() {
     expect(userQuote['content'], quoted);
   });
 
+  test(
+    'oculta el carrier exacto de background process sin artefactos de usuario',
+    () {
+      const raw =
+          '[IMPORTANT: Background process proc_0b5fab8a4839 exited (exit code 1).\n'
+          "Command: agent-cli -p 'Review /home/example/private/project and print TOKEN' "
+          '--unsafe-mode\n'
+          'Output:\n'
+          '/home/example/private/project: failure\n'
+          ']';
+      final carrier = _message('user', raw)..['row_id'] = 1210;
+
+      expect(effectiveUserDisplayKind(carrier), 'hidden');
+      expect(isRealUserTurn(carrier), isFalse);
+
+      final projection = ChatRenderProjection.build([carrier]);
+
+      expect(projection.units, isEmpty);
+      expect(projection.visibleUserCount, 0);
+      expect(projection.userOrdinalFor(carrier), isNull);
+      expect(carrier['content'], raw, reason: 'la historia durable no se muta');
+    },
+  );
+
+  test('el fallback background preserva citas, prefijos inválidos y optimistas', () {
+    const canonical =
+        '[IMPORTANT: Background process proc_0b5fab8a4839 exited (exit code 137).\n'
+        'Command: claude -p private\n'
+        'Output:\n'
+        'private\n'
+        ']';
+    for (final raw in const [
+      '¿Qué significa [IMPORTANT: Background process ...]?',
+      '[IMPORTANT: Background process proc_0b5fab8a4839 exited (exit code 1).',
+      '[IMPORTANT: Background process proc_NOTCANON exited (exit code 1).\nCommand: x\nOutput:\ny\n]',
+      '[IMPORTANT: Background process proc_0b5fab8a4839 exited (exit code 1). ¿qué significa?',
+      'Cita en línea $canonical',
+    ]) {
+      final user = _message('user', raw);
+      expect(projectedUserVisibleContent(user), raw, reason: raw);
+      expect(effectiveUserDisplayKind(user), isEmpty, reason: raw);
+    }
+
+    final optimistic = _message('user', canonical)..['_optimistic'] = true;
+    expect(projectedUserVisibleContent(optimistic), canonical);
+    expect(effectiveUserDisplayKind(optimistic), isEmpty);
+
+    for (final separator in const ['\n\n', '\r\n\r\n']) {
+      final mixed = _message('user', 'Pregunta visible$separator$canonical');
+      expect(projectedUserVisibleContent(mixed), 'Pregunta visible');
+      expect(effectiveUserDisplayKind(mixed), isEmpty);
+    }
+  });
+
+  test(
+    'refresh invalida la caché al cambiar entre carrier oculto y prompt real',
+    () {
+      const carrier =
+          '[IMPORTANT: Background process proc_0b5fab8a4839 exited (exit code 0).\n'
+          'Command: claude -p private\n'
+          'Output:\n'
+          'done\n'
+          ']';
+      final messages = [_message('user', carrier)];
+      final projection = ChatRenderProjection.build(messages);
+
+      messages[0] = _message('user', 'Pregunta tras refresh');
+
+      expect(projection.canReuseFor(messages), isFalse);
+      expect(
+        ChatRenderProjection.build(messages).units.single,
+        isA<ChatUserTurnUnitPlan>(),
+      );
+    },
+  );
+
   test('display_kind hidden no crea una burbuja de usuario cruda', () {
     final hidden = _message('user', 'payload interno')
       ..['display_kind'] = 'hidden';
@@ -331,20 +407,42 @@ void main() {
     expect(tools.messageIndexes, [2, 1]);
   });
 
-  test(
-    'un assistant con razonamiento estructurado y content vacío no se evapora',
-    () {
-      final reasoner = _message('assistant', '')
-        ..['reasoning_content'] = 'pensé paso a paso';
-      final projection = ChatRenderProjection.build([
-        reasoner,
-        _message('user', 'Pregunta'),
-      ]);
+  test('delegate_task call y result no generan tool rows visibles', () {
+    final projection = ChatRenderProjection.build([
+      _message(
+          'tool',
+          '{"delegation_id":"deleg_private","path":"/home/private"}',
+        )
+        ..['tool_call_id'] = 'call-private'
+        ..['tool_name'] = 'delegate_task',
+      _message('assistant', '')
+        ..['tool_calls'] = [
+          {
+            'id': 'call-private',
+            'function': {
+              'name': 'delegate_task',
+              'arguments': '{"goal":"PRIVATE_GOAL"}',
+            },
+          },
+        ],
+      _message('user', 'Delega una revisión'),
+    ]);
 
-      expect(projection.units, hasLength(2));
-      expect(projection.assistantMessageIndexesNewestFirst, [0]);
-    },
-  );
+    expect(projection.units, hasLength(1));
+    expect(projection.units.single, isA<ChatUserTurnUnitPlan>());
+  });
+
+  test('un assistant con solo razonamiento estructurado no se proyecta', () {
+    final reasoner = _message('assistant', '')
+      ..['reasoning_content'] = 'pensé paso a paso';
+    final projection = ChatRenderProjection.build([
+      reasoner,
+      _message('user', 'Pregunta'),
+    ]);
+
+    expect(projection.units, hasLength(1));
+    expect(projection.assistantMessageIndexesNewestFirst, isEmpty);
+  });
 
   test('un assistant vacío sin razonamiento sigue evaporándose', () {
     final projection = ChatRenderProjection.build([

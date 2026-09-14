@@ -19,6 +19,8 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 
+import 'support/in_memory_compression_fence_storage.dart';
+
 SavedConnection _conn() => SavedConnection(
   id: 'conn-1',
   label: 'Test',
@@ -51,6 +53,7 @@ void main() {
           httpClient: client,
         );
         final chat = ActiveChat(
+          compressionFenceStore: testCompressionFenceStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -115,6 +118,7 @@ void main() {
           httpClient: client,
         );
         final chat = ActiveChat(
+          compressionFenceStore: testCompressionFenceStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -184,6 +188,7 @@ void main() {
         httpClient: client,
       );
       final chat = ActiveChat(
+        compressionFenceStore: testCompressionFenceStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',

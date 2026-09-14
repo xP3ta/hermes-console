@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'bridge_client.dart';
+import 'bridge_endpoint_resolver.dart';
 import 'connection_manager.dart';
 import 'secure_storage.dart';
 
@@ -67,6 +68,7 @@ class BridgeState {
 /// credenciales sin acoplar los widgets al almacenamiento real.
 abstract interface class BridgeManagerContract {
   Future<BridgeState> probe(String connectionId);
+  Future<BridgeProvisionResult> provision(String connectionId);
   Future<bool> tryProvision(String connectionId);
   Future<BridgeClient?> clientFor(String connectionId);
 }
@@ -102,12 +104,15 @@ class BridgeManager implements BridgeManagerContract {
     }
     final conn = _conn(connectionId);
     if (conn == null) return null;
-    return (url: conn.derivedBridgeUrl, derived: true);
+    final endpoint = BridgeEndpointResolver.resolve(conn);
+    return (url: endpoint.url, derived: endpoint.derived);
   }
 
   /// URL que se derivaría del host del gateway (sin mirar lo guardado).
-  String? derivedUrlFor(String connectionId) =>
-      _conn(connectionId)?.derivedBridgeUrl;
+  String? derivedUrlFor(String connectionId) {
+    final conn = _conn(connectionId);
+    return conn == null ? null : BridgeEndpointResolver.resolve(conn).url;
+  }
 
   Future<String?> token(String connectionId) =>
       _secure.readBridge(connectionId, 'token');
@@ -165,21 +170,58 @@ class BridgeManager implements BridgeManagerContract {
   /// valida la identidad contra el gateway local, que acepta peticiones sin
   /// autenticación. Guarda el token y devuelve true si tiene éxito.
   @override
-  Future<bool> tryProvision(String connectionId) async {
+  Future<BridgeProvisionResult> provision(String connectionId) async {
     final conn = _conn(connectionId);
-    if (conn == null) return false;
+    if (conn == null) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.unexpectedResponse,
+      );
+    }
     final isLocal =
         conn.host == '127.0.0.1' ||
         conn.host == 'localhost' ||
         conn.host == '10.0.2.2';
-    if (conn.apiKey.trim().isEmpty && !isLocal) return false;
-    final eu = await effectiveUrl(connectionId);
-    if (eu == null) return false;
-    final tok = await BridgeClient.provision(eu.url, conn.apiKey.trim());
-    if (tok == null || tok.isEmpty) return false;
-    await save(connectionId, token: tok, urlOverride: eu.derived ? '' : eu.url);
-    return true;
+    if (conn.apiKey.trim().isEmpty && !isLocal) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.missingApiKey,
+      );
+    }
+    late final ({String url, bool derived})? eu;
+    try {
+      eu = await effectiveUrl(connectionId);
+    } catch (_) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.secureStorage,
+      );
+    }
+    if (eu == null) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.invalidUrl,
+      );
+    }
+    final result = await BridgeClient.provisionDetailed(
+      eu.url,
+      conn.apiKey.trim(),
+      allowEmptyGatewayKey: isLocal,
+    );
+    if (!result.ok) return result;
+    try {
+      await save(
+        connectionId,
+        token: result.token!,
+        urlOverride: eu.derived ? '' : eu.url,
+      );
+    } catch (_) {
+      return const BridgeProvisionResult.failure(
+        BridgeProvisionFailure.secureStorage,
+      );
+    }
+    return result;
   }
+
+  @override
+  Future<bool> tryProvision(String connectionId) async =>
+      (await provision(connectionId)).ok;
 
   /// Cliente listo para operar, o null si falta URL o token.
   @override

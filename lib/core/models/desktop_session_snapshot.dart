@@ -1,3 +1,6 @@
+import '../utils/assistant_content.dart';
+import 'transcript_privacy_state.dart';
+
 /// Typed, defensive projection of the Hermes Agent 0.19 Desktop session
 /// lifecycle responses.
 ///
@@ -6,7 +9,11 @@
 class DesktopSessionSnapshot {
   final String runtimeSessionId;
   final String storedSessionId;
+  final DesktopStoredSessionIdProvenance storedSessionIdProvenance;
   final bool created;
+  final String? lineageRootId;
+  final bool identityAliasesConsistent;
+  final bool storedSessionIdentityExplicit;
   final List<DesktopSessionMessage> messages;
   final bool messagesProvided;
   final bool messagesFullyParsed;
@@ -27,11 +34,18 @@ class DesktopSessionSnapshot {
   final Map<String, dynamic> raw;
   final Map<String, dynamic>? pendingClarify;
   final bool pendingClarifyProvided;
+  final Map<String, dynamic>? pendingApproval;
+  final bool pendingApprovalProvided;
 
   const DesktopSessionSnapshot({
     required this.runtimeSessionId,
     required this.storedSessionId,
+    this.storedSessionIdProvenance =
+        DesktopStoredSessionIdProvenance.requestedFallback,
     required this.created,
+    this.lineageRootId,
+    this.identityAliasesConsistent = true,
+    this.storedSessionIdentityExplicit = true,
     this.messages = const [],
     this.messagesProvided = false,
     this.messagesFullyParsed = true,
@@ -47,7 +61,35 @@ class DesktopSessionSnapshot {
     this.raw = const {},
     this.pendingClarify,
     this.pendingClarifyProvided = false,
+    this.pendingApproval,
+    this.pendingApprovalProvided = false,
   });
+
+  DesktopSessionSnapshot withoutPersistedMessages() => DesktopSessionSnapshot(
+    runtimeSessionId: runtimeSessionId,
+    storedSessionId: storedSessionId,
+    storedSessionIdProvenance: storedSessionIdProvenance,
+    created: created,
+    lineageRootId: lineageRootId,
+    identityAliasesConsistent: identityAliasesConsistent,
+    storedSessionIdentityExplicit: storedSessionIdentityExplicit,
+    messagesProvided: false,
+    messagesFullyParsed: messagesFullyParsed,
+    messageCount: messageCount,
+    hydrating: hydrating,
+    inflight: inflight,
+    queued: queued,
+    running: running,
+    status: status,
+    startedAt: startedAt,
+    turnStartedAt: turnStartedAt,
+    info: info,
+    pendingClarify: pendingClarify,
+    pendingClarifyProvided: pendingClarifyProvided,
+    pendingApproval: pendingApproval,
+    pendingApprovalProvided: pendingApprovalProvided,
+    raw: raw,
+  );
 
   factory DesktopSessionSnapshot.fromJson(
     Map<String, dynamic> json, {
@@ -55,7 +97,7 @@ class DesktopSessionSnapshot {
     required bool created,
     required String method,
   }) {
-    final runtimeSessionId = _nonEmptyString(json['session_id']);
+    final runtimeSessionId = _exactNonEmptyIdentity(json['session_id']);
     if (runtimeSessionId == null) {
       throw FormatException('$method omitted a valid runtime session id');
     }
@@ -64,14 +106,83 @@ class DesktopSessionSnapshot {
     // may use it as a boolean status flag. Identity fields are intentionally
     // strict: a bool/number must never become the persisted strings "true" or
     // "42" through an incidental toString().
+    var identityAliasesConsistent = true;
+    String? readStoredAlias(String key, {bool booleanStatusAllowed = false}) {
+      if (!json.containsKey(key)) return null;
+      final value = json[key];
+      if (booleanStatusAllowed && value is bool) return null;
+      if (value is String && (value.isEmpty || value != value.trim())) {
+        throw FormatException('$method contains an invalid $key identity');
+      }
+      if (value is! String) {
+        identityAliasesConsistent = false;
+        return null;
+      }
+      return value;
+    }
+
+    final explicitStoredSessionId = readStoredAlias('stored_session_id');
+    final explicitSessionKey = readStoredAlias('session_key');
+    final explicitResumed = readStoredAlias(
+      'resumed',
+      booleanStatusAllowed: true,
+    );
+    final explicitAliases = <String>{
+      ?explicitStoredSessionId,
+      ?explicitSessionKey,
+      ?explicitResumed,
+    };
+    if (explicitAliases.length > 1) identityAliasesConsistent = false;
     final storedSessionId =
-        _nonEmptyString(json['stored_session_id']) ??
-        _nonEmptyString(json['session_key']) ??
-        _nonEmptyString(json['resumed']) ??
-        _nonEmptyString(requestedStoredSessionId);
+        explicitStoredSessionId ??
+        explicitSessionKey ??
+        explicitResumed ??
+        _exactNonEmptyIdentity(requestedStoredSessionId);
     if (storedSessionId == null) {
       throw FormatException('$method omitted a valid stored session id');
     }
+
+    final infoJson = _stringKeyedMap(json['info']);
+    final infoStoredSessionId = infoJson == null
+        ? null
+        : _exactNonEmptyIdentity(infoJson['stored_session_id']);
+    if (infoJson?.containsKey('stored_session_id') == true &&
+        (infoStoredSessionId == null ||
+            infoStoredSessionId != storedSessionId)) {
+      identityAliasesConsistent = false;
+    }
+    final infoRuntimeSessionId = infoJson == null
+        ? null
+        : _exactNonEmptyIdentity(infoJson['session_id']);
+    if (infoJson?.containsKey('session_id') == true &&
+        (infoRuntimeSessionId == null ||
+            infoRuntimeSessionId != runtimeSessionId)) {
+      identityAliasesConsistent = false;
+    }
+
+    String? lineageRootId;
+    void collectLineageAliases(Map<String, dynamic>? source) {
+      if (source == null) return;
+      for (final key in const <String>[
+        '_lineage_root_id',
+        'lineage_root_id',
+        'lineage_root',
+      ]) {
+        if (!source.containsKey(key)) continue;
+        final value = source[key];
+        if (value is! String || value.isEmpty || value != value.trim()) {
+          identityAliasesConsistent = false;
+          continue;
+        }
+        if (lineageRootId != null && lineageRootId != value) {
+          identityAliasesConsistent = false;
+        }
+        lineageRootId ??= value;
+      }
+    }
+
+    collectLineageAliases(json);
+    collectLineageAliases(infoJson);
 
     final rawMessages = json['messages'];
     final messages = <DesktopSessionMessage>[];
@@ -96,7 +207,20 @@ class DesktopSessionSnapshot {
     return DesktopSessionSnapshot(
       runtimeSessionId: runtimeSessionId,
       storedSessionId: storedSessionId,
+      storedSessionIdProvenance: explicitStoredSessionId != null
+          ? DesktopStoredSessionIdProvenance.storedSessionId
+          : explicitSessionKey != null
+          ? DesktopStoredSessionIdProvenance.sessionKey
+          : explicitResumed != null
+          ? DesktopStoredSessionIdProvenance.resumed
+          : DesktopStoredSessionIdProvenance.requestedFallback,
       created: created,
+      lineageRootId: lineageRootId,
+      identityAliasesConsistent: identityAliasesConsistent,
+      storedSessionIdentityExplicit:
+          explicitStoredSessionId != null ||
+          explicitSessionKey != null ||
+          explicitResumed != null,
       messages: List.unmodifiable(messages),
       messagesProvided: rawMessages is List && json['messages_omitted'] != true,
       messagesFullyParsed: messagesFullyParsed,
@@ -111,6 +235,8 @@ class DesktopSessionSnapshot {
       info: DesktopSessionRuntimeInfo.fromJson(json['info']),
       pendingClarify: _stringKeyedMap(json['pending_clarify']),
       pendingClarifyProvided: json.containsKey('pending_clarify'),
+      pendingApproval: _stringKeyedMap(json['pending_approval']),
+      pendingApprovalProvided: json.containsKey('pending_approval'),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
       // contain the whole transcript and a many-KiB system prompt; duplicating
       // those in `raw` increases memory pressure and makes accidental logging
@@ -136,6 +262,15 @@ class DesktopSessionSnapshot {
   }
 }
 
+/// Source of the durable identity selected while parsing the response. A
+/// request fallback correlates only that exact request and proves no lineage.
+enum DesktopStoredSessionIdProvenance {
+  storedSessionId,
+  sessionKey,
+  resumed,
+  requestedFallback,
+}
+
 enum DesktopSessionMessageRole { system, user, assistant, tool, unknown }
 
 class DesktopSessionMessage {
@@ -146,6 +281,24 @@ class DesktopSessionMessage {
   final Map<String, dynamic> artifactContainers;
   final DesktopSessionMessageRole role;
   final String rawRole;
+
+  /// Privacy decision captured while the original row classifiers still exist.
+  final bool publiclyRenderable;
+  final TranscriptPrivacyObservation? privacyObservation;
+
+  TranscriptPrivacyObservation get transcriptPrivacyObservation =>
+      privacyObservation ??
+      TranscriptPrivacyObservation(
+        rowId: identityAliasesConsistent ? rowId : null,
+        messageId: identityAliasesConsistent ? stableId : null,
+        negative: !publiclyRenderable,
+        invalidRowClaims: [
+          if (!identityAliasesConsistent && rowId != null) rowId!,
+        ],
+        invalidMessageClaims: [
+          if (!identityAliasesConsistent && stableId != null) stableId!,
+        ],
+      );
   final Object? content;
   final String? text;
   final String? name;
@@ -164,6 +317,8 @@ class DesktopSessionMessage {
   const DesktopSessionMessage({
     required this.role,
     required this.rawRole,
+    this.publiclyRenderable = true,
+    this.privacyObservation,
     this.stableId,
     this.rowId,
     this.identityAliasesConsistent = true,
@@ -216,6 +371,8 @@ class DesktopSessionMessage {
       artifactContainers: _freezeArtifactContainers(json),
       role: role,
       rawRole: rawRole,
+      publiclyRenderable: !hasPrivateTranscriptClassifier(json),
+      privacyObservation: TranscriptPrivacyObservation.fromRaw(json),
       content: content,
       text: text,
       name: name,
@@ -244,6 +401,7 @@ class DesktopInflightTurn {
   final String? status;
   final bool? recoverable;
   final List<DesktopInflightCorrection> corrections;
+  final List<int?> correctionOffsets;
   final DateTime? startedAt;
   final DateTime? updatedAt;
   final Map<String, dynamic> raw;
@@ -256,10 +414,12 @@ class DesktopInflightTurn {
     this.status,
     this.recoverable,
     List<DesktopInflightCorrection> corrections = const [],
+    List<int?> correctionOffsets = const [],
     this.startedAt,
     this.updatedAt,
     this.raw = const {},
-  }) : corrections = List<DesktopInflightCorrection>.unmodifiable(corrections);
+  }) : corrections = List<DesktopInflightCorrection>.unmodifiable(corrections),
+       correctionOffsets = List<int?>.unmodifiable(correctionOffsets);
 
   static DesktopInflightTurn? tryParse(Object? value) {
     final json = _stringKeyedMap(value);
@@ -282,6 +442,13 @@ class DesktopInflightTurn {
         if (correction != null) corrections.add(correction);
       }
     }
+    final correctionOffsets = <int?>[];
+    final rawOffsets = json['correction_offsets'];
+    if (rawOffsets is List) {
+      for (final value in rawOffsets) {
+        correctionOffsets.add(_nonNegativeInt(value));
+      }
+    }
     final terminalStatus = status?.toLowerCase() == 'error';
     if (assistant == null &&
         streaming == null &&
@@ -299,6 +466,7 @@ class DesktopInflightTurn {
       status: status,
       recoverable: recoverable,
       corrections: corrections,
+      correctionOffsets: correctionOffsets,
       startedAt: _epochSeconds(json['started_at']),
       updatedAt: _epochSeconds(json['updated_at']),
       raw: _freezeExtras(json, _inflightParsedKeys),
@@ -418,6 +586,39 @@ class DesktopSessionRuntimeInfo {
     this.installWarning,
     this.raw = const {},
   });
+
+  DesktopSessionRuntimeInfo withUsage(DesktopUsageStats value) =>
+      DesktopSessionRuntimeInfo(
+        model: model,
+        provider: provider,
+        reasoningEffort: reasoningEffort,
+        serviceTier: serviceTier,
+        fast: fast,
+        yolo: yolo,
+        approvalMode: approvalMode,
+        toolCount: toolCount,
+        skillCount: skillCount,
+        cwd: cwd,
+        branch: branch,
+        project: project,
+        personality: personality,
+        running: running,
+        lazy: lazy,
+        title: title,
+        storedSessionId: storedSessionId,
+        desktopContract: desktopContract,
+        version: version,
+        releaseDate: releaseDate,
+        updateBehind: updateBehind,
+        updateCommand: updateCommand,
+        usage: value,
+        profileName: profileName,
+        mcpServerCount: mcpServerCount,
+        configWarning: configWarning,
+        credentialWarning: credentialWarning,
+        installWarning: installWarning,
+        raw: raw,
+      );
 
   factory DesktopSessionRuntimeInfo.fromJson(Object? value) {
     final json = _stringKeyedMap(value);
@@ -612,6 +813,11 @@ String? _nonEmptyString(Object? value) {
   if (value is! String) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+String? _exactNonEmptyIdentity(Object? value) {
+  if (value is! String || value.isEmpty || value != value.trim()) return null;
+  return value;
 }
 
 String? _stableOpaqueId(Object? value) {
@@ -815,6 +1021,7 @@ const _snapshotParsedKeys = <String>{
   'turn_started_at',
   'info',
   'pending_clarify',
+  'pending_approval',
 };
 
 const _messageParsedKeys = <String>{

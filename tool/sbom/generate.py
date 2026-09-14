@@ -31,7 +31,12 @@ VISUAL_ASSET_SUFFIXES = {".webp", ".png", ".svg", ".ttf", ".json"}
 INVENTORY_ASSET_SUFFIXES = MODEL_SUFFIXES | BINARY_SUFFIXES | VISUAL_ASSET_SUFFIXES
 LICENSE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "COPYING", "COPYING.txt")
 CATALOG_PATH = ROOT / "tool/sbom/maven-license-catalog.json"
+PACKAGED_CATALOG_PATH = ROOT / "tool/sbom/packaged-license-catalog.json"
 MAX_POM_BYTES = 2 * 1024 * 1024
+MAX_ARTIFACT_ENTRIES = 10_000
+MAX_ARTIFACT_MEMBER_BYTES = 256 * 1024 * 1024
+MAX_ARTIFACT_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+ZIP_READ_CHUNK_BYTES = 1024 * 1024
 
 
 def run(*args: str, cwd: Path = ROOT) -> str:
@@ -47,10 +52,6 @@ def run(*args: str, cwd: Path = ROOT) -> str:
         sys.stderr.write(result.stderr)
         raise SystemExit(f"command failed ({result.returncode}): {' '.join(args)}")
     return result.stdout
-
-
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -110,6 +111,7 @@ def fingerprint_inputs() -> str:
         "tool/sbom/generate.py",
         "tool/sbom/generate.sh",
         "tool/sbom/maven-license-catalog.json",
+        "tool/sbom/packaged-license-catalog.json",
         "android/build.gradle.kts",
         "android/settings.gradle.kts",
         "android/gradle.properties",
@@ -479,31 +481,193 @@ def source_assets() -> list[dict]:
     return assets
 
 
+def packaged_license_catalog() -> list[tuple[re.Pattern[str], dict[str, str]]]:
+    if (
+        not PACKAGED_CATALOG_PATH.is_file()
+        or PACKAGED_CATALOG_PATH.is_symlink()
+        or PACKAGED_CATALOG_PATH.stat().st_size > MAX_POM_BYTES
+    ):
+        raise SystemExit("invalid packaged license catalog")
+    try:
+        value = json.loads(PACKAGED_CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise SystemExit("invalid packaged license catalog") from error
+    if not isinstance(value, dict) or set(value) != {"schema", "entries"} or value["schema"] != 1:
+        raise SystemExit("invalid packaged license catalog")
+    records = value["entries"]
+    if not isinstance(records, list) or not records:
+        raise SystemExit("invalid packaged license catalog")
+    result: list[tuple[re.Pattern[str], dict[str, str]]] = []
+    patterns: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {
+            "pathPattern", "component", "license", "evidence"
+        }:
+            raise SystemExit("invalid packaged license catalog")
+        if any(not isinstance(record[key], str) or not record[key] for key in record):
+            raise SystemExit("invalid packaged license catalog")
+        pattern = record["pathPattern"]
+        evidence = Path(record["evidence"])
+        if (
+            not pattern.startswith("^")
+            or not pattern.endswith("$")
+            or pattern in patterns
+            or record["license"] == "NOASSERTION"
+            or evidence.is_absolute()
+            or "." in evidence.parts
+            or ".." in evidence.parts
+            or not (ROOT / evidence).is_file()
+            or (ROOT / evidence).is_symlink()
+        ):
+            raise SystemExit("invalid packaged license catalog")
+        try:
+            compiled = re.compile(pattern)
+        except re.error as error:
+            raise SystemExit("invalid packaged license catalog") from error
+        patterns.add(pattern)
+        result.append((compiled, record))
+    return result
+
+
+def zip_member_sha256(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with archive.open(info, "r") as stream:
+            while block := stream.read(
+                min(ZIP_READ_CHUNK_BYTES, info.file_size - size + 1)
+            ):
+                size += len(block)
+                if size > info.file_size:
+                    raise SystemExit(
+                        f"artifact ZIP entry exceeds declared size: {info.filename}"
+                    )
+                digest.update(block)
+    except (OSError, RuntimeError, zipfile.BadZipFile) as error:
+        raise SystemExit(f"invalid artifact ZIP entry: {info.filename}") from error
+    if size != info.file_size:
+        raise SystemExit(f"artifact ZIP entry size mismatch: {info.filename}")
+    return digest.hexdigest()
+
+
 def artifact_entries(path: Path) -> list[dict]:
     if not path.exists():
         raise SystemExit(f"artifact does not exist: {path}")
     entries: list[dict] = []
+    catalog = packaged_license_catalog()
     with zipfile.ZipFile(path) as archive:
-        for info in sorted(archive.infolist(), key=lambda item: item.filename):
+        infos = archive.infolist()
+        if len(infos) > MAX_ARTIFACT_ENTRIES:
+            raise SystemExit("artifact contains too many ZIP entries")
+        if any(info.file_size > MAX_ARTIFACT_MEMBER_BYTES for info in infos):
+            raise SystemExit("artifact ZIP entry exceeds the size limit")
+        if sum(info.file_size for info in infos) > MAX_ARTIFACT_UNCOMPRESSED_BYTES:
+            raise SystemExit("artifact exceeds the uncompressed size limit")
+        for info in sorted(infos, key=lambda item: item.filename):
             suffix = Path(info.filename).suffix.lower()
             if suffix not in MODEL_SUFFIXES | BINARY_SUFFIXES:
                 continue
-            data = archive.read(info)
-            entries.append(
-                {
-                    "path": info.filename,
-                    "size": info.file_size,
-                    "sha256": sha256_bytes(data),
-                    "kind": "model" if suffix in MODEL_SUFFIXES else "native-binary",
-                    "license": "NOASSERTION",
-                }
-            )
+            matches = [record for pattern, record in catalog if pattern.fullmatch(info.filename)]
+            if len(matches) > 1:
+                raise SystemExit(f"ambiguous packaged license evidence: {info.filename}")
+            reviewed = matches[0] if matches else None
+            entry = {
+                "path": info.filename,
+                "size": info.file_size,
+                "sha256": zip_member_sha256(archive, info),
+                "kind": "model" if suffix in MODEL_SUFFIXES else "native-binary",
+                "license": reviewed["license"] if reviewed else "NOASSERTION",
+                "licenseEvidence": reviewed["evidence"] if reviewed else "none",
+            }
+            if reviewed:
+                entry["reviewedComponent"] = reviewed["component"]
+            entries.append(entry)
     return entries
 
 
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def component_license_expression(component: dict) -> str:
+    values: list[str] = []
+    for item in component.get("licenses", []):
+        if "expression" in item:
+            values.append(item["expression"])
+        elif isinstance(item.get("license"), dict):
+            value = item["license"].get("id", item["license"].get("name"))
+            if value:
+                values.append(value)
+    return " OR ".join(sorted(values)) if values else "NOASSERTION"
+
+
+def component_license_evidence(component: dict) -> str:
+    properties = {
+        item.get("name"): item.get("value")
+        for item in component.get("properties", [])
+        if isinstance(item, dict)
+    }
+    return (
+        properties.get("hermes.license.evidence")
+        or properties.get("hermes.license.files")
+        or "none"
+    )
+
+
+def artifact_license_review(
+    variant: str,
+    input_fingerprint: str,
+    source_commit: str,
+    components: list[dict],
+    assets: list[dict],
+    packaged_entries: list[dict],
+) -> dict:
+    dependency_components = [
+        {
+            "id": component["bom-ref"],
+            "license": component_license_expression(component),
+            "evidence": component_license_evidence(component),
+        }
+        for component in components
+    ]
+    source_asset_entries = [
+        {
+            "path": asset["path"],
+            "license": asset.get("license", "NOASSERTION"),
+            "evidence": asset.get("licenseEvidence", "none"),
+        }
+        for asset in assets
+    ]
+    packaged = [
+        {
+            "path": entry["path"],
+            "license": entry.get("license", "NOASSERTION"),
+            "evidence": entry.get("licenseEvidence", "none"),
+        }
+        for entry in packaged_entries
+    ]
+    unresolved = []
+    for category, entries, identity in (
+        ("dependency", dependency_components, "id"),
+        ("source", source_asset_entries, "path"),
+        ("packaged", packaged, "path"),
+    ):
+        if not entries:
+            unresolved.append(f"{category}:empty")
+        for entry in entries:
+            if entry["license"] == "NOASSERTION" or entry["evidence"] in {"none", "unknown", ""}:
+                unresolved.append(f"{category}:{entry[identity]}")
+    return {
+        "schema": 1,
+        "status": "COMPLETE" if not unresolved else "REVIEW_REQUIRED",
+        "inputFingerprint": input_fingerprint,
+        "sourceCommit": source_commit,
+        "dependencyComponents": dependency_components,
+        "sourceAssets": source_asset_entries,
+        "packagedEntries": packaged,
+        "unresolved": sorted(unresolved),
+    }
 
 
 def unresolved_components(components: list[dict]) -> list[str]:
@@ -522,7 +686,10 @@ def main() -> None:
     args = parser.parse_args()
 
     commit = os.environ.get("SBOM_GIT_COMMIT") or None
-    input_fingerprint = fingerprint_inputs()
+    release_fingerprint = os.environ.get("RELEASE_INPUT_FINGERPRINT")
+    if release_fingerprint is not None and re.fullmatch(r"[0-9a-f]{64}", release_fingerprint) is None:
+        raise SystemExit("invalid RELEASE_INPUT_FINGERPRINT")
+    input_fingerprint = release_fingerprint or fingerprint_inputs()
     timestamp = source_timestamp()
     dart, dependencies = dart_components()
     gradle = gradle_components(args.variant, artifact_mode=args.artifact is not None)
@@ -560,19 +727,30 @@ def main() -> None:
     if commit:
         source_inventory["commit"] = commit
     write_json(output / "source-assets.json", source_inventory)
-    review: dict = {
-        "inputFingerprint": input_fingerprint,
-        "variant": args.variant,
-        "status": "REVIEW_REQUIRED" if unresolved_components(components) else "COMPLETE",
-        "unresolvedComponents": unresolved_components(components),
-        "unresolvedSourceAssets": sorted(
-            asset["path"] for asset in assets if asset["license"] == "NOASSERTION"
-        ),
-    }
-    if timestamp:
-        review["generated"] = timestamp
-    if commit:
-        review["commit"] = commit
+    packaged_entries = artifact_entries(args.artifact.resolve()) if args.artifact else None
+    if packaged_entries is None:
+        review: dict = {
+            "inputFingerprint": input_fingerprint,
+            "variant": args.variant,
+            "status": "REVIEW_REQUIRED" if unresolved_components(components) else "COMPLETE",
+            "unresolvedComponents": unresolved_components(components),
+            "unresolvedSourceAssets": sorted(
+                asset["path"] for asset in assets if asset["license"] == "NOASSERTION"
+            ),
+        }
+        if timestamp:
+            review["generated"] = timestamp
+        if commit:
+            review["commit"] = commit
+    else:
+        review = artifact_license_review(
+            args.variant,
+            input_fingerprint,
+            commit or "UNVERIFIED",
+            components,
+            assets,
+            packaged_entries,
+        )
     write_json(
         output / f"{args.variant}.license-review.json",
         review,
@@ -587,7 +765,7 @@ def main() -> None:
                 "size": artifact.stat().st_size,
                 "sha256": sha256_file(artifact),
             },
-            "packagedFiles": artifact_entries(artifact),
+            "packagedFiles": packaged_entries,
         }
         if timestamp:
             artifact_inventory["generated"] = timestamp

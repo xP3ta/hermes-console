@@ -276,14 +276,15 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
   conexión ya posee una API key confiada y el Mobile Bridge puede canjearla por
   un token con scope de configuración. La nueva contraseña del Dashboard se
   genera con CSPRNG, no se registra ni se muestra y se guarda en Keystore.
-- `session.redirect` solo alcanza la sesión viva que abrió el mismo cliente;
-  `session.steer` queda como compatibilidad con Gateways antiguos. Ninguno crea
-  ejecuciones ni amplía los permisos ya concedidos por el Dashboard.
-- Steering acepta únicamente texto. Los adjuntos permanecen locales hasta el
-  siguiente turno normal.
+- `session.redirect` y `session.steer` permanecen como primitivas del cliente de
+  Gateway para compatibilidad y superficies explícitamente autorizadas, cercadas
+  por propiedad exclusiva de la sesión. El Chat y la Voz ordinarios de `1.2.10`
+  no las invocan: todo texto recibido durante un turno activo queda como
+  siguiente turno FIFO.
+- Los adjuntos también permanecen locales hasta ese siguiente turno normal.
 - Si el Dashboard no expone `/api/ws`, el fallback `/v1/runs` no intenta
-  steering por un endpoint añadido ni interrumpe el run silenciosamente. El
-  texto se conserva únicamente en memoria y se envía al terminar el turno.
+  steering por un endpoint añadido ni interrumpe el run silenciosamente.
+- Bot Chat tampoco ofrece write/redirect/steer en `1.2.10` (issue #11).
 
 ### Borrado de tareas programadas
 
@@ -353,10 +354,45 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
   repo.
 - La variante `full` de descarga directa usa firma de release; nunca se
   distribuyen APK debug ni la variante `qa`.
+- El contrato ejecutable `tool/release/release_contract.json` separa los canales:
+  el AAB `playRelease` y toda su evidencia son **Play-private**; GitHub/Obtainium
+  aceptan únicamente los tres APK `fullRelease` firmados y los metadatos de la
+  allowlist pública cerrada. Logs, fixtures, capturas, mappings, credenciales,
+  keystores y diagnósticos internos quedan fuera de ambos sets publicables.
+- Package ID, versión, SHA-256 y certificado de firma se miden de nuevo sobre
+  cada artefacto. Los sidecars no son autoridad y un hash no sustituye la
+  identidad de firma.
+- Dos clones limpios, con caches separados y el `pubspec.lock` autoritativo
+  fijado por SHA-256, generan dos observaciones independientes. Antes de promover
+  la salida, el propio paso de build emite un manifiesto canónico que fija
+  fuente, inputs, comando, rutas/hashes pre-build del toolchain (que deben
+  permanecer iguales tras ambos replicas) y nombres/tamaños/hashes de los
+  artefactos; binding y staging fallan si reciben otros bytes. Es una
+  vinculación causal local, no provenance criptográfica frente al reemplazo
+  conjunto del builder, herramientas, artefactos y manifiesto. Los APK directos
+  a byte entre esas dos ejecuciones, pero esto no se declara reproducibilidad
+  general mientras Gradle, Maven y Android SDK no estén íntegramente fijados por
+  contenido.
+- La provenance pública eventual es DSSE/in-toto/SLSA keyless. Primero se valida
+  firma e identidad OIDC con `gh attestation verify` contra repositorio,
+  workflow, tag y commit exactos; después se aplica la policy estructural al
+  mismo bundle. El validador estructural no es un verificador criptográfico y un
+  JSON sin firma no es provenance.
+- La identidad de provenance usa certificados efímeros de GitHub Actions; no
+  introduce claves privadas ni secretos persistentes de attestación. Solo se
+  obtiene durante la publicación expresamente autorizada.
+- El repositorio es público: los artifacts de GitHub Actions no son un canal
+  privado. El workflow es únicamente de verificación y nunca construye, recibe
+  ni sube APK/AAB firmados. Build, comparación y staging permanecen juntos en el
+  filesystem privado/local controlado por el propietario.
 - Antes de cada entrega Play deben reconciliarse política de privacidad, Data
   Safety, destinos de IA/voz y declaraciones de servicios en primer plano.
-- Ningún AAB, APK, push o publicación se realiza sin autorización explícita del
-  propietario.
+- Ningún AAB, APK, push, attestación externa o publicación se realiza sin
+  autorización explícita del propietario. Los helpers locales no crean una
+  GitHub Release ni realizan un upload a Play Console.
+
+El contrato operativo y la allowlist exacta están documentados en
+[`RELEASE_DISTRIBUTION.md`](RELEASE_DISTRIBUTION.md).
 
 ---
 

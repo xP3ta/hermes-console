@@ -868,6 +868,8 @@ class HermesInlineActivity extends StatelessWidget {
   const HermesInlineActivity({
     required this.title,
     this.summary,
+    this.titleMaxLines,
+    this.summaryMaxLines,
     this.leading,
     this.status,
     this.detail,
@@ -878,6 +880,7 @@ class HermesInlineActivity extends StatelessWidget {
     this.semanticLabel,
     this.semanticHint,
     this.enabled = true,
+    this.flexibleDetail = false,
     this.padding = const EdgeInsets.fromLTRB(12, 4, 12, 6),
     super.key,
   }) : assert(
@@ -891,6 +894,8 @@ class HermesInlineActivity extends StatelessWidget {
 
   final String title;
   final String? summary;
+  final int? titleMaxLines;
+  final int? summaryMaxLines;
   final Widget? leading;
   final Widget? status;
   final Widget? detail;
@@ -901,6 +906,7 @@ class HermesInlineActivity extends StatelessWidget {
   final String? semanticLabel;
   final String? semanticHint;
   final bool enabled;
+  final bool flexibleDetail;
   final EdgeInsetsGeometry padding;
 
   @override
@@ -908,6 +914,8 @@ class HermesInlineActivity extends StatelessWidget {
     return _HermesEditorialBlock(
       title: title,
       summary: summary,
+      titleMaxLines: titleMaxLines,
+      summaryMaxLines: summaryMaxLines,
       leading: leading,
       status: status,
       detail: detail,
@@ -918,6 +926,7 @@ class HermesInlineActivity extends StatelessWidget {
       semanticLabel: semanticLabel,
       semanticHint: semanticHint,
       enabled: enabled,
+      flexibleDetail: flexibleDetail,
       padding: padding,
       density: _HermesEditorialDensity.activity,
     );
@@ -930,6 +939,8 @@ class _HermesEditorialBlock extends StatelessWidget {
   const _HermesEditorialBlock({
     required this.title,
     required this.summary,
+    this.titleMaxLines,
+    this.summaryMaxLines,
     required this.leading,
     required this.status,
     required this.detail,
@@ -940,6 +951,7 @@ class _HermesEditorialBlock extends StatelessWidget {
     required this.semanticLabel,
     required this.semanticHint,
     required this.enabled,
+    this.flexibleDetail = false,
     required this.padding,
     required this.density,
   });
@@ -956,8 +968,11 @@ class _HermesEditorialBlock extends StatelessWidget {
   final String? semanticLabel;
   final String? semanticHint;
   final bool enabled;
+  final bool flexibleDetail;
   final EdgeInsetsGeometry padding;
   final _HermesEditorialDensity density;
+  final int? titleMaxLines;
+  final int? summaryMaxLines;
 
   bool get _hasDisclosure =>
       detail != null && onExpansionChanged != null && disclosureLabel != null;
@@ -969,7 +984,8 @@ class _HermesEditorialBlock extends StatelessWidget {
     final profile = theme.hermesComponents.profile;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final stackStatus = status != null && textScale > 1.3;
+    final overlayStatus = status != null && flexibleDetail;
+    final stackStatus = status != null && textScale > 1.3 && !overlayStatus;
     final isDecision = density == _HermesEditorialDensity.decision;
     final showDetail = detail != null && (!_hasDisclosure || expanded);
     final titleStyle =
@@ -1012,16 +1028,30 @@ class _HermesEditorialBlock extends StatelessWidget {
             children: [
               Semantics(
                 header: isDecision,
-                child: Text(title, style: titleStyle),
+                child: Text(
+                  title,
+                  maxLines: titleMaxLines,
+                  overflow: titleMaxLines == null
+                      ? null
+                      : TextOverflow.ellipsis,
+                  style: titleStyle,
+                ),
               ),
               if (summary != null && summary!.trim().isNotEmpty) ...[
                 const SizedBox(height: 3),
-                Text(summary!, style: summaryStyle),
+                Text(
+                  summary!,
+                  maxLines: summaryMaxLines,
+                  overflow: summaryMaxLines == null
+                      ? null
+                      : TextOverflow.ellipsis,
+                  style: summaryStyle,
+                ),
               ],
             ],
           ),
         ),
-        if (status != null && !stackStatus) ...[
+        if (status != null && !stackStatus && !overlayStatus) ...[
           const SizedBox(width: 10),
           Flexible(
             child: Align(
@@ -1041,6 +1071,17 @@ class _HermesEditorialBlock extends StatelessWidget {
           const SizedBox(height: 7),
           Align(
             alignment: AlignmentDirectional.centerStart,
+            child: _HermesEditorialStatus(child: status!),
+          ),
+        ],
+      );
+    } else if (overlayStatus) {
+      header = Stack(
+        children: [
+          header,
+          PositionedDirectional(
+            top: 7,
+            end: 0,
             child: _HermesEditorialStatus(child: status!),
           ),
         ],
@@ -1113,7 +1154,31 @@ class _HermesEditorialBlock extends StatelessWidget {
                 ),
               ),
             ],
-            if (detail != null)
+            if (detail != null && flexibleDetail)
+              Expanded(
+                child: AnimatedSize(
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  alignment: AlignmentDirectional.topStart,
+                  child: showDetail
+                      ? Padding(
+                          padding: EdgeInsets.only(
+                            top: _hasDisclosure ? 2 : 10,
+                          ),
+                          child: DefaultTextStyle.merge(
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.textSecondary,
+                              height: 1.42,
+                            ),
+                            child: detail!,
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              )
+            else if (detail != null)
               AnimatedSize(
                 duration: reduceMotion
                     ? Duration.zero

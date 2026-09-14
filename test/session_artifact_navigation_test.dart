@@ -151,6 +151,50 @@ void main() {
     },
   );
 
+  group('server ordinal ignores synthetic rows', () {
+    final syntheticRows = <String, Map<String, dynamic>>{
+      'steer': {'role': 'user', 'content': 'steer', '_steer': true},
+      'pipeline': {
+        'role': 'assistant',
+        'content': 'streaming',
+        '_pipeline': true,
+      },
+      'inflight': {
+        'role': 'user',
+        'content': 'runtime-only',
+        '_steer': false,
+        '_pipeline': false,
+        '_desktopSnapshotKind': 'inflight',
+      },
+    };
+
+    for (final MapEntry(key: kind, value: syntheticRow)
+        in syntheticRows.entries) {
+      test('$kind between durable neighbors does not consume an ordinal', () {
+        final messages = <Map<String, dynamic>>[
+          {'role': 'assistant', 'content': 'second persisted'},
+          syntheticRow,
+          {'role': 'user', 'content': 'first persisted'},
+        ];
+
+        expect(
+          messageIndexForArtifactSource(
+            messages,
+            const SessionArtifactSource(messageOrdinal: 0),
+          ),
+          2,
+        );
+        expect(
+          messageIndexForArtifactSource(
+            messages,
+            const SessionArtifactSource(messageOrdinal: 1),
+          ),
+          0,
+        );
+      });
+    }
+  });
+
   test('message anchor cache drops objects removed by a transcript rewind', () {
     final live = <String, dynamic>{'role': 'assistant', 'content': 'live'};
     final removed = <String, dynamic>{

@@ -10,6 +10,25 @@
 /// intacta, garantizando cero cambios de comportamiento en el caso normal.
 library;
 
+/// True when transport metadata makes a transcript row non-public.
+///
+/// Call this before projecting or copying a row: several parsers deliberately
+/// discard unknown payload fields, so delaying the decision loses the evidence
+/// that a row was hidden, reasoning, or otherwise privately classified.
+bool hasPrivateTranscriptClassifier(Map<String, dynamic> payload) {
+  for (final key in const [
+    'hidden',
+    'is_hidden',
+    'is_reasoning',
+    'channel',
+    'kind',
+    'content_type',
+  ]) {
+    if (payload.containsKey(key)) return true;
+  }
+  return payload['reasoning'] == true;
+}
+
 /// Resultado de separar el razonamiento de la respuesta visible.
 class ReasoningSplit {
   /// Texto del razonamiento (sin etiquetas). Puede ser cadena vacía.
@@ -50,74 +69,459 @@ final RegExp _thinkTagResidue = RegExp(
   caseSensitive: false,
 );
 
-// Delimitadores Harmony (gpt-oss): `<|start|>rol<|channel|>analysis<|message|>…`
-// El canal `analysis` es razonamiento; `final`/`commentary` son respuesta.
-final RegExp _harmonyAnalysisSegment = RegExp(
-  r'<\|channel\|>analysis<\|message\|>([\s\S]*?)(<\|end\|>|<\|start\|>|$)',
+/// Typed vocabulary for Harmony assistant channels.
+///
+/// Only [finalResponse] and [commentary] belong to the public allowlist. New or
+/// misspelled channels parse as [unknown] and therefore fail closed.
+enum HarmonyAssistantChannel {
+  finalResponse,
+  commentary,
+  analysis,
+  reasoning,
+  think,
+  tool,
+  unknown;
+
+  static HarmonyAssistantChannel parse(String wireName) =>
+      switch (wireName.trim().toLowerCase()) {
+        'final' => finalResponse,
+        'commentary' => commentary,
+        'analysis' => analysis,
+        'reasoning' => reasoning,
+        'think' => think,
+        'tool' => tool,
+        _ => unknown,
+      };
+
+  bool get publiclyRenderable => this == finalResponse || this == commentary;
+}
+
+// Cada barra de un delimitador Harmony puede llegar como ASCII o U+FF5C de
+// forma independiente. El cuerpo nunca se normaliza: PUBLIC ｜ conserva bytes.
+final RegExp _harmonyDelimiter = RegExp(
+  r'<[|｜](start|end|channel|message|think|/think)[|｜]>',
   caseSensitive: false,
 );
 
-// Variante `<|think|>…` (cierre `<|/think|>`/`</think|>` opcional en streaming).
-final RegExp _harmonyThinkBlock = RegExp(
-  r'<\|think\|>([\s\S]*?)(<\|/think\|>|</think\|>|$)',
+const _harmonyDelimiterNames = <String>[
+  'start',
+  'end',
+  'channel',
+  'message',
+  'think',
+  '/think',
+];
+
+class _HarmonyToken {
+  final String name;
+  final int start;
+  final int end;
+
+  const _HarmonyToken(this.name, this.start, this.end);
+}
+
+enum _HeaderStatus { valid, incomplete, invalid }
+
+class _HarmonyHeader {
+  final _HeaderStatus status;
+  final HarmonyAssistantChannel? channel;
+  final int end;
+
+  const _HarmonyHeader(this.status, {this.channel, required this.end});
+}
+
+class _HarmonyProjection {
+  final String text;
+  final List<int> rawToPublicOffset;
+  final List<String> reasoning;
+  final bool reasoningInProgress;
+
+  const _HarmonyProjection({
+    required this.text,
+    required this.rawToPublicOffset,
+    required this.reasoning,
+    required this.reasoningInProgress,
+  });
+}
+
+/// Texto público y mapa exacto desde offsets UTF-16 de la fuente.
+///
+/// El mapa permite intercalar corrections sin volver a parsear sufijos ni usar
+/// prefijos recortados, que desplazarían whitespace a la fila equivocada.
+class AssistantPublicProjection {
+  final String text;
+  final List<int> _rawToPublicOffset;
+
+  const AssistantPublicProjection._(this.text, this._rawToPublicOffset);
+
+  int publicOffsetAtRawOffset(int rawOffset) {
+    if (rawOffset <= 0) return 0;
+    if (rawOffset >= _rawToPublicOffset.length) return text.length;
+    return _rawToPublicOffset[rawOffset];
+  }
+}
+
+_HarmonyToken? _nextHarmonyToken(String source, int start) {
+  for (final match in _harmonyDelimiter.allMatches(source, start)) {
+    return _HarmonyToken(
+      (match.group(1) ?? '').toLowerCase(),
+      match.start,
+      match.end,
+    );
+  }
+  return null;
+}
+
+_HarmonyHeader _parseHarmonyHeader(
+  String source,
+  _HarmonyToken opener, {
+  required bool streaming,
+}) {
+  var channelToken = opener;
+  if (opener.name == 'start') {
+    final next = _nextHarmonyToken(source, opener.end);
+    if (next == null) {
+      return _HarmonyHeader(
+        streaming ? _HeaderStatus.incomplete : _HeaderStatus.invalid,
+        end: opener.end,
+      );
+    }
+    if (next.name != 'channel') {
+      return _HarmonyHeader(_HeaderStatus.invalid, end: opener.end);
+    }
+    channelToken = next;
+  }
+
+  final messageToken = _nextHarmonyToken(source, channelToken.end);
+  if (messageToken == null) {
+    return _HarmonyHeader(
+      streaming ? _HeaderStatus.incomplete : _HeaderStatus.invalid,
+      end: opener.end,
+    );
+  }
+  if (messageToken.name != 'message') {
+    return _HarmonyHeader(_HeaderStatus.invalid, end: opener.end);
+  }
+  return _HarmonyHeader(
+    _HeaderStatus.valid,
+    channel: HarmonyAssistantChannel.parse(
+      source.substring(channelToken.end, messageToken.start),
+    ),
+    end: messageToken.end,
+  );
+}
+
+int _trailingHarmonyTokenPrefixLength(String source) {
+  final lower = source.toLowerCase();
+  var held = 0;
+  for (final name in _harmonyDelimiterNames) {
+    for (final left in const ['|', '｜']) {
+      for (final right in const ['|', '｜']) {
+        final token = '<$left$name$right>';
+        final max = token.length - 1 < lower.length
+            ? token.length - 1
+            : lower.length;
+        for (var length = max; length > held; length--) {
+          if (lower.endsWith(token.substring(0, length))) {
+            held = length;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return held;
+}
+
+_HarmonyProjection _projectHarmony(String source, {required bool streaming}) {
+  final answer = StringBuffer();
+  final offsets = List<int>.filled(source.length + 1, 0);
+  final reasoning = <String>[];
+  var publicLength = 0;
+  var cursor = 0;
+  HarmonyAssistantChannel? channel;
+  final harmonyThinkChannels = <HarmonyAssistantChannel?>[];
+  var reasoningInProgress = false;
+  var channelReasoning = StringBuffer();
+  var thinkReasoning = StringBuffer();
+
+  bool inHarmonyThink() => harmonyThinkChannels.isNotEmpty;
+  bool canPublish() =>
+      !inHarmonyThink() && (channel == null || channel.publiclyRenderable);
+
+  void appendPublic(int start, int end) {
+    for (var index = start; index < end; index++) {
+      answer.writeCharCode(source.codeUnitAt(index));
+      publicLength++;
+      offsets[index + 1] = publicLength;
+    }
+  }
+
+  void hide(int start, int end) {
+    for (var index = start; index < end; index++) {
+      offsets[index + 1] = publicLength;
+    }
+  }
+
+  void capturePrivate(int start, int end) {
+    if (channel == HarmonyAssistantChannel.analysis) {
+      channelReasoning.write(source.substring(start, end));
+    } else if (inHarmonyThink()) {
+      thinkReasoning.write(source.substring(start, end));
+    }
+    hide(start, end);
+  }
+
+  void flushChannelReasoning() {
+    final value = channelReasoning.toString().trim();
+    if (value.isNotEmpty) reasoning.add(value);
+    channelReasoning = StringBuffer();
+  }
+
+  void flushThinkReasoning() {
+    final value = thinkReasoning.toString().trim();
+    if (value.isNotEmpty) reasoning.add(value);
+    thinkReasoning = StringBuffer();
+  }
+
+  while (cursor < source.length) {
+    final token = _nextHarmonyToken(source, cursor);
+    if (token == null) {
+      if (!canPublish() || inHarmonyThink()) {
+        capturePrivate(cursor, source.length);
+        if (channel == HarmonyAssistantChannel.analysis || inHarmonyThink()) {
+          reasoningInProgress = true;
+        }
+      } else {
+        final held = streaming
+            ? _trailingHarmonyTokenPrefixLength(source.substring(cursor))
+            : 0;
+        appendPublic(cursor, source.length - held);
+        hide(source.length - held, source.length);
+      }
+      cursor = source.length;
+      break;
+    }
+
+    if (!canPublish() || inHarmonyThink()) {
+      capturePrivate(cursor, token.start);
+    } else {
+      appendPublic(cursor, token.start);
+    }
+
+    if (inHarmonyThink()) {
+      if (token.name == '/think') {
+        hide(token.start, token.end);
+        channel = harmonyThinkChannels.removeLast();
+        if (!inHarmonyThink()) flushThinkReasoning();
+      } else if (token.name == 'think') {
+        harmonyThinkChannels.add(channel);
+        hide(token.start, token.end);
+      } else {
+        capturePrivate(token.start, token.end);
+      }
+      cursor = token.end;
+      continue;
+    }
+
+    if (token.name == 'start' || token.name == 'channel') {
+      final header = _parseHarmonyHeader(source, token, streaming: streaming);
+      if (header.status == _HeaderStatus.valid) {
+        flushChannelReasoning();
+        channel = header.channel;
+        hide(token.start, header.end);
+        cursor = header.end;
+        continue;
+      }
+      if (header.status == _HeaderStatus.incomplete) {
+        if (!canPublish()) {
+          capturePrivate(token.start, source.length);
+          if (channel == HarmonyAssistantChannel.analysis) {
+            reasoningInProgress = true;
+          }
+        } else {
+          hide(token.start, source.length);
+        }
+        cursor = source.length;
+        break;
+      }
+      if (canPublish()) {
+        appendPublic(token.start, token.end);
+      } else {
+        capturePrivate(token.start, token.end);
+      }
+      cursor = token.end;
+      continue;
+    }
+
+    if (token.name == 'end' && channel != null) {
+      flushChannelReasoning();
+      hide(token.start, token.end);
+      channel = null;
+      cursor = token.end;
+      continue;
+    }
+
+    if (token.name == 'think') {
+      harmonyThinkChannels.add(channel);
+      hide(token.start, token.end);
+      cursor = token.end;
+      continue;
+    }
+
+    // Un token fuera de un envelope no demuestra contenido privado. En modo
+    // final se conserva literalmente; esto evita borrar citas malformadas.
+    if (canPublish()) {
+      appendPublic(token.start, token.end);
+    } else {
+      capturePrivate(token.start, token.end);
+    }
+    cursor = token.end;
+  }
+
+  flushChannelReasoning();
+  if (!inHarmonyThink()) flushThinkReasoning();
+  return _HarmonyProjection(
+    text: answer.toString(),
+    rawToPublicOffset: List<int>.unmodifiable(offsets),
+    reasoning: List<String>.unmodifiable(reasoning),
+    reasoningInProgress: reasoningInProgress,
+  );
+}
+
+class _MappedProjection {
+  final String text;
+  final List<int> sourceToPublicOffset;
+
+  const _MappedProjection(this.text, this.sourceToPublicOffset);
+}
+
+final RegExp _classicThinkDelimiter = RegExp(
+  r'</?(think|thinking)>',
   caseSensitive: false,
 );
 
-// Cualquier resto del envelope Harmony: tokens de control, el rol que sigue a
-// `<|start|>` y el nombre de canal que precede a `<|message|>`. Jamás debe
-// pintarse crudo.
-final RegExp _harmonyToken = RegExp(
-  r'<\|start\|>[^<]*|<\|channel\|>[a-zA-Z_]+<\|message\|>|<\|[a-zA-Z_/]+\|>',
-  caseSensitive: false,
-);
+int _trailingClassicThinkPrefixLength(String source) {
+  final lower = source.toLowerCase();
+  var held = 0;
+  for (final token in const [
+    '<think>',
+    '<thinking>',
+    '</think>',
+    '</thinking>',
+  ]) {
+    final max = token.length - 1 < lower.length
+        ? token.length - 1
+        : lower.length;
+    for (var length = max; length > held; length--) {
+      if (lower.endsWith(token.substring(0, length))) {
+        held = length;
+        break;
+      }
+    }
+  }
+  return held;
+}
+
+_MappedProjection _projectClassicThink(
+  String source, {
+  required bool streaming,
+}) {
+  final answer = StringBuffer();
+  final offsets = List<int>.filled(source.length + 1, 0);
+  var publicLength = 0;
+  var cursor = 0;
+  final privateStack = <String>[];
+
+  void appendPublic(int start, int end) {
+    for (var index = start; index < end; index++) {
+      answer.writeCharCode(source.codeUnitAt(index));
+      publicLength++;
+      offsets[index + 1] = publicLength;
+    }
+  }
+
+  void hide(int start, int end) {
+    for (var index = start; index < end; index++) {
+      offsets[index + 1] = publicLength;
+    }
+  }
+
+  for (final match in _classicThinkDelimiter.allMatches(source)) {
+    if (privateStack.isEmpty) {
+      appendPublic(cursor, match.start);
+    } else {
+      hide(cursor, match.start);
+    }
+    final closing = source.codeUnitAt(match.start + 1) == 0x2f;
+    final name = (match.group(1) ?? '').toLowerCase();
+    if (closing) {
+      if (privateStack.isNotEmpty && privateStack.last == name) {
+        privateStack.removeLast();
+      }
+    } else {
+      privateStack.add(name);
+    }
+    hide(match.start, match.end);
+    cursor = match.end;
+  }
+
+  if (privateStack.isNotEmpty) {
+    hide(cursor, source.length);
+  } else {
+    final held = streaming
+        ? _trailingClassicThinkPrefixLength(source.substring(cursor))
+        : 0;
+    appendPublic(cursor, source.length - held);
+    hide(source.length - held, source.length);
+  }
+  return _MappedProjection(answer.toString(), List<int>.unmodifiable(offsets));
+}
+
+AssistantPublicProjection projectPublicAssistantText(
+  String raw, {
+  required bool streaming,
+}) {
+  final harmony = _projectHarmony(raw, streaming: streaming);
+  final classic = _projectClassicThink(harmony.text, streaming: streaming);
+  final composed = <int>[
+    for (final harmonyOffset in harmony.rawToPublicOffset)
+      classic.sourceToPublicOffset[harmonyOffset],
+  ];
+  return AssistantPublicProjection._(
+    classic.text,
+    List<int>.unmodifiable(composed),
+  );
+}
+
+/// Returns only assistant text safe to publish while more bytes may arrive.
+String streamingPublicAssistantText(String raw) =>
+    projectPublicAssistantText(raw, streaming: true).text.trim();
+
+/// Returns public text from a completed row/event.
+///
+/// Invalid envelope-like literals are released byte-for-byte on completion,
+/// while bodies behind a valid private header remain withheld even if unclosed.
+String finalizedPublicAssistantText(String raw) =>
+    projectPublicAssistantText(raw, streaming: false).text;
 
 /// Separa el razonamiento (`<think>…</think>`, `<thinking>…`) de la respuesta.
-///
-/// Soporta varios bloques (se concatenan), bloques vacíos y un bloque abierto
-/// sin cerrar durante el streaming (todo lo que sigue a la apertura se trata
-/// como razonamiento en curso). Si el texto no contiene la etiqueta, devuelve
-/// la respuesta sin tocar.
-///
-/// También reconoce los delimitadores Harmony de gpt-oss: el canal
-/// `<|channel|>analysis<|message|>…` y los bloques `<|think|>…` se tratan como
-/// razonamiento, y el resto de tokens de control (`<|start|>`, `<|end|>`…) se
-/// sanea para no pintarse crudo en la burbuja.
 ReasoningSplit splitReasoning(String content) {
-  // Atajo barato: sin ninguna etiqueta de razonamiento (apertura, cierre o
-  // huérfana) ni token Harmony no hay nada que separar (caso del 99 %).
-  if (!_thinkTagResidue.hasMatch(content) && !_harmonyToken.hasMatch(content)) {
+  if (!_thinkTagResidue.hasMatch(content) &&
+      !_harmonyDelimiter.hasMatch(content)) {
     return ReasoningSplit(reasoning: '', answer: content);
   }
 
-  final parts = <String>[];
-  var inProgress = false;
-  var answer = content;
+  final harmony = _projectHarmony(content, streaming: true);
+  final parts = <String>[...harmony.reasoning];
+  var inProgress = harmony.reasoningInProgress;
+  var answer = harmony.text;
 
-  // Harmony (gpt-oss): el canal analysis y los bloques <|think|> son
-  // razonamiento; si quedan abiertos al final del texto, el modelo sigue
-  // pensando. Los demás tokens de control se eliminan de la respuesta.
-  if (_harmonyToken.hasMatch(answer)) {
-    answer = answer.replaceAllMapped(_harmonyAnalysisSegment, (m) {
-      final inner = m.group(1)?.trim() ?? '';
-      if (inner.isNotEmpty) parts.add(inner);
-      if (m.group(2) == '') inProgress = true;
-      return '';
-    });
-    answer = answer.replaceAllMapped(_harmonyThinkBlock, (m) {
-      final inner = m.group(1)?.trim() ?? '';
-      if (inner.isNotEmpty) parts.add(inner);
-      if (m.group(2) == '') inProgress = true;
-      return '';
-    });
-    answer = answer.replaceAll(_harmonyToken, '');
-  }
-
-  answer = answer.replaceAllMapped(_thinkBlock, (m) {
-    final inner = m.group(2)?.trim() ?? '';
+  answer = answer.replaceAllMapped(_thinkBlock, (match) {
+    final inner = match.group(2)?.trim() ?? '';
     if (inner.isNotEmpty) parts.add(inner);
     return '';
   });
-
   final open = _thinkOpen.firstMatch(answer);
   if (open != null) {
     final inner = open.group(2)?.trim() ?? '';
@@ -125,8 +529,6 @@ ReasoningSplit splitReasoning(String content) {
     answer = answer.substring(0, open.start);
     inProgress = true;
   }
-
-  // Limpia cualquier resto de etiqueta huérfana que jamás debe verse.
   answer = answer.replaceAll(_thinkTagResidue, '').trim();
 
   return ReasoningSplit(

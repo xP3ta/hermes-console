@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "permissions": [
+    {"name": "android.permission.ACCESS_NETWORK_STATE"},
+    {"name": "android.permission.CAMERA"},
+    {"name": "android.permission.FOREGROUND_SERVICE"},
+    {"name": "android.permission.FOREGROUND_SERVICE_DATA_SYNC"},
+    {"name": "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"},
+    {"name": "android.permission.FOREGROUND_SERVICE_MICROPHONE"},
+    {"name": "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"},
+    {"name": "android.permission.INTERNET"},
+    {"name": "android.permission.POST_NOTIFICATIONS"},
+    {"name": "android.permission.RECEIVE_BOOT_COMPLETED"},
+    {"name": "android.permission.RECORD_AUDIO"},
+    {"name": "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"},
+    {"name": "android.permission.USE_BIOMETRIC"},
+    {"name": "android.permission.USE_FINGERPRINT"},
+    {"name": "android.permission.VIBRATE"},
+    {"name": "android.permission.WAKE_LOCK"},
+    {"name": "android.permission.WRITE_EXTERNAL_STORAGE", "maxSdkVersion": 28},
+    {"name": "com.termux.permission.RUN_COMMAND"},
+    {"name": "dev.xpetalab.hermesconsole.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"}
+  ],
+  "forbiddenPermissions": [
+    "android.permission.QUERY_ALL_PACKAGES",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.READ_PHONE_STATE",
+    "android.permission.USE_FULL_SCREEN_INTENT"
+  ],
+  "foregroundServices": [
+    {"name": ".HermesExternalDataSyncService", "types": ["dataSync"]},
+    {"name": "com.pravera.flutter_foreground_task.service.ForegroundService", "types": ["dataSync", "mediaPlayback", "microphone", "remoteMessaging"]}
+  ],
+  "requiredPackageQueries": ["com.termux", "org.fdroid.fdroid"]
+}

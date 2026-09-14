@@ -2082,6 +2082,303 @@
       "version": "1.1.0"
     },
     {
+      "bom-ref": "pkg:maven/androidx.media3/media3-common@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-common",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-common@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-container@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-container",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-container@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-database@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-database",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-database@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-datasource@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-datasource",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-datasource@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-decoder@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-decoder",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-decoder@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-exoplayer-dash@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-exoplayer-dash",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-exoplayer-dash@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-exoplayer-hls@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-exoplayer-hls",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-exoplayer-hls@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-exoplayer-rtsp@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-exoplayer-rtsp",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-exoplayer-rtsp@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-exoplayer-smoothstreaming@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-exoplayer-smoothstreaming",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-exoplayer-smoothstreaming@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-exoplayer@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-exoplayer",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-exoplayer@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.media3/media3-extractor@1.9.2",
+      "group": "androidx.media3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "media3-extractor",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.media3/media3-extractor@1.9.2",
+      "type": "library",
+      "version": "1.9.2"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.navigationevent/navigationevent-android@1.0.2",
       "group": "androidx.navigationevent",
       "licenses": [
@@ -3081,7 +3378,61 @@
       "version": "2.41.0"
     },
     {
-      "bom-ref": "pkg:maven/com.google.guava/listenablefuture@1.0",
+      "bom-ref": "pkg:maven/com.google.guava/failureaccess@1.0.2",
+      "group": "com.google.guava",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "failureaccess",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://github.com/google/guava/blob/master/LICENSE"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/com.google.guava/failureaccess@1.0.2",
+      "type": "library",
+      "version": "1.0.2"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.guava/guava@33.3.1-android",
+      "group": "com.google.guava",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "guava",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://github.com/google/guava/blob/master/LICENSE"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/com.google.guava/guava@33.3.1-android",
+      "type": "library",
+      "version": "33.3.1-android"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.guava/listenablefuture@9999.0-empty-to-avoid-conflict-with-guava",
       "group": "com.google.guava",
       "licenses": [
         {
@@ -3103,9 +3454,9 @@
           "value": "curated-catalog"
         }
       ],
-      "purl": "pkg:maven/com.google.guava/listenablefuture@1.0",
+      "purl": "pkg:maven/com.google.guava/listenablefuture@9999.0-empty-to-avoid-conflict-with-guava",
       "type": "library",
-      "version": "1.0"
+      "version": "9999.0-empty-to-avoid-conflict-with-guava"
     },
     {
       "bom-ref": "pkg:maven/com.google.zxing/core@3.5.2",
@@ -3243,7 +3594,7 @@
       "version": "2.20.0"
     },
     {
-      "bom-ref": "pkg:maven/io.flutter/arm64_v8a_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "bom-ref": "pkg:maven/io.flutter/arm64_v8a_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "group": "io.flutter",
       "licenses": [
         {
@@ -3265,12 +3616,12 @@
           "value": "curated-catalog"
         }
       ],
-      "purl": "pkg:maven/io.flutter/arm64_v8a_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "purl": "pkg:maven/io.flutter/arm64_v8a_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "type": "library",
-      "version": "1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0"
+      "version": "1.0.0-5d531788691ec3404cac0cee66ead4007b177363"
     },
     {
-      "bom-ref": "pkg:maven/io.flutter/armeabi_v7a_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "bom-ref": "pkg:maven/io.flutter/armeabi_v7a_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "group": "io.flutter",
       "licenses": [
         {
@@ -3292,12 +3643,12 @@
           "value": "curated-catalog"
         }
       ],
-      "purl": "pkg:maven/io.flutter/armeabi_v7a_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "purl": "pkg:maven/io.flutter/armeabi_v7a_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "type": "library",
-      "version": "1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0"
+      "version": "1.0.0-5d531788691ec3404cac0cee66ead4007b177363"
     },
     {
-      "bom-ref": "pkg:maven/io.flutter/flutter_embedding_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "bom-ref": "pkg:maven/io.flutter/flutter_embedding_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "group": "io.flutter",
       "licenses": [
         {
@@ -3319,12 +3670,12 @@
           "value": "curated-catalog"
         }
       ],
-      "purl": "pkg:maven/io.flutter/flutter_embedding_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "purl": "pkg:maven/io.flutter/flutter_embedding_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "type": "library",
-      "version": "1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0"
+      "version": "1.0.0-5d531788691ec3404cac0cee66ead4007b177363"
     },
     {
-      "bom-ref": "pkg:maven/io.flutter/x86_64_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "bom-ref": "pkg:maven/io.flutter/x86_64_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "group": "io.flutter",
       "licenses": [
         {
@@ -3346,9 +3697,9 @@
           "value": "curated-catalog"
         }
       ],
-      "purl": "pkg:maven/io.flutter/x86_64_release@1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0",
+      "purl": "pkg:maven/io.flutter/x86_64_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "type": "library",
-      "version": "1.0.0-c416acfeb8126e097f758c664aaa3da929e27da0"
+      "version": "1.0.0-5d531788691ec3404cac0cee66ead4007b177363"
     },
     {
       "bom-ref": "pkg:maven/org.apache.commons/commons-imaging@1.0-alpha3",
@@ -3430,6 +3781,33 @@
       "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-android-extensions-runtime@1.9.22",
       "type": "library",
       "version": "1.9.22"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlin/kotlin-bom@1.8.0",
+      "group": "org.jetbrains.kotlin",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "kotlin-bom",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://github.com/JetBrains/kotlin/blob/master/license/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-bom@1.8.0",
+      "type": "library",
+      "version": "1.8.0"
     },
     {
       "bom-ref": "pkg:maven/org.jetbrains.kotlin/kotlin-parcelize-runtime@1.9.22",
@@ -4588,6 +4966,32 @@
       "version": "3.0.7"
     },
     {
+      "bom-ref": "pkg:pub/csslib@1.0.2",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "csslib",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/csslib@1.0.2",
+      "type": "library",
+      "version": "1.0.2"
+    },
+    {
       "bom-ref": "pkg:pub/cupertino_icons@1.0.9",
       "licenses": [
         {
@@ -5680,7 +6084,7 @@
       "version": "2.2.0"
     },
     {
-      "bom-ref": "pkg:pub/hermes_android@1.2.9+4964",
+      "bom-ref": "pkg:pub/hermes_android@1.2.10+9008",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -5701,9 +6105,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.2.9+4964",
+      "purl": "pkg:pub/hermes_android@1.2.10+9008",
       "type": "application",
-      "version": "1.2.9+4964"
+      "version": "1.2.10+9008"
     },
     {
       "bom-ref": "pkg:pub/highlight@0.7.0",
@@ -5782,6 +6186,32 @@
       "purl": "pkg:pub/hooks@2.0.0",
       "type": "library",
       "version": "2.0.0"
+    },
+    {
+      "bom-ref": "pkg:pub/html@0.15.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "html",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/html@0.15.7",
+      "type": "library",
+      "version": "0.15.7"
     },
     {
       "bom-ref": "pkg:pub/http@1.6.0",
@@ -6070,7 +6500,7 @@
       "version": "0.2.2"
     },
     {
-      "bom-ref": "pkg:pub/intl@0.20.2",
+      "bom-ref": "pkg:pub/intl@0.20.3",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -6091,9 +6521,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/intl@0.20.2",
+      "purl": "pkg:pub/intl@0.20.3",
       "type": "library",
-      "version": "0.20.2"
+      "version": "0.20.3"
     },
     {
       "bom-ref": "pkg:pub/io@1.0.5",
@@ -6512,7 +6942,7 @@
       "version": "7.3.1"
     },
     {
-      "bom-ref": "pkg:pub/matcher@0.12.19",
+      "bom-ref": "pkg:pub/matcher@0.12.20",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -6533,9 +6963,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/matcher@0.12.19",
+      "purl": "pkg:pub/matcher@0.12.20",
       "type": "library",
-      "version": "0.12.19"
+      "version": "0.12.20"
     },
     {
       "bom-ref": "pkg:pub/material_color_utilities@0.13.0",
@@ -6564,7 +6994,7 @@
       "version": "0.13.0"
     },
     {
-      "bom-ref": "pkg:pub/meta@1.18.0",
+      "bom-ref": "pkg:pub/meta@1.19.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -6585,9 +7015,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/meta@1.18.0",
+      "purl": "pkg:pub/meta@1.19.0",
       "type": "library",
-      "version": "1.18.0"
+      "version": "1.19.0"
     },
     {
       "bom-ref": "pkg:pub/mime@2.0.0",
@@ -8540,7 +8970,7 @@
       "version": "1.2.2"
     },
     {
-      "bom-ref": "pkg:pub/test_api@0.7.11",
+      "bom-ref": "pkg:pub/test_api@0.7.12",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -8561,9 +8991,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/test_api@0.7.11",
+      "purl": "pkg:pub/test_api@0.7.12",
       "type": "library",
-      "version": "0.7.11"
+      "version": "0.7.12"
     },
     {
       "bom-ref": "pkg:pub/timezone@0.10.1",
@@ -8878,7 +9308,7 @@
       "version": "4.5.3"
     },
     {
-      "bom-ref": "pkg:pub/vector_math@2.2.0",
+      "bom-ref": "pkg:pub/vector_math@2.4.2",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -8899,9 +9329,139 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/vector_math@2.2.0",
+      "purl": "pkg:pub/vector_math@2.4.2",
       "type": "library",
-      "version": "2.2.0"
+      "version": "2.4.2"
+    },
+    {
+      "bom-ref": "pkg:pub/video_player@2.14.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "video_player",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "direct"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/video_player@2.14.0",
+      "type": "library",
+      "version": "2.14.0"
+    },
+    {
+      "bom-ref": "pkg:pub/video_player_android@2.12.2",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "video_player_android",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/video_player_android@2.12.2",
+      "type": "library",
+      "version": "2.12.2"
+    },
+    {
+      "bom-ref": "pkg:pub/video_player_avfoundation@2.12.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "video_player_avfoundation",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/video_player_avfoundation@2.12.0",
+      "type": "library",
+      "version": "2.12.0"
+    },
+    {
+      "bom-ref": "pkg:pub/video_player_platform_interface@6.9.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "video_player_platform_interface",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/video_player_platform_interface@6.9.0",
+      "type": "library",
+      "version": "6.9.0"
+    },
+    {
+      "bom-ref": "pkg:pub/video_player_web@2.4.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "video_player_web",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/video_player_web@2.4.0",
+      "type": "library",
+      "version": "2.4.0"
     },
     {
       "bom-ref": "pkg:pub/vm_service@15.2.0",
@@ -9219,7 +9779,7 @@
   "dependencies": [
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/source_span@1.10.2"
       ],
       "ref": "pkg:pub/_fe_analyzer_shared@100.0.0"
@@ -9231,7 +9791,7 @@
         "pkg:pub/convert@3.1.2",
         "pkg:pub/crypto@3.0.7",
         "pkg:pub/glob@2.1.3",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/package_config@2.2.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/pub_semver@2.2.0",
@@ -9292,7 +9852,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/async@2.13.1"
     },
@@ -9307,7 +9867,7 @@
         "pkg:pub/file@7.0.1",
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/http@1.6.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path_provider@2.1.5",
         "pkg:pub/synchronized@3.4.1",
         "pkg:pub/uuid@4.5.3"
@@ -9339,7 +9899,7 @@
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/plugin_platform_interface@2.1.8"
       ],
       "ref": "pkg:pub/audioplayers_platform_interface@7.1.1"
@@ -9424,7 +9984,7 @@
         "pkg:pub/io@1.0.5",
         "pkg:pub/json_annotation@4.12.0",
         "pkg:pub/logging@1.3.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/mime@2.0.0",
         "pkg:pub/package_config@2.2.0",
         "pkg:pub/path@1.9.1",
@@ -9448,7 +10008,7 @@
         "pkg:pub/built_collection@5.1.1",
         "pkg:pub/collection@1.19.1",
         "pkg:pub/fixnum@1.1.1",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/built_value@8.12.6"
     },
@@ -9487,7 +10047,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/web@1.1.1"
       ],
       "ref": "pkg:pub/cross_file@0.3.5+2"
@@ -9497,6 +10057,12 @@
         "pkg:pub/typed_data@1.4.0"
       ],
       "ref": "pkg:pub/crypto@3.0.7"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/source_span@1.10.2"
+      ],
+      "ref": "pkg:pub/csslib@1.0.2"
     },
     {
       "dependsOn": [],
@@ -9519,7 +10085,7 @@
       "dependsOn": [
         "pkg:pub/asn1lib@1.6.5",
         "pkg:pub/convert@3.1.2",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/pinenacl@0.6.0",
         "pkg:pub/pointycastle@4.0.0"
       ],
@@ -9529,7 +10095,7 @@
       "dependsOn": [
         "pkg:pub/args@2.7.0",
         "pkg:pub/ffi@2.2.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/xml@6.6.1"
       ],
       "ref": "pkg:pub/dbus@0.7.14"
@@ -9537,7 +10103,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/equatable@2.0.8"
     },
@@ -9554,7 +10120,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1"
       ],
       "ref": "pkg:pub/file@7.0.1"
@@ -9616,9 +10182,9 @@
         "pkg:pub/characters@1.4.1",
         "pkg:pub/collection@1.19.1",
         "pkg:pub/material_color_utilities@0.13.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/sky_engine@0.0.0",
-        "pkg:pub/vector_math@2.2.0"
+        "pkg:pub/vector_math@2.4.2"
       ],
       "ref": "pkg:pub/flutter@0.0.0"
     },
@@ -9675,7 +10241,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/intl@0.20.2",
+        "pkg:pub/intl@0.20.3",
         "pkg:pub/path@1.9.1"
       ],
       "ref": "pkg:pub/flutter_localizations@0.0.0"
@@ -9684,7 +10250,7 @@
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/markdown@7.3.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1"
       ],
       "ref": "pkg:pub/flutter_markdown@0.7.7+1"
@@ -9699,7 +10265,7 @@
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/riverpod@2.6.1",
         "pkg:pub/state_notifier@1.0.0"
       ],
@@ -9713,7 +10279,7 @@
         "pkg:pub/flutter_secure_storage_platform_interface@2.0.1",
         "pkg:pub/flutter_secure_storage_web@2.1.1",
         "pkg:pub/flutter_secure_storage_windows@4.1.0",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/flutter_secure_storage@10.3.1"
     },
@@ -9761,7 +10327,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/vector_math@2.2.0"
+        "pkg:pub/vector_math@2.4.2"
       ],
       "ref": "pkg:pub/flutter_shaders@0.1.3"
     },
@@ -9778,13 +10344,13 @@
         "pkg:pub/fake_async@1.3.3",
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/leak_tracker_flutter_testing@3.0.10",
-        "pkg:pub/matcher@0.12.19",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/matcher@0.12.20",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/stack_trace@1.12.1",
         "pkg:pub/stream_channel@2.1.4",
-        "pkg:pub/test_api@0.7.11",
-        "pkg:pub/vector_math@2.2.0"
+        "pkg:pub/test_api@0.7.12",
+        "pkg:pub/vector_math@2.4.2"
       ],
       "ref": "pkg:pub/flutter_test@0.0.0"
     },
@@ -9805,7 +10371,7 @@
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
         "pkg:pub/json_annotation@4.12.0",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/freezed_annotation@3.1.0"
     },
@@ -9831,7 +10397,7 @@
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_web_plugins@0.0.0",
         "pkg:pub/logging@1.3.0",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/go_router@14.8.1"
     },
@@ -9845,7 +10411,7 @@
       "dependsOn": [
         "pkg:pub/ffi@2.2.0",
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/gtk@2.2.0"
     },
@@ -9878,7 +10444,7 @@
         "pkg:pub/image_picker@1.2.2",
         "pkg:pub/image_picker_android@0.8.13+19",
         "pkg:pub/image_picker_platform_interface@2.11.1",
-        "pkg:pub/intl@0.20.2",
+        "pkg:pub/intl@0.20.3",
         "pkg:pub/json_annotation@4.12.0",
         "pkg:pub/json_serializable@6.14.0",
         "pkg:pub/local_auth@2.3.0",
@@ -9895,11 +10461,12 @@
         "pkg:pub/sqflite_common_ffi@2.4.2+1",
         "pkg:pub/url_launcher@6.3.2",
         "pkg:pub/uuid@4.5.3",
+        "pkg:pub/video_player@2.14.0",
         "pkg:pub/web_socket_channel@3.0.3",
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
-      "ref": "pkg:pub/hermes_android@1.2.9+4964"
+      "ref": "pkg:pub/hermes_android@1.2.10+9008"
     },
     {
       "dependsOn": [
@@ -9920,7 +10487,7 @@
         "pkg:pub/collection@1.19.1",
         "pkg:pub/crypto@3.0.7",
         "pkg:pub/logging@1.3.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/pub_semver@2.2.0",
         "pkg:pub/record_use@0.6.0",
         "pkg:pub/yaml@3.1.3"
@@ -9929,9 +10496,16 @@
     },
     {
       "dependsOn": [
+        "pkg:pub/csslib@1.0.2",
+        "pkg:pub/source_span@1.10.2"
+      ],
+      "ref": "pkg:pub/html@0.15.7"
+    },
+    {
+      "dependsOn": [
         "pkg:pub/async@2.13.1",
         "pkg:pub/http_parser@4.1.2",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/web@1.1.1"
       ],
       "ref": "pkg:pub/http@1.6.0"
@@ -9969,7 +10543,7 @@
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_plugin_android_lifecycle@2.0.35",
         "pkg:pub/image_picker_platform_interface@2.11.1",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/image_picker_android@0.8.13+19"
     },
@@ -10029,14 +10603,14 @@
     {
       "dependsOn": [
         "pkg:pub/clock@1.1.2",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1"
       ],
-      "ref": "pkg:pub/intl@0.20.2"
+      "ref": "pkg:pub/intl@0.20.3"
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/string_scanner@1.4.1"
       ],
@@ -10047,7 +10621,7 @@
         "pkg:pub/args@2.7.0",
         "pkg:pub/collection@1.19.1",
         "pkg:pub/ffi@2.2.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/package_config@2.2.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/plugin_platform_interface@2.1.8"
@@ -10063,7 +10637,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/json_annotation@4.12.0"
     },
@@ -10075,7 +10649,7 @@
         "pkg:pub/build_config@1.3.0",
         "pkg:pub/dart_style@3.1.9",
         "pkg:pub/json_annotation@4.12.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/pub_semver@2.2.0",
         "pkg:pub/pubspec_parse@1.5.0",
@@ -10088,7 +10662,7 @@
       "dependsOn": [
         "pkg:pub/clock@1.1.2",
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/vm_service@15.2.0"
       ],
@@ -10099,16 +10673,16 @@
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/leak_tracker@11.0.2",
         "pkg:pub/leak_tracker_testing@3.0.2",
-        "pkg:pub/matcher@0.12.19",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/matcher@0.12.20",
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/leak_tracker_flutter_testing@3.0.10"
     },
     {
       "dependsOn": [
         "pkg:pub/leak_tracker@11.0.2",
-        "pkg:pub/matcher@0.12.19",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/matcher@0.12.20",
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/leak_tracker_testing@3.0.2"
     },
@@ -10130,7 +10704,7 @@
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_plugin_android_lifecycle@2.0.35",
-        "pkg:pub/intl@0.20.2",
+        "pkg:pub/intl@0.20.3",
         "pkg:pub/local_auth_platform_interface@1.1.0"
       ],
       "ref": "pkg:pub/local_auth_android@1.0.56"
@@ -10138,7 +10712,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/intl@0.20.2",
+        "pkg:pub/intl@0.20.3",
         "pkg:pub/local_auth_platform_interface@1.1.0"
       ],
       "ref": "pkg:pub/local_auth_darwin@1.6.1"
@@ -10164,19 +10738,19 @@
     {
       "dependsOn": [
         "pkg:pub/args@2.7.0",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/markdown@7.3.1"
     },
     {
       "dependsOn": [
         "pkg:pub/async@2.13.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/stack_trace@1.12.1",
         "pkg:pub/term_glyph@1.2.2",
-        "pkg:pub/test_api@0.7.11"
+        "pkg:pub/test_api@0.7.12"
       ],
-      "ref": "pkg:pub/matcher@0.12.19"
+      "ref": "pkg:pub/matcher@0.12.20"
     },
     {
       "dependsOn": [
@@ -10186,7 +10760,7 @@
     },
     {
       "dependsOn": [],
-      "ref": "pkg:pub/meta@1.18.0"
+      "ref": "pkg:pub/meta@1.19.0"
     },
     {
       "dependsOn": [],
@@ -10198,7 +10772,7 @@
         "pkg:pub/glob@2.1.3",
         "pkg:pub/hooks@2.0.0",
         "pkg:pub/logging@1.3.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/pub_semver@2.2.0"
       ],
       "ref": "pkg:pub/native_toolchain_c@0.19.0"
@@ -10210,7 +10784,7 @@
         "pkg:pub/ffi@2.2.0",
         "pkg:pub/hooks@2.0.0",
         "pkg:pub/logging@1.3.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/pub_semver@2.2.0"
       ],
       "ref": "pkg:pub/objective_c@9.4.1"
@@ -10228,7 +10802,7 @@
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_web_plugins@0.0.0",
         "pkg:pub/http@1.6.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/package_info_plus_platform_interface@3.2.1",
         "pkg:pub/path@1.9.1",
         "pkg:pub/web@1.1.1",
@@ -10239,7 +10813,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/plugin_platform_interface@2.1.8"
       ],
       "ref": "pkg:pub/package_info_plus_platform_interface@3.2.1"
@@ -10307,7 +10881,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/petitparser@7.0.2"
     },
@@ -10321,7 +10895,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/plugin_platform_interface@2.1.8"
     },
@@ -10342,7 +10916,7 @@
     {
       "dependsOn": [
         "pkg:pub/ffi@2.2.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1"
       ],
       "ref": "pkg:pub/posix@6.5.0"
@@ -10373,7 +10947,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/matcher@0.12.19"
+        "pkg:pub/matcher@0.12.20"
       ],
       "ref": "pkg:pub/quiver@3.2.2"
     },
@@ -10428,7 +11002,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/pub_semver@2.2.0"
       ],
       "ref": "pkg:pub/record_use@0.6.0"
@@ -10452,7 +11026,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/stack_trace@1.12.1",
         "pkg:pub/state_notifier@1.0.0"
       ],
@@ -10465,7 +11039,7 @@
         "pkg:pub/file@7.0.1",
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_web_plugins@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/mime@2.0.0",
         "pkg:pub/share_plus_platform_interface@5.0.2",
         "pkg:pub/url_launcher_linux@3.2.2",
@@ -10481,7 +11055,7 @@
       "dependsOn": [
         "pkg:pub/cross_file@0.3.5+2",
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/mime@2.0.0",
         "pkg:pub/path_provider@2.1.5",
         "pkg:pub/plugin_platform_interface@2.1.8",
@@ -10674,7 +11248,7 @@
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_web_plugins@0.0.0",
         "pkg:pub/json_annotation@4.12.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/speech_to_text_platform_interface@2.4.0",
         "pkg:pub/speech_to_text_windows@1.0.1",
         "pkg:pub/web@1.1.1"
@@ -10684,7 +11258,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/plugin_platform_interface@2.1.8"
       ],
       "ref": "pkg:pub/speech_to_text_platform_interface@2.4.0"
@@ -10718,7 +11292,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/synchronized@3.4.1"
       ],
@@ -10726,7 +11300,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/sqflite_common@2.5.11",
         "pkg:pub/sqlite3@3.5.2",
@@ -10737,7 +11311,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/sqflite_common@2.5.11",
         "pkg:pub/sqflite_platform_interface@2.4.1"
@@ -10747,7 +11321,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/platform@3.1.6",
         "pkg:pub/plugin_platform_interface@2.1.8",
         "pkg:pub/sqflite_common@2.5.11"
@@ -10761,7 +11335,7 @@
         "pkg:pub/crypto@3.0.7",
         "pkg:pub/ffi@2.2.0",
         "pkg:pub/hooks@2.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/native_toolchain_c@0.19.0",
         "pkg:pub/path@1.9.1",
         "pkg:pub/typed_data@1.4.0",
@@ -10777,7 +11351,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0"
+        "pkg:pub/meta@1.19.0"
       ],
       "ref": "pkg:pub/state_notifier@1.0.0"
     },
@@ -10810,14 +11384,14 @@
         "pkg:pub/async@2.13.1",
         "pkg:pub/boolean_selector@2.1.2",
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/source_span@1.10.2",
         "pkg:pub/stack_trace@1.12.1",
         "pkg:pub/stream_channel@2.1.4",
         "pkg:pub/string_scanner@1.4.1",
         "pkg:pub/term_glyph@1.2.2"
       ],
-      "ref": "pkg:pub/test_api@0.7.11"
+      "ref": "pkg:pub/test_api@0.7.12"
     },
     {
       "dependsOn": [
@@ -10835,7 +11409,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/typed_data@1.4.0"
       ],
       "ref": "pkg:pub/universal_io@2.3.1"
@@ -10856,7 +11430,7 @@
     {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/url_launcher_platform_interface@2.3.2"
       ],
       "ref": "pkg:pub/url_launcher_android@6.3.30"
@@ -10914,7 +11488,51 @@
     },
     {
       "dependsOn": [],
-      "ref": "pkg:pub/vector_math@2.2.0"
+      "ref": "pkg:pub/vector_math@2.4.2"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/collection@1.19.1",
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/html@0.15.7",
+        "pkg:pub/video_player_android@2.12.2",
+        "pkg:pub/video_player_avfoundation@2.12.0",
+        "pkg:pub/video_player_platform_interface@6.9.0",
+        "pkg:pub/video_player_web@2.4.0"
+      ],
+      "ref": "pkg:pub/video_player@2.14.0"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.19.0",
+        "pkg:pub/video_player_platform_interface@6.9.0"
+      ],
+      "ref": "pkg:pub/video_player_android@2.12.2"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.19.0",
+        "pkg:pub/video_player_platform_interface@6.9.0"
+      ],
+      "ref": "pkg:pub/video_player_avfoundation@2.12.0"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/plugin_platform_interface@2.1.8"
+      ],
+      "ref": "pkg:pub/video_player_platform_interface@6.9.0"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/flutter_web_plugins@0.0.0",
+        "pkg:pub/video_player_platform_interface@6.9.0",
+        "pkg:pub/web@1.1.1"
+      ],
+      "ref": "pkg:pub/video_player_web@2.4.0"
     },
     {
       "dependsOn": [],
@@ -10968,7 +11586,7 @@
     },
     {
       "dependsOn": [
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/path@1.9.1"
       ],
       "ref": "pkg:pub/xdg_directories@1.1.0"
@@ -10976,7 +11594,7 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/petitparser@7.0.2"
       ],
       "ref": "pkg:pub/xml@6.6.1"
@@ -10986,7 +11604,7 @@
         "pkg:pub/convert@3.1.2",
         "pkg:pub/equatable@2.0.8",
         "pkg:pub/flutter@0.0.0",
-        "pkg:pub/meta@1.18.0",
+        "pkg:pub/meta@1.19.0",
         "pkg:pub/quiver@3.2.2",
         "pkg:pub/zmodem@0.0.6"
       ],
@@ -11010,7 +11628,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:pub/hermes_android@1.2.9+4964",
+      "bom-ref": "pkg:pub/hermes_android@1.2.10+9008",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -11031,14 +11649,14 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.2.9+4964",
+      "purl": "pkg:pub/hermes_android@1.2.10+9008",
       "type": "application",
-      "version": "1.2.9+4964"
+      "version": "1.2.10+9008"
     },
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "5b1ecf8acb619bf9582bfec2fab93e00285ab2303a5e81452553b6423a485077"
+        "value": "83af9981470d275a1e780cacb9daee0f8f7da9210e78f79d83b3534f3b102fd8"
       },
       {
         "name": "hermes.android.variant",
@@ -11050,7 +11668,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:eab09ab3-0587-4733-a907-fdb43306fca2",
+  "serialNumber": "urn:uuid:5078e47f-f589-41ff-ab50-cb8e47e8f60c",
   "specVersion": "1.6",
   "version": 1
 }

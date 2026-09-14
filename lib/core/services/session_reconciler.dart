@@ -1,7 +1,10 @@
 import 'dart:convert';
 
 import '../models/desktop_session_snapshot.dart';
+import '../models/transcript_privacy_state.dart';
+import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
+import 'terminal_transcript_authority.dart';
 
 /// Pure projection of a Hermes Desktop 0.19 resume/activate snapshot into the
 /// newest-first message shape consumed by [ActiveChat].
@@ -27,6 +30,27 @@ class DesktopSessionProjection {
   });
 }
 
+enum _LiveUserProjectionProof { none, exactAnchorPrefix }
+
+class _LiveUserProjectionPlan {
+  final int representedPrefixLength;
+  final _LiveUserProjectionProof proof;
+
+  const _LiveUserProjectionPlan({
+    required this.representedPrefixLength,
+    required this.proof,
+  });
+
+  static const none = _LiveUserProjectionPlan(
+    representedPrefixLength: 0,
+    proof: _LiveUserProjectionProof.none,
+  );
+
+  bool emits(int liveUserIndex) =>
+      proof == _LiveUserProjectionProof.none ||
+      liveUserIndex >= representedPrefixLength;
+}
+
 TranscriptMessageIdentity? _desktopTranscriptIdentity(
   DesktopSessionMessage message,
 ) {
@@ -41,6 +65,229 @@ TranscriptMessageIdentity? _desktopTranscriptIdentity(
 class DesktopSessionReconciler {
   const DesktopSessionReconciler();
 
+  static bool _isDurableTerminalAssistant(Map<String, dynamic> message) {
+    final role = message['role']?.toString().trim().toLowerCase();
+    if (role != 'assistant' && role != 'assistant_error') return false;
+    if (message['_desktopSnapshotKind'] == 'inflight' ||
+        message['_pipeline'] == true ||
+        message['_interim'] == true) {
+      return false;
+    }
+    final isDurable =
+        message['_desktopSnapshotKind'] == 'persisted' ||
+        canonicalTranscriptMessageId(message) != null ||
+        canonicalTranscriptRowId(message) != null;
+    if (!isDurable) return false;
+    final authority = decideTerminalAuthority(
+      chronological: [
+        const {
+          'message_id': '__desktop_reconciler_terminal_anchor__',
+          'role': 'user',
+          'content': '',
+        },
+        message,
+      ],
+      expectedUsers: 1,
+      source: TerminalEvidenceSource.desktopSnapshot,
+      sourceTranscriptComplete: true,
+      transportTerminalObserved: false,
+      transportTerminalIsError: false,
+      compactionFenceActive: false,
+      currentAuthorityFence: true,
+      visibleAssistantTextPresent: false,
+      allowLegacyDirectToolTerminal: false,
+    );
+    return authority.isAuthoritative;
+  }
+
+  static bool _isCrossableNonUserLiveProjection(Map<String, dynamic> message) {
+    if (message['role'] == 'user') return false;
+    return message['_desktopSnapshotKind'] == 'inflight' ||
+        message['_pipeline'] == true;
+  }
+
+  static bool _isBridgeableOwnedLiveUserProjection(
+    Map<String, dynamic> message,
+  ) =>
+      message['role'] == 'user' &&
+      (message['_desktopSnapshotKind'] == 'inflight' ||
+          message['_optimistic'] == true ||
+          message['_steer'] == true);
+
+  static int? _exactPreviousAnchorIndex(
+    List<Map<String, dynamic>> chronological,
+    List<Map<String, dynamic>> previousNewestFirst,
+    bool bridgeOwnedLiveUser,
+  ) {
+    TranscriptMessageIdentity? anchor;
+    for (final previous in previousNewestFirst) {
+      if (_isCrossableNonUserLiveProjection(previous)) continue;
+      if (bridgeOwnedLiveUser &&
+          _isBridgeableOwnedLiveUserProjection(previous)) {
+        continue;
+      }
+      anchor = canonicalTranscriptIdentity(previous);
+      // Never cross an id-less durable-looking survivor to recover an older
+      // anchor: that row could be the unanswered repeated prompt.
+      if (anchor == null) return null;
+      break;
+    }
+    if (anchor == null) return null;
+
+    int? matchedIndex;
+    for (var index = 0; index < chronological.length; index++) {
+      final candidate = chronological[index];
+      if (!transcriptIdentityAliasesShareExactCoordinate(candidate, anchor)) {
+        continue;
+      }
+      final candidateIdentity = canonicalTranscriptIdentity(candidate);
+      if (candidateIdentity == null || !candidateIdentity.matches(anchor)) {
+        return null;
+      }
+      if (matchedIndex != null) return null;
+      matchedIndex = index;
+    }
+    return matchedIndex;
+  }
+
+  static DateTime? _projectedTimestamp(Map<String, dynamic> message) {
+    final value = message['timestamp'];
+    if (value is! num || !value.isFinite || value < 0) return null;
+    try {
+      return DateTime.fromMicrosecondsSinceEpoch(
+        (value * Duration.microsecondsPerSecond).round(),
+      );
+    } on RangeError {
+      return null;
+    }
+  }
+
+  static _LiveUserProjectionPlan _liveUserProjectionPlan(
+    List<Map<String, dynamic>> chronological,
+    List<Map<String, dynamic>> previousNewestFirst,
+    DesktopInflightTurn? inflight,
+    bool bridgeOwnedLiveUser,
+    DateTime? turnStartedAt,
+  ) {
+    if (inflight == null) return _LiveUserProjectionPlan.none;
+    final liveUsers = <String>[
+      if (inflight.user?.trim().isNotEmpty == true) inflight.user!,
+      ...inflight.corrections.map((correction) => correction.text),
+    ];
+    if (liveUsers.isEmpty) return _LiveUserProjectionPlan.none;
+
+    final anchorIndex = _exactPreviousAnchorIndex(
+      chronological,
+      previousNewestFirst,
+      bridgeOwnedLiveUser,
+    );
+    if (anchorIndex == null) return _LiveUserProjectionPlan.none;
+
+    var terminalBoundary = anchorIndex;
+    var terminalFoundAfterAnchor = false;
+    for (var index = anchorIndex + 1; index < chronological.length; index++) {
+      if (_isDurableTerminalAssistant(chronological[index])) {
+        terminalBoundary = index;
+        terminalFoundAfterAnchor = true;
+      }
+    }
+
+    // On the next passive refresh, the latest previous row can already be the
+    // durable form of the active input itself. Treat that exact, uniquely
+    // anchored open tail as part of the current inflight turn; otherwise the
+    // reconciler appends the same synthetic user again on every later snapshot.
+    // A previous terminal assistant still wins, so an identical completed
+    // prompt remains a distinct new turn.
+    final anchoredMessage = chronological[anchorIndex];
+    final anchoredAt = _projectedTimestamp(anchoredMessage);
+    final anchorIsDurableOpenInput =
+        !terminalFoundAfterAnchor &&
+        turnStartedAt != null &&
+        anchoredAt != null &&
+        anchoredAt.isAfter(turnStartedAt) &&
+        canonicalTranscriptIdentity(anchoredMessage) != null &&
+        (isRealUserTurn(anchoredMessage) ||
+            (anchoredMessage['role'] == 'user' &&
+                anchoredMessage['_steer'] == true));
+    if (anchorIsDurableOpenInput) {
+      terminalBoundary = -1;
+      for (var index = anchorIndex - 1; index >= 0; index--) {
+        if (_isDurableTerminalAssistant(chronological[index])) {
+          terminalBoundary = index;
+          break;
+        }
+      }
+    }
+
+    final durableOpenInputs = <Map<String, dynamic>>[];
+    for (
+      var index = terminalBoundary + 1;
+      index < chronological.length;
+      index++
+    ) {
+      final message = chronological[index];
+      final isLiveUserInput =
+          isRealUserTurn(message) ||
+          (message['role'] == 'user' && message['_steer'] == true);
+      if (isLiveUserInput) durableOpenInputs.add(message);
+    }
+    if (durableOpenInputs.isEmpty) return _LiveUserProjectionPlan.none;
+
+    final sharedLength = durableOpenInputs.length < liveUsers.length
+        ? durableOpenInputs.length
+        : liveUsers.length;
+    for (var index = 0; index < sharedLength; index++) {
+      if (durableOpenInputs[index]['content']?.toString() != liveUsers[index]) {
+        return _LiveUserProjectionPlan.none;
+      }
+    }
+    if (durableOpenInputs.length > liveUsers.length &&
+        durableOpenInputs
+            .skip(liveUsers.length)
+            .any((message) => message['_steer'] != true)) {
+      return _LiveUserProjectionPlan.none;
+    }
+    return _LiveUserProjectionPlan(
+      representedPrefixLength: sharedLength,
+      proof: _LiveUserProjectionProof.exactAnchorPrefix,
+    );
+  }
+
+  /// Extrae vetos privados de identidades durables no contradictorias.
+  ///
+  /// Repetir exactamente una fila no revoca evidencia negativa. En cambio, dos
+  /// identidades que comparten una coordenada y contradicen la otra quedan
+  /// aisladas: ninguna se usa para clasificar filas de otra superficie.
+  List<TranscriptMessageIdentity> privateTranscriptIdentityVetoes(
+    List<DesktopSessionMessage> persistedChronological,
+  ) {
+    final identities = <DesktopSessionMessage, TranscriptMessageIdentity>{};
+    final conflicting = <DesktopSessionMessage>{};
+    for (final candidate in persistedChronological) {
+      final identity = _desktopTranscriptIdentity(candidate);
+      if (identity == null) continue;
+      for (final entry in identities.entries) {
+        if (!identity.sharesExactCoordinate(entry.value) ||
+            identity.matches(entry.value)) {
+          continue;
+        }
+        conflicting
+          ..add(candidate)
+          ..add(entry.key);
+      }
+      identities[candidate] = identity;
+    }
+
+    final vetoes = <TranscriptMessageIdentity>[];
+    for (final entry in identities.entries) {
+      if (entry.key.publiclyRenderable || conflicting.contains(entry.key)) {
+        continue;
+      }
+      if (!vetoes.any(entry.value.matches)) vetoes.add(entry.value);
+    }
+    return List<TranscriptMessageIdentity>.unmodifiable(vetoes);
+  }
+
   /// REST 0.19 conserva el contenido autoritativo pero puede omitir los campos
   /// editoriales que sí entrega `session.resume`. Superpone esos campos solo
   /// cuando el mismo mensaje se identifica por id estable. El contenido no es
@@ -49,20 +296,18 @@ class DesktopSessionReconciler {
     List<Map<String, dynamic>> fallbackNewestFirst,
     List<DesktopSessionMessage> persistedChronological,
   ) {
-    final candidates = persistedChronological
-        .where(
-          (message) =>
-              (message.raw['display_kind']?.toString().trim().isNotEmpty ??
-              false),
-        )
-        .toList(growable: false);
-    if (fallbackNewestFirst.isEmpty || candidates.isEmpty) {
+    if (fallbackNewestFirst.isEmpty || persistedChronological.isEmpty) {
       return fallbackNewestFirst;
     }
 
+    final graph = TranscriptPrivacyGraph([
+      ...persistedChronological.map((row) => row.transcriptPrivacyObservation),
+      ...fallbackNewestFirst.map(TranscriptPrivacyObservation.fromRaw),
+    ]);
+
     final identities = <DesktopSessionMessage, TranscriptMessageIdentity>{};
     final ambiguous = <DesktopSessionMessage>{};
-    for (final candidate in candidates) {
+    for (final candidate in persistedChronological) {
       final identity = _desktopTranscriptIdentity(candidate);
       if (identity == null) continue;
       for (final entry in identities.entries) {
@@ -88,45 +333,72 @@ class DesktopSessionReconciler {
       fallbackIdentities[message] = identity;
     }
 
-    return fallbackNewestFirst
-        .map((message) {
-          if (ambiguousFallback.contains(message)) return message;
-          final identity = canonicalTranscriptIdentity(message);
-          DesktopSessionMessage? candidate;
-          if (identity != null) {
-            for (final entry in identities.entries) {
-              if (ambiguous.contains(entry.key) ||
-                  !identity.matches(entry.value)) {
-                continue;
-              }
-              if (candidate != null) {
-                candidate = null;
-                break;
-              }
-              candidate = entry.key;
-            }
+    final merged = <Map<String, dynamic>>[];
+    for (final message in fallbackNewestFirst) {
+      final identity = canonicalTranscriptIdentity(message);
+      // El veto es una operación de conjunto: todos los duplicados exactos de
+      // una identidad privada se eliminan. La ambigüedad sigue bloqueando solo
+      // la superposición positiva de metadata, no convierte un duplicado en
+      // autorización para mostrar contenido sin classifier.
+      final observation = TranscriptPrivacyObservation.fromRaw(message);
+      if (graph.excludes(observation)) continue;
+      if (ambiguousFallback.contains(message)) {
+        merged.add(message);
+        continue;
+      }
+      DesktopSessionMessage? candidate;
+      if (identity != null && graph.permitsPartialInference(observation)) {
+        for (final entry in identities.entries) {
+          if (ambiguous.contains(entry.key) || !identity.matches(entry.value)) {
+            continue;
           }
-          if (candidate == null || message['_steer'] == true) return message;
+          if (candidate != null) {
+            candidate = null;
+            break;
+          }
+          candidate = entry.key;
+        }
+      }
+      if (candidate == null) {
+        merged.add(message);
+        continue;
+      }
 
-          final displayKind =
-              candidate.raw['display_kind']?.toString().trim() ?? '';
-          if (displayKind.isEmpty) return message;
-          final next = Map<String, dynamic>.from(message)
-            ..['display_kind'] = displayKind;
-          final metadata = _sanitizeDisplayMetadata(candidate.displayMetadata);
-          if (metadata == null) {
-            next.remove('display_metadata');
-          } else {
-            next['display_metadata'] = metadata;
-          }
-          return Map<String, dynamic>.unmodifiable(next);
-        })
-        .toList(growable: false);
+      // La clasificación del snapshot es evidencia autoritativa negativa. Una
+      // identidad igual permite vetar o superponer metadata, nunca convertir el
+      // contenido REST/cache sin classifier en permiso público.
+      if (!candidate.publiclyRenderable) continue;
+      if (message['_steer'] == true) {
+        merged.add(message);
+        continue;
+      }
+      final displayKind =
+          candidate.raw['display_kind']?.toString().trim() ?? '';
+      if (displayKind.isEmpty) {
+        merged.add(message);
+        continue;
+      }
+      final next = Map<String, dynamic>.from(message)
+        ..['display_kind'] = displayKind;
+      final metadata = sanitizeDelegationDisplayMetadata(
+        candidate.displayMetadata,
+      );
+      if (metadata == null) {
+        next.remove('display_metadata');
+      } else {
+        next['display_metadata'] = metadata;
+      }
+      merged.add(Map<String, dynamic>.unmodifiable(next));
+    }
+    return List<Map<String, dynamic>>.unmodifiable(merged);
   }
 
   DesktopSessionProjection project(
     DesktopSessionSnapshot snapshot, {
     List<Map<String, dynamic>> fallbackNewestFirst = const [],
+    List<Map<String, dynamic>> previousNewestFirst = const [],
+    bool bridgeOwnedLiveUser = false,
+    bool retainMediaEvidence = false,
   }) {
     final chronological = snapshot.messagesProvided
         ? <Map<String, dynamic>>[
@@ -135,6 +407,7 @@ class DesktopSessionReconciler {
                 snapshot.messages[index],
                 runtimeSessionId: snapshot.runtimeSessionId,
                 ordinal: snapshot.messages[index].serverOrdinal ?? index,
+                retainMediaEvidence: retainMediaEvidence,
               ),
           ]
         : fallbackNewestFirst.reversed
@@ -156,12 +429,20 @@ class DesktopSessionReconciler {
     final inflightStatus = inflight?.status?.trim().toLowerCase() ?? '';
     final inflightFailed =
         inflightError.isNotEmpty || inflightStatus == 'error';
-    if (inflightUser != null && inflightUser.trim().isNotEmpty) {
-      // `inflight.user` no comparte una identidad protocolaria con las filas
-      // persistidas. El upstream mantiene ambos planos separados: el history
-      // durable puede acabar en un user histórico/cancelado y el inflight ser
-      // un turno nuevo con el mismo texto. Fusionarlos por contenido haría que
-      // Stop anclase el turno nuevo al ID del histórico.
+    final liveUserPlan = _liveUserProjectionPlan(
+      chronological,
+      previousNewestFirst,
+      inflight,
+      bridgeOwnedLiveUser,
+      snapshot.resolvedTurnStartedAt,
+    );
+    final hasInflightUser = inflightUser?.trim().isNotEmpty == true;
+    // The Gateway does not link inflight users to durable row IDs. Suppress
+    // only a positionally matching suffix proven by one exact prior anchor;
+    // text/timestamps alone never authorize hiding a user bubble.
+    if (inflightUser != null &&
+        inflightUser.trim().isNotEmpty &&
+        liveUserPlan.emits(0)) {
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'user',
@@ -174,45 +455,116 @@ class DesktopSessionReconciler {
 
     final inflightCorrections =
         inflight?.corrections ?? const <DesktopInflightCorrection>[];
-    for (var index = 0; index < inflightCorrections.length; index++) {
-      final correction = inflightCorrections[index];
-      // Igual que el prompt original, una corrección sin ID explícito nunca
-      // adquiere la identidad de una fila durable solo porque coincida el texto.
-      chronological.add(
-        Map<String, dynamic>.unmodifiable({
-          'role': 'user',
-          'content': correction.text,
-          '_steer': true,
-          '_desktopSnapshotKey':
-              'user-inflight-correction-$index-${snapshot.runtimeSessionId}',
-          '_desktopSnapshotKind': 'inflight',
-        }),
-      );
-    }
-
     final inflightAssistant = inflight?.assistant;
     final hasInflight =
         !inflightFailed &&
         (inflight != null || snapshot.running || inflight?.streaming == true);
-    if (hasInflight &&
-        (inflightAssistant != null ||
-            inflightUser != null ||
-            inflightCorrections.isNotEmpty ||
-            snapshot.running)) {
-      chronological.add(
-        Map<String, dynamic>.unmodifiable({
-          'role': 'assistant',
-          'content': inflightAssistant ?? '',
-          '_pipeline': true,
-          '_desktopSnapshotKey':
-              'assistant-stream-${snapshot.runtimeSessionId}',
-          '_desktopSnapshotKind': 'inflight',
-        }),
+    final correctionOffsets = inflight?.correctionOffsets ?? const <int?>[];
+    final correctionOffsetsUsable =
+        !inflightFailed &&
+        inflightAssistant != null &&
+        inflightAssistant.isNotEmpty &&
+        inflightCorrections.isNotEmpty &&
+        correctionOffsets.length >= inflightCorrections.length &&
+        correctionOffsets
+            .take(inflightCorrections.length)
+            .every((offset) => offset != null);
+
+    Map<String, dynamic> correctionMessage(
+      DesktopInflightCorrection correction,
+      int index,
+    ) => Map<String, dynamic>.unmodifiable({
+      'role': 'user',
+      'content': correction.text,
+      '_steer': true,
+      '_desktopSnapshotKey':
+          'user-inflight-correction-$index-${snapshot.runtimeSessionId}',
+      '_desktopSnapshotKind': 'inflight',
+    });
+
+    Map<String, dynamic> assistantMessage(
+      String content, {
+      required String key,
+      required bool live,
+    }) => Map<String, dynamic>.unmodifiable({
+      'role': 'assistant',
+      'content': content,
+      '_pipeline': live,
+      if (!live) '_interim': true,
+      '_desktopSnapshotKey': key,
+      '_desktopSnapshotKind': 'inflight',
+    });
+
+    if (correctionOffsetsUsable) {
+      final publicProjection = projectPublicAssistantText(
+        inflightAssistant,
+        streaming: true,
       );
+      final publicAssistant = publicProjection.text;
+      var cursor = 0;
+      var publicCursor = 0;
+      for (var index = 0; index < inflightCorrections.length; index++) {
+        final boundary = correctionOffsets[index]!.clamp(
+          cursor,
+          inflightAssistant.length,
+        );
+        var safeBoundary = publicProjection.publicOffsetAtRawOffset(boundary);
+        if (safeBoundary < publicCursor) safeBoundary = publicCursor;
+        final segment = publicAssistant.substring(publicCursor, safeBoundary);
+        if (segment.isNotEmpty) {
+          chronological.add(
+            assistantMessage(
+              segment,
+              key:
+                  'assistant-stream-segment-$index-${snapshot.runtimeSessionId}',
+              live: false,
+            ),
+          );
+        }
+        cursor = boundary;
+        publicCursor = safeBoundary;
+        final liveUserIndex = (hasInflightUser ? 1 : 0) + index;
+        if (liveUserPlan.emits(liveUserIndex)) {
+          chronological.add(
+            correctionMessage(inflightCorrections[index], index),
+          );
+        }
+      }
+      chronological.add(
+        assistantMessage(
+          publicAssistant.substring(publicCursor),
+          key: 'assistant-stream-${snapshot.runtimeSessionId}',
+          live: true,
+        ),
+      );
+    } else {
+      if (hasInflight &&
+          (inflightAssistant != null ||
+              inflightUser != null ||
+              inflightCorrections.isNotEmpty ||
+              snapshot.running)) {
+        chronological.add(
+          assistantMessage(
+            streamingPublicAssistantText(inflightAssistant ?? ''),
+            key: 'assistant-stream-${snapshot.runtimeSessionId}',
+            live: true,
+          ),
+        );
+      }
+      for (var index = 0; index < inflightCorrections.length; index++) {
+        final liveUserIndex = (hasInflightUser ? 1 : 0) + index;
+        if (liveUserPlan.emits(liveUserIndex)) {
+          chronological.add(
+            correctionMessage(inflightCorrections[index], index),
+          );
+        }
+      }
     }
 
     if (inflightFailed) {
-      final partial = inflightAssistant?.trim() ?? '';
+      final partial = streamingPublicAssistantText(
+        inflightAssistant ?? '',
+      ).trim();
       if (partial.isNotEmpty) {
         chronological.add(
           Map<String, dynamic>.unmodifiable({
@@ -264,7 +616,9 @@ class DesktopSessionReconciler {
     DesktopSessionMessage message, {
     required String runtimeSessionId,
     required int ordinal,
+    required bool retainMediaEvidence,
   }) {
+    if (!message.publiclyRenderable) return const [];
     final role = switch (message.role) {
       DesktopSessionMessageRole.system => 'system',
       DesktopSessionMessageRole.user => 'user',
@@ -273,14 +627,19 @@ class DesktopSessionReconciler {
       DesktopSessionMessageRole.unknown => message.rawRole.toLowerCase(),
     };
     final displayKind = message.raw['display_kind']?.toString().trim() ?? '';
-    final displayMetadata = _sanitizeDisplayMetadata(message.displayMetadata);
+    final displayMetadata = sanitizeDelegationDisplayMetadata(
+      message.displayMetadata,
+    );
+    if (role != 'user' && role != 'assistant' && !retainMediaEvidence) {
+      return const [];
+    }
 
-    // Bloques estructurados estilo Anthropic dentro de `content: [...]`. El
-    // aplanado a texto solo conserva los bloques de texto; el resto se proyecta
-    // a su equivalente del timeline para no descartarlo en silencio:
-    // thinking → reasoning, tool_use → tool_calls, tool_result → mensaje tool.
+    // Bloques estructurados estilo Anthropic dentro de `content: [...]`.
+    // Solo el texto narrativo es público; thinking, tool_use y tool_result se
+    // eliminan aquí. La ruta de medios puede conservar temporalmente la forma
+    // mínima de herramientas para asociar adjuntos y la proyección final la
+    // vuelve a retirar.
     final blocks = message.content is List ? message.content as List : null;
-    final blockReasoning = <String>[];
     final synthesizedToolCalls = <Map<String, dynamic>>[];
     final toolResultBlocks = <Map<dynamic, dynamic>>[];
     var imageCount = 0;
@@ -298,11 +657,6 @@ class DesktopSessionReconciler {
           case 'thinking':
           case 'redacted_thinking':
             droppedAny = true;
-            final thinking =
-                (block['thinking'] ?? block['text'])?.toString().trim() ?? '';
-            blockReasoning.add(
-              thinking.isNotEmpty ? thinking : '(razonamiento redactado)',
-            );
           case 'tool_use':
             droppedAny = true;
             final name = block['name']?.toString().trim() ?? '';
@@ -347,28 +701,36 @@ class DesktopSessionReconciler {
       content = content.isEmpty ? marker : '$content\n\n$marker';
     }
 
-    final toolResultMessages = <Map<String, dynamic>>[
-      for (var index = 0; index < toolResultBlocks.length; index++)
-        Map<String, dynamic>.unmodifiable({
-          'role': 'tool',
-          'content':
-              desktopSessionDisplayText(toolResultBlocks[index]['content']) ??
-              '',
-          if (toolResultBlocks[index]['name'] != null)
-            'tool_name': toolResultBlocks[index]['name'].toString(),
-          if (toolResultBlocks[index]['tool_use_id'] != null)
-            'tool_call_id': toolResultBlocks[index]['tool_use_id'].toString(),
-          '_desktopSnapshotKey':
-              'message-$runtimeSessionId-$ordinal-toolresult-$index',
-          '_desktopSnapshotKind': 'persisted',
-        }),
-    ];
+    final toolResultMessages = !retainMediaEvidence
+        ? const <Map<String, dynamic>>[]
+        : <Map<String, dynamic>>[
+            for (var index = 0; index < toolResultBlocks.length; index++)
+              Map<String, dynamic>.unmodifiable({
+                'role': 'tool',
+                'content':
+                    desktopSessionDisplayText(
+                      toolResultBlocks[index]['content'],
+                    ) ??
+                    '',
+                if (toolResultBlocks[index]['name'] != null)
+                  'tool_name': toolResultBlocks[index]['name'].toString(),
+                if (toolResultBlocks[index]['tool_use_id'] != null)
+                  'tool_call_id': toolResultBlocks[index]['tool_use_id']
+                      .toString(),
+                '_desktopSnapshotKey':
+                    'message-$runtimeSessionId-$ordinal-toolresult-$index',
+                '_desktopSnapshotKind': 'persisted',
+              }),
+          ];
 
     // Un mensaje user cuyo contenido eran SOLO bloques tool_result (formato
     // Anthropic) no es un prompt real: se proyecta como mensajes tool y no
     // deja una burbuja de usuario vacía.
+    if (role == 'assistant') content = finalizedPublicAssistantText(content);
     final dropMain =
-        role == 'user' && content.isEmpty && toolResultMessages.isNotEmpty;
+        (role == 'user' && content.isEmpty && toolResultBlocks.isNotEmpty) ||
+        (!retainMediaEvidence && content.trim().isEmpty) ||
+        (role == 'tool' && !retainMediaEvidence);
     final main = Map<String, dynamic>.unmodifiable({
       'role': role,
       'content': content,
@@ -379,23 +741,15 @@ class DesktopSessionReconciler {
       if (message.stableId != null) '_desktopMessageId': message.stableId,
       if (displayKind.isNotEmpty) 'display_kind': displayKind,
       'display_metadata': ?displayMetadata,
-      if (message.name != null) 'name': message.name,
-      if (message.toolName != null) 'tool_name': message.toolName,
-      if (message.toolCallId != null) 'tool_call_id': message.toolCallId,
-      if (message.toolCalls != null)
+      if (retainMediaEvidence && message.name != null) 'name': message.name,
+      if (retainMediaEvidence && message.toolName != null)
+        'tool_name': message.toolName,
+      if (retainMediaEvidence && message.toolCallId != null)
+        'tool_call_id': message.toolCallId,
+      if (retainMediaEvidence && message.toolCalls != null)
         'tool_calls': message.toolCalls
-      else if (synthesizedToolCalls.isNotEmpty)
+      else if (retainMediaEvidence && synthesizedToolCalls.isNotEmpty)
         'tool_calls': synthesizedToolCalls,
-      if (message.reasoning != null)
-        'reasoning': message.reasoning
-      else if (blockReasoning.isNotEmpty)
-        'reasoning': blockReasoning.join('\n\n'),
-      if (message.reasoningContent != null)
-        'reasoning_content': message.reasoningContent,
-      if (message.reasoningDetails != null)
-        'reasoning_details': message.reasoningDetails,
-      if (message.codexReasoningItems != null)
-        'codex_reasoning_items': message.codexReasoningItems,
       if (message.timestamp != null)
         'timestamp': message.timestamp!.millisecondsSinceEpoch / 1000,
     });
@@ -406,7 +760,7 @@ class DesktopSessionReconciler {
 /// Conserva únicamente el pequeño contrato editorial que Hermes Desktop usa
 /// para resumir eventos duraderos. Algunos gateways antiguos serializan el
 /// objeto como JSON; nunca propagamos campos arbitrarios al árbol de widgets.
-Map<String, dynamic>? _sanitizeDisplayMetadata(Object? raw) {
+Map<String, dynamic>? sanitizeDelegationDisplayMetadata(Object? raw) {
   Object? decoded = raw;
   if (raw is String) {
     final value = raw.trim();
@@ -440,6 +794,32 @@ Map<String, dynamic>? _sanitizeDisplayMetadata(Object? raw) {
       delegationId.length <= 180 &&
       RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(delegationId)) {
     safe['delegation_id'] = delegationId;
+  }
+  final rawSubagentIds = decoded['subagent_ids'];
+  if (rawSubagentIds is List &&
+      rawSubagentIds.isNotEmpty &&
+      rawSubagentIds.length <= 64) {
+    final ids = <String>[];
+    var valid = true;
+    for (final rawId in rawSubagentIds) {
+      if (rawId is! String) {
+        valid = false;
+        break;
+      }
+      final id = rawId.trim();
+      if (id.isEmpty ||
+          id.length > 180 ||
+          !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(id) ||
+          ids.contains(id)) {
+        valid = false;
+        break;
+      }
+      ids.add(id);
+    }
+    final taskCount = safe['task_count'];
+    if (valid && (taskCount == null || taskCount == ids.length)) {
+      safe['subagent_ids'] = List<String>.unmodifiable(ids);
+    }
   }
   return safe.isEmpty ? null : Map<String, dynamic>.unmodifiable(safe);
 }

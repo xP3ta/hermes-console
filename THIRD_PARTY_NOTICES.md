@@ -107,6 +107,7 @@ de los paquetes empaquetados).
 | speech_to_text | BSD-3-Clause |
 | flutter_tts | MIT |
 | audioplayers | MIT |
+| video_player | BSD-3-Clause |
 | record | BSD-3-Clause |
 | whisper_ggml_plus | MIT |
 | sherpa_onnx | Apache-2.0 |

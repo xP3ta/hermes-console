@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/main.dart';
@@ -153,6 +154,27 @@ void main() {
   });
 
   group('notification owner routing', () {
+    test('sesión Bot legacy se clasifica como owner de Mission Control', () {
+      final target = missionControlTargetForSession(
+        const Session(
+          id: 'stored-bot-legacy',
+          title: 'Bot',
+          model: '',
+          source: 'bot-mode-local',
+          messageCount: 0,
+          isActive: false,
+          preview: '',
+          startedAt: 0,
+          profile: 'builder',
+        ),
+      );
+
+      expect(target, isNotNull);
+      expect(target!.surface, MissionControlOwnedSurface.bot);
+      expect(target.sessionId, 'stored-bot-legacy');
+      expect(target.profile, 'builder');
+    });
+
     test('Bot se dirige a Bots con su perfil', () {
       final target = missionControlTargetForNotification(
         const NotificationOpen(

@@ -1049,12 +1049,12 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
       onError: (Object error, StackTrace stack) {
         final operation = _operation;
         if (operation != null && _isCurrent(operation)) {
-          operation.workerError = error.toString();
+          operation.workerError = 'Sherpa worker failed.';
           _autoStop();
           return;
         }
         for (final draining in _drainingOperations.values) {
-          draining.workerError = error.toString();
+          draining.workerError = 'Sherpa worker failed.';
         }
       },
     );
@@ -1073,7 +1073,7 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
     }
     final error = update.error;
     if (error != null) {
-      operation.workerError = error;
+      operation.workerError = 'Sherpa worker failed.';
       if (_isCurrent(operation)) _autoStop();
       return;
     }
@@ -1180,9 +1180,9 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
         (bytes) {
           if (_isCurrent(operation)) _onAudio(operation, bytes);
         },
-        onError: (Object e) {
+        onError: (Object _) {
           if (_isCurrent(operation) && !controller.isClosed) {
-            controller.addError(Exception('Microphone error: $e'));
+            controller.addError(Exception('Microphone capture failed.'));
           }
         },
       );
@@ -1192,10 +1192,10 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
         '[VOICE-PERF] sherpa.worker.ready_ms=${perf.elapsedMilliseconds} '
         'generation=${operation.generation}',
       );
-    } catch (e) {
+    } catch (error) {
       debugPrint(
         '[VOICE-PERF] sherpa.listen.failed_ms=${perf.elapsedMilliseconds} '
-        'generation=${operation.generation} error=${e.runtimeType}',
+        'generation=${operation.generation} error=${error.runtimeType}',
       );
       if (_isCurrent(operation) && !controller.isClosed) {
         await _audioSub?.cancel();
@@ -1204,7 +1204,7 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
           await _runtime.stop();
         } catch (_) {}
         operation.started = false;
-        controller.addError(Exception('Could not start live STT: $e'));
+        controller.addError(Exception('Could not start live STT.'));
         await controller.close();
       }
     } finally {
@@ -1401,8 +1401,8 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
     _audioSub = null;
     try {
       await _runtime.stop();
-    } catch (e) {
-      debugPrint('[stt-sherpa] no se pudo detener el grabador: $e');
+    } catch (error) {
+      debugPrint('[stt-sherpa] recorder stop failed (${error.runtimeType})');
     }
     onLevel?.call(0);
     if (controller == null || controller.isClosed) {
@@ -1468,11 +1468,11 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
         SttResult(operation?.committed.join(' ').trim() ?? '', true),
       );
       await controller.close();
-    } catch (e) {
+    } catch (_) {
       operation?.pendingAudio.clear();
       operation?.pendingAudioBytes = 0;
       if (!controller.isClosed) {
-        controller.addError(Exception('Transcription failed: $e'));
+        controller.addError(Exception('Transcription failed.'));
         await controller.close();
       }
     }
@@ -1507,8 +1507,10 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
       }
       try {
         await _runtime.dispose();
-      } catch (e) {
-        debugPrint('[stt-sherpa] no se pudo liberar el grabador: $e');
+      } catch (error) {
+        debugPrint(
+          '[stt-sherpa] recorder dispose failed (${error.runtimeType})',
+        );
       }
       final workerUpdates = _workerUpdates;
       _workerUpdates = null;
@@ -1519,8 +1521,10 @@ class SherpaSttEngine implements SttEngine, CapturedWavSttEngine {
       if (worker != null) {
         try {
           await worker.dispose();
-        } catch (e) {
-          debugPrint('[stt-sherpa] no se pudo liberar el worker: $e');
+        } catch (error) {
+          debugPrint(
+            '[stt-sherpa] worker dispose failed (${error.runtimeType})',
+          );
         }
       }
     }();

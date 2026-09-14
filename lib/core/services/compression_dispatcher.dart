@@ -1,17 +1,139 @@
 import 'dart:async';
 
 import '../models/command_descriptor.dart';
+import '../models/desktop_compression_outcome.dart';
+import '../models/desktop_compression_result.dart';
 import 'tui_gateway_client.dart';
 
-/// Replica exactamente el routing de Hermes Desktop para `/compress`.
-///
-/// No conoce `session.compress`: solo intenta `slash.exec` y, si ese Future
-/// termina con error, un único `command.dispatch`. Los argumentos nunca se
-/// interpolan en logs o mensajes de error.
+/// Routes and classifies compression; command failure text is presentation only.
+/// Legacy payload certainty remains quarantined until its typed contract exists.
 final class CompressionDispatcher {
-  final HermesDesktopCommandGateway _gateway;
+  final Object _gateway;
+  HermesDesktopCommandGateway get _commands =>
+      _gateway as HermesDesktopCommandGateway;
+
+  static DesktopCompressionOutcome failureOutcome(Object error) {
+    if (error is TuiGatewayRpcError &&
+        error.origin == CompressionFailureOrigin.malformed) {
+      return DesktopCompressionOutcome.ambiguous;
+    }
+    if (error is TuiGatewayRpcError &&
+        error.origin == CompressionFailureOrigin.localPreflight) {
+      return DesktopCompressionOutcome.notDispatched;
+    }
+    if (error is TuiGatewayRpcError &&
+        (error.code == 4090 ||
+            error.compressionReason ==
+                CompressionFailureReason.sessionNotOwned)) {
+      return DesktopCompressionOutcome.ownershipLost;
+    }
+    if (error is TuiGatewayRpcError && error.code == -32601) {
+      return DesktopCompressionOutcome.routeUnavailable;
+    }
+    return DesktopCompressionOutcome.ambiguous;
+  }
+
+  static DesktopCompressionEvidence nativeEvidence(
+    DesktopCompressionResult result,
+  ) => DesktopCompressionEvidence(switch (result.outcome) {
+    DesktopCompressionStatus.pending =>
+      DesktopCompressionOutcome.acceptedPending,
+    DesktopCompressionStatus.lockHeld => DesktopCompressionOutcome.lockHeld,
+    DesktopCompressionStatus.compressed ||
+    DesktopCompressionStatus.noOp ||
+    DesktopCompressionStatus.aborted => DesktopCompressionOutcome.settled,
+  }, nativeResult: result);
+
+  static DesktopCompressionOutcome legacyOutcome(
+    DesktopCommandRpcResult response,
+  ) =>
+      response.compressionEvidence == LegacyCompressionEvidence.terminalRejected
+      ? DesktopCompressionOutcome.terminalRejected
+      : response.compressionWireEvidence.outcome;
 
   const CompressionDispatcher(this._gateway);
+
+  Future<
+    ({
+      DesktopCompressionEvidence evidence,
+      DesktopCommandDispatch? command,
+      Object? error,
+    })
+  >
+  dispatch(
+    String runtimeId, {
+    required String focusTopic,
+    required int connectionEpoch,
+    required int sessionEpoch,
+    required bool Function() stillValid,
+    required bool Function(DesktopCompressionResult) matchesRoot,
+  }) => TuiGatewayClient.withCompressionAuthorization(stillValid, () async {
+    if (!stillValid()) {
+      return (
+        evidence: const DesktopCompressionEvidence(
+          DesktopCompressionOutcome.notDispatched,
+        ),
+        command: null,
+        error: StateError('Compression cancelled'),
+      );
+    }
+    if (_gateway case final HermesDesktopCompressionGateway native) {
+      try {
+        final result = await native.compressSession(
+          runtimeId,
+          focusTopic: focusTopic,
+        );
+        if (!matchesRoot(result)) {
+          throw const TuiGatewayRpcError(
+            'session.compress',
+            'Compression lineage mismatch',
+            code: 4004,
+            origin: CompressionFailureOrigin.malformed,
+          );
+        }
+        return (evidence: nativeEvidence(result), command: null, error: null);
+      } catch (error) {
+        final outcome = failureOutcome(error);
+        if (outcome != DesktopCompressionOutcome.routeUnavailable) {
+          return (
+            evidence: DesktopCompressionEvidence(outcome),
+            command: null,
+            error: error,
+          );
+        }
+        if (!stillValid() || _gateway is! HermesDesktopCommandGateway) {
+          return (
+            evidence: const DesktopCompressionEvidence(
+              DesktopCompressionOutcome.terminalRejected,
+            ),
+            command: null,
+            error: const TuiGatewayRpcError(
+              'session.compress',
+              'Compression continuation cancelled',
+              code: 4009,
+            ),
+          );
+        }
+      }
+    }
+    var outcome = DesktopCompressionOutcome.ambiguous;
+    final command = await compress(
+      runtimeId,
+      focusTopic: focusTopic,
+      connectionEpoch: connectionEpoch,
+      sessionEpoch: sessionEpoch,
+      fallbackStillValid: stillValid,
+      onOutcome: (value) => outcome = value,
+    );
+    if (outcome == DesktopCompressionOutcome.routeUnavailable) {
+      outcome = DesktopCompressionOutcome.terminalRejected;
+    }
+    return (
+      evidence: DesktopCompressionEvidence(outcome),
+      command: command,
+      error: null,
+    );
+  });
 
   Future<DesktopCommandDispatch> compress(
     String runtimeSessionId, {
@@ -19,6 +141,7 @@ final class CompressionDispatcher {
     required int connectionEpoch,
     required int sessionEpoch,
     bool Function()? fallbackStillValid,
+    void Function(DesktopCompressionOutcome)? onOutcome,
   }) async {
     final sessionId = _validateSessionId(runtimeSessionId);
     final argument = _validateArgument(focusTopic);
@@ -28,7 +151,8 @@ final class CompressionDispatcher {
     final slashCommand = argument.isEmpty ? 'compress' : 'compress $argument';
 
     try {
-      final response = await _gateway.slashExec(sessionId, slashCommand);
+      final response = await _commands.slashExec(sessionId, slashCommand);
+      onOutcome?.call(legacyOutcome(response));
       return _resultFromResponse(
         response,
         sessionId: sessionId,
@@ -39,9 +163,12 @@ final class CompressionDispatcher {
         fallbackUsed: false,
       );
     } catch (error) {
-      // Desktop usa el error como única señal para probar command.dispatch.
-      // No se conserva el error primario porque podría incluir texto remoto.
-      if (fallbackStillValid != null && !fallbackStillValid()) {
+      onOutcome?.call(failureOutcome(error));
+      // `method not found` is a protocol-level, pre-acceptance rejection.
+      // Anything else can mean the server accepted /compress before the
+      // response path failed, so it must not be replayed on another route.
+      if (!_canSafelyFallbackAfterSlashFailure(error) ||
+          (fallbackStillValid != null && !fallbackStillValid())) {
         return DesktopCommandDispatch(
           commandName: 'compress',
           arg: argument,
@@ -58,11 +185,12 @@ final class CompressionDispatcher {
     }
 
     try {
-      final response = await _gateway.commandDispatch(
+      final response = await _commands.commandDispatch(
         sessionId,
         name: 'compress',
         arg: argument,
       );
+      onOutcome?.call(legacyOutcome(response));
       return _resultFromResponse(
         response,
         sessionId: sessionId,
@@ -73,6 +201,7 @@ final class CompressionDispatcher {
         fallbackUsed: true,
       );
     } catch (error) {
+      onOutcome?.call(failureOutcome(error));
       // No hay tercer intento. Tras un error de transporte/timeout no se puede
       // saber con seguridad si el backend aceptó la mutación.
       return DesktopCommandDispatch(
@@ -122,10 +251,18 @@ final class CompressionDispatcher {
       );
     }
     if (error is TuiGatewayRpcError) {
-      final isTimeout = error.message.toLowerCase().contains('timeout');
+      final message = error.message.toLowerCase();
+      final isTimeout =
+          message.contains('timeout') || message.contains('timed out');
+      final isTransport =
+          message.contains('transport') ||
+          message.contains('socket') ||
+          message.contains('websocket');
       return CommandFailure(
         kind: isTimeout
             ? CommandFailureKind.timeout
+            : isTransport
+            ? CommandFailureKind.transport
             : CommandFailureKind.remote,
         code: error.code,
         retryable: false,
@@ -136,6 +273,9 @@ final class CompressionDispatcher {
       retryable: false,
     );
   }
+
+  bool _canSafelyFallbackAfterSlashFailure(Object error) =>
+      failureOutcome(error) == DesktopCompressionOutcome.routeUnavailable;
 
   String _validateSessionId(String raw) {
     final value = raw.trim();

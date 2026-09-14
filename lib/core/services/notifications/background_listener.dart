@@ -20,7 +20,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 import '../../models/kanban.dart';
-import '../../utils/home_recent_sessions.dart';
 import '../connection_manager.dart';
 import '../secure_storage.dart';
 import '../../utils/transport_privacy.dart';
@@ -455,6 +454,11 @@ String _normalizeRunOwnerProfile(String value) {
   runId: run.runId,
 );
 
+@visibleForTesting
+Uri backgroundRunStatusUri(String safeBase, WatchedRun run) => Uri.parse(
+  '$safeBase/${ApiClient.profileEndpoint('v1/runs/${Uri.encodeComponent(run.runId)}', profile: run.profile)}',
+);
+
 class CronExecutionSnapshot {
   final String jobKey;
   final String jobId;
@@ -532,7 +536,7 @@ class CronExecutionSnapshot {
         .toLowerCase();
     final status = switch (rawStatus) {
       'ok' || 'success' || 'completed' => 'completed',
-      'error' || 'failure' || 'failed' => 'failed',
+      'error' || 'failure' || 'failed' || 'delivery_failed' => 'failed',
       'running' || 'started' || 'queued' => rawStatus,
       'unknown' => 'unknown',
       _ => '',
@@ -781,26 +785,15 @@ class BackgroundCronWatch {
   notificationDestination(Session session) =>
       (sessionId: session.id, taskCenterRunId: null, profile: session.profile);
 
-  /// La lista ligera de sesiones de Agent 0.20 puede omitir el último turno.
-  /// Hermes Desktop abre entonces el transcript oficial de esa sesión; el
-  /// listener replica ese fallback solo para una ejecución recién terminada.
+  /// Solo usa el preview público anunciado por la lista ligera de sesiones.
+  /// Un resultado desconocido permanece ausente; el listener no reconstruye
+  /// texto de notificación leyendo el transcript privado de la sesión.
   @visibleForTesting
-  static Future<String?> notificationPreview(
-    Session? session,
-    Future<List<Map<String, dynamic>>> Function(
-      String sessionId,
-      String profile,
-    )
-    loadMessages,
-  ) async {
+  static String? notificationPreview(Session? session) {
     if (session == null) return null;
     final advertised = session.lastAssistantPreview?.trim();
     if (advertised != null && advertised.isNotEmpty) return advertised;
-    final messages = await loadMessages(
-      session.id,
-      session.profile?.trim() ?? '',
-    );
-    return latestAssistantPreview(messages);
+    return null;
   }
 
   /// Solo eleva al plano de interrupción un resultado material. Esta regla se
@@ -1022,7 +1015,9 @@ class KanbanDiscoveryEntry {
 /// primer plano, de modo que una transición no se duplica al volver al fondo.
 class BackgroundKanbanWatch {
   static const int _maxTasksPerConnection = 500;
-  static const Set<String> _notifiableStatuses = {'done', 'blocked', 'triage'};
+  // Done is audit/activity, not an interruption. Only a task that is blocked
+  // or explicitly triaged needs an owner-facing notification.
+  static const Set<String> _notifiableStatuses = {'blocked', 'triage'};
 
   @visibleForTesting
   static List<KanbanDiscoveryEntry> discoveryEntriesForTest({
@@ -1692,11 +1687,7 @@ class _HermesTaskHandler extends TaskHandler {
               : BackgroundCronWatch.notificationDestination(session);
           String? preview;
           try {
-            preview = await BackgroundCronWatch.notificationPreview(
-              session,
-              (sessionId, profile) =>
-                  dashboard.getSessionMessages(sessionId, profile: profile),
-            );
+            preview = BackgroundCronWatch.notificationPreview(session);
           } catch (_) {
             // Preview is display-only; identity and cursor remain authoritative.
           }
@@ -1830,7 +1821,7 @@ class _HermesTaskHandler extends TaskHandler {
         BackgroundDiscoveryCapability.kanban,
       );
       try {
-        const materialStatuses = <String>{'done', 'blocked', 'triage'};
+        const materialStatuses = <String>{'blocked', 'triage'};
         final t = NotifL10n.of(prefs);
         final entries = BackgroundKanbanWatch.discoveryEntriesForTest(
           connId: connection.id,
@@ -2036,7 +2027,7 @@ class _HermesTaskHandler extends TaskHandler {
     }
     try {
       final token = await _secure.readApiKey(r.connId);
-      final uri = Uri.parse('$safeBase/v1/runs/${r.runId}');
+      final uri = backgroundRunStatusUri(safeBase, r);
       final res = await _http
           .get(
             uri,

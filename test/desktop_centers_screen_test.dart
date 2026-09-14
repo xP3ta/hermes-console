@@ -34,6 +34,12 @@ class _FakeControlGateway implements HermesDesktopControlGateway {
     snapshots: [],
     processes: [],
   );
+  SpawnTreeDetail spawnTreeDetail = const SpawnTreeDetail(
+    startedAt: 1,
+    finishedAt: 2,
+    subagents: [SpawnTreeSubagentEntry(status: AgentCenterStatus.completed)],
+  );
+  final List<String> loadedSpawnTreePaths = [];
   final List<String> killedProcesses = [];
 
   void _throwIfNeeded() {
@@ -63,16 +69,10 @@ class _FakeControlGateway implements HermesDesktopControlGateway {
   }
 
   @override
-  Future<SpawnTreeDetail> loadSpawnTree(String opaquePath) async =>
-      const SpawnTreeDetail(
-        sessionId: 'session-a',
-        label: 'Review',
-        startedAt: 1,
-        finishedAt: 2,
-        subagents: [
-          {'id': 'agent-a', 'status': 'completed', 'label': 'Audit UI'},
-        ],
-      );
+  Future<SpawnTreeDetail> loadSpawnTree(String opaquePath) async {
+    loadedSpawnTreePaths.add(opaquePath);
+    return spawnTreeDetail;
+  }
 
   @override
   Future<String> startBackgroundTask(
@@ -140,6 +140,50 @@ Widget _app(Widget home, {Locale locale = const Locale('es')}) => MaterialApp(
   theme: AppTheme.fromId('dark'),
   home: home,
 );
+
+String _widgetProjection(WidgetTester tester) {
+  final values = <String>[];
+  for (final widget in tester.allWidgets) {
+    final key = widget.key;
+    if (key != null) values.add(key.toString());
+    if (widget case Text(:final data, :final textSpan)) {
+      values.add(data ?? textSpan?.toPlainText() ?? '');
+    }
+    if (widget case Semantics(:final properties)) {
+      values.addAll(
+        [
+          properties.label,
+          properties.value,
+          properties.hint,
+          properties.tooltip,
+        ].whereType<String>(),
+      );
+    }
+    if (widget case Tooltip(:final message)) {
+      if (message != null) values.add(message);
+    }
+  }
+  return values.join('\n');
+}
+
+void _expectNoPrivateProjection(WidgetTester tester) {
+  final projection = _widgetProjection(tester);
+  for (final privateValue in const [
+    '/private/host/spawn.json',
+    'private-session',
+    'Parallel review',
+    'private goal',
+    'private summary',
+    'private result',
+    'private error',
+    'private output',
+    'flutter test --token secret',
+    'proc-sensitive-id',
+    'private-model',
+  ]) {
+    expect(projection, isNot(contains(privateValue)), reason: privateValue);
+  }
+}
 
 void main() {
   testWidgets('Projects renders authoritative project and hydrated lane', (
@@ -268,45 +312,95 @@ void main() {
     expect(secondGateway.projectTreeCalls, 1);
   });
 
-  testWidgets('Agents hides host path and destructive action without runtime', (
-    tester,
-  ) async {
-    final gateway = _FakeControlGateway()
-      ..agents = AgentCenterSnapshot.fromJson(
-        snapshots: {
-          'entries': [
+  testWidgets(
+    'Agents projects status-only rows and preserves exact history and stop controls',
+    (tester) async {
+      final gateway = _FakeControlGateway()
+        ..agents = AgentCenterSnapshot.fromJson(
+          snapshots: {
+            'entries': [
+              {
+                'path': '/private/host/spawn.json',
+                'session_id': 'private-session',
+                'label': 'Parallel review',
+                'goal': 'private goal',
+                'count': 2,
+                'started_at': 1704067200,
+                'metadata': {'model': 'private-model'},
+              },
+            ],
+          },
+          processes: {
+            'processes': [
+              {
+                'session_id': 'proc-sensitive-id',
+                'command': 'flutter test --token secret',
+                'status': 'running',
+                'uptime_seconds': 7,
+                'output_tail': 'private output',
+                'error': 'private error',
+              },
+            ],
+          },
+        )
+        ..spawnTreeDetail = SpawnTreeDetail.fromJson({
+          'session_id': 'private-session',
+          'label': 'Parallel review',
+          'subagents': [
             {
-              'path': '/private/host/spawn.json',
-              'label': 'Parallel review',
-              'count': 2,
-              'started_at': 1704067200,
+              'id': 'private-subagent-id',
+              'status': 'completed',
+              'goal': 'private goal',
+              'summary': 'private summary',
+              'result': 'private result',
+              'error': 'private error',
+              'output': 'private output',
+              'metadata': {'model': 'private-model'},
             },
           ],
-        },
-        processes: {
-          'processes': [
-            {
-              'session_id': 'proc-a',
-              'command': 'flutter test',
-              'status': 'running',
-            },
-          ],
-        },
+        });
+
+      await tester.pumpWidget(
+        _app(
+          AgentCenterScreen(gateway: gateway, runtimeSessionId: 'runtime-test'),
+          locale: const Locale('en'),
+        ),
       );
+      await tester.pumpAndSettle();
 
-    await tester.pumpWidget(_app(AgentCenterScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
+      expect(find.text('Process 1'), findsOneWidget);
+      expect(find.textContaining('running · 7 s'), findsOneWidget);
+      expect(find.text('Agent work 1'), findsOneWidget);
+      expect(find.textContaining('2 subagents'), findsOneWidget);
+      _expectNoPrivateProjection(tester);
 
-    expect(find.text('Parallel review'), findsOneWidget);
-    expect(find.textContaining('No son perfiles'), findsOneWidget);
-    expect(find.textContaining('2024'), findsOneWidget);
-    expect(find.text('flutter test'), findsNothing);
-    expect(find.textContaining('/private/host'), findsNothing);
-    expect(find.byTooltip('Detener este proceso'), findsNothing);
-    expect(find.text('Nueva tarea'), findsNothing);
-  });
+      await tester.tap(find.byKey(const ValueKey('agent-center-history-1')));
+      await tester.pumpAndSettle();
 
-  testWidgets('Agents integra nueva tarea y permite detener todos', (
+      expect(gateway.loadedSpawnTreePaths, ['/private/host/spawn.json']);
+      expect(find.text('Agent work 1'), findsWidgets);
+      expect(find.text('Subagent 1'), findsOneWidget);
+      expect(find.text('COMPLETED'), findsOneWidget);
+      _expectNoPrivateProjection(tester);
+
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('agent-center-process-stop-1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Process 1'), findsWidgets);
+      _expectNoPrivateProjection(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Stop'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.killedProcesses, ['proc-sensitive-id']);
+      _expectNoPrivateProjection(tester);
+    },
+  );
+
+  testWidgets('Agents conserva detener uno y no expone detener todos', (
     tester,
   ) async {
     final gateway = _FakeControlGateway()
@@ -328,12 +422,16 @@ void main() {
 
     expect(find.byType(FloatingActionButton), findsNothing);
     expect(find.byKey(const ValueKey('agent-center-new-task')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('agent-center-stop-all')));
+    expect(find.byKey(const ValueKey('agent-center-stop-all')), findsNothing);
+    expect(find.text('Detener todos'), findsNothing);
+    expect(find.byTooltip('Detener este proceso'), findsNWidgets(2));
+
+    await tester.tap(find.byTooltip('Detener este proceso').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Detener todos'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Detener'));
     await tester.pumpAndSettle();
 
-    expect(gateway.killedProcesses, containsAll(['proc-a', 'proc-b']));
+    expect(gateway.killedProcesses, ['proc-a']);
   });
 
   testWidgets('unsupported centre is explicit instead of an empty fake list', (

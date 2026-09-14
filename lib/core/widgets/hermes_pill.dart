@@ -39,14 +39,18 @@ class HermesPill extends StatelessWidget {
             ),
             const SizedBox(width: 5),
           ],
-          Text(
-            label.toUpperCase(),
-            style: TextStyle(
-              // 10px como base mínima legible de las pills (spec 028 A-113).
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: color,
-              letterSpacing: 0.8,
+          Flexible(
+            child: Text(
+              label.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                // 10px como base mínima legible de las pills (spec 028 A-113).
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: color,
+                letterSpacing: 0.8,
+              ),
             ),
           ),
         ],
@@ -85,10 +89,7 @@ class TuiLoader extends StatelessWidget {
         const SizedBox(width: 10),
         Text(
           effectiveLabel,
-          style: TextStyle(
-            fontSize: 12,
-            color: colors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 12, color: colors.textSecondary),
         ),
       ],
     );

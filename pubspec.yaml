@@ -1,7 +1,7 @@
 name: hermes_android
 description: "Hermes Agent — chat with your Hermes Gateway API Server over LAN. SSE streaming, Bearer auth, session management."
 publish_to: 'none'
-version: 1.2.9+4964
+version: 1.2.10+9008
 
 environment:
   sdk: ^3.12.0
@@ -88,6 +88,7 @@ dependencies:
   dartssh2: ^2.9.0
   xterm: ^4.0.0
   sqflite: ^2.4.3
+  video_player: ^2.14.0
 
 dev_dependencies:
   flutter_test:

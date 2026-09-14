@@ -1,7 +1,7 @@
 # Google Play — Permissions justification
 
 Justificación de cada permiso para la revisión de Google Play. Esta tabla apunta
-al candidato fuente `1.2.9` y se reconcilió el 2026-09-01 con sus manifests
+al candidato fuente `1.2.10` y se reconcilió el 2026-09-03 con sus manifests
 versionados. El AAB firmado definitivo todavía no se ha generado ni inspeccionado
 con bundletool, por lo que no se registra aquí ningún hash o permiso efectivo
 como si ya existiera. Antes de copiar el texto a Play Console hay que repetir la
@@ -79,9 +79,9 @@ exclusivas de la variante completa.
 ## Evidencia pendiente antes de Play
 
 - Manifest fusionado y permisos efectivos del AAB firmado finalmente elegido.
-- Flujo físico de permiso y ciclo de vida de cámara con un QR real leído por
-  ZXing, incluyendo denegación y el fallback de pegar enlace.
-- Los cuatro vídeos FGS y la QA física detallada en
+- Flujo E2E en emulador de permiso y ciclo de vida de cámara con una imagen QR
+  de prueba leída por ZXing, incluyendo denegación y el fallback de pegar enlace.
+- Los cuatro vídeos FGS y la QA E2E en emulador detallada en
   [`PLAY_FGS_DECLARATION.md`](PLAY_FGS_DECLARATION.md).
 - Coincidencia entre esta tabla, Data Safety, la política desplegada y el
   artefacto que finalmente se seleccione en Play Console.

@@ -1,4 +1,5 @@
 import 'agent_profile.dart';
+import 'hosted_groups.dart';
 import 'kanban.dart';
 import 'session.dart';
 
@@ -143,6 +144,8 @@ final class MissionBackendSnapshot {
   final MissionCapabilityState profilesCapability;
   final MissionCapabilityState sessionsCapability;
   final MissionCapabilityState kanbanCapability;
+  final HostedGroupsSnapshot hostedGroups;
+  final MissionCapabilityState hostedGroupsCapability;
   final Map<String, Object> failures;
   final DateTime loadedAt;
 
@@ -153,6 +156,8 @@ final class MissionBackendSnapshot {
     this.profilesCapability = MissionCapabilityState.unavailable,
     this.sessionsCapability = MissionCapabilityState.unavailable,
     this.kanbanCapability = MissionCapabilityState.unavailable,
+    this.hostedGroups = HostedGroupsSnapshot.empty,
+    this.hostedGroupsCapability = MissionCapabilityState.unsupported,
     this.failures = const {},
     required this.loadedAt,
   });

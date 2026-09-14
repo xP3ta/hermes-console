@@ -14,6 +14,8 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/in_memory_compression_fence_storage.dart';
+
 class _ConfiguredCreateGateway
     implements
         HermesDesktopGateway,
@@ -76,6 +78,9 @@ class _ConfiguredCreateGateway
         storedSessionId: resumeExistingCalls > 1
             ? 'stored-reentered'
             : 'stored-configured',
+        storedSessionIdProvenance:
+            DesktopStoredSessionIdProvenance.storedSessionId,
+        lineageRootId: 'draft-mobile',
         created: false,
         info: const DesktopSessionRuntimeInfo(
           model: 'openai/gpt-5.5-codex',
@@ -203,6 +208,7 @@ class _ConfiguredCreateGateway
     String text,
     int truncateBeforeUserOrdinal, {
     required int truncateBeforeRowId,
+    List<int> rebindSurvivorRowIds = const [],
   }) async {
     submittedRuntime = runtimeSessionId;
     return const DesktopRewindAck();
@@ -293,7 +299,9 @@ ActiveChat _chat(
   _ConfiguredCreateGateway gateway, {
   String? sessionProfile,
   http.Client? httpClient,
+  String sessionId = 'draft-mobile',
 }) => ActiveChat(
+  compressionFenceStore: testCompressionFenceStore(),
   connection: SavedConnection(
     id: 'conn-configured-create',
     label: 'Configured create',
@@ -302,7 +310,7 @@ ActiveChat _chat(
     apiKey: 'test-key',
     kind: InstanceKind.vps,
   ),
-  sessionId: 'draft-mobile',
+  sessionId: sessionId,
   sessionTitle: 'Draft',
   notifications: null,
   onTerminal: () {},
@@ -314,6 +322,7 @@ ActiveChat _chat(
         MockClient((_) async => http.Response('unexpected REST', 500)),
   ),
   desktopGateway: gateway,
+  allowUnownedDesktopSnapshotForTesting: true,
   sessionProfile: sessionProfile,
 );
 
@@ -325,7 +334,10 @@ void main() {
       final chat = _chat(gateway);
       addTearDown(chat.dispose);
 
-      expect(await chat.ensureDesktopRuntime(), isTrue);
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isTrue,
+      );
       expect(chat.isStreaming, isFalse);
 
       await chat.suspendIdleDesktopConnection();
@@ -353,7 +365,10 @@ void main() {
     final draft = _chat(draftGateway);
     addTearDown(draft.dispose);
 
-    expect(await draft.ensureDesktopRuntime(), isFalse);
+    expect(
+      await draft.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isFalse,
+    );
     expect(draftGateway.resumeExistingCalls, 1);
     expect(draftGateway.configuredCreateCalls, 0);
     expect(draftGateway.legacyCreateCalls, 0);
@@ -363,7 +378,10 @@ void main() {
     final existing = _chat(existingGateway);
     addTearDown(existing.dispose);
 
-    expect(await existing.ensureDesktopRuntime(), isTrue);
+    expect(
+      await existing.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     expect(existingGateway.resumeExistingCalls, 1);
     expect(existingGateway.configuredCreateCalls, 0);
     expect(existingGateway.legacyCreateCalls, 0);
@@ -375,7 +393,10 @@ void main() {
     final chat = _chat(gateway);
     addTearDown(chat.dispose);
 
-    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     const key = DesktopSessionConfigKey.model;
     await chat.setSessionModel(
       DesktopModelSelection(
@@ -386,7 +407,10 @@ void main() {
     );
     expect(chat.pendingSessionConfigChange(key), isNotNull);
     gateway.disconnectForTest();
-    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     expect(gateway.activationCalls, 1);
     expect(gateway.resumeExistingCalls, 1);
 
@@ -397,7 +421,10 @@ void main() {
         'runtime closed',
         code: 4007,
       );
-    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     expect(gateway.activationCalls, 2);
     expect(gateway.resumeExistingCalls, 2);
     expect(gateway.configuredCreateCalls, 0);
@@ -412,7 +439,10 @@ void main() {
     final chat = _chat(gateway);
     addTearDown(chat.dispose);
 
-    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     const key = DesktopSessionConfigKey.fast;
     await chat.setSessionFastMode(DesktopFastMode.fast);
     expect(chat.pendingSessionConfigChange(key), isNotNull);
@@ -458,7 +488,10 @@ void main() {
     final chat = _chat(gateway);
     addTearDown(chat.dispose);
 
-    expect(await chat.ensureDesktopRuntime(), isTrue);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
     await chat.setSessionFastMode(DesktopFastMode.fast);
     expect(
       chat.pendingSessionConfigChange(DesktopSessionConfigKey.fast),
@@ -509,6 +542,7 @@ void main() {
     var restCalls = 0;
     final chat = _chat(
       gateway,
+      sessionId: 'mob-room-create-failure',
       httpClient: MockClient((_) async {
         restCalls++;
         return http.Response('must not use REST', 500);
@@ -537,7 +571,7 @@ void main() {
     'primer submit crea una vez con config capturada antes de awaits',
     () async {
       final gateway = _ConfiguredCreateGateway();
-      final chat = _chat(gateway);
+      final chat = _chat(gateway, sessionId: 'mob-configured-submit');
       addTearDown(chat.dispose);
       final config = DesktopSessionCreateConfig(
         model: DesktopModelSelection(
@@ -559,7 +593,7 @@ void main() {
       );
 
       expect(accepted, isTrue);
-      expect(gateway.resumeExistingCalls, 1);
+      expect(gateway.resumeExistingCalls, 0);
       expect(gateway.configuredCreateCalls, 1);
       expect(gateway.legacyResumeCalls, 0);
       expect(gateway.legacyCreateCalls, 0);
@@ -603,7 +637,7 @@ void main() {
     final gateway = _ConfiguredCreateGateway();
     final chat = _chat(gateway, sessionProfile: 'profile-a');
     addTearDown(chat.dispose);
-    chat.messages = [
+    chat.internalMessagesForTesting = [
       {'role': 'assistant', 'content': 'respuesta anterior'},
       {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
     ];
@@ -621,9 +655,11 @@ void main() {
 
   test('confirmación cara espera session.info antes de ser efectiva', () async {
     final gateway = _ConfiguredCreateGateway();
-    final chat = _chat(gateway);
+    final chat = _chat(gateway, sessionId: 'mob-expensive-config');
     addTearDown(chat.dispose);
     await chat.send(fullText: 'hola', model: 'hermes-agent', history: const []);
+    expect(gateway.resumeExistingCalls, 0);
+    expect(gateway.configuredCreateCalls, 1);
     final selection = DesktopModelSelection(
       modelId: 'anthropic/claude-opus-4-8',
       providerSlug: 'anthropic',
@@ -659,9 +695,11 @@ void main() {
 
   test('4009 revierte fast y conserva la sesión utilizable', () async {
     final gateway = _ConfiguredCreateGateway();
-    final chat = _chat(gateway);
+    final chat = _chat(gateway, sessionId: 'mob-fast-config');
     addTearDown(chat.dispose);
     await chat.send(fullText: 'hola', model: 'hermes-agent', history: const []);
+    expect(gateway.resumeExistingCalls, 0);
+    expect(gateway.configuredCreateCalls, 1);
     gateway.configError = const TuiGatewayRpcError(
       'config.set',
       'busy',

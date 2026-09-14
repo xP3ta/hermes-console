@@ -5,23 +5,29 @@ import '../models/session_artifact.dart';
 
 final class ArtifactIndexScope {
   final String connectionId;
+  final String profileOwner;
   final String logicalSessionId;
 
   factory ArtifactIndexScope({
     required String connectionId,
+    required String profileOwner,
     required String logicalSessionId,
   }) {
-    if (!_isOpaqueId(connectionId) || !_isOpaqueId(logicalSessionId)) {
+    if (!_isOpaqueId(connectionId) ||
+        !_isOpaqueId(profileOwner) ||
+        !_isOpaqueId(logicalSessionId)) {
       throw const FormatException('Invalid artifact index scope');
     }
     return ArtifactIndexScope._(
       connectionId: connectionId,
+      profileOwner: profileOwner,
       logicalSessionId: logicalSessionId,
     );
   }
 
   const ArtifactIndexScope._({
     required this.connectionId,
+    required this.profileOwner,
     required this.logicalSessionId,
   });
 
@@ -30,10 +36,11 @@ final class ArtifactIndexScope {
       identical(this, other) ||
       other is ArtifactIndexScope &&
           connectionId == other.connectionId &&
+          profileOwner == other.profileOwner &&
           logicalSessionId == other.logicalSessionId;
 
   @override
-  int get hashCode => Object.hash(connectionId, logicalSessionId);
+  int get hashCode => Object.hash(connectionId, profileOwner, logicalSessionId);
 
   @override
   String toString() => 'ArtifactIndexScope(<redacted>)';

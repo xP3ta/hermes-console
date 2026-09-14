@@ -31,7 +31,10 @@ class _OfflineLineageApiClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<Session>> getSessions({bool includeChildren = false}) async {
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) async {
     if (includeChildren) {
       lineageRequests++;
       throw StateError('offline');

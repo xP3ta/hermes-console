@@ -118,16 +118,18 @@ void main() {
       },
     );
 
-    test('agent snapshot keeps backend path opaque and bounds output', () {
+    test('agent center retains only exact controls and status projections', () {
       final result = AgentCenterSnapshot.fromJson(
         snapshots: {
           'entries': [
             {
               'path': '/host/private/spawn.json',
-              'session_id': 'session-a',
-              'label': 'parallel review',
+              'session_id': 'private-session',
+              'label': 'private delegation label',
+              'goal': 'private goal',
               'count': 3,
               'finished_at': 10,
+              'metadata': {'model': 'private-model', 'cwd': '/private/path'},
             },
           ],
         },
@@ -135,19 +137,52 @@ void main() {
           'processes': [
             {
               'session_id': 'proc-a',
-              'command': 'flutter test',
-              'status': 'running',
+              'command': 'private command --token secret',
+              'status': 'RUNNING',
               'uptime_seconds': 5,
-              'output_tail': List.filled(5000, 'x').join(),
-              'token': 'must-not-survive',
+              'output_tail': 'private process output',
+              'error': 'private process error',
+              'metadata': {'model': 'private-model', 'cwd': '/private/path'},
             },
+            {'process_id': 'proc-b', 'status': 'invented private state'},
           ],
         },
       );
+      final detail = SpawnTreeDetail.fromJson({
+        'session_id': 'private-session',
+        'label': 'private tree label',
+        'started_at': 1,
+        'finished_at': 2,
+        'subagents': [
+          {
+            'id': 'private-agent-id',
+            'status': 'completed',
+            'goal': 'private goal',
+            'summary': 'private summary',
+            'result': 'private result',
+            'error': 'private error',
+            'output': 'private output',
+            'metadata': {'model': 'private-model', 'cwd': '/private/path'},
+          },
+          {'status': 'invented private state'},
+          {'phase': 42},
+        ],
+      });
 
       expect(result.snapshots.single.opaquePath, '/host/private/spawn.json');
-      expect(result.processes.single.outputTail.length, 4000);
-      expect(result.processes.single.toString(), isNot(contains('token')));
+      expect(result.snapshots.single.count, 3);
+      expect(result.snapshots.single.finishedAt, 10);
+      expect(result.processes.first.opaqueId, 'proc-a');
+      expect(result.processes.first.status, AgentCenterStatus.running);
+      expect(result.processes.first.uptimeSeconds, 5);
+      expect(result.processes.last.status, AgentCenterStatus.unknown);
+      expect(detail.startedAt, 1);
+      expect(detail.finishedAt, 2);
+      expect(detail.subagents.map((entry) => entry.status), [
+        AgentCenterStatus.completed,
+        AgentCenterStatus.unknown,
+        AgentCenterStatus.unknown,
+      ]);
     });
 
     test('project tree parses overview and hydrated lanes', () {

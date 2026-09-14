@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 import 'bridge_client.dart';
@@ -289,6 +288,7 @@ fi
     Future<String?> Function(String baseUrl)? versionProbe,
     void Function(String stage)? onProgress,
     Duration timeout = const Duration(minutes: 4),
+    String? verificationUrl,
   }) async {
     final expectedVersion = release?.version ?? targetVersion;
     final script = await installScript(
@@ -301,10 +301,12 @@ fi
     String runId;
     try {
       runId = await _api.startRun(input: agentPrompt(script));
-    } catch (e) {
+    } catch (_) {
       return (
         ok: false,
-        detail: 'No se pudo lanzar la instalación en el agente: $e',
+        detail:
+            'El Gateway no pudo iniciar la reparación remota. Comprueba que '
+            '/v1/runs esté disponible y que la API key sea válida.',
         command: command,
       );
     }
@@ -315,15 +317,13 @@ fi
     onProgress?.call('Instalando y arrancando el bridge…');
     final deadline = DateTime.now().add(timeout);
     var approvedOnce = false;
+    var approvalUnavailable = false;
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(seconds: 2));
       Map<String, dynamic> run;
       try {
         run = await _api.getRun(runId);
-      } catch (e) {
-        debugPrint(
-          '[bridge-install] excepción silenciada (se omite este elemento): $e',
-        );
+      } catch (_) {
         continue; // 404 transitorio / red: reintenta hasta el deadline.
       }
       final status = (run['status'] ?? '').toString();
@@ -334,7 +334,8 @@ fi
           try {
             await _api.resolveRunApproval(runId, 'once');
           } catch (_) {
-            /* la verificación real del bridge lo cubre igual */
+            approvalUnavailable = true;
+            break;
           }
         }
         continue;
@@ -349,7 +350,16 @@ fi
     // Verificación REAL e independiente del texto del modelo: ¿responde el
     // bridge ahora? Reintentamos unos segundos por si tarda en levantar.
     onProgress?.call('Verificando el bridge…');
-    final url = _conn.derivedBridgeUrl;
+    if (approvalUnavailable) {
+      return (
+        ok: false,
+        detail:
+            'La reparación necesita aprobación, pero el Gateway no permitió '
+            'resolverla. Usa la instalación manual segura.',
+        command: command,
+      );
+    }
+    final url = verificationUrl ?? _conn.derivedBridgeUrl;
     for (var i = 0; i < 6; i++) {
       final token = await _safeProvision(url);
       if (token != null && token.isNotEmpty) {
@@ -357,6 +367,13 @@ fi
         try {
           final h = await client.healthDiagnose();
           if (h.ok) {
+            final caps = await client.detect();
+            if (!caps.online || !caps.authValid) {
+              onProgress?.call(
+                'El bridge responde; verificando autenticación…',
+              );
+              continue;
+            }
             if (expectedVersion != null) {
               final running = await (versionProbe ?? BridgeClient.probeVersion)(
                 url,
@@ -377,10 +394,7 @@ fi
               command: command,
             );
           }
-        } catch (e) {
-          debugPrint(
-            '[bridge-install] excepción silenciada (se ignora sin más): $e',
-          );
+        } catch (_) {
         } finally {
           client.close();
         }
@@ -402,10 +416,7 @@ fi
   Future<String?> _safeProvision(String url) async {
     try {
       return await BridgeClient.provision(url, _conn.apiKey.trim());
-    } catch (e) {
-      debugPrint(
-        '[bridge-install] excepción silenciada (se devuelve null): $e',
-      );
+    } catch (_) {
       return null;
     }
   }

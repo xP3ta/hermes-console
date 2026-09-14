@@ -99,6 +99,63 @@ void main() {
   });
 
   test(
+    'descarga grande escribe por chunks sin construir el body en memoria',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('dashboard-download-');
+      addTearDown(() => temp.delete(recursive: true));
+      final target = File('${temp.path}/generated.mp4');
+      final transport = _StreamingClient((request, _) async {
+        expect(request.headers['X-Hermes-Session-Token'], 'session-token');
+        expect(request.url.path, '/p/media-qa/api/files/download');
+        expect(request.url.queryParameters['path'], '/tmp/generated.mp4');
+        return http.StreamedResponse(
+          Stream.fromIterable(<List<int>>[
+            utf8.encode('chunk-a'),
+            utf8.encode('chunk-b'),
+          ]),
+          200,
+          contentLength: 14,
+          headers: {'content-type': 'video/mp4'},
+        );
+      });
+      final client = dashboard(transport);
+      addTearDown(client.close);
+
+      final headers = await client.apiDownloadToFile(
+        'files/download?path=%2Ftmp%2Fgenerated.mp4',
+        target,
+        maxBytes: 20,
+        profile: 'media-qa',
+      );
+
+      expect(await target.readAsString(), 'chunk-achunk-b');
+      expect(headers['content-type'], 'video/mp4');
+    },
+  );
+
+  test('descarga a archivo elimina el parcial si supera el límite', () async {
+    final temp = await Directory.systemTemp.createTemp('dashboard-download-');
+    addTearDown(() => temp.delete(recursive: true));
+    final target = File('${temp.path}/generated.mp4');
+    final tracked = _TrackedStream([
+      [1, 2, 3],
+      [4, 5, 6],
+    ]);
+    final transport = _StreamingClient((_, _) async {
+      return http.StreamedResponse(tracked.stream, 200);
+    });
+    final client = dashboard(transport);
+    addTearDown(client.close);
+
+    await expectLater(
+      client.apiDownloadToFile('files/download', target, maxBytes: 5),
+      throwsA(isA<StateError>()),
+    );
+    expect(await target.exists(), isFalse);
+    expect(tracked.cancelled, isTrue);
+  });
+
+  test(
     'respuesta multipart queda acotada y cancela el stream excesivo',
     () async {
       final temp = await Directory.systemTemp.createTemp('dashboard-upload-');

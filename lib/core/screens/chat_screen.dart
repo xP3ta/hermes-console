@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
@@ -46,6 +47,7 @@ import '../models/attachment_draft.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_preferences.dart';
 import '../models/command_descriptor.dart';
+import '../models/desktop_compression_result.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/desktop_session_config.dart';
@@ -75,14 +77,17 @@ import '../services/notifications/notification_service.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/generated_image_service.dart';
+import '../services/generated_media_service.dart';
 import '../services/generated_artifact_registry.dart';
 import '../services/connection_manager.dart';
 import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
+import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
+import 'foreground_conversation_reader.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/conversation/native_voice_session_configurator.dart';
 import '../services/voice/conversation/local_voice_conversation_controller.dart';
@@ -127,6 +132,7 @@ import '../widgets/attachment_card.dart';
 import '../widgets/attachment_history_preview.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/generated_image_card.dart';
+import '../widgets/generated_video_card.dart';
 import '../widgets/generated_artifact_viewer.dart';
 import '../widgets/callout_card.dart';
 import '../widgets/chat_event_cards.dart';
@@ -466,6 +472,12 @@ final class _AssistantGeneratedImageChunk extends _AssistantBodyChunk {
   const _AssistantGeneratedImageChunk(this.basename);
 }
 
+final class _AssistantGeneratedMediaChunk extends _AssistantBodyChunk {
+  final GeneratedMediaReference reference;
+
+  const _AssistantGeneratedMediaChunk(this.reference);
+}
+
 final class _StructuredGeneratedImage {
   final GeneratedImageSourceKind kind;
   final String source;
@@ -568,6 +580,57 @@ List<_StructuredGeneratedImage> _structuredGeneratedImages(
   return List<_StructuredGeneratedImage>.unmodifiable(refs);
 }
 
+final class _StructuredGeneratedVideo {
+  final GeneratedMediaReference reference;
+  final String toolCallId;
+
+  const _StructuredGeneratedVideo({
+    required this.reference,
+    required this.toolCallId,
+  });
+
+  ValueKey<String> get widgetKey {
+    final digest = sha256
+        .convert(
+          utf8.encode(
+            '${reference.sourceKind.name}\u0000${reference.source}\u0000$toolCallId',
+          ),
+        )
+        .toString()
+        .substring(0, 24);
+    return ValueKey<String>('generated-video-$digest');
+  }
+}
+
+List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
+  Map<String, dynamic> metadata,
+) {
+  final raw = metadata['_generatedImages'];
+  if (raw is! List) return const [];
+  final refs = <_StructuredGeneratedVideo>[];
+  final seen = <String>{};
+  for (final entry in raw.whereType<Map>()) {
+    if (entry['media_kind'] != GeneratedMediaKind.video.name) continue;
+    final toolCallId = entry['tool_call_id'];
+    final source = entry['source'];
+    if (toolCallId is! String ||
+        toolCallId.trim().isEmpty ||
+        source is! String) {
+      continue;
+    }
+    final reference = GeneratedMediaService.referenceFromSource(source);
+    if (reference == null || reference.kind != GeneratedMediaKind.video) {
+      continue;
+    }
+    if (entry['kind'] != reference.sourceKind.name) continue;
+    if (!seen.add('$toolCallId\u0000${reference.source}')) continue;
+    refs.add(
+      _StructuredGeneratedVideo(reference: reference, toolCallId: toolCallId),
+    );
+  }
+  return List<_StructuredGeneratedVideo>.unmodifiable(refs);
+}
+
 String _stripStructuredGeneratedImageEchoes(
   String text,
   List<_StructuredGeneratedImage> refs,
@@ -646,6 +709,22 @@ final class _ProjectedAssistantTable extends _ProjectedAssistantBlock {
 final class _ProjectedAssistantImage extends _ProjectedAssistantBlock {
   final String basename;
   const _ProjectedAssistantImage(this.basename);
+}
+
+final class _ProjectedAssistantMedia extends _ProjectedAssistantBlock {
+  final GeneratedMediaReference reference;
+  const _ProjectedAssistantMedia(this.reference);
+}
+
+ValueKey<String> _generatedMediaWidgetKey(
+  GeneratedMediaReference reference,
+  int ordinal,
+) {
+  final digest = sha256
+      .convert(utf8.encode(reference.source))
+      .toString()
+      .substring(0, 24);
+  return ValueKey<String>('generated-media-$digest-$ordinal');
 }
 
 final class _ProjectedAssistantGap extends _ProjectedAssistantBlock {
@@ -737,13 +816,6 @@ int? messageIndexForArtifactSource(
     // degradar a un ordinal que ahora podría señalar otro mensaje.
     return null;
   }
-  for (var index = 0; index < messagesNewestFirst.length; index++) {
-    if (messagesNewestFirst[index]['_desktopMessageOrdinal'] ==
-        source.messageOrdinal) {
-      return index;
-    }
-  }
-
   var serverOrdinal = 0;
   for (var index = messagesNewestFirst.length - 1; index >= 0; index--) {
     final message = messagesNewestFirst[index];
@@ -770,6 +842,7 @@ enum _ChatControlAction {
   cron,
   recovery,
   extensions,
+  releaseDesktop,
   delete,
 }
 
@@ -959,6 +1032,8 @@ class ChatScreen extends StatefulWidget {
   final Future<void> Function()? cancelStreamOverride;
   @visibleForTesting
   final VoidCallback? sendAttemptObserver;
+  @visibleForTesting
+  final ChatDraftStore? draftStoreOverride;
 
   const ChatScreen({
     required this.connection,
@@ -982,6 +1057,7 @@ class ChatScreen extends StatefulWidget {
     this.attachmentPrivateCopyDeleter,
     this.cancelStreamOverride,
     this.sendAttemptObserver,
+    this.draftStoreOverride,
     super.key,
   });
 
@@ -1006,17 +1082,25 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void>? _sessionUsageRefreshInFlight;
   String? _sessionContextBootstrapRuntimeId;
   String? _sessionContextBootstrapInFlightRuntimeId;
+  Timer? _sessionContextBootstrapRetryTimer;
+  Completer<bool>? _sessionContextBootstrapRetryCompleter;
   bool _sessionContextAwaitingPostCompactionMetrics = false;
   int? _desktopRuntimePresentationFingerprint;
+  (bool, int, int, int, int)? _activityPresentationFingerprint;
   bool _lastDesktopCompacting = false;
+  PendingSessionConfigChange? _pendingModelConfirmation;
+  NavigatorState? _modelConfirmationNavigator;
+  Route<bool>? _modelConfirmationRoute;
   // Se marca en cuanto empieza dispose(). El stream del chat es un broadcast
   // que puede entregar un evento ya en cola vía microtask durante el desmontaje
   // (la ventana en que el Element ya es defunct pero `mounted` aún es true);
   // ese setState tardío reventaba con "_lifecycleState != defunct". Filtrar por
   // este flag además de `mounted` corta esos eventos diferidos.
   bool _disposed = false;
+  late final LocalConversationLifecycle _localConversationLifecycle;
 
   bool _editingUserMessage = false;
+  String? _editingQueuedEntryId;
   bool _editingRewriteSubmitted = false;
   List<Map<String, dynamic>>? _editingMessagesSnapshot;
   ChatPipelineState? _editingPipelineSnapshot;
@@ -1034,21 +1118,37 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool _loading = true;
   String? _error;
+  bool _loadingEarlierMessages = false;
   int _messageRefreshEpoch = 0;
   int? _messageRefreshInFlightEpoch;
+  int? _passiveMessageRefreshEpoch;
   int? _messageRefreshAnchorEpoch;
   int? _messageRefreshPublishedEpoch;
   bool _messageRefreshReanchorScheduled = false;
+  ForegroundConversationReader? _passiveConversationReader;
+  bool _chatRouteVisible = false;
+  late bool _appInForeground;
+  Timer? _subagentPollTimer;
+  String? _subagentPollingRuntimeId;
+  SubagentPresentationOwnerToken? _subagentPresentationOwner;
+  int _viewerAttachGeneration = 0;
 
   /// A-201 (spec 028): la excepción cruda del error de carga solo se muestra
   /// bajo demanda ("ver detalles"), nunca como cuerpo del estado de error.
   bool _showErrorDetail = false;
+
+  // La cobertura es una advertencia de esta vista, no un bloqueo ni estado
+  // durable del transcript. El lector puede descartarla y seguir cargando
+  // páginas anteriores al llegar al extremo del timeline.
+  bool _coreReadCoverageNoticeDismissed = false;
 
   // Chat sending state — derived from pipeline state.
   late final TextEditingController _textController;
   final _textFocusNode = FocusNode();
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
+  (bool, bool, bool)? _lastDesktopCompressionPresentation;
+  bool _compressionDraftFocusRetained = false;
   bool get _compressingSession =>
       _compressionCommandInFlight ||
       (_chatBound && _chat.desktopManualCompressionInFlight);
@@ -1092,13 +1192,17 @@ class _ChatScreenState extends State<ChatScreen>
   // didChangeDependencies.
   VoiceUiSurface? _vc;
   StreamSubscription<SttCheck>? _vcUnavailableSub;
+  NativeVoicePreparation? _nativeVoicePreparation;
 
   // Adjuntos seleccionados, pendientes de subir al filesystem gestionado del
   // agente cuando el usuario envíe el mensaje. La galería puede añadir varias
   // imágenes en una sola selección; cámara y archivos se agregan a esta lista.
   final List<AttachmentDraft> _pendingAttachments = [];
+  int? _producerAttachmentOwner;
   bool _queueExpanded = false;
   ChatDraftStore? _draftStore;
+  String? _normalCanonicalDraftId;
+  Future<void> _draftSnapshotTail = Future<void>.value();
   MissionBotChatStore? _botChatStore;
   String? _persistedCanonicalBotPinId;
   String? _canonicalBotPinFlightId;
@@ -1108,6 +1212,8 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void>? _hiddenCanonicalBotFlight;
   TurnOutboxStore? _turnOutbox;
   PreparedTurn? _preparedTurn;
+  String? _composerPreparedTurnClientTurnId;
+  String? _failedTurnDiscardInFlightId;
   final Completer<bool> _initialOutboxRead = Completer<bool>();
   ActiveTurnDelivery? _attachmentDelivery;
   late final ValueChanged<List<AttachmentDraft>> _attachmentListener;
@@ -1466,6 +1572,9 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void initState() {
     super.initState();
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _appInForeground =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     _textController = widget.missionRoom == null
         ? _SlashAccentTextEditingController()
         : _RoomMentionTextEditingController(
@@ -1477,6 +1586,12 @@ class _ChatScreenState extends State<ChatScreen>
     _loadPrefs();
     _loadActiveModel();
     _profileReady = _loadActiveProfile();
+    _localConversationLifecycle = LocalConversationCleanupFence.beginLifecycle(
+      connectionId: widget.connection.id,
+      profile: Session.profileOwner(widget.session.profile),
+      sessionId: widget.session.id,
+      sessionAliases: {_draftRecoverySessionId, ..._draftRecoveryAliases},
+    );
     _scrollController.addListener(_onScroll);
     _textController.addListener(_onComposerChanged);
     _textFocusNode.addListener(_onComposerFocusChanged);
@@ -1569,12 +1684,40 @@ class _ChatScreenState extends State<ChatScreen>
 
   String get _draftRecoverySessionId {
     final room = widget.missionRoom;
-    return room == null ? widget.session.id : 'mob-room-${room.id}';
+    if (room != null) return 'mob-room-${room.id}';
+    if (!_isBotChatSurface &&
+        widget.session.isUnpersistedMobileDraft &&
+        _chatBound &&
+        _chat.sessionId == widget.session.id &&
+        _chat.sessionProfile == _recoveryProfile) {
+      // Unacknowledged delivery still belongs to the provisional outbox key.
+      // Moving only its composer would bypass recovery/idempotency on reopen.
+      final pendingState = _preparedTurn?.state;
+      if (_composerPreparedTurnClientTurnId != null ||
+          pendingState == PreparedTurnState.prepared ||
+          pendingState == PreparedTurnState.submitting ||
+          pendingState == PreparedTurnState.ambiguous ||
+          pendingState == PreparedTurnState.failedBeforeAcceptance) {
+        return widget.session.id;
+      }
+      return _chat.createdDraftSessionId ?? widget.session.id;
+    }
+    return widget.session.id;
   }
 
-  String get _recoveryProfile => _chatBound
-      ? _chat.sessionProfile
-      : Session.profileOwner(widget.session.profile);
+  void _authorizeDraftDestination(String sessionId) {
+    if (widget.missionRoom == null &&
+        !_isBotChatSurface &&
+        sessionId != widget.session.id) {
+      LocalConversationCleanupFence.authorizeCreatedSession(
+        _localConversationLifecycle,
+        sessionId,
+      );
+      _normalCanonicalDraftId = sessionId;
+    }
+  }
+
+  String get _recoveryProfile => _localConversationLifecycle.profile;
 
   bool get _isBotChatSurface => const {
     'mobile-bot',
@@ -1638,11 +1781,13 @@ class _ChatScreenState extends State<ChatScreen>
         legacy.text,
         legacy.attachments,
         profile: profile,
+        preparedTurnClientTurnId: legacy.preparedTurnClientTurnId,
         missionRoomIntentId: legacy.missionRoomIntentId,
         missionRoomWorkerProfile: legacy.missionRoomWorkerProfile,
         missionRoomBoardId: legacy.missionRoomBoardId,
         missionRoomBoardQuery: legacy.missionRoomBoardQuery,
         missionRoomTaskPhase: legacy.missionRoomTaskPhase,
+        lifecycle: _localConversationLifecycle,
       );
       await store.clear(
         widget.connection.id,
@@ -1657,14 +1802,36 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<void> _restoreDraft() async {
     final prefs = await SharedPreferences.getInstance();
-    final store = ChatDraftStore(prefs);
-    final outbox = TurnOutboxStore();
+    if (!mounted || _disposed) return;
+    if (!LocalConversationCleanupFence.rehydrate(_localConversationLifecycle)) {
+      return;
+    }
+    final store = widget.draftStoreOverride ?? ChatDraftStore(prefs);
+    final outbox = TurnOutboxStore(lifecycle: _localConversationLifecycle);
     // El borrador pinta primero: la reconciliación adicional de outbox no debe
     // retrasar el composer ni introducir una carrera visible al navegar rápido.
-    final draft = await _loadDraftWithRecoveryMigration(store);
+    var draft = await _loadDraftWithRecoveryMigration(store);
     if (!mounted) return;
     _draftStore = store;
     _turnOutbox = outbox;
+    final linkedDiscard = draft.preparedTurnClientTurnId;
+    if (widget.missionRoom == null &&
+        linkedDiscard != null &&
+        await outbox.isFailedBeforeAcceptanceDiscarded(
+          connectionId: widget.connection.id,
+          profile: _recoveryProfile,
+          sessionId: widget.session.id,
+          clientTurnId: linkedDiscard,
+        )) {
+      // El tombstone manda incluso si el proceso murió entre los dos stores.
+      // El clear es compactación exacta; la UI no depende de que termine.
+      await store.clear(
+        widget.connection.id,
+        _draftRecoverySessionId,
+        profile: _recoveryProfile,
+      );
+      draft = const ChatDraft(text: '', attachments: []);
+    }
     final liveDeliveryAtRestore = _chatBound ? _chat.activeTurnDelivery : null;
     final liveOwnsRestoredDraft =
         liveDeliveryAtRestore != null &&
@@ -1676,6 +1843,7 @@ class _ChatScreenState extends State<ChatScreen>
         );
     _restoringDraft = true;
     setState(() {
+      _composerPreparedTurnClientTurnId = draft.preparedTurnClientTurnId;
       if (!liveOwnsRestoredDraft && _textController.text.isEmpty) {
         _textController.text = draft.text;
       }
@@ -1709,6 +1877,7 @@ class _ChatScreenState extends State<ChatScreen>
       _roomTaskFrozenText = draft.text;
     }
     _restoringDraft = false;
+    _syncProducerAttachmentRetention();
     if (draft.missionRoomTaskPhase == MissionRoomTaskPhase.submitting &&
         _selectedRoomMentions.isNotEmpty) {
       // The process disappeared after the operation was durably marked as
@@ -1739,6 +1908,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted) return;
     if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(true);
     if (loaded == null) {
+      _composerPreparedTurnClientTurnId = null;
       await _chat.restoreQueuedTurns(recoveredQueued, outbox);
       return;
     }
@@ -1816,6 +1986,10 @@ class _ChatScreenState extends State<ChatScreen>
     _restoringDraft = true;
     setState(() {
       if (recoverPrepared) {
+        _composerPreparedTurnClientTurnId =
+            prepared.state == PreparedTurnState.failedBeforeAcceptance
+            ? prepared.clientTurnId
+            : null;
         _textController.text = prepared.text;
         _pendingAttachments
           ..clear()
@@ -1824,9 +1998,24 @@ class _ChatScreenState extends State<ChatScreen>
         // ACK ya persistido: el draft antiguo no vuelve a ofrecerse para envío.
         _textController.clear();
         _pendingAttachments.clear();
+        _composerPreparedTurnClientTurnId = null;
       }
     });
     _restoringDraft = false;
+    _syncProducerAttachmentRetention();
+    if (recoverPrepared &&
+        prepared.state == PreparedTurnState.failedBeforeAcceptance &&
+        widget.missionRoom == null &&
+        draft.preparedTurnClientTurnId != prepared.clientTurnId) {
+      // Backfill para drafts creados por v23: a partir de aquí cualquier
+      // corte entre tombstone y clear puede atribuirlos al intento exacto.
+      await _saveDraftSnapshot(
+        prepared.text,
+        prepared.attachments,
+        preparedTurnClientTurnId: prepared.clientTurnId,
+      );
+      if (!mounted) return;
+    }
     if (!recoverPrepared) {
       // accepted/running se conservan cifrados hasta el terminal para permitir
       // reattach tras process death. Solo el draft/composer viejo se retira.
@@ -1913,7 +2102,10 @@ class _ChatScreenState extends State<ChatScreen>
       );
       return;
     }
-    if (identical(_preparedTurn, prepared)) _preparedTurn = null;
+    if (identical(_preparedTurn, prepared)) {
+      _preparedTurn = null;
+      _composerPreparedTurnClientTurnId = null;
+    }
     if (!mounted || !composerStillMatches) return;
     _restoringDraft = true;
     setState(() {
@@ -1921,24 +2113,175 @@ class _ChatScreenState extends State<ChatScreen>
       _pendingAttachments.clear();
     });
     _restoringDraft = false;
+    _syncProducerAttachmentRetention();
     await _clearDraft();
   }
 
+  void _maybeDiscardFailedTurnFromExplicitEmptyComposer() {
+    if (_restoringDraft ||
+        _composerSubmissionInFlight ||
+        widget.missionRoom != null ||
+        _textController.text.isNotEmpty ||
+        _pendingAttachments.isNotEmpty) {
+      return;
+    }
+    final prepared = _preparedTurn;
+    if (prepared == null ||
+        prepared.state != PreparedTurnState.failedBeforeAcceptance ||
+        !prepared.restoresComposer ||
+        _composerPreparedTurnClientTurnId != prepared.clientTurnId ||
+        _failedTurnDiscardInFlightId != null) {
+      return;
+    }
+    // Se fija antes del primer await: ningún debounce, lifecycle flush o
+    // successor puede heredar por accidente la autoridad de P0.
+    _failedTurnDiscardInFlightId = prepared.storageId;
+    _composerPreparedTurnClientTurnId = null;
+    unawaited(_discardFailedTurnFromEmptyComposer(prepared));
+  }
+
+  Future<void> _discardFailedTurnFromEmptyComposer(
+    PreparedTurn prepared,
+  ) async {
+    var discarded = false;
+    try {
+      final live = _chatBound ? _chat.activeTurnDelivery : null;
+      final observed = live?.current.storageId == prepared.storageId
+          ? live
+          : _attachmentDelivery?.current.storageId == prepared.storageId
+          ? _attachmentDelivery
+          : null;
+      if (observed != null) {
+        discarded = await observed.discardFailedBeforeAcceptance();
+        if (discarded && identical(live, observed)) {
+          _chat.releaseTurnDelivery(observed);
+        }
+      } else {
+        discarded = await (await _outboxStore()).discardFailedBeforeAcceptance(
+          prepared,
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[turn-outbox] rejected discard failed (${error.runtimeType})',
+      );
+    }
+    if (!discarded) {
+      if (_preparedTurn?.storageId == prepared.storageId &&
+          _composerPreparedTurnClientTurnId == null) {
+        _composerPreparedTurnClientTurnId = prepared.clientTurnId;
+      }
+      if (_failedTurnDiscardInFlightId == prepared.storageId) {
+        _failedTurnDiscardInFlightId = null;
+      }
+      return;
+    }
+
+    if (_preparedTurn?.storageId == prepared.storageId) {
+      _preparedTurn = null;
+    }
+    if (_attachmentDelivery?.current.storageId == prepared.storageId) {
+      _observeAttachmentDelivery(null);
+    }
+    final removedProjection = _removeLatestFailedPromptProjection(
+      prepared.fullText,
+    );
+    final composerStillEmpty =
+        !mounted ||
+        (_textController.text.isEmpty && _pendingAttachments.isEmpty);
+    if (mounted && removedProjection) {
+      setState(() {
+        if (_pipelineState == ChatPipelineState.failed) {
+          _pipelineState = ChatPipelineState.idle;
+        }
+      });
+    }
+    // El tombstone ya es autoritativo. Este clear exacto solo compacta el
+    // segundo store; si Android corta aquí, restore suprime el draft enlazado.
+    if (composerStillEmpty) await _clearDraft();
+    if (_failedTurnDiscardInFlightId == prepared.storageId) {
+      _failedTurnDiscardInFlightId = null;
+    }
+  }
+
+  Future<void> _retireProducerAttachments(
+    List<AttachmentDraft> attachments,
+  ) async {
+    final store =
+        _draftStore ?? ChatDraftStore(await SharedPreferences.getInstance());
+    _draftStore ??= store;
+    await store.retireAttachments(attachments);
+  }
+
+  void _syncProducerAttachmentRetention() {
+    final current = _producerAttachmentOwner;
+    if (_pendingAttachments.isNotEmpty) {
+      if (current == null) {
+        _producerAttachmentOwner =
+            AttachmentOwnershipCoordinator.retainProducer(_pendingAttachments);
+      } else {
+        AttachmentOwnershipCoordinator.updateProducerRetention(
+          current,
+          _pendingAttachments,
+        );
+      }
+      return;
+    }
+    if (current == null) return;
+    _producerAttachmentOwner = null;
+    unawaited(
+      AttachmentOwnershipCoordinator.releaseProducer(
+        current,
+        _retireProducerAttachments,
+      ),
+    );
+  }
+
   void _scheduleDraftSave() {
+    _syncProducerAttachmentRetention();
     if (_restoringDraft || _roomTaskSubmitting) return;
     _draftTimer?.cancel();
     final text = _textController.text;
     final attachments = List<AttachmentDraft>.of(_pendingAttachments);
+    final preparedTurnClientTurnId = _composerPreparedTurnClientTurnId;
+    if (text.isEmpty &&
+        attachments.isEmpty &&
+        _failedTurnDiscardInFlightId != null) {
+      // El clear de draft nunca adelanta al tombstone durable.
+      return;
+    }
     _draftTimer = Timer(const Duration(milliseconds: 350), () {
-      unawaited(_saveDraftSnapshot(text, attachments));
+      unawaited(
+        _saveDraftSnapshot(
+          text,
+          attachments,
+          preparedTurnClientTurnId: preparedTurnClientTurnId,
+          preparedTurnAuthorityCaptured: true,
+        ),
+      );
     });
   }
 
   Future<bool> _saveDraftSnapshot(
     String text,
-    List<AttachmentDraft> attachments,
-  ) async {
+    List<AttachmentDraft> attachments, {
+    String? preparedTurnClientTurnId,
+    bool preparedTurnAuthorityCaptured = false,
+    bool finalDisposeSnapshot = false,
+  }) async {
+    if (_disposed && !finalDisposeSnapshot) return false;
+    final previous = _draftSnapshotTail;
+    final completed = Completer<void>();
+    _draftSnapshotTail = completed.future;
     try {
+      final recoveryId = _draftRecoverySessionId;
+      _authorizeDraftDestination(recoveryId);
+      final retiredId = widget.missionRoom != null || _isBotChatSurface
+          ? null
+          : recoveryId == widget.session.id
+          ? _normalCanonicalDraftId
+          : widget.session.id;
+      // Admit both keys before waiting, so session cleanup sees queued saves.
       final store =
           _draftStore ?? ChatDraftStore(await SharedPreferences.getInstance());
       _draftStore ??= store;
@@ -1952,19 +2295,40 @@ class _ChatScreenState extends State<ChatScreen>
           }
         }
       }
-      await store.save(
+      final saved = store.save(
         widget.connection.id,
-        _draftRecoverySessionId,
+        recoveryId,
         text,
         attachments,
         profile: _recoveryProfile,
+        preparedTurnClientTurnId: preparedTurnAuthorityCaptured
+            ? preparedTurnClientTurnId
+            : preparedTurnClientTurnId ?? _composerPreparedTurnClientTurnId,
         missionRoomIntentId: roomWorker == null ? null : _roomMentionIntentId,
         missionRoomWorkerProfile: roomWorker,
         missionRoomBoardId: roomWorker == null ? null : _roomTaskBoardId,
         missionRoomBoardQuery: roomWorker == null ? null : _roomTaskBoardQuery,
         missionRoomTaskPhase: roomWorker == null ? null : _roomTaskPhase,
+        lifecycle: _localConversationLifecycle,
+        afterSave: previous.then((_) => true),
       );
-      return true;
+      final saves = <Future<bool>>[saved];
+      if (retiredId != null && retiredId != recoveryId) {
+        // Both directions use only the proven create mapping. An unresolved
+        // turn stays with its provisional outbox; ACK moves free drafts back.
+        saves.add(
+          store.save(
+            widget.connection.id,
+            retiredId,
+            '',
+            const [],
+            profile: _recoveryProfile,
+            lifecycle: _localConversationLifecycle,
+            afterSave: saved,
+          ),
+        );
+      }
+      return (await Future.wait(saves)).every((committed) => committed);
     } catch (error) {
       // El borrador puede contener secretos: no se degrada a almacenamiento en
       // claro ni se incluye el error del plugin en logs.
@@ -1972,12 +2336,18 @@ class _ChatScreenState extends State<ChatScreen>
         '[chat-draft] secure persistence failed (${error.runtimeType})',
       );
       return false;
+    } finally {
+      await previous;
+      completed.complete();
     }
   }
 
   Future<bool> _clearDraft({bool allowRoomTaskOperation = false}) async {
     if (_roomTaskSubmitting && !allowRoomTaskOperation) return false;
     _draftTimer?.cancel();
+    if (widget.missionRoom == null && !_isBotChatSurface) {
+      return _saveDraftSnapshot('', const []);
+    }
     try {
       final store =
           _draftStore ?? ChatDraftStore(await SharedPreferences.getInstance());
@@ -2003,8 +2373,9 @@ class _ChatScreenState extends State<ChatScreen>
         ?.activeChats;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final drafts = ChatDraftStore(prefs);
-      final outbox = TurnOutboxStore();
+      final drafts =
+          _draftStore ?? widget.draftStoreOverride ?? ChatDraftStore(prefs);
+      final outbox = TurnOutboxStore(lifecycle: _localConversationLifecycle);
       final aliases = <String>{
         localSessionId,
         _draftRecoverySessionId,
@@ -2027,7 +2398,7 @@ class _ChatScreenState extends State<ChatScreen>
       await activeChats?.clearCancelledTurnsForSession(
         connectionId: widget.connection.id,
         profile: _recoveryProfile,
-        sessionId: localSessionId,
+        sessionId: _chat.logicalSessionId,
       );
     } catch (error) {
       debugPrint(
@@ -2037,7 +2408,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<TurnOutboxStore> _outboxStore() async {
-    final store = _turnOutbox ?? TurnOutboxStore();
+    final store =
+        _turnOutbox ?? TurnOutboxStore(lifecycle: _localConversationLifecycle);
     _turnOutbox = store;
     return store;
   }
@@ -2117,6 +2489,7 @@ class _ChatScreenState extends State<ChatScreen>
         await delivery.removeAttachment(localId);
       }
       _applyAttachmentProjection(delivery.current.attachments);
+      _maybeDiscardFailedTurnFromExplicitEmptyComposer();
       return;
     }
     if (!mounted) return;
@@ -2129,6 +2502,7 @@ class _ChatScreenState extends State<ChatScreen>
       _pendingAttachments.removeAt(removed);
       _invalidatePreparedRoomTaskForMutation();
     });
+    _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
     // Puede retirarse antes de que el primer autosave llegue a referenciar la
     // copia privada. En esa ventana el store no tiene un snapshot anterior que
@@ -2261,6 +2635,7 @@ class _ChatScreenState extends State<ChatScreen>
         () => unawaited(_refreshDesktopSlashSuggestions(text, completionEpoch)),
       );
     }
+    _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
   }
 
@@ -2540,7 +2915,11 @@ class _ChatScreenState extends State<ChatScreen>
       // would submit without the verified pin after an RMW failure. A Room is
       // likewise valid only after the TUI lifecycle confirms its manager id.
       allowTransportFallback:
-          !isOfficialBotPin && !isMissionRoom && !createsBotChat,
+          widget.connection.kind == InstanceKind.localhost &&
+          widget.connection.onDeviceLoopback &&
+          !isOfficialBotPin &&
+          !isMissionRoom &&
+          !createsBotChat,
     );
   }
 
@@ -2730,13 +3109,28 @@ class _ChatScreenState extends State<ChatScreen>
   /// `session.info` has not published a real context window yet. This is a
   /// single gateway snapshot, never a poll and never a model invocation.
   Future<void> _ensureDesktopRuntimeAndBootstrapContext() async {
-    if (_disposed || !mounted) return;
+    if (_disposed ||
+        !mounted ||
+        !_chatRouteVisible ||
+        !_appInForeground ||
+        !_chat.attachesDesktopRuntimeOnLoad) {
+      return;
+    }
+    final generation = _viewerAttachGeneration;
+    bool stillOwningVisible() =>
+        !_disposed &&
+        mounted &&
+        _chatRouteVisible &&
+        _appInForeground &&
+        generation == _viewerAttachGeneration;
     try {
       if (_chat.desktopRuntimeSessionId == null &&
-          !await _chat.ensureDesktopRuntime()) {
+          !await _chat.attachExistingRuntimeViewer(
+            stillOwningVisible: stillOwningVisible,
+          )) {
         return;
       }
-      if (_disposed || !mounted) return;
+      if (!stillOwningVisible()) return;
       _syncSessionContextMetrics(preserveKnownWindow: true);
       await _bootstrapSessionContextForCurrentRuntime();
     } catch (error) {
@@ -2753,6 +3147,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _bootstrapSessionContextForCurrentRuntime() async {
     if (_disposed || !mounted) return;
     final runtimeId = _chat.desktopRuntimeSessionId;
+    final viewerGeneration = _viewerAttachGeneration;
     if (runtimeId == null || runtimeId == _sessionContextBootstrapRuntimeId) {
       return;
     }
@@ -2788,7 +3183,17 @@ class _ChatScreenState extends State<ChatScreen>
           return;
         }
         if (attempt == 0) {
-          await Future<void>.delayed(const Duration(milliseconds: 350));
+          final retryAuthorized = await _waitForSessionContextBootstrapRetry(
+            runtimeId: runtimeId,
+            viewerGeneration: viewerGeneration,
+          );
+          if (!retryAuthorized ||
+              _disposed ||
+              !mounted ||
+              viewerGeneration != _viewerAttachGeneration ||
+              _chat.desktopRuntimeSessionId != runtimeId) {
+            return;
+          }
         }
       }
     } catch (error) {
@@ -2801,6 +3206,39 @@ class _ChatScreenState extends State<ChatScreen>
         _sessionContextBootstrapInFlightRuntimeId = null;
       }
     }
+  }
+
+  Future<bool> _waitForSessionContextBootstrapRetry({
+    required String runtimeId,
+    required int viewerGeneration,
+  }) {
+    _cancelSessionContextBootstrapRetry();
+    final completer = Completer<bool>();
+    _sessionContextBootstrapRetryCompleter = completer;
+    late final Timer timer;
+    timer = Timer(const Duration(milliseconds: 350), () {
+      if (!identical(_sessionContextBootstrapRetryTimer, timer)) return;
+      _sessionContextBootstrapRetryTimer = null;
+      _sessionContextBootstrapRetryCompleter = null;
+      completer.complete(
+        !_disposed &&
+            mounted &&
+            _chatRouteVisible &&
+            _appInForeground &&
+            viewerGeneration == _viewerAttachGeneration &&
+            _chat.desktopRuntimeSessionId == runtimeId,
+      );
+    });
+    _sessionContextBootstrapRetryTimer = timer;
+    return completer.future;
+  }
+
+  void _cancelSessionContextBootstrapRetry() {
+    _sessionContextBootstrapRetryTimer?.cancel();
+    _sessionContextBootstrapRetryTimer = null;
+    final completer = _sessionContextBootstrapRetryCompleter;
+    _sessionContextBootstrapRetryCompleter = null;
+    if (completer != null && !completer.isCompleted) completer.complete(false);
   }
 
   /// Everything in `session.info` that may change chat chrome, except usage.
@@ -2835,7 +3273,6 @@ class _ChatScreenState extends State<ChatScreen>
         info.configWarning,
         info.credentialWarning,
         info.installWarning,
-        info.raw.toString(),
       ]);
 
   /// Lee el modelo activo para pintar el badge del AppBar. Intenta primero el
@@ -3033,6 +3470,35 @@ class _ChatScreenState extends State<ChatScreen>
         final client = BridgeClient(baseUrl: url, token: token);
         try {
           return await client.fetchGeneratedImage(name);
+        } finally {
+          client.close();
+        }
+      },
+    );
+  }
+
+  /// Resolves canonical `MEDIA:` paths through the authenticated Dashboard
+  /// managed-files endpoint, then stores them only in app-private cache. This
+  /// supports generated files outside Hermes' legacy image cache without
+  /// publishing a bearer token or a server-local path to another Android app.
+  Future<File> downloadGeneratedMedia(GeneratedMediaReference reference) {
+    final profile = _effectiveSessionProfile;
+    final cacheScope = '${widget.connection.id}\u0000$profile';
+    return GeneratedMediaService.ensureDownloaded(
+      cacheScope,
+      reference,
+      fetchServerPathToFile: (path, destination) async {
+        final client = DashboardClient.lazy(widget.connection);
+        try {
+          await client.apiDownloadToFile(
+            'files/download?path=${Uri.encodeQueryComponent(path)}',
+            destination,
+            maxBytes: reference.kind == GeneratedMediaKind.image
+                ? GeneratedMediaService.maxImageBytes
+                : GeneratedMediaService.maxVideoBytes,
+            profile: profile,
+            timeout: const Duration(minutes: 3),
+          );
         } finally {
           client.close();
         }
@@ -3274,6 +3740,7 @@ class _ChatScreenState extends State<ChatScreen>
         sessionSnapshot: widget.session,
         sessionProfile: resolvedSessionProfile,
         initialStoredSessionId: widget.initialStoredSessionId,
+        localConversationLifecycle: _localConversationLifecycle,
         authoritativeStoredSessionBinding: _isBotChatSurface,
         notificationSurface: widget.missionRoom != null
             ? NotificationChatSurface.room
@@ -3282,6 +3749,12 @@ class _ChatScreenState extends State<ChatScreen>
             : NotificationChatSurface.normal,
         notificationRoomId: widget.missionRoom?.id,
         selectedProvider: _selectedProvider,
+      );
+      _passiveConversationReader = ForegroundConversationReader(
+        successInterval: const Duration(seconds: 3),
+        failureIntervals: const [Duration(seconds: 5), Duration(seconds: 15)],
+        canRead: () => _canProbePassiveRemoteActivity,
+        read: _refreshPassiveTranscript,
       );
       if (widget.session.isUnpersistedMobileDraft &&
           _chat.messages.isEmpty &&
@@ -3301,7 +3774,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
       _lastDesktopCompacting = _compressingSession;
       _syncDesktopSessionConfig();
-      unawaited(_chat.warmDesktopGateway());
+      unawaited(_chat.warmDesktopGatewayForAutomaticBootstrap());
       if (_chat.messagesLoaded) {
         unawaited(_ensureDesktopRuntimeAndBootstrapContext());
         unawaited(_refreshPublishedSessionUsage());
@@ -3343,7 +3816,10 @@ class _ChatScreenState extends State<ChatScreen>
         _chat.messagesLoaded = true;
         _loading = false;
       } else {
-        _fetchMessages();
+        // A screen created while the app is already backgrounded may perform
+        // its one durable read, but it must not connect to or acquire a live
+        // runtime until it becomes the owning foreground route.
+        _fetchMessages(passiveOnly: !_appInForeground);
       }
       // Fase G: comprueba (una vez) si el bridge de esta instancia está
       // desactualizado y, según el ajuste, lo auto-actualiza o avisa.
@@ -3465,6 +3941,15 @@ class _ChatScreenState extends State<ChatScreen>
   /// capa de notificaciones. Solo la limpia si seguía siendo la nuestra, para no
   /// pisar a otro chat que ya se haya marcado visible (navegación apilada).
   void _markChatVisible(bool visible) {
+    final changed = _chatRouteVisible != visible;
+    if (changed) {
+      _viewerAttachGeneration += 1;
+      _cancelSessionContextBootstrapRetry();
+    }
+    _chatRouteVisible = visible;
+    if (changed && mounted && !_disposed) setState(() {});
+    _syncPassiveTranscriptRefresh();
+    _syncSubagentPolling();
     unawaited(DrawerGestureExclusion.setEnabled(visible));
     if (!_chatBound) return;
     final notif = _chatService.notifications;
@@ -3482,12 +3967,114 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  void _syncSubagentPolling() {
+    final shouldOwnPresentation =
+        !_disposed &&
+        mounted &&
+        _chatBound &&
+        _chatRouteVisible &&
+        _appInForeground;
+    if (shouldOwnPresentation) {
+      _subagentPresentationOwner ??= _chat
+          .acquireSubagentForegroundPresentation();
+    } else {
+      final owner = _subagentPresentationOwner;
+      _subagentPresentationOwner = null;
+      if (owner != null) {
+        _chat.releaseSubagentForegroundPresentation(owner);
+      }
+    }
+    final runtimeId = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    final shouldPoll = shouldOwnPresentation && runtimeId != null;
+    if (!shouldPoll) {
+      _subagentPollTimer?.cancel();
+      _subagentPollTimer = null;
+      _subagentPollingRuntimeId = null;
+      return;
+    }
+    if (_subagentPollTimer != null && _subagentPollingRuntimeId == runtimeId) {
+      return;
+    }
+
+    _subagentPollTimer?.cancel();
+    _subagentPollingRuntimeId = runtimeId;
+    unawaited(_chat.refreshSubagents());
+    _subagentPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_disposed || !mounted) return;
+      if (_chat.desktopRuntimeSessionId != _subagentPollingRuntimeId) {
+        _syncSubagentPolling();
+        return;
+      }
+      unawaited(_chat.refreshSubagents());
+    });
+  }
+
+  bool get _canProbePassiveRemoteActivity =>
+      !_disposed &&
+      mounted &&
+      _chatBound &&
+      _chatRouteVisible &&
+      _appInForeground &&
+      !_chat.isStreaming &&
+      !_chat.resumeReconciliationInFlight;
+
+  bool get _canPassivelyRefreshTranscript =>
+      _canProbePassiveRemoteActivity &&
+      (!_chat.hasDesktopRuntime || _chat.remoteSurfaceOwnsLiveTurn) &&
+      _messageRefreshInFlightEpoch == null;
+
+  void _syncPassiveTranscriptRefresh({bool refreshNow = false}) {
+    final shouldRun = _canProbePassiveRemoteActivity;
+    if (!shouldRun) {
+      // Lifecycle, reconciliation, or local production is an authority
+      // transition. Retire both the reader timer and any REST request that
+      // captured the previous observation tuple before it can publish.
+      _passiveConversationReader?.setVisible(false);
+      _invalidatePassiveMessageRefresh();
+      return;
+    }
+    _passiveConversationReader?.setVisible(true, immediate: refreshNow);
+  }
+
+  Future<bool> _refreshPassiveTranscript() async {
+    if (!_canProbePassiveRemoteActivity) return true;
+    await _chat.refreshPassiveRemoteActivity();
+    if (!_canPassivelyRefreshTranscript) return true;
+    return _fetchMessages(passiveOnly: true);
+  }
+
+  void _invalidatePassiveMessageRefresh() {
+    final passiveEpoch = _passiveMessageRefreshEpoch;
+    if (!_chatBound || passiveEpoch == null) return;
+    _chat.invalidatePassiveRead();
+    _passiveMessageRefreshEpoch = null;
+    if (_messageRefreshInFlightEpoch == passiveEpoch) {
+      _messageRefreshEpoch += 1;
+      _messageRefreshInFlightEpoch = null;
+      _messageRefreshPublishedEpoch = null;
+      _cancelMessageRefreshViewportAnchor();
+    }
+  }
+
+  void _invalidateOwnedNativeVoicePreparation() {
+    final preparation = _nativeVoicePreparation;
+    if (preparation == null) return;
+    _nativeVoicePreparation = null;
+    _voice?.cancelNativeVoicePreparation(preparation);
+  }
+
   // ── RouteAware: visibilidad en la pila de navegación ──────────────────────
   @override
-  void didPush() => _markChatVisible(true); // esta pantalla acaba de entrar
+  void didPush() {
+    _markChatVisible(true); // esta pantalla acaba de entrar
+    unawaited(_ensureDesktopRuntimeAndBootstrapContext());
+  }
+
   @override
   void didPopNext() {
     _markChatVisible(true); // volvió al frente (pop de la de encima)
+    unawaited(_ensureDesktopRuntimeAndBootstrapContext());
+    _syncPassiveTranscriptRefresh(refreshNow: true);
     // Recarga el perfil activo: pudo cambiarse en Perfiles mientras estábamos
     // fuera. Antes el chat se quedaba con el perfil viejo hasta reabrirlo.
     unawaited(_loadActiveProfile());
@@ -3530,9 +4117,16 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   @override
-  void didPushNext() => _markChatVisible(false); // la tapó otra pantalla
+  void didPushNext() {
+    _invalidateOwnedNativeVoicePreparation();
+    _markChatVisible(false); // la tapó otra pantalla
+  }
+
   @override
-  void didPop() => _markChatVisible(false); // esta pantalla se va
+  void didPop() {
+    _invalidateOwnedNativeVoicePreparation();
+    _markChatVisible(false); // esta pantalla se va
+  }
 
   /// ¿El modo voz global está activo y atado a ESTA sesión? La orquestación de
   /// voz (hablar, fases) la lleva el controlador local; la pantalla solo
@@ -3569,8 +4163,20 @@ class _ChatScreenState extends State<ChatScreen>
   /// controlador de conversación, suscrito al mismo chat por su cuenta.
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    _syncSubagentPolling();
+    if (_chat.hasDesktopRuntime) {
+      // The service publishes attachment on its event stream. Fence a passive
+      // null-runtime read at that same ownership boundary before any early
+      // return (including context-only updates) can bypass reader shutdown.
+      _syncPassiveTranscriptRefresh();
+    }
     if (_editingRewriteSubmitted &&
-        (event == ActiveChatEvent.done ||
+        ((event == ActiveChatEvent.started &&
+                (_editingPipelineSnapshot == ChatPipelineState.connecting ||
+                    _editingPipelineSnapshot == ChatPipelineState.waiting ||
+                    _editingPipelineSnapshot == ChatPipelineState.executing ||
+                    _editingPipelineSnapshot == ChatPipelineState.streaming)) ||
+            event == ActiveChatEvent.done ||
             event == ActiveChatEvent.error ||
             event == ActiveChatEvent.cancelled ||
             event == ActiveChatEvent.messagesHydrated)) {
@@ -3626,7 +4232,20 @@ class _ChatScreenState extends State<ChatScreen>
         _chat.desktopRuntimeInfo,
       );
       final compacting = _compressingSession;
+      final compressionPresentation = (
+        _chat.desktopCompressionAwaitingReconciliation,
+        _chat.desktopCompressionTransportUncertain,
+        _chat.desktopCompressionNeedsConfirmation,
+      );
       final contextCompacting = _chat.desktopCompressionInFlight;
+      final passiveAggregate = _chat.passiveActivityAggregate;
+      final activityPresentation = (
+        _chat.hasRecentPassiveRemoteActivity,
+        passiveAggregate.total,
+        passiveAggregate.active,
+        passiveAggregate.completed,
+        _chat.safeActiveSubagentCount,
+      );
       if (contextCompacting) {
         _sessionContextAwaitingPostCompactionMetrics = true;
       }
@@ -3635,7 +4254,11 @@ class _ChatScreenState extends State<ChatScreen>
       contextOnlySessionInfo =
           _desktopRuntimePresentationFingerprint != null &&
           _desktopRuntimePresentationFingerprint == presentationFingerprint &&
-          _lastDesktopCompacting == compacting;
+          _lastDesktopCompacting == compacting &&
+          _lastDesktopCompressionPresentation == compressionPresentation &&
+          _activityPresentationFingerprint == activityPresentation;
+      _lastDesktopCompressionPresentation = compressionPresentation;
+      _activityPresentationFingerprint = activityPresentation;
       _desktopRuntimePresentationFingerprint = presentationFingerprint;
       _lastDesktopCompacting = compacting;
       _syncSessionContextMetrics(
@@ -3777,8 +4400,9 @@ class _ChatScreenState extends State<ChatScreen>
             _pipelineState == ChatPipelineState.completed) {
           // A-015 (spec 028): mismo filtrado que el botón altavoz — leer solo
           // la respuesta final, nunca el razonamiento interno (`<think>`).
-          final answer = splitReasoning(_chat.assistantContent).answer;
-          final message = _assistantMessageForAnswer(answer);
+          final rawAnswer = splitReasoning(_chat.assistantContent).answer;
+          final answer = GeneratedMediaService.stripDirectives(rawAnswer);
+          final message = _assistantMessageForAnswer(rawAnswer);
           final voice = _voice;
           if (voice != null && answer.trim().isNotEmpty) {
             unawaited(
@@ -3805,6 +4429,17 @@ class _ChatScreenState extends State<ChatScreen>
           );
         }
         break;
+      case ActiveChatEvent.warning:
+        final warning = _chat.takeTerminalWarning();
+        if (warning != null && warning.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(warning),
+              duration: const Duration(seconds: 8),
+            ),
+          );
+        }
+        break;
       case ActiveChatEvent.cancelled:
       case ActiveChatEvent.connected:
       case ActiveChatEvent.waiting:
@@ -3813,6 +4448,7 @@ class _ChatScreenState extends State<ChatScreen>
       case ActiveChatEvent.responseMetrics:
       case ActiveChatEvent.queueChanged:
       case ActiveChatEvent.sessionInfo:
+      case ActiveChatEvent.dashboardAuthChanged:
         break;
     }
   }
@@ -4183,6 +4819,7 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         );
       }
+      rethrow;
     } finally {
       if (mounted) setState(() => _resolvingInteractivePrompt = false);
     }
@@ -4211,6 +4848,28 @@ class _ChatScreenState extends State<ChatScreen>
     // defunct. El stream del agente NO se cancela aquí: el servicio lo mantiene
     // vivo en segundo plano (se suelta más abajo con _chatService.release).
     _disposed = true;
+    final modelConfirmationNavigator = _modelConfirmationNavigator;
+    final modelConfirmationRoute = _modelConfirmationRoute;
+    _modelConfirmationNavigator = null;
+    _modelConfirmationRoute = null;
+    if (modelConfirmationNavigator != null &&
+        modelConfirmationNavigator.mounted &&
+        modelConfirmationRoute != null &&
+        modelConfirmationRoute.isActive) {
+      modelConfirmationNavigator.removeRoute(modelConfirmationRoute);
+    }
+    final pendingModelConfirmation = _pendingModelConfirmation;
+    _pendingModelConfirmation = null;
+    if (pendingModelConfirmation != null) {
+      _chat.dismissSessionConfigConfirmation(pendingModelConfirmation);
+    }
+    _cancelSessionContextBootstrapRetry();
+    _passiveConversationReader?.dispose();
+    _passiveConversationReader = null;
+    _subagentPollTimer?.cancel();
+    _subagentPollTimer = null;
+    _subagentPollingRuntimeId = null;
+    _invalidatePassiveMessageRefresh();
     WidgetsBinding.instance.removeObserver(this);
     hermesRouteObserver.unsubscribe(this);
     // Al salir de la pantalla deja de ser la sesión visible (si lo era).
@@ -4236,6 +4895,8 @@ class _ChatScreenState extends State<ChatScreen>
     _sttSub = null;
     final voice = _voice;
     if (voice != null) {
+      voice.cancelNativeVoicePreparationOwnedBy(this);
+      _nativeVoicePreparation = null;
       voice.disableHermesServerDictation(owner: this);
       unawaited(
         voice.stopManualReadAloud(messageKeyPrefix: '${widget.session.id}:'),
@@ -4256,13 +4917,23 @@ class _ChatScreenState extends State<ChatScreen>
     _draftTimer?.cancel();
     _keyboardScrollTimer?.cancel();
     _streamingRevealTimer?.cancel();
-    if (!_composerSubmissionInFlight) {
-      unawaited(
-        _saveDraftSnapshot(
-          _textController.text,
-          List<AttachmentDraft>.of(_pendingAttachments),
-        ),
+    if (!_composerSubmissionInFlight && _failedTurnDiscardInFlightId == null) {
+      final finalDraftSave = _saveDraftSnapshot(
+        _textController.text,
+        List<AttachmentDraft>.of(_pendingAttachments),
+        finalDisposeSnapshot: true,
       );
+      // Let this captured flush settle before retiring its producer. Storage
+      // still rechecks replacement owners and cleanup epochs at each effect.
+      unawaited(
+        finalDraftSave.whenComplete(() {
+          LocalConversationCleanupFence.endLifecycle(
+            _localConversationLifecycle,
+          );
+        }),
+      );
+    } else {
+      LocalConversationCleanupFence.endLifecycle(_localConversationLifecycle);
     }
     _textController.removeListener(_onComposerChanged);
     _textFocusNode
@@ -4280,6 +4951,17 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    final wasInForeground = _appInForeground;
+    _appInForeground = state == AppLifecycleState.resumed;
+    if (wasInForeground != _appInForeground) {
+      _viewerAttachGeneration += 1;
+      _cancelSessionContextBootstrapRetry();
+    }
+    if (wasInForeground != _appInForeground && mounted && !_disposed) {
+      setState(() {});
+    }
+    _syncPassiveTranscriptRefresh();
+    _syncSubagentPolling();
     // El modo voz lo gobierna el controlador global (vía HermesAppState), que
     // ya recibe el ciclo de vida globalmente. Aquí solo paramos el dictado del
     // COMPOSER si la app pasa al fondo; el TTS del modo voz NO se toca para que el
@@ -4287,11 +4969,17 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      // A setup that began while this route owned the foreground cannot regain
+      // authority after an asynchronous dashboard response. This only revokes
+      // the opaque preparation; an already-active opted-in conversation stays
+      // under the global controller's lifecycle policy.
+      _invalidateOwnedNativeVoicePreparation();
       // No dependas del debounce si Android congela o termina el proceso justo
       // después de mandar la app al fondo. Persistimos el estado exacto del
       // composer (texto + adjuntos) antes de perder tiempo de ejecución.
       _draftTimer?.cancel();
-      if (!_composerSubmissionInFlight) {
+      if (!_composerSubmissionInFlight &&
+          _failedTurnDiscardInFlightId == null) {
         unawaited(
           _saveDraftSnapshot(
             _textController.text,
@@ -4307,6 +4995,9 @@ class _ChatScreenState extends State<ChatScreen>
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
     if (state == AppLifecycleState.resumed) {
       _loadActiveModel();
+      if (_chatBound) {
+        unawaited(_chat.warmDesktopGatewayForAutomaticBootstrap());
+      }
     }
   }
 
@@ -4331,14 +5022,9 @@ class _ChatScreenState extends State<ChatScreen>
     final atBottom =
         _scrollController.position.pixels <=
         _scrollController.position.minScrollExtent + 100;
-    // Acercarse al extremo ANTIGUO dispara el backfill paginado del
-    // transcript (patrón "Show earlier" de Desktop): el servicio antepone la
-    // página anterior sin mover el viewport (crece maxScrollExtent).
-    if (_scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 400 &&
-        _chat.hasEarlierMessages) {
-      unawaited(_chat.loadEarlierMessages());
-    }
+    // El historial anterior es una acción explícita. Llegar al borde solo hace
+    // visible el control flotante; nunca dispara red ni encadena páginas por un
+    // rebote de física/semántica de "scroll to top".
     // La flecha representa una distancia real al final, no el estado interno
     // del seguimiento. Un toque sin desplazamiento puede pausar el auto-follow
     // durante unos milisegundos, pero no debe enseñar una acción inútil si el
@@ -4352,6 +5038,36 @@ class _ChatScreenState extends State<ChatScreen>
         _liveAssistantMaterialized) {
       _scheduleTerminalLiveHostRelease();
     }
+  }
+
+  Future<void> _loadEarlierMessages() async {
+    if (_loadingEarlierMessages || !_chat.hasEarlierMessages) return;
+    final position = _scrollController.hasClients
+        ? _scrollController.position
+        : null;
+    final previousPixels = position?.pixels;
+    final previousMax = position?.maxScrollExtent;
+    setState(() {
+      _loadingEarlierMessages = true;
+      _coreReadCoverageNoticeDismissed = false;
+    });
+    await _chat.loadEarlierMessages(continuePastInvisible: true);
+    if (_disposed || !mounted) return;
+    setState(() => _loadingEarlierMessages = false);
+    if (previousPixels == null || previousMax == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted || !_scrollController.hasClients) return;
+      final next = _scrollController.position;
+      final extentDelta = next.maxScrollExtent - previousMax;
+      if (extentDelta <= 0) return;
+      // The transcript is reverse:true: older rows extend the far (max) edge,
+      // while every existing row keeps its bottom-origin coordinate. Consume
+      // the measured extent delta by retaining the captured coordinate rather
+      // than following the new max edge.
+      next.jumpTo(
+        previousPixels.clamp(next.minScrollExtent, next.maxScrollExtent),
+      );
+    });
   }
 
   void _scheduleTerminalLiveHostRelease() {
@@ -4664,23 +5380,37 @@ class _ChatScreenState extends State<ChatScreen>
       return cached.plan;
     }
 
-    final split = splitReasoning(content);
+    final split = ReasoningSplit(
+      reasoning: '',
+      answer: finalizedPublicAssistantText(content),
+    );
     if (split.answer.length <= _assistantChunkMaxChars) {
       _cacheAssistantRenderPlan(content, null);
       return null;
     }
 
     final chunks = <_AssistantBodyChunk>[];
-    for (final segment in GeneratedImageService.segments(split.answer)) {
-      switch (segment) {
-        case ImageSegment(:final basename):
-          chunks.add(_AssistantGeneratedImageChunk(basename));
-        case TextSegment(:final text):
-          if (text.trim().isEmpty) continue;
-          final structured = prepareAssistantAnswerStructure(text);
-          for (final part in splitAssistantMarkdownForViewport(structured)) {
-            if (part.trim().isNotEmpty) {
-              chunks.add(_AssistantMarkdownChunk(part));
+    for (final mediaSegment in GeneratedMediaService.parseSegments(
+      split.answer,
+    )) {
+      switch (mediaSegment) {
+        case GeneratedMediaFileSegment(:final reference):
+          chunks.add(_AssistantGeneratedMediaChunk(reference));
+        case GeneratedMediaTextSegment(:final text):
+          for (final imageSegment in GeneratedImageService.segments(text)) {
+            switch (imageSegment) {
+              case ImageSegment(:final basename):
+                chunks.add(_AssistantGeneratedImageChunk(basename));
+              case TextSegment(:final text):
+                if (text.trim().isEmpty) continue;
+                final structured = prepareAssistantAnswerStructure(text);
+                for (final part in splitAssistantMarkdownForViewport(
+                  structured,
+                )) {
+                  if (part.trim().isNotEmpty) {
+                    chunks.add(_AssistantMarkdownChunk(part));
+                  }
+                }
             }
           }
       }
@@ -4819,17 +5549,17 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
-  Future<void> _fetchMessages() async {
+  Future<bool> _fetchMessages({bool passiveOnly = false}) async {
     await _profileReady;
-    if (!mounted) return;
+    if (!mounted) return false;
     // No recargues sobre un stream en curso: clobbearía el parcial que llega.
     if (_chat.isStreaming) {
-      if (mounted) {
+      if (!passiveOnly && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).chaStatusExecuting)),
         );
       }
-      return;
+      return true;
     }
     if (widget.session.isUnpersistedMobileDraft && _messages.isEmpty) {
       _chat.markStoredSessionMissing();
@@ -4840,24 +5570,36 @@ class _ChatScreenState extends State<ChatScreen>
           _error = null;
         });
       }
-      return;
+      return true;
     }
     final refreshEpoch = ++_messageRefreshEpoch;
+    final viewerGeneration = _viewerAttachGeneration;
+    bool stillOwningVisible() =>
+        !_disposed &&
+        mounted &&
+        _chatRouteVisible &&
+        _appInForeground &&
+        viewerGeneration == _viewerAttachGeneration;
     final hadTranscript = _messages.isNotEmpty;
     _messageRefreshInFlightEpoch = refreshEpoch;
+    if (passiveOnly) _passiveMessageRefreshEpoch = refreshEpoch;
     _messageRefreshPublishedEpoch = null;
     if (hadTranscript) {
       _beginMessageRefreshViewportAnchor(refreshEpoch);
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (!passiveOnly) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
 
     try {
       await _chat.loadMessages(
         expectedMessageCount: widget.session.messageCount,
         profile: _effectiveSessionProfile,
+        passiveOnly: passiveOnly,
+        stillOwningVisible: passiveOnly ? null : stillOwningVisible,
         onMessagesPublished: () {
           if (!mounted ||
               refreshEpoch != _messageRefreshEpoch ||
@@ -4867,12 +5609,17 @@ class _ChatScreenState extends State<ChatScreen>
           _messageRefreshPublishedEpoch = refreshEpoch;
         },
       );
-      if (!mounted || refreshEpoch != _messageRefreshEpoch) return;
-      // `loadMessages` may finish linking an old durable session after the
-      // eager entry attempt. Retry once from this authoritative completion.
-      unawaited(_ensureDesktopRuntimeAndBootstrapContext());
-      _syncDesktopSessionConfig();
+      if (!mounted || refreshEpoch != _messageRefreshEpoch) return false;
+      if (!passiveOnly) {
+        // Una carga interactiva puede enlazar una sesión durable anterior. El
+        // observador pasivo nunca intenta enlazar, reanudar ni adquirir runtime.
+        unawaited(_ensureDesktopRuntimeAndBootstrapContext());
+        _syncDesktopSessionConfig();
+      }
       _messageRefreshInFlightEpoch = null;
+      if (_passiveMessageRefreshEpoch == refreshEpoch) {
+        _passiveMessageRefreshEpoch = null;
+      }
       _messageRefreshPublishedEpoch = null;
       setState(() {
         _loading = false;
@@ -4882,11 +5629,16 @@ class _ChatScreenState extends State<ChatScreen>
       } else {
         _releaseMessageRefreshViewportAnchorAfterLayout(refreshEpoch);
       }
+      return true;
     } catch (e) {
-      if (!mounted || refreshEpoch != _messageRefreshEpoch) return;
+      if (!mounted || refreshEpoch != _messageRefreshEpoch) return false;
       _messageRefreshInFlightEpoch = null;
+      if (_passiveMessageRefreshEpoch == refreshEpoch) {
+        _passiveMessageRefreshEpoch = null;
+      }
       _messageRefreshPublishedEpoch = null;
       _cancelMessageRefreshViewportAnchor();
+      if (passiveOnly) return false;
       final errStr = e.toString();
       if (errStr.contains('404') || errStr.contains('not found')) {
         final isUnpersistedMobileChat =
@@ -4901,6 +5653,9 @@ class _ChatScreenState extends State<ChatScreen>
           _chat.messagesLoaded = true;
         }
         setState(() {
+          if (!isUnpersistedMobileChat) {
+            _error = errStr;
+          }
           _loading = false;
         });
         if (!isUnpersistedMobileChat) {
@@ -4908,12 +5663,13 @@ class _ChatScreenState extends State<ChatScreen>
             SnackBar(content: Text(Strings.of(context).chaMessagesError)),
           );
         }
-        return;
+        return false;
       }
       setState(() {
         _error = errStr;
         _loading = false;
       });
+      return false;
     }
   }
 
@@ -4940,6 +5696,8 @@ class _ChatScreenState extends State<ChatScreen>
         _compressingSession) {
       return false;
     }
+    _passiveConversationReader?.setVisible(false);
+    _invalidatePassiveMessageRefresh();
     widget.sendAttemptObserver?.call();
     if (mounted) {
       setState(() => _composerSubmissionInFlight = true);
@@ -4962,6 +5720,7 @@ class _ChatScreenState extends State<ChatScreen>
         _composerSubmissionInFlight = false;
         if (submitsAttachment) _attachmentSubmitting = false;
       }
+      _syncPassiveTranscriptRefresh(refreshNow: true);
     }
   }
 
@@ -5434,6 +6193,10 @@ class _ChatScreenState extends State<ChatScreen>
     await _profileReady;
     final outboxRecoveryAvailable = await _initialOutboxRead.future;
     if (!mounted || _roomTaskSubmitting) return false;
+    if (_chat.mutationsBlockedByOwnershipConflict &&
+        !_chat.manualOwnershipProbeAvailable) {
+      return false;
+    }
     if (!outboxRecoveryAvailable) {
       _showOutboxUnavailable();
       return false;
@@ -5443,12 +6206,21 @@ class _ChatScreenState extends State<ChatScreen>
     final usesComposerState =
         textOverride == null || includeComposerAttachments;
     final rawComposerText = (textOverride ?? _textController.text).trim();
-    if (!skipSlashRouting && rawComposerText.startsWith('/')) {
+    if (!skipSlashRouting &&
+        rawComposerText.startsWith('/') &&
+        shouldRouteSlashBeforeBusyAttachmentQueue(rawComposerText)) {
       final invocation = parseSlashInvocation(rawComposerText);
       final local = parseSlashCommand(rawComposerText);
       if (local?.command.action == SlashAction.unavailable) {
         await _executeSlash(local!.command, local.arg);
         return true;
+      }
+      if (invocation == null) {
+        final unknownName = rawComposerText.substring(1);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(str.chaCommandUnknown(unknownName))),
+        );
+        return false;
       }
       if (_pendingAttachments.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5460,7 +6232,7 @@ class _ChatScreenState extends State<ChatScreen>
         await _executeSlash(local.command, local.arg);
         return true;
       }
-      if (invocation != null && !isUnavailableSlashName(invocation.name)) {
+      if (!isUnavailableSlashName(invocation.name)) {
         final catalog = await _loadDesktopCommandCatalog();
         if (!mounted) return false;
         CommandCatalogEntry? remote;
@@ -5483,7 +6255,7 @@ class _ChatScreenState extends State<ChatScreen>
           return true;
         }
       }
-      final unknownName = invocation?.name ?? rawComposerText.substring(1);
+      final unknownName = invocation.name;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(str.chaCommandUnknown(unknownName))),
       );
@@ -5500,6 +6272,21 @@ class _ChatScreenState extends State<ChatScreen>
     final selectedModel = _selectedModel;
     final firstSubmitConfig = _firstSubmitConfig;
     if (text.isEmpty && attachments.isEmpty) return false;
+
+    // Un turno recuperado tras perder el ACK puede haberse ejecutado ya. Volver
+    // a pulsar Enviar sobre el mismo texto no es una intención nueva y jamás
+    // debe convertirlo en `prepared`, especialmente en transportes sin
+    // idempotencia. Un texto editado sí continúa por la ruta normal con otro ID.
+    final recoveredAmbiguous = _preparedTurn;
+    if (usesComposerState &&
+        recoveredAmbiguous != null &&
+        recoveredAmbiguous.restoresComposer &&
+        recoveredAmbiguous.state == PreparedTurnState.ambiguous &&
+        recoveredAmbiguous.text == text) {
+      _showHiddenRecoveredTurn(recoveredAmbiguous);
+      return false;
+    }
+
     final roomRouting = usesComposerState
         ? await _routeSelectedRoomMention(text: text, attachments: attachments)
         : null;
@@ -5674,10 +6461,11 @@ class _ChatScreenState extends State<ChatScreen>
       fullText = text;
     }
 
-    // Adjuntos nunca usan steering: el lote completo se prepara y se conserva
-    // como siguiente turno normal, con la misma identidad y payloads que usará
-    // el transporte al drenar la cola.
-    if (_sending && attachments.isNotEmpty) {
+    final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
+    // Every queued composer turn is written to the encrypted outbox before the
+    // composer is cleared. This preserves FIFO across process death and keeps a
+    // rejected head visible for explicit retry instead of dropping it.
+    if (_sending || waitsForExternalOwner) {
       final now = DateTime.now().millisecondsSinceEpoch;
       final prepared = PreparedTurn(
         connectionId: widget.connection.id,
@@ -5722,56 +6510,6 @@ class _ChatScreenState extends State<ChatScreen>
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
-      }
-      return true;
-    }
-
-    // Igual que Hermes Desktop/TUI: una indicación de solo texto durante el run se incorpora
-    // mediante session.redirect (o session.steer en gateways antiguos) sin
-    // cancelar herramientas, razonamiento ni estado ya completado. La cola
-    // local queda únicamente como degradación cuando el transporte confirma
-    // que no dispone de steering.
-    if (_sending) {
-      bool ownsComposerBatch() =>
-          textOverride == null &&
-          _textController.text == composerTextAtSubmit &&
-          _sameAttachmentDrafts(_pendingAttachments, attachments);
-
-      try {
-        await _chat.steer(fullText);
-        if (ownsComposerBatch()) _textController.clear();
-        if (!mounted) return true;
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(str.chaSteerSupplementsLabel),
-              duration: const Duration(milliseconds: 1400),
-            ),
-          );
-      } catch (error) {
-        final safeToQueue =
-            error is StateError ||
-            (error is TuiGatewayRpcError &&
-                (error.code == -32601 ||
-                    error.code == 4007 ||
-                    error.code == 4009));
-        if (safeToQueue) {
-          _chat.enqueue(fullText);
-          if (ownsComposerBatch()) _textController.clear();
-          if (!mounted) return true;
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
-          return true;
-        } else if (mounted) {
-          // Timeouts y cortes de red son ambiguos: el servidor puede haber
-          // aceptado el redirect. No autoencolamos porque duplicaría el texto.
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(SnackBar(content: Text(str.chaSteerFailed)));
-        }
-        return false;
       }
       return true;
     }
@@ -5912,6 +6650,7 @@ class _ChatScreenState extends State<ChatScreen>
       setState(() {
         _textController.clear();
         _pendingAttachments.clear();
+        _composerPreparedTurnClientTurnId = null;
         _showScrollToBottom = false;
       });
       _restoringDraft = false;
@@ -5923,6 +6662,11 @@ class _ChatScreenState extends State<ChatScreen>
       // El transporte no confirmó el turno. Texto y lote permanecen tanto en
       // pantalla como en el borrador persistente; reintentar no pierde imágenes.
       _preparedTurn = delivery.current;
+      _composerPreparedTurnClientTurnId =
+          delivery.current.state == PreparedTurnState.failedBeforeAcceptance &&
+              delivery.current.restoresComposer
+          ? delivery.current.clientTurnId
+          : null;
       if (mounted && composerReleasedBeforeAcceptance) {
         _restoringDraft = true;
         setState(() {
@@ -5938,7 +6682,13 @@ class _ChatScreenState extends State<ChatScreen>
         });
         _restoringDraft = false;
       }
-      if (usesComposerState) await _saveDraftSnapshot(text, attachments);
+      if (usesComposerState) {
+        await _saveDraftSnapshot(
+          text,
+          attachments,
+          preparedTurnClientTurnId: _composerPreparedTurnClientTurnId,
+        );
+      }
       if (delivery.persistenceFailed && !delivery.transportStarted) {
         _showOutboxUnavailable();
       }
@@ -5949,6 +6699,7 @@ class _ChatScreenState extends State<ChatScreen>
     // aunque esta ruta se haya destruido mientras esperaba el ACK.
     final acceptedTurn = delivery.current;
     _preparedTurn = acceptedTurn;
+    _composerPreparedTurnClientTurnId = null;
     if (delivery.persistenceFailed) {
       // El servidor ya confirmó el prompt; no se vuelve a habilitar como si no
       // se hubiera enviado. Intentamos retirar cualquier marca obsoleta.
@@ -6030,11 +6781,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No se pudo guardar Stop de forma segura. Reinténtalo.',
-            ),
-          ),
+          SnackBar(content: Text(Strings.of(context).chaStopPersistenceFailed)),
         );
       }
     } finally {
@@ -6055,47 +6802,37 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Retry the last failed send.
-  void _retryLastPrompt() {
-    if (_lastPrompt.isEmpty) return;
-    _removeLatestFailedPromptProjection(
-      _lastPrompt,
-      allowLegacyContentPair: true,
-    );
+  Future<void> _retryLastPrompt([String? bubblePrompt]) async {
+    // The error bubble remembers its own prompt; after a relaunch the screen's
+    // last prompt can be empty while the bubble is still on screen.
+    final prompt = _lastPrompt.isNotEmpty ? _lastPrompt : (bubblePrompt ?? '');
+    if (_chat.awaitingDurableTurnRecovery) {
+      final reconciled = await _chat.reconcileAfterResume();
+      if (reconciled || !mounted || _chat.state != ChatPipelineState.failed) {
+        return;
+      }
+      // The server holds no evidence of this turn: reconciling cannot recover
+      // anything, so the retry the user asked for is a real resend.
+    }
+    if (prompt.isEmpty) return;
+    _removeLatestFailedPromptProjection(prompt, allowLegacyContentPair: true);
     // En un fallo previo al ACK, el composer ya conserva el texto y todos los
     // adjuntos originales. Solo reconstruimos desde lastPrompt para sesiones
     // antiguas o fallos posteriores al ACK donde el composer sí estaba vacío.
     if (_textController.text.trim().isEmpty && _pendingAttachments.isEmpty) {
-      _textController.text = _lastPrompt;
+      _textController.text = prompt;
     }
     setState(() => _pipelineState = ChatPipelineState.idle);
-    _sendMessage();
+    await _sendMessage();
   }
 
   bool _removeLatestFailedPromptProjection(
     String prompt, {
     bool allowLegacyContentPair = false,
-  }) {
-    if (_messages.isEmpty) return false;
-    final error = _messages.first;
-    if (error['role'] != 'assistant_error' ||
-        (error['_prompt'] ?? '').toString() != prompt) {
-      return false;
-    }
-    final projectionId = error['_localTranscriptProjectionId'];
-    _messages.removeAt(0);
-    if (_messages.isEmpty || _messages.first['role'] != 'user') return true;
-    final user = _messages.first;
-    final paired =
-        projectionId is String &&
-        projectionId.isNotEmpty &&
-        user['_localTranscriptPairId'] == projectionId;
-    final legacyPair =
-        allowLegacyContentPair &&
-        projectionId == null &&
-        (user['content'] ?? '').toString() == prompt;
-    if (paired || legacyPair) _messages.removeAt(0);
-    return true;
-  }
+  }) => _chat.removeLatestFailedPromptProjection(
+    prompt,
+    allowLegacyContentPair: allowLegacyContentPair,
+  );
 
   int? _userOrdinalFor(Map<String, dynamic> target) {
     return _currentRenderProjection.userOrdinalFor(target);
@@ -6112,10 +6849,8 @@ class _ChatScreenState extends State<ChatScreen>
         parsed.attachments.isNotEmpty) {
       return false;
     }
-    return !_chat.isStreaming || ordinal == _visibleUserCount - 1;
+    return true;
   }
-
-  int get _visibleUserCount => _currentRenderProjection.visibleUserCount;
 
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
@@ -6197,6 +6932,35 @@ class _ChatScreenState extends State<ChatScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  Future<void> _editQueuedEntry(QueuedEntryView entry) async {
+    if (_editingQueuedEntryId != null ||
+        entry.kind == QueuedEntryKind.desktopAccepted) {
+      return;
+    }
+    setState(() => _editingQueuedEntryId = entry.id);
+    final edited = await showHermesFloatingSurface<String>(
+      context: context,
+      surfaceKey: ValueKey('chat-queue-edit-dialog-${entry.id}'),
+      maxWidth: 560,
+      maxHeightFactor: 1,
+      builder: (_) => _EditUserMessageSheet(initialText: entry.text),
+    );
+    if (!mounted) return;
+    var saved = true;
+    if (edited != null &&
+        edited.trim().isNotEmpty &&
+        edited.trim() != entry.text) {
+      saved = await _chat.editQueuedTurn(entry.id, edited);
+    }
+    if (!mounted) return;
+    setState(() => _editingQueuedEntryId = null);
+    if (!saved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaQueueEditFailed)),
+      );
     }
   }
 
@@ -6467,68 +7231,88 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<bool> _compressDesktopSession(String focusTopic) async {
-    if (_compressingSession) return false;
+    if (_compressingSession) {
+      _restoreComposerFocusAfterCompression();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaCompressionBusy)),
+      );
+      return false;
+    }
     if (widget.connection.readOnly) {
       showReadOnlyNotice(context);
       return false;
     }
 
-    setState(() => _compressionCommandInFlight = true);
+    setState(() {
+      _compressionCommandInFlight = true;
+      _compressionDraftFocusRetained = false;
+    });
     try {
-      if (!await _chat.ensureDesktopRuntime()) {
-        throw const TuiGatewayRpcError(
-          'slash.exec',
-          'No live runtime is available for session compression',
-          code: 4007,
-        );
-      }
-      final result = await _chat.compressDesktopSession(
+      final presentation = await _chat.compressDesktopSessionForPresentation(
         focusTopic: focusTopic.trim(),
       );
       if (!mounted) return false;
+      if (!presentation.projection.isCurrent) return false;
+      if (presentation.failure case final failure?) throw failure;
+      final result = presentation.command!;
       final strings = Strings.of(context);
-      final message = result.accepted == DesktopCommandAcceptance.accepted
-          ? (result.output?.trim().isNotEmpty == true
-                ? result.output!.trim()
-                : strings.chaCompressionAccepted)
-          : _compressionFailureMessage(strings, result.failure?.code);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
+      final message = _compressionResultMessage(strings, result);
+      final compression = result.compressionResult;
+      final hasDurableTimelineOutcome =
+          (result.compressionStatus == DesktopCompressionStatus.compressed ||
+              result.compressionStatus == DesktopCompressionStatus.noOp) &&
+          compression?.removed != null &&
+          compression?.beforeMessages != null &&
+          compression?.afterMessages != null &&
+          compression?.beforeTokens != null &&
+          compression?.afterTokens != null;
+      if (!hasDurableTimelineOutcome) {
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
             duration: const Duration(seconds: 7),
           ),
         );
-      return result.accepted == DesktopCommandAcceptance.accepted;
+      }
+      final succeeded = _compressionSucceeded(result);
+      if (!succeeded) {
+        _restoreComposerFocusAfterCompression(
+          retainWhileFenced: result.compressionStatus == null,
+        );
+      }
+      return succeeded;
     } on TuiGatewayRpcError catch (error) {
       if (!mounted) return false;
+      _restoreComposerFocusAfterCompression();
       final strings = Strings.of(context);
-      final message = _compressionFailureMessage(strings, error.code);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(message),
-            duration: const Duration(seconds: 8),
-          ),
-        );
+      final message = _chat.desktopCompressionTransportUncertain
+          ? strings.chaCompressionReconciling
+          : _compressionFailureMessage(strings, error.code);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
+      );
       return false;
     } catch (_) {
       if (!mounted) return false;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaCompressionUnknown),
-            duration: const Duration(seconds: 8),
-          ),
-        );
+      _restoreComposerFocusAfterCompression();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Strings.of(context).chaCompressionUnknown),
+          duration: const Duration(seconds: 8),
+        ),
+      );
       return false;
     } finally {
       _compressionCommandInFlight = false;
       if (mounted) setState(() {});
     }
+  }
+
+  void _restoreComposerFocusAfterCompression({bool retainWhileFenced = true}) {
+    _compressionDraftFocusRetained = retainWhileFenced;
+    _textFocusNode.canRequestFocus = true;
+    _textFocusNode.requestFocus();
+    FocusManager.instance.applyFocusChangesIfNeeded();
   }
 
   String _compressionFailureMessage(Strings strings, int? code) =>
@@ -6540,6 +7324,34 @@ class _ChatScreenState extends State<ChatScreen>
         _ => strings.chaCompressionUnknown,
       };
 
+  String _compressionResultMessage(
+    Strings strings,
+    DesktopCommandDispatch result,
+  ) => switch (result.compressionStatus) {
+    DesktopCompressionStatus.compressed => strings.chaCompressionCompleted,
+    DesktopCompressionStatus.noOp => strings.chaCompressionNoop(
+      result.compressionResult?.beforeMessages ?? 0,
+      (result.compressionResult?.beforeTokens ?? 0).toString(),
+    ),
+    DesktopCompressionStatus.aborted => strings.chaCompressionAborted,
+    DesktopCompressionStatus.pending => strings.chaCompressionPending,
+    DesktopCompressionStatus.lockHeld => strings.chaCompressionLockHeld,
+    null =>
+      _chat.desktopCompressionTransportUncertain
+          ? strings.chaCompressionReconciling
+          : result.accepted == DesktopCommandAcceptance.accepted
+          ? (result.output?.trim().isNotEmpty == true
+                ? result.output!.trim()
+                : strings.chaCompressionAccepted)
+          : _compressionFailureMessage(strings, result.failure?.code),
+  };
+
+  bool _compressionSucceeded(DesktopCommandDispatch result) =>
+      result.compressionStatus == DesktopCompressionStatus.compressed ||
+      result.compressionStatus == DesktopCompressionStatus.noOp ||
+      (result.compressionStatus == null &&
+          result.accepted == DesktopCommandAcceptance.accepted);
+
   void _pushScreen(Widget screen) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
@@ -6549,6 +7361,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _setModelByName(String arg) async {
     final q = arg.toLowerCase();
     try {
+      if (!_chat.hasDesktopRuntime &&
+          !await _chat.ensureDesktopRuntime(acquireForExplicitAction: true)) {
+        return false;
+      }
       final (_, providers) = await _loadModelOptions();
       final matches = <(ModelProvider, String)>[];
       for (final p in providers) {
@@ -6593,7 +7409,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!_chat.hasDesktopRuntime) {
       try {
-        await _chat.ensureDesktopRuntime();
+        await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -6659,27 +7475,53 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       result = await _chat.setSessionModel(selection);
       if (result.status == SessionConfigChangeStatus.confirmRequired) {
-        if (!targetContext.mounted) return false;
-        final confirmed = await showDialog<bool>(
-          context: targetContext,
-          builder: (dctx) => AlertDialog(
-            backgroundColor: Theme.of(dctx).hermes.surface,
-            title: Text(str.chaModelChangeTitle),
-            content: Text(result.confirmMessage ?? ''),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dctx, false),
-                child: Text(str.chaCancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dctx, true),
-                child: Text(str.chaChange),
-              ),
-            ],
-          ),
-        );
-        if (confirmed != true) return false;
-        result = await _chat.confirmSessionModel(result);
+        final confirmation = result;
+        _pendingModelConfirmation = confirmation;
+        try {
+          if (!targetContext.mounted) {
+            _chat.dismissSessionConfigConfirmation(confirmation);
+            return false;
+          }
+          final navigator = Navigator.of(targetContext, rootNavigator: true);
+          final route = DialogRoute<bool>(
+            context: targetContext,
+            builder: (dctx) => AlertDialog(
+              backgroundColor: Theme.of(dctx).hermes.surface,
+              title: Text(str.chaModelChangeTitle),
+              content: Text(confirmation.confirmMessage ?? ''),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dctx, false),
+                  child: Text(str.chaCancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dctx, true),
+                  child: Text(str.chaChange),
+                ),
+              ],
+            ),
+          );
+          _modelConfirmationNavigator = navigator;
+          _modelConfirmationRoute = route;
+          final bool? confirmed;
+          try {
+            confirmed = await navigator.push(route);
+          } finally {
+            if (identical(_modelConfirmationRoute, route)) {
+              _modelConfirmationNavigator = null;
+              _modelConfirmationRoute = null;
+            }
+          }
+          if (confirmed != true) {
+            _chat.dismissSessionConfigConfirmation(confirmation);
+            return false;
+          }
+          result = await _chat.confirmSessionModel(confirmation);
+        } finally {
+          if (identical(_pendingModelConfirmation, confirmation)) {
+            _pendingModelConfirmation = null;
+          }
+        }
       }
     } catch (error) {
       if (mounted) {
@@ -6722,7 +7564,7 @@ class _ChatScreenState extends State<ChatScreen>
     final str = Strings.of(context);
     if (!_chat.hasDesktopRuntime) {
       try {
-        await _chat.ensureDesktopRuntime();
+        await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -6778,7 +7620,7 @@ class _ChatScreenState extends State<ChatScreen>
     final str = Strings.of(context);
     if (!_chat.hasDesktopRuntime) {
       try {
-        await _chat.ensureDesktopRuntime();
+        await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -6968,9 +7810,14 @@ class _ChatScreenState extends State<ChatScreen>
             extensions: strings.drawerExtensions,
             delete: strings.sesDelete,
             readOnly: strings.statusReadOnly,
+            releaseDesktop: strings.chaControlReleaseDesktop,
+            releaseUnavailable: strings.chaRuntimeReleaseUnavailable,
           ),
           conversationTitle: widget.session.displayTitle,
           readOnly: sessionReadOnly,
+          showReleaseDesktop: _chat.showReleaseToDesktopControl,
+          releaseDesktopEnabled: _chat.canReleaseToDesktop,
+          releaseInFlight: _chat.runtimeReleaseInFlight,
           showDetails: _devDiagnostics,
           showCron: widget.session.isJob,
           onPermissions: () => select(_ChatControlAction.permissions),
@@ -6990,6 +7837,7 @@ class _ChatScreenState extends State<ChatScreen>
               )
               ? null
               : () => select(_ChatControlAction.extensions),
+          onReleaseDesktop: () => select(_ChatControlAction.releaseDesktop),
           // A Mission Room owns a durable manager-session binding. Deleting
           // that session from the generic chat sheet would strand the Room.
           // Room removal remains available from Mission Control, where it
@@ -7016,9 +7864,46 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_openRecoveryCenter());
       case _ChatControlAction.extensions:
         unawaited(_openExtensionsCenter());
+      case _ChatControlAction.releaseDesktop:
+        unawaited(_releaseRuntimeForDesktop());
       case _ChatControlAction.delete:
         unawaited(_deleteCurrentChat());
     }
+  }
+
+  Future<void> _releaseRuntimeForDesktop() async {
+    final strings = Strings.of(context);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('chat-runtime-release-confirm-dialog'),
+        title: Text(strings.chaRuntimeReleaseConfirmTitle),
+        content: Text(strings.chaRuntimeReleaseConfirmBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(strings.sesCancel),
+          ),
+          FilledButton(
+            key: const ValueKey('chat-runtime-release-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(strings.chaRuntimeReleaseConfirm),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    final released = await _chat.releaseRuntimeForDesktop();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          released
+              ? strings.chaRuntimeReleased
+              : strings.chaRuntimeReleaseFailed,
+        ),
+      ),
+    );
   }
 
   void _showSessionDetails() {
@@ -7257,7 +8142,10 @@ class _ChatScreenState extends State<ChatScreen>
     );
     Session? childSession;
     try {
-      childSession = await client.getSession(childSessionId);
+      childSession = await client.getSession(
+        childSessionId,
+        profile: _chat.sessionProfile,
+      );
     } catch (_) {
       if (!_disposed && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -7284,8 +8172,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// La confirmación y el pending son por hijo. El reducer conserva el estado
   /// actual hasta que Hermes emita un evento autoritativo de cancelación.
-  Future<void> _confirmInterruptSubagent(SubagentActivity activity) async {
-    if (_chat.isSubagentInterruptPending(activity)) return;
+  Future<bool> _confirmInterruptSubagent(SubagentActivity activity) async {
+    if (_chat.isSubagentInterruptPending(activity)) return false;
     final strings = Strings.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -7307,15 +8195,15 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
-    if (confirmed != true || _disposed || !mounted) return;
+    if (confirmed != true || _disposed || !mounted) return false;
 
     // Puede llegar progreso mientras el diálogo está abierto. Resolver de
     // nuevo por la key estable evita operar con un snapshot de fila obsoleto.
     final current = _currentSubagentActivity(activity.key);
-    if (current == null || !_chat.canInterruptSubagent(current)) return;
+    if (current == null || !_chat.canInterruptSubagent(current)) return false;
     try {
       final found = await _chat.interruptSubagent(current);
-      if (_disposed || !mounted) return;
+      if (_disposed || !mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -7325,14 +8213,18 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
       );
+      return found;
     } on StateError {
       // Otro toque/evento ganó la carrera. El estado visible ya se actualiza
       // desde ActiveChat; no mostrar un error falso al usuario.
+      return false;
     } catch (_) {
-      if (_disposed || !mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).subagentInterruptFailed)),
-      );
+      if (!_disposed && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).subagentInterruptFailed)),
+        );
+      }
+      return false;
     }
   }
 
@@ -7417,12 +8309,16 @@ class _ChatScreenState extends State<ChatScreen>
             app == null
         ? DashboardClient.lazy(widget.connection)
         : null;
+    final ownerProfile = _chat.sessionProfile;
     try {
       final result = await deleteSessionWithResolvedLineage(
         widget.session,
-        loadSessions: ({bool includeChildren = false}) =>
-            client.getSessions(includeChildren: includeChildren),
-        deleteSession: client.deleteSession,
+        loadSessions: ({bool includeChildren = false}) => client.getSessions(
+          includeChildren: includeChildren,
+          profile: ownerProfile,
+        ),
+        deleteSession: (sessionId) =>
+            client.deleteSession(sessionId, profile: ownerProfile),
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,
@@ -7435,15 +8331,20 @@ class _ChatScreenState extends State<ChatScreen>
                   ? app.connManager.deleteLinkedCronJob(
                       widget.connection,
                       jobId,
-                      profile: app.connManager.activeProfileFor(
-                        widget.connection.id,
-                      ),
+                      profile: ownerProfile,
                     )
-                  : dashboard!.deleteCronJob(jobId),
+                  : dashboard!.deleteCronJob(jobId, profile: ownerProfile),
       );
       if (!mounted) return;
       switch (result.status) {
         case LinkedSessionDeleteStatus.deleted:
+          app?.activeChats.globalActivity.clearSession(
+            widget.connection.id,
+            ownerProfile,
+            widget.session.id,
+          );
+          await app?.activeChats.globalActivity.flushJournal();
+          if (!mounted) return;
           Navigator.pop(context, true);
           break;
         case LinkedSessionDeleteStatus.cancelled:
@@ -8079,7 +8980,7 @@ class _ChatScreenState extends State<ChatScreen>
           : HermesDrawer(
               connection: widget.connection,
               connManager: connManager,
-              current: DrawerSection.sessions,
+              current: DrawerSection.chat,
               connected: true,
             ),
       appBar: HermesAppBar(
@@ -8351,10 +9252,46 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                     child: Column(
                       children: [
+                        if (_chat.dashboardAuthRequired)
+                          _DesktopAuthRequiredBanner(
+                            message: str.chaDesktopAuthRequiredBanner,
+                          ),
+                        if (_chat.localTranscriptOlderHistoryTruncated)
+                          _LocalTranscriptTruncationNotice(
+                            message: str.chaLocalTranscriptTruncated,
+                          ),
                         Expanded(
                           child: Stack(
                             children: [
                               _buildBody(),
+                              if (_chat.hasEarlierMessages)
+                                Positioned(
+                                  top: 8,
+                                  left: 0,
+                                  right: 0,
+                                  height: 48,
+                                  child: Center(
+                                    child: _LoadEarlierMessagesButton(
+                                      key: const ValueKey('chat-load-earlier'),
+                                      loading: _loadingEarlierMessages,
+                                      onTap: _loadEarlierMessages,
+                                    ),
+                                  ),
+                                ),
+                              if (_chat.earlierMessagesLoadFailed &&
+                                  !_coreReadCoverageNoticeDismissed)
+                                Positioned(
+                                  top: 64,
+                                  left: 12,
+                                  right: 12,
+                                  child: _CoreReadPartialCoverageNotice(
+                                    message: str.chaEarlierMessagesError,
+                                    onDismiss: () => setState(
+                                      () => _coreReadCoverageNoticeDismissed =
+                                          true,
+                                    ),
+                                  ),
+                                ),
                               Positioned(
                                 left: 0,
                                 right: 0,
@@ -8392,6 +9329,9 @@ class _ChatScreenState extends State<ChatScreen>
                                                     ),
                                               curve: Curves.easeOutCubic,
                                               child: _ScrollToBottomButton(
+                                                key: const ValueKey(
+                                                  'chat-scroll-to-bottom',
+                                                ),
                                                 onTap: _scrollToBottom,
                                               ),
                                             ),
@@ -8402,9 +9342,62 @@ class _ChatScreenState extends State<ChatScreen>
                                   },
                                 ),
                               ),
+                              if (_chat.pendingInteractivePrompt != null)
+                                Positioned.fill(
+                                  child: Stack(
+                                    children: [
+                                      // Dim the transcript instead of hiding
+                                      // it: the question stays anchored above
+                                      // the composer like Desktop's inline
+                                      // clarify, not as a blank full screen.
+                                      Positioned.fill(
+                                        child: ColoredBox(
+                                          color: colors.background.withAlpha(
+                                            178,
+                                          ),
+                                        ),
+                                      ),
+                                      Positioned(
+                                        left: 0,
+                                        right: 0,
+                                        bottom: 0,
+                                        child: InteractivePromptCard(
+                                          key: ValueKey(
+                                            'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
+                                            '${_chat.pendingInteractivePrompt!.key.requestId}',
+                                          ),
+                                          entry:
+                                              _chat.pendingInteractivePrompt!,
+                                          busy:
+                                              _resolvingInteractivePrompt ||
+                                              _chat
+                                                      .pendingInteractivePrompt!
+                                                      .status ==
+                                                  InteractivePromptStatus
+                                                      .responding,
+                                          onSubmit: (value) {
+                                            unawaited(
+                                              _resolveInteractivePrompt(value),
+                                            );
+                                          },
+                                          onSubmitBatch: (answers) {
+                                            return _resolveInteractivePromptBatch(
+                                              answers,
+                                            );
+                                          },
+                                          onCancel: _cancelInteractivePrompt,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                         ),
+                        // Ownership conflicts keep the transcript and composer
+                        // mounted while fencing every mutation.
+                        if (_chat.conflictReadOnly)
+                          _buildRuntimeOwnershipBanner(),
                         // Aprobación inline: aparece justo encima del composer cuando el
                         // agente pide permiso (motor /v1/runs).
                         if (_chat.pendingApproval != null)
@@ -8416,39 +9409,74 @@ class _ChatScreenState extends State<ChatScreen>
                                 .findAncestorStateOfType<HermesAppState>()
                                 ?.companion,
                           ),
-                        if (_chat.pendingInteractivePrompt != null)
-                          InteractivePromptCard(
-                            key: ValueKey(
-                              'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
-                              '${_chat.pendingInteractivePrompt!.key.requestId}',
+                        if (_chat.desktopContinuationRequired)
+                          Semantics(
+                            container: true,
+                            label: 'Continúa esta solicitud en Hermes Desktop',
+                            child: const Card(
+                              key: ValueKey('desktop-continuation-required'),
+                              child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.desktop_windows_outlined),
+                                    SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        'Continúa esta solicitud en Hermes Desktop',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                            entry: _chat.pendingInteractivePrompt!,
-                            busy:
-                                _resolvingInteractivePrompt ||
-                                _chat.pendingInteractivePrompt!.status ==
-                                    InteractivePromptStatus.responding,
-                            onSubmit: (value) {
-                              unawaited(_resolveInteractivePrompt(value));
-                            },
-                            onSubmitBatch: (answers) {
-                              _resolveInteractivePromptBatch(answers);
-                            },
-                            onCancel: _cancelInteractivePrompt,
                           ),
-                        if (_chat.subagentActivities.isNotEmpty)
-                          SubagentActivityCard(
+                        KeyedSubtree(
+                          key: const ValueKey('chat-session-activity'),
+                          child: SubagentActivityCard(
+                            key: const ValueKey('chat-subagent-status'),
                             activities: _chat.subagentActivities,
+                            safeChildCount:
+                                _chat.safeActiveSubagentCount >
+                                    (_chat.hasRecentPassiveRemoteActivity
+                                        ? _chat.passiveActivityAggregate.total
+                                        : 0)
+                                ? _chat.safeActiveSubagentCount
+                                : (_chat.hasRecentPassiveRemoteActivity
+                                      ? _chat.passiveActivityAggregate.total
+                                      : 0),
+                            background:
+                                _chat.hasRecentPassiveRemoteActivity ||
+                                _chat.safeActiveSubagentCount > 0,
                             canInterrupt: _chat.canInterruptSubagent,
+                            canSteer: _chat.canSteerSubagent,
                             isInterruptPending:
                                 _chat.isSubagentInterruptPending,
+                            appForeground:
+                                _appInForeground && _chatRouteVisible,
+                            onTail: (activity) async {
+                              final result = await _chat.tailSubagent(activity);
+                              return SubagentTailView(
+                                available: result.available,
+                                content: result.content,
+                                truncated: result.truncated,
+                              );
+                            },
+                            onSteer: (activity, text) async {
+                              final result = await _chat.steerSubagent(
+                                activity,
+                                text,
+                              );
+                              return SubagentSteerView(status: result.status);
+                            },
                             isOpenPending: _isSubagentOpenPending,
                             onOpenConversation: (activity) {
                               unawaited(_openSubagentConversation(activity));
                             },
-                            onInterrupt: (activity) {
-                              unawaited(_confirmInterruptSubagent(activity));
-                            },
+                            onStopRequested: _confirmInterruptSubagent,
                           ),
+                        ),
+                        _buildStopStatusStrip(colors),
                         _buildQueueStrip(colors),
                         if ((_vc?.active ?? false) && !showVoiceSurface)
                           _buildVoiceReturnBar(
@@ -8585,16 +9613,19 @@ class _ChatScreenState extends State<ChatScreen>
       progress.dispose();
       return;
     }
-    var res = (ok: false, detail: strings.bridgeNotDetected);
+    BridgeUpdateResult res = BridgeUpdateResult.failure(
+      BridgeUpdateFailure.repairFailed,
+      strings.bridgeNotDetected,
+    );
     try {
       res = await BridgeUpdateService.update(
         widget.connection,
         onProgress: (stage) => progress.value = stage,
       );
     } catch (error) {
-      res = (
-        ok: false,
-        detail: '${strings.bridgeNotDetected} (${error.runtimeType})',
+      res = BridgeUpdateResult.failure(
+        BridgeUpdateFailure.repairFailed,
+        '${strings.bridgeNotDetected} (${error.runtimeType})',
       );
     }
     final dialogContext = progressDialogContext;
@@ -8621,7 +9652,10 @@ class _ChatScreenState extends State<ChatScreen>
         _showModelSheet();
         return;
       }
-      res = (ok: false, detail: strings.bridgeNotDetected);
+      res = BridgeUpdateResult.failure(
+        BridgeUpdateFailure.verificationFailed,
+        strings.bridgeNotDetected,
+      );
     }
 
     // El agente declinó, el servidor no tiene gestor persistente o el bridge
@@ -9804,6 +10838,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// puede arrancar usando motores locales a escondidas.
   Future<bool> _maybeOfferNativeVoice(HermesAppState app) async {
     DashboardClient? discoveryClient;
+    final connection = widget.connection;
+    final preparation = app.voice.beginNativeVoicePreparation(owner: this);
+    if (preparation == null) return false;
+    _nativeVoicePreparation = preparation;
     try {
       final prefs = await SharedPreferences.getInstance();
       final dashboard = DashboardClient.lazy(widget.connection);
@@ -9815,6 +10853,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
       final mode = NativeVoiceModeStore(prefs).read(identity);
       if (mode != NativeVoiceMode.server) {
+        app.voice.cancelNativeVoicePreparation(preparation);
         app.voice.enableOnDeviceVoice();
         debugPrint(
           '[VOICE-PERF] voice.route.selected=phone status=ready '
@@ -9826,7 +10865,6 @@ class _ChatScreenState extends State<ChatScreen>
       final consentStore = NativeVoiceConsentStore(prefs);
       final consent = consentStore.read(identity);
       if (consent != NativeVoiceConsent.accepted) {
-        app.voice.disableNativeVoice();
         debugPrint(
           '[VOICE-PERF] voice.route.selected=server status=blocked_consent',
         );
@@ -9843,7 +10881,6 @@ class _ChatScreenState extends State<ChatScreen>
         await capabilityStore.write(identity, capability);
       }
       if (!capability.ok) {
-        app.voice.disableNativeVoice();
         debugPrint(
           '[VOICE-PERF] voice.route.selected=server status=unavailable',
         );
@@ -9858,19 +10895,31 @@ class _ChatScreenState extends State<ChatScreen>
         connection: widget.connection,
         preferences: prefs,
         profile: profile,
+        owner: this,
+        preparation: preparation,
+        isStillCurrent: () =>
+            mounted &&
+            !_disposed &&
+            identical(_nativeVoicePreparation, preparation) &&
+            identical(widget.connection, connection) &&
+            _effectiveSessionProfile == profile,
         dashboardClient: dashboard,
       );
-      if (!configured) app.voice.disableNativeVoice();
       debugPrint(
         '[VOICE-PERF] voice.route.selected=server '
         'status=${configured ? 'ready' : 'unavailable'}',
       );
       return configured;
     } catch (e) {
-      debugPrint('[voice-stab] oferta de voz nativa omitida: $e');
-      app.voice.disableNativeVoice();
+      debugPrint(
+        '[voice-stab] oferta de voz nativa omitida (${e.runtimeType})',
+      );
       return false;
     } finally {
+      app.voice.cancelNativeVoicePreparation(preparation);
+      if (identical(_nativeVoicePreparation, preparation)) {
+        _nativeVoicePreparation = null;
+      }
       discoveryClient?.close();
     }
   }
@@ -9956,6 +11005,7 @@ class _ChatScreenState extends State<ChatScreen>
       chat: _chat,
       model: _selectedModel,
       profile: _effectiveSessionProfile,
+      allowTransportFallback: _firstSubmitConfig.allowTransportFallback,
       // En el primer turno por voz, fija el título de la sesión a partir del
       // texto dictado (igual que el envío por teclado).
       onBeforeSend: _persistAutoTitleIfNeeded,
@@ -10180,12 +11230,63 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Estado de Stop respaldado por el ACK exacto del runtime.
+  Widget _buildStopStatusStrip(HermesThemeColors colors) {
+    final stop = _chat.stopConfirmationState;
+    if (stop == StopConfirmationState.idle) return const SizedBox.shrink();
+    final strings = Strings.of(context);
+    final label = switch (stop) {
+      StopConfirmationState.stopping => strings.chaStopStopping,
+      StopConfirmationState.retrying => strings.chaStopRetrying,
+      StopConfirmationState.confirmed => strings.chaStopConfirmed,
+      StopConfirmationState.failed => strings.chaStopFailed,
+      StopConfirmationState.idle => '',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      child: Semantics(
+        liveRegion: true,
+        label: label,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Row(
+            children: [
+              if (stop == StopConfirmationState.stopping ||
+                  stop == StopConfirmationState.retrying)
+                const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(
+                  stop == StopConfirmationState.failed
+                      ? Icons.error_outline_rounded
+                      : Icons.stop_circle_outlined,
+                  size: 20,
+                  color: stop == StopConfirmationState.failed
+                      ? colors.error
+                      : colors.textSecondary,
+                ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(label)),
+              if (stop == StopConfirmationState.failed)
+                TextButton(
+                  key: const ValueKey('chat-stop-retry'),
+                  onPressed: _cancelStream,
+                  child: Text(strings.chaStopRetry),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Indicaciones que no pudieron entrar en el turno vivo. Viven junto al
   /// composer, no como burbujas apiladas, y pueden cancelarse antes de enviarse.
   Widget _buildQueueStrip(HermesThemeColors colors) {
-    final queuedText = _chat.queuedTextMessages;
-    final queuedTurns = _chat.queuedTurns;
-    final queuedCount = queuedText.length + queuedTurns.length;
+    final queuedEntries = _chat.queuedEntries;
+    final queuedCount = queuedEntries.length;
     if (queuedCount == 0) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
@@ -10201,7 +11302,7 @@ class _ChatScreenState extends State<ChatScreen>
               borderRadius: BorderRadius.circular(8),
               onTap: () => setState(() => _queueExpanded = !_queueExpanded),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 44),
+                constraints: const BoxConstraints(minHeight: 48),
                 child: Row(
                   children: [
                     Icon(
@@ -10211,7 +11312,11 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                     const SizedBox(width: 7),
                     Text(
-                      Strings.of(context).chaQueuedCount(queuedCount),
+                      _chat.queueParked
+                          ? Strings.of(
+                              context,
+                            ).chaQueuedPausedCount(queuedCount)
+                          : Strings.of(context).chaQueuedCount(queuedCount),
                       style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w700,
@@ -10222,7 +11327,9 @@ class _ChatScreenState extends State<ChatScreen>
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        Strings.of(context).chaQueuedNote,
+                        _chat.queueParked
+                            ? Strings.of(context).chaQueueParkedNote
+                            : Strings.of(context).chaQueuedNote,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 10,
@@ -10242,36 +11349,41 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
           ),
+          if (_chat.queueParked)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const ValueKey('chat-queue-resume'),
+                onPressed: _chat.resumeParkedQueue,
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: Text(Strings.of(context).chaQueueResume),
+                style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+              ),
+            ),
           if (_queueExpanded) ...[
             Divider(
               height: 1,
               thickness: 0.5,
               color: colors.divider.withValues(alpha: 0.38),
             ),
-            for (var i = 0; i < queuedTurns.length; i++) ...[
+            for (var i = 0; i < queuedEntries.length; i++) ...[
               _QueuedRow(
-                text: queuedTurns[i].turn.text,
-                attachmentNames: queuedTurns[i].turn.activeAttachments
+                entry: queuedEntries[i],
+                attachmentNames: queuedEntries[i].attachments
                     .map((item) => item.name)
                     .toList(growable: false),
-                onCancel: () => unawaited(
-                  _chat.cancelQueuedTurn(queuedTurns[i].turn.clientTurnId),
+                busy: _chat.isStreaming,
+                editingId: _editingQueuedEntryId,
+                onEdit: () => unawaited(_editQueuedEntry(queuedEntries[i])),
+                onSteer: () =>
+                    unawaited(_chat.steerQueuedTurn(queuedEntries[i].id)),
+                onSendNow: () =>
+                    unawaited(_chat.sendQueuedNow(queuedEntries[i].id)),
+                onDelete: () => unawaited(
+                  _chat.cancelQueuedByIdentity(queuedEntries[i].id),
                 ),
               ),
-              if (i != queuedTurns.length - 1 || queuedText.isNotEmpty)
-                Divider(
-                  height: 1,
-                  thickness: 0.5,
-                  indent: 23,
-                  color: colors.divider.withValues(alpha: 0.26),
-                ),
-            ],
-            for (var i = 0; i < queuedText.length; i++) ...[
-              _QueuedRow(
-                text: queuedText[i],
-                onCancel: () => _chat.cancelQueued(i),
-              ),
-              if (i != queuedText.length - 1)
+              if (i != queuedEntries.length - 1)
                 Divider(
                   height: 1,
                   thickness: 0.5,
@@ -10469,9 +11581,68 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  Future<void> _checkRuntimeOwnership() async {
+    if (_chat.ownershipRecheckInFlight || !_chat.ownershipRecheckAvailable) {
+      return;
+    }
+    await _fetchMessages(passiveOnly: true);
+    if (!mounted || !_chat.conflictReadOnly) return;
+    await _chat.recheckRuntimeOwnership();
+  }
+
+  Widget _buildRuntimeOwnershipBanner() {
+    final strings = Strings.of(context);
+    final checking = _chat.ownershipRecheckInFlight;
+    final colors = Theme.of(context).hermes;
+    return Container(
+      key: const ValueKey('chat-runtime-ownership-banner'),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            strings.chaRuntimeOwnershipTitle,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            strings.chaRuntimeOwnershipMessage,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 6),
+          TextButton(
+            key: const ValueKey('chat-runtime-ownership-check'),
+            onPressed: checking || !_chat.ownershipRecheckAvailable
+                ? null
+                : _checkRuntimeOwnership,
+            child: Text(
+              checking
+                  ? strings.chaRuntimeOwnershipChecking
+                  : strings.chaRuntimeOwnershipCheck,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInputBar() {
     widget.performanceProbe?.composerBuilds++;
     final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final compressionProgressLabel = _chat.desktopCompressionNeedsConfirmation
+        ? strings.chaCompressionUnknown
+        : _chat.desktopCompressionTransportUncertain
+        ? strings.chaCompressionReconciling
+        : _chat.desktopCompressionAwaitingReconciliation
+        ? strings.chaCompressionPending
+        : strings.chaCompressionProgress;
     final roomMentionController = _textController;
     if (roomMentionController is _RoomMentionTextEditingController) {
       roomMentionController.mentionColor = colors.accent;
@@ -10593,7 +11764,7 @@ class _ChatScreenState extends State<ChatScreen>
                 Semantics(
                   key: const ValueKey('desktop-session-compression-progress'),
                   liveRegion: true,
-                  label: Strings.of(context).chaCompressionProgress,
+                  label: compressionProgressLabel,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
                     child: Row(
@@ -10601,15 +11772,21 @@ class _ChatScreenState extends State<ChatScreen>
                         SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: colors.accent,
-                          ),
+                          child: _chat.desktopCompressionNeedsConfirmation
+                              ? Icon(
+                                  Icons.info_outline,
+                                  size: 16,
+                                  color: colors.accent,
+                                )
+                              : CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: colors.accent,
+                                ),
                         ),
                         const SizedBox(width: 9),
                         Expanded(
                           child: Text(
-                            Strings.of(context).chaCompressionProgress,
+                            compressionProgressLabel,
                             style: TextStyle(
                               color: colors.textSecondary,
                               fontSize: 12.5,
@@ -10715,11 +11892,15 @@ class _ChatScreenState extends State<ChatScreen>
                                       ),
                                     ),
                                 textInputAction: TextInputAction.newline,
+                                // A retained invocation may keep focus without
+                                // authorizing edits or a second submission.
+                                readOnly: _compressingSession,
                                 enabled:
                                     !_loading &&
                                     !_roomTaskMutationLocked &&
                                     !_attachmentSubmitting &&
-                                    !_compressingSession,
+                                    (!_compressingSession ||
+                                        _compressionDraftFocusRetained),
                               ),
                             ),
                           ),
@@ -10770,9 +11951,16 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody() => KeyedSubtree(
+    key: const ValueKey('chat-stable-body'),
+    child: _buildBodyContent(),
+  );
+
+  Widget _buildBodyContent() {
     final colors = Theme.of(context).hermes;
-    if (_loading && _messages.isEmpty) {
+    if (_messages.isEmpty &&
+        (_loading || !_chat.messagesLoaded) &&
+        _error == null) {
       // Estado de carga con la mascota (006): si la presencia está activa, el
       // Companion "piensa" mientras carga; si está apagada, cae al spinner.
       final app = context.findAncestorStateOfType<HermesAppState>();
@@ -10884,12 +12072,15 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (_messages.isEmpty) {
-      return _EmptyChatState(
-        model: _activeModelLabel,
-        agentName: _agentName,
-        missionRoom: widget.missionRoom,
-        missionRoomProfiles: widget.missionRoomProfiles,
-        missionAvatarCache: widget.missionAvatarCache,
+      return KeyedSubtree(
+        key: const ValueKey('chat-empty-state'),
+        child: _EmptyChatState(
+          model: _activeModelLabel,
+          agentName: _agentName,
+          missionRoom: widget.missionRoom,
+          missionRoomProfiles: widget.missionRoomProfiles,
+          missionAvatarCache: widget.missionAvatarCache,
+        ),
       );
     }
 
@@ -11006,6 +12197,28 @@ class _ChatScreenState extends State<ChatScreen>
           if (!keepsLiveHost && !isLiveHead) {
             result = RepaintBoundary(child: result);
           }
+          final durableEntryIds = sourceMessages
+              .map((message) {
+                final messageId = canonicalTranscriptMessageId(message);
+                if (messageId != null) return 'message:$messageId';
+                final rowId = canonicalTranscriptRowId(message);
+                return rowId == null ? null : 'row:$rowId';
+              })
+              .whereType<String>()
+              .toList(growable: false);
+          if (durableEntryIds.length == sourceMessages.length) {
+            // This must remain the outermost list child. Sliver reconciliation
+            // can then retain the complete bubble subtree even when refresh
+            // replaces its source Map or runtime presentation wrappers change.
+            result = KeyedSubtree(
+              key: ValueKey<Object>((
+                'chat-render-entry',
+                durableEntryIds.join('\u0000'),
+                assistantSlice?.index,
+              )),
+              child: result,
+            );
+          }
           return result;
         },
       ),
@@ -11079,21 +12292,30 @@ class _ChatScreenState extends State<ChatScreen>
     return [for (final index in indexes) _messages[index]];
   }
 
-  /// Clave estable para la entrada animada de un mensaje. Los mensajes de
-  /// usuario llegan envueltos en [_UserTurnGroup] (recreado en cada build), pero
-  /// su Map primario es estable. El servicio, en cambio, reemplaza el Map del
-  /// asistente al publicar cada fragmento: por eso usa el serial estable del
-  /// turno. El placeholder (`_pipeline`) y los grupos de actividad no se animan.
+  /// Stable key for the newest-row entrance. Durable transcript coordinates are
+  /// preferred; identityless rows use bounded display fields. Map identity is
+  /// never part of the key, so an identical passive refresh cannot remount the
+  /// entrance animation or invalidate viewport anchors.
   Object? _entranceKey(Object unit) {
-    if (unit is _UserTurnGroup) return unit.primary;
-    if (unit is Map<String, dynamic>) {
-      if (unit['_pipeline'] == true) return null;
-      if (unit['role'] == 'assistant') {
-        return (widget.session.logicalId, _assistantEntranceSerial);
-      }
-      return unit;
+    final message = unit is _UserTurnGroup
+        ? unit.primary
+        : unit is Map<String, dynamic>
+        ? unit
+        : null;
+    if (message == null || message['_pipeline'] == true) return null;
+    final messageId = canonicalTranscriptMessageId(message);
+    if (messageId != null) return ('message', messageId);
+    final rowId = canonicalTranscriptRowId(message);
+    if (rowId != null) return ('row', rowId);
+    if (message['role'] == 'assistant') {
+      return (widget.session.logicalId, _assistantEntranceSerial);
     }
-    return null;
+    return (
+      'idless',
+      message['role']?.toString() ?? '',
+      message['content']?.toString() ?? '',
+      message['timestamp']?.toString() ?? '',
+    );
   }
 
   Widget _buildActiveThinkingState() {
@@ -11134,14 +12356,15 @@ class _ChatScreenState extends State<ChatScreen>
     // petición que ya estaba ejecutándose. Se presentan dentro de una única
     // burbuja compacta en lugar de apilar mensajes de usuario independientes.
     if (unit is _UserTurnGroup) {
-      final content = (unit.primary['content'] as String?) ?? '';
+      final rawContent = (unit.primary['content'] as String?) ?? '';
+      final content = projectedUserVisibleContent(unit.primary);
       final systemChip = _jobChipLabel(content);
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
       final parsedContent = _parseUserContent(content);
       final supplements = unit.supplements
-          .map((message) => (message['content'] as String?) ?? '')
+          .map(projectedUserVisibleContent)
           .where((text) => text.trim().isNotEmpty)
           .toList();
       if (parsedContent.text.trim().isEmpty &&
@@ -11155,7 +12378,10 @@ class _ChatScreenState extends State<ChatScreen>
         metadata: unit.primary,
         compact: compact,
         supplements: supplements,
-        onEdit: unit.supplements.isEmpty && _canEditUserMessage(unit.primary)
+        onEdit:
+            content == rawContent &&
+                unit.supplements.isEmpty &&
+                _canEditUserMessage(unit.primary)
             ? () => _editUserMessage(unit.primary)
             : null,
       );
@@ -11165,6 +12391,17 @@ class _ChatScreenState extends State<ChatScreen>
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
     final sourceContent = content;
+
+    final historicalSubagents = historicalSubagentCompletionOf(msg);
+    if (historicalSubagents != null) {
+      return Padding(
+        key: ValueKey<String>(
+          'subagent-completion-${historicalSubagents.completionKey}',
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: SubagentCompletionCard(data: historicalSubagents),
+      );
+    }
 
     final timelineEvent = _timelineSystemEventPresentation(context, msg);
     if (timelineEvent != null) {
@@ -11190,7 +12427,9 @@ class _ChatScreenState extends State<ChatScreen>
       final prompt = (msg['_prompt'] as String?) ?? _lastPrompt;
       return _ErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
-        onRetry: () => _retryLastPrompt(),
+        onRetry: _chat.conflictReadOnly
+            ? null
+            : () => unawaited(_retryLastPrompt(prompt)),
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
       );
@@ -11266,8 +12505,10 @@ class _ChatScreenState extends State<ChatScreen>
       _scheduleGeneratedArtifactIndex(msg, terminalAnswer);
     }
     final spokenAnswer = role == 'assistant'
-        ? displaySlice?.plan.split.answer ??
-              splitReasoning(displayContent).answer
+        ? GeneratedMediaService.stripDirectives(
+            displaySlice?.plan.split.answer ??
+                splitReasoning(displayContent).answer,
+          )
         : '';
     final readAloudMessageKey = role == 'assistant'
         ? _readAloudMessageKey(msg, spokenAnswer)
@@ -11433,6 +12674,8 @@ class _ChatScreenState extends State<ChatScreen>
       _AssistantMarkdownChunk(:final data) => 'markdown:${slice!.index}:$data',
       _AssistantGeneratedImageChunk(:final basename) =>
         'image:${slice!.index}:$basename',
+      _AssistantGeneratedMediaChunk(:final reference) =>
+        'media:${slice!.index}:${sha256.convert(utf8.encode(reference.source))}',
       null => '',
     };
     final key = _AssistantTerminalProjectionKey(
@@ -11447,7 +12690,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     widget.performanceProbe?.terminalProjectionComputations++;
-    final split = slice?.plan.split ?? splitReasoning(content);
+    final split =
+        slice?.plan.split ??
+        ReasoningSplit(
+          reasoning: '',
+          answer: finalizedPublicAssistantText(content),
+        );
     final suggestions = suggestionsEnabled && (slice?.showFooter ?? true)
         ? projectAssistantSuggestions(split.answer)
         : AssistantSuggestionsProjection(body: split.answer);
@@ -11488,15 +12736,24 @@ class _ChatScreenState extends State<ChatScreen>
         );
       case _AssistantGeneratedImageChunk(:final basename):
         blocks.add(_ProjectedAssistantImage(basename));
+      case _AssistantGeneratedMediaChunk(:final reference):
+        blocks.add(_ProjectedAssistantMedia(reference));
       case null:
-        for (final segment in GeneratedImageService.segments(
+        for (final mediaSegment in GeneratedMediaService.parseSegments(
           suggestions.body,
         )) {
-          switch (segment) {
-            case ImageSegment(:final basename):
-              blocks.add(_ProjectedAssistantImage(basename));
-            case TextSegment(:final text):
-              addMarkdown(text, structured: false);
+          switch (mediaSegment) {
+            case GeneratedMediaFileSegment(:final reference):
+              blocks.add(_ProjectedAssistantMedia(reference));
+            case GeneratedMediaTextSegment(:final text):
+              for (final imageSegment in GeneratedImageService.segments(text)) {
+                switch (imageSegment) {
+                  case ImageSegment(:final basename):
+                    blocks.add(_ProjectedAssistantImage(basename));
+                  case TextSegment(:final text):
+                    addMarkdown(text, structured: false);
+                }
+              }
           }
         }
     }
@@ -11550,6 +12807,170 @@ class _ChatScreenState extends State<ChatScreen>
         (candidate, _) => !live.contains(candidate),
       );
     }
+  }
+}
+
+class _DesktopAuthRequiredBanner extends StatelessWidget {
+  const _DesktopAuthRequiredBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      key: const ValueKey('chat-dashboard-auth-required'),
+      container: true,
+      liveRegion: true,
+      label: message,
+      child: ExcludeSemantics(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: colors.warning.withValues(alpha: 0.1),
+            border: Border(
+              bottom: BorderSide(color: colors.warning.withValues(alpha: 0.28)),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 18, color: colors.warning),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 12.5,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CoreReadPartialCoverageNotice extends StatelessWidget {
+  const _CoreReadPartialCoverageNotice({
+    required this.message,
+    required this.onDismiss,
+  });
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      key: const ValueKey('core-read-partial-coverage-notice'),
+      container: true,
+      liveRegion: true,
+      label: message,
+      child: ExcludeSemantics(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 8, 4, 8),
+          decoration: BoxDecoration(
+            color: colors.warning.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.warning.withValues(alpha: 0.32)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.account_tree_outlined,
+                size: 18,
+                color: colors.warning,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 12.5,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('core-read-partial-coverage-dismiss'),
+                tooltip: 'Cerrar',
+                onPressed: onDismiss,
+                icon: const Icon(Icons.close),
+                iconSize: 18,
+                color: colors.textSecondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalTranscriptTruncationNotice extends StatelessWidget {
+  const _LocalTranscriptTruncationNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      key: const ValueKey('local-transcript-truncation-notice'),
+      container: true,
+      liveRegion: true,
+      label: message,
+      child: ExcludeSemantics(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: colors.warning.withValues(alpha: 0.1),
+            border: Border(
+              bottom: BorderSide(color: colors.warning.withValues(alpha: 0.28)),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.history_toggle_off_rounded,
+                size: 18,
+                color: colors.warning,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 12.5,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -12750,11 +14171,11 @@ final _classifyError = classifyChatError;
 /// Error bubble shown when the stream fails — inline with retry button.
 ///
 /// Diferencia el tipo de error (conexión/modelo/herramienta/local/desconocido)
-/// y permite desplegar el detalle técnico completo sin volcarlo por defecto.
+/// usando únicamente el copy público ya saneado por ActiveChat.
 class _ErrorBubble extends StatefulWidget {
   final String error;
   final String prompt;
-  final VoidCallback onRetry;
+  final VoidCallback? onRetry;
 
   /// Acción opcional para reiniciar el gateway (se ofrece en errores de
   /// "agente colgado"/conexión, donde el servidor puede estar atascado).
@@ -12894,11 +14315,12 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                 // ~25dp tocables); el visual compacto se conserva.
                 Row(
                   children: [
-                    _ErrorBubbleAction(
-                      label: Strings.of(context).chaRetry,
-                      color: colors.error,
-                      onTap: widget.onRetry,
-                    ),
+                    if (widget.onRetry != null)
+                      _ErrorBubbleAction(
+                        label: Strings.of(context).chaRetry,
+                        color: colors.error,
+                        onTap: widget.onRetry!,
+                      ),
                     // En errores de "agente colgado"/conexión, ofrecer reiniciar
                     // el gateway del servidor (puede estar atascado).
                     if (widget.onRestartGateway != null &&
@@ -13515,6 +14937,37 @@ _timelineSystemEventPresentation(
         title: strings.chaTimelineModelChanged,
         detail: null,
         icon: Icons.swap_horiz_rounded,
+      );
+    case 'compression_result':
+      final rawMetadata = message['display_metadata'];
+      if (rawMetadata is! Map) return null;
+      final noop = rawMetadata['noop'] == true;
+      final beforeMessages = rawMetadata['before_messages'];
+      final afterMessages = rawMetadata['after_messages'];
+      final beforeTokens = rawMetadata['before_tokens'];
+      final afterTokens = rawMetadata['after_tokens'];
+      if (beforeMessages is! int ||
+          afterMessages is! int ||
+          beforeTokens is! int ||
+          afterTokens is! int) {
+        return null;
+      }
+      return (
+        title: noop
+            ? strings.chaCompressionNoop(
+                beforeMessages,
+                beforeTokens.toString(),
+              )
+            : strings.chaCompressionCompleted,
+        detail: noop
+            ? null
+            : strings.chaCompressionSuccess(
+                beforeMessages,
+                afterMessages,
+                beforeTokens.toString(),
+                afterTokens.toString(),
+              ),
+        icon: Icons.compress_rounded,
       );
     case 'auto_continue':
       return (
@@ -14468,20 +15921,19 @@ class _AssistantMessage extends StatelessWidget {
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
 
-    // Separa el razonamiento (`<think>…`) de la respuesta final para mostrarlos
-    // como bloques distintos (razonamiento discreto y plegable arriba). El
-    // backend también entrega razonamiento ESTRUCTURADO fuera del content
-    // (reasoning_content de DeepSeek-reasoner, reasoning_details de OpenRouter):
-    // se compone con el inline para que no desaparezca de la burbuja; sin este
-    // merge un assistant con razonamiento pero content vacío quedaría invisible.
-    final split = mergeStructuredReasoning(
-      terminalProjection?.split ?? slice?.plan.split ?? splitReasoning(content),
-      metadata,
-    );
+    // El parser retira `<think>`/Harmony del contenido público. El razonamiento
+    // inline o estructurado nunca se materializa en la UI móvil.
+    final parsedSplit =
+        terminalProjection?.split ??
+        slice?.plan.split ??
+        splitReasoning(content);
+    final split = ReasoningSplit(reasoning: '', answer: parsedSplit.answer);
     final showHeader = slice?.showHeader ?? true;
     final showFooter = slice?.showFooter ?? true;
     final structuredImages = _structuredGeneratedImages(metadata);
+    final structuredVideos = _structuredGeneratedVideos(metadata);
     final textualGeneratedBasenames = <String, int>{};
+    final textualGeneratedVideoSources = <String, int>{};
     if (structuredImages.isNotEmpty) {
       for (final segment in GeneratedImageService.segments(
         split.answer,
@@ -14489,6 +15941,16 @@ class _AssistantMessage extends StatelessWidget {
         final key = segment.basename.toLowerCase();
         textualGeneratedBasenames[key] =
             (textualGeneratedBasenames[key] ?? 0) + 1;
+      }
+    }
+    if (structuredVideos.isNotEmpty) {
+      for (final segment in GeneratedMediaService.parseSegments(
+        split.answer,
+      ).whereType<GeneratedMediaFileSegment>()) {
+        final reference = segment.reference;
+        if (reference.kind != GeneratedMediaKind.video) continue;
+        textualGeneratedVideoSources[reference.source] =
+            (textualGeneratedVideoSources[reference.source] ?? 0) + 1;
       }
     }
     final structuredFooterImages = showFooter
@@ -14507,6 +15969,17 @@ class _AssistantMessage extends StatelessWidget {
               })
               .toList(growable: false)
         : const <_StructuredGeneratedImage>[];
+    final structuredFooterVideos = showFooter
+        ? structuredVideos
+              .where((ref) {
+                final source = ref.reference.source;
+                final remaining = textualGeneratedVideoSources[source] ?? 0;
+                if (remaining <= 0) return true;
+                textualGeneratedVideoSources[source] = remaining - 1;
+                return false;
+              })
+              .toList(growable: false)
+        : const <_StructuredGeneratedVideo>[];
     String stripStructuredEchoes(String text) =>
         _stripStructuredGeneratedImageEchoes(text, structuredImages);
     final suggestionProjection =
@@ -14532,7 +16005,7 @@ class _AssistantMessage extends StatelessWidget {
         height: config.height,
         colors: colors,
       ),
-      styleSheet: _assistantSheet(theme, colors),
+      styleSheet: _assistantSheet(context, data),
       builders: {'pre': _PreCodeBuilder()},
     );
 
@@ -14569,9 +16042,16 @@ class _AssistantMessage extends StatelessWidget {
       if (tail.trim().isNotEmpty) yield markdownWidget(tail);
     }
 
+    Iterable<Widget> structuredVideoWidgets() sync* {
+      for (final ref in structuredFooterVideos) {
+        yield _GeneratedMediaSlot(key: ref.widgetKey, reference: ref.reference);
+      }
+    }
+
     Iterable<Widget> answerWidgets() sync* {
       final projected = terminalProjection;
       if (projected != null) {
+        var generatedMediaOrdinal = 0;
         for (final block in projected.blocks) {
           switch (block) {
             case _ProjectedAssistantMarkdown(:final data):
@@ -14585,6 +16065,14 @@ class _AssistantMessage extends StatelessWidget {
             case _ProjectedAssistantImage(:final basename):
               final ref = _StructuredGeneratedImage.textPath(basename);
               yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+            case _ProjectedAssistantMedia(:final reference):
+              yield _GeneratedMediaSlot(
+                key: _generatedMediaWidgetKey(
+                  reference,
+                  generatedMediaOrdinal++,
+                ),
+                reference: reference,
+              );
             case _ProjectedAssistantGap():
               yield const SizedBox(height: 4);
           }
@@ -14592,6 +16080,7 @@ class _AssistantMessage extends StatelessWidget {
         for (final ref in structuredFooterImages) {
           yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
         }
+        yield* structuredVideoWidgets();
         return;
       }
       final renderSlice = slice;
@@ -14600,6 +16089,11 @@ class _AssistantMessage extends StatelessWidget {
           case _AssistantGeneratedImageChunk(:final basename):
             final ref = _StructuredGeneratedImage.textPath(basename);
             yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+          case _AssistantGeneratedMediaChunk(:final reference):
+            yield _GeneratedMediaSlot(
+              key: _generatedMediaWidgetKey(reference, renderSlice.index),
+              reference: reference,
+            );
           case _AssistantMarkdownChunk(:final data):
             yield* buildAssistantAnswerBlocks(
               stripStructuredEchoes(data),
@@ -14617,39 +16111,55 @@ class _AssistantMessage extends StatelessWidget {
         for (final ref in structuredFooterImages) {
           yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
         }
+        yield* structuredVideoWidgets();
         return;
       }
-      for (final segment in GeneratedImageService.segments(answer)) {
-        if (segment is ImageSegment) {
-          final ref = _StructuredGeneratedImage.textPath(segment.basename);
-          yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+      var generatedMediaOrdinal = 0;
+      for (final mediaSegment in GeneratedMediaService.parseSegments(answer)) {
+        if (mediaSegment is GeneratedMediaFileSegment) {
+          yield _GeneratedMediaSlot(
+            key: _generatedMediaWidgetKey(
+              mediaSegment.reference,
+              generatedMediaOrdinal++,
+            ),
+            reference: mediaSegment.reference,
+          );
           continue;
         }
-        final text = stripStructuredEchoes((segment as TextSegment).text);
-        if (text.trim().isEmpty) continue;
-        // Respuesta viva larga: el prefijo de bloques cerrados se proyecta una
-        // sola vez por contenido; cada frame solo normaliza y parsea la cola
-        // mutable. El texto resultante es byte a byte el mismo que el de la
-        // ruta de bloque único (las reparaciones son independientes por bloque).
-        if (isStreaming && text.length >= _liveAssistantStableSplitMinChars) {
-          yield* streamingSplitWidgets(text);
-          continue;
+        final mediaText = (mediaSegment as GeneratedMediaTextSegment).text;
+        for (final segment in GeneratedImageService.segments(mediaText)) {
+          if (segment is ImageSegment) {
+            final ref = _StructuredGeneratedImage.textPath(segment.basename);
+            yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+            continue;
+          }
+          final text = stripStructuredEchoes((segment as TextSegment).text);
+          if (text.trim().isEmpty) continue;
+          // Respuesta viva larga: el prefijo de bloques cerrados se proyecta una
+          // sola vez por contenido; cada frame solo normaliza y parsea la cola
+          // mutable. El texto resultante es byte a byte el mismo que el de la
+          // ruta de bloque único (las reparaciones son independientes por bloque).
+          if (isStreaming && text.length >= _liveAssistantStableSplitMinChars) {
+            yield* streamingSplitWidgets(text);
+            continue;
+          }
+          yield* buildAssistantAnswerBlocks(
+            text,
+            isStreaming: isStreaming,
+            markdown: markdownWidget,
+            callout: (block) => CalloutCard(
+              kind: block.kind,
+              title: block.title,
+              body: block.body,
+            ),
+            onLinkTap: (href) => _openMarkdownLink(context, href),
+          );
         }
-        yield* buildAssistantAnswerBlocks(
-          text,
-          isStreaming: isStreaming,
-          markdown: markdownWidget,
-          callout: (block) => CalloutCard(
-            kind: block.kind,
-            title: block.title,
-            body: block.body,
-          ),
-          onLinkTap: (href) => _openMarkdownLink(context, href),
-        );
       }
       for (final ref in structuredFooterImages) {
         yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
       }
+      yield* structuredVideoWidgets();
     }
 
     // La copia completa vive en la cabecera y la selección parcial en la región
@@ -14738,7 +16248,9 @@ class _AssistantMessage extends StatelessWidget {
                             Clipboard.setData(
                               ClipboardData(
                                 text: markdownToClipboardText(
-                                  answer.isNotEmpty ? answer : content,
+                                  GeneratedMediaService.stripDirectives(
+                                    answer.isNotEmpty ? answer : content,
+                                  ),
                                 ),
                               ),
                             );
@@ -14811,7 +16323,9 @@ class _AssistantMessage extends StatelessWidget {
             if (showFooter && metadata['show_link_preview'] == true)
               Builder(
                 builder: (ctx) {
-                  final first = firstUrl(answer);
+                  final first = firstUrl(
+                    GeneratedMediaService.stripDirectives(answer),
+                  );
                   if (first == null) return const SizedBox.shrink();
                   return _LinkPreviewLoader(
                     url: first,
@@ -15041,6 +16555,114 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
       status: _status,
       file: _file,
       onRetry: _status == GeneratedImageStatus.error ? _start : null,
+    );
+  }
+}
+
+/// Canonical `MEDIA:` attachment rendered from the authenticated managed-file
+/// API. The server path never appears in visible UI and the downloaded copy is
+/// kept in app-private storage.
+class _GeneratedMediaSlot extends StatefulWidget {
+  final GeneratedMediaReference reference;
+  const _GeneratedMediaSlot({super.key, required this.reference});
+
+  @override
+  State<_GeneratedMediaSlot> createState() => _GeneratedMediaSlotState();
+}
+
+class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
+  late GeneratedImageStatus _status;
+  File? _file;
+
+  @override
+  void initState() {
+    super.initState();
+    // MEDIA text is model-controlled. Even authenticated server paths may
+    // point at an unrelated private image/video, so fetching always requires
+    // an explicit tap. Legacy structured generated images keep their existing
+    // trusted-tool auto-download path in [_GeneratedImageSlot].
+    _status = GeneratedImageStatus.unsupported;
+  }
+
+  Future<void> _start() async {
+    final state = context.findAncestorStateOfType<_ChatScreenState>();
+    if (state == null) {
+      if (mounted) setState(() => _status = GeneratedImageStatus.error);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _status = GeneratedImageStatus.downloading;
+        _file = null;
+      });
+    }
+    try {
+      final file = await state.downloadGeneratedMedia(widget.reference);
+      if (!mounted) return;
+      setState(() {
+        _file = file;
+        _status = GeneratedImageStatus.ready;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _status = GeneratedImageStatus.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final file = _file;
+    if (_status == GeneratedImageStatus.ready && file != null) {
+      return widget.reference.kind == GeneratedMediaKind.image
+          ? GeneratedImageCard(status: GeneratedImageStatus.ready, file: file)
+          : GeneratedVideoCard(file: file);
+    }
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final loading = _status == GeneratedImageStatus.downloading;
+    final awaitingConsent = _status == GeneratedImageStatus.unsupported;
+    final domain = widget.reference.sourceKind == GeneratedMediaSourceKind.https
+        ? Uri.parse(widget.reference.source).host
+        : '';
+    return Semantics(
+      container: true,
+      liveRegion: loading,
+      label: loading
+          ? strings.genMediaLoading
+          : awaitingConsent
+          ? domain.isEmpty
+                ? strings.genMediaLoad
+                : strings.genMediaLoadFrom(domain)
+          : strings.genMediaError,
+      child: Container(
+        key: const ValueKey<String>('generated-media-placeholder'),
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 128),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.divider),
+        ),
+        child: Center(
+          child: loading
+              ? const CircularProgressIndicator(strokeWidth: 2)
+              : TextButton.icon(
+                  onPressed: _start,
+                  icon: Icon(
+                    awaitingConsent
+                        ? Icons.cloud_download_outlined
+                        : Icons.refresh_rounded,
+                  ),
+                  label: Text(
+                    awaitingConsent
+                        ? domain.isEmpty
+                              ? strings.genMediaLoad
+                              : strings.genMediaLoadFrom(domain)
+                        : strings.commonRetry,
+                  ),
+                ),
+        ),
+      ),
     );
   }
 }
@@ -15401,15 +17023,8 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
 
 List<String> _buildMetaLines(bool verbose, Map<String, dynamic> metadata) {
   if (!verbose) return const [];
-  final lines = <String>['role: ${metadata['role'] ?? 'unknown'}'];
-  for (final entry in metadata.entries) {
-    if (entry.key == 'role' || entry.key == 'content') continue;
-    final value = entry.value?.toString() ?? 'null';
-    lines.add(
-      '${entry.key}: ${value.length > 80 ? '${value.substring(0, 80)}…' : value}',
-    );
-  }
-  return lines;
+  final role = metadata['role']?.toString().trim();
+  return ['role: ${role == null || role.isEmpty ? 'unknown' : role}'];
 }
 
 String? _formatMessageTimestamp(Map<String, dynamic> metadata) {
@@ -15687,20 +17302,58 @@ class _MetaBlock extends StatelessWidget {
 /// Fila compacta para un seguimiento pendiente: comparte el eje del composer,
 /// no ocupa un turno visual y se puede retirar antes del envío automático.
 class _QueuedRow extends StatelessWidget {
-  final String text;
+  final QueuedEntryView entry;
   final List<String> attachmentNames;
-  final VoidCallback onCancel;
+  final bool busy;
+  final String? editingId;
+  final VoidCallback onEdit;
+  final VoidCallback onSteer;
+  final VoidCallback onSendNow;
+  final VoidCallback onDelete;
 
   const _QueuedRow({
-    required this.text,
+    required this.entry,
     this.attachmentNames = const [],
-    required this.onCancel,
+    required this.busy,
+    required this.editingId,
+    required this.onEdit,
+    required this.onSteer,
+    required this.onSendNow,
+    required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final preview = text.length > 72 ? '${text.substring(0, 72)}…' : text;
+    final strings = Strings.of(context);
+    final preview = entry.text.length > 72
+        ? '${entry.text.substring(0, 72)}…'
+        : entry.text;
+    final isEditing = editingId == entry.id;
+    final accepted = entry.kind == QueuedEntryKind.desktopAccepted;
+    final editEnabled = !accepted && (editingId == null || isEditing);
+    final canSteer = busy && entry.isSteerable && !isEditing && !accepted;
+    final sendLabel = busy ? strings.chaQueueSendNext : strings.chaQueueSend;
+    Widget action({
+      required String keyName,
+      required String label,
+      required IconData icon,
+      required VoidCallback? onPressed,
+    }) => Semantics(
+      key: ValueKey(keyName),
+      button: true,
+      enabled: onPressed != null,
+      label: label,
+      onTap: onPressed,
+      excludeSemantics: true,
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: label,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        padding: EdgeInsets.zero,
+        icon: Icon(icon, size: 17, color: colors.textSecondary),
+      ),
+    );
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 48),
       child: Row(
@@ -15727,6 +17380,12 @@ class _QueuedRow extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
+                if (entry.blocked)
+                  Text(
+                    'Envío pendiente. Reintenta.',
+                    key: ValueKey('chat-queue-blocked-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  ),
                 if (attachmentNames.isNotEmpty)
                   Wrap(
                     spacing: 8,
@@ -15748,16 +17407,30 @@ class _QueuedRow extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
-            onPressed: onCancel,
-            tooltip: Strings.of(context).chaCancelQueuedMessage,
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            padding: EdgeInsets.zero,
-            icon: Icon(
-              Icons.close_rounded,
-              size: 16,
-              color: colors.textSecondary,
+          action(
+            keyName: 'chat-queue-edit-${entry.id}',
+            label: strings.chaQueueEdit,
+            icon: Icons.edit_outlined,
+            onPressed: editEnabled ? onEdit : null,
+          ),
+          if (canSteer)
+            action(
+              keyName: 'chat-queue-steer-${entry.id}',
+              label: strings.chaQueueSteer,
+              icon: Icons.turn_right_rounded,
+              onPressed: onSteer,
             ),
+          action(
+            keyName: 'chat-queue-send-now-${entry.id}',
+            label: sendLabel,
+            icon: Icons.keyboard_return_rounded,
+            onPressed: isEditing || accepted ? null : onSendNow,
+          ),
+          action(
+            keyName: 'chat-queue-delete-${entry.id}',
+            label: strings.chaQueueDelete,
+            icon: Icons.delete_outline_rounded,
+            onPressed: accepted ? null : onDelete,
           ),
         ],
       ),
@@ -15767,7 +17440,7 @@ class _QueuedRow extends StatelessWidget {
 
 class _ScrollToBottomButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ScrollToBottomButton({required this.onTap});
+  const _ScrollToBottomButton({required this.onTap, super.key});
 
   @override
   Widget build(BuildContext context) => _ChatScrollButton(
@@ -15778,17 +17451,39 @@ class _ScrollToBottomButton extends StatelessWidget {
   );
 }
 
-class _ChatScrollButton extends StatelessWidget {
+class _LoadEarlierMessagesButton extends StatelessWidget {
+  const _LoadEarlierMessagesButton({
+    required this.loading,
+    required this.onTap,
+    super.key,
+  });
+
+  final bool loading;
   final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => _ChatScrollButton(
+    onTap: loading ? null : onTap,
+    label: Strings.of(context).chaLoadEarlierMessages,
+    icon: Icons.keyboard_arrow_up_rounded,
+    iconSize: 20,
+    loading: loading,
+  );
+}
+
+class _ChatScrollButton extends StatelessWidget {
+  final VoidCallback? onTap;
   final String label;
   final IconData icon;
   final double iconSize;
+  final bool loading;
 
   const _ChatScrollButton({
     required this.onTap,
     required this.label,
     required this.icon,
     this.iconSize = 18,
+    this.loading = false,
   });
 
   @override
@@ -15796,34 +17491,46 @@ class _ChatScrollButton extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     // Nombre y rol para TalkBack + target táctil de 48dp; el círculo visual se
     // mantiene discreto para no tapar la respuesta.
-    return Semantics(
-      button: true,
-      label: label,
-      child: GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
-          width: 48,
-          height: 48,
-          child: Center(
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: colors.divider.withValues(alpha: 0.55),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        enabled: onTap != null,
+        label: label,
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: colors.divider.withValues(alpha: 0.55),
                   ),
-                ],
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: loading
+                    ? Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.accent,
+                        ),
+                      )
+                    : Icon(icon, size: iconSize, color: colors.accent),
               ),
-              child: Icon(icon, size: iconSize, color: colors.accent),
             ),
           ),
         ),
@@ -16337,12 +18044,18 @@ class AssistantMarkdownView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.hermes;
     final operationalProjection = _projectOperationalArtifacts(context, data);
-    // Misma ruta que el chat: separa razonamiento y normaliza el streaming sin
-    // inventar jerarquías que el modelo no escribió.
-    final split = splitReasoning(operationalProjection.visibleMarkdown);
+    // Misma ruta que el chat: separa y descarta razonamiento; solo el answer
+    // público puede llegar al árbol de widgets.
+    final parsedSplit = isStreaming
+        ? splitReasoning(operationalProjection.visibleMarkdown)
+        : ReasoningSplit(
+            reasoning: '',
+            answer: finalizedPublicAssistantText(
+              operationalProjection.visibleMarkdown,
+            ),
+          );
+    final split = ReasoningSplit(reasoning: '', answer: parsedSplit.answer);
     final blocks = split.answer.isEmpty
         ? const <Widget>[]
         : buildAssistantAnswerBlocks(
@@ -16352,7 +18065,7 @@ class AssistantMarkdownView extends StatelessWidget {
               data: d,
               selectable: false,
               softLineBreak: false,
-              styleSheet: _assistantSheet(theme, colors),
+              styleSheet: _assistantSheet(context, d),
               builders: {'pre': _PreCodeBuilder()},
             ),
             callout: (b) =>
@@ -16408,7 +18121,61 @@ class AssistantMarkdownView extends StatelessWidget {
   }
 }
 
-MarkdownStyleSheet _assistantSheet(ThemeData theme, HermesThemeColors colors) {
+// flutter_markdown constrains the marker to listIndent (padding is separate).
+// Measure the rendered ordinals, including CommonMark's implicit increments,
+// rather than guessing a fixed gutter or suppressing wrapping/clipping.
+double _assistantListIndent(
+  BuildContext context,
+  String data,
+  TextStyle style,
+) {
+  var width = 16.0;
+  final painter = TextPainter(
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+  );
+  void measure(String marker) {
+    painter.text = TextSpan(text: marker, style: style);
+    painter.layout();
+    width = math.max(width, painter.width.ceilToDouble());
+  }
+
+  void visit(md.Node node) {
+    if (node is! md.Element) return;
+    if (node.tag == 'ol') {
+      var ordinal = int.tryParse(node.attributes['start'] ?? '') ?? 1;
+      for (final child in node.children ?? const <md.Node>[]) {
+        if (child is md.Element && child.tag == 'li') {
+          measure('${ordinal++}.');
+        }
+      }
+    }
+    for (final child in node.children ?? const <md.Node>[]) {
+      visit(child);
+    }
+  }
+
+  try {
+    measure('•');
+    for (final node in md.Document(
+      extensionSet: md.ExtensionSet.gitHubFlavored,
+    ).parseLines(data.split('\n'))) {
+      visit(node);
+    }
+    return width;
+  } finally {
+    painter.dispose();
+  }
+}
+
+MarkdownStyleSheet _assistantSheet(BuildContext context, String data) {
+  final theme = Theme.of(context);
+  final colors = theme.hermes;
+  final listBullet = (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
+    fontSize: 15,
+    height: 1.5,
+    color: colors.textPrimary,
+  );
   return MarkdownStyleSheet(
     p: theme.textTheme.bodyMedium?.copyWith(
       color: colors.textPrimary,
@@ -16494,13 +18261,9 @@ MarkdownStyleSheet _assistantSheet(ThemeData theme, HermesThemeColors colors) {
       ),
     ),
     blockquotePadding: const EdgeInsets.fromLTRB(10, 2, 0, 2),
-    listIndent: 16,
+    listIndent: _assistantListIndent(context, data, listBullet),
     listBulletPadding: const EdgeInsets.only(right: 6),
-    listBullet: theme.textTheme.bodyMedium?.copyWith(
-      fontSize: 15,
-      height: 1.5,
-      color: colors.textPrimary,
-    ),
+    listBullet: listBullet,
     // Tablas legibles: bordes sutiles, cabecera marcada y celdas con aire.
     tableHead: theme.textTheme.bodyMedium?.copyWith(
       color: colors.textPrimary,

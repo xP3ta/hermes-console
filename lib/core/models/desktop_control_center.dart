@@ -437,19 +437,42 @@ final class DesktopMcpProbeResult {
   }
 }
 
+enum AgentCenterStatus {
+  requested,
+  running,
+  thinking,
+  tool,
+  completed,
+  failed,
+  cancelled,
+  stopped,
+  unknown,
+}
+
+AgentCenterStatus _parseAgentCenterStatus(Object? raw) {
+  final value = _cleanText(raw, max: 80).toLowerCase();
+  return switch (value) {
+    'requested' || 'pending' => AgentCenterStatus.requested,
+    'running' || 'active' => AgentCenterStatus.running,
+    'thinking' => AgentCenterStatus.thinking,
+    'tool' || 'using_tool' || 'using tool' => AgentCenterStatus.tool,
+    'completed' || 'finished' => AgentCenterStatus.completed,
+    'failed' || 'error' => AgentCenterStatus.failed,
+    'cancelled' || 'canceled' => AgentCenterStatus.cancelled,
+    'stopped' => AgentCenterStatus.stopped,
+    _ => AgentCenterStatus.unknown,
+  };
+}
+
 final class SpawnTreeEntry {
   /// Opaque backend identity used only for `spawn_tree.load`.
   final String opaquePath;
-  final String sessionId;
-  final String label;
   final int count;
   final double startedAt;
   final double finishedAt;
 
   const SpawnTreeEntry({
     required this.opaquePath,
-    required this.sessionId,
-    required this.label,
     required this.count,
     required this.startedAt,
     required this.finishedAt,
@@ -460,8 +483,6 @@ final class SpawnTreeEntry {
     if (path.isEmpty) return null;
     return SpawnTreeEntry(
       opaquePath: path,
-      sessionId: _cleanText(json['session_id'], max: 512),
-      label: _cleanText(json['label']),
       count: _safeInt(json['count']).clamp(0, 10000),
       startedAt: _safeDouble(json['started_at']),
       finishedAt: _safeDouble(json['finished_at']),
@@ -470,18 +491,15 @@ final class SpawnTreeEntry {
 }
 
 final class BackgroundProcessEntry {
-  final String id;
-  final String commandPreview;
-  final String status;
+  /// Opaque backend identity used only for the exact `process.kill` call.
+  final String opaqueId;
+  final AgentCenterStatus status;
   final int uptimeSeconds;
-  final String outputTail;
 
   const BackgroundProcessEntry({
-    required this.id,
-    required this.commandPreview,
+    required this.opaqueId,
     required this.status,
     required this.uptimeSeconds,
-    required this.outputTail,
   });
 
   static BackgroundProcessEntry? tryParse(Map<String, dynamic> json) {
@@ -491,13 +509,11 @@ final class BackgroundProcessEntry {
     );
     if (id.isEmpty) return null;
     return BackgroundProcessEntry(
-      id: id,
-      commandPreview: _cleanText(json['command'], max: 240),
-      status: _cleanText(json['status'], max: 80),
+      opaqueId: id,
+      status: _parseAgentCenterStatus(json['status'] ?? json['phase']),
       uptimeSeconds: _safeInt(
         json['uptime_seconds'] ?? json['uptime'],
       ).clamp(0, 315360000),
-      outputTail: _cleanText(json['output_tail'], max: 4000),
     );
   }
 }
@@ -505,34 +521,52 @@ final class BackgroundProcessEntry {
 final class AgentCenterSnapshot {
   final List<SpawnTreeEntry> snapshots;
   final List<BackgroundProcessEntry> processes;
+  final bool processesFullyParsed;
 
-  const AgentCenterSnapshot({required this.snapshots, required this.processes});
+  const AgentCenterSnapshot({
+    required this.snapshots,
+    required this.processes,
+    this.processesFullyParsed = true,
+  });
 
   factory AgentCenterSnapshot.fromJson({
     required Map<String, dynamic> snapshots,
     Map<String, dynamic>? processes,
-  }) => AgentCenterSnapshot(
-    snapshots: _objectRows(snapshots['entries'])
-        .map(SpawnTreeEntry.tryParse)
-        .whereType<SpawnTreeEntry>()
-        .toList(growable: false),
-    processes: _objectRows(processes?['processes'])
+  }) {
+    final rawProcesses = processes?['processes'];
+    final parsedProcesses = _objectRows(rawProcesses)
         .map(BackgroundProcessEntry.tryParse)
         .whereType<BackgroundProcessEntry>()
-        .toList(growable: false),
-  );
+        .toList(growable: false);
+    return AgentCenterSnapshot(
+      snapshots: _objectRows(snapshots['entries'])
+          .map(SpawnTreeEntry.tryParse)
+          .whereType<SpawnTreeEntry>()
+          .toList(growable: false),
+      processes: parsedProcesses,
+      processesFullyParsed:
+          rawProcesses is List && parsedProcesses.length == rawProcesses.length,
+    );
+  }
+}
+
+final class SpawnTreeSubagentEntry {
+  final AgentCenterStatus status;
+
+  const SpawnTreeSubagentEntry({required this.status});
+
+  factory SpawnTreeSubagentEntry.fromJson(Map<String, dynamic> json) =>
+      SpawnTreeSubagentEntry(
+        status: _parseAgentCenterStatus(json['status'] ?? json['phase']),
+      );
 }
 
 final class SpawnTreeDetail {
-  final String sessionId;
-  final String label;
   final double startedAt;
   final double finishedAt;
-  final List<Map<String, dynamic>> subagents;
+  final List<SpawnTreeSubagentEntry> subagents;
 
   const SpawnTreeDetail({
-    required this.sessionId,
-    required this.label,
     required this.startedAt,
     required this.finishedAt,
     required this.subagents,
@@ -540,31 +574,11 @@ final class SpawnTreeDetail {
 
   factory SpawnTreeDetail.fromJson(Map<String, dynamic> json) =>
       SpawnTreeDetail(
-        sessionId: _cleanText(json['session_id'], max: 512),
-        label: _cleanText(json['label']),
         startedAt: _safeDouble(json['started_at']),
         finishedAt: _safeDouble(json['finished_at']),
-        subagents: _objectRows(json['subagents'])
-            .map(
-              (entry) => <String, dynamic>{
-                'id': _cleanText(
-                  entry['id'] ?? entry['subagent_id'] ?? entry['task_id'],
-                  max: 512,
-                ),
-                'status': _cleanText(
-                  entry['status'] ?? entry['phase'],
-                  max: 80,
-                ),
-                'label': _cleanText(
-                  entry['label'] ?? entry['goal'] ?? entry['task'],
-                ),
-                'summary': _cleanText(
-                  entry['summary'] ?? entry['result'] ?? entry['output'],
-                  max: 1000,
-                ),
-              },
-            )
-            .toList(growable: false),
+        subagents: _objectRows(
+          json['subagents'],
+        ).map(SpawnTreeSubagentEntry.fromJson).toList(growable: false),
       );
 }
 

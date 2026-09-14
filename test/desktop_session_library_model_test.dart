@@ -3,11 +3,12 @@ import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/models/session_category.dart';
 
 void main() {
-  test('taxonomía 0.20 conserva las siete fuentes de automatización', () {
+  test('taxonomía actual conserva las fuentes internas de automatización', () {
     expect(AutomationSessionSources.values, const [
       'cron',
+      'kanban',
+      'subagent',
       'tool',
-      'api_server',
       'acp',
       'hermes_flow',
       'vulcan_delegate',
@@ -43,6 +44,12 @@ void main() {
     expect(SessionCategory.automation.sources, AutomationSessionSources.values);
     expect(SessionCategory.all.sources, isEmpty);
     expect(SessionCategory.all.excludeSources, isEmpty);
+    expect(
+      SessionCategory.chats.includesSource('api_server'),
+      isTrue,
+      reason: 'API es un transporte de chat, no una automatización',
+    );
+    expect(SessionCategory.automation.includesSource('api_server'), isFalse);
   });
 
   test('Session parsea lineage, perfil, rama, archivo y handoff 0.19', () {

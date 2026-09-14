@@ -5,8 +5,8 @@
 //  · play → solo-remoto, sin la función de instancia local (Google Play).
 //
 // El valor se inyecta en el build con `--dart-define=HERMES_FLAVOR=play|full`.
-// Por defecto es `full` para que el desarrollo y los tests conserven el
-// comportamiento completo actual sin tener que pasar el flag.
+// Por defecto es `full` para conservar la variante de desarrollo; la integración
+// local de Termux exige además `HERMES_LOCAL_AGENT=true`.
 const String kHermesFlavor = String.fromEnvironment(
   'HERMES_FLAVOR',
   defaultValue: 'full',
@@ -14,10 +14,9 @@ const String kHermesFlavor = String.fromEnvironment(
 
 /// ¿Está habilitada la función de instancia local en Termux en este build?
 ///
-/// Retirada de la UI para el lanzamiento (spec 028, U-13): `false` por
-/// defecto en TODAS las variantes — por ahora la app es solo-remota. Las
-/// conexiones localhost ya guardadas no se borran: quedan ocultas de listas
-/// y flujos de alta (reversible). En `play` no puede activarse nunca.
+/// Permanece `false` por defecto y en `play` no puede activarse nunca. El build
+/// público `full` la habilita explícitamente para incluir la integración Termux;
+/// los builds que omitan ese define conservan la experiencia solo-remota.
 ///
 /// Reactivación para desarrollo/APK completo:
 ///   flutter build apk --debug --dart-define=HERMES_LOCAL_AGENT=true

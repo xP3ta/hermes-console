@@ -92,6 +92,85 @@ void main() {
     client.close();
   });
 
+  test(
+    'named-profile delete clears only the exact duplicate session owner',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final drafts = ChatDraftStore(prefs);
+      final outbox = TurnOutboxStore();
+      await drafts.save(
+        'conn-cleanup',
+        'shared-session',
+        'delete profile A',
+        const [],
+        profile: 'profile-a',
+      );
+      await drafts.save(
+        'conn-cleanup',
+        'shared-session',
+        'keep profile B',
+        const [],
+        profile: 'profile-b',
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final owner in const ['profile-a', 'profile-b']) {
+        await outbox.save(
+          PreparedTurn(
+            connectionId: 'conn-cleanup',
+            sessionId: 'shared-session',
+            clientTurnId: 'turn-$owner',
+            createdAtMs: now,
+            updatedAtMs: now,
+            text: owner,
+            attachments: const [],
+            model: 'modelo',
+            profile: owner,
+          ),
+        );
+      }
+      final client = clientWithDeleted(true);
+
+      expect(
+        await client.deleteSession('shared-session', profile: 'profile-a'),
+        isTrue,
+      );
+
+      expect(
+        (await drafts.load(
+          'conn-cleanup',
+          'shared-session',
+          profile: 'profile-a',
+        )).text,
+        isEmpty,
+      );
+      expect(
+        (await drafts.load(
+          'conn-cleanup',
+          'shared-session',
+          profile: 'profile-b',
+        )).text,
+        'keep profile B',
+      );
+      expect(
+        await outbox.loadForChat(
+          'conn-cleanup',
+          'shared-session',
+          profile: 'profile-a',
+        ),
+        isNull,
+      );
+      expect(
+        await outbox.loadForChat(
+          'conn-cleanup',
+          'shared-session',
+          profile: 'profile-b',
+        ),
+        isNotNull,
+      );
+      client.close();
+    },
+  );
+
   test('rechazo remoto conserva la recuperación local', () async {
     await seedRecovery();
     final client = clientWithDeleted(false);

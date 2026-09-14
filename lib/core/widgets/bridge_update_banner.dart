@@ -110,14 +110,17 @@ class BridgeUpdateBanner extends StatelessWidget {
       ).then((_) => progressCtx = null),
     );
 
-    ({bool ok, String detail}) res;
+    late BridgeUpdateResult res;
     try {
       res = await BridgeUpdateService.update(
         connection,
         onProgress: (s) => progress.value = s,
       );
     } catch (e) {
-      res = (ok: false, detail: '$e');
+      res = BridgeUpdateResult.failure(
+        BridgeUpdateFailure.repairFailed,
+        '${e.runtimeType}',
+      );
     }
     if (!context.mounted) {
       progress.dispose();

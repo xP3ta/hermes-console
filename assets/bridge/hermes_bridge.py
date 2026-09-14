@@ -2873,9 +2873,8 @@ async def skills_find(request):
 #
 # picker_hints=True: cada fila trae el `authenticated`/`auth_type`/`key_env`/
 # `warning` REALES que calcula Hermes. Antes se estampaba authenticated=True a
-# todo, y la app enseñaba como "configurados" proveedores que Hermes solo
-# DESCUBRIÓ en la máquina (OAuth de Claude Code, `gh` logueado → anthropic y
-# github fantasma en un servidor recién instalado; spec 028).
+# todo, y la app enseñaba como "configurados" proveedores descubiertos a través
+# de CLIs locales, aunque no estuvieran disponibles para el runtime; spec 028.
 #
 # probe_custom_providers=False: recomendación del propio upstream para pickers
 # GUI — sin esto cada petición sondea por red los endpoints custom y la

@@ -18,7 +18,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
@@ -26,6 +26,21 @@ import 'package:web_socket_channel/status.dart' as ws_status;
 import '../../utils/transport_privacy.dart';
 import 'stt_engine.dart';
 import 'voice_latency_trace.dart';
+
+@visibleForTesting
+String serverSttPublicErrorMessage(Object? _) =>
+    'Server speech recognition failed.';
+
+@visibleForTesting
+Map<String, double>? serverSttPublicMeta(Object? raw) {
+  if (raw is! Map) return null;
+  final safe = <String, double>{};
+  for (final key in const ['voiced_secs', 'avg_logprob', 'no_speech_prob']) {
+    final value = raw[key];
+    if (value is num && value.isFinite) safe[key] = value.toDouble();
+  }
+  return safe.isEmpty ? null : safe;
+}
 
 /// Resultado de [ServerSttEngine._connectWithAuth]: el canal (para escribir)
 /// más el stream de LECTURA correcto para el resto de la sesión (broadcast
@@ -524,9 +539,9 @@ class ServerSttEngine implements SttEngine {
         (raw) {
           if (_isCurrent(operation)) _onServerMessage(operation, raw);
         },
-        onError: (Object e) {
+        onError: (Object _) {
           if (_isCurrent(operation)) {
-            _failTurn('Server connection error: $e');
+            _failTurn('Server connection error.');
           }
         },
         onDone: () {
@@ -559,12 +574,12 @@ class ServerSttEngine implements SttEngine {
       operation.latencyTurn?.mark(VoiceLatencyPoint.sttStarted);
       onCaptureReady?.call();
       _listenToAudio(operation, stream);
-    } catch (e) {
+    } catch (_) {
       if (_isCurrent(operation)) {
         _failTurn(
           _persistent
-              ? 'Could not resume server STT: $e'
-              : 'Could not start server STT: $e',
+              ? 'Could not resume server STT.'
+              : 'Could not start server STT.',
         );
       }
     } finally {
@@ -599,8 +614,8 @@ class ServerSttEngine implements SttEngine {
           }
         }
       },
-      onError: (Object e) {
-        if (_isCurrent(operation)) _failTurn('Microphone error: $e');
+      onError: (Object _) {
+        if (_isCurrent(operation)) _failTurn('Microphone capture failed.');
       },
     );
   }
@@ -672,15 +687,13 @@ class ServerSttEngine implements SttEngine {
         // del gate server-side. Antes solo se logueaba; ahora también viaja en
         // SttResult.meta (spec 025 F2) para que un consumidor (p.ej. el VAD
         // local o un futuro adaptador) lo use sin reimplementar el parseo.
-        final metaRaw = msg['meta'];
-        final meta = metaRaw is Map<String, dynamic> ? metaRaw : null;
+        final meta = serverSttPublicMeta(msg['meta']);
         debugPrint(
           '[VOICE] stt-server final len=${text.length}'
           ' peak=${peak.toStringAsFixed(3)}'
           '${meta != null ? ' voiced=${meta['voiced_secs']}'
                     ' logprob=${meta['avg_logprob']}'
-                    ' nospeech=${meta['no_speech_prob']}'
-                    '${meta['gate'] != null ? ' gateServer=${meta['gate']}' : ''}' : ''}'
+                    ' nospeech=${meta['no_speech_prob']}' : ''}'
           '${ghost ? ' → DESCARTADO (pico < $_speechPeakThreshold: sin voz'
                     ' real, alucinación probable)' : ''}',
         );
@@ -692,7 +705,7 @@ class ServerSttEngine implements SttEngine {
         // siguiente turno.
         break;
       case 'error':
-        _failTurn('Server: ${msg['message'] ?? 'error'}');
+        _failTurn(serverSttPublicErrorMessage(msg));
         break;
     }
   }
@@ -870,10 +883,10 @@ class ServerSttEngine implements SttEngine {
     if (c == null || _closing) return;
     try {
       c.add(jsonEncode({'type': 'eof'}));
-    } catch (e) {
+    } catch (error) {
       // Si el eof no sale, el cierre del turno depende del hangover del
       // servidor — deja rastro para diagnosticarlo (A-032, spec 028).
-      debugPrint('[stt] no se pudo enviar eof: $e');
+      debugPrint('[stt] eof send failed (${error.runtimeType})');
     }
   }
 

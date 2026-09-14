@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "source": {
+    "authoritativeLock": "pubspec.lock",
+    "authoritativeLockSha256": "f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3"
+  },
+  "sourceAuthorization": {
+    "forge": "github.com",
+    "authorizedActors": ["xP3ta"],
+    "requireAuthorAndCommitter": true
+  },
+  "signerContinuity": {
+    "direct-public": {
+      "baselineTag": "v1.2.9",
+      "baselineArtifact": "app-arm64-v8a-full-release.apk",
+      "baselineArtifactSha256": "f5187dbc57caa881ca3f21453335df320e271d7358e81e6095e6d9af50a9f734",
+      "certificateSha256": "86edaa150fabd33d8184f5b958400cabadacb49632f7ec50ecbe49608058d159"
+    },
+    "play-private": {
+      "certificateSha256": "86edaa150fabd33d8184f5b958400cabadacb49632f7ec50ecbe49608058d159"
+    }
+  },
+  "publicInspectionTools": {
+    "platform": "linux-x86_64",
+    "buildToolsRevision": "36.0.0",
+    "commandLineToolsRevision": "12.0",
+    "tools": {
+      "aapt": {
+        "path": "build-tools/36.0.0/aapt",
+        "sha256": "c076aeeee8bd3ce58395a093747202265ab80c6c12e59358f598a30a81fde13b"
+      },
+      "apksigner": {
+        "path": "build-tools/36.0.0/apksigner",
+        "sha256": "b47549e373b895ce6ca620d0c7887e674d9615ffa837a86ac601dcfd04adb0f0"
+      },
+      "apkanalyzer": {
+        "path": "cmdline-tools/latest/bin/apkanalyzer",
+        "sha256": "c3277b8f17d26159c6496740114b5ed639d221107d94f47ff8a2ed4a5ea29026"
+      }
+    },
+    "runtimeTrees": {
+      "androidBuildTools": {
+        "root": "android-sdk",
+        "path": "build-tools/36.0.0",
+        "sha256": "5889971d8cbf457d2771b534eb9de0a6156ce2e34d8b7170b66435fbe8af6d26"
+      },
+      "androidCommandLineTools": {
+        "root": "android-sdk",
+        "path": "cmdline-tools/latest",
+        "sha256": "06973c0511cb548d5904221c176b490b0c213a17062524e12c7e2460af9ed7ad"
+      },
+      "javaBinaries": {
+        "root": "jdk",
+        "path": "bin",
+        "sha256": "673a60e262fc553e95b04b39e2c3d6e32f7acd936147ce34785cf877c7aa66d9"
+      },
+      "javaLibraries": {
+        "root": "jdk",
+        "path": "lib",
+        "sha256": "8e99c647bd0296ef86e87e261b409d7f08ae52e4d05169dfb392c973b53927c6"
+      }
+    }
+  },
+  "playInspectionTools": {
+    "platform": "linux-x86_64",
+    "tools": {
+      "apkanalyzer": {
+        "root": "android-sdk",
+        "path": "cmdline-tools/latest/bin/apkanalyzer",
+        "sha256": "c3277b8f17d26159c6496740114b5ed639d221107d94f47ff8a2ed4a5ea29026"
+      },
+      "jarsigner": {
+        "root": "jdk",
+        "path": "bin/jarsigner",
+        "sha256": "2c3ad93fbe432cda2f3338acd0a150a472860c38477845208b673f306f5e09d7"
+      },
+      "keytool": {
+        "root": "jdk",
+        "path": "bin/keytool",
+        "sha256": "bfd62a2ed799d9f2760ca528df3dc2df31fb6a33c521321b84e2ab67007b987d"
+      }
+    }
+  },
+  "android": {
+    "packageId": "dev.xpetalab.hermesconsole",
+    "versionSource": "pubspec.yaml"
+  },
+  "channels": {
+    "direct-public": {
+      "visibility": "public-after-owner-approval",
+      "flavor": "full",
+      "artifactType": "signed-release-apk",
+      "artifacts": {
+        "app-arm64-v8a-full-release.apk": "arm64-v8a",
+        "app-armeabi-v7a-full-release.apk": "armeabi-v7a",
+        "app-x86_64-full-release.apk": "x86_64"
+      },
+      "publicAssets": [
+        "SHA256SUMS",
+        "app-arm64-v8a-full-release.apk",
+        "app-armeabi-v7a-full-release.apk",
+        "app-x86_64-full-release.apk",
+        "hermes-console-release-evidence.tar.gz",
+        "provenance.intoto.jsonl"
+      ],
+      "provenanceSubjects": [
+        "app-arm64-v8a-full-release.apk",
+        "app-armeabi-v7a-full-release.apk",
+        "app-x86_64-full-release.apk",
+        "hermes-console-release-evidence.tar.gz"
+      ],
+      "rebuildAcceptance": "observed-two-build-byte-identity",
+      "inputsCryptographicallyPinned": false
+    },
+    "play-private": {
+      "visibility": "private",
+      "flavor": "play",
+      "artifactType": "signed-release-aab",
+      "artifacts": ["app-play-release.aab"],
+      "rebuildAcceptance": "observed-two-build-functional-payload-equivalence",
+      "inputsCryptographicallyPinned": false
+    }
+  },
+  "provenance": {
+    "bundleMediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+    "dssePayloadType": "application/vnd.in-toto+json",
+    "statementType": "https://in-toto.io/Statement/v1",
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+    "builder": "github-hosted",
+    "repository": "https://github.com/xP3ta/hermes-console",
+    "repositorySlug": "xP3ta/hermes-console",
+    "workflowPath": ".github/workflows/build-apk.yml",
+    "oidcIssuer": "https://token.actions.githubusercontent.com",
+    "certificateIdentityTemplate": "https://github.com/xP3ta/hermes-console/.github/workflows/build-apk.yml@refs/tags/{tag}",
+    "verifierSignerWorkflow": "xP3ta/hermes-console/.github/workflows/build-apk.yml",
+    "signatureMode": "keyless",
+    "cryptographicVerifier": "gh attestation verify",
+    "verifierPlatform": "linux-x86_64",
+    "verifierVersion": "2.98.0",
+    "verifierSha256": "62885b97de6a0cd85e616cdd94bcda908bf5cf1018094385892b05cea3537163",
+    "denySelfHostedRunners": true
+  }
+}

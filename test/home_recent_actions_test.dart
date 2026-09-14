@@ -27,9 +27,37 @@ class _RecentHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<Session>> getSessions({bool includeChildren = false}) async => [
-    session,
-  ];
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) async => [session];
+
+  @override
+  void close() {}
+}
+
+class _ProfileRowsHomeClient extends ApiClient {
+  _ProfileRowsHomeClient(this.sessions)
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        httpClient: MockClient((_) async => http.Response('{}', 404)),
+      );
+
+  final List<Session> sessions;
+  String? requestedProfile;
+
+  @override
+  Future<bool> healthCheck() async => true;
+
+  @override
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) async {
+    requestedProfile = profile;
+    return List<Session>.of(sessions);
+  }
 
   @override
   void close() {}
@@ -50,7 +78,10 @@ class _MutableRecentHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<Session>> getSessions({bool includeChildren = false}) async {
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) async {
     sessionReads++;
     return List<Session>.of(sessions);
   }
@@ -73,7 +104,10 @@ class _DeferredRecentHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<Session>> getSessions({bool includeChildren = false}) {
+  Future<List<Session>> getSessions({
+    bool includeChildren = false,
+    String? profile,
+  }) {
     final load = Completer<List<Session>>();
     sessionLoads.add(load);
     return load.future;
@@ -118,6 +152,79 @@ void main() {
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureChannel, null);
   });
+
+  testWidgets(
+    'Home stamps profileless scoped rows and rejects contradictory owners',
+    (tester) async {
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      await manager.saveConnection(
+        'QA',
+        '127.0.0.2',
+        8642,
+        'test-key',
+        kind: InstanceKind.vps,
+      );
+      final connection = manager.getConnections().single;
+      await manager.setActiveConnection(connection.id);
+      await manager.setActiveProfile(connection.id, 'canonical-owner');
+      final client = _ProfileRowsHomeClient(const [
+        Session(
+          id: 'legacy-profileless-row',
+          title: 'Visible legacy row',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 1,
+          isActive: false,
+          preview: 'Content',
+          startedAt: 2,
+        ),
+        Session(
+          id: 'contradictory-row',
+          title: 'Hidden contradictory row',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 1,
+          isActive: false,
+          preview: 'Content',
+          startedAt: 1,
+          profile: 'other-owner',
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('es'),
+          theme: AppTheme.fromId('dark'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: HomeDashboardScreen(
+            connManager: manager,
+            clientFactory: (_) => client,
+          ),
+        ),
+      );
+      for (var attempt = 0; attempt < 40; attempt++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        if (find.text('Visible legacy row').evaluate().isNotEmpty) break;
+      }
+
+      expect(client.requestedProfile, 'canonical-owner');
+      expect(find.text('Visible legacy row'), findsOneWidget);
+      expect(find.text('Hidden contradictory row'), findsNothing);
+      final recentTile = tester.widget(
+        find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_RecentSessionTile',
+        ),
+      );
+      expect((recentTile as dynamic).session.profile, 'canonical-owner');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('swipe gestiona y renombra por identidad lógica', (tester) async {
     final manager = await ConnectionManager.create(

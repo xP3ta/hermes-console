@@ -40,11 +40,16 @@ void main() {
 
   NewSessionLaunchCoordinator coordinator({
     Future<SavedConnection?> Function(List<SavedConnection>)? selector,
-    Future<void> Function(SavedConnection, Session, NewSessionLaunchTarget)?
+    Future<NavigationDeliveryOutcome> Function(
+      SavedConnection,
+      Session,
+      NewSessionLaunchTarget,
+    )?
     navigator,
     Future<void> Function()? openApp,
     Future<void> Function()? openSetup,
-    Future<void> Function(SavedConnection, String)? openSession,
+    Future<NavigationDeliveryOutcome> Function(SavedConnection, String)?
+    openSession,
   }) {
     return NewSessionLaunchCoordinator(
       connections: () => connections,
@@ -60,6 +65,7 @@ void main() {
           (selected, draft, target) async {
             opened.add(draft);
             openedTargets.add(target);
+            return NavigationDeliveryOutcome.delivered;
           },
       openApp: openApp,
       openSetup: openSetup,
@@ -123,6 +129,7 @@ void main() {
           openedTargets.add(target);
           navigationStarted.complete();
           await finishNavigation.future;
+          return NavigationDeliveryOutcome.delivered;
         },
       );
 
@@ -236,6 +243,7 @@ void main() {
         openSession: (selected, sessionId) async {
           expect(selected.id, 'only');
           openedSessions.add(sessionId);
+          return NavigationDeliveryOutcome.delivered;
         },
       );
 
@@ -251,6 +259,71 @@ void main() {
       );
       expect(openedSessions, ['session-1']);
       expect(opened, isEmpty);
+    },
+  );
+
+  test(
+    'retains a draft action when its navigation commit is deferred',
+    () async {
+      var attempts = 0;
+      final subject = coordinator(
+        navigator: (_, draft, target) async {
+          attempts += 1;
+          if (attempts == 1) {
+            unlocked = false;
+            return NavigationDeliveryOutcome.deferred;
+          }
+          opened.add(draft);
+          return NavigationDeliveryOutcome.delivered;
+        },
+      );
+
+      expect(
+        await subject.enqueue(action('deferred-draft')),
+        NewSessionLaunchDisposition.queued,
+      );
+      expect(subject.state, NewSessionLaunchCoordinatorState.waitingForUnlock);
+      expect(subject.hasPending, isTrue);
+      expect(opened, isEmpty);
+      expect(attempts, 1);
+
+      expect(await subject.retry(), NewSessionLaunchDisposition.queued);
+      expect(attempts, 1);
+      unlocked = true;
+      expect(await subject.retry(), NewSessionLaunchDisposition.delivered);
+      expect(subject.hasPending, isFalse);
+      expect(opened, hasLength(1));
+      expect(attempts, 2);
+    },
+  );
+
+  test(
+    'retains a widget session when its navigation commit is deferred',
+    () async {
+      var attempts = 0;
+      final openedSessions = <String>[];
+      final subject = coordinator(
+        openSession: (_, sessionId) async {
+          attempts += 1;
+          if (attempts == 1) return NavigationDeliveryOutcome.deferred;
+          openedSessions.add(sessionId);
+          return NavigationDeliveryOutcome.delivered;
+        },
+      );
+
+      final resume = action(
+        'deferred-session',
+        kind: NewSessionLaunchKind.openSession,
+        sessionId: 'session-locked',
+      );
+      expect(await subject.enqueue(resume), NewSessionLaunchDisposition.queued);
+      expect(subject.hasPending, isTrue);
+      expect(openedSessions, isEmpty);
+
+      expect(await subject.retry(), NewSessionLaunchDisposition.delivered);
+      expect(subject.hasPending, isFalse);
+      expect(openedSessions, ['session-locked']);
+      expect(attempts, 2);
     },
   );
 }

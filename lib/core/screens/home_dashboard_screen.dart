@@ -86,7 +86,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   final Map<String, ({double activityAt, String? user, String? assistant})>
   _turnPreviews = {};
   int _previewHydrationEpoch = 0;
-  ApiClient? _previewClient;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   PageRoute<dynamic>? _route;
   bool _initialLoadComplete = false;
@@ -109,8 +108,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
     _previewHydrationEpoch++;
-    _previewClient?.close();
-    _previewClient = null;
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
@@ -274,6 +271,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   Future<void> _deleteRecent(Session session) async {
     final conn = _active;
     if (conn == null) return;
+    final ownerProfile = Session.profileOwner(session.profile);
     if (conn.readOnly) {
       showReadOnlyNotice(context);
       return;
@@ -314,7 +312,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
     var removed = false;
     if (isLocal) {
-      await LocalTranscriptStore.clear(conn.id, session.id);
+      await LocalTranscriptStore.clear(
+        conn.id,
+        session.id,
+        profile: ownerProfile,
+      );
       removed = true;
     } else {
       final client = ApiClient(
@@ -326,9 +328,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       try {
         result = await deleteSessionWithResolvedLineage(
           session,
-          loadSessions: ({bool includeChildren = false}) =>
-              client.getSessions(includeChildren: includeChildren),
-          deleteSession: client.deleteSession,
+          loadSessions: ({bool includeChildren = false}) => client.getSessions(
+            includeChildren: includeChildren,
+            profile: ownerProfile,
+          ),
+          deleteSession: (sessionId) =>
+              client.deleteSession(sessionId, profile: ownerProfile),
           cronDeletion: cronDeletion,
           deleteCronJob:
               !session.isJob ||
@@ -337,12 +342,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               : (jobId) => widget.connManager.deleteLinkedCronJob(
                   conn,
                   jobId,
-                  profile: widget.connManager.activeProfileFor(conn.id),
+                  profile: ownerProfile,
                 ),
         );
       } finally {
         client.close();
       }
+      if (!mounted) return;
       switch (result.status) {
         case LinkedSessionDeleteStatus.deleted:
           removed = true;
@@ -375,10 +381,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!removed) return;
     }
     if (!mounted || !removed) return;
+    final aggregate = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.activeChats
+        .globalActivity;
+    aggregate?.clearSession(conn.id, ownerProfile, session.id);
+    await aggregate?.flushJournal();
+    if (!mounted) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await ChatDraftStore(prefs).clear(conn.id, session.id);
-      await TurnOutboxStore().deleteForChat(conn.id, session.id);
+      await ChatDraftStore(
+        prefs,
+      ).clear(conn.id, session.id, profile: ownerProfile);
+      await TurnOutboxStore().deleteForChat(
+        conn.id,
+        session.id,
+        profile: ownerProfile,
+      );
     } catch (error) {
       debugPrint(
         '[home-dashboard] recovery cleanup failed (${error.runtimeType})',
@@ -387,7 +406,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (!mounted) return;
     setState(() {
       _recentSessions = _recentSessions
-          .where((x) => x.id != session.id)
+          .where(
+            (x) =>
+                x.id != session.id ||
+                Session.profileOwner(x.profile) != ownerProfile,
+          )
           .toList();
     });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -604,6 +627,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final client =
         widget.clientFactory?.call(conn) ??
         ApiClient(baseUrl: conn.baseUrl, apiKey: conn.apiKey);
+    final ownerProfile = Session.profileOwner(
+      widget.connManager.activeProfileFor(conn.id),
+    );
     try {
       if (conn.kind == InstanceKind.localhost) {
         // El agente local sirve dashboard en :9119; su health es /api/status,
@@ -622,14 +648,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           _ensureLocalBridgeFresh(conn);
           // El bridge local no expone /api/sessions — usamos el transcript
           // guardado en SharedPreferences por LocalTranscriptStore.
-          sessions = await LocalTranscriptStore.listForConnection(conn.id);
+          sessions = await LocalTranscriptStore.listForConnection(
+            conn.id,
+            profile: ownerProfile,
+          );
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         }
       } else {
         ok = await client.healthCheck();
         if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         if (ok) {
-          sessions = await client.getSessions();
+          sessions = await client.getSessions(profile: ownerProfile);
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
           sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
           // La comprobación del bridge ya no depende de abrir Chat/Ajustes.
@@ -650,10 +679,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     }
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     if (!mounted) return;
-    final merged = <String, Session>{
-      for (final session in sessions) session.id: session,
-    };
-    for (final draft in drafts) {
+    final merged = <String, Session>{};
+    for (final session in sessions) {
+      final published = session.profile?.trim();
+      if (published != null && published.isNotEmpty) {
+        if (published == ownerProfile) merged[session.id] = session;
+        continue;
+      }
+      final captured = session.copyWith(profile: ownerProfile);
+      merged[captured.id] = captured;
+    }
+    for (final draft in drafts.where(
+      (draft) => Session.profileOwner(draft.profile) == ownerProfile,
+    )) {
       final localDraft = draft.toSession(
         fallbackTitle: Strings.of(context).drawerNewChat,
       );
@@ -725,13 +763,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     List<Session> sessions,
   ) async {
     final epoch = ++_previewHydrationEpoch;
-    _previewClient?.close();
-    _previewClient = null;
     final activeChats = context
         .findAncestorStateOfType<HermesAppState>()
         ?.activeChats;
-    final candidates = <({String key, Session session})>[];
-    var memoryChanged = false;
+    var changed = false;
 
     for (final session in sessions) {
       final key = _turnPreviewKey(connection, session);
@@ -741,128 +776,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         session.id,
         profile: session.profile,
       );
-      final inMemoryUser = inMemory == null
-          ? null
-          : latestUserPreview(inMemory.messages, newestFirst: true);
-      final inMemoryAssistant = inMemory == null
-          ? null
-          : latestAssistantPreview(inMemory.messages, newestFirst: true);
-      final serverAdvertisedTurn =
-          session.lastUserPreview != null ||
-          session.lastAssistantPreview != null;
-      final user = inMemoryUser ?? session.lastUserPreview;
-      final assistant = inMemoryAssistant ?? session.lastAssistantPreview;
-
-      if (inMemory != null || serverAdvertisedTurn) {
-        final cached = _turnPreviews[key];
-        if (cached?.activityAt != activityAt ||
-            cached?.user != user ||
-            cached?.assistant != assistant) {
-          _turnPreviews[key] = (
-            activityAt: activityAt,
-            user: user,
-            assistant: assistant,
-          );
-          memoryChanged = true;
-        }
+      final user = inMemory == null
+          ? session.lastUserPreview
+          : latestUserPreview(inMemory.messages, newestFirst: true) ??
+                session.lastUserPreview;
+      final assistant = inMemory == null
+          ? session.lastAssistantPreview
+          : latestAssistantPreview(inMemory.messages, newestFirst: true) ??
+                session.lastAssistantPreview;
+      final cached = _turnPreviews[key];
+      if (cached?.activityAt == activityAt &&
+          cached?.user == user &&
+          cached?.assistant == assistant) {
         continue;
       }
-
-      if (_turnPreviews[key]?.activityAt == activityAt) continue;
-      if (connection.kind == InstanceKind.localhost ||
-          session.isDraftOnly ||
-          session.messageCount < 2) {
-        _turnPreviews[key] = (
-          activityAt: activityAt,
-          user: null,
-          assistant: null,
-        );
-        continue;
-      }
-      candidates.add((key: key, session: session));
+      _turnPreviews[key] = (
+        activityAt: activityAt,
+        user: user,
+        assistant: assistant,
+      );
+      changed = true;
     }
 
-    if (memoryChanged && mounted && epoch == _previewHydrationEpoch) {
+    if (changed && mounted && epoch == _previewHydrationEpoch) {
       setState(() {});
     }
-    if (candidates.isEmpty || !mounted || epoch != _previewHydrationEpoch) {
-      return;
-    }
-
-    final client = ApiClient(
-      baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
-      connectionId: connection.id,
-    );
-    _previewClient = client;
-    final hydrated =
-        <String, ({double activityAt, String? user, String? assistant})>{};
-    var nextIndex = 0;
-    var endpointUnavailable = false;
-
-    Future<void> worker() async {
-      while (!endpointUnavailable) {
-        final index = nextIndex++;
-        if (index >= candidates.length) return;
-        final candidate = candidates[index];
-        try {
-          final messages = await client.getMessages(candidate.session.id);
-          hydrated[candidate.key] = (
-            activityAt: candidate.session.lastActivityAt,
-            user: latestUserPreview(messages),
-            assistant: latestAssistantPreview(messages),
-          );
-        } catch (error) {
-          final detail = error.toString();
-          if (detail.contains('HTTP 404') || detail.contains('HTTP 405')) {
-            endpointUnavailable = true;
-          }
-          hydrated[candidate.key] = (
-            activityAt: candidate.session.lastActivityAt,
-            user: null,
-            assistant: null,
-          );
-        }
-      }
-    }
-
-    try {
-      final workerCount = candidates.length < 3 ? candidates.length : 3;
-      await Future.wait(List.generate(workerCount, (_) => worker()));
-    } finally {
-      if (identical(_previewClient, client)) _previewClient = null;
-      client.close();
-    }
-
-    if (endpointUnavailable) {
-      for (final candidate in candidates) {
-        hydrated.putIfAbsent(
-          candidate.key,
-          () => (
-            activityAt: candidate.session.lastActivityAt,
-            user: null,
-            assistant: null,
-          ),
-        );
-      }
-    }
-    if (!mounted ||
-        epoch != _previewHydrationEpoch ||
-        _active?.id != connection.id) {
-      return;
-    }
-    setState(() {
-      for (final entry in hydrated.entries) {
-        final current = _recentSessions
-            .where(
-              (session) => _turnPreviewKey(connection, session) == entry.key,
-            )
-            .firstOrNull;
-        if (current?.lastActivityAt == entry.value.activityAt) {
-          _turnPreviews[entry.key] = entry.value;
-        }
-      }
-    });
   }
 
   String _recentGroupLabel(HomeRecentDateGroup group) => switch (group) {

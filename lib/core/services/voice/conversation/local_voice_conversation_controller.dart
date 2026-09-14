@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../active_chat_service.dart';
+import '../../connection_manager.dart';
 import '../session/voice_ui_surface.dart';
 import '../hermes_speech_stream.dart';
 import '../spoken_text.dart';
@@ -32,7 +33,7 @@ bool voiceConversationMustSuspendFullDuplexInBackground({
 }) => !continueWhenLocked;
 
 /// Conversación local por turnos alineada con el chat visible:
-/// STT APK → `ActiveChat.send/steer/enqueue` → respuesta visible → TTS APK.
+/// STT APK → `ActiveChat.send/enqueue` → respuesta visible → TTS APK.
 ///
 /// No crea sesiones, talkers ni acuses auxiliares. Toda operación asíncrona
 /// captura [_epoch]; Pausa, Stop, Cancel y X la rotan antes de tocar plugins.
@@ -86,6 +87,7 @@ class LocalVoiceConversationController extends ChangeNotifier
 
   String _model = '';
   String _profile = '';
+  bool _allowTransportFallback = false;
   Future<void> Function(String prompt)? _onBeforeSend;
   String _partialTranscript = '';
   String _userTranscript = '';
@@ -213,6 +215,9 @@ class LocalVoiceConversationController extends ChangeNotifier
   int get debugEpoch => _epoch;
 
   @visibleForTesting
+  bool get debugAllowTransportFallback => _allowTransportFallback;
+
+  @visibleForTesting
   int get debugNarrationCursor => _narration?.cursor ?? 0;
 
   @visibleForTesting
@@ -232,6 +237,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     required ActiveChat chat,
     required String model,
     String profile = '',
+    bool allowTransportFallback = false,
     Future<void> Function(String prompt)? onBeforeSend,
   }) async {
     final pendingExit = _exitInFlight;
@@ -257,6 +263,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     _chat = chat;
     _model = model;
     _profile = ownerProfile;
+    _allowTransportFallback = allowTransportFallback;
     _onBeforeSend = onBeforeSend;
     _partialTranscript = '';
     _userTranscript = '';
@@ -588,30 +595,14 @@ class LocalVoiceConversationController extends ChangeNotifier
       _notify();
 
       if (!voicePlaybackInterrupted && chat.isStreaming) {
-        _latencyTurn?.mark(VoiceLatencyPoint.submitStarted);
-        try {
-          // Hermes Desktop corrige un run vivo con `session.redirect`. Cancelar
-          // y enviar inmediatamente abría una carrera con el drenaje del run:
-          // el backend aceptaba el stop, pero podía perder el reemplazo.
-          await chat.steer(text);
-          if (!_isCurrent(operation) || turn != _turnBinding) return;
-          _runtime.markBackendRunning(turn);
-          _markLatencySubmitAccepted(chat, lifecycleAcknowledged: true);
-          // `session.redirect` conserva el mismo run, así que no llegará un
-          // `started` que reinicie la cola. Omite lo ya visible antes de la
-          // interrupción y narra solo la continuación posterior.
-          _narration?.resumeFromVisibleEnd();
-        } catch (error) {
-          if (!_isCurrent(operation) || turn != _turnBinding) return;
-          // Gateways sin redirect conservan el texto en la cola. Nunca hacemos
-          // cancel -> send sin esperar: el siguiente turno se drena cuando el
-          // run actual termina y la corrección no se pierde.
-          chat.enqueue(text);
-          _runtime.markSubmissionQueued(turn);
-        }
+        // Una transcripción nueva durante un run activo siempre pertenece al
+        // turno siguiente. Voz comparte la cola FIFO del chat y no muta el run
+        // vivo mediante session.redirect/session.steer.
+        chat.enqueue(text);
+        _runtime.markSubmissionQueued(turn);
         _notify();
-        // El monitor consume una captura por interjección. Rearmarlo después
-        // de redirect/cola permite otra corrección en el mismo run.
+        // El monitor consume una captura por interjección. Rearmarlo después de
+        // encolar permite preparar otro turno sin alterar el actual.
         unawaited(_armFullDuplexForTurn(beginResponseTurn: true));
         return;
       }
@@ -630,6 +621,11 @@ class LocalVoiceConversationController extends ChangeNotifier
         history: chat.buildHistory(),
         profile: _profile,
         voicePlaybackInterrupted: voicePlaybackInterrupted,
+        allowTransportFallbackOverride: chat.hasDesktopTransport
+            ? _allowTransportFallback &&
+                  chat.connection.kind == InstanceKind.localhost &&
+                  chat.connection.onDeviceLoopback
+            : null,
       );
       if (!_isCurrent(operation) || turn != _turnBinding) return;
       if (accepted) {
@@ -990,7 +986,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     bool lifecycleAcknowledged = false,
   }) {
     if (_latencyTurn?.mark(VoiceLatencyPoint.submitAccepted) != true) return;
-    // Anything observed while the submit/redirect was still pending belongs
+    // Anything observed while the submit was still pending belongs
     // to the previous response and cannot seed the new turn's latency.
     _latencyAssistantBaseline = chat.assistantContent;
     _latencyNarrationBaselineLength = _narration?.rawObserved.length ?? 0;
@@ -1051,7 +1047,10 @@ class LocalVoiceConversationController extends ChangeNotifier
   void _onChatEvent(ActiveChatEvent event) {
     if (!active) return;
     // A context-metrics refresh has no conversational or audio meaning.
-    if (event == ActiveChatEvent.responseMetrics) return;
+    if (event == ActiveChatEvent.responseMetrics ||
+        event == ActiveChatEvent.dashboardAuthChanged) {
+      return;
+    }
     final chat = _chat;
     final narration = _narration;
     if (chat == null || narration == null) return;
@@ -1105,9 +1104,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       case ActiveChatEvent.toolProgress:
       case ActiveChatEvent.subagentActivity:
         _resumeAfterApprovalIfResolved();
-        final hasActiveSubagent = chat.subagentActivities.any(
-          (activity) => !activity.isTerminal,
-        );
+        final hasActiveSubagent = chat.subagentAggregate.activeCount > 0;
         final liveToolLabel =
             chat.activeVoiceToolLabel ??
             (hasActiveSubagent ? 'delegate_task' : null);
@@ -1224,6 +1221,8 @@ class LocalVoiceConversationController extends ChangeNotifier
       case ActiveChatEvent.earlierMessagesLoaded:
       case ActiveChatEvent.responseMetrics:
       case ActiveChatEvent.sessionInfo:
+      case ActiveChatEvent.warning:
+      case ActiveChatEvent.dashboardAuthChanged:
         break;
     }
     _notify();
@@ -2731,6 +2730,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     _sttSub = null;
     _modelHandoff = null;
     _chat = null;
+    _allowTransportFallback = false;
     _onBeforeSend = null;
     // Invalida y empieza a liberar los motores antes de esperar cancelaciones
     // de streams. Algunos plugins completan `StreamSubscription.cancel()` solo

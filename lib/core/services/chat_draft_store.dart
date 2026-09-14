@@ -8,12 +8,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/attachment_draft.dart';
 import '../models/session.dart';
 import 'attachment_uploader.dart';
+import 'session_deletion.dart';
+import 'turn_outbox_store.dart';
 
 enum MissionRoomTaskPhase { prepared, submitting, outcomeUnknown }
 
 class ChatDraft {
   final String text;
   final List<AttachmentDraft> attachments;
+  final String? preparedTurnClientTurnId;
   final String? missionRoomIntentId;
   final String? missionRoomWorkerProfile;
   final String? missionRoomBoardId;
@@ -23,6 +26,7 @@ class ChatDraft {
   const ChatDraft({
     required this.text,
     required this.attachments,
+    this.preparedTurnClientTurnId,
     this.missionRoomIntentId,
     this.missionRoomWorkerProfile,
     this.missionRoomBoardId,
@@ -88,22 +92,41 @@ class ChatDraftEntry {
 /// sensibles aunque no sea una credencial, por eso vive en el Keystore y no en
 /// SharedPreferences. Las rutas SAF/caché se validan al restaurar porque Android
 /// puede revocarlas o borrarlas.
+typedef ChatDraftChange = ({
+  String connectionId,
+  String profile,
+  String sessionId,
+});
+
 class ChatDraftStore {
+  static final _changes = StreamController<ChatDraftChange>.broadcast();
+
+  /// Invalidation only, emitted after a confirmed mutation; never draft text.
+  static Stream<ChatDraftChange> get changes => _changes.stream;
+
   // Secure storage operations are asynchronous and Android may complete an
   // older write after a newer delete. Serialize mutations by the exact
   // connection/profile/session key so an autosave can never resurrect a draft
   // that an acknowledged send already cleared. Static scope also covers the
   // short window where two widget lifecycles construct separate store objects.
   static final Map<String, Future<void>> _mutationTails = {};
+  static final Map<String, int> _mutationGenerations = {};
+  static final Map<
+    String,
+    ({String connectionId, String profile, String sessionId})
+  >
+  _mutationIdentities = {};
 
   final SharedPreferences _prefs;
   final FlutterSecureStorage _secure;
   final Future<bool> Function(AttachmentDraft) _deletePrivateCopy;
+  final String mutationNamespaceForTesting;
 
   ChatDraftStore(
     this._prefs, {
     FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
     Future<bool> Function(AttachmentDraft)? deletePrivateCopy,
+    this.mutationNamespaceForTesting = '',
   }) : _secure = secureStorage,
        _deletePrivateCopy =
            deletePrivateCopy ?? AttachmentUploader.deletePrivateDraftCopy;
@@ -120,15 +143,14 @@ class ChatDraftStore {
       value.startsWith('mob-bot-') || value.startsWith('mob-room-');
 
   static bool _belongsToDedicatedSurface(String sessionId, String owner) =>
-      _isDedicatedSurfaceScope(sessionId) ||
-      _isDedicatedSurfaceScope(owner);
+      _isDedicatedSurfaceScope(sessionId) || _isDedicatedSurfaceScope(owner);
 
   String _key(String connectionId, String sessionId, String profile) =>
       'chat_draft_v3.${_scope(connectionId)}.${_scope(profile)}.${_scope(sessionId)}';
-  String _unscopedV2Key(String connectionId, String sessionId) =>
-      'chat_draft_v2_${connectionId}_$sessionId';
-  String _legacyKey(String connectionId, String sessionId) =>
-      'chat_draft_v1_${connectionId}_$sessionId';
+
+  String _mutationScope(String key) => mutationNamespaceForTesting.isEmpty
+      ? key
+      : '$mutationNamespaceForTesting\u0000$key';
 
   static Future<T> _serializeMutation<T>(
     String scope,
@@ -150,6 +172,12 @@ class ChatDraftStore {
       }
     }
   }
+
+  static int _currentMutationGeneration(String scope) =>
+      _mutationGenerations[scope] ?? 0;
+
+  static int _advanceMutationGeneration(String scope) => _mutationGenerations
+      .update(scope, (value) => value + 1, ifAbsent: () => 1);
 
   static String keyForTesting(
     String connectionId,
@@ -193,6 +221,9 @@ class ChatDraftStore {
       final draft = ChatDraft(
         text: (data['text'] ?? '').toString(),
         attachments: attachments,
+        preparedTurnClientTurnId: _safeOpaqueIdentity(
+          data['preparedTurnClientTurnId'],
+        ),
         missionRoomIntentId: _safeMetadata(
           data['missionRoomIntentId'],
           maxLength: 128,
@@ -228,46 +259,21 @@ class ChatDraftStore {
     String connectionId,
     String sessionId, {
     String profile = 'default',
+    // Conservado para compatibilidad; V1/V2 no tienen ownership demostrable.
     bool claimUnscopedLegacy = false,
   }) async {
+    await LocalConversationCleanupFence.waitForSessionClears(
+      connectionId: connectionId,
+      sessionId: sessionId,
+    );
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
-    final pendingMutation = _mutationTails[key];
+    final pendingMutation = _mutationTails[_mutationScope(key)];
     if (pendingMutation != null) await pendingMutation;
-    var raw = await _secure.read(key: key);
-    final ownsUnscopedLegacy =
-        owner == 'default' ||
-        claimUnscopedLegacy ||
-        sessionId.startsWith('mob-room-') ||
-        sessionId.startsWith('mob-bot-');
-    if ((raw == null || raw.isEmpty) && ownsUnscopedLegacy) {
-      final unscopedKey = _unscopedV2Key(connectionId, sessionId);
-      final unscoped = await _secure.read(key: unscopedKey);
-      if (unscoped != null && unscoped.isNotEmpty) {
-        await _secure.write(key: key, value: unscoped);
-        await _secure.delete(key: unscopedKey);
-        raw = unscoped;
-      }
-    }
-    if (raw == null || raw.isEmpty) {
-      // Migración única de versiones que guardaban el borrador en claro.
-      final legacyKey = _legacyKey(connectionId, sessionId);
-      final legacy = _prefs.getString(legacyKey);
-      if (legacy != null && legacy.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(legacy) as Map<String, dynamic>;
-          decoded['savedAt'] = DateTime.now().millisecondsSinceEpoch;
-          raw = jsonEncode(decoded);
-          await _secure.write(key: key, value: raw);
-        } catch (_) {
-          raw = null;
-        } finally {
-          // Incluso un legacy corrupto no debe permanecer indefinidamente en
-          // claro; si la migración falla, el llamador lo tratará como vacío.
-          await _prefs.remove(legacyKey);
-        }
-      }
-    }
+    final raw = await _secure.read(key: key);
+    // V1/V2 concatenaban connectionId y sessionId con `_` sin escape. Incluso
+    // un lookup aparentemente exacto puede pertenecer a otra pareja de IDs,
+    // por lo que nunca se reclama ni migra automáticamente.
     if (raw == null || raw.isEmpty) {
       return const ChatDraft(text: '', attachments: []);
     }
@@ -283,7 +289,6 @@ class ChatDraftStore {
   /// puedan reabrir chats aún no materializados en Hermes.
   Future<List<ChatDraftEntry>> listForConnection(String connectionId) async {
     final prefix = 'chat_draft_v3.${_scope(connectionId)}.';
-    final unscopedPrefix = 'chat_draft_v2_${connectionId}_';
     final entries = <ChatDraftEntry>[];
     final secureEntries = await _secure.readAll();
     for (final item in secureEntries.entries) {
@@ -319,44 +324,15 @@ class ChatDraftStore {
         entries.add(decoded);
       }
     }
-    // V2 no tenía owner. Solo el listado genérico del perfil default puede
-    // reclamar esas claves; Rooms/Bots y perfiles no-default las migran desde
-    // su superficie autoritativa mediante load(... claimUnscopedLegacy: true).
-    // Así una actualización no oculta borradores normales ni adivina el dueño
-    // de un workstream aislado.
-    for (final item in secureEntries.entries) {
-      if (!item.key.startsWith(unscopedPrefix)) continue;
-      final sessionId = item.key.substring(unscopedPrefix.length);
-      if (sessionId.isEmpty) {
-        await _deleteSecureDraft(item.key, item.value);
-        continue;
-      }
-      if (sessionId.startsWith('mob-room-') ||
-          sessionId.startsWith('mob-bot-')) {
-        // These stable mobile surface ids are claimed with the authoritative
-        // manager/profile owner when that Room/Bot is opened. Migrating them
-        // here to `default` makes the owner-specific load miss the draft.
-        continue;
-      }
-      final canonicalKey = _key(connectionId, sessionId, 'default');
-      if (secureEntries.containsKey(canonicalKey)) {
-        await _deleteSecureDraft(item.key, item.value);
-        continue;
-      }
-      final decoded = _decodeEntry(sessionId, 'default', item.value);
-      if (decoded == null) {
-        await _deleteSecureDraft(item.key, item.value);
-        continue;
-      }
-      await _secure.write(key: canonicalKey, value: item.value);
-      await _secure.delete(key: item.key);
-      entries.add(decoded);
-    }
+    // V2 used `_` as an unescaped delimiter for both connection and session
+    // identifiers. Neither bulk listing nor an apparently exact lookup can
+    // prove where either identifier ends, so V1/V2 remain inaccessible and
+    // untouched rather than being parsed, migrated or deleted.
     entries.sort((a, b) => b.savedAt.compareTo(a.savedAt));
     return entries;
   }
 
-  Future<void> save(
+  Future<bool> save(
     String connectionId,
     String sessionId,
     String text,
@@ -367,6 +343,11 @@ class ChatDraftStore {
     String? missionRoomBoardId,
     String? missionRoomBoardQuery,
     MissionRoomTaskPhase? missionRoomTaskPhase,
+    String? preparedTurnClientTurnId,
+    LocalConversationLifecycle? lifecycle,
+    // Admit before waiting on a screen's two-key move. Cleanup must see this
+    // request even while an earlier snapshot is still using storage.
+    Future<bool>? afterSave,
   }) async {
     final normalizedAttachments = attachments
         .where((item) => item.uploadState != AttachmentUploadState.removed)
@@ -378,66 +359,138 @@ class ChatDraftStore {
         .toList(growable: false);
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
-    await _serializeMutation(key, () async {
-      if (text.isEmpty && normalizedAttachments.isEmpty) {
-        await _clearUnlocked(
-          connectionId,
-          sessionId,
-          owner: owner,
-          includeUnscoped: false,
-        );
-        return;
-      }
-      final previous = await _secure.read(key: key);
-      final removesUnscoped =
-          owner == 'default' ||
-          sessionId.startsWith('mob-room-') ||
-          sessionId.startsWith('mob-bot-');
-      final unscopedKey = _unscopedV2Key(connectionId, sessionId);
-      final unscopedPrevious = removesUnscoped
-          ? await _secure.read(key: unscopedKey)
-          : null;
-      final legacyKey = _legacyKey(connectionId, sessionId);
-      final legacyPrevious = _prefs.getString(legacyKey);
-      final safeIntentId = _safeMetadata(missionRoomIntentId, maxLength: 128);
-      final safeWorker = _safeMetadata(
-        missionRoomWorkerProfile,
-        maxLength: 64,
-        pattern: RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$'),
+    final mutationScope = _mutationScope(key);
+    _mutationIdentities[mutationScope] = (
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: sessionId,
+    );
+    final resource = LocalConversationResourceKey(
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: sessionId,
+      physicalKey: key,
+    );
+    final journalOperation = LocalConversationCleanupFence.admitOperation(
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: sessionId,
+      lifecycle: lifecycle,
+      kind: LocalConversationOperationKind.save,
+      resources: [resource],
+    );
+    // A rejected producer must not invalidate another producer's admission.
+    final admittedGeneration = text.isEmpty && normalizedAttachments.isEmpty
+        ? _advanceMutationGeneration(mutationScope)
+        : _currentMutationGeneration(mutationScope);
+    final pendingOwner = AttachmentOwnershipCoordinator.reservePendingOwner(
+      normalizedAttachments,
+    );
+    var didCommit = false;
+    try {
+      if (afterSave != null && !await afterSave) return false;
+      await LocalConversationCleanupFence.write(
+        connectionId: connectionId,
+        profile: owner,
+        sessionId: sessionId,
+        lifecycle: lifecycle,
+        admittedOperation: journalOperation,
+        operation: () => _serializeMutation(
+          mutationScope,
+          () => AttachmentOwnershipCoordinator.serialize(() async {
+            LocalConversationCleanupFence.ensureOperationAllowed(
+              journalOperation,
+            );
+            if (_currentMutationGeneration(mutationScope) !=
+                admittedGeneration) {
+              return;
+            }
+            if (text.isEmpty && normalizedAttachments.isEmpty) {
+              didCommit = await _clearUnlocked(
+                connectionId,
+                sessionId,
+                owner: owner,
+                operation: journalOperation,
+                resource: resource,
+              );
+              return;
+            }
+            final safePreparedTurnId = _safeOpaqueIdentity(
+              preparedTurnClientTurnId,
+            );
+            if (safePreparedTurnId != null &&
+                await TurnOutboxStore(
+                  secureStorage: _secure,
+                ).isFailedBeforeAcceptanceDiscarded(
+                  connectionId: connectionId,
+                  profile: owner,
+                  sessionId: sessionId,
+                  clientTurnId: safePreparedTurnId,
+                )) {
+              return;
+            }
+            final previous = await _secure.read(key: key);
+            LocalConversationCleanupFence.ensureOperationAllowed(
+              journalOperation,
+            );
+            final safeIntentId = _safeMetadata(
+              missionRoomIntentId,
+              maxLength: 128,
+            );
+            final safeWorker = _safeMetadata(
+              missionRoomWorkerProfile,
+              maxLength: 64,
+              pattern: RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$'),
+            );
+            final safeBoardId = _safeMetadata(
+              missionRoomBoardId,
+              maxLength: 128,
+            );
+            final safeBoardQuery = _safeMetadata(
+              missionRoomBoardQuery,
+              maxLength: 128,
+            );
+            final safePhase = safeIntentId != null && safeWorker != null
+                ? missionRoomTaskPhase
+                : null;
+            final encoded = jsonEncode({
+              'savedAt': DateTime.now().millisecondsSinceEpoch,
+              'text': text,
+              'preparedTurnClientTurnId': ?safePreparedTurnId,
+              'missionRoomIntentId': ?safeIntentId,
+              'missionRoomWorkerProfile': ?safeWorker,
+              'missionRoomBoardId': ?safeBoardId,
+              'missionRoomBoardQuery': ?safeBoardQuery,
+              'missionRoomTaskPhase': ?safePhase?.name,
+              'attachments': normalizedAttachments
+                  .map((item) => item.toJson())
+                  .toList(),
+            });
+            final committed = await LocalConversationCleanupFence.commitEffect(
+              operation: journalOperation,
+              resource: resource,
+              mutation: () => _secure.write(key: key, value: encoded),
+            );
+            if (!committed) return;
+            didCommit = true;
+            _changes.add((
+              connectionId: connectionId,
+              profile: owner,
+              sessionId: sessionId,
+            ));
+            await _cleanupUnowned([
+              if (previous != null) ..._attachmentsFromRaw(previous),
+            ]);
+          }),
+        ),
       );
-      final safeBoardId = _safeMetadata(missionRoomBoardId, maxLength: 128);
-      final safeBoardQuery = _safeMetadata(
-        missionRoomBoardQuery,
-        maxLength: 128,
+    } finally {
+      await AttachmentOwnershipCoordinator.withdrawPendingOwner(
+        pendingOwner,
+        _cleanupUnownedLocked,
       );
-      final safePhase = safeIntentId != null && safeWorker != null
-          ? missionRoomTaskPhase
-          : null;
-      await _secure.write(
-        key: key,
-        value: jsonEncode({
-          'savedAt': DateTime.now().millisecondsSinceEpoch,
-          'text': text,
-          'missionRoomIntentId': ?safeIntentId,
-          'missionRoomWorkerProfile': ?safeWorker,
-          'missionRoomBoardId': ?safeBoardId,
-          'missionRoomBoardQuery': ?safeBoardQuery,
-          'missionRoomTaskPhase': ?safePhase?.name,
-          'attachments': normalizedAttachments
-              .map((item) => item.toJson())
-              .toList(),
-        }),
-      );
-      if (removesUnscoped) {
-        await _secure.delete(key: unscopedKey);
-      }
-      await _prefs.remove(legacyKey);
-      await _cleanupUnowned([
-        if (previous != null) ..._attachmentsFromRaw(previous),
-        if (unscopedPrevious != null) ..._attachmentsFromRaw(unscopedPrevious),
-        if (legacyPrevious != null) ..._attachmentsFromRaw(legacyPrevious),
-      ]);
-    });
+    }
+    return didCommit;
   }
 
   static String? _safeMetadata(
@@ -456,6 +509,16 @@ class ChatDraftStore {
     return normalized;
   }
 
+  static String? _safeOpaqueIdentity(Object? value) {
+    if (value is! String ||
+        value.trim().isEmpty ||
+        value.length > 256 ||
+        value.contains(RegExp(r'[\u0000-\u001f\u007f]'))) {
+      return null;
+    }
+    return value;
+  }
+
   static MissionRoomTaskPhase? _taskPhase(Object? value) {
     if (value is! String) return null;
     for (final phase in MissionRoomTaskPhase.values) {
@@ -468,47 +531,71 @@ class ChatDraftStore {
     String connectionId,
     String sessionId, {
     String profile = 'default',
+    // Conservado para compatibilidad; nunca autoriza V1/V2 ambiguos.
     bool includeUnscoped = false,
-  }) async {
+  }) {
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
-    await _serializeMutation(
-      key,
+    final mutationScope = _mutationScope(key);
+    _advanceMutationGeneration(mutationScope);
+    final resource = LocalConversationResourceKey(
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: sessionId,
+      physicalKey: key,
+    );
+    late final LocalConversationOperation journalOperation;
+    try {
+      journalOperation = LocalConversationCleanupFence.admitOperation(
+        connectionId: connectionId,
+        profile: owner,
+        sessionId: sessionId,
+        kind: LocalConversationOperationKind.clearExact,
+        resources: [resource],
+      );
+    } catch (error, stackTrace) {
+      return Future<void>.error(error, stackTrace);
+    }
+    return _serializeMutation(
+      mutationScope,
       () => _clearUnlocked(
         connectionId,
         sessionId,
         owner: owner,
-        includeUnscoped: includeUnscoped,
+        operation: journalOperation,
+        resource: resource,
       ),
     );
   }
 
-  Future<void> _clearUnlocked(
+  Future<bool> _clearUnlocked(
     String connectionId,
     String sessionId, {
     required String owner,
-    required bool includeUnscoped,
+    LocalConversationOperation? operation,
+    LocalConversationResourceKey? resource,
   }) async {
     final key = _key(connectionId, sessionId, owner);
     final raw = await _secure.read(key: key);
-    await _secure.delete(key: key);
-    String? unscoped;
-    if (includeUnscoped ||
-        owner == 'default' ||
-        sessionId.startsWith('mob-room-') ||
-        sessionId.startsWith('mob-bot-')) {
-      final unscopedKey = _unscopedV2Key(connectionId, sessionId);
-      unscoped = await _secure.read(key: unscopedKey);
-      await _secure.delete(key: unscopedKey);
+    if (operation != null && resource != null) {
+      final committed = await LocalConversationCleanupFence.commitEffect(
+        operation: operation,
+        resource: resource,
+        mutation: () => _secure.delete(key: key),
+      );
+      if (!committed) return false;
+    } else {
+      await _secure.delete(key: key);
     }
-    final legacyKey = _legacyKey(connectionId, sessionId);
-    final legacy = _prefs.getString(legacyKey);
-    await _prefs.remove(legacyKey);
-    await _cleanupUnowned([
-      if (raw != null) ..._attachmentsFromRaw(raw),
-      if (unscoped != null) ..._attachmentsFromRaw(unscoped),
-      if (legacy != null) ..._attachmentsFromRaw(legacy),
-    ]);
+    if (raw != null) {
+      _changes.add((
+        connectionId: connectionId,
+        profile: owner,
+        sessionId: sessionId,
+      ));
+    }
+    await _cleanupUnowned([if (raw != null) ..._attachmentsFromRaw(raw)]);
+    return true;
   }
 
   /// Elimina el borrador de una sesión en todos sus owners conocidos.
@@ -519,89 +606,183 @@ class ChatDraftStore {
   /// servidor ya confirmó el borrado. La coincidencia sigue siendo exacta por
   /// conexión y sesión, sin tocar borradores vecinos.
   Future<void> clearForSession(String connectionId, String sessionId) async {
-    final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
-    final secureSuffix = '.${_scope(sessionId)}';
-    final secureEntries = await _secure.readAll();
-    final matchingKeys = secureEntries.keys
-        .where(
+    final clearOperation = LocalConversationCleanupFence.admitSessionClear(
+      connectionId: connectionId,
+      sessionId: sessionId,
+      physicalKeyPrefix: 'chat_draft_v3.',
+    );
+    try {
+      for (final entry
+          in _mutationIdentities.entries
+              .where(
+                (entry) =>
+                    entry.value.connectionId == connectionId &&
+                    entry.value.sessionId == sessionId,
+              )
+              .toList(growable: false)) {
+        _advanceMutationGeneration(entry.key);
+      }
+      final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
+      final secureSuffix = '.${_scope(sessionId)}';
+      final secureEntries = await _secure.readAll();
+      final matchingKeys = <String>{
+        ...secureEntries.keys.where(
           (key) => key.startsWith(securePrefix) && key.endsWith(secureSuffix),
-        )
-        .toList(growable: false);
-    final removedAttachments = <AttachmentDraft>[];
-    for (final key in matchingKeys) {
-      removedAttachments.addAll(_attachmentsFromRaw(secureEntries[key] ?? ''));
-      await _secure.delete(key: key);
+        ),
+        ...LocalConversationCleanupFence.resourcesBefore(clearOperation)
+            .map((resource) => resource.physicalKey)
+            .where(
+              (key) =>
+                  key.startsWith(securePrefix) && key.endsWith(secureSuffix),
+            ),
+      };
+      await LocalConversationCleanupFence.settleDeliveredEffectsBefore(
+        clearOperation,
+      );
+      final removedAttachments = <AttachmentDraft>[];
+      for (final key in matchingKeys) {
+        final encodedOwner = key.substring(
+          securePrefix.length,
+          key.length - secureSuffix.length,
+        );
+        late final String owner;
+        try {
+          owner = _unScope(encodedOwner);
+        } catch (_) {
+          continue;
+        }
+        final resource = LocalConversationResourceKey(
+          connectionId: connectionId,
+          profile: owner,
+          sessionId: sessionId,
+          physicalKey: key,
+        );
+        await _serializeMutation(_mutationScope(key), () async {
+          if (LocalConversationCleanupFence.hasConfirmedCommitAfter(
+            resource,
+            clearOperation.admissionSequence,
+          )) {
+            return;
+          }
+          final raw = await _secure.read(key: key);
+          final committed = await LocalConversationCleanupFence.commitEffect(
+            operation: clearOperation,
+            resource: resource,
+            mutation: () => _secure.delete(key: key),
+          );
+          if (committed && raw != null) {
+            removedAttachments.addAll(_attachmentsFromRaw(raw));
+          }
+        });
+      }
+      await _cleanupUnowned(removedAttachments);
+    } finally {
+      LocalConversationCleanupFence.completeOperation(clearOperation);
     }
-    final unscopedKey = _unscopedV2Key(connectionId, sessionId);
-    final unscoped = secureEntries[unscopedKey];
-    if (unscoped != null) {
-      removedAttachments.addAll(_attachmentsFromRaw(unscoped));
-    }
-    await _secure.delete(key: unscopedKey);
-    final legacyKey = _legacyKey(connectionId, sessionId);
-    final legacy = _prefs.getString(legacyKey);
-    if (legacy != null) {
-      removedAttachments.addAll(_attachmentsFromRaw(legacy));
-    }
-    await _prefs.remove(legacyKey);
-    await _cleanupUnowned(removedAttachments);
+  }
+
+  /// Elimina únicamente los borradores V3 del perfil indicado.
+  /// V1/V2 no codifican fronteras ni owner de forma no ambigua y se conservan.
+  Future<int> deleteForProfile(String connectionId, String profile) {
+    final owner = profile.trim().isEmpty ? 'default' : profile.trim();
+    return LocalConversationCleanupFence.cleanupProfile(
+      connectionId: connectionId,
+      profile: owner,
+      operation: () async {
+        final securePrefix =
+            'chat_draft_v3.${_scope(connectionId)}.${_scope(owner)}.';
+        var removed = 0;
+        final removedAttachments = <AttachmentDraft>[];
+        final secureEntries = await _secure.readAll();
+        bool shouldRemoveSecure(String key) {
+          if (key.startsWith(securePrefix)) {
+            try {
+              final sessionId = _unScope(key.substring(securePrefix.length));
+              return !_isDedicatedSurfaceScope(sessionId);
+            } catch (_) {
+              return true;
+            }
+          }
+          return false;
+        }
+
+        for (final key in secureEntries.keys.where(shouldRemoveSecure)) {
+          removedAttachments.addAll(
+            _attachmentsFromRaw(secureEntries[key] ?? ''),
+          );
+          await _secure.delete(key: key);
+          removed++;
+        }
+        await _cleanupUnowned(removedAttachments);
+        return removed;
+      },
+    );
   }
 
   /// Elimina únicamente borradores pertenecientes a una conexión retirada.
   /// `readAll` nunca se copia a prefs/logs y las demás entradas del Keystore se
   /// conservan intactas.
-  Future<int> deleteForConnection(String connectionId) async {
-    final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
-    final unscopedPrefix = 'chat_draft_v2_${connectionId}_';
-    final legacyPrefix = 'chat_draft_v1_${connectionId}_';
-    var removed = 0;
-    final removedAttachments = <AttachmentDraft>[];
-    final secureEntries = await _secure.readAll();
-    for (final key in secureEntries.keys.where(
-      (key) => key.startsWith(securePrefix) || key.startsWith(unscopedPrefix),
-    )) {
-      removedAttachments.addAll(_attachmentsFromRaw(secureEntries[key] ?? ''));
-      await _secure.delete(key: key);
-      removed++;
-    }
-    for (final key in _prefs.getKeys().where(
-      (key) => key.startsWith(legacyPrefix),
-    )) {
-      removedAttachments.addAll(
-        _attachmentsFromRaw(_prefs.getString(key) ?? ''),
+  Future<int> deleteForConnection(String connectionId) =>
+      LocalConversationCleanupFence.cleanupConnection(
+        connectionId: connectionId,
+        operation: () async {
+          final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
+          var removed = 0;
+          final removedAttachments = <AttachmentDraft>[];
+          final secureEntries = await _secure.readAll();
+          for (final key in secureEntries.keys.where(
+            (key) => key.startsWith(securePrefix),
+          )) {
+            removedAttachments.addAll(
+              _attachmentsFromRaw(secureEntries[key] ?? ''),
+            );
+            await _secure.delete(key: key);
+            removed++;
+          }
+          await _cleanupUnowned(removedAttachments);
+          return removed;
+        },
       );
-      await _prefs.remove(key);
-      removed++;
-    }
-    await _cleanupUnowned(removedAttachments);
-    return removed;
-  }
 
   Future<void> _deleteSecureDraft(String key, String raw) async {
     await _secure.delete(key: key);
     await _cleanupUnowned(_attachmentsFromRaw(raw));
   }
 
-  Future<void> _cleanupUnowned(List<AttachmentDraft> candidates) async {
+  Future<void> retireAttachments(List<AttachmentDraft> attachments) =>
+      _cleanupUnowned(List<AttachmentDraft>.of(attachments));
+
+  Future<void> _cleanupUnowned(List<AttachmentDraft> candidates) =>
+      AttachmentOwnershipCoordinator.serialize(
+        () => _cleanupUnownedLocked(candidates),
+      );
+
+  Future<void> _cleanupUnownedLocked(List<AttachmentDraft> candidates) async {
     if (candidates.isEmpty) return;
-    late final Map<String, String> remaining;
-    try {
-      remaining = await _secure.readAll();
-    } catch (_) {
-      // Si no podemos demostrar que no queda otro owner, no borramos nada.
-      return;
-    }
-    final decoded = <Object?>[];
-    for (final raw in remaining.values) {
-      try {
-        decoded.add(jsonDecode(raw));
-      } catch (_) {}
-    }
+    final decoded = await AttachmentOwnershipCoordinator.loadDurableReferences(
+      _secure,
+      preferences: _prefs,
+    );
+    if (decoded == null) return;
     final visitedPaths = <String>{};
     for (final candidate in candidates) {
       if (candidate.localPath.isEmpty ||
-          !visitedPaths.add(candidate.localPath) ||
-          decoded.any((value) => _referencesAttachment(value, candidate))) {
+          !visitedPaths.add(candidate.localPath)) {
+        continue;
+      }
+      if (AttachmentOwnershipCoordinator.hasPendingOwner(candidate)) {
+        AttachmentOwnershipCoordinator.deferCleanup(
+          candidate,
+          _cleanupUnownedLocked,
+        );
+        continue;
+      }
+      if (decoded.any(
+        (value) => AttachmentOwnershipCoordinator.durableReferencesAttachment(
+          value,
+          candidate,
+        ),
+      )) {
         continue;
       }
       await _deletePrivateCopy(candidate);
@@ -636,25 +817,4 @@ List<AttachmentDraft> _attachmentsFromRaw(String raw) {
   } catch (_) {
     return const [];
   }
-}
-
-bool _referencesAttachment(Object? value, AttachmentDraft target) {
-  if (value is List) {
-    return value.any((item) => _referencesAttachment(item, target));
-  }
-  if (value is! Map) return false;
-  final map = Map<String, dynamic>.from(value);
-  if ((map['upload_state'] ?? '').toString() ==
-      AttachmentUploadState.removed.name) {
-    return false;
-  }
-  if ((map['local_path'] ?? '').toString() == target.localPath) {
-    final storedId = (map['local_id'] ?? '').toString();
-    if (storedId.isEmpty ||
-        target.localId.isEmpty ||
-        storedId == target.localId) {
-      return true;
-    }
-  }
-  return map.values.any((nested) => _referencesAttachment(nested, target));
 }

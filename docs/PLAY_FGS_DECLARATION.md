@@ -6,9 +6,9 @@ Flutter (notificación ID 256) mantiene `remoteMessaging`, Voz, Read Aloud y el
 fallback `dataSync` de API ≤34. `HermesExternalDataSyncService` (notificación
 ID 257) mantiene únicamente SSH/SFTP `dataSync` en API ≥35.
 
-**Revisado**: 2026-09-01 para el candidato fuente `1.2.9`. Los tipos
+**Revisado**: 2026-09-03 para el candidato fuente `1.2.10`. Los tipos
 coinciden con el manifest versionado, pero el AAB firmado, su manifest fusionado
-y la demostración física todavía están pendientes. Copiar o adaptar en Play
+y la demostración grabada todavía están pendientes. Copiar o adaptar en Play
 Console → Contenido de la aplicación → Permisos de servicios en primer plano
 solo después de cerrar esos gates. Google exige declarar cada tipo, describir el
 efecto de un aplazamiento/interrupción y aportar un vídeo que muestre cómo lo

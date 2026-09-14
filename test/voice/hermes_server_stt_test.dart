@@ -91,26 +91,35 @@ void main() {
     expect(calls, 0);
   });
 
-  test('una respuesta sin ok lanza con el detalle del servidor', () async {
-    final runtime = HermesServerSttRuntime(
-      transcribeRequest: (dataUrl, mimeType) async => {
-        'ok': false,
-        'detail': 'Audio recording is too large',
-      },
-    );
-    addTearDown(runtime.dispose);
-    final path = await clip([1]);
+  test(
+    'una respuesta sin ok lanza sin copiar el detalle del servidor',
+    () async {
+      final runtime = HermesServerSttRuntime(
+        transcribeRequest: (dataUrl, mimeType) async => {
+          'ok': false,
+          'detail': 'PRIVATE_STT_SERVER_DETAIL /home/server/audio.wav',
+        },
+      );
+      addTearDown(runtime.dispose);
+      final path = await clip([1]);
 
-    await expectLater(
-      runtime.transcribe(
-        model: WhisperModel.tiny,
-        audioPath: path,
-        lang: 'es',
-        threads: 2,
-      ),
-      throwsException,
-    );
-  });
+      await expectLater(
+        runtime.transcribe(
+          model: WhisperModel.tiny,
+          audioPath: path,
+          lang: 'es',
+          threads: 2,
+        ),
+        throwsA(
+          predicate<Object>(
+            (error) =>
+                !error.toString().contains('PRIVATE_STT_SERVER_DETAIL') &&
+                !error.toString().contains('/home/server'),
+          ),
+        ),
+      );
+    },
+  );
 
   test('el modelo local nunca es requisito: modelReady es true', () async {
     final runtime = HermesServerSttRuntime(

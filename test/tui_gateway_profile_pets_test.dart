@@ -31,6 +31,13 @@ _servePetGateway(
   final requests = <Map<String, dynamic>>[];
   server.listen((request) async {
     final socket = await WebSocketTransformer.upgrade(request);
+    socket.add(
+      jsonEncode({
+        'jsonrpc': '2.0',
+        'method': 'event',
+        'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+      }),
+    );
     onSocket?.call((frame) => socket.add(jsonEncode(frame)));
     await for (final raw in socket) {
       final frame = jsonDecode(raw as String) as Map<String, dynamic>;

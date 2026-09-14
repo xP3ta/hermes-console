@@ -49,12 +49,13 @@ android {
    // Variantes del mismo código (ver docs/RELEASE_DISTRIBUTION.md):
    //  · full → app completa con instancia local en Termux (descarga directa).
    //  · play → solo-remoto, sin la función local ni sus permisos (Google Play).
-   //  · qa   → equivalente remoto para pruebas físicas en paralelo a Play.
+   //  · qa   → equivalente remoto para pruebas en emulador en paralelo a Play.
    // Ambas comparten applicationId de producción a propósito: así el build `full`
    // (el de uso diario) actualiza la app instalada sin perder datos. No conviven
    // a la vez en un mismo dispositivo, lo cual es aceptable (full = directo,
    // play = tienda). El gating de UI/permisos se hace por manifest (src/play) y
-   // por la bandera Dart kLocalAgentEnabled (--dart-define=HERMES_FLAVOR).
+   // por kLocalAgentEnabled (--dart-define=HERMES_LOCAL_AGENT=true), habilitada
+   // únicamente para el artefacto full.
    flavorDimensions += "distribution"
    productFlavors {
        create("full") {

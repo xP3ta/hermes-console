@@ -2,6 +2,55 @@ final RegExp _asyncDelegationMarkerPattern = RegExp(
   r'^\[ASYNC DELEGATION (?:BATCH )?COMPLETE — deleg_[0-9a-f]{8}\](?:\r?\n|$)',
 );
 
+final RegExp _backgroundProcessCarrierPattern = RegExp(
+  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} exited \(exit code (?:[0-9]|[1-9][0-9]{1,2})\)\.\r?\n'
+  r'Command: [^\r\n]+\r?\n'
+  r'Output:\r?\n'
+  r'[\s\S]*\r?\n\]$',
+);
+
+String stripBackgroundProcessCarrier(String raw) {
+  var from = 0;
+  while (true) {
+    final index = raw.indexOf('[IMPORTANT: Background process ', from);
+    if (index < 0) return raw;
+    final prefix = raw.substring(0, index);
+    final atBoundary =
+        index == 0 || prefix.endsWith('\n\n') || prefix.endsWith('\r\n\r\n');
+    if (atBoundary &&
+        _backgroundProcessCarrierPattern.hasMatch(raw.substring(index))) {
+      return prefix.trimRight();
+    }
+    from = index + 1;
+  }
+}
+
+bool isBackgroundProcessBackendPreview(String raw) => RegExp(
+  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} exited \(exi\.\.\.$',
+).hasMatch(raw);
+
+bool isBackgroundProcessFlattenedPreview(String raw) => RegExp(
+  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} exited '
+  r'\(exit code (?:[0-9]|[1-9][0-9]{1,2})\)\. '
+  r'Command: \S(?:.*\S)? Output: (?:\S(?:.*\S)? )?\]$',
+).hasMatch(raw);
+
+/// Removes only the canonical runtime carrier from the visible user projection.
+///
+/// The persisted source stays untouched. The textual fallback is deliberately
+/// narrower than a generic `[IMPORTANT: ...]`: it requires the exact process
+/// identity, terminal status, `Command`/`Output` structure, closing bracket and
+/// either the start of the row or a paragraph boundary.
+String projectedUserVisibleContent(Map<String, dynamic> message) {
+  final raw = (message['content'] ?? message['text'] ?? '').toString();
+  if (message['role'] != 'user' ||
+      message['_steer'] == true ||
+      message['_optimistic'] == true) {
+    return raw;
+  }
+  return stripBackgroundProcessCarrier(raw);
+}
+
 /// Las dos coordenadas durables que Hermes puede exponer para una misma fila.
 ///
 /// `messageId` y `rowId` viven en espacios de nombres distintos. Una identidad
@@ -151,6 +200,10 @@ String effectiveUserDisplayKind(Map<String, dynamic> message) {
   final rawContent = (message['content'] ?? message['text'] ?? '').toString();
   if (_asyncDelegationMarkerPattern.hasMatch(rawContent)) {
     return 'async_delegation_complete';
+  }
+  if (projectedUserVisibleContent(message).trim().isEmpty &&
+      rawContent.trim().isNotEmpty) {
+    return 'hidden';
   }
   final content = rawContent.trimLeft().toLowerCase();
   final isLegacyModelSwitch =

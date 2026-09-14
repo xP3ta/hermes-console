@@ -34,9 +34,12 @@ final class DesktopActiveSession {
     if (json == null) return null;
     final runtimeSessionId = _opaqueId(json['id']);
     if (runtimeSessionId == null) return null;
+    final hasStoredSessionId = json.containsKey('session_key');
+    final storedSessionId = _opaqueId(json['session_key']);
+    if (hasStoredSessionId && storedSessionId == null) return null;
     return DesktopActiveSession(
       runtimeSessionId: runtimeSessionId,
-      storedSessionId: _opaqueId(json['session_key']),
+      storedSessionId: storedSessionId,
       current: json['current'] == true,
       status: _nonEmptyBoundedString(json['status']),
       lastActiveAt: _epochSeconds(json['last_active']),
@@ -62,16 +65,21 @@ final class DesktopActiveSession {
 
   static String? _opaqueId(Object? value) {
     if (value is! String) return null;
-    final trimmed = value.trim();
-    if (trimmed.isEmpty || trimmed.length > 1024) return null;
-    return trimmed;
+    if (value.isEmpty || value.length > 1024 || value != value.trim()) {
+      return null;
+    }
+    return value;
   }
 }
 
 final class DesktopActiveSessionList {
   final List<DesktopActiveSession> sessions;
+  final bool hasMalformedRows;
 
-  const DesktopActiveSessionList({this.sessions = const []});
+  const DesktopActiveSessionList({
+    this.sessions = const [],
+    this.hasMalformedRows = false,
+  });
 
   factory DesktopActiveSessionList.fromJson(Map<String, dynamic> json) {
     final rawSessions = json['sessions'];
@@ -81,11 +89,19 @@ final class DesktopActiveSessionList {
       );
     }
     final sessions = <DesktopActiveSession>[];
+    var hasMalformedRows = false;
     for (final row in rawSessions) {
       final parsed = DesktopActiveSession.tryParse(row);
-      if (parsed != null) sessions.add(parsed);
+      if (parsed == null) {
+        hasMalformedRows = true;
+      } else {
+        sessions.add(parsed);
+      }
     }
-    return DesktopActiveSessionList(sessions: List.unmodifiable(sessions));
+    return DesktopActiveSessionList(
+      sessions: List.unmodifiable(sessions),
+      hasMalformedRows: hasMalformedRows,
+    );
   }
 }
 

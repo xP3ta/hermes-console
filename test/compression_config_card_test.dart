@@ -62,7 +62,8 @@ CompressionConfigSnapshot _agent020Snapshot([
 Widget _app({
   required CompressionConfigLoader load,
   required CompressionConfigSaver save,
-  bool readOnly = false,
+  bool canRead = true,
+  bool canWrite = true,
 }) => MaterialApp(
   locale: const Locale('es'),
   localizationsDelegates: Strings.localizationsDelegates,
@@ -72,7 +73,8 @@ Widget _app({
     body: SingleChildScrollView(
       child: CompressionConfigCard(
         profile: 'qa',
-        readOnly: readOnly,
+        canRead: canRead,
+        canWrite: canWrite,
         load: load,
         save: save,
       ),
@@ -290,13 +292,103 @@ void main() {
     expect(saved.single.threshold, 0.72);
   });
 
+  testWidgets('sliders exponen etiqueta y valor localizados en un unico nodo', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      _app(
+        load: () async => _snapshot(),
+        save: (_, value) async => _snapshot(value),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('compression-config-advanced')));
+    await tester.pump();
+
+    final expectations = <(Key, String, String)>[
+      (
+        const ValueKey('compression-config-threshold'),
+        'Umbral de inicio',
+        '50%',
+      ),
+      (
+        const ValueKey('compression-config-target-ratio'),
+        'Objetivo de reducción',
+        '20%',
+      ),
+      (
+        const ValueKey('compression-config-protect-last-n'),
+        'Mensajes protegidos',
+        '20',
+      ),
+    ];
+
+    for (final (key, label, value) in expectations) {
+      final data = tester.getSemantics(find.byKey(key)).getSemanticsData();
+      expect(data.label, label);
+      expect(data.value, value);
+      expect(data.flagsCollection.isSlider, isTrue);
+      expect(
+        find.bySemanticsLabel(RegExp('^${RegExp.escape(label)}\$')),
+        findsOne,
+      );
+    }
+    for (final duplicate in <String>[
+      'Empezar al 50%',
+      'Reducir hasta el 20% del umbral',
+      'Conservar intactos los últimos 20 mensajes',
+    ]) {
+      expect(
+        find.bySemanticsLabel(RegExp('^${RegExp.escape(duplicate)}\$')),
+        findsNothing,
+      );
+    }
+    semantics.dispose();
+  });
+
+  testWidgets('toggles exponen una sola semantica localizada', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      _app(
+        load: () async => _agent020Snapshot(),
+        save: (_, value) async => _agent020Snapshot(value),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('compression-config-advanced')));
+    await tester.pump();
+
+    const expectations = <(Key, String, String)>[
+      (
+        ValueKey('compression-config-enabled'),
+        'Comprimir automáticamente',
+        'Hermes inicia la compresión al alcanzar el umbral configurado.',
+      ),
+      (
+        ValueKey('compression-config-progress-notices'),
+        'Avisos de progreso',
+        'Muestra el progreso rutinario de la compresión en los canales de chat compatibles.',
+      ),
+    ];
+
+    for (final (key, title, hint) in expectations) {
+      final data = tester.getSemantics(find.byKey(key)).getSemanticsData();
+      expect(data.label, contains(title));
+      expect(data.label, contains(hint));
+      expect(RegExp(RegExp.escape(title)).allMatches(data.label), hasLength(1));
+      expect(find.bySemanticsLabel(RegExp(RegExp.escape(title))), findsOne);
+    }
+    semantics.dispose();
+  });
+
   testWidgets('solo lectura carga datos pero desactiva todas las mutaciones', (
     tester,
   ) async {
     var saves = 0;
     await tester.pumpWidget(
       _app(
-        readOnly: true,
+        canWrite: false,
         load: () async => _snapshot(),
         save: (base, value) async {
           saves++;
@@ -328,6 +420,36 @@ void main() {
     );
     expect(saves, 0);
   });
+
+  testWidgets(
+    'sin lectura muestra no disponible y no inicia carga ni guardado',
+    (tester) async {
+      var loads = 0;
+      var saves = 0;
+      await tester.pumpWidget(
+        _app(
+          canRead: false,
+          canWrite: false,
+          load: () async {
+            loads += 1;
+            return _snapshot();
+          },
+          save: (_, value) async {
+            saves += 1;
+            return _snapshot(value);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('compression-config-unavailable')),
+        findsOneWidget,
+      );
+      expect(loads, 0);
+      expect(saves, 0);
+    },
+  );
 
   testWidgets('distingue contrato no soportado de fallo de carga', (
     tester,

@@ -68,6 +68,7 @@ class RunRecord {
     String? progressLabel,
     String? lastEvent,
     double? updatedAt,
+    String? connId,
     String? profile,
   }) => RunRecord(
     runId: runId,
@@ -80,7 +81,7 @@ class RunRecord {
     progressLabel: progressLabel ?? this.progressLabel,
     lastEvent: lastEvent ?? this.lastEvent,
     updatedAt: updatedAt ?? this.updatedAt,
-    connId: connId,
+    connId: connId ?? this.connId,
     profile: profile ?? this.profile,
   );
 
@@ -131,9 +132,10 @@ class RunRegistry {
 
   final SharedPreferences _prefs;
   final String _key;
+  final String _connectionId;
   List<RunRecord> _records;
 
-  RunRegistry._(this._prefs, this._key, this._records);
+  RunRegistry._(this._prefs, this._key, this._connectionId, this._records);
 
   static Future<RunRegistry> load(
     SharedPreferences prefs,
@@ -156,7 +158,23 @@ class RunRegistry {
         records = [];
       }
     }
-    return RunRegistry._(prefs, key, records);
+    final ownershipChanged = records.any(
+      (record) => record.connId != connectionId,
+    );
+    final ownedRecords = records
+        .map(
+          (record) => record.connId == connectionId
+              ? record
+              : record.copyWith(connId: connectionId),
+        )
+        .toList();
+    if (ownershipChanged) {
+      await prefs.setString(
+        key,
+        jsonEncode(ownedRecords.map((record) => record.toJson()).toList()),
+      );
+    }
+    return RunRegistry._(prefs, key, connectionId, ownedRecords);
   }
 
   /// Más reciente primero.
@@ -168,9 +186,7 @@ class RunRegistry {
 
   Future<void> add(RunRecord record) async {
     final profile = _normalizeRunProfile(record.profile);
-    final owned = profile == record.profile
-        ? record
-        : record.copyWith(profile: profile);
+    final owned = record.copyWith(connId: _connectionId, profile: profile);
     _records.removeWhere(
       (r) => r.runId == owned.runId && r.profile == owned.profile,
     );

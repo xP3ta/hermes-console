@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'agent_runtime/agent_runtime.dart';
 import 'active_chat_service.dart';
 import 'bridge_client.dart';
+import 'bridge_endpoint_resolver.dart';
 import 'bridge_release_channel.dart';
 import 'bridge_version.dart';
 import 'connection_manager.dart';
@@ -52,6 +53,33 @@ class BridgeUpdateCheck {
     reachable: false,
     outdated: false,
   );
+}
+
+class BridgeUpdateResult {
+  final bool ok;
+  final String detail;
+  final BridgeUpdateFailure? failure;
+  final bool manualAction;
+
+  const BridgeUpdateResult.success(this.detail)
+    : ok = true,
+      failure = null,
+      manualAction = false;
+
+  const BridgeUpdateResult.failure(
+    this.failure,
+    this.detail, {
+    this.manualAction = false,
+  }) : ok = false;
+}
+
+enum BridgeUpdateFailure {
+  readOnly,
+  releaseUnavailable,
+  downloadFailed,
+  repairUnsupported,
+  repairFailed,
+  verificationFailed,
 }
 
 class BridgeMaintenanceResult {
@@ -187,9 +215,15 @@ class BridgeUpdateService {
           detail: 'Mobile Bridge ${check.installed ?? ''} al día.',
         );
       }
-      final result = updater != null
-          ? await updater(conn)
-          : await update(conn, target: check.target, automatic: true);
+      if (updater != null) {
+        final result = await updater(conn);
+        return BridgeMaintenanceResult(
+          checked: true,
+          updated: result.ok,
+          detail: result.detail,
+        );
+      }
+      final result = await update(conn, target: check.target, automatic: true);
       return BridgeMaintenanceResult(
         checked: true,
         updated: result.ok,
@@ -233,7 +267,7 @@ class BridgeUpdateService {
         '[bridge-update] bridge config unavailable (${error.runtimeType})',
       );
     }
-    return conn.derivedBridgeUrl;
+    return BridgeEndpointResolver.resolve(conn).url;
   }
 
   /// Comprueba la versión del bridge de [conn] vía `/bridge/health` (sin auth).
@@ -282,7 +316,7 @@ class BridgeUpdateService {
   /// Actualiza (reinstala) el bridge de [conn] a la mejor release validada.
   /// Invalida la caché de capacidad solo después de confirmar que la versión
   /// objetivo está realmente sirviéndose tras el reinicio.
-  static Future<({bool ok, String detail})> update(
+  static Future<BridgeUpdateResult> update(
     SavedConnection conn, {
     void Function(String message)? onProgress,
     BridgeReleaseTarget? target,
@@ -293,11 +327,16 @@ class BridgeUpdateService {
     BridgeReleaseInstaller? legacyInstaller,
     BridgeVersionProbe? versionProbe,
     bool automatic = false,
+    bool forceRemoteRepair = false,
     Duration verificationTimeout = const Duration(seconds: 90),
     Duration verificationRetryDelay = const Duration(seconds: 2),
   }) async {
     if (conn.readOnly) {
-      return (ok: false, detail: 'La instancia está en modo solo lectura.');
+      return const BridgeUpdateResult.failure(
+        BridgeUpdateFailure.readOnly,
+        'La instancia está en modo solo lectura.',
+        manualAction: true,
+      );
     }
     final bridgeUrl = await _effectiveBridgeUrl(conn);
     late final BridgeReleaseTarget resolvedTarget;
@@ -306,19 +345,23 @@ class BridgeUpdateService {
           target ??
           await (targetResolver ?? BridgeReleaseChannel.resolveLatestTarget)();
     } catch (e) {
-      return (
-        ok: false,
-        detail: 'No se pudo preparar una release válida del Mobile Bridge: $e',
+      return BridgeUpdateResult.failure(
+        BridgeUpdateFailure.releaseUnavailable,
+        'No se pudo preparar una release válida del Mobile Bridge.',
+        manualAction: true,
       );
     }
 
     final probe = versionProbe ?? BridgeClient.probeVersion;
     try {
       final installed = await probe(bridgeUrl);
-      if (installed != null &&
+      if (!forceRemoteRepair &&
+          installed != null &&
           installed.isNotEmpty &&
           BridgeVersion.compare(installed, resolvedTarget.version) >= 0) {
-        return (ok: true, detail: 'Mobile Bridge $installed ya está al día.');
+        return BridgeUpdateResult.success(
+          'Mobile Bridge $installed ya está al día.',
+        );
       }
     } catch (_) {
       // La acción manual también sirve para reparar un bridge que no responde.
@@ -335,11 +378,11 @@ class BridgeUpdateService {
         throw const FormatException('La release no coincide con el target.');
       }
     } catch (_) {
-      return (
-        ok: false,
-        detail:
-            'No se pudo descargar y validar Mobile Bridge '
-            '${resolvedTarget.version}.',
+      return BridgeUpdateResult.failure(
+        BridgeUpdateFailure.downloadFailed,
+        'No se pudo descargar y validar Mobile Bridge '
+        '${resolvedTarget.version}.',
+        manualAction: true,
       );
     }
 
@@ -347,7 +390,9 @@ class BridgeUpdateService {
     if (installer != null) {
       result = await installer(release, onProgress);
     } else {
-      final direct = selfUpdater != null
+      final direct = forceRemoteRepair
+          ? (supported: false, ok: false, detail: 'remote repair requested')
+          : selfUpdater != null
           ? await selfUpdater(conn, release, onProgress)
           : await _trySelfUpdate(
               conn,
@@ -357,12 +402,12 @@ class BridgeUpdateService {
             );
       if (direct.supported) {
         result = (ok: direct.ok, detail: direct.detail);
-      } else if (automatic) {
-        return (
-          ok: false,
-          detail:
-              'Este Mobile Bridge necesita una actualización manual inicial; '
-              'después podrá actualizarse automáticamente.',
+      } else if (automatic && !forceRemoteRepair) {
+        return const BridgeUpdateResult.failure(
+          BridgeUpdateFailure.repairUnsupported,
+          'Este Mobile Bridge necesita una actualización manual inicial; '
+          'después podrá actualizarse automáticamente.',
+          manualAction: true,
         );
       } else if (legacyInstaller != null) {
         result = await legacyInstaller(release, onProgress);
@@ -374,6 +419,7 @@ class BridgeUpdateService {
             release: release,
             versionProbe: probe,
             onProgress: onProgress,
+            verificationUrl: bridgeUrl,
           );
           result = (ok: installed.ok, detail: installed.detail);
         } finally {
@@ -381,7 +427,13 @@ class BridgeUpdateService {
         }
       }
     }
-    if (!result.ok) return result;
+    if (!result.ok) {
+      return BridgeUpdateResult.failure(
+        BridgeUpdateFailure.repairFailed,
+        result.detail,
+        manualAction: true,
+      );
+    }
 
     final running = await _waitForBridgeVersion(
       conn,
@@ -393,14 +445,14 @@ class BridgeUpdateService {
       retryDelay: verificationRetryDelay,
     );
     if (running == null) {
-      return (
-        ok: false,
-        detail:
-            'No se confirmó Mobile Bridge ${release.version} tras actualizar.',
+      return BridgeUpdateResult.failure(
+        BridgeUpdateFailure.verificationFailed,
+        'No se confirmó Mobile Bridge ${release.version} tras actualizar.',
+        manualAction: true,
       );
     }
     ActiveChat.invalidateBridgeProfileCache(conn.id);
-    return result;
+    return BridgeUpdateResult.success(result.detail);
   }
 
   static Future<({bool supported, bool ok, String detail})> _trySelfUpdate(

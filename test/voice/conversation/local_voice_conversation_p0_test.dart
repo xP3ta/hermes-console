@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
@@ -15,6 +16,8 @@ import 'package:hermes_android/core/services/voice/voice_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../support/in_memory_compression_fence_storage.dart';
 
 class _VoiceProbe {
   final List<_ProbeStt> sttEngines = [];
@@ -136,7 +139,11 @@ class _ProbeTts implements TtsEngine {
   }
 }
 
-class _DesktopGatewayProbe implements HermesDesktopGateway {
+class _DesktopGatewayProbe
+    implements
+        HermesDesktopGateway,
+        HermesDesktopSessionLifecycleGateway,
+        HermesDesktopExclusiveSubmitCapabilityGateway {
   _DesktopGatewayProbe(this.runtimeSessionId);
 
   final String runtimeSessionId;
@@ -168,6 +175,38 @@ class _DesktopGatewayProbe implements HermesDesktopGateway {
     storedSessionId: storedSessionId,
     created: false,
   );
+
+  @override
+  Future<void> ensureExclusiveSubmitCapability() async {}
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async {
+    _connected = true;
+    return DesktopSessionSnapshot(
+      runtimeSessionId: runtimeSessionId,
+      storedSessionId: storedSessionId,
+      created: false,
+    );
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async {
+    _connected = true;
+    return DesktopSessionSnapshot(
+      runtimeSessionId: runtimeSessionId,
+      storedSessionId: 'stored-created',
+      created: true,
+    );
+  }
 
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
@@ -245,6 +284,7 @@ SavedConnection _connection(String suffix) => SavedConnection(
 );
 
 ActiveChat _chatFor(_DesktopGatewayProbe gateway, String suffix) => ActiveChat(
+  compressionFenceStore: testCompressionFenceStore(),
   connection: _connection(suffix),
   sessionId: 'stored-$suffix',
   sessionTitle: 'Voice P0',
@@ -643,7 +683,7 @@ void main() {
     });
     await _waitFor(
       () =>
-          harness.chat.subagentActivities.isNotEmpty &&
+          harness.chat.subagentAggregate.activeCount == 1 &&
           harness.chat.messages.any(
             (message) => message['_desktopInterim'] == true,
           ),

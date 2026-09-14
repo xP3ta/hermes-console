@@ -193,6 +193,60 @@ void main() {
     },
   );
 
+  test(
+    'forced remote repair bypasses dead bridge self-update/provision path',
+    () async {
+      var selfUpdates = 0;
+      var installs = 0;
+      final probes = <String?>[null, '1.17.0'];
+      final result = await BridgeUpdateService.update(
+        _connection(),
+        forceRemoteRepair: true,
+        target: _release('1.17.0', remote: true).target,
+        releaseDownloader: (_) async => _release('1.17.0', remote: true),
+        selfUpdater: (connection, release, progress) async {
+          selfUpdates++;
+          return (supported: true, ok: true, detail: 'unexpected');
+        },
+        legacyInstaller: (release, progress) async {
+          installs++;
+          return (ok: true, detail: 'restarted bridge service');
+        },
+        versionProbe: (_) async => probes.removeAt(0),
+        verificationTimeout: const Duration(milliseconds: 20),
+        verificationRetryDelay: const Duration(milliseconds: 1),
+      );
+
+      expect(result.ok, isTrue);
+      expect(selfUpdates, 0);
+      expect(installs, 1);
+    },
+  );
+
+  test(
+    'forced remote repair runs installer even if a fresh health probe answers',
+    () async {
+      var installs = 0;
+      final probes = <String?>['1.17.0', '1.17.0'];
+      final result = await BridgeUpdateService.update(
+        _connection(),
+        forceRemoteRepair: true,
+        target: _release('1.17.0', remote: true).target,
+        releaseDownloader: (_) async => _release('1.17.0', remote: true),
+        legacyInstaller: (release, progress) async {
+          installs++;
+          return (ok: true, detail: 'restarted bridge service');
+        },
+        versionProbe: (_) async => probes.removeAt(0),
+        verificationTimeout: const Duration(milliseconds: 20),
+        verificationRetryDelay: const Duration(milliseconds: 1),
+      );
+
+      expect(result.ok, isTrue);
+      expect(installs, 1);
+    },
+  );
+
   test('mantenimiento automático usa self_update sin lanzar runs', () async {
     final probes = <String>['1.16.0', '1.17.0'];
     var selfUpdates = 0;

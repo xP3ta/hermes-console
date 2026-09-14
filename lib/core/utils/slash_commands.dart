@@ -159,6 +159,10 @@ SlashInvocation? parseSlashInvocation(String text) {
   return SlashInvocation(name, arg);
 }
 
+/// Classifies a valid slash before any busy attachment queue decision.
+bool shouldRouteSlashBeforeBusyAttachmentQueue(String text) =>
+    text.trim().startsWith('/');
+
 bool isUnavailableSlashName(String name) =>
     name.trim().replaceFirst(RegExp(r'^/+'), '').toLowerCase() == 'compact';
 

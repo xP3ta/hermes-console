@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../utils/chat_turn.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/session_timestamp.dart';
 
@@ -240,8 +241,17 @@ class Session implements SessionSortKey {
 
   /// Preview SIN preámbulos internos ni sintaxis Markdown visible.
   /// Para sesiones del Kanban, el preview es el prompt interno crudo: se oculta.
-  String get cleanPreview =>
-      isKanbanJob ? '' : markdownToCompactText(stripCronPreamble(preview));
+  String get cleanPreview {
+    if (isKanbanJob ||
+        _looksAsyncDelegationCarrier(preview) ||
+        isBackgroundProcessBackendPreview(preview) ||
+        isBackgroundProcessFlattenedPreview(preview)) {
+      return '';
+    }
+    return markdownToCompactText(
+      stripCronPreamble(stripBackgroundProcessCarrier(preview)),
+    );
+  }
 
   /// Removes Hermes' synthetic todo handoff from user-visible projections.
   ///
@@ -254,6 +264,12 @@ class Session implements SessionSortKey {
   // SessionDB selects 63 chars, then _shape_preview caps them to 60 + `...`.
   static const _todoContinuationBackendPreview =
       '[Your active task list was preserved across context compress...';
+  static final RegExp _asyncDelegationCarrier = RegExp(
+    r'^\[ASYNC DELEGATION (?:BATCH )?COMPLETE — deleg_[0-9a-f]{8}\](?:\r?\n|$|\.\.\.$)',
+  );
+
+  static bool _looksAsyncDelegationCarrier(String raw) =>
+      _asyncDelegationCarrier.hasMatch(raw);
 
   static String stripTodoContinuation(String raw) {
     var from = 0;
@@ -262,12 +278,9 @@ class Session implements SessionSortKey {
       if (index < 0) return raw;
       final prefix = raw.substring(0, index);
       final atBoundary =
-          index == 0 ||
-          prefix.endsWith('\n\n') ||
-          prefix.endsWith('\r\n\r\n');
+          index == 0 || prefix.endsWith('\n\n') || prefix.endsWith('\r\n\r\n');
       final suffix = raw.substring(index + _todoContinuationHeader.length);
-      if (atBoundary &&
-          RegExp(r'^(?:\r?\n| )- \[(?: |>)\]').hasMatch(suffix)) {
+      if (atBoundary && RegExp(r'^(?:\r?\n| )- \[(?: |>)\]').hasMatch(suffix)) {
         return raw.substring(0, index).trimRight();
       }
       from = index + _todoContinuationHeader.length;
@@ -351,7 +364,8 @@ class Session implements SessionSortKey {
 
   static bool _looksInternalTitle(String title) {
     final normalized = title.trimLeft().toLowerCase();
-    return normalized.startsWith('[context compaction') ||
+    return _looksAsyncDelegationCarrier(title) ||
+        normalized.startsWith('[context compaction') ||
         normalized.startsWith('[important:') ||
         normalized.startsWith('operation interrupted:') ||
         normalized == 'operation interrupted.';

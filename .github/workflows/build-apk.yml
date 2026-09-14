@@ -1,206 +1,97 @@
-name: Build Direct Release APKs
+name: Release policy verification (no candidate artifacts)
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-policy-verification-${{ github.ref }}
   cancel-in-progress: false
 
+# CI verification only. Signed APK/AAB creation, comparison, attestation and
+# staging stay on an owner-controlled private machine until publication.
 jobs:
-  build:
-    name: Build full APK for GitHub and Obtainium
-    runs-on: ubuntu-latest
-
+  verify:
+    name: Verify immutable release source and policy
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout immutable source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
-      - name: Set up Java
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+      - name: Verify tag, source identity and authoritative lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$RELEASE_REF_TYPE" == "tag" ]]
+          [[ "$GITHUB_REF" == "refs/tags/$RELEASE_TAG" ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          echo "f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3  pubspec.lock" \
+            | sha256sum --strict -c -
+          checkout_commit="$(git rev-parse "$GITHUB_SHA^{commit}")"
+          tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          build_number="$(sed -nE 's/^version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\+([0-9]+)[[:space:]]*$/\1/p' pubspec.yaml)"
+          [[ "$build_number" =~ ^(0|[1-9][0-9]*)$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/commits/$checkout_commit" \
+            --jq '{authorLogin:.author.login,committerLogin:.committer.login,verification:(.commit.verification | {verified,reason,signature,payload,verified_at})}' \
+            > "$RUNNER_TEMP/source-verification.json"
+          python3 tool/release/verify_release_identity.py \
+            --tag "$RELEASE_TAG" \
+            --pubspec pubspec.yaml \
+            --build-number "$build_number" \
+            --expected-commit "$GITHUB_SHA" \
+            --checkout-commit "$checkout_commit" \
+            --tag-commit "$tag_commit" \
+            --verification-json "$RUNNER_TEMP/source-verification.json" \
+            --policy tool/release/release_contract.json
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version: '3.44.1'
-          channel: 'stable'
+          flutter-version: '3.47.1'
+          channel: stable
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: flutter pub get --enforce-lockfile
 
-      - name: Install REUSE
-        run: python3 -m pip install --disable-pip-version-check reuse==6.2.0
-
-      - name: Verify REUSE compliance
-        run: reuse lint
-
-      - name: Scan Git history with Gitleaks
+      - name: Install and verify REUSE
         run: |
+          python3 -m pip install --disable-pip-version-check reuse==6.2.0
+          reuse lint
+
+      - name: Scan Git history with pinned scanners
+        run: |
+          set -Eeuo pipefail
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 \
             git /repo --no-banner --redact=100
-
-      - name: Scan verified and unknown secrets with TruffleHog
-        run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             trufflesecurity/trufflehog@sha256:ff4c95e9df7d645daf2140e3ca1039031c63106268d5fbb25feb43ceca1bcc33 \
             --no-update --fail --fail-on-scan-errors \
             --exclude-detectors=URI --results=verified,unknown \
-            --json git file:///repo \
-            > "$RUNNER_TEMP/trufflehog.jsonl"
+            --json git file:///repo > "$RUNNER_TEMP/trufflehog.jsonl"
           test ! -s "$RUNNER_TEMP/trufflehog.jsonl"
 
-      - name: Verify Gradle wrapper
+      - name: Verify Gradle wrapper and checked-in SBOMs
         run: |
+          set -Eeuo pipefail
           echo "76805e32c009c0cf0dd5d206bddc9fb22ea42e84db904b764f3047de095493f3  android/gradle/wrapper/gradle-wrapper.jar" \
-            | sha256sum -c -
-
-      - name: Verify checked-in source SBOMs
-        run: |
+            | sha256sum --strict -c -
           ./tool/sbom/generate.sh
           git diff --exit-code -- sbom
 
-      - name: Run Python security and SBOM tests
-        run: python3 -m unittest discover -s test -p '*_test.py'
-
-      - name: Set up release keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      - name: Run policy gates, analysis and tests
         run: |
-          test -n "$KEYSTORE_BASE64"
-          test -n "$STORE_PASSWORD"
-          test -n "$KEY_PASSWORD"
-          test -n "$KEY_ALIAS"
-          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
-          {
-            echo "storePassword=$STORE_PASSWORD"
-            echo "keyPassword=$KEY_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "storeFile=$GITHUB_WORKSPACE/release.keystore"
-          } > key.properties
-
-      - name: Static analysis
-        run: flutter analyze --fatal-infos
-
-      - name: Run tests
-        run: flutter test --concurrency=1
-
-      - name: Build APK (full release)
-        run: |
-          flutter build apk --release --flavor full --split-per-abi \
-            --dart-define=HERMES_FLAVOR=full
-
-      - name: Generate release evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-evidence/source-sbom release-evidence/artifacts/full \
-            release-evidence/certificates release-public
-          cp sbom/*.json release-evidence/source-sbom/
-
-          commit="$(git rev-parse HEAD)"
-          source_epoch="$(git show -s --format=%ct HEAD)"
-          while IFS= read -r -d '' apk; do
-            artifact="$(basename "$apk" .apk)"
-            output="release-evidence/artifacts/full/$artifact"
-            mkdir -p "$output"
-            SBOM_GIT_COMMIT="$commit" SOURCE_DATE_EPOCH="$source_epoch" \
-              python3 tool/sbom/generate.py \
-                --variant fullRelease \
-                --artifact "$apk" \
-                --output-dir "$output"
-          done < <(find build/app/outputs/flutter-apk \
-            -type f -name '*-full-release.apk' -print0 | sort -z)
-
-          build_tools="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 \
-            -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
-          apksigner="$ANDROID_SDK_ROOT/build-tools/$build_tools/apksigner"
-          while IFS= read -r -d '' apk; do
-            artifact="$(basename "$apk" .apk)"
-            "$apksigner" verify --verbose --print-certs "$apk" \
-              > "release-evidence/certificates/$artifact.txt"
-            cp "$apk" release-public/
-          done < <(find build/app/outputs/flutter-apk \
-            -type f -name '*-full-release.apk' -print0 | sort -z)
-
-          # Keep the complete evidence tree in one uniquely named archive. The
-          # three per-ABI inventories intentionally share their internal
-          # `fullRelease.artifact.json` name and therefore must not be flattened
-          # into individual GitHub Release assets.
-          sums="$(mktemp)"
-          find release-evidence \
-            -type f ! -name SHA256SUMS -print0 \
-            | sort -z | xargs -0 sha256sum > "$sums"
-          mv "$sums" release-evidence/SHA256SUMS
-          tar -czf release-public/hermes-console-release-evidence.tar.gz \
-            release-evidence
-
-          # This public manifest contains only basenames of files attached to
-          # the GitHub Release, so `sha256sum -c SHA256SUMS` works directly
-          # after downloading the assets into one directory.
-          (
-            cd release-public
-            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
-              | sort -z | xargs -0 sha256sum > SHA256SUMS
-          )
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-artifacts
-          path: |
-            release-public/**
-            release-evidence/**
-          if-no-files-found: error
-          retention-days: 30
-
-  release:
-    name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # Required only here to create or update the tag's release.
-
-    steps:
-      - name: Download APKs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-artifacts
-          path: release-artifacts
-
-      - name: Create Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          mapfile -d '' release_files < <(find release-artifacts/release-public \
-            -maxdepth 1 -type f -print0 | sort -z)
-          test "${#release_files[@]}" -gt 0
-          # This job intentionally has no checkout. Keep the repository
-          # explicit so gh never falls back to Git metadata discovery.
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Hermes Console $RELEASE_TAG" \
-            --generate-notes \
-            "${release_files[@]}" || \
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "${release_files[@]}" --clobber
+          python3 -m unittest discover -s test -p '*_test.py'
+          flutter analyze --fatal-infos
+          flutter test --concurrency=1

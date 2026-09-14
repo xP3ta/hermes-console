@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_model_catalog.dart';
@@ -16,6 +18,7 @@ import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
@@ -32,6 +35,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/in_memory_compression_fence_storage.dart';
+
 class _SlashGateway
     implements
         HermesDesktopGateway,
@@ -42,6 +47,17 @@ class _SlashGateway
         HermesDesktopModelCatalogGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
+
+  void emit(String type, [Map<String, dynamic>? payload]) {
+    _events.add(
+      TuiGatewayEvent(
+        type: type,
+        sessionId: 'runtime-slash-test',
+        payload: payload ?? const {},
+      ),
+    );
+  }
+
   final List<String> submissions = [];
   final List<String> slashCalls = [];
   Completer<SlashCompletionBatch>? slashCompletion;
@@ -222,6 +238,37 @@ class _SlashGateway
   }
 }
 
+class _GatedCompressionStorage implements DesktopCompressionFenceStorage {
+  String? value;
+  Completer<void>? readEntered;
+  Completer<void>? releaseRead;
+
+  void gateNextRead() {
+    readEntered = Completer<void>();
+    releaseRead = Completer<void>();
+  }
+
+  @override
+  Future<String?> read() async {
+    final entered = readEntered;
+    final release = releaseRead;
+    if (entered != null && release != null) {
+      if (!entered.isCompleted) entered.complete();
+      await release.future;
+      if (identical(releaseRead, release)) {
+        readEntered = null;
+        releaseRead = null;
+      }
+    }
+    return value;
+  }
+
+  @override
+  Future<void> write(String next) async {
+    value = next;
+  }
+}
+
 class _OpenSttEngine implements SttEngine {
   final StreamController<SttResult> _results =
       StreamController<SttResult>.broadcast();
@@ -304,19 +351,23 @@ Future<ActiveChat> _pumpSlashChat(
   _SlashGateway gateway, {
   _OpenSttEngine? stt,
   bool readOnly = false,
+  bool bindInitialStoredSession = true,
+  DesktopCompressionFenceStore? compressionFenceStore,
 }) async {
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
   final secure = SecureStorage();
-  final activeChats = ActiveChatService();
+  final activeChats = ActiveChatService(
+    compressionFenceStore: compressionFenceStore,
+  );
   final connection = _connection().copyWith(readOnly: readOnly);
   final chat = activeChats.attach(
     connection: connection,
     sessionId: _session.id,
     sessionTitle: _session.title,
-    initialStoredSessionId: _session.id,
+    initialStoredSessionId: bindInitialStoredSession ? _session.id : null,
     api: _safeApi(),
     desktopGateway: gateway,
     disableForegroundKeepAlive: true,
@@ -523,6 +574,25 @@ void main() {
       expect(compact?.arg, 'decisiones de release');
       expect(isUnavailableSlashName('/compact'), isTrue);
     });
+
+    test(
+      '/ compress is invalid while /compress is routed before busy files',
+      () {
+        expect(parseSlashCommand('/ compress'), isNull);
+        expect(
+          shouldRouteSlashBeforeBusyAttachmentQueue(
+            '/compress keep this draft',
+          ),
+          isTrue,
+        );
+        expect(
+          shouldRouteSlashBeforeBusyAttachmentQueue(
+            '/ compress keep this draft',
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('Chat slash palette', () {
@@ -723,6 +793,97 @@ void main() {
       },
     );
 
+    testWidgets('busy ejecuta slash remoto sin encolar ni redirigir', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      final chat = await _pumpSlashChat(tester, gateway);
+
+      expect(
+        await chat.send(
+          fullText: 'turno vivo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.enterText(composer, '/goal corregir ahora');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+
+      expect(gateway.slashCalls, ['goal corregir ahora']);
+      expect(gateway.submissions, ['turno vivo']);
+      expect(chat.queuedMessages, isEmpty);
+      expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+      expect(tester.takeException(), isNull);
+
+      gateway.emit('message.complete', {'text': 'listo'});
+      await tester.pump(const Duration(milliseconds: 350));
+    });
+
+    testWidgets(
+      'busy /compress with attachment preserves exact editable batch and does zero RPC',
+      (tester) async {
+        final gateway = _SlashGateway();
+        final temp = (await tester.runAsync(
+          () => Directory.systemTemp.createTemp('compress-file-draft-'),
+        ))!;
+        addTearDown(() async {
+          if (await temp.exists()) await temp.delete(recursive: true);
+        });
+        final file = (await tester.runAsync(() async {
+          final value = File('${temp.path}/evidence.txt');
+          await value.writeAsString('safe');
+          return value;
+        }))!;
+        final attachment = AttachmentDraft(
+          localId: 'compress-file',
+          type: AttachmentType.document,
+          name: 'evidence.txt',
+          mimeType: 'text/plain',
+          sizeBytes: file.lengthSync(),
+          localPath: file.path,
+        );
+        String scope(String value) =>
+            base64Url.encode(utf8.encode(value)).replaceAll('=', '');
+        secureStore['chat_draft_v3.${scope('slash-widget')}.${scope('default')}.${scope(_session.id)}'] =
+            jsonEncode({
+              'savedAt': DateTime.now().millisecondsSinceEpoch,
+              'text': '/compress keep exact',
+              'attachments': [attachment.toJson()],
+            });
+
+        final chat = await _pumpSlashChat(tester, gateway);
+        expect(
+          await chat.send(
+            fullText: 'turno vivo',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        final composer = find.byType(TextField).last;
+        final field = tester.widget<TextField>(composer);
+        expect(field.controller?.text, '/compress keep exact');
+
+        await _submitSlash(tester);
+
+        expect(field.controller?.text, '/compress keep exact');
+        expect(find.textContaining('evidence.txt'), findsWidgets);
+        expect(chat.queuedMessages, isEmpty);
+        expect(gateway.slashCalls, isEmpty);
+        expect(gateway.submissions, ['turno vivo']);
+        expect(tester.takeException(), isNull);
+        gateway.emit('message.complete', {'text': 'listo'});
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
     testWidgets('/model preserves rejection and accepted retry clears once', (
       tester,
     ) async {
@@ -798,8 +959,108 @@ void main() {
       },
     );
 
+    testWidgets(
+      'REGRESSION_COMP_FIX3 /compress preserves ambiguous legacy draft and focus',
+      (tester) async {
+        final gateway = _SlashGateway()
+          ..slashResult = DesktopCommandRpcResult.fromJson({
+            'type': 'exec',
+            'accepted': false,
+            'status': 'pending',
+            'output': 'queued',
+          });
+        final chat = await _pumpSlashChat(
+          tester,
+          gateway,
+          compressionFenceStore: DesktopCompressionFenceStore(
+            storage: InMemoryDesktopCompressionFenceStorage(),
+            mutationNamespaceForTesting: 'fix3-legacy-widget',
+          ),
+        );
+        final composer = find.byType(TextField).last;
+        await tester.tap(composer);
+        await tester.enterText(composer, '/compress release decisions');
+        await tester.pump(const Duration(milliseconds: 250));
+        final field = tester.widget<TextField>(composer);
+        await _submitSlash(tester);
+        expect(gateway.slashCalls, ['compress release decisions']);
+        expect(field.controller?.text, '/compress release decisions');
+        expect(field.focusNode?.hasFocus, isTrue);
+        expect(chat.desktopCompressionInFlight, isTrue);
+        expect(tester.widget<TextField>(composer).readOnly, isTrue);
+        expect(find.byKey(const ValueKey('send')), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('send')),
+            matching: find.byType(HermesTactileAction),
+          ),
+          findsNothing,
+          reason: 'busy send surface has no invokable action',
+        );
+        await expectLater(
+          chat.compressDesktopSession(),
+          throwsA(
+            isA<TuiGatewayRpcError>().having((e) => e.code, 'code', 4009),
+          ),
+        );
+        expect(gateway.slashCalls, hasLength(1));
+        expect(gateway.submissions, isEmpty);
+        expect(tester.takeException(), isNull);
+        chat.dispose();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'REGRESSION_COMP2A /compress invalidation is not dispatched or replayed',
+      (tester) async {
+        final gateway = _SlashGateway();
+        final storage = _GatedCompressionStorage();
+        final chat = await _pumpSlashChat(
+          tester,
+          gateway,
+          compressionFenceStore: DesktopCompressionFenceStore(
+            storage: storage,
+            mutationNamespaceForTesting: 'comp2a-authority-widget',
+          ),
+        );
+        final composer = find.byType(TextField).last;
+        await tester.tap(composer);
+        await tester.enterText(composer, '/compress authority target');
+        await tester.pump(const Duration(milliseconds: 250));
+        final field = tester.widget<TextField>(composer);
+
+        storage.gateNextRead();
+        _sendAction(tester).onPressed!();
+        await tester.pump();
+        await storage.readEntered!.future;
+        chat.invalidatePassiveRead();
+        storage.releaseRead!.complete();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(gateway.slashCalls, isEmpty);
+        expect(gateway.submissions, isEmpty);
+        expect(field.controller?.text, '/compress authority target');
+
+        // Only a second explicit gesture creates fresh authority.
+        await tester.tap(composer);
+        await tester.pump();
+        await _submitSlash(tester);
+        expect(gateway.slashCalls, ['compress authority target']);
+        expect(gateway.submissions, isEmpty);
+        expect(field.controller?.text, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('/compress preserves rejected invocation', (tester) async {
-      final gateway = _SlashGateway()..slashResult = _rejectedResult;
+      final gateway = _SlashGateway()
+        ..slashResult = DesktopCommandRpcResult.fromJson({
+          'type': 'error',
+          'accepted': false,
+          'status': 'rejected',
+        });
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
       await tester.tap(composer);
@@ -814,6 +1075,21 @@ void main() {
       await _submitSlash(tester);
       expect(gateway.slashCalls, hasLength(2));
       expect(field.controller?.text, isEmpty);
+      gateway._events.add(
+        const TuiGatewayEvent(
+          type: 'status.update',
+          sessionId: 'runtime-slash-test',
+          payload: {
+            'kind': 'compacted',
+            'info': {
+              '_lineage_root_id': 'session-slash-test',
+              'stored_session_id': 'session-slash-test-compressed',
+            },
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
       gateway
         ..slashError = _syntheticRpcError
         ..dispatchError = _syntheticRpcError;
@@ -821,6 +1097,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       await _submitSlash(tester);
       expect(field.controller?.text, '/compress retry me');
+      gateway._events.add(
+        const TuiGatewayEvent(
+          type: 'status.update',
+          sessionId: 'runtime-slash-test',
+          payload: {
+            'kind': 'compacted',
+            'info': {
+              '_lineage_root_id': 'session-slash-test',
+              'stored_session_id': 'session-slash-test-compressed-again',
+            },
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
       gateway.resumeExistingError = _syntheticRpcError;
       await tester.enterText(composer, '/compress no runtime');
       await tester.pump(const Duration(milliseconds: 250));

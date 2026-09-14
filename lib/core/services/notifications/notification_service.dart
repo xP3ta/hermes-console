@@ -13,6 +13,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../utils/markdown_clipboard.dart';
+import '../new_session_launch_coordinator.dart';
 import 'notification_delivery_coordinator.dart';
 import 'notification_delivery_store.dart';
 import 'notification_strings.dart';
@@ -159,10 +160,10 @@ class NotificationOpen {
   }
 }
 
-/// Devuelve `true` cuando el destino se pudo abrir. Si la shell todavía no
-/// tiene un Navigator o la conexión aún no está disponible, devuelve `false`
-/// para que [NotificationService] conserve el toque y lo reintente.
-typedef NotificationOpenHandler = bool Function(NotificationOpen open);
+/// Confirma el resultado real de la navegación. Un destino diferido permanece
+/// pendiente hasta que una ruta llegue a comprometerse.
+typedef NotificationOpenHandler =
+    FutureOr<NavigationDeliveryOutcome> Function(NotificationOpen open);
 
 /// Aviso discreto para mostrar DENTRO de la app (una tarjeta flotante con acción
 /// "Ir"), no como notificación del sistema. Se emite cuando un evento (respuesta
@@ -373,10 +374,12 @@ class NotificationService
 
   set onOpenSession(NotificationOpenHandler? handler) {
     _onOpenSession = handler;
-    if (handler != null) retryPendingOpen();
+    if (handler != null) unawaited(retryPendingOpen());
   }
 
   NotificationOpen? _pendingOpen;
+  Future<NavigationDeliveryOutcome>? _pendingOpenDelivery;
+  String? _pendingOpenDeliveryPayload;
   String? _lastPlatformOpenFingerprint;
 
   NotificationService(this._prefs, {NotificationDeliveryStore? deliveryStore}) {
@@ -673,7 +676,9 @@ class NotificationService
           if (launch?.didNotificationLaunchApp ?? false) {
             final response = launch!.notificationResponse;
             if (response != null) {
-              _handleOpenResponse(response, suppressRecentDuplicate: true);
+              unawaited(
+                _handleOpenResponse(response, suppressRecentDuplicate: true),
+              );
             }
           }
         } catch (e) {
@@ -717,13 +722,13 @@ class NotificationService
   // ── Navegación al pulsar ────────────────────────────────────────────────
 
   void _onNotificationTap(NotificationResponse response) {
-    _handleOpenResponse(response);
+    unawaited(_handleOpenResponse(response));
   }
 
-  bool _handleOpenResponse(
+  Future<bool> _handleOpenResponse(
     NotificationResponse response, {
     bool suppressRecentDuplicate = false,
-  }) {
+  }) async {
     final open = _decodePayload(response.payload);
     if (open == null) {
       _log('tap ignorado: payload sin destino válido');
@@ -737,31 +742,62 @@ class NotificationService
       return false;
     }
     _lastPlatformOpenFingerprint = fingerprint;
-    return _deliverOrQueue(open);
+    return await _deliverOrQueue(open) == NavigationDeliveryOutcome.delivered;
   }
 
-  bool _deliverOrQueue(NotificationOpen open) {
+  @visibleForTesting
+  Future<NavigationDeliveryOutcome> deliverOpenForTesting(
+    NotificationOpen open,
+  ) => _deliverOrQueue(open);
+
+  @visibleForTesting
+  bool get hasPendingOpenForTesting => _pendingOpen != null;
+
+  Future<NavigationDeliveryOutcome> _deliverOrQueue(NotificationOpen open) {
+    final payload = open.toPayload();
+    _pendingOpen = open;
+    final inFlight = _pendingOpenDelivery;
+    if (inFlight != null && _pendingOpenDeliveryPayload == payload) {
+      return inFlight;
+    }
+    final delivery = _attemptOpen(open);
+    _pendingOpenDelivery = delivery;
+    _pendingOpenDeliveryPayload = payload;
+    unawaited(
+      delivery.whenComplete(() {
+        if (identical(_pendingOpenDelivery, delivery)) {
+          _pendingOpenDelivery = null;
+          _pendingOpenDeliveryPayload = null;
+        }
+      }),
+    );
+    return delivery;
+  }
+
+  Future<NavigationDeliveryOutcome> _attemptOpen(NotificationOpen open) async {
     final handler = _onOpenSession;
     if (handler != null) {
       try {
-        if (handler(open)) {
-          _pendingOpen = null;
+        final outcome = await handler(open);
+        if (outcome == NavigationDeliveryOutcome.delivered) {
+          completePendingOpen(open);
           _log('tap entregado a la navegación');
-          return true;
+          return outcome;
         }
       } catch (error) {
         _log('navegación del tap no disponible todavía: $error');
       }
     }
-    _pendingOpen = open;
     _log('tap conservado para reintento');
-    return false;
+    return NavigationDeliveryOutcome.deferred;
   }
 
   /// Reintenta un toque que llegó antes de que la shell pudiera navegar.
-  bool retryPendingOpen() {
+  Future<NavigationDeliveryOutcome> retryPendingOpen() {
     final open = _pendingOpen;
-    if (open == null) return false;
+    if (open == null) {
+      return Future.value(NavigationDeliveryOutcome.deferred);
+    }
     return _deliverOrQueue(open);
   }
 
@@ -781,13 +817,15 @@ class NotificationService
   /// otra vez en cada `resumed` posterior.
   Future<bool> recoverPlatformOpen() async {
     await init();
-    if (retryPendingOpen()) return true;
+    if (await retryPendingOpen() == NavigationDeliveryOutcome.delivered) {
+      return true;
+    }
     try {
       final launch = await _plugin.getNotificationAppLaunchDetails();
       if (!(launch?.didNotificationLaunchApp ?? false)) return false;
       final response = launch!.notificationResponse;
       if (response == null) return false;
-      return _handleOpenResponse(response, suppressRecentDuplicate: true);
+      return await _handleOpenResponse(response, suppressRecentDuplicate: true);
     } catch (error) {
       _log('no se pudo recuperar el tap de plataforma: $error');
       return false;

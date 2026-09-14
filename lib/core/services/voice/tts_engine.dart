@@ -13,6 +13,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 
 import '../../utils/transport_privacy.dart';
+
 import 'package:path_provider/path_provider.dart';
 
 import 'neural_tts_worker.dart';
@@ -166,12 +167,16 @@ Future<void> _retireTtsPlayback(TtsAudioPlayback playback) async {
   try {
     await playback.stop().timeout(const Duration(seconds: 2));
   } catch (error) {
-    debugPrint('[hermes-tts] no se pudo detener el player retirado: $error');
+    debugPrint(
+      '[hermes-tts] retired player stop failed (${error.runtimeType})',
+    );
   }
   try {
     await playback.dispose().timeout(const Duration(seconds: 2));
   } catch (error) {
-    debugPrint('[hermes-tts] no se pudo liberar el player retirado: $error');
+    debugPrint(
+      '[hermes-tts] retired player dispose failed (${error.runtimeType})',
+    );
   }
 }
 
@@ -362,7 +367,7 @@ class DeviceTtsEngine implements TtsEngine {
       // fallback igual: el plugin cae a la voz por defecto si no existe.
       await _tts.setLanguage(pick ?? kDeviceTtsFallback[lang] ?? 'es-ES');
     } catch (e) {
-      debugPrint('[hermes-tts] excepción silenciada (se ignora sin más): $e');
+      debugPrint('[hermes-tts] local operation failed (${e.runtimeType})');
     }
     _init = true;
   }
@@ -469,7 +474,9 @@ Future<String?> systemTtsEngine() async {
       if (discovered != null) _systemTtsEngineCache = discovered;
       return discovered;
     } catch (e) {
-      debugPrint('[hermes-tts] no se pudo descubrir un motor del sistema: $e');
+      debugPrint(
+        '[hermes-tts] system engine discovery failed (${e.runtimeType})',
+      );
       return null;
     }
   }
@@ -685,8 +692,7 @@ class HermesServerTtsEngine implements TtsEngine, PrewarmableTts {
     final raw = (map['data_url'] ?? '').toString().trim();
     final match = _dataUrlPattern.firstMatch(raw);
     if (map['ok'] != true || match == null) {
-      final detail = map['detail'] ?? map['error'] ?? 'sin data_url';
-      throw Exception('El servidor no devolvió audio ($detail).');
+      throw const TtsUserException(TtsUserError.invalidAudio);
     }
     final mime = (map['mime_type'] ?? match.group(1) ?? 'audio/mpeg')
         .toString();
@@ -733,6 +739,25 @@ class HermesServerTtsEngine implements TtsEngine, PrewarmableTts {
   }
 }
 
+class _OwnedNeuralSynthesis {
+  _OwnedNeuralSynthesis(this.key, this.future);
+
+  final String key;
+  final Future<NeuralTtsAudio> future;
+  NeuralTtsAudio? audio;
+  int claims = 0;
+  bool retired = false;
+  bool cleanupScheduled = false;
+  final Set<String> wavePaths = <String>{};
+}
+
+class _ClaimedNeuralSynthesis {
+  const _ClaimedNeuralSynthesis(this.owner, this.audio);
+
+  final _OwnedNeuralSynthesis owner;
+  final NeuralTtsAudio audio;
+}
+
 class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
   final String modelPath;
   final String tokensPath;
@@ -769,8 +794,7 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
   Future<NeuralTtsWorker>? _workerStarting;
   final _operations = _TtsOperationGate();
   int _wavSeq = 0;
-  String? _cachedSynthesisKey;
-  Future<NeuralTtsAudio>? _cachedSynthesis;
+  _OwnedNeuralSynthesis? _cachedSynthesis;
   bool _disposed = false;
 
   Future<NeuralTtsWorker> _ensureWorker() async {
@@ -825,26 +849,74 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
     );
   }
 
-  Future<NeuralTtsAudio> _cachedSynthesize(String sentence) {
+  _OwnedNeuralSynthesis _cachedSynthesize(String sentence) {
     final key = '$speed\u0000$sentence';
-    if (_cachedSynthesisKey == key && _cachedSynthesis != null) {
+    if (_cachedSynthesis?.key == key) {
       return _cachedSynthesis!;
     }
-    final synthesis = _synthesizeSentence(sentence);
-    _cachedSynthesisKey = key;
+    final replaced = _cachedSynthesis;
+    final synthesis = _OwnedNeuralSynthesis(key, _synthesizeSentence(sentence));
     _cachedSynthesis = synthesis;
+    if (replaced != null) _retireSynthesis(replaced);
     return synthesis;
   }
 
-  Future<NeuralTtsAudio?> _synthesizeCancellable(
+  void _retireSynthesis(_OwnedNeuralSynthesis synthesis) {
+    synthesis.retired = true;
+    if (synthesis.claims != 0 || synthesis.cleanupScheduled) return;
+    synthesis.cleanupScheduled = true;
+    final resolvedAudio = synthesis.audio;
+    if (resolvedAudio != null) {
+      _deleteSynthesisWaves(synthesis, resolvedAudio);
+      return;
+    }
+    unawaited(
+      synthesis.future.then<void>((audio) {
+        synthesis.audio = audio;
+        _deleteSynthesisWaves(synthesis, audio);
+      }, onError: (Object _, StackTrace _) {}),
+    );
+  }
+
+  void _deleteSynthesisWaves(
+    _OwnedNeuralSynthesis synthesis,
+    NeuralTtsAudio audio,
+  ) {
+    final sourcePath = audio.wavePath;
+    if (sourcePath != null) synthesis.wavePaths.add(sourcePath);
+    for (final path in synthesis.wavePaths) {
+      _deleteWave(path);
+    }
+  }
+
+  void _releaseSynthesis(_OwnedNeuralSynthesis synthesis) {
+    assert(synthesis.claims > 0);
+    synthesis.claims -= 1;
+    if (synthesis.retired) _retireSynthesis(synthesis);
+  }
+
+  void _releaseCancelledSynthesis(_OwnedNeuralSynthesis synthesis) {
+    _releaseSynthesis(synthesis);
+    unawaited(
+      synthesis.future.then<void>((audio) {
+        synthesis.audio = audio;
+        if (synthesis.claims == 0 && identical(_cachedSynthesis, synthesis)) {
+          _clearCachedSynthesis(synthesis);
+        }
+      }, onError: (Object _, StackTrace _) {}),
+    );
+  }
+
+  Future<_ClaimedNeuralSynthesis?> _synthesizeCancellable(
     String sentence,
     _TtsOperation operation,
   ) async {
     final synthesis = _cachedSynthesize(sentence);
+    synthesis.claims += 1;
     Object? synthesisError;
     StackTrace? synthesisStack;
     final cancelled = await Future.any<bool>([
-      synthesis.then(
+      synthesis.future.then(
         (_) => false,
         onError: (Object error, StackTrace stackTrace) {
           synthesisError = error;
@@ -855,23 +927,46 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
       operation.cancelled.then((_) => true),
     ]);
     if (cancelled) {
-      synthesis.ignore();
+      synthesis.future.ignore();
+      // A cancelled waiter releases its claim immediately. Keep the pending
+      // synthesis reusable only while another operation has actually claimed
+      // it; once it settles ownerless, retire its temporary WAV.
+      _releaseCancelledSynthesis(synthesis);
       return null;
     }
     if (synthesisError != null) {
+      _clearCachedSynthesis(synthesis);
+      _releaseSynthesis(synthesis);
       Error.throwWithStackTrace(
         synthesisError!,
         synthesisStack ?? StackTrace.current,
       );
     }
-    return synthesis;
+    final audio = await synthesis.future;
+    synthesis.audio = audio;
+    return _ClaimedNeuralSynthesis(synthesis, audio);
   }
 
-  void _clearCachedSynthesis(String sentence) {
-    final key = '$speed\u0000$sentence';
-    if (_cachedSynthesisKey != key) return;
-    _cachedSynthesisKey = null;
-    _cachedSynthesis = null;
+  void _clearCachedSynthesis(_OwnedNeuralSynthesis synthesis) {
+    if (identical(_cachedSynthesis, synthesis)) _cachedSynthesis = null;
+    _retireSynthesis(synthesis);
+  }
+
+  void _clearCachedSynthesisForSentence(String sentence) {
+    final synthesis = _cachedSynthesis;
+    if (synthesis?.key != '$speed\u0000$sentence') return;
+    _clearCachedSynthesis(synthesis!);
+  }
+
+  void _discardSynthesisWhenReady(Future<_ClaimedNeuralSynthesis?>? pending) {
+    if (pending == null) return;
+    unawaited(
+      pending.then<void>((synthesis) {
+        if (synthesis == null) return;
+        _clearCachedSynthesis(synthesis.owner);
+        _releaseSynthesis(synthesis.owner);
+      }, onError: (Object _, StackTrace _) {}),
+    );
   }
 
   Future<String?> _writeWave(NeuralTtsAudio audio) async {
@@ -896,12 +991,13 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
       if (sentences.isEmpty || _disposed) return;
       final sentence = sentences.first;
       try {
-        await _cachedSynthesize(sentence);
+        final synthesis = _cachedSynthesize(sentence);
+        synthesis.audio = await synthesis.future;
       } catch (_) {
-        _clearCachedSynthesis(sentence);
+        _clearCachedSynthesisForSentence(sentence);
       }
     } catch (e) {
-      debugPrint('[hermes-tts] prewarm silenciado: $e');
+      debugPrint('[hermes-tts] prewarm failed (${e.runtimeType})');
     }
   }
 
@@ -932,6 +1028,7 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
     final replacesActivePlayback = _operations.hasActive;
     final operation = _operations.begin();
     var producedAudio = false;
+    Future<_ClaimedNeuralSynthesis?>? prefetched;
     try {
       if (replacesActivePlayback) await _rotatePlayback();
       if (!_operations.isCurrent(operation)) return;
@@ -939,47 +1036,52 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
       await playback.stop();
       if (!_operations.isCurrent(operation)) return;
       final sentences = _sentences(text);
-      Future<NeuralTtsAudio?>? prefetched;
       for (var index = 0; index < sentences.length; index++) {
         final sentence = sentences[index];
         if (!_operations.isCurrent(operation)) break;
         final pending = prefetched;
         prefetched = null;
-        final audio =
+        final synthesis =
             await (pending ?? _synthesizeCancellable(sentence, operation));
-        if (audio == null) break;
-        if (!_operations.isCurrent(operation)) break;
-        // Salta si no hay muestras O si son SILENCIO (pico ~0): algunas voces con
-        // espeak-ng-data incompleto generan un búfer NO vacío pero mudo. Tratarlo
-        // como "sin audio" hace que, si NINGUNA frase suena, caigamos al TTS del
-        // sistema (throw de abajo) en vez de reproducir silencio.
-        if (!audio.audible) continue;
-        final path = await _writeWave(audio);
-        if (!_operations.isCurrent(operation)) {
-          if (path != null) _deleteWave(path);
-          break;
+        if (synthesis == null) break;
+        final audio = synthesis.audio;
+        String? path;
+        _TtsPlaybackOutcome? playbackOutcome;
+        try {
+          if (!_operations.isCurrent(operation)) break;
+          // Salta si no hay muestras O si son SILENCIO (pico ~0): algunas voces
+          // con espeak-ng-data incompleto generan un búfer NO vacío pero mudo.
+          if (!audio.audible) continue;
+          path = await _writeWave(audio);
+          if (path != null) synthesis.owner.wavePaths.add(path);
+          if (!_operations.isCurrent(operation)) break;
+          if (path == null) continue;
+          if (index + 1 < sentences.length &&
+              _operations.isCurrent(operation)) {
+            // El worker queda libre en cuanto termina la frase actual. Prepara
+            // la siguiente mientras el reproductor está hablando para evitar
+            // el hueco síntesis → reproducción que se percibía como voz cortada.
+            final next = _synthesizeCancellable(
+              sentences[index + 1],
+              operation,
+            );
+            next.ignore();
+            prefetched = next;
+          }
+          final ms = audio.sampleRate > 0
+              ? (audio.sampleCount * 1000 / audio.sampleRate).ceil()
+              : 8000;
+          playbackOutcome = await _playAndWait(
+            playback: playback,
+            operations: _operations,
+            operation: operation,
+            play: () => playback.playFile(path!),
+            timeout: Duration(milliseconds: ms + 400),
+          );
+        } finally {
+          _clearCachedSynthesis(synthesis.owner);
+          _releaseSynthesis(synthesis.owner);
         }
-        if (path == null) continue;
-        if (index + 1 < sentences.length && _operations.isCurrent(operation)) {
-          // El worker queda libre en cuanto termina la frase actual. Prepara
-          // la siguiente mientras el reproductor está hablando para evitar el
-          // hueco síntesis → reproducción que se percibía como voz cortada.
-          final next = _synthesizeCancellable(sentences[index + 1], operation);
-          next.ignore();
-          prefetched = next;
-        }
-        final ms = audio.sampleRate > 0
-            ? (audio.sampleCount * 1000 / audio.sampleRate).ceil()
-            : 8000;
-        final playbackOutcome = await _playAndWait(
-          playback: playback,
-          operations: _operations,
-          operation: operation,
-          play: () => playback.playFile(path),
-          timeout: Duration(milliseconds: ms + 400),
-        );
-        _deleteWave(path);
-        _clearCachedSynthesis(sentence);
         if (playbackOutcome == _TtsPlaybackOutcome.cancelled) break;
         producedAudio = true;
         if (playbackOutcome == _TtsPlaybackOutcome.timedOut) {
@@ -1004,6 +1106,7 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
       if (!_operations.isCurrent(operation)) return;
       rethrow;
     } finally {
+      _discardSynthesisWhenReady(prefetched);
       _operations.finish(operation);
     }
   }
@@ -1013,7 +1116,7 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
       final file = File(path);
       if (file.existsSync()) file.deleteSync();
     } catch (e) {
-      debugPrint('[hermes-tts] excepción silenciada (se ignora sin más): $e');
+      debugPrint('[hermes-tts] local operation failed (${e.runtimeType})');
     }
   }
 
@@ -1046,16 +1149,8 @@ class OnDeviceNeuralTtsEngine implements TtsEngine, PrewarmableTts {
     _operations.dispose();
     await _retireTtsPlayback(_player);
     final cached = _cachedSynthesis;
-    if (cached != null) {
-      unawaited(
-        cached.then<void>((audio) {
-          final path = audio.wavePath;
-          if (path != null) _deleteWave(path);
-        }, onError: (Object _, StackTrace _) {}),
-      );
-    }
     _cachedSynthesis = null;
-    _cachedSynthesisKey = null;
+    if (cached != null) _retireSynthesis(cached);
     final worker = _worker;
     _worker = null;
     if (worker != null) {
@@ -1548,7 +1643,7 @@ class OpenAiStreamingTtsEngine implements TtsEngine {
               if (!_operations.isCurrent(operation)) return;
             } catch (e) {
               if (!_operations.isCurrent(operation)) return;
-              debugPrint('[hermes-tts] excepción silenciada (se relanza): $e');
+              debugPrint('[hermes-tts] retry failed (${e.runtimeType})');
               rethrow;
             }
           } else {

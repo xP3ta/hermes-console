@@ -120,6 +120,16 @@ void main() {
       expect(missingTotal.details.progress, isNull);
       expect(invalidTotal.details.progress, isNull);
     });
+
+    test('complete event rejects a contradictory live status', () {
+      final event = _native('subagent.complete', _scope(), const {
+        'subagent_id': 'child-contradictory',
+        'status': 'running',
+      });
+
+      expect(event.kind, SubagentActivityEventKind.complete);
+      expect(event.phase, SubagentActivityPhase.completed);
+    });
   });
 
   group('SubagentActivityReducer', () {

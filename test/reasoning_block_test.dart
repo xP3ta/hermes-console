@@ -26,7 +26,7 @@ void main() {
     );
   }
 
-  testWidgets('separa el razonamiento de la respuesta y oculta la etiqueta', (
+  testWidgets('retira el razonamiento y conserva solo la respuesta pública', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -35,47 +35,48 @@ void main() {
         'Son las tres de la tarde.',
       ),
     );
-    // El bloque de razonamiento existe (plegado) y la respuesta es visible.
-    expect(find.byType(ReasoningBlock), findsOneWidget);
-    expect(find.text('Razonamiento'), findsOneWidget);
+    expect(find.byType(ReasoningBlock), findsNothing);
+    expect(find.text('Razonamiento'), findsNothing);
     expect(find.textContaining('Son las tres'), findsOneWidget);
     // La etiqueta cruda nunca debe verse y, plegado, tampoco el razonamiento.
     expect(find.textContaining('<think>'), findsNothing);
     expect(find.textContaining('El usuario pregunta'), findsNothing);
   });
 
-  testWidgets('al expandir muestra el texto del razonamiento', (tester) async {
+  testWidgets('no ofrece disclosure para expandir razonamiento', (
+    tester,
+  ) async {
     await tester.pumpWidget(host('<think>Paso 1. Paso 2.</think>Hecho.'));
-    await tester.tap(find.byType(ReasoningBlock));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Paso 1. Paso 2.'), findsOneWidget);
+    expect(find.byType(ReasoningBlock), findsNothing);
+    expect(find.textContaining('Paso 1. Paso 2.'), findsNothing);
+    expect(find.textContaining('Hecho.'), findsOneWidget);
   });
 
-  testWidgets('streaming: <think> abierto muestra estado "Pensando…"', (
+  testWidgets('streaming de reasoning puro no expone estado ni texto', (
     tester,
   ) async {
     await tester.pumpWidget(
       host('<think>sigo razonando sobre la respuesta', isStreaming: true),
     );
-    expect(find.byType(ReasoningBlock), findsOneWidget);
-    expect(find.text('Pensando…'), findsOneWidget);
+    expect(find.byType(ReasoningBlock), findsNothing);
+    expect(find.text('Pensando…'), findsNothing);
+    expect(find.textContaining('sigo razonando'), findsNothing);
     expect(tester.hasRunningAnimations, isFalse);
   });
 
-  testWidgets('el disclosure de razonamiento conserva 48 dp', (tester) async {
+  testWidgets('razonamiento cerrado tampoco crea un control táctil', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       host('<think>Paso publicado.</think>Respuesta final.'),
     );
 
-    final disclosure = find.descendant(
-      of: find.byType(ReasoningBlock),
-      matching: find.byType(InkWell),
-    );
-    expect(disclosure, findsOneWidget);
-    expect(tester.getSize(disclosure).height, greaterThanOrEqualTo(48));
+    expect(find.byType(ReasoningBlock), findsNothing);
+    expect(find.textContaining('Paso publicado.'), findsNothing);
+    expect(find.textContaining('Respuesta final.'), findsOneWidget);
   });
 
-  testWidgets('detalle limpia Markdown y anuncia el estado del disclosure', (
+  testWidgets('Markdown interno se descarta junto con el razonamiento', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -85,26 +86,14 @@ void main() {
       ),
     );
 
-    Semantics disclosureSemantics() => tester
-        .widgetList<Semantics>(
-          find.descendant(
-            of: find.byType(ReasoningBlock),
-            matching: find.byType(Semantics),
-          ),
-        )
-        .singleWhere((widget) => widget.properties.label == 'Razonamiento');
-
-    expect(disclosureSemantics().properties.expanded, isFalse);
-    await tester.tap(find.text('Razonamiento'));
-    await tester.pumpAndSettle();
-
-    expect(disclosureSemantics().properties.expanded, isTrue);
-    expect(find.textContaining('Plan'), findsOneWidget);
-    expect(find.textContaining('Paso'), findsOneWidget);
-    expect(find.textContaining('uno'), findsOneWidget);
+    expect(find.byType(ReasoningBlock), findsNothing);
+    expect(find.textContaining('Plan'), findsNothing);
+    expect(find.textContaining('Paso'), findsNothing);
+    expect(find.textContaining('uno'), findsNothing);
     expect(find.textContaining('##'), findsNothing);
     expect(find.textContaining('**'), findsNothing);
     expect(find.textContaining('`'), findsNothing);
+    expect(find.textContaining('Respuesta final.'), findsOneWidget);
   });
 
   testWidgets('sin razonamiento no se renderiza el bloque', (tester) async {

@@ -2,11 +2,12 @@
 
 ## Current status
 
-`1.2.9` is the source-current publication candidate. Its final build number and
-signed distribution artifacts remain pending until the automated, independent
-review and physical release gates close. Any QA profile build is for internal
-validation only. `1.2.7` is the latest version already delivered through Google
-Play and GitHub Releases/Obtainium.
+`1.2.10` is the source-current publication candidate. Its final signed
+distribution artifacts remain pending until the independent emulator and
+Desktop release gates close. Any QA profile build is for internal validation
+only. `1.2.9` is the latest release published through GitHub
+Releases/Obtainium; verify Google Play's displayed version in the listing before
+assuming channel parity.
 
 Do not install or share a `qa`, `debug`, or `profile` APK outside the internal
 validation flow. Those builds use different guarantees and, in the QA flavor,
@@ -48,7 +49,7 @@ public APK.
 
 Requirements for the current tree:
 
-- Flutter 3.44.x and the Dart SDK bundled with it.
+- Flutter 3.47.x and the Dart SDK bundled with it.
 - Java 17.
 - Android SDK 36.
 
@@ -57,7 +58,8 @@ flutter pub get
 flutter analyze
 flutter test
 flutter build apk --debug --flavor full \
-  --dart-define=HERMES_FLAVOR=full
+  --dart-define=HERMES_FLAVOR=full \
+  --dart-define=HERMES_LOCAL_AGENT=true
 ```
 
 The debug output is for development only. Release builds require a signing key

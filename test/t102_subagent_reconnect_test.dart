@@ -9,6 +9,8 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/in_memory_compression_fence_storage.dart';
+
 class _ReconnectGateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -133,6 +135,7 @@ void main() {
       final gateway = _ReconnectGateway();
       var restCalls = 0;
       final chat = ActiveChat(
+        compressionFenceStore: testCompressionFenceStore(),
         connection: SavedConnection(
           id: 't102-subagents',
           label: 'T102 subagents',
@@ -155,6 +158,7 @@ void main() {
           }),
         ),
         desktopGateway: gateway,
+        allowUnownedDesktopSnapshotForTesting: true,
       );
       addTearDown(() async {
         chat.dispose();
@@ -162,6 +166,16 @@ void main() {
       });
 
       await chat.loadMessages();
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'NO_LEASE_PRIVATE_CHILD',
+        'child_session_id': 'NO_LEASE_PRIVATE_SESSION',
+        'goal': 'NO_LEASE_PRIVATE_GOAL',
+        'status': 'running',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.subagentActivities, isEmpty);
+
+      chat.acquireSubagentForegroundPresentation();
       expect(chat.state, ChatPipelineState.executing);
       expect(gateway.resumeExistingCalls, 1);
       expect(gateway.createCalls, 0);
@@ -175,6 +189,8 @@ void main() {
         'event_id': 'child-a-start',
         'event_revision': 1,
         'status': 'running',
+        'tool_name': 'r1-tool-must-not-cross-alias',
+        'accepting_steer': true,
       });
       await _waitFor(
         () => chat.subagentActivities.length == 1,
@@ -182,7 +198,10 @@ void main() {
       );
 
       gateway.disconnectTransport();
-      expect(await chat.ensureDesktopRuntime(), isTrue);
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isTrue,
+      );
       expect(gateway.resumeExistingCalls, 2);
       expect(gateway.createCalls, 0);
       expect(restCalls, 1);
@@ -238,6 +257,16 @@ void main() {
       expect(
         byId['child-before-disconnect']?.goalPreview,
         'goal preserved across runtime aliases',
+      );
+      expect(byId['child-before-disconnect']?.eventRevision, 2);
+      expect(byId['child-before-disconnect']?.seenEventIds, [
+        'child-a-complete',
+      ]);
+      expect(byId['child-before-disconnect']?.details.activeToolName, isNull);
+      expect(byId['child-before-disconnect']?.details.acceptingSteer, isNull);
+      expect(
+        byId['child-before-disconnect']?.resultPreview,
+        'completed after reconnect',
       );
       expect(byId['child-terminal-only']?.phase, SubagentActivityPhase.failed);
       expect(restCalls, 1);

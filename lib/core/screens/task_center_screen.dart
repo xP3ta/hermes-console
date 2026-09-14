@@ -42,7 +42,7 @@ const _kStatusPriority = {
 };
 
 typedef TaskCenterRunStatusFetcher =
-    Future<Map<String, dynamic>> Function(String runId);
+    Future<Map<String, dynamic>> Function(String runId, String profile);
 
 @visibleForTesting
 Future<void> refreshTaskCenterRunStatuses(
@@ -51,7 +51,7 @@ Future<void> refreshTaskCenterRunStatuses(
 ) async {
   for (final record in registry.records.where((record) => !record.isTerminal)) {
     try {
-      final status = await fetchStatus(record.runId);
+      final status = await fetchStatus(record.runId, record.profile);
       await registry.update(
         record.runId,
         profile: record.profile,
@@ -99,7 +99,12 @@ Future<RunRecord> persistTaskCenterRunUpdate(
 
 class TaskCenterScreen extends StatefulWidget {
   final SavedConnection connection;
-  const TaskCenterScreen({required this.connection, super.key});
+  final String profile;
+  const TaskCenterScreen({
+    required this.connection,
+    this.profile = 'default',
+    super.key,
+  });
 
   @override
   State<TaskCenterScreen> createState() => _TaskCenterScreenState();
@@ -174,7 +179,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     final registry = _registry;
     if (registry == null || _refreshing) return;
     setState(() => _refreshing = true);
-    await refreshTaskCenterRunStatuses(registry, _client.getRun);
+    await refreshTaskCenterRunStatuses(
+      registry,
+      (runId, profile) => _client.getRun(runId, profile: profile),
+    );
     if (!mounted) return;
     setState(() => _refreshing = false);
     // Abrir SSE para runs que siguen no terminales tras el refresh.
@@ -222,6 +230,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
 
     _client.streamRunEvents(
       runId,
+      profile: record.profile,
       onEvent: (event) => _onEvent(record, event),
       onDone: () => _onStreamClosed(record, pollAfter: true),
       onError: (_) => _onStreamClosed(record, pollAfter: false),
@@ -318,7 +327,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     final registry = _registry;
     if (registry == null) return;
     try {
-      final status = await _client.getRun(record.runId);
+      final status = await _client.getRun(
+        record.runId,
+        profile: record.profile,
+      );
       await registry.update(
         record.runId,
         profile: record.profile,
@@ -362,12 +374,17 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
         await _launchLocalRun(prompt);
         return;
       }
-      final runId = await _client.startRun(input: prompt);
+      final runId = await _client.startRun(
+        input: prompt,
+        profile: widget.profile,
+      );
       final record = RunRecord(
         runId: runId,
         prompt: prompt,
         createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
         lastStatus: 'queued',
+        connId: widget.connection.id,
+        profile: widget.profile,
       );
       await _registry?.add(record);
       if (!mounted) return;
@@ -405,6 +422,8 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
       lastStatus: 'completed',
       output: response,
+      connId: widget.connection.id,
+      profile: widget.profile,
     );
     await _registry?.add(record);
     if (!mounted) return;

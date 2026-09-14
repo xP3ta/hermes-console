@@ -42,11 +42,10 @@ extension ApprovalModeLabel on ApprovalMode {
 
   String get storageKey => name;
 
-  static ApprovalMode fromStorage(String? v) =>
-      ApprovalMode.values.firstWhere(
-        (m) => m.name == v,
-        orElse: () => ApprovalMode.interactive,
-      );
+  static ApprovalMode fromStorage(String? v) => ApprovalMode.values.firstWhere(
+    (m) => m.name == v,
+    orElse: () => ApprovalMode.interactive,
+  );
 }
 
 /// Alcance de una resolución de aprobación (mapea 1:1 con el Gateway).
@@ -55,6 +54,36 @@ enum ApprovalScope { once, session, always, deny }
 extension ApprovalScopeWire on ApprovalScope {
   /// Valor que entiende `POST /v1/runs/{id}/approval {choice}`.
   String get wire => name; // once|session|always|deny
+}
+
+/// Scopes the exact Desktop request authorizes this client to submit.
+/// An explicit choices list is authoritative; capability flags may only remove.
+Set<String> permittedApprovalChoices(Map<String, dynamic> approval) {
+  final raw = approval['choices'] ?? approval['allowed_choices'];
+  final choices = raw is List
+      ? raw
+            .whereType<Object>()
+            .map((value) => value.toString().trim().toLowerCase())
+            .map(
+              (value) => switch (value) {
+                'allow' || 'allow_once' || 'allow-once' => 'once',
+                'allow_session' || 'allow-session' => 'session',
+                'allow_permanent' ||
+                'allow-permanent' ||
+                'allow_always' ||
+                'allow-always' => 'always',
+                _ => value,
+              },
+            )
+            .where(const {'once', 'session', 'always', 'deny'}.contains)
+            .toSet()
+      : <String>{'once', 'session', 'always', 'deny'};
+  if (approval['allow_session'] == false) choices.remove('session');
+  if (approval['allow_permanent'] == false ||
+      approval['allow_always'] == false) {
+    choices.remove('always');
+  }
+  return Set<String>.unmodifiable(choices);
 }
 
 /// Riesgo estimado. Reutiliza [CommandRisk] (no hay un segundo enum).
@@ -166,8 +195,7 @@ class ApprovalRule {
       (r) => r.name == j['risk'],
       orElse: () => CommandRisk.medium,
     ),
-    createdAt:
-        DateTime.tryParse(j['created_at'] ?? '') ?? DateTime.now(),
+    createdAt: DateTime.tryParse(j['created_at'] ?? '') ?? DateTime.now(),
   );
 }
 
@@ -372,7 +400,9 @@ class ApprovalPolicyService extends ChangeNotifier {
           .map(ApprovalRule.fromJson)
           .toList();
     } catch (e) {
-      debugPrint('[approval-policy] excepción silenciada (se devuelve lista vacía): $e');
+      debugPrint(
+        '[approval-policy] excepción silenciada (se devuelve lista vacía): $e',
+      );
       return const [];
     }
   }
@@ -403,8 +433,7 @@ class ApprovalPolicyService extends ChangeNotifier {
   }
 
   Future<void> revokeRule(String instanceId, String ruleId) async {
-    final rules = [...rulesFor(instanceId)]
-      ..removeWhere((r) => r.id == ruleId);
+    final rules = [...rulesFor(instanceId)]..removeWhere((r) => r.id == ruleId);
     await _prefs.setString(
       _rulesKey(instanceId),
       jsonEncode(rules.map((r) => r.toJson()).toList()),

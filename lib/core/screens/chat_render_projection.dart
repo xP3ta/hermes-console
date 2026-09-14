@@ -2,6 +2,45 @@ import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
 import '../widgets/chat_event_cards.dart';
 
+Set<String> _delegateTaskCallIds(List<Map<String, dynamic>> messages) {
+  final ids = <String>{};
+  for (final message in messages) {
+    final calls = message['tool_calls'];
+    if (calls is! List) continue;
+    for (final raw in calls) {
+      if (raw is! Map) continue;
+      final function = raw['function'];
+      final name = function is Map ? function['name'] : null;
+      if (name?.toString().trim().toLowerCase() != 'delegate_task') continue;
+      final id = raw['id']?.toString().trim();
+      if (id != null && id.isNotEmpty) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+bool _isDelegateTaskTranscriptMessage(
+  Map<String, dynamic> message,
+  Set<String> callIds,
+) {
+  final role = message['role']?.toString().trim().toLowerCase();
+  if (role == 'assistant') {
+    final calls = message['tool_calls'];
+    if (calls is! List) return false;
+    return calls.any((raw) {
+      if (raw is! Map) return false;
+      final function = raw['function'];
+      final name = function is Map ? function['name'] : null;
+      return name?.toString().trim().toLowerCase() == 'delegate_task';
+    });
+  }
+  if (role != 'tool') return false;
+  final toolName = message['tool_name']?.toString().trim().toLowerCase();
+  if (toolName == 'delegate_task') return true;
+  final callId = message['tool_call_id']?.toString().trim();
+  return callId != null && callId.isNotEmpty && callIds.contains(callId);
+}
+
 /// Plan estructural de una unidad del timeline. Guarda índices, no mapas de
 /// mensajes: [ActiveChat] sustituye `messages[0]` durante el streaming y una
 /// caché de mapas enseñaría snapshots antiguos.
@@ -72,7 +111,7 @@ final class ChatRenderProjection {
        _headSteer = source.isNotEmpty && source.first['_steer'] == true,
        _headDisplayKind = source.isEmpty
            ? null
-           : source.first['display_kind']?.toString().trim(),
+           : effectiveUserDisplayKind(source.first),
        _headHasVisibleText =
            source.isNotEmpty && _hasVisibleText(source.first['content']),
        _headHasStructuredReasoning =
@@ -81,6 +120,7 @@ final class ChatRenderProjection {
 
   factory ChatRenderProjection.build(List<Map<String, dynamic>> messages) {
     final chronologicalUnits = <ChatRenderUnitPlan>[];
+    final delegateTaskCallIds = _delegateTaskCallIds(messages);
     final assistantIndexes = <int>[];
     final messageIndexes = Map<Map<String, dynamic>, int>.identity();
     final userOrdinals = <int, int>{};
@@ -104,6 +144,9 @@ final class ChatRenderProjection {
     for (var index = messages.length - 1; index >= 0; index--) {
       final message = messages[index];
       messageIndexes[message] = index;
+      if (_isDelegateTaskTranscriptMessage(message, delegateTaskCallIds)) {
+        continue;
+      }
       final role = (message['role'] as String?) ?? 'assistant';
       final isPipeline = message['_pipeline'] == true;
 
@@ -167,12 +210,9 @@ final class ChatRenderProjection {
         continue;
       }
 
-      // Los placeholders vacíos del asistente no generan huecos visuales. Un
-      // assistant con razonamiento estructurado (reasoning_content/metadata)
-      // pero sin content visible SÍ se conserva: su bloque de razonamiento
-      // plegado es contenido real del turno y no debe evaporarse.
-      if (event.text.trim().isEmpty &&
-          structuredReasoningText(message).isEmpty) {
+      // Los assistant sin contenido público no generan huecos. El razonamiento
+      // estructurado es metadata privada y nunca convierte una fila en visible.
+      if (event.text.trim().isEmpty) {
         continue;
       }
       flushTools();
@@ -205,7 +245,7 @@ final class ChatRenderProjection {
     return head['role'] == _headRole &&
         (head['_pipeline'] == true) == _headPipeline &&
         (head['_steer'] == true) == _headSteer &&
-        head['display_kind']?.toString().trim() == _headDisplayKind &&
+        effectiveUserDisplayKind(head) == _headDisplayKind &&
         _hasVisibleText(head['content']) == _headHasVisibleText &&
         structuredReasoningText(head).isNotEmpty == _headHasStructuredReasoning;
   }

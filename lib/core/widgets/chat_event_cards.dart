@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../companion/render/companion_status_indicator.dart';
 import '../companion/state/companion_controller.dart';
+import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
@@ -27,13 +28,13 @@ enum ChatEventKind { text, toolEvent, approval }
 /// Resultado de clasificar un mensaje del historial.
 class ChatEventInfo {
   final ChatEventKind kind;
-  final String? command;
-  final String? description;
-  final String? output;
-  final int? exitCode;
+  String? get command => null;
+  String? get description => null;
+  String? get output => null;
+  int? get exitCode => null;
   final String? status;
-  final String? runId;
-  final String? patternKey;
+  String? get runId => null;
+  String? get patternKey => null;
   final bool approvalPending;
 
   /// Texto a renderizar cuando [kind] == text (markdown normal).
@@ -42,13 +43,7 @@ class ChatEventInfo {
   const ChatEventInfo._({
     required this.kind,
     required this.text,
-    this.command,
-    this.description,
-    this.output,
-    this.exitCode,
     this.status,
-    this.runId,
-    this.patternKey,
     this.approvalPending = false,
   });
 
@@ -78,6 +73,9 @@ class ChatEventInfo {
     final role = (msg['role'] ?? '').toString().toLowerCase();
     final rawContent = msg['content'];
     final textContent = rawContent is String ? rawContent : '';
+    if (role != 'user' && role != 'assistant' && !_toolRoles.contains(role)) {
+      return const ChatEventInfo._(kind: ChatEventKind.text, text: '');
+    }
 
     // ── Caso 1: el asistente INVOCA una herramienta. ──────────────────────
     // El agente Hermes manda content:"" y la llamada en tool_calls[].function
@@ -89,18 +87,9 @@ class ChatEventInfo {
     if (toolCalls is List &&
         toolCalls.isNotEmpty &&
         textContent.trim().isEmpty) {
-      final call = toolCalls.first;
-      final fn = (call is Map) ? call['function'] : null;
-      final name =
-          (fn is Map ? fn['name'] : null)?.toString() ??
-          (msg['tool_name']?.toString() ?? 'tool');
-      final argsRaw = (fn is Map ? fn['arguments'] : null)?.toString() ?? '';
-      final command = _formatToolArgs(argsRaw);
-      return ChatEventInfo._(
+      return const ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
-        text: textContent,
-        description: name,
-        command: (command.isNotEmpty) ? command : null,
+        text: '',
         status: 'llamada',
       );
     }
@@ -109,7 +98,6 @@ class ChatEventInfo {
     // El content puede ser JSON puro, JSON + "\n\n[Tool loop warning: …]" o
     // texto plano. La señal de aprobación viene EMBEBIDA en el string de error.
     if (_toolRoles.contains(role)) {
-      final toolName = msg['tool_name']?.toString();
       final lower = textContent.toLowerCase();
       final isApproval =
           lower.contains('asking the user for approval') ||
@@ -118,44 +106,18 @@ class ChatEventInfo {
           lower.contains('awaiting_approval') ||
           lower.contains('waiting_for_approval');
 
-      final payload = _tryParseLeadingJson(textContent);
-      String? output;
-      int? exitCode;
-      String? status;
-      String? command = (msg['command'])?.toString();
-      if (payload != null) {
-        output =
-            (payload['output'] ??
-                    payload['stdout'] ??
-                    payload['result'] ??
-                    payload['error'])
-                ?.toString();
-        exitCode = (payload['exit_code'] as num?)?.toInt();
-        status = payload['status']?.toString();
-        command ??= payload['command']?.toString();
-      } else {
-        output = textContent;
-      }
-      output = _sanitizeToolOutput(output);
-
       if (isApproval) {
-        return ChatEventInfo._(
+        return const ChatEventInfo._(
           kind: ChatEventKind.approval,
-          text: textContent,
-          description: toolName,
-          command: _extractFencedCode(textContent) ?? command,
+          text: '',
           status: 'pending_approval',
           approvalPending: true,
         );
       }
-      return ChatEventInfo._(
+      return const ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
-        text: textContent,
-        description: toolName,
-        command: (command != null && command.isNotEmpty) ? command : null,
-        output: (output != null && output.isNotEmpty) ? output : null,
-        exitCode: exitCode,
-        status: status ?? 'completado',
+        text: '',
+        status: 'completado',
       );
     }
 
@@ -175,16 +137,7 @@ class ChatEventInfo {
       return ChatEventInfo._(kind: ChatEventKind.text, text: textContent);
     }
 
-    final command = (payload['command'] ?? msg['command'])?.toString();
-    final description = (payload['description'] ?? msg['description'])
-        ?.toString();
-    final output = (payload['output'] ?? payload['stdout'] ?? payload['result'])
-        ?.toString();
-    final exitCode = (payload['exit_code'] as num?)?.toInt();
     final status = (payload['status'] ?? msg['status'])?.toString();
-    final runId = (payload['run_id'] ?? payload['runId'] ?? msg['run_id'])
-        ?.toString();
-    final patternKey = payload['pattern_key']?.toString();
 
     final approvalPending =
         payload['approval_pending'] == true ||
@@ -198,47 +151,10 @@ class ChatEventInfo {
 
     return ChatEventInfo._(
       kind: kind,
-      text: textContent,
-      command: (command != null && command.isNotEmpty) ? command : null,
-      description: (description != null && description.isNotEmpty)
-          ? description
-          : null,
-      output: (output != null && output.isNotEmpty) ? output : null,
-      exitCode: exitCode,
-      status: status,
-      runId: (runId != null && runId.isNotEmpty) ? runId : null,
-      patternKey: patternKey,
+      text: '',
+      status: approvalPending ? 'pending_approval' : 'completado',
       approvalPending: approvalPending,
     );
-  }
-
-  /// Extrae el campo "jugoso" de los argumentos JSON de una tool call (código,
-  /// comando, contenido de fichero, consulta…) con los `\n` ya reales. Si no hay
-  /// uno claro, devuelve el JSON indentado legible.
-  static String _formatToolArgs(String argsRaw) {
-    final t = argsRaw.trim();
-    if (t.isEmpty) return '';
-    try {
-      final decoded = jsonDecode(t);
-      if (decoded is Map<String, dynamic>) {
-        for (final k in [
-          'code',
-          'command',
-          'content',
-          'query',
-          'path',
-          'url',
-        ]) {
-          final v = decoded[k];
-          if (v is String && v.trim().isNotEmpty) return v;
-        }
-        const enc = JsonEncoder.withIndent('  ');
-        return enc.convert(decoded);
-      }
-    } catch (_) {
-      // No es JSON: se muestra crudo (ya con \n reales si los traía).
-    }
-    return t;
   }
 
   /// Parsea el PRIMER objeto JSON balanceado al inicio de [s], tolerando texto
@@ -270,9 +186,10 @@ class ChatEventInfo {
           try {
             final d = jsonDecode(t.substring(0, i + 1));
             return d is Map<String, dynamic> ? d : null;
-          } catch (e) {
+          } catch (error) {
             debugPrint(
-              '[chat-cards] excepción silenciada (se devuelve null): $e',
+              '[chat-cards] malformed legacy tool envelope '
+              '(${error.runtimeType})',
             );
             return null;
           }
@@ -280,23 +197,6 @@ class ChatEventInfo {
       }
     }
     return null;
-  }
-
-  /// Quita los avisos internos de control del agente ("[Tool loop warning: …]",
-  /// cerrados o truncados) que no deben verse en el chat.
-  static String? _sanitizeToolOutput(String? out) {
-    if (out == null) return null;
-    var s = out.replaceAll(RegExp(r'\[Tool loop warning:[\s\S]*?\]'), '');
-    s = s.replaceAll(RegExp(r'\[Tool loop warning:[\s\S]*$'), '');
-    return s.trim();
-  }
-
-  /// Extrae el primer bloque de código cercado (```…```) de [s]; usado para
-  /// mostrar el código que el agente quiere ejecutar en la tarjeta de aprobación.
-  static String? _extractFencedCode(String s) {
-    final m = RegExp(r'```[a-zA-Z]*\n([\s\S]*?)```').firstMatch(s);
-    final code = m?.group(1)?.trim();
-    return (code != null && code.isNotEmpty) ? code : null;
   }
 }
 
@@ -926,6 +826,7 @@ class ChatApprovalCard extends StatelessWidget {
     // en inglés del servidor).
     final what = command.isNotEmpty ? command : description;
     final oneLine = !what.contains('\n') && what.length <= 80;
+    final allowed = permittedApprovalChoices(approval);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
@@ -989,58 +890,66 @@ class ChatApprovalCard extends StatelessWidget {
               ApprovalCommandBox(command: what, oneLine: oneLine),
             ],
             const SizedBox(height: 13),
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: _ApprovalChoice(
-                    label: s.cevAllow,
-                    icon: Icons.check_rounded,
-                    color: colors.accent,
-                    busy: busy,
-                    filled: true,
-                    onTap: () => onChoice('once'),
+            if (allowed.contains('once') || allowed.contains('deny'))
+              Row(
+                children: [
+                  if (allowed.contains('once'))
+                    Expanded(
+                      flex: 3,
+                      child: _ApprovalChoice(
+                        label: s.cevAllow,
+                        icon: Icons.check_rounded,
+                        color: colors.accent,
+                        busy: busy,
+                        filled: true,
+                        onTap: () => onChoice('once'),
+                      ),
+                    ),
+                  if (allowed.contains('once') && allowed.contains('deny'))
+                    const SizedBox(width: 9),
+                  if (allowed.contains('deny'))
+                    Expanded(
+                      flex: 2,
+                      child: _ApprovalChoice(
+                        label: s.cevDeny,
+                        icon: Icons.close_rounded,
+                        color: colors.error,
+                        busy: busy,
+                        onTap: () => onChoice('deny'),
+                      ),
+                    ),
+                ],
+              ),
+            if (allowed.contains('session') || allowed.contains('always'))
+              const SizedBox(height: 10),
+            if (allowed.contains('session') || allowed.contains('always'))
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 4,
+                runSpacing: 2,
+                children: [
+                  Text(
+                    '${s.cevRemember}:',
+                    style: TextStyle(fontSize: 11, color: colors.textDisabled),
                   ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  flex: 2,
-                  child: _ApprovalChoice(
-                    label: s.cevDeny,
-                    icon: Icons.close_rounded,
-                    color: colors.error,
-                    busy: busy,
-                    onTap: () => onChoice('deny'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 4,
-              runSpacing: 2,
-              children: [
-                Text(
-                  '${s.cevRemember}:',
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
-                ),
-                _ScopeChip(
-                  label: s.cevThisSession,
-                  icon: Icons.repeat_rounded,
-                  busy: busy,
-                  semanticHint: s.cevRemember,
-                  onTap: () => onChoice('session'),
-                ),
-                _ScopeChip(
-                  label: s.cevAlways,
-                  icon: Icons.all_inclusive_rounded,
-                  busy: busy,
-                  semanticHint: s.cevRemember,
-                  onTap: () => onChoice('always'),
-                ),
-              ],
-            ),
+                  if (allowed.contains('session'))
+                    _ScopeChip(
+                      label: s.cevThisSession,
+                      icon: Icons.repeat_rounded,
+                      busy: busy,
+                      semanticHint: s.cevRemember,
+                      onTap: () => onChoice('session'),
+                    ),
+                  if (allowed.contains('always'))
+                    _ScopeChip(
+                      label: s.cevAlways,
+                      icon: Icons.all_inclusive_rounded,
+                      busy: busy,
+                      semanticHint: s.cevRemember,
+                      onTap: () => onChoice('always'),
+                    ),
+                ],
+              ),
           ],
         ),
       ),

@@ -18,6 +18,11 @@ abstract final class SubagentActivityReducer {
     if (matches.isEmpty) {
       final created = _fromEvent(event);
       if (created == null) return state;
+      if (!created.isTerminal &&
+          state.activities.where((activity) => !activity.isTerminal).length >=
+              SubagentPayloadLimits.activeActivities) {
+        return state;
+      }
       final changed = Map<SubagentActivityKey, SubagentActivity>.of(
         state.entries,
       );
@@ -305,6 +310,7 @@ SubagentActivityDetails _mergeDetails(
       current.activeToolPreview,
       incoming.activeToolPreview,
     ),
+    acceptingSteer: choose(current.acceptingSteer, incoming.acceptingSteer),
     usage: usage,
     durationSeconds: choose(current.durationSeconds, incoming.durationSeconds),
     startedAt: choose(current.startedAt, incoming.startedAt),
@@ -436,6 +442,7 @@ bool _sameDetails(
     left.filesWrittenCount == right.filesWrittenCount &&
     left.activeToolName == right.activeToolName &&
     left.activeToolPreview == right.activeToolPreview &&
+    left.acceptingSteer == right.acceptingSteer &&
     left.usage == right.usage &&
     left.durationSeconds == right.durationSeconds &&
     left.startedAt == right.startedAt &&

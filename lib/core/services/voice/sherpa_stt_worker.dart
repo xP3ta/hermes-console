@@ -340,21 +340,7 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
   int? activeGeneration;
 
   String safeError(Object error) {
-    var detail = error.toString();
-    for (final key in const [
-      'tokensPath',
-      'encoderPath',
-      'decoderPath',
-      'joinerPath',
-      'sileroPath',
-    ]) {
-      final path = bootstrap[key];
-      if (path is String && path.isNotEmpty) {
-        detail = detail.replaceAll(path, '<$key>');
-      }
-    }
-    if (detail.length > 300) detail = '${detail.substring(0, 300)}…';
-    return detail;
+    return 'Sherpa worker failed (${error.runtimeType}).';
   }
 
   void ensureEngine() {
@@ -435,12 +421,17 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
       try {
         recognizer?.free();
       } catch (error) {
-        debugPrint('[hermes-stt-worker] recognizer free failed: $error');
+        debugPrint(
+          '[hermes-stt-worker] recognizer free failed '
+          '(${error.runtimeType})',
+        );
       }
       try {
         vad?.free();
       } catch (error) {
-        debugPrint('[hermes-stt-worker] VAD free failed: $error');
+        debugPrint(
+          '[hermes-stt-worker] VAD free failed (${error.runtimeType})',
+        );
       }
       recognizer = null;
       vad = null;

@@ -39,6 +39,13 @@ void main() {
       final requests = <Map<String, dynamic>>[];
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+          }),
+        );
         await for (final raw in socket) {
           final frame = Map<String, dynamic>.from(
             jsonDecode(raw as String) as Map,
@@ -170,9 +177,10 @@ void main() {
       expect(restore.historyRemoved, 2);
       expect(inventory.plugins.single.name, 'plugin-a');
       expect(inventory.toolsets.single.name, 'web');
-      expect(agents.snapshots.single.label, 'Audit');
-      expect(agents.processes.single.id, 'process-a');
-      expect(tree.subagents, hasLength(1));
+      expect(agents.snapshots.single.count, 1);
+      expect(agents.processes.single.opaqueId, 'process-a');
+      expect(agents.processes.single.status.name, 'running');
+      expect(tree.subagents.single.status.name, 'completed');
       expect(taskId, 'bg-a');
       expect(projects.activeId, 'project-a');
       expect(project?.label, 'Hermes Console');
@@ -239,6 +247,13 @@ void main() {
       addTearDown(server.close);
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+          }),
+        );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           socket.add(
@@ -279,6 +294,13 @@ void main() {
     server.listen((request) async {
       connections++;
       final socket = await WebSocketTransformer.upgrade(request);
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+        }),
+      );
       await socket.close();
     });
     final client = _clientFor(server);

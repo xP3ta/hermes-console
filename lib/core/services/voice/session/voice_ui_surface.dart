@@ -32,6 +32,7 @@ abstract class VoiceUiSurface implements Listenable {
     required ActiveChat chat,
     required String model,
     String profile,
+    bool allowTransportFallback = false,
     Future<void> Function(String prompt)? onBeforeSend,
   });
 
