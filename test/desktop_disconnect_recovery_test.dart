@@ -7084,6 +7084,7 @@ void main() {
         'coverage-empty-backoff',
         gateway,
         desktopRecoveryBackoff: const [],
+        desktopRecoveryRandom: () => 1.0,
       );
       addTearDown(chat.dispose);
 
@@ -7114,6 +7115,10 @@ void main() {
           Duration.zero,
           Duration(seconds: -1),
         ],
+        // Pin the jitter: the normalized fallback delay must land in full,
+        // otherwise a small random sample lets a third attempt slip into the
+        // observation window and the assertion flakes.
+        desktopRecoveryRandom: () => 1.0,
       );
       addTearDown(chat.dispose);
 
