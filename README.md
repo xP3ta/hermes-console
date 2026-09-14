@@ -57,16 +57,24 @@ needs; older servers degrade without inventing endpoints.
 
 <table>
   <tr>
-    <td align="center"><strong>Home</strong></td>
     <td align="center"><strong>Conversations</strong></td>
-    <td align="center"><strong>Voice</strong></td>
+    <td align="center"><strong>Kanban</strong></td>
     <td align="center"><strong>Tools</strong></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/1.2.4-912/home.png" width="220" alt="Hermes Console home screen with fictional Project Aurora data" /></td>
-    <td><img src="docs/screenshots/1.2.4-912/chat.png" width="220" alt="Hermes Console conversation with fictional Project Aurora data" /></td>
-    <td><img src="docs/screenshots/1.2.4-912/voice.png" width="220" alt="Hermes Console dedicated Voice screen" /></td>
-    <td><img src="docs/screenshots/1.2.4-912/tools.png" width="220" alt="Hermes Console tools screen" /></td>
+    <td><img src="docs/screenshots/1.2.10-9008/chat.png" width="260" alt="Hermes Console conversation with a launch snapshot table and next steps for the fictional Project Aurora" /></td>
+    <td><img src="docs/screenshots/1.2.10-9008/workspace.png" width="260" alt="Hermes Console Kanban board with Working now, Queued and Done columns for the fictional Project Aurora" /></td>
+    <td><img src="docs/screenshots/1.2.10-9008/tools.png" width="260" alt="Hermes Console tools screen: appearance, pets, instances, models, SSH terminal, profiles, agents, skills, extensions, memory and scheduled tasks" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Terminal</strong></td>
+    <td align="center"><strong>Scheduled tasks</strong></td>
+    <td align="center"><strong>Documents</strong></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/1.2.10-9008/terminal.png" width="260" alt="Hermes Console SSH terminal showing git status, diff and log of the fictional Project Aurora workspace" /></td>
+    <td><img src="docs/screenshots/1.2.10-9008/automation.png" width="260" alt="Hermes Console scheduled tasks with scheduled, paused and running cron jobs" /></td>
+    <td><img src="docs/screenshots/1.2.10-9008/documents.png" width="260" alt="Hermes Console inline PDF viewer showing the fictional Aurora product brief" /></td>
   </tr>
 </table>
 

@@ -1,9 +1,12 @@
 # Public screenshots and media
 
-The files under `1.2.4-912/` are the small, owner-approved public demo set
-already used by the Hermes Console website and Google Play presentation. The
-README intentionally reuses only Home, Conversations, Voice and Tools so the
-repository stays clear and compact.
+The files under `1.2.10-9008/` are the owner-approved public demo set already
+used by the Hermes Console website (hermes.xpetalab.dev) and Google Play
+presentation: Conversations (`chat.png`), Kanban (`workspace.png`), Tools
+(`tools.png`), Terminal (`terminal.png`), Scheduled tasks (`automation.png`)
+and Documents (`documents.png`). The README reuses exactly these six so the
+repository stays clear and compact; the previous `1.2.4-912/` set was removed
+when this one replaced it.
 
 Only add or replace media when it meets all of these conditions:
 

@@ -47,10 +47,12 @@ They contain only fictional data and are reused here without modification.
 
 | File | Role | License | SHA-256 |
 |---|---|---|---|
-| `docs/screenshots/1.2.4-912/home.png` | Home | GPL-3.0-only | `58a3ec17a3e6b714db71876a8bfea0601a3fd4103bf26f72dbc043644ab9bfbd` |
-| `docs/screenshots/1.2.4-912/chat.png` | Conversations | GPL-3.0-only | `492fd4dcfc82d46792ecc4e9ae859113d6428c8543b9895aa995be9519568566` |
-| `docs/screenshots/1.2.4-912/voice.png` | Voice | GPL-3.0-only | `334efe827a4bd3f40a174efb6b98d12f3f52471d09df9d6c95a90ca8073e70ed` |
-| `docs/screenshots/1.2.4-912/tools.png` | Tools | GPL-3.0-only | `a0723d6aa97fd32c8f1d0cfb55ac2274cc84a3f454c804f81059401248be1644` |
+| `docs/screenshots/1.2.10-9008/chat.png` | Conversations | GPL-3.0-only | `3bd993b41d10995cc36edfe711ab623d25e8145725f243679c5928bcf705e3f5` |
+| `docs/screenshots/1.2.10-9008/workspace.png` | Kanban | GPL-3.0-only | `febe6102c50f9a57df801ae92f5da7ac7e26733203f3e857ade5ec1ee1686272` |
+| `docs/screenshots/1.2.10-9008/tools.png` | Tools | GPL-3.0-only | `9409c85d0a154ec00a2da8e817e7846cea408c0f0359402fb61e7ceaccd749d9` |
+| `docs/screenshots/1.2.10-9008/terminal.png` | Terminal | GPL-3.0-only | `50d787d860c46e775da00991a894766645e1a0bd97aeda45a4fbb832194e48ef` |
+| `docs/screenshots/1.2.10-9008/automation.png` | Scheduled tasks | GPL-3.0-only | `e304c7a34f0bc0108b58133d94cc4e2ee1eeec0857e546ea706a3dab4253a754` |
+| `docs/screenshots/1.2.10-9008/documents.png` | Documents | GPL-3.0-only | `e40bd6ea818ea6a95b1df355ae33a6d72c0053c4c1ee2d22ec4a01be339f4520` |
 
 ## Local companion sprites
 
