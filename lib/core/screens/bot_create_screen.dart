@@ -959,19 +959,21 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     button: true,
     child: InkWell(
       key: key,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(999),
       onTap: _busy || _identityLocked ? null : onTap,
       child: Container(
-        constraints: const BoxConstraints(minHeight: 48, minWidth: 86),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        constraints: const BoxConstraints(minHeight: 40, minWidth: 86),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: selected
-              ? colors.accent.withValues(alpha: 0.12)
-              : colors.surfaceVariant.withValues(alpha: 0.28),
-          borderRadius: BorderRadius.circular(12),
+              ? colors.accent.withValues(alpha: 0.16)
+              : colors.surfaceVariant.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: selected ? colors.accent : colors.divider,
-            width: selected ? 1.5 : 1,
+            color: selected
+                ? colors.accent.withValues(alpha: 0.38)
+                : colors.divider,
+            width: selected ? 1 : 1,
           ),
         ),
         child: Row(
@@ -997,22 +999,31 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     ),
   );
 
-  Widget _buildIdentityPreview() => Container(
-    key: const ValueKey('bot-create-preview'),
-    width: 120,
-    height: 120,
-    alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: Theme.of(context).hermes.surfaceVariant.withValues(alpha: 0.28),
-      borderRadius: BorderRadius.circular(28),
-      border: Border.all(color: Theme.of(context).hermes.divider),
-    ),
-    child: switch (_identityMode) {
-      _CreateIdentityMode.pet => _petPreview(),
-      _CreateIdentityMode.image => _imagePreview(),
-      _CreateIdentityMode.face => _facePreview(size: 96),
-    },
-  );
+  Widget _buildIdentityPreview() {
+    final accent = Theme.of(context).hermes.accent;
+    return Container(
+      key: const ValueKey('bot-create-preview'),
+      width: 120,
+      height: 120,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Theme.of(context).hermes.surfaceVariant.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: 0.28),
+            blurRadius: 18,
+            spreadRadius: -2,
+          ),
+        ],
+      ),
+      child: switch (_identityMode) {
+        _CreateIdentityMode.pet => _petPreview(),
+        _CreateIdentityMode.image => _imagePreview(),
+        _CreateIdentityMode.face => _facePreview(size: 96),
+      },
+    );
+  }
 
   Widget _petPreview() {
     final slug = _selectedPetSlug;

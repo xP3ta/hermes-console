@@ -561,19 +561,21 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     button: true,
     child: InkWell(
       key: key,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(999),
       onTap: onTap,
       child: Container(
-        constraints: const BoxConstraints(minHeight: 48, minWidth: 86),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        constraints: const BoxConstraints(minHeight: 40, minWidth: 86),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: selected
-              ? colors.accent.withValues(alpha: 0.12)
-              : colors.surfaceVariant.withValues(alpha: 0.28),
-          borderRadius: BorderRadius.circular(12),
+              ? colors.accent.withValues(alpha: 0.16)
+              : colors.surfaceVariant.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: selected ? colors.accent : colors.divider,
-            width: selected ? 1.5 : 1,
+            color: selected
+                ? colors.accent.withValues(alpha: 0.38)
+                : colors.divider,
+            width: 1,
           ),
         ),
         child: Row(
@@ -600,6 +602,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   );
 
   Widget _buildPreview() {
+    final accent = Theme.of(context).hermes.accent;
     return Container(
       key: const ValueKey('profile-editor-preview'),
       width: 120,
@@ -608,7 +611,13 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).hermes.surfaceVariant.withValues(alpha: 0.28),
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Theme.of(context).hermes.divider),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: 0.28),
+            blurRadius: 18,
+            spreadRadius: -2,
+          ),
+        ],
       ),
       child: switch (_mode) {
         _IdentityMode.pet => _petPreview(),

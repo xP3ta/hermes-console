@@ -310,15 +310,23 @@ Future<void> _openDestination(WidgetTester tester, String key) async {
 
 Future<void> _openWork(WidgetTester tester) => _openDestination(tester, 'work');
 
+/// El ⋯ (o mantener pulsada la fila) abre la hoja de acciones rápidas; su
+/// ítem "Detalles del bot" es el que lleva a la ficha completa
+/// (`_AgentDetail`). Reemplaza al tap directo sobre la fila, que ahora abre
+/// el chat (ver [_openBotChat]).
 Future<void> _openAgentDetail(WidgetTester tester, String profile) async {
   await tester.tap(find.byKey(ValueKey('mission-bot-details-$profile')));
   await tester.pumpAndSettle();
+  final detailsItem = find.byKey(const ValueKey('bot-quick-details'));
+  await tester.ensureVisible(detailsItem);
+  await tester.pumpAndSettle();
+  await tester.tap(detailsItem);
+  await tester.pumpAndSettle();
 }
 
+/// Tocar la fila abre el chat del bot directamente.
 Future<void> _openBotChat(WidgetTester tester, String profile) async {
   await tester.tap(find.byKey(ValueKey('mission-bot-$profile')));
-  await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
   await tester.pumpAndSettle();
 }
 
@@ -511,7 +519,7 @@ void main() {
     expect(opened!.source, 'bot-mode');
   });
 
-  testWidgets('bot row opens work detail and chat stays explicit', (
+  testWidgets('bot row opens chat directly; quick actions reach full detail', (
     tester,
   ) async {
     final manager = await _manager();
@@ -529,12 +537,18 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
-    expect(opened, isNull);
-    await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
-    await tester.pumpAndSettle();
+    // Tocar la fila abre el chat directamente: es el gesto primario según
+    // el rediseño más reciente de las tarjetas de bot.
     expect(opened?.profile, 'infra');
     expect(opened?.title, 'Bot Chat');
+    expect(find.byKey(const ValueKey('mission-agent-detail')), findsNothing);
+
+    // El ⋯ (o mantener pulsada la fila) abre en cambio la hoja de
+    // acciones rápidas, desde la que "Detalles del bot" sigue llevando a
+    // la ficha completa con el botón "Abrir chat" explícito.
+    await _openAgentDetail(tester, 'infra');
+    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-detail-chat')), findsOneWidget);
   });
 
   testWidgets('working bot row prioritizes its task over chat preview', (
@@ -632,8 +646,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
-    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
 
     expect(find.text('Tareas asignadas (4)'), findsOneWidget);
     expect(find.text('Desplegar gateway'), findsOneWidget);
@@ -2574,8 +2587,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
-    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
     expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
     expect(find.byKey(const ValueKey('bot-mode-floating-dock')), findsNothing);
     await tester.binding.handlePopRoute();

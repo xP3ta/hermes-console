@@ -116,6 +116,7 @@ final class MissionControlCopy {
   String get searchAgents => _english ? 'Search bots' : 'Buscar bots';
   String get clearSearch => _english ? 'Clear search' : 'Borrar búsqueda';
   String get activeNow => _english ? 'Active now' : 'Activos ahora';
+  String get pinnedBots => _english ? 'Pinned' : 'Fijados';
   String get otherBots => _english ? 'Other bots' : 'Otros bots';
   String get allBots => _english ? 'All bots' : 'Todos los bots';
   String get searchResults => _english ? 'Results' : 'Resultados';

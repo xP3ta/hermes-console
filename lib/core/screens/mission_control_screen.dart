@@ -1182,6 +1182,43 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
+  /// Hoja compacta de acciones rápidas de una tarjeta de bot (mantener
+  /// pulsado o tocar el ⋯): fijar/dejar de fijar, ocultar/mostrar y accesos
+  /// directos a abrir el chat o la ficha completa (`_openAgent`). El swipe
+  /// se descartó en el diseño más reciente (compite con los gestos
+  /// horizontales de Android y no se descubre); esta hoja es su sustituto.
+  Future<void> _openBotQuickActions(MissionAgent agent) async {
+    _surfaceCoordinator.setRouteActive(false);
+    final action =
+        await showHermesFloatingSurface<_BotQuickAction>(
+          context: context,
+          surfaceKey: ValueKey(
+            'mission-bot-quick-actions-${agent.profile.name}',
+          ),
+          maxWidth: 420,
+          maxHeightFactor: 0.5,
+          builder: (sheetContext) => _BotQuickActionsSheet(
+            agent: agent,
+            copy: MissionControlCopy.of(sheetContext),
+            avatarCache: _profileAvatarCache,
+            canMutate: !widget.connection.readOnly,
+          ),
+        ).whenComplete(() {
+          if (mounted) _surfaceCoordinator.setRouteActive(true);
+        });
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _BotQuickAction.togglePinned:
+        unawaited(_saveBotRosterMeta(agent, pinned: !agent.profile.botPinned));
+      case _BotQuickAction.toggleHidden:
+        unawaited(_saveBotRosterMeta(agent, hidden: !agent.profile.botHidden));
+      case _BotQuickAction.openChat:
+        unawaited(_openChat(agent));
+      case _BotQuickAction.details:
+        _openAgent(agent);
+    }
+  }
+
   Future<void> _editRoom([MissionRoom? existing]) async {
     if (widget.connection.readOnly) return;
     if (existing != null && await _roomMutationBlocked(existing)) return;
@@ -2031,7 +2068,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 avatarCache: _profileAvatarCache,
                 activityStore: _botActivityStore,
                 onOpenChat: _openChat,
-                onDetails: _openAgent,
+                onDetails: _openBotQuickActions,
                 onAttention:
                     projection.approvals.isNotEmpty ||
                         projection.blockedCount > 0
@@ -2557,7 +2594,16 @@ class _BotsTabState extends State<_BotsTab> {
     ].whereType<String>().any((value) => _foldBotSearch(value).contains(query));
   }
 
-  List<Widget> _botRows(BuildContext context, List<MissionAgent> agents) {
+  /// [showPinBadge] controla el indicador de fijado junto al nombre: se omite
+  /// dentro de la propia sección "Fijados" y, fuera de ella, es gris apagado
+  /// con secciones (Activos ahora / Otros bots) o acento sin ellas (búsqueda
+  /// activa), según la especificación del mockup más reciente.
+  List<Widget> _botRows(
+    BuildContext context,
+    List<MissionAgent> agents, {
+    required bool showPinBadge,
+  }) {
+    final colors = Theme.of(context).hermes;
     final widgets = <Widget>[];
     for (var index = 0; index < agents.length; index++) {
       final agent = agents[index];
@@ -2576,7 +2622,12 @@ class _BotsTabState extends State<_BotsTab> {
           copy: widget.copy,
           avatarCache: widget.avatarCache,
           onOpen: () => widget.onOpenChat(agent),
-          onDetails: () => widget.onDetails(agent),
+          onQuickActions: () => widget.onDetails(agent),
+          pinBadgeColor: !showPinBadge || !agent.profile.botPinned
+              ? null
+              : (_query.trim().isEmpty
+                    ? colors.textDisabled
+                    : colors.accentText),
         ),
       );
       if (index != agents.length - 1) {
@@ -2615,12 +2666,25 @@ class _BotsTabState extends State<_BotsTab> {
         .where((agent) => _showHidden || !agent.profile.botHidden)
         .where(_matches)
         .toList(growable: false);
-    final active = _query.trim().isEmpty
-        ? agents.where(_activeNow).toList(growable: false)
-        : const <MissionAgent>[];
-    final resting = _query.trim().isEmpty
-        ? agents.where((agent) => !_activeNow(agent)).toList(growable: false)
-        : agents;
+    final searching = _query.trim().isNotEmpty;
+    // Fuera de búsqueda los bots fijados se agrupan en su propia sección
+    // ("Fijados"), estén activos o en reposo, así que no aparecen también en
+    // "Activos ahora" u "Otros bots". Con búsqueda activa no hay secciones:
+    // el pin vuelve a leerse como badge en línea (ver _botRows).
+    final pinned = searching
+        ? const <MissionAgent>[]
+        : agents
+              .where((agent) => agent.profile.botPinned)
+              .toList(growable: false);
+    final unpinned = searching
+        ? agents
+        : agents.where((agent) => !agent.profile.botPinned);
+    final active = searching
+        ? const <MissionAgent>[]
+        : unpinned.where(_activeNow).toList(growable: false);
+    final resting = searching
+        ? agents
+        : unpinned.where((agent) => !_activeNow(agent)).toList(growable: false);
     return ListView(
       key: const ValueKey('mission-bots'),
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
@@ -2744,6 +2808,18 @@ class _BotsTabState extends State<_BotsTab> {
           if (agents.isEmpty)
             _MessageCard(text: copy.noMatchingAgents)
           else ...[
+            if (pinned.isNotEmpty) ...[
+              _BotSectionLabel(
+                key: const ValueKey('mission-pinned'),
+                title: copy.pinnedBots,
+                count: pinned.length,
+                icon: Icons.push_pin_rounded,
+              ),
+              const SizedBox(height: 4),
+              ..._botRows(context, pinned, showPinBadge: false),
+              if (active.isNotEmpty || resting.isNotEmpty)
+                const SizedBox(height: 18),
+            ],
             if (active.isNotEmpty) ...[
               _BotSectionLabel(
                 key: const ValueKey('mission-active-now'),
@@ -2751,20 +2827,20 @@ class _BotsTabState extends State<_BotsTab> {
                 count: active.length,
               ),
               const SizedBox(height: 4),
-              ..._botRows(context, active),
+              ..._botRows(context, active, showPinBadge: true),
               if (resting.isNotEmpty) const SizedBox(height: 18),
             ],
             if (resting.isNotEmpty) ...[
               _BotSectionLabel(
                 title: _query.trim().isNotEmpty
                     ? copy.searchResults
-                    : active.isNotEmpty
+                    : active.isNotEmpty || pinned.isNotEmpty
                     ? copy.otherBots
                     : copy.allBots,
                 count: resting.length,
               ),
               const SizedBox(height: 4),
-              ..._botRows(context, resting),
+              ..._botRows(context, resting, showPinBadge: true),
             ],
           ],
         ],
@@ -2794,14 +2870,24 @@ String _foldBotSearch(String value) => value
 class _BotSectionLabel extends StatelessWidget {
   final String title;
   final int count;
+  final IconData? icon;
 
-  const _BotSectionLabel({required this.title, required this.count, super.key});
+  const _BotSectionLabel({
+    required this.title,
+    required this.count,
+    this.icon,
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Row(
       children: [
+        if (icon != null) ...[
+          Icon(icon, size: 13, color: colors.accentText),
+          const SizedBox(width: 6),
+        ],
         Expanded(
           child: Text(
             title,
@@ -4808,17 +4894,25 @@ class _BotRow extends StatelessWidget {
   final MissionControlCopy copy;
   final MissionProfileAvatarCache? avatarCache;
   final VoidCallback onOpen;
-  final VoidCallback onDetails;
+  final VoidCallback onQuickActions;
+
+  /// Color del indicador de fijado junto al nombre, o `null` para no
+  /// mostrarlo. Se omite dentro de la sección "Fijados" (la propia sección
+  /// ya lo dice) y cambia de gris apagado a acento cuando no hay secciones
+  /// (resultados de búsqueda), para que se lea como estado sin depender del
+  /// agrupado.
+  final Color? pinBadgeColor;
 
   const _BotRow({
     required this.agent,
     required this.copy,
     required this.avatarCache,
     required this.onOpen,
-    required this.onDetails,
+    required this.onQuickActions,
     this.pinnedChat,
     this.needsYou = false,
     this.unread = false,
+    this.pinBadgeColor,
     super.key,
   });
 
@@ -4848,8 +4942,8 @@ class _BotRow extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           key: ValueKey('mission-bot-${profile.name}'),
-          onTap: onDetails,
-          onLongPress: onDetails,
+          onTap: onOpen,
+          onLongPress: onQuickActions,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsetsDirectional.fromSTEB(4, 10, 0, 10),
@@ -4909,12 +5003,12 @@ class _BotRow extends StatelessWidget {
                               ),
                             ),
                           ],
-                          if (profile.botPinned) ...[
+                          if (pinBadgeColor != null) ...[
                             const SizedBox(width: 7),
                             Icon(
                               Icons.push_pin_rounded,
                               size: 13,
-                              color: colors.textDisabled,
+                              color: pinBadgeColor,
                             ),
                           ],
                           if (profile.botHidden) ...[
@@ -4987,7 +5081,7 @@ class _BotRow extends StatelessWidget {
                 IconButton(
                   key: ValueKey('mission-bot-details-${profile.name}'),
                   tooltip: copy.botDetails,
-                  onPressed: onDetails,
+                  onPressed: onQuickActions,
                   icon: const Icon(Icons.more_horiz_rounded, size: 21),
                   color: colors.textSecondary,
                   constraints: const BoxConstraints(
@@ -5800,6 +5894,167 @@ class _OrganizationEditorState extends State<_OrganizationEditor> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _BotQuickAction { togglePinned, toggleHidden, openChat, details }
+
+/// Hoja de acciones rápidas de una tarjeta de bot: mantener pulsada la fila
+/// o tocar su ⋯ abre esto en vez de saltar directo a la ficha completa
+/// (`_AgentDetail`), que sigue accesible como "Detalles del bot". Sustituye
+/// al swipe explorado en rondas de diseño anteriores.
+class _BotQuickActionsSheet extends StatelessWidget {
+  final MissionAgent agent;
+  final MissionControlCopy copy;
+  final MissionProfileAvatarCache? avatarCache;
+  final bool canMutate;
+
+  const _BotQuickActionsSheet({
+    required this.agent,
+    required this.copy,
+    required this.avatarCache,
+    required this.canMutate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final profile = agent.profile;
+    return SafeArea(
+      top: false,
+      child: ListView(
+        key: const ValueKey('mission-bot-quick-actions'),
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+            child: Row(
+              children: [
+                _AgentAvatar(
+                  profile: profile,
+                  status: agent.status,
+                  avatarCache: avatarCache,
+                  size: 40,
+                  showStatusIndicator: agent.status != MissionAgentStatus.idle,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        profile.botTitle ?? profile.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        '@${profile.name}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: colors.divider.withValues(alpha: 0.5)),
+          const SizedBox(height: 4),
+          if (canMutate)
+            _BotQuickActionItem(
+              key: const ValueKey('bot-quick-toggle-pinned'),
+              icon: profile.botPinned
+                  ? Icons.push_pin_outlined
+                  : Icons.push_pin_rounded,
+              label: profile.botPinned ? copy.unpinBot : copy.pinBot,
+              primary: true,
+              onTap: () => Navigator.pop(context, _BotQuickAction.togglePinned),
+            ),
+          if (canMutate)
+            _BotQuickActionItem(
+              key: const ValueKey('bot-quick-toggle-hidden'),
+              icon: profile.botHidden
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              label: profile.botHidden ? copy.showBot : copy.hideBot,
+              onTap: () => Navigator.pop(context, _BotQuickAction.toggleHidden),
+            ),
+          _BotQuickActionItem(
+            key: const ValueKey('bot-quick-open-chat'),
+            icon: Icons.chat_bubble_outline,
+            label: copy.openChat,
+            onTap: () => Navigator.pop(context, _BotQuickAction.openChat),
+          ),
+          _BotQuickActionItem(
+            key: const ValueKey('bot-quick-details'),
+            icon: Icons.info_outline,
+            label: copy.botDetails,
+            onTap: () => Navigator.pop(context, _BotQuickAction.details),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BotQuickActionItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool primary;
+
+  const _BotQuickActionItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.primary = false,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final color = primary ? colors.accentText : colors.textPrimary;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: SizedBox(
+            height: 52,
+            child: Row(
+              children: [
+                Icon(icon, size: 22, color: primary ? colors.accent : color),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
