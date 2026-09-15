@@ -7414,6 +7414,99 @@ void main() {
     expect(find.byType(AttachmentCard), findsNWidgets(3));
   });
 
+  testWidgets(
+    'adjuntar un archivo mientras se escribe no remonta el campo ni cierra el teclado',
+    (tester) async {
+      // Regresión: `_AttachmentPreviewStrip` y la `Row` del campo de texto no
+      // tenían `Key`. Cuando `_pendingAttachments` pasa de vacío a no-vacío,
+      // el número de hijos del `Column` antes de la `Row` cambia y Flutter
+      // reconciliaba por posición: el `Row` (y su `EditableText`) se
+      // desmontaba y remontaba, cerrando el teclado aunque el `FocusNode`
+      // lógico siguiera marcado como enfocado. Con `Key` estables, el
+      // `State` del campo debe sobrevivir intacto.
+      final temp = Directory.systemTemp.createTempSync(
+        'chat-attach-keeps-focus-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final extra = File('${temp.path}/nota.pdf')
+        ..writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 1]);
+      final picker = _FakeFilePicker(
+        FilePickerResult([
+          PlatformFile(
+            name: 'nota.pdf',
+            path: extra.path,
+            size: extra.lengthSync(),
+          ),
+        ]),
+      );
+      FilePicker.platform = picker;
+      addTearDown(() => FilePicker.platform = _FakeFilePicker(null));
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+
+      await pumpChat(tester);
+
+      final field = find.byType(TextField);
+      await tester.enterText(field, 'Borrador antes de adjuntar');
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.widget<TextField>(field).focusNode?.hasFocus, isTrue);
+
+      final editableTextBefore = tester.state(find.byType(EditableText));
+      final rowBefore = tester.element(
+        find.byKey(const ValueKey('composer-input-row')),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('composer-add')));
+      await tester.pump();
+      tester
+          .widget<MenuItemButton>(find.byType(MenuItemButton).last)
+          .onPressed!();
+      for (
+        var frame = 0;
+        frame < 40 && find.byType(AttachmentCard).evaluate().isEmpty;
+        frame++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      expect(find.byType(AttachmentCard), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('composer-attachment-preview')),
+        findsOneWidget,
+      );
+      final rowAfter = tester.element(
+        find.byKey(const ValueKey('composer-input-row')),
+      );
+      expect(
+        rowAfter,
+        same(rowBefore),
+        reason: 'la Row del campo de texto no debe remontarse al aparecer '
+            'el adjunto',
+      );
+      expect(
+        tester.state(find.byType(EditableText)),
+        same(editableTextBefore),
+        reason: 'el EditableText no debe remontarse (cerraría el teclado)',
+      );
+      expect(
+        tester.widget<TextField>(field).controller?.text,
+        'Borrador antes de adjuntar',
+      );
+      expect(tester.widget<TextField>(field).focusNode?.hasFocus, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Galería deduplica por contenido y conserva como máximo 10', (
     tester,
   ) async {
