@@ -3154,6 +3154,8 @@
   "crnAddJob": "Nueva tarea",
   "crnAdd": "Crear",
   "crnEditJob": "Editar tarea",
+  "crnMuteNotificationsTitle": "Silenciar notificaciones de este job",
+  "crnMuteNotificationsSub": "No avisar cuando termine, aunque los resultados de Cron estén activados",
   "crnDeleteTitle": "Eliminar tarea",
   "crnDeleteConfirm": "¿Borrar \"{name}\"?",
   "@crnDeleteConfirm": {

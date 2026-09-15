@@ -16,6 +16,7 @@ import '../../utils/markdown_clipboard.dart';
 import '../new_session_launch_coordinator.dart';
 import 'notification_delivery_coordinator.dart';
 import 'notification_delivery_store.dart';
+import 'notification_mute_store.dart';
 import 'notification_strings.dart';
 
 /// Tipos de evento que pueden notificar (cada uno con su toggle).
@@ -273,6 +274,7 @@ class NotificationService
     implements RunNotificationFacade, NotificationDeliveryPresenter {
   final SharedPreferences _prefs;
   late final NotificationDeliveryCoordinator _delivery;
+  late final NotificationMuteStore muteStore;
   final Map<String, _DurableDisplay> _pendingDisplays =
       <String, _DurableDisplay>{};
   final FlutterLocalNotificationsPlugin _plugin =
@@ -389,6 +391,7 @@ class NotificationService
       store: deliveryStore ?? NotificationDeliveryStore(),
       presenter: this,
     );
+    muteStore = NotificationMuteStore(_prefs);
   }
 
   Future<void> closeDelivery() => _delivery.close();
@@ -558,6 +561,16 @@ class NotificationService
           (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
   Future<void> setNotifyKanbanResults(bool v) =>
       _prefs.setBool(_kKanbanResults, v);
+
+  /// Silenciado por elemento concreto: un cron job o una tarea de Kanban
+  /// puede desactivar SU aviso sin tocar el toggle global de arriba, y
+  /// viceversa (apagar el global no borra estas preferencias).
+  bool isJobMuted(String jobId) => muteStore.isJobMuted(jobId);
+  bool isTaskMuted(String taskId) => muteStore.isTaskMuted(taskId);
+  Future<void> setJobMuted(String jobId, bool muted) =>
+      muteStore.setJobMuted(jobId, muted);
+  Future<void> setTaskMuted(String taskId, bool muted) =>
+      muteStore.setTaskMuted(taskId, muted);
 
   bool get notifyReplies => _prefs.getBool(_kReplies) ?? true;
   Future<void> setNotifyReplies(bool v) => _prefs.setBool(_kReplies, v);
@@ -1121,6 +1134,7 @@ class NotificationService
     String? preview,
   }) async {
     if (!notifyCronResults) return;
+    if (isJobMuted(jobId)) return;
     final normalizedProfile = profile?.trim().isNotEmpty == true
         ? profile!.trim().toLowerCase()
         : 'default';
@@ -1211,6 +1225,7 @@ class NotificationService
     String sourceVersion = 'current',
   }) async {
     if (!notifyKanbanResults) return;
+    if (isTaskMuted(taskId)) return;
     final connection = connId.trim();
     final task = taskId.trim();
     final normalizedProfile = profile.trim().toLowerCase();

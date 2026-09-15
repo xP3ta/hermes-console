@@ -2377,6 +2377,8 @@
   "crnAddJob": "New task",
   "crnAdd": "Create",
   "crnEditJob": "Edit task",
+  "crnMuteNotificationsTitle": "Mute notifications for this job",
+  "crnMuteNotificationsSub": "Don't notify when it finishes, even if Cron results are enabled",
   "crnDeleteTitle": "Delete task",
   "crnDeleteConfirm": "Delete \"{name}\"?",
   "@crnDeleteConfirm": {

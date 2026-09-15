@@ -1484,6 +1484,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             }
 
             final hydratedTask = detail.task;
+            final notif = context
+                .findAncestorStateOfType<HermesAppState>()
+                ?.notifications;
             return KanbanTaskDetailSurface(
               detail: detail,
               readOnly: widget.connection.readOnly,
@@ -1596,6 +1599,13 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   : () {
                       Navigator.of(sheetCtx).pop();
                       _openTaskForm(existing: hydratedTask);
+                    },
+              notificationsMuted: notif?.isTaskMuted(hydratedTask.id) ?? false,
+              onToggleNotificationsMuted: notif == null
+                  ? null
+                  : (muted) async {
+                      await notif.setTaskMuted(hydratedTask.id, muted);
+                      if (sheetCtx.mounted) setSheet(() {});
                     },
             );
           },

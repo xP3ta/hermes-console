@@ -19,6 +19,7 @@ import '../models/cron_job.dart';
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/cron_repository.dart';
+import '../services/notifications/notification_service.dart';
 
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
@@ -1314,6 +1315,8 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
   String _deliver = 'local';
   String _modelChoice = _defaultModel;
   String? _error;
+  NotificationService? _notif;
+  bool _notificationsMuted = false;
 
   bool get _editing => widget.job != null;
   bool get _scriptOnly => widget.job?.isScriptOnly == true;
@@ -1335,6 +1338,28 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
         ? '${job!.provider}:${job.model}'
         : _defaultModel;
     unawaited(_loadResources());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_notif == null) {
+      final notif = context
+          .findAncestorStateOfType<HermesAppState>()
+          ?.notifications;
+      if (notif != null) {
+        _notif = notif;
+        final job = widget.job;
+        if (job != null) _notificationsMuted = notif.isJobMuted(job.id);
+      }
+    }
+  }
+
+  Future<void> _setNotificationsMuted(bool value) async {
+    final job = widget.job;
+    if (job == null) return;
+    setState(() => _notificationsMuted = value);
+    await _notif?.setJobMuted(job.id, value);
   }
 
   Future<void> _loadResources() async {
@@ -1731,6 +1756,21 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
             style: TextStyle(fontSize: 11, color: colors.textSecondary),
           ),
         ],
+      ],
+      if (_editing) ...[
+        const SizedBox(height: 16),
+        HermesSwitchTile(
+          controlKey: const ValueKey('cron-mute-notifications-switch'),
+          contentPadding: EdgeInsets.zero,
+          secondary: Icon(
+            Icons.notifications_off_outlined,
+            color: colors.textSecondary,
+          ),
+          title: s.crnMuteNotificationsTitle,
+          subtitle: s.crnMuteNotificationsSub,
+          value: _notificationsMuted,
+          onChanged: _notif == null ? null : _setNotificationsMuted,
+        ),
       ],
     ];
   }

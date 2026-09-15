@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/kanban.dart';
 import '../theme/app_theme.dart';
+import 'hermes_ui.dart';
 
 typedef KanbanTaskAction = Future<void> Function();
 typedef KanbanCommentAction = Future<void> Function(String body);
@@ -34,6 +35,8 @@ class KanbanTaskDetailSurface extends StatefulWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onMove;
   final VoidCallback? onEdit;
+  final bool notificationsMuted;
+  final ValueChanged<bool>? onToggleNotificationsMuted;
 
   const KanbanTaskDetailSurface({
     required this.detail,
@@ -55,6 +58,8 @@ class KanbanTaskDetailSurface extends StatefulWidget {
     this.onDelete,
     this.onMove,
     this.onEdit,
+    this.notificationsMuted = false,
+    this.onToggleNotificationsMuted,
     super.key,
   });
 
@@ -706,6 +711,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
 
   bool _hasOperationalActions(KanbanTask task) {
     if (widget.onConfigureModel != null) return true;
+    if (widget.onToggleNotificationsMuted != null) return true;
     if (widget.readOnly) return false;
     return widget.onReassign != null ||
         (task.status == 'running' && widget.onReclaim != null) ||
@@ -747,6 +753,16 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
               onTap: widget.readOnly
                   ? null
                   : () => _run('model', widget.onConfigureModel!),
+            ),
+          if (widget.onToggleNotificationsMuted != null)
+            HermesSwitchTile(
+              controlKey: const ValueKey('kanban-task-mute-notifications'),
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.notifications_off_outlined),
+              title: copy.muteNotifications,
+              subtitle: copy.muteNotificationsSub,
+              value: widget.notificationsMuted,
+              onChanged: widget.onToggleNotificationsMuted,
             ),
           if (!widget.readOnly)
             Wrap(
@@ -1108,4 +1124,9 @@ class _KanbanDetailCopy {
       spanish ? 'Recuperar y reencolar' : 'Reclaim and requeue';
   String get specify => spanish ? 'Especificar' : 'Specify';
   String get decompose => spanish ? 'Descomponer' : 'Decompose';
+  String get muteNotifications =>
+      spanish ? 'Silenciar notificaciones' : 'Mute notifications';
+  String get muteNotificationsSub => spanish
+      ? 'No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados'
+      : "Don't notify status changes for this task, even if Kanban results are enabled";
 }

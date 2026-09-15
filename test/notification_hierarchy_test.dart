@@ -443,4 +443,78 @@ void main() {
       expect(tray.keys, isNot(contains(500)));
     },
   );
+
+  test(
+    'un cron job silenciado individualmente calla aunque el toggle global de Cron esté activo',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = testService(prefs)..appInForeground = false;
+      expect(service.notifyCronResults, isTrue);
+
+      await service.setJobMuted('job-muted', true);
+      expect(service.isJobMuted('job-muted'), isTrue);
+
+      await service.cronFinished(
+        title: 'Job silenciado',
+        ok: true,
+        connId: 'demo-node',
+        sessionId: 'cron-muted-1',
+        executionId: 'execution-muted-1',
+        jobId: 'job-muted',
+      );
+      expect(shownArgs(groupSummary: false), isEmpty);
+
+      // Otro job, no silenciado, sigue avisando con el mismo toggle global.
+      await service.cronFinished(
+        title: 'Job normal',
+        ok: true,
+        connId: 'demo-node',
+        sessionId: 'cron-normal-1',
+        executionId: 'execution-normal-1',
+        jobId: 'job-normal',
+      );
+      expect(shownArgs(groupSummary: false), hasLength(1));
+    },
+  );
+
+  test(
+    'una tarea de Kanban silenciada individualmente calla aunque el toggle global de Kanban esté activo',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final service = testService(prefs)..appInForeground = false;
+      expect(service.notifyKanbanResults, isTrue);
+
+      await service.setTaskMuted('task-muted', true);
+      expect(service.isTaskMuted('task-muted'), isTrue);
+
+      await service.kanbanTransition(
+        connId: 'demo-node',
+        taskId: 'task-muted',
+        title: 'Tarea silenciada',
+        status: 'done',
+      );
+      expect(shownArgs(groupSummary: false), isEmpty);
+
+      // Otra tarea, no silenciada, sigue avisando con el mismo toggle global.
+      await service.kanbanTransition(
+        connId: 'demo-node',
+        taskId: 'task-normal',
+        title: 'Tarea normal',
+        status: 'done',
+      );
+      expect(shownArgs(groupSummary: false), hasLength(1));
+
+      // Des-silenciar restaura el aviso para esa misma tarea.
+      await service.setTaskMuted('task-muted', false);
+      expect(service.isTaskMuted('task-muted'), isFalse);
+      await service.kanbanTransition(
+        connId: 'demo-node',
+        taskId: 'task-muted',
+        title: 'Tarea silenciada',
+        status: 'blocked',
+        sourceVersion: 'second',
+      );
+      expect(shownArgs(groupSummary: false), hasLength(2));
+    },
+  );
 }
