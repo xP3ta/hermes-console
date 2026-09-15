@@ -95,6 +95,14 @@ class NotifL10n {
   String get kanbanUpdated =>
       _('Tarea de Kanban actualizada', 'Kanban task updated');
 
+  // ── Standing goals ────────────────────────────────────────────────────────
+  String get goalDone => _('Goal terminado', 'Goal done');
+  String get goalPaused => _('Goal en pausa', 'Goal paused');
+  String get goalBlocked => _('Goal bloqueado', 'Goal blocked');
+  String get goalWaiting => _('Goal esperando', 'Goal waiting');
+  String goalBody(String title) =>
+      title.isEmpty ? _('Sin título', 'Untitled') : title;
+
   // ── Respuestas ────────────────────────────────────────────────────────────
   String replyTitle(String? session) {
     final s = session?.trim() ?? '';

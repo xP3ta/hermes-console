@@ -2845,6 +2845,7 @@ enum ActiveChatEvent {
   cancelled,
   queueChanged,
   dashboardAuthChanged,
+  goalUpdated,
 }
 
 Future<({Object? error, T? value})> _captureAsync<T>(
@@ -4276,6 +4277,87 @@ class ActiveChat {
 
   @visibleForTesting
   bool get firstTokenWatchdogArmed => _firstTokenTimer != null;
+
+  /// Live standing-goal state for this session (`session.control`), null when
+  /// there is no active goal. Hydrated once via [_hydrateGoal] and kept fresh
+  /// by `session.control.update` while the socket stays connected.
+  SessionGoalSnapshot? _goal;
+  SessionGoalSnapshot? get goal => _goal;
+  String? _lastNotifiedGoalStatus;
+
+  void _applyGoalUpdate(Object? control) {
+    if (control is! Map) return;
+    _goal = SessionGoalSnapshot.tryParse(control['goal']);
+    _syncGoalWatch();
+    _emit(ActiveChatEvent.goalUpdated);
+  }
+
+  /// Registers/unregisters this session with [BackgroundGoalWatch] so the
+  /// background service polls it for status-transition notifications while
+  /// the app isn't in the foreground. A cleared/done goal stops the watch —
+  /// there is nothing left to notify about.
+  static const _notifiableGoalStates = {'paused', 'done', 'waiting', 'blocked'};
+
+  /// Notifies on a goal state *transition* only — not on every `continue`
+  /// turn (which leaves `status` at `active` throughout) and not twice for
+  /// the same state. `last_verdict: blocked` takes priority over `status`,
+  /// same as Desktop's red-state rule in `session-control-goal.tsx`.
+  void _syncGoalWatch() {
+    final storedId = _desktopStoredSessionId;
+    final goal = _goal;
+    if (storedId == null || storedId.isEmpty || goal == null) {
+      _lastNotifiedGoalStatus = null;
+      return;
+    }
+    final key = goal.isBlocked ? 'blocked' : goal.status;
+    if (key == _lastNotifiedGoalStatus) return;
+    _lastNotifiedGoalStatus = key;
+    if (!_notifiableGoalStates.contains(key)) return;
+    unawaited(() async {
+      try {
+        await _notifications?.goalTransition(
+          title: goal.title,
+          status: key,
+          connId: connection.id,
+          sessionId: storedId,
+          profile: _storedSessionProfile,
+        );
+      } catch (error) {
+        if (kDebugMode) {
+          debugPrint(
+            '[active-chat] goal transition notify failed (${error.runtimeType})',
+          );
+        }
+      }
+    }());
+  }
+
+  /// One-shot hydration for a freshly opened/resumed chat — the live push
+  /// (`session.control.update`) only carries deltas from here on.
+  Future<void> _hydrateGoal(String runtimeSessionId) async {
+    if (!_usingDesktopGateway) return;
+    try {
+      final snapshot = await desktopControlGateway?.readSessionGoal(
+        runtimeSessionId,
+      );
+      if (_disposed || _desktopRuntimeSessionId != runtimeSessionId) return;
+      _goal = snapshot;
+      _syncGoalWatch();
+      _emit(ActiveChatEvent.goalUpdated);
+    } catch (_) {
+      // Best-effort: an unsupported/older gateway simply shows no goal state.
+    }
+  }
+
+  /// Sends a `session.control` goal action (pause/resume/unwait/clear). The
+  /// live state updates from the next `session.control.update` push, not
+  /// optimistically here — Console shows what the server confirms, not what
+  /// it hopes happened.
+  Future<void> sendGoalAction(String action) async {
+    final runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null) return;
+    await desktopControlGateway?.sendGoalAction(runtimeId, action);
+  }
 
   List<SubagentActivity> get subagentActivities {
     if (_disposed ||
@@ -6134,7 +6216,10 @@ class ActiveChat {
       _observeSessionConfigInfo(info);
       _adoptDesktopSessionTitle(info);
     }
-    if (didAdopt) unawaited(_hydrateSubagentsForCurrentRuntime());
+    if (didAdopt) {
+      unawaited(_hydrateSubagentsForCurrentRuntime());
+      unawaited(_hydrateGoal(runtimeId));
+    }
   }
 
   @visibleForTesting
@@ -6175,6 +6260,8 @@ class ActiveChat {
     // authority; it must never inherit a stuck or presumed-success request.
     _abandonPendingDesktopCompression();
     _desktopBindEpoch += 1;
+    _goal = null;
+    _lastNotifiedGoalStatus = null;
     final retiredRuntimeId = _desktopRuntimeSessionId;
     if (retiredRuntimeId != null) {
       // The reducer emits callbacks synchronously. Fence and detach first so a
@@ -15038,6 +15125,10 @@ class ActiveChat {
     }
     _observeDesktopOwnershipTransport(event);
     final payload = event.payload;
+    if (event.type == 'session.control.update') {
+      _applyGoalUpdate(payload['control']);
+      return;
+    }
     final isTerminal =
         event.type == 'message.complete' || event.type == 'error';
     final stop = _stopTransition;

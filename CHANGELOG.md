@@ -8,6 +8,16 @@ are not releases.
 - Rendered automatic standing-goal continuations as compact resumed-turn
   events when reopening an active Desktop session, including legacy history
   persisted before display metadata was available.
+- Standing goals (`/goal`) now show live in the composer: a compact one-line
+  status (turn count, paused/waiting/blocked/done) sourced from the
+  structured `session.control` contract, not text scraping. Tapping it opens
+  the full contract, criteria and quality gates, with pause/resume/resume-now
+  and clear actions. A state transition (not each intermediate turn) notifies
+  through a new `local_agent` source, with its own settings toggle. Scope
+  note: this is observed live while the session's socket stays connected —
+  there is no background poll for a fully closed app, since
+  `session.control.read` is a control-channel RPC, not a REST endpoint the
+  background service can poll the way it does Cron/Kanban.
 - Notified when a session being driven from another surface (Desktop, another
   Console, TUI) reaches a proven terminal state (completed, failed or
   interrupted) while this device is connected, reusing the existing

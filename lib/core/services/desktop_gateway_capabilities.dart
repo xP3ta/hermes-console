@@ -10,6 +10,7 @@ enum DesktopGatewayCapability {
   projectsCenter,
   profileAssets,
   profilePets,
+  sessionControl,
 }
 
 enum DesktopGatewayCapabilityState { unknown, supported, unsupported, invalid }

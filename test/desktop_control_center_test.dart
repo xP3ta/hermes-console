@@ -233,4 +233,88 @@ void main() {
       );
     });
   });
+
+  group('SessionGoalSnapshot', () {
+    test('parses an active goal with contract, subgoals and gates', () {
+      final goal = SessionGoalSnapshot.tryParse({
+        'title': 'Ship 1.2.11',
+        'status': 'active',
+        'turns_used': 3,
+        'max_turns': 20,
+        'contract': {
+          'outcome': 'PR merged',
+          'verification': 'CI green',
+          'constraints': 'no breaking changes',
+          'boundaries': 'this repo only',
+          'stop_when': 'PR merged',
+        },
+        'subgoals': ['write tests', 'update changelog'],
+        'gates': [
+          {
+            'command': 'flutter analyze --fatal-infos',
+            'timeout_seconds': 60,
+            'max_retries': 2,
+            'attempts': 1,
+            'last_exit_code': 0,
+          },
+        ],
+      });
+      expect(goal, isNotNull);
+      expect(goal!.title, 'Ship 1.2.11');
+      expect(goal.isActive, isTrue);
+      expect(goal.turnsUsed, 3);
+      expect(goal.maxTurns, 20);
+      expect(goal.outcome, 'PR merged');
+      expect(goal.subgoals, ['write tests', 'update changelog']);
+      expect(goal.gates.single.command, 'flutter analyze --fatal-infos');
+      expect(goal.gates.single.lastExitCode, 0);
+      expect(goal.isBlocked, isFalse);
+      expect(goal.displayReason, '');
+    });
+
+    test('a cleared goal parses to null', () {
+      expect(
+        SessionGoalSnapshot.tryParse({'status': 'cleared'}),
+        isNull,
+      );
+      expect(SessionGoalSnapshot.tryParse(null), isNull);
+      expect(SessionGoalSnapshot.tryParse('not a map'), isNull);
+    });
+
+    test('wait_barrier.reason wins over paused_reason and last_reason', () {
+      final goal = SessionGoalSnapshot.tryParse({
+        'status': 'waiting',
+        'paused_reason': 'paused reason',
+        'last_reason': 'last reason',
+        'wait_barrier': {
+          'type': 'until',
+          'until_at': '2026-09-15T00:00:00Z',
+          'reason': 'barrier reason',
+        },
+      });
+      expect(goal!.displayReason, 'barrier reason');
+      expect(goal.isWaiting, isTrue);
+    });
+
+    test('paused_reason wins over last_reason when there is no wait_barrier', () {
+      final goal = SessionGoalSnapshot.tryParse({
+        'status': 'paused',
+        'paused_reason': 'paused reason',
+        'last_reason': 'last reason',
+      });
+      expect(goal!.displayReason, 'paused reason');
+      expect(goal.isPaused, isTrue);
+    });
+
+    test('last_verdict blocked is independent of status', () {
+      final goal = SessionGoalSnapshot.tryParse({
+        'status': 'active',
+        'last_verdict': 'blocked',
+        'last_reason': 'flaky test',
+      });
+      expect(goal!.isActive, isTrue);
+      expect(goal.isBlocked, isTrue);
+      expect(goal.displayReason, 'flaky test');
+    });
+  });
 }

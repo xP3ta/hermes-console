@@ -19,7 +19,7 @@ import 'notification_delivery_store.dart';
 import 'notification_strings.dart';
 
 /// Tipos de evento que pueden notificar (cada uno con su toggle).
-enum NotificationKind { approval, run, reply, test, localAgent }
+enum NotificationKind { approval, run, reply, test, localAgent, goal }
 
 /// Superficie propietaria de una sesión accionable.
 ///
@@ -495,6 +495,7 @@ class NotificationService
   static const _kRuns = 'notif_runs';
   static const _kCronResults = 'notif_cron_results';
   static const _kKanbanResults = 'notif_kanban_results';
+  static const _kLocalAgentResults = 'notif_local_agent_results';
   static const _kReplies = 'notif_replies';
   static const _kForeground = 'notif_even_foreground';
   static const _kHideSensitive = 'notif_hide_sensitive_content';
@@ -558,6 +559,16 @@ class NotificationService
           (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
   Future<void> setNotifyKanbanResults(bool v) =>
       _prefs.setBool(_kKanbanResults, v);
+
+  /// Standing goals (Console-observed live, not background-discovered) y
+  /// `background.complete`. Opt-in propio, mismo criterio de herencia que
+  /// Kanban: si nunca se tocó, hereda el opt-in general de automatizaciones.
+  bool get notifyLocalAgentResults =>
+      automationNotificationsEnabled &&
+      (_prefs.getBool(_kLocalAgentResults) ??
+          (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
+  Future<void> setNotifyLocalAgentResults(bool v) =>
+      _prefs.setBool(_kLocalAgentResults, v);
 
   bool get notifyReplies => _prefs.getBool(_kReplies) ?? true;
   Future<void> setNotifyReplies(bool v) => _prefs.setBool(_kReplies, v);
@@ -1099,6 +1110,81 @@ class NotificationService
               sessionId: sessionId,
               runId: run,
             ),
+          ],
+        ),
+      ]);
+    } finally {
+      _pendingDisplays.remove(identity.eventKey);
+    }
+  }
+
+  /// Un standing goal (`/goal`) cambió a un estado que necesita atención:
+  /// paused, blocked, waiting o done. Console lo observa en vivo mientras el
+  /// socket de la sesión sigue conectado ([ActiveChatService._syncGoalWatch])
+  /// — a diferencia de cron/kanban, no hay un sondeo en segundo plano con la
+  /// app totalmente cerrada, porque `session.control.read` es un RPC del
+  /// canal de control (requiere conexión activa), no un endpoint REST que el
+  /// isolate de servicio pueda sondear igual que `plugins/kanban/board`.
+  /// Límite honesto: si el proceso muere del todo, no hay aviso hasta la
+  /// próxima vez que se abra esa sesión.
+  Future<void> goalTransition({
+    required String title,
+    required String status,
+    String? connId,
+    String? sessionId,
+    String? profile,
+  }) async {
+    if (!notifyLocalAgentResults) return;
+    final connection = connId?.trim() ?? '';
+    final normalizedProfile = profile?.trim().isNotEmpty == true
+        ? profile!.trim().toLowerCase()
+        : 'default';
+    final session = sessionId?.trim() ?? '';
+    if (connection.isEmpty || session.isEmpty) {
+      _log('goal transition suprimida: identidad durable incompleta');
+      return;
+    }
+    final identity = NotificationEventIdentity(
+      connId: connection,
+      profile: normalizedProfile,
+      sourceKind: 'local_agent',
+      objectId: session,
+      eventKind: 'status',
+      sourceVersion: status,
+    );
+    final t = NotifL10n.of(_prefs);
+    final notifTitle = switch (status) {
+      'done' => t.goalDone,
+      'paused' => t.goalPaused,
+      'waiting' => t.goalWaiting,
+      _ => t.goalBlocked,
+    };
+    _pendingDisplays[identity.eventKey] = _DurableDisplay(
+      kind: NotificationKind.goal,
+      title: notifTitle,
+      body: t.goalBody(title),
+      targetSessionId: session,
+      payload: _encodePayload(
+        connection,
+        session,
+        title,
+        profile: normalizedProfile,
+      ),
+    );
+    try {
+      await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey: '$connection/$normalizedProfile/local_agent/$session',
+          connId: connection,
+          profile: normalizedProfile,
+          sourceKind: 'local_agent',
+          objectId: session,
+          lastState: status,
+          lastVersion: status,
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(identity: identity, destinationKind: 'goal_transition', sessionId: session),
           ],
         ),
       ]);
@@ -1718,6 +1804,7 @@ class NotificationService
         );
       case NotificationKind.run:
       case NotificationKind.localAgent:
+      case NotificationKind.goal:
         return (
           id: _chRuns,
           name: t.chRuns,

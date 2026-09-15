@@ -5203,6 +5203,35 @@ class TuiGatewayClient
     }
   }
 
+  static const Set<String> _validGoalActions = {
+    'goal.pause',
+    'goal.resume',
+    'goal.clear',
+    'goal.unwait',
+  };
+
+  @override
+  Future<SessionGoalSnapshot?> readSessionGoal(String runtimeSessionId) async {
+    final result = await _controlRequest('session.control.read', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+    }, capability: DesktopGatewayCapability.sessionControl);
+    final control = result['control'];
+    if (control is! Map) return null;
+    return SessionGoalSnapshot.tryParse(control['goal']);
+  }
+
+  @override
+  Future<void> sendGoalAction(String runtimeSessionId, String action) async {
+    if (!_validGoalActions.contains(action)) {
+      throw ArgumentError.value(action, 'action', 'not a supported goal action');
+    }
+    _requireWritableControlConnection();
+    await _controlRequest('session.control', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      'action': action,
+    }, capability: DesktopGatewayCapability.sessionControl);
+  }
+
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     await _requestPromptSubmit({'session_id': runtimeSessionId, 'text': text});

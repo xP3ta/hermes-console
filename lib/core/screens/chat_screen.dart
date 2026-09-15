@@ -60,6 +60,7 @@ import '../models/prepared_turn.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
 import '../navigation/chat_route.dart';
+import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
 import '../services/artifact_export_service.dart';
@@ -4449,6 +4450,9 @@ class _ChatScreenState extends State<ChatScreen>
       case ActiveChatEvent.queueChanged:
       case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.dashboardAuthChanged:
+      case ActiveChatEvent.goalUpdated:
+        // The generic setState above already repaints _buildGoalStrip; no
+        // extra behavior (scrolling, etc.) is needed for a status change.
         break;
     }
   }
@@ -9477,6 +9481,7 @@ class _ChatScreenState extends State<ChatScreen>
                           ),
                         ),
                         _buildStopStatusStrip(colors),
+                        _buildGoalStrip(colors),
                         _buildQueueStrip(colors),
                         if ((_vc?.active ?? false) && !showVoiceSurface)
                           _buildVoiceReturnBar(
@@ -11279,6 +11284,226 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
       ),
+    );
+  }
+
+  /// Live standing-goal status, one line above the composer — same slot
+  /// family as [_buildStopStatusStrip]. Tap opens the detail sheet with the
+  /// contract, criteria, gates and the pause/resume/clear actions. This is
+  /// deliberately not a card: goals are ambient state, not an interruption.
+  Widget _buildGoalStrip(HermesThemeColors colors) {
+    final goal = _chat.goal;
+    if (goal == null) return const SizedBox.shrink();
+    final s = Strings.of(context);
+    final blocked = goal.isBlocked;
+    final label = blocked
+        ? s.chaGoalBlocked
+        : switch (goal.status) {
+            'paused' => s.chaGoalPaused,
+            'waiting' => s.chaGoalWaiting,
+            'done' => s.chaGoalDoneTurns(goal.turnsUsed),
+            _ =>
+              goal.title.isEmpty
+                  ? s.chaGoalTurnLabel(goal.turnsUsed, goal.maxTurns)
+                  : '${s.chaGoalTurnLabel(goal.turnsUsed, goal.maxTurns)} · ${goal.title}',
+          };
+    final icon = blocked
+        ? Icons.flag_circle_outlined
+        : switch (goal.status) {
+            'paused' => Icons.pause_circle_outlined,
+            'waiting' => Icons.hourglass_empty_rounded,
+            'done' => Icons.flag_outlined,
+            _ => Icons.flag_circle_outlined,
+          };
+    final color = blocked
+        ? colors.error
+        : switch (goal.status) {
+            'paused' || 'waiting' => colors.warning,
+            'done' => colors.textSecondary,
+            _ => colors.accent,
+          };
+    final reason = goal.displayReason;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      child: Semantics(
+        liveRegion: true,
+        label: reason.isEmpty ? label : '$label. $reason',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => unawaited(_showGoalSheet(goal)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: color),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (reason.isNotEmpty)
+                        Text(
+                          reason,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: colors.textSecondary),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: colors.textDisabled,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendGoalAction(String action) async {
+    try {
+      await _chat.sendGoalAction(action);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(Strings.of(context).chaGoalActionFailed)));
+    }
+  }
+
+  Future<void> _showGoalSheet(SessionGoalSnapshot goal) async {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('chat-goal-dialog'),
+      maxWidth: 560,
+      builder: (sheetContext) {
+        Widget section(String title, String body) {
+          if (body.isEmpty) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(sheetContext).textTheme.labelMedium
+                      ?.copyWith(color: colors.textSecondary),
+                ),
+                const SizedBox(height: 2),
+                Text(body),
+              ],
+            ),
+          );
+        }
+
+        return ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          children: [
+            Text(
+              goal.title.isEmpty ? s.chaGoalSheetTitle : goal.title,
+              style: Theme.of(sheetContext).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            section(s.chaGoalSheetOutcome, goal.outcome),
+            section(s.chaGoalSheetVerification, goal.verification),
+            section(s.chaGoalSheetConstraints, goal.constraints),
+            section(s.chaGoalSheetBoundaries, goal.boundaries),
+            section(s.chaGoalSheetStopWhen, goal.stopWhen),
+            if (goal.subgoals.isNotEmpty)
+              section(s.chaGoalSheetSubgoals, goal.subgoals.join('\n')),
+            if (goal.gates.isNotEmpty)
+              section(
+                s.chaGoalSheetGates,
+                goal.gates
+                    .map(
+                      (g) =>
+                          '${g.command} (${g.attempts}/${g.maxRetries + 1}'
+                          '${g.lastExitCode == null ? '' : ', exit ${g.lastExitCode}'})',
+                    )
+                    .join('\n'),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (goal.isActive)
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_sendGoalAction('goal.pause'));
+                    },
+                    child: Text(s.chaGoalActionPause),
+                  ),
+                if (goal.isPaused)
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_sendGoalAction('goal.resume'));
+                    },
+                    child: Text(s.chaGoalActionResume),
+                  ),
+                if (goal.isWaiting)
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_sendGoalAction('goal.unwait'));
+                    },
+                    child: Text(s.chaGoalActionResumeNow),
+                  ),
+                if (!goal.isDone)
+                  TextButton(
+                    onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: sheetContext,
+                        builder: (dialogContext) => AlertDialog(
+                          title: Text(s.chaGoalClearConfirmTitle),
+                          content: Text(s.chaGoalClearConfirmBody),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(false),
+                              child: Text(
+                                MaterialLocalizations.of(
+                                  dialogContext,
+                                ).cancelButtonLabel,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(true),
+                              child: Text(s.chaGoalActionClear),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true && sheetContext.mounted) {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(_sendGoalAction('goal.clear'));
+                      }
+                    },
+                    child: Text(s.chaGoalActionClear),
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 
