@@ -422,6 +422,13 @@ class HermesDrawer extends StatelessWidget {
                         connManager.activeConnectionId.value ?? conn?.id,
                     onSelected: (id) => _selectInstance(context, id),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+                    child: Divider(
+                      height: 1,
+                      color: colors.divider.withValues(alpha: 0.44),
+                    ),
+                  ),
                   _DrawerItem(
                     icon: Icons.home_outlined,
                     label: strings.drawerHome,
