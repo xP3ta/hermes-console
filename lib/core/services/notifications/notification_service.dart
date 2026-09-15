@@ -1298,6 +1298,43 @@ class NotificationService
   Future<void> cancelRun(String runId) =>
       cancelById(9000 + (runId.hashCode & 0x1ff), 'cancelRun');
 
+  /// Otra superficie (Desktop, otra Console, TUI) terminó de trabajar en una
+  /// sesión — cross-surface, sin tomar propiedad de ella. `phase` es
+  /// 'completed'/'failed'/'interrupted' (ver [sessionActivityPhaseWire]).
+  ///
+  /// No se nombra la superficie de origen: la proyección de actividad global
+  /// es deliberadamente ciega a esa identidad (privacy-bounded), así que
+  /// afirmarlo sería inventar un dato que no tenemos. Reusa el toggle y canal
+  /// de Runs — es la misma categoría de aviso ("algo terminó en segundo
+  /// plano") y evita una fila más de ajustes para algo que el usuario no pidió
+  /// separar.
+  Future<void> sessionActivityFinished({
+    required String phase,
+    String? connId,
+    String? sessionId,
+    String? profile,
+  }) {
+    if (!notifyRuns) return Future.value();
+    final t = NotifL10n.of(_prefs);
+    return _show(
+      kind: NotificationKind.localAgent,
+      id: eventNotificationId(
+        base: 7000,
+        span: 512,
+        parts: [connId ?? '', sessionId ?? ''],
+      ),
+      title: switch (phase) {
+        'failed' => t.sessionActivityFailedTitle,
+        'interrupted' => t.sessionActivityInterruptedTitle,
+        _ => t.sessionActivityFinishedTitle,
+      },
+      body: t.sessionActivityBody,
+      targetSessionId: sessionId,
+      payload: _encodePayload(connId, sessionId, null, profile: profile),
+      compact: true,
+    );
+  }
+
   /// La respuesta del asistente está lista (app en segundo plano). [session] es
   /// el título legible de la sesión: si se conoce, lo nombramos para que el
   /// usuario sepa de qué chat se trata sin abrir la app.

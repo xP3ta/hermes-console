@@ -8,6 +8,12 @@ are not releases.
 - Rendered automatic standing-goal continuations as compact resumed-turn
   events when reopening an active Desktop session, including legacy history
   persisted before display metadata was available.
+- Notified when a session being driven from another surface (Desktop, another
+  Console, TUI) reaches a proven terminal state (completed, failed or
+  interrupted) while this device is connected, reusing the existing
+  cross-surface activity projection and the Runs notification channel. The
+  notification never names the originating surface or session content — the
+  projection is deliberately blind to that identity.
 
 ## 1.2.10 (9008) — 2026-09-14
 

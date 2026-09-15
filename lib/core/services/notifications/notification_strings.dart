@@ -72,6 +72,18 @@ class NotifL10n {
   // ── Ejecuciones ───────────────────────────────────────────────────────────
   String get runCompleted => _('Ejecución completada', 'Run completed');
   String get runFailed => _('Ejecución con errores', 'Run failed');
+
+  // ── Actividad en otra superficie (Desktop / otra Console / TUI) ──────────
+  String get sessionActivityFinishedTitle =>
+      _('Sesión terminada en otro dispositivo', 'Session finished elsewhere');
+  String get sessionActivityFailedTitle =>
+      _('Sesión con error en otro dispositivo', 'Session failed elsewhere');
+  String get sessionActivityInterruptedTitle => _(
+    'Sesión interrumpida en otro dispositivo',
+    'Session interrupted elsewhere',
+  );
+  String get sessionActivityBody =>
+      _('Abre Hermes para ver el resultado.', 'Open Hermes to see the result.');
   String get cronCompleted => _('Cron completado', 'Cron completed');
   String get cronFailed => _('Cron falló', 'Cron failed');
   String get kanbanCompleted =>

@@ -553,4 +553,92 @@ void main() {
       );
     },
   );
+
+  group('onTerminal', () {
+    test('fires once for a proven busy→terminal transition', () {
+      final seen = <(GlobalActivityScope, GlobalActivityPhase)>[];
+      final aggregate = GlobalActivityAggregate.inMemory(
+        now: () => DateTime.utc(2026),
+        onTerminal: (scope, phase) => seen.add((scope, phase)),
+      );
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'tool.start',
+          sessionId: 'runtime-a',
+          sequence: 1,
+          payload: {},
+        ),
+      );
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-a',
+          sequence: 2,
+          payload: {'status': 'ok'},
+        ),
+      );
+      expect(seen, hasLength(1));
+      expect(seen.single.$1.durableSessionId, 'durable-a');
+      expect(seen.single.$2, GlobalActivityPhase.completed);
+    });
+
+    test('does not fire for a terminal event with no prior busy activity', () {
+      final seen = <(GlobalActivityScope, GlobalActivityPhase)>[];
+      final aggregate = GlobalActivityAggregate.inMemory(
+        now: () => DateTime.utc(2026),
+        onTerminal: (scope, phase) => seen.add((scope, phase)),
+      );
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-a',
+          sequence: 1,
+          payload: {'status': 'ok'},
+        ),
+      );
+      expect(seen, isEmpty);
+    });
+
+    test('does not fire for a non-terminal (live) event', () {
+      final seen = <(GlobalActivityScope, GlobalActivityPhase)>[];
+      final aggregate = GlobalActivityAggregate.inMemory(
+        now: () => DateTime.utc(2026),
+        onTerminal: (scope, phase) => seen.add((scope, phase)),
+      );
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'tool.start',
+          sessionId: 'runtime-a',
+          sequence: 1,
+          payload: {},
+        ),
+      );
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'tool.complete',
+          sessionId: 'runtime-a',
+          sequence: 2,
+          payload: {},
+        ),
+      );
+      expect(seen, isEmpty);
+    });
+
+    test('maps failed and interrupted phases to their wire state', () {
+      expect(
+        sessionActivityPhaseWire(GlobalActivityPhase.completed),
+        'completed',
+      );
+      expect(sessionActivityPhaseWire(GlobalActivityPhase.failed), 'failed');
+      expect(
+        sessionActivityPhaseWire(GlobalActivityPhase.interrupted),
+        'interrupted',
+      );
+    });
+  });
 }

@@ -21161,7 +21161,17 @@ class ActiveChatService {
        _attachDesktopRuntimeOnLoadByDefault = attachDesktopRuntimeOnLoad,
        globalActivity =
            globalActivity ??
-           GlobalActivityAggregate(journal: GlobalActivityJournal.secure()),
+           GlobalActivityAggregate(
+             journal: GlobalActivityJournal.secure(),
+             onTerminal: notifications == null
+                 ? null
+                 : (scope, phase) => notifications.sessionActivityFinished(
+                     phase: sessionActivityPhaseWire(phase),
+                     connId: scope.connectionId,
+                     sessionId: scope.durableSessionId,
+                     profile: scope.profile,
+                   ),
+           ),
        _compressionFenceStore =
            compressionFenceStore ?? DesktopCompressionFenceStore() {
     _restoreObservedFirstTokenLatencies();

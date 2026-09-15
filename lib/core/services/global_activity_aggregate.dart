@@ -117,15 +117,29 @@ final class GlobalActivityAggregate extends ChangeNotifier {
   GlobalActivityAggregate({
     required GlobalActivityJournal journal,
     DateTime Function()? now,
+    void Function(GlobalActivityScope scope, GlobalActivityPhase phase)?
+    onTerminal,
   }) : _journal = journal,
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now,
+       _onTerminal = onTerminal;
 
-  GlobalActivityAggregate.inMemory({DateTime Function()? now})
-    : _journal = null,
-      _now = now ?? DateTime.now;
+  GlobalActivityAggregate.inMemory({
+    DateTime Function()? now,
+    void Function(GlobalActivityScope scope, GlobalActivityPhase phase)?
+    onTerminal,
+  }) : _journal = null,
+       _now = now ?? DateTime.now,
+       _onTerminal = onTerminal;
 
   final DateTime Function() _now;
   final GlobalActivityJournal? _journal;
+
+  /// Fired once per busy→terminal transition proven by an authoritative
+  /// gateway event (never by a roster entry merely disappearing — that is
+  /// ambiguous, not proof). Consumers use this to notify without duplicating
+  /// the phase classification above.
+  final void Function(GlobalActivityScope scope, GlobalActivityPhase phase)?
+  _onTerminal;
   final Map<String, GlobalActivity> _byDurable = {};
   final Map<String, int> _terminalRosterGeneration = {};
   final Map<String, int> _rosterGeneration = {};
@@ -278,6 +292,10 @@ final class GlobalActivityAggregate extends ChangeNotifier {
         _terminalRosterGeneration.remove(_terminalRosterGeneration.keys.first);
       }
       _byDurable.remove(scope.durableKey);
+      // Only a proven busy→terminal transition is notify-worthy; a terminal
+      // event with no prior tracked activity (already removed, or one we
+      // never saw as busy) carries nothing new to tell the user.
+      if (current != null) _onTerminal?.call(scope, reduction.phase);
       _changed();
       return;
     }
@@ -624,6 +642,16 @@ GlobalActivityPhase _phaseFromRoster(String? raw) =>
       'waiting' => GlobalActivityPhase.waitingForUser,
       _ => GlobalActivityPhase.generating,
     };
+
+/// Wire form of a terminal [GlobalActivityPhase] for the cross-surface
+/// activity notification. Only `completed`/`failed`/`interrupted` ever reach
+/// [GlobalActivityAggregate]'s `onTerminal` callback (see `_reduceEvent`'s
+/// `terminal(...)` calls) — any other phase is defensive, not reachable.
+String sessionActivityPhaseWire(GlobalActivityPhase phase) => switch (phase) {
+  GlobalActivityPhase.failed => 'failed',
+  GlobalActivityPhase.interrupted => 'interrupted',
+  _ => 'completed',
+};
 
 typedef _EventReduction = ({
   GlobalActivityPhase phase,
