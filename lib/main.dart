@@ -1375,6 +1375,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       ),
       NotificationKind.reply => (Icons.check_circle_outline, colors.success),
       NotificationKind.run => (Icons.task_alt, colors.accent),
+      NotificationKind.localAgent => (Icons.devices_outlined, colors.accent),
       _ => (Icons.notifications_none, colors.accent),
     };
     // Un solo aviso a la vez: el evento más reciente manda.
