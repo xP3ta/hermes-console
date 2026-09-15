@@ -500,6 +500,8 @@
   "chaSelectText": "Select text",
   "chaBackgroundWorkTitle": "Background work",
   "chaBackgroundWorkFinished": "Finished",
+  "chaBackgroundTaskDone": "Background task finished",
+  "chaBackgroundTaskError": "Background task failed",
   "chaBackgroundAgentsFinished": "{count, plural, =1{1 agent finished} other{{count} agents finished}}",
   "@chaBackgroundAgentsFinished": {
     "placeholders": {

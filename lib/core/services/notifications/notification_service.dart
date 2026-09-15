@@ -1335,6 +1335,34 @@ class NotificationService
     );
   }
 
+  /// Una tarea de `prompt.background` lanzada desde el Agent Center terminó.
+  /// Igual que [sessionActivityFinished], nunca se repite el texto de
+  /// respuesta en la bandeja del sistema — solo el estado; el resultado
+  /// completo vive dentro de la app.
+  Future<void> backgroundTaskFinished({
+    required bool isError,
+    String? connId,
+    String? sessionId,
+    String? taskId,
+    String? profile,
+  }) {
+    if (!notifyRuns) return Future.value();
+    final t = NotifL10n.of(_prefs);
+    return _show(
+      kind: NotificationKind.localAgent,
+      id: eventNotificationId(
+        base: 7600,
+        span: 512,
+        parts: [connId ?? '', taskId ?? ''],
+      ),
+      title: isError ? t.backgroundTaskFailedTitle : t.backgroundTaskFinishedTitle,
+      body: t.backgroundTaskBody,
+      targetSessionId: sessionId,
+      payload: _encodePayload(connId, sessionId, null, profile: profile),
+      compact: true,
+    );
+  }
+
   /// La respuesta del asistente está lista (app en segundo plano). [session] es
   /// el título legible de la sesión: si se conoce, lo nombramos para que el
   /// usuario sepa de qué chat se trata sin abrir la app.

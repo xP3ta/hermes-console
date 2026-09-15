@@ -84,6 +84,14 @@ class NotifL10n {
   );
   String get sessionActivityBody =>
       _('Abre Hermes para ver el resultado.', 'Open Hermes to see the result.');
+
+  // ── Tarea en segundo plano (prompt.background / background.complete) ─────
+  String get backgroundTaskFinishedTitle =>
+      _('Tarea en segundo plano lista', 'Background task finished');
+  String get backgroundTaskFailedTitle =>
+      _('Tarea en segundo plano con error', 'Background task failed');
+  String get backgroundTaskBody =>
+      _('Abre Hermes para ver el resultado.', 'Open Hermes to see the result.');
   String get cronCompleted => _('Cron completado', 'Cron completed');
   String get cronFailed => _('Cron falló', 'Cron failed');
   String get kanbanCompleted =>

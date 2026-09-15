@@ -4449,6 +4449,7 @@ class _ChatScreenState extends State<ChatScreen>
       case ActiveChatEvent.queueChanged:
       case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.dashboardAuthChanged:
+      case ActiveChatEvent.backgroundTaskComplete:
         break;
     }
   }
@@ -9477,6 +9478,7 @@ class _ChatScreenState extends State<ChatScreen>
                           ),
                         ),
                         _buildStopStatusStrip(colors),
+                        _buildBackgroundTaskStrip(colors),
                         _buildQueueStrip(colors),
                         if ((_vc?.active ?? false) && !showVoiceSurface)
                           _buildVoiceReturnBar(
@@ -11280,6 +11282,101 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       ),
     );
+  }
+
+  /// Resultado de una tarea de `prompt.background` (Agent Center). Una sola
+  /// línea, sin `ListTile` ni chevron — tocar abre el texto completo, la X
+  /// descarta sin verlo. Si hay más de una pendiente, se muestra la más
+  /// reciente con un contador; las demás esperan su turno.
+  Widget _buildBackgroundTaskStrip(HermesThemeColors colors) {
+    final outcomes = _chat.backgroundTaskOutcomes;
+    if (outcomes.isEmpty) return const SizedBox.shrink();
+    final s = Strings.of(context);
+    final taskId = outcomes.keys.last;
+    final outcome = outcomes[taskId]!;
+    final extra = outcomes.length - 1;
+    final label = extra > 0
+        ? '${outcome.isError ? s.chaBackgroundTaskError : s.chaBackgroundTaskDone} (+$extra)'
+        : (outcome.isError ? s.chaBackgroundTaskError : s.chaBackgroundTaskDone);
+    final color = outcome.isError ? colors.error : colors.accent;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      child: Semantics(
+        liveRegion: true,
+        label: label,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Row(
+            children: [
+              Icon(
+                outcome.isError
+                    ? Icons.error_outline_rounded
+                    : Icons.task_alt_rounded,
+                size: 16,
+                color: color,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () =>
+                      unawaited(_showBackgroundTaskResult(taskId, outcome)),
+                  child: Text(
+                    label,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: color),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              IconButton(
+                iconSize: 16,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: s.inAppDismiss,
+                onPressed: () => _chat.dismissBackgroundTaskOutcome(taskId),
+                icon: Icon(Icons.close_rounded, color: colors.textDisabled),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showBackgroundTaskResult(
+    String taskId,
+    ({String text, bool isError}) outcome,
+  ) async {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('chat-background-task-result'),
+      maxWidth: 560,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              outcome.isError
+                  ? s.chaBackgroundTaskError
+                  : s.chaBackgroundTaskDone,
+              style: Theme.of(sheetContext).textTheme.titleSmall?.copyWith(
+                color: outcome.isError ? colors.error : colors.accent,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(outcome.text, style: Theme.of(sheetContext).textTheme.bodyMedium),
+          ],
+        ),
+      ),
+    );
+    _chat.dismissBackgroundTaskOutcome(taskId);
   }
 
   /// Indicaciones que no pudieron entrar en el turno vivo. Viven junto al

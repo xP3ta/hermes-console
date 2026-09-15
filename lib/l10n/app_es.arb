@@ -830,6 +830,8 @@
   "chaSelectText": "Seleccionar texto",
   "chaBackgroundWorkTitle": "Trabajo en segundo plano",
   "chaBackgroundWorkFinished": "Finalizado",
+  "chaBackgroundTaskDone": "Tarea en segundo plano lista",
+  "chaBackgroundTaskError": "Tarea en segundo plano con error",
   "chaBackgroundAgentsFinished": "{count, plural, =1{1 agente finalizado} other{{count} agentes finalizados}}",
   "@chaBackgroundAgentsFinished": {
     "placeholders": {

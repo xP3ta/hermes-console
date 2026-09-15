@@ -14,6 +14,15 @@ are not releases.
   cross-surface activity projection and the Runs notification channel. The
   notification never names the originating surface or session content — the
   projection is deliberately blind to that identity.
+- Surfaced the result of a background task started from the Agent Center
+  (`prompt.background` / `background.complete`) as a single-line strip above
+  the composer, tap to read the full text, plus a notification when the app
+  is backgrounded but the process is still alive. The system notification
+  never repeats the task's own output, only its outcome. This only works
+  while the app's process stays alive (foreground, or background before
+  Android reaps it) — there is no gateway endpoint yet to reconstruct a
+  background task's outcome after a cold start; closing that gap needs either
+  a new poll endpoint or the shared gateway.
 
 ## 1.2.10 (9008) — 2026-09-14
 

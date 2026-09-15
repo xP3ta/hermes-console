@@ -2845,6 +2845,7 @@ enum ActiveChatEvent {
   cancelled,
   queueChanged,
   dashboardAuthChanged,
+  backgroundTaskComplete,
 }
 
 Future<({Object? error, T? value})> _captureAsync<T>(
@@ -3602,6 +3603,24 @@ class ActiveChat {
 
   final NotificationService? _notifications;
   bool? _notifyRepliesOverride;
+
+  /// Resultados de `prompt.background` recibidos como `background.complete`
+  /// en esta sesión, indexados por `task_id`. Solo vive en memoria — no hay
+  /// endpoint del gateway para reconstruirlos tras un reinicio del proceso,
+  /// así que un relanzamiento de la app los pierde (limitación conocida,
+  /// igual que la actividad cross-surface de [GlobalActivityAggregate]).
+  final Map<String, ({String text, bool isError})> _backgroundTaskOutcomes =
+      {};
+  Map<String, ({String text, bool isError})> get backgroundTaskOutcomes =>
+      Map.unmodifiable(_backgroundTaskOutcomes);
+
+  /// El usuario ya vio/descartó este resultado — lo quita del strip.
+  void dismissBackgroundTaskOutcome(String taskId) {
+    if (_backgroundTaskOutcomes.remove(taskId) != null) {
+      _emit(ActiveChatEvent.backgroundTaskComplete);
+    }
+  }
+
   final ApprovalPolicyService? _policy;
   final VoidCallback _onTerminal;
   final VoidCallback? _onUnused;
@@ -15098,6 +15117,28 @@ class ActiveChat {
           !_streamingConfirmed &&
           !_runTerminal) {
         _armFirstTokenTimer();
+      }
+      return;
+    }
+    if (event.type == 'background.complete') {
+      final taskId = payload['task_id']?.toString().trim() ?? '';
+      if (taskId.isNotEmpty) {
+        final rawText = payload['text']?.toString() ?? '';
+        final isError = rawText.startsWith('error:');
+        _backgroundTaskOutcomes[taskId] = (text: rawText, isError: isError);
+        _emit(ActiveChatEvent.backgroundTaskComplete);
+        unawaited(
+          _notifications
+                  ?.backgroundTaskFinished(
+                    isError: isError,
+                    connId: connection.id,
+                    sessionId: runtimeId,
+                    taskId: taskId,
+                    profile: _storedSessionProfile,
+                  )
+                  .catchError((_) {}) ??
+              Future<void>.value(),
+        );
       }
       return;
     }
