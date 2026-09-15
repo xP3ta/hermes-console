@@ -31,6 +31,7 @@ import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/bot_mode_dock.dart';
 import '../widgets/chat_surface_coordinator.dart';
+import '../widgets/dock_shortcuts.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/room_avatar_stack.dart';
 import 'bot_create_screen.dart';
@@ -143,7 +144,7 @@ class MissionControlScreen extends StatefulWidget {
 enum _MissionDestination { bots, work }
 
 class _MissionControlScreenState extends State<MissionControlScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   late final MissionControlDataSource _dataSource;
   late final MissionProfileAvatarCache? _profileAvatarCache;
   late final MissionOrganizationStoreContract _organizationStore;
@@ -176,6 +177,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   bool _initialOpenDispatched = false;
   _MissionDestination _destination = _MissionDestination.bots;
   late final ChatSurfaceCoordinator _surfaceCoordinator;
+  // Observador de rutas (least-invasive: no toca el sistema de navegación,
+  // solo se suscribe a él) para saber si hay una subpantalla abierta encima
+  // de Mission Control y mostrar el "Atrás" contextual del dock (perfil
+  // Bots).
+  PageRoute<dynamic>? _dockRoute;
+  bool _hasSubscreenAbove = false;
   final Map<WorkItem, int> _workItemGenerations = Map.identity();
   final Map<String, WorkDestination> _validatedWorkDestinations = {};
 
@@ -243,11 +250,28 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _activeChats = service;
     _activeChats?.activeIds.addListener(_onActiveIdsChanged);
     _syncLiveSubscriptions();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<dynamic> && !identical(route, _dockRoute)) {
+      hermesRouteObserver.unsubscribe(this);
+      _dockRoute = route;
+      hermesRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    if (mounted) setState(() => _hasSubscreenAbove = true);
+  }
+
+  @override
+  void didPopNext() {
+    if (mounted) setState(() => _hasSubscreenAbove = false);
   }
 
   @override
   void dispose() {
     _disposed = true;
+    hermesRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _activeChats?.activeIds.removeListener(_onActiveIdsChanged);
     _cancelLiveSubscriptions();
@@ -1958,6 +1982,30 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                         createRoomLabel: _canCreateHostedRoom
                             ? null
                             : copy.createLocalRoom,
+                        showBackContext: _hasSubscreenAbove,
+                        onBack: () => Navigator.of(context).maybePop(),
+                        // "Inicio" saca de Bots al dashboard general: el
+                        // catálogo de Bots lo incluye por defecto (antes no
+                        // había forma de volver a Inicio desde aquí, bug
+                        // confirmado en dispositivo real).
+                        onOpenHome: () =>
+                            Navigator.of(context).popUntil((r) => r.isFirst),
+                        // Accesos directos opcionales (ocultos de fábrica);
+                        // mismas pantallas/criterios que ya usa HermesDrawer.
+                        onOpenCron: () =>
+                            openDockCron(context, widget.connection),
+                        onOpenTasks: () =>
+                            openDockTasks(context, widget.connection),
+                        onOpenSessions: () => openDockSessions(
+                          context,
+                          widget.connection,
+                          widget.connManager,
+                        ),
+                        onOpenTools: () => openDockTools(
+                          context,
+                          widget.connection,
+                          widget.connManager,
+                        ),
                       )
                     : const SizedBox.shrink(),
               ),

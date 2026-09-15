@@ -64,6 +64,175 @@ enum DrawerSection {
 /// Sections that need a gateway are disabled while [connection] is null.
 /// Navigation pops back to the root first so drawer hops never stack
 /// section screens on top of each other.
+/// Catálogo de destinos de "Herramientas": extraído de [HermesDrawer] como
+/// función de nivel superior (en vez de método privado) para que el acceso
+/// directo opcional "Herramientas" del dock (ver `dock_shortcuts.dart`)
+/// pueda abrir EXACTAMENTE la misma pantalla con los mismos criterios de
+/// capacidades, sin duplicar esta lista.
+List<HermesToolDestination> buildHermesToolDestinations({
+  required BuildContext context,
+  required SavedConnection? connection,
+  required ConnectionManager connManager,
+  required CapabilityMatrix capabilities,
+}) {
+  final strings = Strings.of(context);
+  final conn = connection;
+
+  bool enabled([CapState? capability]) =>
+      conn != null && (capability == null || !capability.isNo);
+
+  String? disabledReason([CapState? capability]) {
+    if (conn == null) return strings.drawerNeedInstance;
+    if (capability?.isNo ?? false) return strings.drawerUnsupported;
+    return null;
+  }
+
+  return [
+    HermesToolDestination(
+      id: 'appearance',
+      group: strings.drawerPersonalization,
+      icon: Icons.palette_outlined,
+      label: strings.setSecAppearance,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => AppearanceScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'mascotas',
+      group: strings.drawerPersonalization,
+      icon: Icons.pets_outlined,
+      label: strings.drawerMascots,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => const MascotasScreen(),
+    ),
+    HermesToolDestination(
+      id: 'instances',
+      group: strings.drawerGroupInstance,
+      icon: Icons.router_outlined,
+      label: strings.drawerInstances,
+      builder: (_) => GatewayManagerScreen(connManager: connManager),
+    ),
+    HermesToolDestination(
+      id: 'models',
+      group: strings.drawerGroupInstance,
+      icon: Icons.memory_outlined,
+      label: strings.drawerModels,
+      enabled: enabled(capabilities.modelsRead),
+      disabledReason: disabledReason(capabilities.modelsRead),
+      builder: (_) => ModelsScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'ssh',
+      group: strings.drawerGroupInstance,
+      icon: Icons.terminal_outlined,
+      label: strings.drawerSsh,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => SshScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'profiles',
+      group: strings.drawerGroupAgent,
+      icon: Icons.account_tree_outlined,
+      label: strings.drawerProfiles,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) =>
+          ProfilesScreen(connection: conn!, connManager: connManager),
+    ),
+    HermesToolDestination(
+      id: 'agents',
+      group: strings.drawerGroupAgent,
+      icon: Icons.smart_toy_outlined,
+      label: strings.drawerAgents,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) {
+        final gateway = TuiGatewayClient(conn!);
+        return AgentCenterScreen(
+          gateway: gateway,
+          readOnly: conn.readOnly,
+          disposeGateway: gateway.close,
+        );
+      },
+    ),
+    HermesToolDestination(
+      id: 'skills',
+      group: strings.drawerGroupAgent,
+      icon: Icons.extension_outlined,
+      label: strings.drawerSkills,
+      enabled: enabled(capabilities.skillsRead),
+      disabledReason: disabledReason(capabilities.skillsRead),
+      builder: (_) => SkillsScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'extensions',
+      group: strings.drawerGroupAgent,
+      icon: Icons.extension_outlined,
+      label: strings.drawerExtensions,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) {
+        final gateway = TuiGatewayClient(conn!);
+        return ExtensionsCenterScreen(
+          gateway: gateway,
+          readOnly: conn.readOnly,
+          disposeGateway: gateway.close,
+        );
+      },
+    ),
+    HermesToolDestination(
+      id: 'memory',
+      group: strings.drawerGroupAgent,
+      icon: Icons.psychology_outlined,
+      label: strings.drawerMemory,
+      enabled: enabled(capabilities.memoryRead),
+      disabledReason: disabledReason(capabilities.memoryRead),
+      builder: (_) => MemoryScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'cron',
+      group: strings.drawerGroupAgent,
+      icon: Icons.schedule_outlined,
+      label: strings.drawerCron,
+      enabled: enabled(capabilities.cronRead),
+      disabledReason: disabledReason(capabilities.cronRead),
+      builder: (_) => CronScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'soul',
+      group: strings.drawerGroupAgent,
+      icon: Icons.auto_awesome_outlined,
+      label: strings.drawerSoul,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => SoulScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'task-center',
+      group: strings.drawerGroupSystem,
+      icon: Icons.rocket_launch_outlined,
+      label: strings.drawerTaskCenter,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => TaskCenterScreen(
+        connection: conn!,
+        profile: connManager.activeProfileFor(conn.id),
+      ),
+    ),
+    HermesToolDestination(
+      id: 'activity',
+      group: strings.drawerGroupSystem,
+      icon: Icons.receipt_long_outlined,
+      label: strings.drawerActivity,
+      enabled: enabled(capabilities.logsRead),
+      disabledReason: disabledReason(capabilities.logsRead),
+      builder: (_) => ActivityScreen(connection: conn!),
+    ),
+  ];
+}
+
 class HermesDrawer extends StatelessWidget {
   /// Añade una banda táctil propia después del borde reservado por Android.
   ///
@@ -165,171 +334,15 @@ class HermesDrawer extends StatelessWidget {
     );
   }
 
-  Widget _agentsCenter(SavedConnection active) {
-    final gateway = TuiGatewayClient(active);
-    return AgentCenterScreen(
-      gateway: gateway,
-      readOnly: active.readOnly,
-      disposeGateway: gateway.close,
-    );
-  }
-
-  Widget _extensionsCenter(SavedConnection active) {
-    final gateway = TuiGatewayClient(active);
-    return ExtensionsCenterScreen(
-      gateway: gateway,
-      readOnly: active.readOnly,
-      disposeGateway: gateway.close,
-    );
-  }
-
   List<HermesToolDestination> _toolDestinations(
     BuildContext context,
     CapabilityMatrix capabilities,
-  ) {
-    final strings = Strings.of(context);
-    final conn = connection;
-
-    bool enabled([CapState? capability]) =>
-        conn != null && (capability == null || !capability.isNo);
-
-    String? disabledReason([CapState? capability]) {
-      if (conn == null) return strings.drawerNeedInstance;
-      if (capability?.isNo ?? false) return strings.drawerUnsupported;
-      return null;
-    }
-
-    return [
-      HermesToolDestination(
-        id: 'appearance',
-        group: strings.drawerPersonalization,
-        icon: Icons.palette_outlined,
-        label: strings.setSecAppearance,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => AppearanceScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'mascotas',
-        group: strings.drawerPersonalization,
-        icon: Icons.pets_outlined,
-        label: strings.drawerMascots,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => const MascotasScreen(),
-      ),
-      HermesToolDestination(
-        id: 'instances',
-        group: strings.drawerGroupInstance,
-        icon: Icons.router_outlined,
-        label: strings.drawerInstances,
-        builder: (_) => GatewayManagerScreen(connManager: connManager),
-      ),
-      HermesToolDestination(
-        id: 'models',
-        group: strings.drawerGroupInstance,
-        icon: Icons.memory_outlined,
-        label: strings.drawerModels,
-        enabled: enabled(capabilities.modelsRead),
-        disabledReason: disabledReason(capabilities.modelsRead),
-        builder: (_) => ModelsScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'ssh',
-        group: strings.drawerGroupInstance,
-        icon: Icons.terminal_outlined,
-        label: strings.drawerSsh,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => SshScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'profiles',
-        group: strings.drawerGroupAgent,
-        icon: Icons.account_tree_outlined,
-        label: strings.drawerProfiles,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) =>
-            ProfilesScreen(connection: conn!, connManager: connManager),
-      ),
-      HermesToolDestination(
-        id: 'agents',
-        group: strings.drawerGroupAgent,
-        icon: Icons.smart_toy_outlined,
-        label: strings.drawerAgents,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => _agentsCenter(conn!),
-      ),
-      HermesToolDestination(
-        id: 'skills',
-        group: strings.drawerGroupAgent,
-        icon: Icons.extension_outlined,
-        label: strings.drawerSkills,
-        enabled: enabled(capabilities.skillsRead),
-        disabledReason: disabledReason(capabilities.skillsRead),
-        builder: (_) => SkillsScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'extensions',
-        group: strings.drawerGroupAgent,
-        icon: Icons.extension_outlined,
-        label: strings.drawerExtensions,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => _extensionsCenter(conn!),
-      ),
-      HermesToolDestination(
-        id: 'memory',
-        group: strings.drawerGroupAgent,
-        icon: Icons.psychology_outlined,
-        label: strings.drawerMemory,
-        enabled: enabled(capabilities.memoryRead),
-        disabledReason: disabledReason(capabilities.memoryRead),
-        builder: (_) => MemoryScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'cron',
-        group: strings.drawerGroupAgent,
-        icon: Icons.schedule_outlined,
-        label: strings.drawerCron,
-        enabled: enabled(capabilities.cronRead),
-        disabledReason: disabledReason(capabilities.cronRead),
-        builder: (_) => CronScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'soul',
-        group: strings.drawerGroupAgent,
-        icon: Icons.auto_awesome_outlined,
-        label: strings.drawerSoul,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => SoulScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'task-center',
-        group: strings.drawerGroupSystem,
-        icon: Icons.rocket_launch_outlined,
-        label: strings.drawerTaskCenter,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => TaskCenterScreen(
-          connection: conn!,
-          profile: connManager.activeProfileFor(conn.id),
-        ),
-      ),
-      HermesToolDestination(
-        id: 'activity',
-        group: strings.drawerGroupSystem,
-        icon: Icons.receipt_long_outlined,
-        label: strings.drawerActivity,
-        enabled: enabled(capabilities.logsRead),
-        disabledReason: disabledReason(capabilities.logsRead),
-        builder: (_) => ActivityScreen(connection: conn!),
-      ),
-    ];
-  }
+  ) => buildHermesToolDestinations(
+    context: context,
+    connection: connection,
+    connManager: connManager,
+    capabilities: capabilities,
+  );
 
   void _openTools(BuildContext context, CapabilityMatrix capabilities) {
     final destinations = _toolDestinations(context, capabilities);

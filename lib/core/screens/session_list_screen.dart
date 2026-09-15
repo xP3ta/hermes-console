@@ -23,6 +23,7 @@ import '../services/tui_gateway_client.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
@@ -1664,7 +1665,18 @@ class _SessionListScreenState extends State<SessionListScreen>
         checking: _health.checking,
         onSectionReturn: _fetchSessions,
       ),
-      body: _buildBody(),
+      // "Ver todas" es alcanzable en 1 salto desde Inicio: sin el dock aquí
+      // el usuario lo veía "desaparecer" al salir de Inicio (bug confirmado
+      // en dispositivo real). `includeSessionsAction: false` evita apilar
+      // esta misma pantalla si el usuario activó el acceso opcional
+      // "Sesiones" del catálogo del dock.
+      body: GeneralDockShell(
+        connection: widget.connection,
+        connManager: widget.connManager,
+        onCreate: _createNewSession,
+        includeSessionsAction: false,
+        body: _buildBody(),
+      ),
     );
   }
 

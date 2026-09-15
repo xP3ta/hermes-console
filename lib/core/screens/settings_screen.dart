@@ -21,6 +21,7 @@ import '../theme/theme_profile_store.dart';
 
 import '../services/bridge_update_service.dart';
 import '../../main.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
@@ -34,6 +35,7 @@ import 'models_screen.dart';
 import 'permissions_screen.dart';
 import 'security_info_screen.dart';
 import 'themes_screen.dart';
+import 'dock_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
 
@@ -150,104 +152,115 @@ class SettingsScreen extends StatelessWidget {
   Widget _buildBody(BuildContext context, SavedConnection conn) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).setTitle)),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: [
-          // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
-          // avanzado, con voz y notificaciones como apartados propios en vez
-          // de filas sueltas dentro de "chat" (spec 028 U-08).
-          _SectionHeader(Strings.of(context).setSecConnection),
-          _ConnectionCard(connection: conn, connManager: connManager),
-          _SectionHeader(Strings.of(context).setSecAppearance),
-          HermesGroup(
-            children: [
-              _ThemesEntry(),
-              _FontStyleEntry(),
-              _LanguageEntry(),
-              _HeaderTitleField(),
-            ],
-          ),
-          _SectionHeader(Strings.of(context).setSecChat),
-          HermesGroup(
-            children: [
-              _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
-            ],
-          ),
-          _SectionHeader(Strings.of(context).voiceTitle),
-          HermesGroup(children: [_VoiceTile(connection: conn)]),
-          _SectionHeader(Strings.of(context).notifTitle),
-          HermesGroup(children: [_NotificationsTile()]),
-          _SectionHeader(Strings.of(context).setSecSecurity),
-          HermesGroup(
-            children: [
-              HermesNavRow(
-                icon: Icons.shield_outlined,
-                title: Strings.of(context).setSecurity,
-                subtitle: Strings.of(context).setSecuritySub,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        SecurityInfoScreen(connManager: connManager),
-                  ),
-                ),
-              ),
-              HermesNavRow(
-                icon: Icons.verified_user_outlined,
-                title: Strings.of(context).setPermissions,
-                subtitle: Strings.of(context).setPermissionsSub,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PermissionsScreen(connection: conn),
-                  ),
-                ),
-              ),
-              HermesNavRow(
-                icon: Icons.tune_outlined,
-                title: Strings.of(context).setServerConfig,
-                subtitle: Strings.of(context).setServerConfigSub,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => BridgeFileEditorScreen(
-                      connectionId: conn.id,
-                      target: Strings.of(context).setSecConfig,
-                      titleLabel: 'config.yaml',
-                      readOnly: true,
+      // Ajustes es una pantalla de navegación de nivel superior alcanzable
+      // en 1 salto desde Inicio: sin el dock aquí, el usuario lo veía
+      // "desaparecer" al salir de Inicio/Mission Control (bug confirmado en
+      // dispositivo real). `includeSettingsAction: false` evita apilar
+      // Ajustes sobre sí misma si el usuario toca el propio item.
+      body: GeneralDockShell(
+        connection: conn,
+        connManager: connManager,
+        includeSettingsAction: false,
+        body: ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          children: [
+            // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
+            // avanzado, con voz y notificaciones como apartados propios en vez
+            // de filas sueltas dentro de "chat" (spec 028 U-08).
+            _SectionHeader(Strings.of(context).setSecConnection),
+            _ConnectionCard(connection: conn, connManager: connManager),
+            _SectionHeader(Strings.of(context).setSecAppearance),
+            HermesGroup(
+              children: [
+                _ThemesEntry(),
+                _FontStyleEntry(),
+                _LanguageEntry(),
+                _HeaderTitleField(),
+                _DockTile(),
+              ],
+            ),
+            _SectionHeader(Strings.of(context).setSecChat),
+            HermesGroup(
+              children: [
+                _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
+              ],
+            ),
+            _SectionHeader(Strings.of(context).voiceTitle),
+            HermesGroup(children: [_VoiceTile(connection: conn)]),
+            _SectionHeader(Strings.of(context).notifTitle),
+            HermesGroup(children: [_NotificationsTile()]),
+            _SectionHeader(Strings.of(context).setSecSecurity),
+            HermesGroup(
+              children: [
+                HermesNavRow(
+                  icon: Icons.shield_outlined,
+                  title: Strings.of(context).setSecurity,
+                  subtitle: Strings.of(context).setSecuritySub,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          SecurityInfoScreen(connManager: connManager),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-          _SectionHeader(Strings.of(context).setSecSystem),
-          _MaintenanceSection(
-            key: ValueKey('maint-${conn.id}'),
-            connection: conn,
-            connManager: connManager,
-          ),
-          _SectionHeader(Strings.of(context).setSecBridge),
-          HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
-          _SectionHeader(Strings.of(context).setSecData),
-          HermesGroup(
-            children: [
-              DiagnosticBundleTile(
-                controller: DiagnosticBundleController(manager: connManager),
-              ),
-            ],
-          ),
-          HistoryCleanupSection(
-            key: ValueKey('history-cleanup-${conn.id}'),
-            connection: conn,
-            connManager: connManager,
-            verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
-          ),
-          _OrphanDataTile(connManager: connManager),
-          _SectionHeader(Strings.of(context).setSecAbout),
-          _AboutCard(),
-          const SizedBox(height: 24),
-        ],
+                HermesNavRow(
+                  icon: Icons.verified_user_outlined,
+                  title: Strings.of(context).setPermissions,
+                  subtitle: Strings.of(context).setPermissionsSub,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PermissionsScreen(connection: conn),
+                    ),
+                  ),
+                ),
+                HermesNavRow(
+                  icon: Icons.tune_outlined,
+                  title: Strings.of(context).setServerConfig,
+                  subtitle: Strings.of(context).setServerConfigSub,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => BridgeFileEditorScreen(
+                        connectionId: conn.id,
+                        target: Strings.of(context).setSecConfig,
+                        titleLabel: 'config.yaml',
+                        readOnly: true,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            _SectionHeader(Strings.of(context).setSecSystem),
+            _MaintenanceSection(
+              key: ValueKey('maint-${conn.id}'),
+              connection: conn,
+              connManager: connManager,
+            ),
+            _SectionHeader(Strings.of(context).setSecBridge),
+            HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
+            _SectionHeader(Strings.of(context).setSecData),
+            HermesGroup(
+              children: [
+                DiagnosticBundleTile(
+                  controller: DiagnosticBundleController(manager: connManager),
+                ),
+              ],
+            ),
+            HistoryCleanupSection(
+              key: ValueKey('history-cleanup-${conn.id}'),
+              connection: conn,
+              connManager: connManager,
+              verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
+            ),
+            _OrphanDataTile(connManager: connManager),
+            _SectionHeader(Strings.of(context).setSecAbout),
+            _AboutCard(),
+            const SizedBox(height: 24),
+          ],
+        ),
       ),
     );
   }
@@ -747,6 +760,21 @@ class _VoiceTile extends StatelessWidget {
         MaterialPageRoute(
           builder: (_) => VoiceSettingsScreen(connection: connection),
         ),
+      ),
+    );
+  }
+}
+
+class _DockTile extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return HermesNavRow(
+      icon: Icons.dashboard_customize_outlined,
+      title: Strings.of(context).dockSettingsTitle,
+      subtitle: Strings.of(context).dockSettingsSubtitle,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const DockSettingsScreen()),
       ),
     );
   }
