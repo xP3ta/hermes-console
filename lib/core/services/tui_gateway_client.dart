@@ -2285,7 +2285,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _request(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     await connect();
     return _requestConnected(method, params, timeout: timeout);
@@ -2306,7 +2306,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestExclusiveSessionMutation(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
     bool preserveCapabilityFailure = false,
   }) async {
     try {
@@ -2467,7 +2467,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestConnected(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
     bool redactRemoteError = false,
   }) {
     final channel = _channel;
@@ -2585,7 +2585,7 @@ class TuiGatewayClient
     _SessionRosterSocketLease lease,
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     final result = await _awaitSessionRosterLease(
       lease,
@@ -2694,7 +2694,7 @@ class TuiGatewayClient
     _GroupSocketLease lease,
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     final result = await _awaitGroupSocketLease(
       lease,
@@ -4522,7 +4522,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _controlRequest(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
     DesktopGatewayCapability? capability,
   }) async {
     if (capability != null && !_capabilityCache.canAttempt(capability)) {
