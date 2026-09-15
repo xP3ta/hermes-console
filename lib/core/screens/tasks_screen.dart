@@ -1609,33 +1609,19 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     required String body,
     required String confirmLabel,
     bool destructive = false,
-  }) async {
-    final colors = Theme.of(context).hermes;
+  }) {
     final s = Strings.of(context);
-    final result = await showDialog<bool>(
+    // Shared floating dialog shell (see hermes_premium_ui.dart) instead of a
+    // raw AlertDialog: opaque surface, radius 22, no divider above the
+    // actions, destructive action as a filled red pill.
+    return showHermesConfirmDialog(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: Text(s.kanbanCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: Text(
-              confirmLabel,
-              style: TextStyle(
-                color: destructive ? colors.error : colors.accent,
-              ),
-            ),
-          ),
-        ],
-      ),
+      title: title,
+      message: body,
+      confirmLabel: confirmLabel,
+      cancelLabel: s.kanbanCancel,
+      destructive: destructive,
     );
-    return result == true;
   }
 
   Future<void> _uploadTaskAttachment(String taskId) async {

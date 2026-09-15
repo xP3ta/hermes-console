@@ -322,6 +322,12 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
           ? strings.chaBackgroundWorkTitle
           : '${strings.subagentActivityTitle}, $displayCount',
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      // Painted as a floating pill: chat_screen.dart anchors this widget as
+      // an overlay above the composer instead of a Column child, so it
+      // needs its own opaque, shadowed shell. Purely visual — the phase
+      // counting above (live/completed/unknown) and the expand/tail/steer
+      // behavior below are untouched.
+      floating: true,
     );
   }
 

@@ -464,7 +464,7 @@ Future<void> showImageViewer(BuildContext context, File file) {
                             color: Colors.white,
                           ),
                           tooltip: Strings.of(innerCtx).imgSaveToGallery,
-                          onPressed: () => _saveToGallery(innerCtx, file),
+                          onPressed: () => saveMediaToGallery(innerCtx, file),
                         ),
                       ),
                       IconButton(
@@ -473,7 +473,7 @@ Future<void> showImageViewer(BuildContext context, File file) {
                           color: Colors.white,
                         ),
                         tooltip: Strings.of(ctx).commonShare,
-                        onPressed: () => _shareImage(file),
+                        onPressed: () => shareMediaFile(file),
                       ),
                       const Spacer(),
                       IconButton(
@@ -495,18 +495,35 @@ Future<void> showImageViewer(BuildContext context, File file) {
 
 /// Guarda [file] en la galería del sistema (spec 030). En Android 13+ `gal`
 /// no requiere permiso para su propia media.
-Future<void> _saveToGallery(BuildContext context, File file) async {
+///
+/// Compartido entre el visor de imágenes ([showImageViewer]) y la tarjeta o
+/// visor a pantalla completa de vídeo generado ([isVideo]: true), para no
+/// duplicar la llamada a `gal` ni el manejo de errores en cada sitio.
+Future<void> saveMediaToGallery(
+  BuildContext context,
+  File file, {
+  bool isVideo = false,
+}) async {
   final s = Strings.of(context);
   final messenger = ScaffoldMessenger.of(context);
   try {
-    await Gal.putImage(file.path);
-    messenger.showSnackBar(SnackBar(content: Text(s.imgSavedToGallery)));
+    if (isVideo) {
+      await Gal.putVideo(file.path);
+    } else {
+      await Gal.putImage(file.path);
+    }
+    messenger.showSnackBar(
+      SnackBar(content: Text(isVideo ? s.genVideoSaved : s.imgSavedToGallery)),
+    );
   } catch (e) {
-    messenger.showSnackBar(SnackBar(content: Text(s.imgSaveFailed)));
+    messenger.showSnackBar(
+      SnackBar(content: Text(isVideo ? s.genVideoSaveFailed : s.imgSaveFailed)),
+    );
   }
 }
 
-/// Abre el selector de compartir del sistema con [file].
-Future<void> _shareImage(File file) async {
+/// Abre el selector de compartir del sistema con [file]. Vale tanto para
+/// imágenes como para vídeo: `share_plus` decide el tipo por extensión.
+Future<void> shareMediaFile(File file) async {
   await Share.shareXFiles([XFile(file.path)]);
 }

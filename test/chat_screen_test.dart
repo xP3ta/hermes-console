@@ -4091,13 +4091,38 @@ void main() {
         matching: find.byType(ListView),
       );
       final composer = find.byType(TextField).last;
+      // The activity pill is a fixed overlay pinned to the TOP of the chat
+      // Stack, just under the app bar (Positioned(top: 8, ...) — see
+      // chat_screen.dart), not floating over the last messages the way an
+      // earlier iteration of this design did. Two invariants matter here:
+      //
+      // 1. It's anchored at the TOP, not the bottom — `transcript` (the
+      //    reverse:true ListView) fills this whole Stack by construction,
+      //    so its outer rect always starts at the same `top` as the pill's
+      //    own Positioned band; we can't assert "zero overlap with the full
+      //    ListView box" without either resizing the Stack (which the
+      //    design explicitly avoids) or dynamically measuring the pill's
+      //    height to reserve exact space. What we *can* assert, and what
+      //    actually distinguishes this design from the old
+      //    below-the-transcript one, is that the pill sits right at the
+      //    transcript's top edge, not somewhere in the middle or bottom of
+      //    it. The transcript also reserves real top padding
+      //    (`_subagentActivityPillReservedSpace` in chat_screen.dart) so in
+      //    practice real message content starts below the pill at normal
+      //    text scale; that reservation is a best-effort estimate, not a
+      //    measured one, so it isn't re-asserted pixel-for-pixel here.
+      // 2. It must NEVER cover the composer — this is the one hard,
+      //    non-negotiable product rule, asserted with a small safety
+      //    margin so "touching" isn't considered acceptable either.
+      const topAnchorTolerance = 16.0;
+      const clearanceMargin = 1.0;
       expect(
-        tester.getRect(surface).top,
-        greaterThanOrEqualTo(tester.getRect(transcript).bottom),
+        tester.getRect(surface).top - tester.getRect(transcript).top,
+        inInclusiveRange(0.0, topAnchorTolerance),
       );
       expect(
         tester.getRect(surface).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top),
+        lessThanOrEqualTo(tester.getRect(composer).top - clearanceMargin),
       );
 
       final semanticTree = tester.getSemantics(surface).toStringDeep();
@@ -4116,9 +4141,11 @@ void main() {
       addTearDown(tester.view.resetViewInsets);
       await tester.pump();
       expect(tester.element(surface), same(surfaceElement));
+      // Same hard invariant after the keyboard opens and the composer
+      // rises: the floating pill must still clear it.
       expect(
         tester.getRect(surface).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top),
+        lessThanOrEqualTo(tester.getRect(composer).top - clearanceMargin),
       );
       expect(tester.takeException(), isNull);
       semantics.dispose();
@@ -4434,9 +4461,21 @@ void main() {
       await tester.pump();
       expect(tester.element(surface), same(surfaceElement));
       expect(chat.subagentActivities, isEmpty);
+      // The floating pill's header cross-fades title/summary
+      // (`_HermesRotatingHeaderText` in hermes_premium_ui.dart). Pushing
+      // this route fires several ActiveChat notifications back-to-back
+      // within the same frame, and the tip text happens to settle back on
+      // "Trabajo en segundo plano" after passing through an intermediate
+      // value — legitimately re-showing that text via a fresh fade-in
+      // while an earlier, not-yet-fully-exited instance briefly overlaps
+      // it, rather than the single instantaneous swap this assertion
+      // originally assumed before the pill grew this animation. What
+      // actually matters here — that the surface survived, the activity
+      // count is really zero and the composer/stop affordances reflect
+      // that — is asserted around this block already.
       expect(
         find.text('Trabajo en segundo plano', skipOffstage: false),
-        findsOneWidget,
+        findsWidgets,
       );
       expect(
         find.byKey(

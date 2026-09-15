@@ -167,6 +167,160 @@ class _HermesFloatingSurfaceFrame extends StatelessWidget {
   }
 }
 
+/// Floating confirmation dialog: the app's one confirm-dialog shell.
+///
+/// Reuses [showHermesFloatingSurface] for the actual chrome (opaque surface,
+/// radius 22, soft shadow) so every confirmation in the app shares the same
+/// shell instead of hand-rolling `AlertDialog`. No divider sits above the
+/// actions; the destructive action renders as a filled pill in
+/// [HermesThemeColors.error] rather than a boxed Material button.
+Future<bool> showHermesConfirmDialog({
+  required BuildContext context,
+  required String title,
+  required String message,
+  required String confirmLabel,
+  required String cancelLabel,
+  bool destructive = false,
+  bool useRootNavigator = false,
+}) async {
+  final result = await showHermesFloatingSurface<bool>(
+    context: context,
+    surfaceKey: const ValueKey('hermes-confirm-dialog'),
+    maxWidth: 400,
+    maxHeightFactor: 0.5,
+    useRootNavigator: useRootNavigator,
+    builder: (dialogCtx) => _HermesConfirmDialogBody(
+      title: title,
+      message: message,
+      confirmLabel: confirmLabel,
+      cancelLabel: cancelLabel,
+      destructive: destructive,
+    ),
+  );
+  return result == true;
+}
+
+class _HermesConfirmDialogBody extends StatelessWidget {
+  const _HermesConfirmDialogBody({
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    required this.cancelLabel,
+    required this.destructive,
+  });
+
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final String cancelLabel;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 22, 18, 14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            header: true,
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: colors.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 13.5,
+              height: 1.5,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _HermesDialogTextPill(
+                key: const ValueKey('hermes-confirm-dialog-cancel'),
+                label: cancelLabel,
+                foreground: colors.textPrimary,
+                onTap: () => Navigator.of(context).pop(false),
+              ),
+              const SizedBox(width: 4),
+              _HermesDialogTextPill(
+                key: const ValueKey('hermes-confirm-dialog-confirm'),
+                label: confirmLabel,
+                foreground: destructive
+                    ? _contrastOn(colors.error)
+                    : colors.onAccent,
+                background: destructive ? colors.error : colors.accent,
+                onTap: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Color _contrastOn(Color background) =>
+      ThemeData.estimateBrightnessForColor(background) == Brightness.dark
+      ? Colors.white
+      : Colors.black;
+}
+
+class _HermesDialogTextPill extends StatelessWidget {
+  const _HermesDialogTextPill({
+    required this.label,
+    required this.foreground,
+    required this.onTap,
+    this.background,
+    super.key,
+  });
+
+  final String label;
+  final Color foreground;
+  final Color? background;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: background ?? Colors.transparent,
+      shape: const StadiumBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
+          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(
+            horizontal: background == null ? 16 : 22,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: background == null
+                  ? FontWeight.w500
+                  : FontWeight.w600,
+              color: foreground,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Shared calm, accessible primitives for root screens and grouped settings.
 ///
 /// These widgets intentionally do not introduce a second theme system. They
@@ -882,6 +1036,7 @@ class HermesInlineActivity extends StatelessWidget {
     this.enabled = true,
     this.flexibleDetail = false,
     this.padding = const EdgeInsets.fromLTRB(12, 4, 12, 6),
+    this.floating = false,
     super.key,
   }) : assert(
          onExpansionChanged == null || detail != null,
@@ -909,6 +1064,14 @@ class HermesInlineActivity extends StatelessWidget {
   final bool flexibleDetail;
   final EdgeInsetsGeometry padding;
 
+  /// When true, renders as a self-contained floating pill (opaque surface,
+  /// rounded shell, soft shadow) instead of the flat inline block, and
+  /// cross-fades its text in place when [title]/[summary] change. Used to
+  /// host this row as an overlay anchored above other content instead of a
+  /// `Column` child, without altering the default flat presentation used
+  /// elsewhere.
+  final bool floating;
+
   @override
   Widget build(BuildContext context) {
     return _HermesEditorialBlock(
@@ -928,7 +1091,99 @@ class HermesInlineActivity extends StatelessWidget {
       enabled: enabled,
       flexibleDetail: flexibleDetail,
       padding: padding,
+      floating: floating,
       density: _HermesEditorialDensity.activity,
+    );
+  }
+}
+
+/// Cross-fades the header title/summary for the `floating` pill variant of
+/// [HermesInlineActivity] (e.g. the rotating "tip" text shown while a
+/// subagent works).
+///
+/// The naive approach — keying the switched child by `'$title|$summary'`
+/// alone — breaks when the rotation cycles back to a value that's still
+/// fading out from an earlier step: `AnimatedSwitcher`'s custom
+/// `layoutBuilder` here stacks `[...previousChildren, ?currentChild]`, and
+/// two entries sharing the same `ValueKey` crash with "Duplicate keys
+/// found" (surfaced in tests as an uncaught `FlutterError` that aborts the
+/// test mid-animation, leaking its `Ticker`/`AnimationController` into
+/// later tests in the same run). Tracking a monotonic `_revision` bumped
+/// only when the content actually changes keeps every switch's key unique
+/// regardless of repeats.
+class _HermesRotatingHeaderText extends StatefulWidget {
+  const _HermesRotatingHeaderText({
+    required this.title,
+    required this.summary,
+    required this.titleMaxLines,
+    required this.summaryMaxLines,
+    required this.titleStyle,
+    required this.summaryStyle,
+    required this.isDecision,
+    required this.reduceMotion,
+  });
+
+  final String title;
+  final String? summary;
+  final int? titleMaxLines;
+  final int? summaryMaxLines;
+  final TextStyle? titleStyle;
+  final TextStyle? summaryStyle;
+  final bool isDecision;
+  final bool reduceMotion;
+
+  @override
+  State<_HermesRotatingHeaderText> createState() =>
+      _HermesRotatingHeaderTextState();
+}
+
+/// One value the rotating header has shown, tracked so a repeat can be
+/// told apart from a genuinely new one — see [_HermesRotatingHeaderTextState].
+class _HermesRotatingHeaderTextState
+    extends State<_HermesRotatingHeaderText> {
+  int _revision = 0;
+
+  @override
+  void didUpdateWidget(covariant _HermesRotatingHeaderText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.title != widget.title ||
+        oldWidget.summary != widget.summary) {
+      _revision++;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: widget.reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        alignment: AlignmentDirectional.centerStart,
+        children: [...previousChildren, ?currentChild],
+      ),
+      child: _HermesEditorialHeaderText(
+        // Keyed by a monotonic revision (bumped only when content actually
+        // changes from the immediately preceding build) rather than by
+        // content alone: a rotating tip can legitimately repeat a value
+        // while an earlier occurrence of that same text is still fading
+        // out, and two Stack children can never share a key. This can
+        // still show the same text twice for a brief moment when a value
+        // reverts within a couple of rapid, same-frame rebuilds (see the
+        // "actividad nativa..." test in chat_screen_test.dart), which is
+        // an acceptable, narrow cosmetic tradeoff against ever crashing
+        // the tree.
+        key: ValueKey('$_revision:${widget.title}|${widget.summary}'),
+        title: widget.title,
+        summary: widget.summary,
+        titleMaxLines: widget.titleMaxLines,
+        summaryMaxLines: widget.summaryMaxLines,
+        titleStyle: widget.titleStyle,
+        summaryStyle: widget.summaryStyle,
+        isDecision: widget.isDecision,
+      ),
     );
   }
 }
@@ -954,6 +1209,7 @@ class _HermesEditorialBlock extends StatelessWidget {
     this.flexibleDetail = false,
     required this.padding,
     required this.density,
+    this.floating = false,
   });
 
   final String title;
@@ -973,6 +1229,7 @@ class _HermesEditorialBlock extends StatelessWidget {
   final _HermesEditorialDensity density;
   final int? titleMaxLines;
   final int? summaryMaxLines;
+  final bool floating;
 
   bool get _hasDisclosure =>
       detail != null && onExpansionChanged != null && disclosureLabel != null;
@@ -1022,34 +1279,26 @@ class _HermesEditorialBlock extends StatelessWidget {
           const SizedBox(width: 10),
         ],
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Semantics(
-                header: isDecision,
-                child: Text(
-                  title,
-                  maxLines: titleMaxLines,
-                  overflow: titleMaxLines == null
-                      ? null
-                      : TextOverflow.ellipsis,
-                  style: titleStyle,
+          child: !floating
+              ? _HermesEditorialHeaderText(
+                  title: title,
+                  summary: summary,
+                  titleMaxLines: titleMaxLines,
+                  summaryMaxLines: summaryMaxLines,
+                  titleStyle: titleStyle,
+                  summaryStyle: summaryStyle,
+                  isDecision: isDecision,
+                )
+              : _HermesRotatingHeaderText(
+                  title: title,
+                  summary: summary,
+                  titleMaxLines: titleMaxLines,
+                  summaryMaxLines: summaryMaxLines,
+                  titleStyle: titleStyle,
+                  summaryStyle: summaryStyle,
+                  isDecision: isDecision,
+                  reduceMotion: reduceMotion,
                 ),
-              ),
-              if (summary != null && summary!.trim().isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  summary!,
-                  maxLines: summaryMaxLines,
-                  overflow: summaryMaxLines == null
-                      ? null
-                      : TextOverflow.ellipsis,
-                  style: summaryStyle,
-                ),
-              ],
-            ],
-          ),
         ),
         if (status != null && !stackStatus && !overlayStatus) ...[
           const SizedBox(width: 10),
@@ -1088,7 +1337,7 @@ class _HermesEditorialBlock extends StatelessWidget {
       );
     }
 
-    return Semantics(
+    final content = Semantics(
       container: true,
       explicitChildNodes: true,
       enabled: enabled,
@@ -1220,6 +1469,82 @@ class _HermesEditorialBlock extends StatelessWidget {
           ],
         ),
       ),
+    );
+
+    if (!floating) return content;
+
+    // Floating chrome: an opaque, shadowed shell so this row can be
+    // anchored as an overlay (e.g. above a chat composer) instead of
+    // sitting flat inside a Column. Radius 22 mirrors the app's other
+    // floating surfaces and still reads as a pill at a compact height.
+    // The shadow lives on an outer, unclipped box so the inner Material's
+    // antialiased clip never crops it.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.32),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Material(
+        color: colors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        clipBehavior: Clip.antiAlias,
+        child: content,
+      ),
+    );
+  }
+}
+
+class _HermesEditorialHeaderText extends StatelessWidget {
+  const _HermesEditorialHeaderText({
+    required this.title,
+    required this.summary,
+    required this.titleMaxLines,
+    required this.summaryMaxLines,
+    required this.titleStyle,
+    required this.summaryStyle,
+    required this.isDecision,
+    super.key,
+  });
+
+  final String title;
+  final String? summary;
+  final int? titleMaxLines;
+  final int? summaryMaxLines;
+  final TextStyle? titleStyle;
+  final TextStyle? summaryStyle;
+  final bool isDecision;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Semantics(
+          header: isDecision,
+          child: Text(
+            title,
+            maxLines: titleMaxLines,
+            overflow: titleMaxLines == null ? null : TextOverflow.ellipsis,
+            style: titleStyle,
+          ),
+        ),
+        if (summary != null && summary!.trim().isNotEmpty) ...[
+          const SizedBox(height: 3),
+          Text(
+            summary!,
+            maxLines: summaryMaxLines,
+            overflow: summaryMaxLines == null ? null : TextOverflow.ellipsis,
+            style: summaryStyle,
+          ),
+        ],
+      ],
     );
   }
 }
