@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../services/server_setup_generator.dart';
+import '../theme/app_theme.dart';
 
 /// Dos comandos ejecutables por separado. Evita que una persona en Windows
 /// copie por accidente el `curl | sh`, o que alguien en Unix copie PowerShell.
@@ -49,14 +50,15 @@ class _PlatformCommand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    // Bug real: usaba Theme.of(context).colorScheme en vez de `hermes`.
+    final colors = Theme.of(context).hermes;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        color: colors.surfaceVariant.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: scheme.outlineVariant),
+        border: Border.all(color: colors.divider),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

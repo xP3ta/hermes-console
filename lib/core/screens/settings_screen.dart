@@ -1169,6 +1169,10 @@ class _HistoryCleanupActionRow extends StatelessWidget {
   final String? subtitle;
   final bool busy;
   final VoidCallback? onTap;
+  // true (por defecto) conserva el tinte error de las acciones de borrado de
+  // historial; false lo usa como fila de mantenimiento neutra (p. ej.
+  // limpiar datos huérfanos), sin sonar tan alarmante como "eliminar".
+  final bool destructive;
 
   const _HistoryCleanupActionRow({
     required this.actionKey,
@@ -1177,12 +1181,15 @@ class _HistoryCleanupActionRow extends StatelessWidget {
     required this.busy,
     required this.onTap,
     this.subtitle,
+    this.destructive = true,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final foreground = onTap == null ? colors.textDisabled : colors.error;
+    final foreground = onTap == null
+        ? colors.textDisabled
+        : (destructive ? colors.error : colors.textPrimary);
     return Material(
       type: MaterialType.transparency,
       child: InkWell(
@@ -1278,26 +1285,17 @@ class _OrphanDataTileState extends State<_OrphanDataTile> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
+    // Fila compacta coherente con el resto de la pantalla en vez de un
+    // ListTile genérico: reutiliza _HistoryCleanupActionRow.
     return HermesPanel(
-      child: ListTile(
-        leading: Icon(
-          Icons.cleaning_services_outlined,
-          color: colors.textSecondary,
-        ),
-        title: Text(Strings.of(context).secOrphanTitle),
-        subtitle: Text(
-          Strings.of(context).secOrphanSubtitle,
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
-        ),
-        trailing: _cleaning
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : null,
+      child: _HistoryCleanupActionRow(
+        actionKey: const ValueKey('orphan-data-clean'),
+        icon: Icons.cleaning_services_outlined,
+        title: Strings.of(context).secOrphanTitle,
+        subtitle: Strings.of(context).secOrphanSubtitle,
+        busy: _cleaning,
         onTap: _cleaning ? null : _clean,
+        destructive: false,
       ),
     );
   }
@@ -1875,37 +1873,67 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    // Filas compactas coherentes con el resto de la pantalla en vez de
+    // ListTile genérico.
     if (_loading) {
       return HermesPanel(
-        child: ListTile(
-          leading: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          title: Text(
-            Strings.of(context).setCheckingStatus,
-            style: TextStyle(color: colors.textSecondary, fontSize: 13),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 14),
+              Text(
+                Strings.of(context).setCheckingStatus,
+                style: TextStyle(color: colors.textSecondary, fontSize: 13),
+              ),
+            ],
           ),
         ),
       );
     }
     if (_error != null) {
       return HermesPanel(
-        child: ListTile(
-          leading: Icon(Icons.cloud_off_outlined, color: colors.error),
-          title: Text(
-            Strings.of(context).setStatusUnavailable,
-            style: TextStyle(color: colors.textPrimary),
-          ),
-          subtitle: Text(
-            _error!,
-            style: TextStyle(fontSize: 12, color: colors.textSecondary),
-          ),
-          trailing: IconButton(
-            icon: Icon(Icons.refresh, color: colors.textSecondary),
-            tooltip: Strings.of(context).commonRetry,
-            onPressed: () => _refresh(forceUpdate: true),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.cloud_off_outlined, size: 21, color: colors.error),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      Strings.of(context).setStatusUnavailable,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _error!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.refresh, color: colors.textSecondary),
+                tooltip: Strings.of(context).commonRetry,
+                onPressed: () => _refresh(forceUpdate: true),
+              ),
+            ],
           ),
         ),
       );
@@ -2249,19 +2277,17 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   }
 
   Widget _restartCard(HermesThemeColors colors) {
+    // Fila compacta coherente con el resto de la pantalla en vez de un
+    // ListTile genérico: reutiliza _HistoryCleanupActionRow.
     return HermesPanel(
-      child: ListTile(
-        leading: Icon(Icons.restart_alt, color: colors.textSecondary),
-        title: Text(
-          Strings.of(context).setRestartGateway,
-          style: TextStyle(color: colors.textPrimary),
-        ),
-        subtitle: Text(
-          Strings.of(context).setReconnectsPlatforms,
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
-        ),
-        trailing: Icon(Icons.chevron_right, color: colors.textDisabled),
+      child: _HistoryCleanupActionRow(
+        actionKey: const ValueKey('maintenance-restart-gateway'),
+        icon: Icons.restart_alt,
+        title: Strings.of(context).setRestartGateway,
+        subtitle: Strings.of(context).setReconnectsPlatforms,
+        busy: false,
         onTap: _busy ? null : _restartGateway,
+        destructive: false,
       ),
     );
   }
@@ -2293,25 +2319,22 @@ class _AboutCardState extends State<_AboutCard> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
+    // Fila compacta coherente con el resto de la pantalla en vez de un
+    // ListTile genérico: reutiliza _HistoryCleanupActionRow.
     return HermesPanel(
-      child: ListTile(
-        leading: Icon(Icons.info_outline, color: colors.textSecondary),
-        title: const Text(
-          'Hermes Console',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          Strings.of(
-            context,
-          ).setClientVersion(_version.isNotEmpty ? _version : '…'),
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
-        ),
-        trailing: Icon(Icons.chevron_right, color: colors.textDisabled),
+      child: _HistoryCleanupActionRow(
+        actionKey: const ValueKey('about-hermes-console'),
+        icon: Icons.info_outline,
+        title: 'Hermes Console',
+        subtitle: Strings.of(
+          context,
+        ).setClientVersion(_version.isNotEmpty ? _version : '…'),
+        busy: false,
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const AboutScreen()),
         ),
+        destructive: false,
       ),
     );
   }

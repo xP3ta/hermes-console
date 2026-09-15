@@ -359,9 +359,12 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
       ?_formatDuration(_elapsedSeconds(activity.details, widget.now)),
     ];
 
+    // Sin borde duro: hairline superior consistente con el resto de la app,
+    // tipografía coherente (no monoespaciado genérico salvo la salida en
+    // vivo, que recibe un tratamiento de bloque de código sutil).
     return Container(
       margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 10),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: colors.divider)),
       ),
@@ -373,11 +376,20 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
             strings.subagentActivityItem(index),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: colors.textPrimary,
+            ),
           ),
           if (goal != null && goal.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(goal, maxLines: 3, overflow: TextOverflow.ellipsis),
+            Text(
+              goal,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: colors.textPrimary),
+            ),
           ],
           if (facts.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -385,45 +397,76 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
               facts.join(' · '),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+              style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
             ),
           ],
           if (tail != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             if (!tail.available)
               Text(
                 strings.subagentTailUnavailable,
-                style: TextStyle(color: colors.textSecondary),
+                style: TextStyle(color: colors.textSecondary, fontSize: 12),
               )
             else ...[
               if (tail.content.trim().isNotEmpty)
-                SelectableText(
-                  tail.content,
-                  maxLines: 6,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                // Bloque de código sutil (surfaceVariant + radio) en vez de
+                // SelectableText monoespaciado a secas: la salida en vivo del
+                // subagente es contenido de log real, así que conserva el
+                // tratamiento mono pero contenido, no crudo.
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: SelectableText(
+                    tail.content,
+                    maxLines: 6,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      height: 1.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
                 ),
               if (tail.truncated)
-                Text(
-                  strings.subagentTailTruncated,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    strings.subagentTailTruncated,
+                    style: TextStyle(color: colors.textDisabled, fontSize: 11),
+                  ),
                 ),
             ],
           ],
           if (steerAllowed) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+            // Mismo estilo de campo que el composer/inputs del resto de la
+            // app (InputDecorationTheme global: relleno surfaceVariant,
+            // borde hairline, radio consistente).
             TextField(
               key: ValueKey('subagent-steer-input-${activity.key.stableId}'),
               controller: _steerController,
               minLines: 1,
               maxLines: 3,
               maxLength: 512,
+              style: TextStyle(fontSize: 14, color: colors.textPrimary),
               decoration: InputDecoration(
                 labelText: strings.subagentSteerLabel,
                 counterText: '',
+                isDense: true,
               ),
             ),
             if (steerNotice != null)
-              Text(steerNotice, style: TextStyle(color: colors.textSecondary)),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  steerNotice,
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                ),
+              ),
           ],
           if (canOpen || canStop || steerAllowed)
             Align(
@@ -684,44 +727,63 @@ class _SubagentRow extends StatelessWidget {
       button: true,
       selected: selected,
       label: '$title, $label',
-      child: InkWell(
-        key: ValueKey('subagent-row-${activity.key.stableId}'),
-        onTap: onSelect,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
+      child: Material(
+        // Tinte suave de superficie en la fila seleccionada, sin borde:
+        // mismo lenguaje visual que el resto de listas rediseñadas.
+        color: selected
+            ? colors.surfaceVariant.withValues(alpha: 0.55)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          key: ValueKey('subagent-row-${activity.key.stableId}'),
+          onTap: onSelect,
+          borderRadius: BorderRadius.circular(10),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        [label, ?duration].join(' · '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: color, fontSize: 12),
-                      ),
-                    ],
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          [label, ?duration].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: color, fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Icon(
-                  selected ? Icons.chevron_right : Icons.chevron_right_outlined,
-                  color: colors.textSecondary,
-                ),
-              ],
+                  Icon(
+                    selected
+                        ? Icons.chevron_right
+                        : Icons.chevron_right_outlined,
+                    color: colors.textSecondary,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

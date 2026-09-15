@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
 import '../services/attachment_uploader.dart';
+import '../theme/app_theme.dart';
 import 'attachment_card.dart';
 import 'hermes_app_bar.dart';
 
@@ -232,21 +233,26 @@ class _AttachmentMetadataHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    // Bug real: usaba Theme.of(context).colorScheme (Material 3 por defecto)
+    // en vez del theme extension `hermes` de la app; de ahí el contraste roto.
+    final colors = Theme.of(context).hermes;
     final details = [
       if (mimeType.isNotEmpty) mimeType,
       if (sizeLabel.isNotEmpty) sizeLabel,
       'SHA-256 ${digest.substring(0, 12)}…',
     ].join(' · ');
-    return Container(
+    // Metadatos en una línea, sin caja, coherente con el resto de superficies
+    // rediseñadas.
+    return SizedBox(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-      child: Text(
-        details,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.bodySmall,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: Text(
+          details,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+        ),
       ),
     );
   }
@@ -259,14 +265,28 @@ class _TextBytesPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
     final text = utf8.decode(bytes, allowMalformed: true);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: SelectableText(
-          text,
-          style: const TextStyle(fontFamily: 'monospace', height: 1.4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: SelectableText(
+            text,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              height: 1.5,
+              fontSize: 12.5,
+              color: colors.textPrimary,
+            ),
+          ),
         ),
       ),
     );
@@ -405,28 +425,48 @@ class _BinaryBytesPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
+    // Bug real: usaba Theme.of(context).colorScheme/.textTheme (Material 3
+    // por defecto) en vez del theme extension `hermes`.
+    final colors = Theme.of(context).hermes;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (warning != null) ...[
-            Text(
-              warning!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
+            Text(warning!, style: TextStyle(color: colors.error)),
             const SizedBox(height: 12),
           ],
           Text(
             strings.chaAttachmentPreviewBinaryTitle,
-            style: Theme.of(context).textTheme.titleMedium,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: colors.textPrimary,
+            ),
           ),
           const SizedBox(height: 6),
-          Text(strings.chaAttachmentPreviewBinaryBody),
+          Text(
+            strings.chaAttachmentPreviewBinaryBody,
+            style: TextStyle(color: colors.textSecondary),
+          ),
           const SizedBox(height: 16),
-          SelectableText(
-            _hexExcerpt(bytes),
-            style: const TextStyle(fontFamily: 'monospace', height: 1.45),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: SelectableText(
+              _hexExcerpt(bytes),
+              style: TextStyle(
+                fontFamily: 'monospace',
+                height: 1.45,
+                fontSize: 12,
+                color: colors.textSecondary,
+              ),
+            ),
           ),
         ],
       ),

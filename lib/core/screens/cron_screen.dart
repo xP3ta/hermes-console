@@ -23,7 +23,6 @@ import '../services/cron_repository.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
-import '../widgets/accent_card.dart';
 import '../widgets/feature_dependency_notice.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_pill.dart';
@@ -320,23 +319,39 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     final s = Strings.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(s.crnDeleteTitle),
-        content: Text(s.crnDeleteConfirm(job.title)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(s.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(dialogContext).hermes.error,
+      builder: (dialogContext) {
+        // Reutiliza la carcasa flotante global (surface + radio 22 en
+        // DialogThemeData); solo se afina el contenido y el pill destructivo.
+        final dialogColors = Theme.of(dialogContext).hermes;
+        return AlertDialog(
+          title: Text(s.crnDeleteTitle),
+          content: Text(
+            s.crnDeleteConfirm(job.title),
+            style: TextStyle(
+              fontSize: 13.5,
+              height: 1.5,
+              color: dialogColors.textSecondary,
             ),
-            child: Text(s.commonDelete),
           ),
-        ],
-      ),
+          actionsPadding: const EdgeInsets.fromLTRB(0, 10, 4, 4),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(s.commonCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: dialogColors.error,
+                foregroundColor: dialogColors.background,
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+              ),
+              child: Text(s.commonDelete),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
 
@@ -383,8 +398,16 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   Future<void> _showEditor({CronJob? job}) async {
     if (_mutationsDisabled) return showReadOnlyNotice(context);
-    final result = await showDialog<_CronEditorResult>(
+    // La app prohíbe showModalBottomSheet/BottomSheet en UI de cara al
+    // usuario (test/no_bottom_sheet_contract_test.dart): "hacen que los
+    // controles se sientan desconectados del elemento que los abrió". La
+    // superficie flotante compartida (showHermesFloatingSurface, la misma
+    // que usa el detalle de tarea) es el mecanismo sancionado.
+    final result = await showHermesFloatingSurface<_CronEditorResult>(
       context: context,
+      surfaceKey: const ValueKey('cron-editor-surface'),
+      maxWidth: 560,
+      maxHeightFactor: 0.9,
       barrierDismissible: false,
       builder: (_) => _CronEditorDialog(repository: _repository, job: job),
     );
@@ -624,6 +647,9 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
           Expanded(child: _buildBody()),
         ],
       ),
+      // Se mantiene: el mockup "Superficies" (CronList) muestra el FAB
+      // circular como punto de creación de esta pantalla; no se depende de
+      // feat/dock-v2 (rama en curso, no mergeada) para decidir su retiro.
       floatingActionButton: _mutationsDisabled
           ? null
           : FloatingActionButton(
@@ -774,18 +800,16 @@ class _CronJobTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final presentation = _statePresentation(job.state, context);
-    return AccentCard(
-      margin: const EdgeInsets.only(bottom: 8),
-      accent: job.state == CronJobState.error
-          ? colors.error.withValues(alpha: 0.65)
-          : null,
-      background: colors.surfaceVariant.withValues(alpha: 0.38),
-      borderRadius: const BorderRadius.all(Radius.circular(14)),
+    // Fila plana con hairline inferior en vez de tarjeta con franja lateral
+    // de color: coherente con el resto de listas rediseñadas de la app.
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: colors.divider)),
+      ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+          padding: const EdgeInsets.fromLTRB(2, 12, 0, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1043,30 +1067,24 @@ class _CronJobDetailState extends State<_CronJobDetail> {
           ],
         ),
         if (_job.lastError != null) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: colors.error.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.warning_amber_rounded,
-                  size: 18,
-                  color: colors.error,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _job.lastError!,
-                    style: TextStyle(fontSize: 12, color: colors.error),
+          const SizedBox(height: 14),
+          // Aviso en línea, sin caja: icono + texto en color error.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _job.lastError!,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.45,
+                    color: colors.error,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
         if (_job.preview.isNotEmpty) ...[
@@ -1078,16 +1096,9 @@ class _CronJobDetailState extends State<_CronJobDetail> {
             ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
           ),
           const SizedBox(height: 7),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: SelectableText(
-              _job.preview,
-              style: const TextStyle(fontSize: 13, height: 1.4),
-            ),
+          SelectableText(
+            _job.preview,
+            style: const TextStyle(fontSize: 13, height: 1.5),
           ),
         ],
         if (!widget.readOnly) ...[
@@ -1169,17 +1180,23 @@ class _MetadataGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          for (var index = 0; index < rows.length; index++) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 7),
+    // Lista de metadatos con hairlines, sin contenedor: coherente con el
+    // resto de la pantalla rediseñada (sin cajas).
+    return Column(
+      children: [
+        for (var index = 0; index < rows.length; index++)
+          Container(
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: index < rows.length - 1
+                      ? colors.divider
+                      : Colors.transparent,
+                ),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1197,17 +1214,14 @@ class _MetadataGrid extends StatelessWidget {
                   Expanded(
                     child: Text(
                       rows[index].$2.isEmpty ? '—' : rows[index].$2,
-                      style: const TextStyle(fontSize: 12),
+                      style: const TextStyle(fontSize: 12.5),
                     ),
                   ),
                 ],
               ),
             ),
-            if (index < rows.length - 1)
-              Divider(height: 1, color: colors.divider),
-          ],
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
@@ -1457,147 +1471,155 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 560,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 12, 10),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
+    // showHermesFloatingSurface (no showModalBottomSheet: ver
+    // test/no_bottom_sheet_contract_test.dart) ya aporta la carcasa —
+    // Material con el shape/fondo del dialogTheme y el límite de tamaño—,
+    // así que este build solo entrega el contenido: cabecera, cuerpo con
+    // scroll y acciones flotantes sobre degradado, sin divisores duros.
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 12, 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _editing ? s.crnEditJob : s.crnAddJob,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _editing
+                            ? s.crnEditDescription
+                            : s.crnCreateDescription,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+                ),
+              ],
+            ),
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
+              child: _loadingResources
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 48),
+                      child: Center(child: TuiLoader()),
+                    )
+                  : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _editing ? s.crnEditJob : s.crnAddJob,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _editing
-                              ? s.crnEditDescription
-                              : s.crnCreateDescription,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            color: colors.textSecondary,
+                        if (!_editing &&
+                            (_resources?.blueprints.isNotEmpty ?? false)) ...[
+                          _fieldLabel(s.crnStartFrom, colors),
+                          _dropdown<String>(
+                            value: _blueprint?.key ?? _customTemplate,
+                            items: [
+                              DropdownMenuItem(
+                                value: _customTemplate,
+                                child: Text(s.crnCustomSetup),
+                              ),
+                              for (final item in _resources!.blueprints)
+                                DropdownMenuItem(
+                                  value: item.key,
+                                  child: Text(
+                                    item.title,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: _selectTemplate,
                           ),
-                        ),
+                          if (_blueprint?.description.isNotEmpty == true) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              _blueprint!.description,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                        ],
+                        if (_blueprint != null)
+                          ..._buildBlueprintFields(colors)
+                        else
+                          ..._buildManualFields(colors),
+                        if (_error != null) ...[
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: colors.error.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              _error!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.error,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                    tooltip: MaterialLocalizations.of(
-                      context,
-                    ).closeButtonTooltip,
-                  ),
-                ],
+            ),
+          ),
+          // Acciones flotantes sobre degradado, sin divisor duro.
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [colors.surface.withValues(alpha: 0), colors.surface],
+                stops: const [0, 0.5],
               ),
             ),
-            Divider(height: 1, color: colors.divider),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: _loadingResources
-                    ? const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 48),
-                        child: Center(child: TuiLoader()),
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!_editing &&
-                              (_resources?.blueprints.isNotEmpty ?? false)) ...[
-                            _fieldLabel(s.crnStartFrom, colors),
-                            _dropdown<String>(
-                              value: _blueprint?.key ?? _customTemplate,
-                              items: [
-                                DropdownMenuItem(
-                                  value: _customTemplate,
-                                  child: Text(s.crnCustomSetup),
-                                ),
-                                for (final item in _resources!.blueprints)
-                                  DropdownMenuItem(
-                                    value: item.key,
-                                    child: Text(
-                                      item.title,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                              ],
-                              onChanged: _selectTemplate,
-                            ),
-                            if (_blueprint?.description.isNotEmpty == true) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                _blueprint!.description,
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  color: colors.textSecondary,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 16),
-                          ],
-                          if (_blueprint != null)
-                            ..._buildBlueprintFields(colors)
-                          else
-                            ..._buildManualFields(colors),
-                          if (_error != null) ...[
-                            const SizedBox(height: 14),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: colors.error.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                _error!,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: colors.error,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-              ),
-            ),
-            Divider(height: 1, color: colors.divider),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text(s.commonCancel),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(s.commonCancel),
+                ),
+                const SizedBox(width: 6),
+                FilledButton(
+                  onPressed: _loadingResources ? null : _submit,
+                  style: FilledButton.styleFrom(
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: _loadingResources ? null : _submit,
-                    child: Text(
-                      _blueprint != null
-                          ? s.crnBlueprintCreate
-                          : (_editing ? s.commonSave : s.crnAdd),
-                    ),
+                  child: Text(
+                    _blueprint != null
+                        ? s.crnBlueprintCreate
+                        : (_editing ? s.commonSave : s.crnAdd),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
