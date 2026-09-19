@@ -250,7 +250,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('archivos · SFTP'),
+            Text(Strings.of(context).sftpFilesTitle),
             Text(
               widget.connection.label,
               style: TextStyle(fontSize: 10.5, color: colors.textSecondary),

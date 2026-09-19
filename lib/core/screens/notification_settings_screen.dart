@@ -423,6 +423,7 @@ class _NotificationSettingsScreenState
           await BackgroundListener.stopAutomation();
           await notif.setNotifyCronResults(false);
           await notif.setNotifyKanbanResults(false);
+          await notif.setNotifyLocalAgentResults(false);
           if (mounted) {
             setState(() {
               _bgRunning = false;
@@ -473,6 +474,18 @@ class _NotificationSettingsScreenState
         subtitle: s.notifKanbanResultsSub,
         value: notif.notifyKanbanResults,
         onChanged: (v) => _toggleKanbanResults(notif, v),
+      ),
+      _eventSwitch(
+        colors,
+        enabled: on,
+        icon: Icons.flag_outlined,
+        title: s.notifLocalAgentResultsTitle,
+        subtitle: s.notifLocalAgentResultsSub,
+        value: notif.notifyLocalAgentResults,
+        onChanged: (v) async {
+          await notif.setNotifyLocalAgentResults(v);
+          if (mounted) setState(() {});
+        },
       ),
       _eventSwitch(
         colors,

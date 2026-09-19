@@ -15,6 +15,7 @@ import '../services/connection_manager.dart';
 import '../utils/transport_privacy.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/status_pill.dart';
 import 'instance_edit_screen.dart';
@@ -306,6 +307,31 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
     }
   }
 
+  // Esta pantalla lista TODAS las instancias y no tiene una "conexión
+  // actual" propia como el resto de pantallas del perfil General — usamos la
+  // instancia activa (la que HomeScreen usaría para reconectar) como ancla
+  // del dock; sin ninguna activa (lista vacía o recién arrancada) el dock
+  // simplemente no se pinta, igual que en Voz cuando falta connManager.
+  SavedConnection? get _activeConnectionObj {
+    final id = _activeId;
+    if (id == null) return null;
+    for (final c in _connections) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  Widget _wrapWithDock(Widget body) {
+    final conn = _activeConnectionObj;
+    if (conn == null) return body;
+    return GeneralDockShell(
+      connection: conn,
+      connManager: widget.connManager,
+      onCreate: _showAddDialog,
+      body: body,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -321,7 +347,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
           ),
         ],
       ),
-      body: _buildBody(colors),
+      body: _wrapWithDock(_buildBody(colors)),
     );
   }
 
@@ -406,6 +432,24 @@ class _InstanceCard extends StatelessWidget {
         InstanceStatus.checking => c.accent,
       };
 
+  // Antes cada hecho (activa / estado / solo lectura) era un fragmento de
+  // texto suelto encadenado con "·" a mano; ahora es una sola etiqueta con
+  // todo lo que aplica, coloreada por el hecho más importante.
+  String _tagLabel(BuildContext context) {
+    final parts = <String>[
+      if (isActive) Strings.of(context).gwActiveBadge,
+      status.labelFor(context),
+      if (connection.readOnly) Strings.of(context).gwReadOnly,
+    ];
+    return parts.join(' · ');
+  }
+
+  Color _tagColor(HermesThemeColors colors) {
+    if (status == InstanceStatus.error) return colors.error;
+    if (connection.readOnly) return colors.warning;
+    return _statusColor(colors, status);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -414,10 +458,11 @@ class _InstanceCard extends StatelessWidget {
 
     return AccentCard(
       margin: const EdgeInsets.only(bottom: 7),
-      accent: isActive ? colors.accent.withValues(alpha: 0.85) : null,
-      accentWidth: 2.5,
-      // Minimalista: panel suave sin borde (la franja de acento ya lo define).
-      background: colors.surfaceVariant.withValues(alpha: 0.4),
+      // La franja de acento en el lateral se veía como un tachón de color
+      // pegado al borde — quitada. La etiqueta de estado ya dice "Activa"
+      // en texto; un fondo un poco más marcado basta para distinguir la
+      // tarjeta activa sin un borde duro de color.
+      background: colors.surfaceVariant.withValues(alpha: isActive ? 0.7 : 0.4),
       borderRadius: const BorderRadius.all(Radius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -464,54 +509,15 @@ class _InstanceCard extends StatelessWidget {
                             ),
                           ),
                         ],
-                        const SizedBox(width: 9),
-                        // Estado plano: punto de color + texto legible.
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _statusColor(colors, status),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          status.labelFor(context),
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                            color: colors.textSecondary,
-                          ),
-                        ),
-                        if (isActive) ...[
-                          Text(
-                            '  ·  ',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              color: colors.textDisabled,
-                            ),
-                          ),
-                          Text(
-                            Strings.of(context).gwActiveBadge,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                              color: colors.accent,
-                            ),
-                          ),
-                        ],
-                        if (connection.readOnly) ...[
-                          const SizedBox(width: 8),
-                          Text(
-                            Strings.of(context).gwReadOnly,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w500,
-                              color: colors.warning,
-                            ),
-                          ),
-                        ],
                       ],
+                    ),
+                    const SizedBox(height: 5),
+                    // Una sola etiqueta con lo que importa (antes: punto +
+                    // estado + " · Activa" + " · Solo lectura" como texto
+                    // suelto encadenado, difícil de leer de un vistazo).
+                    _StatusTag(
+                      label: _tagLabel(context),
+                      color: _tagColor(colors),
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -557,10 +563,22 @@ class _InstanceCard extends StatelessWidget {
                   ),
                   padding: EdgeInsets.zero,
                 ),
+              // Editar ya no vive solo dentro del "⋮": era la acción más
+              // usada y estaba escondida detrás de un paso extra.
+              IconButton(
+                icon: Icon(
+                  Icons.edit_outlined,
+                  size: 18,
+                  color: colors.textPrimary,
+                ),
+                onPressed: onEdit,
+                tooltip: Strings.of(context).commonEdit,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: EdgeInsets.zero,
+              ),
               _CardMenu(
                 onSelect: onSelect,
                 onToggleDefault: onToggleDefault,
-                onEdit: onEdit,
                 onTest: onRecheck,
                 onDelete: onDelete,
                 isActive: isActive,
@@ -574,10 +592,53 @@ class _InstanceCard extends StatelessWidget {
   }
 }
 
+/// One compact pill for everything worth flagging about an instance
+/// (active / status / read-only), instead of a run of loose text fragments
+/// chained with "·" that was hard to scan at a glance.
+class _StatusTag extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _StatusTag({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CardMenu extends StatelessWidget {
   final VoidCallback onSelect;
   final VoidCallback onToggleDefault;
-  final VoidCallback onEdit;
   final VoidCallback onTest;
   final VoidCallback onDelete;
   final bool isActive;
@@ -586,7 +647,6 @@ class _CardMenu extends StatelessWidget {
   const _CardMenu({
     required this.onSelect,
     required this.onToggleDefault,
-    required this.onEdit,
     required this.onTest,
     required this.onDelete,
     required this.isActive,
@@ -605,8 +665,6 @@ class _CardMenu extends StatelessWidget {
             onSelect();
           case _MenuAction.toggleDefault:
             onToggleDefault();
-          case _MenuAction.edit:
-            onEdit();
           case _MenuAction.test:
             onTest();
           case _MenuAction.delete:
@@ -648,16 +706,6 @@ class _CardMenu extends StatelessWidget {
           ),
         ),
         PopupMenuItem(
-          value: _MenuAction.edit,
-          child: Row(
-            children: [
-              Icon(Icons.edit_outlined, size: 18, color: colors.textSecondary),
-              const SizedBox(width: 10),
-              Text(Strings.of(context).commonEdit),
-            ],
-          ),
-        ),
-        PopupMenuItem(
           value: _MenuAction.test,
           child: Row(
             children: [
@@ -685,7 +733,7 @@ class _CardMenu extends StatelessWidget {
   }
 }
 
-enum _MenuAction { select, toggleDefault, edit, test, delete }
+enum _MenuAction { select, toggleDefault, test, delete }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 

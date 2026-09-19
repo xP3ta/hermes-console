@@ -6,6 +6,15 @@ import 'package:video_player/video_player.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import 'attachment_card.dart' show saveMediaToGallery, shareMediaFile;
+
+/// `mm:ss` for a playback position/duration. Local formatting only — does
+/// not touch how the video is decoded or played.
+String _formatPlaybackTime(Duration d) {
+  final minutes = d.inMinutes.remainder(60).toString();
+  final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
+}
 
 /// Inline, non-autoplaying player for generated videos cached in app-private
 /// storage. Playback is paused whenever the app leaves the foreground.
@@ -194,6 +203,88 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
                         ),
                       ),
                     ),
+                    // Degradado superior + fila de iconos (descargar,
+                    // compartir, pantalla completa) — misma anatomía que ya
+                    // existe para las imágenes generadas.
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: 0,
+                      child: IgnorePointer(
+                        child: Container(
+                          height: 52,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black.withValues(alpha: 0.55),
+                                Colors.black.withValues(alpha: 0),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _VideoOverlayIconButton(
+                            icon: Icons.download_rounded,
+                            tooltip: strings.imgSaveToGallery,
+                            onPressed: () => saveMediaToGallery(
+                              context,
+                              widget.file,
+                              isVideo: true,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          _VideoOverlayIconButton(
+                            icon: Icons.share_outlined,
+                            tooltip: strings.commonShare,
+                            onPressed: () => shareMediaFile(widget.file),
+                          ),
+                          const SizedBox(width: 4),
+                          _VideoOverlayIconButton(
+                            icon: Icons.fullscreen_rounded,
+                            tooltip: strings.genVideoFullscreen,
+                            onPressed: () => showVideoViewer(
+                              context,
+                              widget.file,
+                              controller,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Badge de duración, igual que en el visor de imágenes.
+                    Positioned(
+                      left: 8,
+                      bottom: 8,
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            _formatPlaybackTime(controller.value.duration),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -261,6 +352,228 @@ class _VideoFrame extends StatelessWidget {
         border: Border.all(color: colors.divider),
       ),
       child: child,
+    );
+  }
+}
+
+/// Small round icon button used in the card's top overlay row (download,
+/// share, fullscreen) — same 28px-ish scrim-circle affordance the image
+/// viewer uses, just sized for an inline card instead of a full toolbar.
+class _VideoOverlayIconButton extends StatelessWidget {
+  const _VideoOverlayIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.4),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: Icon(icon, size: 15, color: Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Fullscreen video viewer: same anatomy as [showImageViewer] (black
+/// background, white download/share/spacer/close row on top) plus a
+/// floating playback bar (play/pause, accent scrubber, times) over black,
+/// with no extra container.
+///
+/// Reuses the [controller] the card already created and initialized —
+/// playback/decoding is entirely owned by [GeneratedVideoCard]; this route
+/// only reads its [ValueListenableBuilder] state and calls the same
+/// play/pause/seekTo controls the card's own toggle already uses.
+Future<void> showVideoViewer(
+  BuildContext context,
+  File file,
+  VideoPlayerController controller,
+) {
+  return Navigator.of(context).push(
+    PageRouteBuilder<void>(
+      opaque: false,
+      barrierColor: Colors.black,
+      barrierDismissible: true,
+      transitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (ctx, anim, _) => FadeTransition(
+        opacity: anim,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () {
+                      if (controller.value.isPlaying) {
+                        controller.pause();
+                      } else {
+                        controller.play();
+                      }
+                    },
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: controller.value.aspectRatio,
+                        child: VideoPlayer(controller),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  left: 8,
+                  child: Row(
+                    children: [
+                      Builder(
+                        builder: (innerCtx) => IconButton(
+                          icon: const Icon(
+                            Icons.download_rounded,
+                            color: Colors.white,
+                          ),
+                          tooltip: Strings.of(innerCtx).imgSaveToGallery,
+                          onPressed: () =>
+                              saveMediaToGallery(innerCtx, file, isVideo: true),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.share_outlined,
+                          color: Colors.white,
+                        ),
+                        tooltip: Strings.of(ctx).commonShare,
+                        onPressed: () => shareMediaFile(file),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        tooltip: Strings.of(ctx).commonClose,
+                        onPressed: () => Navigator.of(ctx).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: 20,
+                  right: 20,
+                  bottom: 20,
+                  child: _VideoViewerPlaybackBar(controller: controller),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Floating playback bar for the fullscreen viewer: play/pause, an
+/// accent-colored scrubber and elapsed/total times — no background
+/// container, just white/accent controls over the black viewer.
+class _VideoViewerPlaybackBar extends StatelessWidget {
+  const _VideoViewerPlaybackBar({required this.controller});
+
+  final VideoPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Material(
+              color: Colors.white.withValues(alpha: 0.12),
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () {
+                  if (value.isPlaying) {
+                    controller.pause();
+                  } else {
+                    controller.play();
+                  }
+                },
+                child: SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: Semantics(
+                    button: true,
+                    label: value.isPlaying
+                        ? strings.genVideoPause
+                        : strings.genVideoPlay,
+                    excludeSemantics: true,
+                    child: Icon(
+                      value.isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Row(
+                children: [
+                  Text(
+                    _formatPlaybackTime(value.position),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: VideoProgressIndicator(
+                      controller,
+                      allowScrubbing: true,
+                      padding: EdgeInsets.zero,
+                      colors: VideoProgressColors(
+                        playedColor: colors.accent,
+                        bufferedColor: Colors.white.withValues(alpha: 0.3),
+                        backgroundColor: Colors.white.withValues(alpha: 0.2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _formatPlaybackTime(value.duration),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

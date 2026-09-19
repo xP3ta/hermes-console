@@ -4,6 +4,7 @@ import '../../widgets/hermes_spark_mascot.dart';
 import '../models/companion_animation_state.dart';
 import '../state/companion_controller.dart';
 import 'spritesheet_renderer.dart';
+import '../../../l10n/app_localizations.dart';
 
 /// Punto único de render de la mascota.
 ///
@@ -47,7 +48,7 @@ class CompanionView extends StatelessWidget {
     final controller = this.controller;
     if (controller == null) {
       // Sin controller no hay preferencia de escala: tamaño base (Fase A).
-      return _labeled(_fallback(size));
+      return _labeled(context, _fallback(size));
     }
     return AnimatedBuilder(
       animation: controller,
@@ -62,9 +63,10 @@ class CompanionView extends StatelessWidget {
         final companion = controller.activeCompanion;
         if (companion == null) {
           // Activada pero sin mascota válida seleccionada → Spark por defecto.
-          return _labeled(_fallback(scaledSize));
+          return _labeled(context, _fallback(scaledSize));
         }
         return _labeled(
+          context,
           SpritesheetRenderer(
             companion: companion,
             state: companionStateForMood(mood),
@@ -78,8 +80,13 @@ class CompanionView extends StatelessWidget {
     );
   }
 
-  Widget _labeled(Widget child) =>
-      Semantics(label: 'Companion animado', image: true, child: child);
+  Widget _labeled(BuildContext context, Widget child) => Semantics(
+    label:
+        Localizations.of<Strings>(context, Strings)?.companionAnimatedLabel ??
+        'Companion animado',
+    image: true,
+    child: child,
+  );
 
   // El Spark es un placeholder discreto: se renderiza reducido respecto al
   // tamaño pedido para no dominar la pantalla cuando no hay sprite.

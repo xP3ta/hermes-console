@@ -506,7 +506,7 @@ void main() {
   });
 
   testWidgets(
-    'cara legacy abre como Blobatar sin RPC y migra al guardado explícito',
+    'cara geométrica conserva su identidad al cambiar solo el título',
     (tester) async {
       final log = <String>[];
       final assets = _FakeAssetsGateway(log: log);
@@ -533,7 +533,7 @@ void main() {
       expect(
         tester
             .widgetList<HermesBotFace>(find.byType(HermesBotFace))
-            .every((face) => face.visual is HermesBlobatarFaceVisual),
+            .any((face) => face.visual is HermesClassicFaceVisual),
         isTrue,
       );
       expect(
@@ -542,7 +542,7 @@ void main() {
       );
       expect(find.text('Clásica'), findsNothing);
 
-      await tester.enterText(find.byType(TextField).first, 'Legacy migrated');
+      await tester.enterText(find.byType(TextField).first, 'Legacy preserved');
       await tester.pump();
       expect(
         find.byKey(const ValueKey('profile-editor-dirty')),
@@ -550,13 +550,10 @@ void main() {
       );
       await _save(tester);
 
-      expect(log, ['disable-pet', 'save']);
+      expect(log, ['save']);
       final identity = assets.savedMeta.single['identity'];
-      expect(identity, isA<ProceduralFaceIdentity>());
-      final procedural = identity! as ProceduralFaceIdentity;
-      expect(procedural.shapeWire, 'blobatar');
-      expect(procedural.dormantColorHex, '#38bdf8');
-      expect(assets.savedMeta.single['title'], 'Legacy migrated');
+      expect(identity, isNull);
+      expect(assets.savedMeta.single['title'], 'Legacy preserved');
     },
   );
 

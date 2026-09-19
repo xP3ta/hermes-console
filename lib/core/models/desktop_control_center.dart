@@ -768,3 +768,157 @@ final class ProjectTreeSnapshot {
         },
       );
 }
+
+/// One quality gate attached to a standing goal (`/goal gate add ...`).
+final class SessionGoalGate {
+  final String command;
+  final int timeoutSeconds;
+  final int maxRetries;
+  final int attempts;
+  final int? lastExitCode;
+
+  const SessionGoalGate({
+    required this.command,
+    required this.timeoutSeconds,
+    required this.maxRetries,
+    required this.attempts,
+    this.lastExitCode,
+  });
+
+  static SessionGoalGate? tryParse(Map<String, dynamic> json) {
+    final command = _cleanText(json['command'], max: 400);
+    if (command.isEmpty) return null;
+    return SessionGoalGate(
+      command: command,
+      timeoutSeconds: _safeInt(json['timeout_seconds']),
+      maxRetries: _safeInt(json['max_retries']),
+      attempts: _safeInt(json['attempts']),
+      lastExitCode: json['last_exit_code'] == null
+          ? null
+          : _safeInt(json['last_exit_code']),
+    );
+  }
+}
+
+/// A goal parked waiting on a time, another session, or a process to exit.
+final class SessionGoalWaitBarrier {
+  final String type;
+  final String untilAt;
+  final String target;
+  final String reason;
+
+  const SessionGoalWaitBarrier({
+    required this.type,
+    required this.untilAt,
+    required this.target,
+    required this.reason,
+  });
+
+  static SessionGoalWaitBarrier? tryParse(Map<String, dynamic> json) {
+    final type = _cleanText(json['type'], max: 40);
+    if (type.isEmpty) return null;
+    return SessionGoalWaitBarrier(
+      type: type,
+      untilAt: _cleanText(json['until_at'], max: 80),
+      target: _cleanText(json['target'], max: 200),
+      reason: _cleanText(json['reason']),
+    );
+  }
+}
+
+/// Live standing-goal state for one session, from `session.control.read` /
+/// `session.control.update` (`session.control.goal` in the gateway contract).
+/// A `null` snapshot (from a "cleared" status) means no active goal.
+final class SessionGoalSnapshot {
+  final String title;
+  final String status;
+  final int turnsUsed;
+  final int maxTurns;
+  final String outcome;
+  final String verification;
+  final String constraints;
+  final String boundaries;
+  final String stopWhen;
+  final List<String> subgoals;
+  final List<SessionGoalGate> gates;
+  final String pausedReason;
+  final String lastVerdict;
+  final String lastReason;
+  final SessionGoalWaitBarrier? waitBarrier;
+
+  const SessionGoalSnapshot({
+    required this.title,
+    required this.status,
+    required this.turnsUsed,
+    required this.maxTurns,
+    this.outcome = '',
+    this.verification = '',
+    this.constraints = '',
+    this.boundaries = '',
+    this.stopWhen = '',
+    this.subgoals = const [],
+    this.gates = const [],
+    this.pausedReason = '',
+    this.lastVerdict = '',
+    this.lastReason = '',
+    this.waitBarrier,
+  });
+
+  bool get isActive => status == 'active';
+  bool get isPaused => status == 'paused';
+  bool get isDone => status == 'done';
+  bool get isWaiting => status == 'waiting';
+  bool get isBlocked => lastVerdict == 'blocked';
+
+  /// wait_barrier.reason > paused_reason > last_reason, same priority Desktop
+  /// uses in `session-control-goal.tsx`.
+  String get displayReason {
+    final barrierReason = waitBarrier?.reason ?? '';
+    if (barrierReason.isNotEmpty) return barrierReason;
+    if (pausedReason.isNotEmpty) return pausedReason;
+    return lastReason;
+  }
+
+  /// Parses `control.goal` from `session.control.read` / `.update`. Returns
+  /// null both for a missing field and for an explicit `status: "cleared"`.
+  static SessionGoalSnapshot? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final json = Map<String, dynamic>.from(raw);
+    final status = _cleanText(json['status'], max: 40);
+    if (status.isEmpty || status == 'cleared') return null;
+    final contract = json['contract'];
+    final contractMap = contract is Map
+        ? Map<String, dynamic>.from(contract)
+        : const <String, dynamic>{};
+    final waitBarrierRaw = json['wait_barrier'];
+    return SessionGoalSnapshot(
+      title: _cleanText(json['title'], max: 200),
+      status: status,
+      turnsUsed: _safeInt(json['turns_used']),
+      maxTurns: _safeInt(json['max_turns']),
+      outcome: _cleanText(contractMap['outcome']),
+      verification: _cleanText(contractMap['verification']),
+      constraints: _cleanText(contractMap['constraints']),
+      boundaries: _cleanText(contractMap['boundaries']),
+      stopWhen: _cleanText(contractMap['stop_when']),
+      subgoals: (json['subgoals'] is List)
+          ? (json['subgoals'] as List)
+                .map((e) => _cleanText(e, max: 200))
+                .where((e) => e.isNotEmpty)
+                .toList(growable: false)
+          : const [],
+      gates: _objectRows(json['gates'])
+          .map(SessionGoalGate.tryParse)
+          .whereType<SessionGoalGate>()
+          .toList(growable: false),
+      pausedReason: _cleanText(json['paused_reason']),
+      lastVerdict: _cleanText(json['last_verdict'], max: 40),
+      lastReason: _cleanText(json['last_reason']),
+      waitBarrier: waitBarrierRaw is Map
+          ? SessionGoalWaitBarrier.tryParse(
+              Map<String, dynamic>.from(waitBarrierRaw),
+            )
+          : null,
+    );
+  }
+}

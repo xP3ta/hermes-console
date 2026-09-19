@@ -355,6 +355,97 @@ void main() {
       expect(profile.botModeUiMeta.containsKey('chat'), isTrue);
       expect(profile.botChatSessionId, isNull);
       expect(profile.hasInvalidBotChatPin, isFalse);
+      expect(profile.botChatPinExplicitlyReset, isTrue);
+    });
+
+    test(
+      'metadata solo-apariencia (sin clave chat) no es un reset de Desktop',
+      () {
+        // Instalación stock: `hermes-bots` solo trae título/forma/color y no
+        // trae ninguna clave `chat` — ni siquiera `null`. Issue #11: esto no
+        // debe tratarse como un reset explícito de Desktop.
+        final profile = AgentProfile.fromJson({
+          'name': 'stock-install',
+          'ui_meta': {
+            'hermes-bots': {'title': 'Ops', 'shape': 'cloud'},
+          },
+        });
+
+        expect(profile.botModeMetadataPublished, isTrue);
+        expect(profile.botChatSessionId, isNull);
+        expect(profile.botChatPinExplicitlyReset, isFalse);
+      },
+    );
+
+    test(
+      'canonicalSession resuelve el Bot Chat oculto ya existente sin pin oficial',
+      () {
+        // Issue #11 (comentario de Akuyumu, 2026-09-16): sin pin en ui_meta,
+        // pero el gateway ya resuelve server-side el "Bot Chat" oculto
+        // canónico por título y lo publica en profiles.list como
+        // `canonical_session`. Console debe usarlo en vez de crear una
+        // conversación huérfana nueva en cada intento.
+        final profile = AgentProfile.fromJson({
+          'name': 'self-hosted',
+          'ui_meta': {
+            'hermes-bots': {'title': 'Ops', 'shape': 'cloud'},
+          },
+          'canonical_session': {
+            'id': 'canon-bot-chat-1',
+            'resolved_id': 'canon-bot-chat-1--compact-3',
+            'root_title': 'Bot Chat',
+            'title': 'Bot Chat',
+            'preview': 'histórico de cientos de mensajes',
+            'started_at': 10,
+            'last_active': 500,
+            'message_count': 340,
+          },
+        });
+
+        expect(profile.canonicalSession?.id, 'canon-bot-chat-1');
+        expect(profile.canonicalSession?.messageCount, 340);
+        expect(
+          profile.canonicalBotChatSessionId,
+          'canon-bot-chat-1--compact-3',
+        );
+      },
+    );
+
+    test(
+      'canonicalSession se ignora si Desktop reseteó explícitamente el pin',
+      () {
+        final profile = AgentProfile.fromJson({
+          'name': 'reset-mid-flight',
+          'ui_meta': {
+            'hermes-bots': {'chat': null},
+          },
+          'canonical_session': {'id': 'stale-before-recreate'},
+        });
+
+        expect(profile.botChatPinExplicitlyReset, isTrue);
+        // El campo se sigue parseando (es informativo); el llamador es quien
+        // debe consultar `botChatPinExplicitlyReset` antes de usarlo.
+        expect(profile.canonicalSession?.id, 'stale-before-recreate');
+      },
+    );
+
+    test(
+      'canonicalBotChatSessionId nunca adopta un id móvil provisional',
+      () {
+        final profile = AgentProfile.fromJson({
+          'name': 'corrupt-registry',
+          'canonical_session': {'id': 'mob-throwaway-123'},
+        });
+
+        expect(profile.canonicalBotChatSessionId, isNull);
+      },
+    );
+
+    test('canonicalSession ausente no rompe el roster', () {
+      final profile = AgentProfile.fromJson({'name': 'brand-new'});
+
+      expect(profile.canonicalSession, isNull);
+      expect(profile.canonicalBotChatSessionId, isNull);
     });
 
     test('ui_meta top-level no-null debe ser un objeto', () {

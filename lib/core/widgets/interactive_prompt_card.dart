@@ -281,15 +281,27 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
             MediaQuery.textScalerOf(context).scale(1) > 1 &&
             constraints.maxHeight.isFinite &&
             constraints.maxHeight < 600;
-        return Material(
-          color: colors.surface,
-          clipBehavior: Clip.antiAlias,
-          shape: RoundedRectangleBorder(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-            side: BorderSide(color: colors.divider),
+        return DecoratedBox(
+          // Floating card on all four corners, off the screen edges — not a
+          // bottom-sheet flush to the bottom (that read as a modal takeover
+          // for something that's just a paused, resumable question).
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
+              ),
+            ],
           ),
-          child: SafeArea(
-            top: false,
+          child: Material(
+            color: colors.surface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: BorderSide(color: colors.divider),
+            ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(6, 8, 6, 6),
               child: Column(

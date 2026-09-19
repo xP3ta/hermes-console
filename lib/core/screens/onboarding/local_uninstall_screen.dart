@@ -852,7 +852,7 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
             const SizedBox(height: 10),
             TextButton.icon(
               icon: const Icon(Icons.open_in_new_rounded, size: 16),
-              label: const Text('Abrir Termux para activarlo'),
+              label: Text(Strings.of(context).uninstallOpenTermux),
               onPressed: _termux.bootstrapExternalApps,
             ),
             TextButton(

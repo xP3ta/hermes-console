@@ -1,3 +1,4 @@
+import '../utils/bot_mention_text.dart';
 import 'package:flutter/foundation.dart';
 
 import '../utils/chat_turn.dart';
@@ -178,7 +179,7 @@ class Session implements SessionSortKey {
     // Worker del Kanban: el dispatcher la nombra/arranca con "work kanban
     // task t_<id>" (id crudo, no dice de qué tarea vino). Título humano.
     if (isKanbanJob) return 'Tarea del Kanban';
-    final humanizedTitle = _humanizeTitle(title);
+    final humanizedTitle = _humanizeTitle(stripBotMentionNote(title));
     final syntheticTodoTitle = _looksSyntheticTodoTitle(
       humanizedTitle,
       preview,
@@ -249,7 +250,7 @@ class Session implements SessionSortKey {
       return '';
     }
     return markdownToCompactText(
-      stripCronPreamble(stripBackgroundProcessCarrier(preview)),
+      stripCronPreamble(stripBackgroundProcessCarrier(stripBotMentionNote(preview))),
     );
   }
 
@@ -374,7 +375,7 @@ class Session implements SessionSortKey {
   /// Primeras ~6 palabras de [text], limpiadas de puntuación de borde. Base del
   /// título autogenerado.
   static String titleFromText(String text) {
-    return text
+    return stripBotMentionNote(text)
         .split(RegExp(r'\s+'))
         .map((w) => w.replaceAll(RegExp(r"^[^\wÀ-ÿ]+|[^\wÀ-ÿ]+$"), ''))
         .where((w) => w.isNotEmpty)
@@ -516,14 +517,14 @@ class Session implements SessionSortKey {
     final explicitActive = json['is_active'];
     return Session(
       id: _opaqueId(json['id']) ?? '',
-      title: _boundedText(json['title'], 512) ?? 'Untitled',
+      title: _boundedText(_mentionDisplayValue(json['title']), 512) ?? 'Untitled',
       model: _boundedText(json['model'], 256) ?? 'Default',
       source: _boundedText(json['source'], 128) ?? '',
       messageCount: _nonNegativeInt(json['message_count']) ?? 0,
       isActive: explicitActive is bool ? explicitActive : endedAt == null,
-      preview: _boundedText(json['preview'], 2048) ?? '',
+      preview: _boundedText(_mentionDisplayValue(json['preview']), 2048) ?? '',
       lastUserPreview: _boundedText(
-        json['last_user_preview'] ?? json['lastUserPreview'],
+        _mentionDisplayValue(json['last_user_preview'] ?? json['lastUserPreview']),
         2048,
       ),
       lastAssistantPreview: _boundedText(
@@ -625,3 +626,5 @@ double? _nonNegativeDouble(Object? value) {
   if (value is! num || !value.isFinite || value < 0) return null;
   return value.toDouble();
 }
+
+Object? _mentionDisplayValue(Object? value) => value is String ? stripBotMentionNote(value) : value;

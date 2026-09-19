@@ -24,6 +24,7 @@ import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 import '../utils/voice_error.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
@@ -2858,6 +2859,23 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
         ],
       );
 
+  // Voz es alcanzable sin instancia activa (configuración local del
+  // dispositivo), así que el dock solo se añade cuando hay conexión y
+  // ConnectionManager disponibles — igual que el resto de pantallas que lo
+  // usan, sin forzar una dependencia que esta pantalla no siempre tiene.
+  Widget _wrapWithDock(BuildContext context, Widget body) {
+    final conn = widget.connection;
+    final connManager = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.connManager;
+    if (conn == null || connManager == null) return body;
+    return GeneralDockShell(
+      connection: conn,
+      connManager: connManager,
+      body: body,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
@@ -2871,158 +2889,163 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
         // Notificaciones (spec 028 A-203).
         title: Text(s.voiceTitle),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) => ListView(
-          controller: _scrollController,
-          padding: EdgeInsets.zero,
-          children: [
-            Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (kVoiceModeEnabled) ...[
-                        _voiceModeHeader(colors, s),
-                        const SizedBox(height: 12),
-                      ],
-                      if (_usesHermesServer) ...[
-                        _serverVoiceCard(colors, s),
-                        const SizedBox(height: 12),
-                      ],
-                      ...[
-                        _voiceSection(
-                          key: const ValueKey('voice_listening_section'),
-                          colors: colors,
-                          icon: Icons.mic_none_rounded,
-                          title: s.voiceListeningSectionTitle,
-                          selection: _dictationSelection(s),
-                          status: dictationStatus.$1,
-                          statusColor: dictationStatus.$2,
-                          children: [
-                            Text(
-                              s.voiceListeningSectionSub,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12.5,
-                                height: 1.4,
+      body: _wrapWithDock(
+        context,
+        LayoutBuilder(
+          builder: (context, constraints) => ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.zero,
+            children: [
+              Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (kVoiceModeEnabled) ...[
+                          _voiceModeHeader(colors, s),
+                          const SizedBox(height: 12),
+                        ],
+                        if (_usesHermesServer) ...[
+                          _serverVoiceCard(colors, s),
+                          const SizedBox(height: 12),
+                        ],
+                        ...[
+                          _voiceSection(
+                            key: const ValueKey('voice_listening_section'),
+                            colors: colors,
+                            icon: Icons.mic_none_rounded,
+                            title: s.voiceListeningSectionTitle,
+                            selection: _dictationSelection(s),
+                            status: dictationStatus.$1,
+                            statusColor: dictationStatus.$2,
+                            children: [
+                              Text(
+                                s.voiceListeningSectionSub,
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 12.5,
+                                  height: 1.4,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            _Choice<_SttSetupMode>(
-                              colors: colors,
-                              value: _sttSetupMode,
-                              options: [
-                                (
-                                  _SttSetupMode.live,
-                                  s.voiceSherpaLiveLabel,
-                                  s.voiceLiveModeSub,
-                                ),
-                                (
-                                  _SttSetupMode.afterSpeaking,
-                                  s.voiceWhisperLabel,
-                                  s.voiceWhisperSub,
-                                ),
-                              ],
-                              disabled: const {},
-                              onChanged: _selectSttSetupMode,
-                            ),
-                            _sttAdvancedSection(colors, s),
-                          ],
-                        ),
-                        _voiceSection(
-                          key: const ValueKey('voice_reading_section'),
-                          colors: colors,
-                          icon: Icons.volume_up_outlined,
-                          title: s.voiceReadingSectionTitle,
-                          selection: _readingSelection(s),
-                          status: readingStatus.$1,
-                          statusColor: readingStatus.$2,
-                          children: [
-                            Text(
-                              s.voiceReadingSectionSub,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12.5,
-                                height: 1.4,
+                              const SizedBox(height: 8),
+                              _Choice<_SttSetupMode>(
+                                colors: colors,
+                                value: _sttSetupMode,
+                                options: [
+                                  (
+                                    _SttSetupMode.live,
+                                    s.voiceSherpaLiveLabel,
+                                    s.voiceLiveModeSub,
+                                  ),
+                                  (
+                                    _SttSetupMode.afterSpeaking,
+                                    s.voiceWhisperLabel,
+                                    s.voiceWhisperSub,
+                                  ),
+                                ],
+                                disabled: const {},
+                                onChanged: _selectSttSetupMode,
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            _Choice<_TtsSetupChoice>(
-                              colors: colors,
-                              value: _ttsChoice,
-                              options: [
-                                (
-                                  _TtsSetupChoice.device,
-                                  s.voiceDeviceLabel,
-                                  s.voiceDeviceSub,
-                                ),
-                                (
-                                  _TtsSetupChoice.onDeviceNeural,
-                                  s.voiceNeuralLabel,
-                                  s.voiceNeuralSub,
-                                ),
-                              ],
-                              disabled: const {},
-                              onChanged: _selectTtsChoice,
-                            ),
-                            if (_s.ttsEngine == TtsEngineKind.onnx) ...[
-                              _disclaimer(colors, s.voiceNeuralDisclaimer),
-                              _onnxVoiceManager(colors, s),
+                              _sttAdvancedSection(colors, s),
                             ],
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                key: const ValueKey('voice_setup_test_action'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: colors.textPrimary,
-                                  minimumSize: const Size.fromHeight(48),
-                                  side: BorderSide(
-                                    color: colors.divider.withValues(
-                                      alpha: 0.7,
+                          ),
+                          _voiceSection(
+                            key: const ValueKey('voice_reading_section'),
+                            colors: colors,
+                            icon: Icons.volume_up_outlined,
+                            title: s.voiceReadingSectionTitle,
+                            selection: _readingSelection(s),
+                            status: readingStatus.$1,
+                            statusColor: readingStatus.$2,
+                            children: [
+                              Text(
+                                s.voiceReadingSectionSub,
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 12.5,
+                                  height: 1.4,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              _Choice<_TtsSetupChoice>(
+                                colors: colors,
+                                value: _ttsChoice,
+                                options: [
+                                  (
+                                    _TtsSetupChoice.device,
+                                    s.voiceDeviceLabel,
+                                    s.voiceDeviceSub,
+                                  ),
+                                  (
+                                    _TtsSetupChoice.onDeviceNeural,
+                                    s.voiceNeuralLabel,
+                                    s.voiceNeuralSub,
+                                  ),
+                                ],
+                                disabled: const {},
+                                onChanged: _selectTtsChoice,
+                              ),
+                              if (_s.ttsEngine == TtsEngineKind.onnx) ...[
+                                _disclaimer(colors, s.voiceNeuralDisclaimer),
+                                _onnxVoiceManager(colors, s),
+                              ],
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  key: const ValueKey(
+                                    'voice_setup_test_action',
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: colors.textPrimary,
+                                    minimumSize: const Size.fromHeight(48),
+                                    side: BorderSide(
+                                      color: colors.divider.withValues(
+                                        alpha: 0.7,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                onPressed: _testingVoice ? null : _testVoice,
-                                icon: _testingVoice
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.volume_up_outlined),
-                                label: Text(
-                                  _testingVoice
-                                      ? s.voiceTestPreparing
-                                      : s.voiceTestButton,
+                                  onPressed: _testingVoice ? null : _testVoice,
+                                  icon: _testingVoice
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.volume_up_outlined),
+                                  label: Text(
+                                    _testingVoice
+                                        ? s.voiceTestPreparing
+                                        : s.voiceTestButton,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            HermesSwitchTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: s.voiceAutoSpeakTitle,
-                              subtitle: s.voiceAutoSpeakSub,
-                              value: _s.autoSpeak,
-                              onChanged: (value) =>
-                                  _update(_s.copyWith(autoSpeak: value)),
-                            ),
-                            _readingAdvancedSection(colors, s),
-                          ],
-                        ),
+                              const SizedBox(height: 6),
+                              HermesSwitchTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: s.voiceAutoSpeakTitle,
+                                subtitle: s.voiceAutoSpeakSub,
+                                value: _s.autoSpeak,
+                                onChanged: (value) =>
+                                    _update(_s.copyWith(autoSpeak: value)),
+                              ),
+                              _readingAdvancedSection(colors, s),
+                            ],
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

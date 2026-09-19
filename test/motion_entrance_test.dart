@@ -31,4 +31,31 @@ void main() {
     final fade = tester.widget<FadeTransition>(find.byType(FadeTransition));
     expect(fade.opacity.value, 1.0);
   });
+
+  testWidgets('rebuild conserva la animación y dispose libera su listener', (
+    tester,
+  ) async {
+    Widget changingHost(String text) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: MotionEntrance(child: Text(text)),
+    );
+
+    await tester.pumpWidget(changingHost('primero'));
+    await tester.pump(const Duration(milliseconds: 50));
+    final curve =
+        tester.widget<FadeTransition>(find.byType(FadeTransition)).opacity
+            as CurvedAnimation;
+    final progress = curve.value;
+    await tester.pumpWidget(changingHost('actualizado'));
+    expect(find.text('actualizado'), findsOneWidget);
+    expect(
+      tester.widget<FadeTransition>(find.byType(FadeTransition)).opacity,
+      same(curve),
+    );
+    expect(curve.value, progress);
+    await tester.pump(Motion.base);
+    expect(curve.value, 1);
+    await tester.pumpWidget(const SizedBox());
+    expect(curve.isDisposed, isTrue);
+  });
 }

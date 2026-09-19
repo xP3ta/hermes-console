@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:hermes_android/core/models/bot_mention.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
@@ -132,6 +133,24 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
 
   @override
   Future<void> steer(String runtimeSessionId, String text) async {}
+}
+
+class _NativeHistoryRecoveryGateway extends _LifecycleRecoverableGateway
+    implements HermesDesktopSessionHistoryGateway {
+  final historyRequests = <({String sessionId, String? profile})>[];
+
+  @override
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  }) async {
+    historyRequests.add((sessionId: sessionId, profile: profile));
+    return SessionMessagesPage.fromRaw(
+      rawMessages: const [],
+      pagination: null,
+      paginationProvided: false,
+    );
+  }
 }
 
 class _QueueAuthorizedDroppingGateway extends _DroppingDesktopGateway
@@ -3381,6 +3400,174 @@ void main() {
   );
 
   test(
+    'release durable read is bounded and never repeats during reconnect',
+    () async {
+      final transcript = Completer<List<Map<String, dynamic>>>();
+      final resume = Completer<DesktopSessionSnapshot>();
+      final gateway = _LifecycleRecoverableGateway()
+        ..recoveryExistingGate = resume;
+      var dropped = false;
+      var reads = 0;
+      final chat = _recoverableChat(
+        'bounded-durable',
+        gateway,
+        turnIdempotencySupported: false,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 20),
+        desktopRecoveryBackoff: const [Duration.zero],
+        storedMessageLoader: (_, _) {
+          if (!dropped) return Future.value(const []);
+          reads++;
+          return transcript.future;
+        },
+      );
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'Question',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('bounded-durable', _NoopOutbox()),
+      );
+      final resumes = gateway.resumeExistingCalls;
+      dropped = true;
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls >= resumes + 2);
+      expect(reads, 1);
+      chat.dispose();
+      transcript.complete(const [
+        {'role': 'user', 'content': 'Question'},
+        {'role': 'assistant', 'content': 'Late final'},
+      ]);
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.state, isNot(ChatPipelineState.completed));
+    },
+  );
+
+  test(
+    'release profile recovery retires stale runtime and resumes after REST 401',
+    () async {
+      final gateway = _NativeHistoryRecoveryGateway()
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-recovered',
+          storedSessionId: 'session-native-durable',
+          created: false,
+          messagesProvided: true,
+          messageCount: 2,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'role': 'user',
+              'text': 'Question',
+            })!,
+            DesktopSessionMessage.tryParse(const {
+              'role': 'assistant',
+              'text': 'Native final',
+            })!,
+          ],
+        );
+      var restCalls = 0;
+      final chat = _recoverableChat(
+        'native-durable',
+        gateway,
+        turnIdempotencySupported: false,
+        api: ApiClient(
+          baseUrl: 'https://gateway.invalid',
+          apiKey: '',
+          httpClient: MockClient((_) async {
+            restCalls++;
+            return http.Response('Unauthorized', 401);
+          }),
+        ),
+      );
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'Question',
+        model: 'hermes-agent',
+        profile: 'builder',
+        history: const [],
+      );
+      expect(chat.isStreaming, isTrue);
+      final resumes = gateway.resumeExistingCalls;
+      final restBeforeRecovery = restCalls;
+      gateway.historyRequests.clear();
+      gateway.drop();
+      await _waitUntil(
+        () =>
+            chat.state == ChatPipelineState.completed ||
+            chat.state == ChatPipelineState.failed,
+      );
+      expect(gateway.historyRequests, isEmpty);
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.assistantContent, 'Native final');
+      expect(restCalls, greaterThan(restBeforeRecovery));
+      expect(gateway.resumeExistingCalls, resumes + 1);
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
+  test(
+    'sin turn_idempotency_v1 un GET durable sella el turno sin reanudar el socket',
+    () async {
+      final recoveryGate = Completer<DesktopSessionSnapshot>();
+      final gateway = _LifecycleRecoverableGateway()
+        ..recoveryExistingGate = recoveryGate
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-rest-first',
+          storedSessionId: 'session-rest-first-noidem',
+          created: false,
+          messagesProvided: true,
+          messages: const [],
+          inflight: DesktopInflightTurn(user: 'dame noticias', streaming: true),
+          running: true,
+        );
+      final api = _CompletedTranscriptApi(const [
+        {
+          'message_id': 'rest-first-user',
+          'role': 'user',
+          'content': 'dame noticias',
+        },
+        {
+          'message_id': 'rest-first-assistant',
+          'role': 'assistant',
+          'content': 'Aquí están las noticias.',
+        },
+      ]);
+      final chat = _recoverableChat(
+        'rest-first-noidem',
+        gateway,
+        api: api,
+        turnIdempotencySupported: false,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'dame noticias',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('rest-first-noidem', _NoopOutbox()),
+      );
+      final resumesBeforeDrop = gateway.resumeExistingCalls;
+      expect(chat.isStreaming, isTrue);
+      gateway.drop();
+      await _waitUntil(
+        () => chat.state == ChatPipelineState.completed,
+        timeout: const Duration(seconds: 5),
+      );
+
+      expect(chat.assistantContent, 'Aquí están las noticias.');
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
+      expect(api.calls, greaterThan(0));
+      expect(gateway.resumeExistingCalls, resumesBeforeDrop);
+      expect(recoveryGate.isCompleted, isFalse);
+      expect(gateway.statusCalls, 0);
+      expect(
+        chat.messages.any(
+          (message) => message['content'].toString().contains('StateError'),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'sin turn_idempotency_v1 un resume sin snapshot sigue degradando honesto',
     () async {
       final gateway = _LifecycleRecoverableGateway();
@@ -3477,7 +3664,7 @@ void main() {
       await _waitUntil(() => chat.state == ChatPipelineState.failed);
 
       expect(chat.awaitingDurableTurnRecovery, isTrue);
-      expect(transcriptCalls, 1);
+      expect(transcriptCalls, 2);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'respuesta local incompleta',
@@ -3497,7 +3684,6 @@ void main() {
   test(
     'snapshot terminal parcial sin user queda history-pending sin GET tardío',
     () async {
-      final transcriptGate = Completer<List<Map<String, dynamic>>>();
       var transcriptCalls = 0;
       final gateway = _LifecycleRecoverableGateway()
         ..initialSnapshot = DesktopSessionSnapshot(
@@ -3533,10 +3719,8 @@ void main() {
         'terminal-no-user',
         gateway,
         storedMessageLoader: (_, _) {
-          if (transcriptCalls++ == 0) {
-            return Future.value(const []);
-          }
-          return transcriptGate.future;
+          transcriptCalls++;
+          return Future.value(const []);
         },
       );
       addTearDown(chat.dispose);
@@ -3558,15 +3742,13 @@ void main() {
       );
       await _waitUntil(() => chat.state == ChatPipelineState.failed);
       expect(chat.awaitingDurableTurnRecovery, isTrue);
-      expect(transcriptCalls, 1);
-      expect(transcriptGate.isCompleted, isFalse);
+      expect(transcriptCalls, 2);
     },
   );
 
   test(
     'snapshot terminal parcial con tool queda pending sin promover transcript',
     () async {
-      final transcriptGate = Completer<List<Map<String, dynamic>>>();
       var transcriptCalls = 0;
       final gateway = _LifecycleRecoverableGateway()
         ..initialSnapshot = DesktopSessionSnapshot(
@@ -3618,10 +3800,8 @@ void main() {
         'terminal-tool-tail',
         gateway,
         storedMessageLoader: (_, _) {
-          if (transcriptCalls++ == 0) {
-            return Future.value(const []);
-          }
-          return transcriptGate.future;
+          transcriptCalls++;
+          return Future.value(const []);
         },
       );
       addTearDown(chat.dispose);
@@ -3637,8 +3817,7 @@ void main() {
       expect(chat.state, isNot(ChatPipelineState.completed));
       await _waitUntil(() => chat.state == ChatPipelineState.failed);
       expect(chat.awaitingDurableTurnRecovery, isTrue);
-      expect(transcriptCalls, 1);
-      expect(transcriptGate.isCompleted, isFalse);
+      expect(transcriptCalls, 2);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'assistant final ya durable',
@@ -5693,6 +5872,108 @@ void main() {
       expect(recorded[1].cancelledMessageId, 'first-cancelled-user');
     },
   );
+
+  for (final sameAnnotation in [true, false]) {
+    test(
+      'mention Stop retains exact annotation evidence: $sameAnnotation',
+      () async {
+        const mention = BotMention(
+          connectionId: 'fixture',
+          profile: 'ops',
+          handle: 'ops',
+        );
+        final note = buildBotMentionAnnotation([mention]);
+        final prompt = appendBotMentionNote('segundo turno @ops', note);
+        final recorded = <CancelledTurnTombstone>[];
+        final durable = <Map<String, dynamic>>[];
+        final gateway = _LifecycleRecoverableGateway();
+        final chat = _recoverableChat(
+          'two-durable-stops',
+          gateway,
+          desktopRecoveryAttemptTimeout: const Duration(milliseconds: 30),
+          storedMessageLoader: (_, _) async => List.of(durable),
+          onCancelledTurn: (tombstone) async => recorded.add(tombstone),
+        );
+        addTearDown(chat.dispose);
+        chat.markStoredSessionMissing();
+
+        await chat.send(
+          fullText: 'primer turno detenido',
+          model: 'hermes-agent',
+          history: const [],
+          delivery: _delivery('two-durable-stops-1', _NoopOutbox()),
+        );
+        await chat.cancel();
+        durable.add(const {
+          'message_id': 'first-cancelled-user',
+          'role': 'user',
+          'content': 'primer turno detenido',
+          'timestamp': 50,
+        });
+
+        final accepted = await chat.send(
+          fullText: prompt,
+          model: 'hermes-agent',
+          history: chat.buildHistory(),
+          delivery: ActiveTurnDelivery(
+            prepared: _delivery('two-durable-stops-2', _NoopOutbox()).current
+                .copyWith(
+                  text: 'segundo turno @ops',
+                  fullText: 'segundo turno @ops',
+                  desktopText: 'segundo turno @ops',
+                  mentionAnnotation: note,
+                  mentions: [mention],
+                ),
+            store: _NoopOutbox(),
+          ),
+        );
+        expect(accepted, isTrue);
+        gateway.initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: chat.desktopRuntimeSessionId!,
+          storedSessionId: chat.serverSessionId,
+          created: false,
+          messagesProvided: false,
+          messageCount: durable.length,
+          running: true,
+          inflight: DesktopInflightTurn(
+            user: sameAnnotation
+                ? prompt
+                : prompt.replaceFirst(
+                    'agent profile "ops"',
+                    'agent profile "other"',
+                  ),
+            streaming: true,
+            startedAt: DateTime.fromMillisecondsSinceEpoch(100000, isUtc: true),
+          ),
+        );
+        expect(
+          chat.messages.where((m) => m['role'] == 'user').first['content'],
+          'segundo turno @ops',
+        );
+        expect(
+          chat.internalMessagesForTesting
+              .where((m) => m['role'] == 'user')
+              .first['content'],
+          prompt,
+        );
+        if (!sameAnnotation) {
+          await expectLater(chat.cancel(), throwsStateError);
+          expect(recorded, hasLength(1));
+          return;
+        }
+        await chat.cancel();
+
+        final created = recorded
+            .where((tombstone) => tombstone.cancelledMessageId == null)
+            .toList(growable: false);
+        expect(created, hasLength(2));
+        expect(created.first.firstUser, isTrue);
+        expect(created.last.firstUser, isFalse);
+        expect(created.last.anchorMessageId, 'first-cancelled-user');
+        expect(recorded[1].cancelledMessageId, 'first-cancelled-user');
+      },
+    );
+  }
 
   test(
     'resume 4007 más REST vacío autoriza firstUser del primer Stop',

@@ -111,7 +111,12 @@ class _StopGateway
   ) async => DesktopRedirectDisposition.redirected;
 }
 
-ActiveChat _chat(_StopGateway gateway, {String id = 'conn-stop-recovery'}) {
+ActiveChat _chat(
+  _StopGateway gateway, {
+  String id = 'conn-stop-recovery',
+  StoredSessionMessageLoader? storedMessageLoader,
+  Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
+}) {
   final api = ApiClient(
     baseUrl: 'https://example.invalid',
     apiKey: 'test-only',
@@ -133,7 +138,32 @@ ActiveChat _chat(_StopGateway gateway, {String id = 'conn-stop-recovery'}) {
     onTerminal: () {},
     api: api,
     desktopGateway: gateway,
+    storedMessageLoader: storedMessageLoader,
+    onCancelledTurn: onCancelledTurn,
   );
+}
+
+/// Sesión como la del dispositivo real: hay tombstone store (la app siempre lo
+/// pasa) y una conversación previa con identidad durable, de modo que Stop sí
+/// puede anclar su tombstone. El servidor, en cambio, nunca llega a publicar
+/// una fila durable para el propio turno interrumpido — que es lo normal
+/// cuando Stop llega antes de que el gateway persista el prompt, y lo que
+/// siempre ocurre si la lectura del transcript falla en el móvil.
+({ActiveChat chat, List<CancelledTurnTombstone> saved}) _durableChat(
+  _StopGateway gateway, {
+  required String id,
+}) {
+  final saved = <CancelledTurnTombstone>[];
+  final chat = _chat(
+    gateway,
+    id: id,
+    storedMessageLoader: (_, _) async => const [
+      {'role': 'user', 'content': 'hola', 'id': 1},
+      {'role': 'assistant', 'content': 'buenas', 'id': 2},
+    ],
+    onCancelledTurn: (tombstone) async => saved.add(tombstone),
+  );
+  return (chat: chat, saved: saved);
 }
 
 /// Reproduce la carrera del informe: el terminal autoritativo llega mientras
@@ -259,5 +289,171 @@ void main() {
     expect(chat.stopConfirmationState, StopConfirmationState.confirmed);
     expect(chat.queueParked, isFalse);
     expect(chat.queueDrainSuspendedForTesting, isFalse);
+  });
+
+  group('un Stop confirmado nunca inutiliza la sesión', () {
+    test('se puede volver a enviar aunque el turno detenido no sea durable', () async {
+      final gateway = _StopGateway();
+      final harness = _durableChat(gateway, id: 'conn-stop-then-send');
+      final chat = harness.chat;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      expect(
+        await chat.send(
+          fullText: 'segundo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      await chat.cancel().timeout(const Duration(seconds: 5));
+      expect(chat.stopConfirmationState, StopConfirmationState.confirmed);
+      expect(harness.saved, hasLength(1));
+
+      // El turno detenido se quedó sin fila durable en el servidor. Antes eso
+      // rechazaba en silencio TODO envío posterior y la sesión quedaba muerta.
+      expect(
+        await chat
+            .send(
+              fullText: 'tercero',
+              model: 'hermes-agent',
+              history: const [],
+            )
+            .timeout(const Duration(seconds: 5)),
+        isTrue,
+      );
+      expect(gateway.submittedTexts, ['segundo', 'tercero']);
+    });
+
+    test('la cola retenida drena al reanudarla tras el Stop', () async {
+      final gateway = _StopGateway();
+      final harness = _durableChat(gateway, id: 'conn-stop-queue-drains');
+      final chat = harness.chat;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      expect(
+        await chat.send(
+          fullText: 'segundo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      expect(chat.enqueue('en cola'), isTrue);
+      await chat.cancel().timeout(const Duration(seconds: 5));
+      expect(chat.queueParked, isTrue);
+
+      chat.resumeParkedQueue();
+      for (var tick = 0; tick < 60 && chat.queuedMessages.isNotEmpty; tick++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+
+      // El drenaje llamaba a `send()`, se lo rechazaban y la rama de texto no
+      // reintentaba ni avisaba: la entrada se quedaba muda en la cabeza.
+      expect(gateway.submittedTexts, ['segundo', 'en cola']);
+      expect(chat.queuedMessages, isEmpty);
+    });
+
+    test('editar un mensaje con el turno vivo envía el texto nuevo', () async {
+      final gateway = _StopGateway();
+      final harness = _durableChat(gateway, id: 'conn-edit-while-streaming');
+      final chat = harness.chat;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      expect(
+        await chat.send(
+          fullText: 'segundo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      expect(chat.isStreaming, isTrue);
+
+      // Ordinal 1 == el turno vivo ('hola' es el 0).
+      await chat
+          .rewrite(
+            userOrdinal: 1,
+            text: 'segundo editado',
+            model: 'hermes-agent',
+          )
+          .timeout(const Duration(seconds: 6));
+
+      expect(gateway.interruptCalls, 1);
+      expect(gateway.submittedTexts, ['segundo', 'segundo editado']);
+      expect(chat.takeRewindRestoredOnError(), isFalse);
+      expect(chat.isStreaming, isTrue);
+
+      // Y la sesión sigue viva: editar no puede dejarla bloqueada tampoco.
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['role'] == 'user' && message['_cancelledUser'] == true,
+        ),
+        isFalse,
+        reason: 'editar no es un Stop del usuario',
+      );
+    });
+
+    test('una edición rechazada antes de arrancar se marca para la UI', () async {
+      final gateway = _StopGateway();
+      final harness = _durableChat(gateway, id: 'conn-edit-rejected');
+      final chat = harness.chat;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(
+        await chat.send(
+          fullText: 'segundo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      chat.dispose();
+
+      await chat
+          .rewrite(userOrdinal: 1, text: 'no llega', model: 'hermes-agent')
+          .timeout(const Duration(seconds: 6));
+
+      // Sin esta marca la pantalla no mostraba nada: el turno vivo quedaba
+      // interrumpido y la edición desaparecía sin aviso.
+      expect(chat.takeRewindRestoredOnError(), isTrue);
+    });
+  });
+
+  test('dos drenajes solapados no envían la misma entrada dos veces', () async {
+    final gateway = _StopGateway();
+    final chat = _chat(gateway, id: 'conn-queue-reentrancy');
+    addTearDown(chat.dispose);
+
+    // Cola en reposo: cada `enqueue` programa su propio drenaje, así que dos
+    // seguidos dejan dos drenajes en vuelo sobre la misma cabeza. `send()`
+    // tarda varios `await` en publicar `connecting`, que era la ventana en la
+    // que ambos leían la misma entrada y la enviaban por duplicado.
+    expect(
+      await chat.send(
+        fullText: 'vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    gateway.emit('message.complete', {'text': 'listo'});
+    for (var tick = 0; tick < 40 && chat.isStreaming; tick++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(chat.isStreaming, isFalse);
+
+    expect(chat.enqueue('A'), isTrue);
+    expect(chat.enqueue('B'), isTrue);
+    for (var tick = 0; tick < 60; tick++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(gateway.submittedTexts, ['vivo', 'A']);
+    expect(chat.queuedMessages, ['B']);
   });
 }

@@ -253,7 +253,7 @@ class _FakeServerSession implements ServerSttSession {
   final List<Object> sent = [];
 
   @override
-  dynamic get firstMessage => null;
+  dynamic get firstMessage => '{"type":"ready"}';
 
   @override
   Stream<dynamic> get messages => incoming.stream;

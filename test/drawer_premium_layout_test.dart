@@ -103,23 +103,31 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('el dock de Nuevo chat permanece fijo al desplazar el drawer', (
-    tester,
-  ) async {
-    await pumpDrawer(tester, connManager: await manager());
+  testWidgets(
+    'Nuevo chat es la primera fila de la lista y se desplaza con ella',
+    (tester) async {
+      // La maqueta aprobada del rediseño del drawer mueve "Nuevo chat" del
+      // dock fijo al fondo a la primera fila bajo la cabecera: ya no hay
+      // una franja separada, así que debe desplazarse con el resto de la
+      // lista en vez de quedarse fijo.
+      await pumpDrawer(tester, connManager: await manager());
 
-    final newChat = find.text('Nuevo chat');
-    expect(newChat, findsOneWidget);
-    final initialY = tester.getCenter(newChat).dy;
+      final newChat = find.text('Nuevo chat');
+      expect(newChat, findsOneWidget);
+      final initialY = tester.getCenter(newChat).dy;
 
-    await tester.drag(
-      find.byKey(const ValueKey('drawer-scroll')),
-      const Offset(0, -420),
-    );
-    await tester.pump();
+      // Un desplazamiento pequeño: lo bastante para mover la fila si ya no
+      // está fija, sin sacarla del viewport (ahora es la primera fila, así
+      // que un scroll grande directamente la saca de la pantalla).
+      await tester.drag(
+        find.byKey(const ValueKey('drawer-scroll')),
+        const Offset(0, -80),
+      );
+      await tester.pump();
 
-    expect(tester.getCenter(newChat).dy, initialY);
-  });
+      expect(tester.getCenter(newChat).dy, isNot(initialY));
+    },
+  );
 
   testWidgets('el drawer carga recientes reales y omite sesiones hijas', (
     tester,

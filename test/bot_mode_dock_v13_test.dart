@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/bot_mode_dock.dart';
+import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
+/// Monta el dock unificado con el perfil "Bots" tal y como lo monta Mission
+/// Control: sus mismas acciones, sus mismas dos órbitas de creación y el
+/// mismo inset inferior (`ChatSurfaceCoordinator.bottomInset`, que sin área
+/// segura es solo el hueco de 10dp).
 Widget _host({
   required int selectedIndex,
   required ValueChanged<int> onDestination,
@@ -27,11 +31,35 @@ Widget _host({
   ),
   home: Scaffold(
     resizeToAvoidBottomInset: true,
-    body: BotModeDock(
-      selectedIndex: selectedIndex,
-      onDestinationSelected: onDestination,
-      onCreateBot: onCreateBot,
-      onCreateRoom: onCreateRoom,
+    body: Dock(
+      profileId: DockProfileId.bots,
+      bottomInset: 10,
+      actions: {
+        DockItemId.home: const DockItemAction(),
+        DockItemId.bots: DockItemAction(
+          onTap: () => onDestination(0),
+          selected: selectedIndex == 0,
+        ),
+        DockItemId.work: DockItemAction(
+          onTap: () => onDestination(1),
+          selected: selectedIndex == 1,
+        ),
+        DockItemId.create: const DockItemAction(),
+      },
+      createOrbits: [
+        DockCreateOrbit(
+          controlKey: const ValueKey('bot-mode-create-bot'),
+          label: 'Nuevo bot',
+          icon: Icons.smart_toy_outlined,
+          onTap: onCreateBot,
+        ),
+        DockCreateOrbit(
+          controlKey: const ValueKey('bot-mode-create-room'),
+          label: 'Nueva sala',
+          icon: Icons.groups_2_outlined,
+          onTap: onCreateRoom,
+        ),
+      ],
     ),
   ),
 );
@@ -211,11 +239,14 @@ void main() {
     expect(roomData.label, 'Nueva sala');
     expect(botData.flagsCollection.isButton, isTrue);
     expect(roomData.flagsCollection.isButton, isTrue);
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'Create bot');
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'Dock create orbit',
+    );
 
     await tester.tapAt(const Offset(10, 100));
     await tester.pumpAndSettle();
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'Bot Mode create');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'Dock create');
     semantics.dispose();
   });
 }

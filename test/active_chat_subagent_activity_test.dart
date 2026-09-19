@@ -1849,8 +1849,17 @@ void main() {
       await tester.pump();
       final stableKey = chat.subagentActivities.single.key;
       expect(find.byType(SubagentActivityCard), findsOneWidget);
-      await tester.tap(find.text('ver detalles'));
-      await tester.pumpAndSettle();
+      // La píldora ya no expande inline ("ver detalles" ya no existe, ver
+      // subagent_activity_card.dart): tocarla abre el bottom sheet de
+      // detalle. La actividad sigue "running", así que el sheet pinta un
+      // CircularProgressIndicator indeterminado — pumpAndSettle nunca
+      // termina con una animación infinita en pantalla, así que se avanza
+      // con pumps acotados en su lugar (mismo patrón que el resto de tests
+      // de esta pantalla).
+      await tester.tap(find.byKey(const ValueKey('subagent-disclosure')));
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
       final rowFinder = find.byKey(ValueKey(stableKey));
       expect(rowFinder, findsOneWidget);
       final stableElement = tester.element(rowFinder);

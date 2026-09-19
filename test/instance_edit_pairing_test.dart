@@ -90,6 +90,48 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+    'blank secret fields preserve rotations made while editor is open',
+    (tester) async {
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      addTearDown(manager.dispose);
+      await manager.upsertConnection(
+        SavedConnection(
+          id: 'edit-rotation',
+          label: 'Example',
+          host: 'example.invalid',
+          port: 443,
+          useHttps: true,
+          apiKey: 'original-test-key',
+        ),
+      );
+      await manager.setDashboardSecrets(
+        'edit-rotation',
+        username: 'old-user',
+        password: 'old-test-pass',
+      );
+      await pumpEditor(
+        tester,
+        manager,
+        initial: manager.getConnections().single,
+      );
+      await tester.pumpAndSettle();
+      await manager.updateApiKey('edit-rotation', 'rotated-test-key');
+      await manager.setDashboardSecrets(
+        'edit-rotation',
+        username: 'new-user',
+        password: 'new-test-pass',
+      );
+      await revealAndTapSave(tester);
+      expect(manager.getConnections().single.apiKey, 'rotated-test-key');
+      final secrets = await manager.getDashboardSecrets('edit-rotation');
+      expect(secrets.username, 'new-user');
+      expect(secrets.password, 'new-test-pass');
+    },
+  );
+
   testWidgets('deep link externo pide permiso antes de automatizar', (
     tester,
   ) async {
@@ -447,6 +489,12 @@ void main() {
     );
 
     await pumpEditor(tester, manager, initial: manager.getConnections().single);
+    await tester.pump();
+    // El bridge manual vive detrás de un disclosure colapsado por defecto en
+    // una instancia ya guardada (configuración excepcional, no de todos los
+    // días): hay que abrirlo antes de poder ver/tocar sus campos.
+    await tester.ensureVisible(find.text('mobile bridge'));
+    await tester.tap(find.text('mobile bridge'));
     await tester.pump();
     await tester.ensureVisible(
       find.byKey(const ValueKey('instance-bridge-token')),

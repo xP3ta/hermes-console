@@ -93,7 +93,17 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.10 (4965)`
+## Novedades — `1.2.11 (9009)`
+
+### Español (máximo 500 caracteres)
+
+Modo Bot completo: organiza tus bots en secciones; crea, duplica y edita perfiles (habilidades, herramientas, MCP, modelo); avatares con IA; salas de equipo con @menciones y @all, sincronizadas con Desktop. El historial de los chats de bots carga por el canal ya autenticado (adiós al error 401). Nuevo dock unificado, tareas en Lista o Tablero, más textos traducidos y transiciones más ligeras.
+
+### English (maximum 500 characters)
+
+Full Bot Mode: organize bots into sections; create, duplicate and edit profiles (skills, tools, MCP, model); AI-generated avatars; team rooms with @mentions and @all, in sync with Desktop. Bot chat history now loads over the already-authenticated channel (no more 401 errors). New unified dock, Tasks list/board view, more translated text and lighter screen transitions.
+
+## Novedades anteriores — `1.2.10 (4965)`
 
 ### Español (máximo 500 caracteres)
 
@@ -112,7 +122,7 @@ readable, while connection failures no longer expose internal technical details.
 
 ## Recursos gráficos
 
-- Para `1.2.10`, conservar el icono, la feature graphic y las capturas que ya
+- Para `1.2.11`, conservar el icono, la feature graphic y las capturas que ya
   están publicadas y aprobadas en Google Play. Esta actualización no requiere
   nuevos recursos gráficos ni cambia los flujos declarados en Data Safety.
 - Cualquier recurso nuevo conserva su gate independiente de privacidad,

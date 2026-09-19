@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/kanban.dart';
 import '../theme/app_theme.dart';
+import 'hermes_ui.dart';
 
 typedef KanbanTaskAction = Future<void> Function();
 typedef KanbanCommentAction = Future<void> Function(String body);
@@ -34,6 +35,8 @@ class KanbanTaskDetailSurface extends StatefulWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onMove;
   final VoidCallback? onEdit;
+  final bool notificationsMuted;
+  final ValueChanged<bool>? onToggleNotificationsMuted;
 
   const KanbanTaskDetailSurface({
     required this.detail,
@@ -55,6 +58,8 @@ class KanbanTaskDetailSurface extends StatefulWidget {
     this.onDelete,
     this.onMove,
     this.onEdit,
+    this.notificationsMuted = false,
+    this.onToggleNotificationsMuted,
     super.key,
   });
 
@@ -260,7 +265,8 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
               key: const ValueKey('kanban-detail-diagnostics'),
               colors: colors,
               title: '${copy.diagnostics} · ${detail.diagnostics.length}',
-              child: Column(
+              child: _HairlineRows(
+                colors: colors,
                 children: [
                   for (final diagnostic in detail.diagnostics)
                     _DiagnosticTile(colors: colors, diagnostic: diagnostic),
@@ -365,26 +371,59 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       key: const ValueKey('kanban-detail-children'),
       colors: colors,
       title: '${copy.childResults} · ${children.length}',
-      child: Column(
+      child: _HairlineRows(
+        colors: colors,
         children: [
           for (final child in children)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: Text(child.title, maxLines: 2),
-              subtitle: child.latestSummary?.isNotEmpty == true
-                  ? Text(child.latestSummary!, maxLines: 3)
-                  : null,
-              trailing: Text(
-                child.status.replaceAll('_', ' '),
-                style: TextStyle(fontSize: 11, color: colors.accent),
-              ),
+            _CompactRow(
+              key: ValueKey('kanban-child-${child.id}'),
+              colors: colors,
               onTap: widget.onOpenLinkedTask == null
                   ? null
                   : () => _run(
                       'child-${child.id}',
                       () => widget.onOpenLinkedTask!(child.id),
                     ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          child.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        if (child.latestSummary?.isNotEmpty == true) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            child.latestSummary!,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    child.status.replaceAll('_', ' '),
+                    style: TextStyle(fontSize: 11, color: colors.accent),
+                  ),
+                ],
+              ),
             ),
         ],
       ),
@@ -493,23 +532,41 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
               copy.noAttachments,
               style: TextStyle(fontSize: 12, color: colors.textSecondary),
             )
-          : Column(
+          : _HairlineRows(
+              colors: colors,
               children: [
                 for (final attachment in attachments)
-                  ListTile(
+                  _CompactRow(
                     key: ValueKey('kanban-attachment-${attachment.id}'),
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    leading: const Icon(Icons.insert_drive_file_outlined),
-                    title: Text(
-                      attachment.safeFilename,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(_formatBytes(attachment.size)),
-                    trailing: Wrap(
-                      spacing: 0,
+                    colors: colors,
+                    child: Row(
                       children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                attachment.safeFilename,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: colors.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatBytes(attachment.size),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: colors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                         IconButton(
                           tooltip: copy.download,
                           onPressed:
@@ -566,30 +623,25 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
               icon: const Icon(Icons.terminal_rounded, size: 16),
               label: Text(copy.log),
             ),
-      child: Column(
+      child: _HairlineRows(
+        colors: colors,
         children: [
           for (final run in runs)
-            Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant.withValues(alpha: 0.22),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: colors.divider.withValues(alpha: 0.55),
-                ),
-              ),
+            _CompactRow(
+              key: ValueKey('kanban-run-${run.id}'),
+              colors: colors,
               child: Row(
                 children: [
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           '${copy.run} #${run.id} · ${run.status}',
                           style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
                             color: colors.textPrimary,
                           ),
                         ),
@@ -706,6 +758,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
 
   bool _hasOperationalActions(KanbanTask task) {
     if (widget.onConfigureModel != null) return true;
+    if (widget.onToggleNotificationsMuted != null) return true;
     if (widget.readOnly) return false;
     return widget.onReassign != null ||
         (task.status == 'running' && widget.onReclaim != null) ||
@@ -730,23 +783,52 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (widget.onConfigureModel != null)
-            ListTile(
+            _CompactRow(
               key: const ValueKey('kanban-model-override'),
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.memory_rounded),
-              title: Text(copy.model),
-              subtitle: Text(
-                task.reasoningEffort?.isNotEmpty == true
-                    ? '$currentModel · ${task.reasoningEffort}'
-                    : currentModel,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: const Icon(Icons.chevron_right_rounded),
+              colors: colors,
               enabled: !widget.readOnly && _busyAction == null,
               onTap: widget.readOnly
                   ? null
                   : () => _run('model', widget.onConfigureModel!),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      copy.model,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      task.reasoningEffort?.isNotEmpty == true
+                          ? '$currentModel · ${task.reasoningEffort}'
+                          : currentModel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (widget.onToggleNotificationsMuted != null)
+            HermesSwitchTile(
+              controlKey: const ValueKey('kanban-task-mute-notifications'),
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.notifications_off_outlined),
+              title: copy.muteNotifications,
+              subtitle: copy.muteNotificationsSub,
+              value: widget.notificationsMuted,
+              onChanged: widget.onToggleNotificationsMuted,
             ),
           if (!widget.readOnly)
             Wrap(
@@ -948,37 +1030,109 @@ class _DiagnosticTile extends StatelessWidget {
       KanbanDiagnosticSeverity.critical => colors.error,
       KanbanDiagnosticSeverity.unknown => colors.textSecondary,
     };
-    return Container(
+    return Padding(
       key: ValueKey('kanban-diagnostic-${diagnostic.kind}'),
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: tone.withValues(alpha: 0.35)),
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 9),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '${diagnostic.title}${diagnostic.count > 1 ? ' ×${diagnostic.count}' : ''}',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: tone,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                margin: const EdgeInsets.only(top: 4, right: 8),
+                decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
+              ),
+              Expanded(
+                child: Text(
+                  '${diagnostic.title}${diagnostic.count > 1 ? ' ×${diagnostic.count}' : ''}',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: tone,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
-          SelectableText(
-            diagnostic.detail,
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.35,
-              color: colors.textSecondary,
+          Padding(
+            padding: const EdgeInsets.only(left: 14),
+            child: SelectableText(
+              diagnostic.detail,
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.35,
+                color: colors.textSecondary,
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Plain-whitespace list: rows separated by a single hairline divider,
+/// never boxed or bordered. Used in place of the old `Container` +
+/// `BoxDecoration` + `Border.all` blocks (runs, diagnostics).
+class _HairlineRows extends StatelessWidget {
+  final HermesThemeColors colors;
+  final List<Widget> children;
+
+  const _HairlineRows({required this.colors, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i++) {
+      rows.add(children[i]);
+      if (i != children.length - 1) {
+        rows.add(
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: colors.divider.withValues(alpha: 0.6),
+          ),
+        );
+      }
+    }
+    return Column(children: rows);
+  }
+}
+
+/// Compact row: no leading circle, no generic Material chevron — just the
+/// row's own [child] content at a comfortable minimum tap height. Replaces
+/// the old `ListTile` usages across the task detail.
+class _CompactRow extends StatelessWidget {
+  final HermesThemeColors colors;
+  final Widget child;
+  final VoidCallback? onTap;
+  final bool enabled;
+
+  const _CompactRow({
+    required this.colors,
+    required this.child,
+    this.onTap,
+    this.enabled = true,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final content = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 44),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Align(alignment: Alignment.centerLeft, child: child),
+      ),
+    );
+    if (onTap == null) return content;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(onTap: enabled ? onTap : null, child: content),
     );
   }
 }
@@ -1108,4 +1262,9 @@ class _KanbanDetailCopy {
       spanish ? 'Recuperar y reencolar' : 'Reclaim and requeue';
   String get specify => spanish ? 'Especificar' : 'Specify';
   String get decompose => spanish ? 'Descomponer' : 'Decompose';
+  String get muteNotifications =>
+      spanish ? 'Silenciar notificaciones' : 'Mute notifications';
+  String get muteNotificationsSub => spanish
+      ? 'No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados'
+      : "Don't notify status changes for this task, even if Kanban results are enabled";
 }

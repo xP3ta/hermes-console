@@ -184,7 +184,28 @@ void main() {
     expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
     expect(find.byIcon(Icons.graphic_eq_rounded), findsNothing);
 
-    await tester.enterText(find.byType(TextField), '');
+    final surface = tester.widget<HermesComposerSurface>(
+      find.byType(HermesComposerSurface),
+    );
+    await tester.enterText(find.byType(TextField), 'hola de nuevo');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<HermesComposerSurface>(find.byType(HermesComposerSurface)),
+      same(surface),
+      reason: 'Seguir escribiendo no debe reconstruir el chrome del composer',
+    );
+
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+
+    final controller = tester
+        .widget<TextField>(find.byType(TextField))
+        .controller!;
+    controller.text = 'texto programático';
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    controller.clear();
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
   });

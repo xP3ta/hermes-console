@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/sftp_transfer_service.dart';
 import '../theme/app_theme.dart';
+import '../../l10n/app_localizations.dart';
 
 /// Barra in-app que muestra las transferencias SFTP (en curso y recién
 /// terminadas), con su barra de progreso. Observa el servicio, así que sigue
@@ -101,10 +102,11 @@ class SshTransferBar extends StatelessWidget {
           if (!t.isRunning)
             IconButton(
               icon: Icon(Icons.close, size: 15, color: colors.textDisabled),
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              tooltip: 'Descartar',
+              // Objetivo táctil real de 44dp aunque el icono visible sea de
+              // 15dp: `BoxConstraints()` vacío colapsaba el hit-test al
+              // tamaño del icono.
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              tooltip: Strings.of(context).inAppDismiss,
               onPressed: service.clearFinished,
             ),
         ],

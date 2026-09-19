@@ -139,7 +139,6 @@ void main() {
         'models',
         'ssh',
         'profiles',
-        'agents',
         'skills',
         'extensions',
         'memory',
@@ -149,7 +148,11 @@ void main() {
         'activity',
       }),
     );
-    expect(hub.destinations.map((destination) => destination.id).length, 14);
+    // 'agents' (AgentCenterScreen) se retiró: siempre se abría sin
+    // runtimeSessionId desde este catálogo genérico, así que nunca podía
+    // mostrar nada útil — confirmado leyendo agent_center_screen.dart, que
+    // solo tiene este único call site en todo el código.
+    expect(hub.destinations.map((destination) => destination.id).length, 13);
   });
 
   testWidgets('Voz se bloquea y Herramientas sigue accesible sin instancia', (
@@ -160,6 +163,12 @@ void main() {
       final manager = await _manager();
       await _pumpDrawer(tester, manager: manager);
 
+      // Instancias/Ajustes ahora viven en un pie fijo bajo la lista (ver
+      // hermes_drawer.dart), lo que le resta altura al viewport scrolleable
+      // y empuja "Voz" fuera de la vista inicial en el tamaño de pantalla
+      // simulado por el test — se revela igual que ya se hace con
+      // "Herramientas" más abajo.
+      await _revealDrawerItem(tester, 'Voz');
       expect(find.text('Voz'), findsOneWidget);
       expect(find.text('Apariencia'), findsNothing);
 

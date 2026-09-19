@@ -32,6 +32,9 @@ class SecureStorage {
     String value,
   ) => _storage.write(key: _dashKey(connectionId, field), value: value);
 
+  Future<void> deleteDashboardSecret(String connectionId, String field) =>
+      _storage.delete(key: _dashKey(connectionId, field));
+
   Future<void> deleteDashboardSecrets(String connectionId) async {
     for (final f in const ['token', 'user', 'pass']) {
       await _storage.delete(key: _dashKey(connectionId, f));

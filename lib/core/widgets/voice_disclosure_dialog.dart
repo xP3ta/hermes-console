@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../theme/app_theme.dart';
 
 enum VoiceDisclosureChoice { foregroundOnly, continueWhenLocked }
 
@@ -109,7 +110,8 @@ class _DisclosureChoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    // Bug real: usaba Theme.of(context).colorScheme en vez de `hermes`.
+    color: Theme.of(context).hermes.surfaceVariant,
     borderRadius: BorderRadius.circular(12),
     clipBehavior: Clip.antiAlias,
     child: InkWell(

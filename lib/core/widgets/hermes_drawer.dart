@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../screens/activity_screen.dart';
-import '../screens/agent_center_screen.dart';
 import '../screens/appearance_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/cron_screen.dart';
@@ -27,6 +26,7 @@ import '../services/tui_gateway_client.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/instance_route_guard.dart';
 import '../theme/app_theme.dart';
+import '../utils/session_timestamp.dart';
 import '../../l10n/app_localizations.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
@@ -64,6 +64,159 @@ enum DrawerSection {
 /// Sections that need a gateway are disabled while [connection] is null.
 /// Navigation pops back to the root first so drawer hops never stack
 /// section screens on top of each other.
+/// Catálogo de destinos de "Herramientas": extraído de [HermesDrawer] como
+/// función de nivel superior (en vez de método privado) para que el acceso
+/// directo opcional "Herramientas" del dock (ver `dock_shortcuts.dart`)
+/// pueda abrir EXACTAMENTE la misma pantalla con los mismos criterios de
+/// capacidades, sin duplicar esta lista.
+List<HermesToolDestination> buildHermesToolDestinations({
+  required BuildContext context,
+  required SavedConnection? connection,
+  required ConnectionManager connManager,
+  required CapabilityMatrix capabilities,
+}) {
+  final strings = Strings.of(context);
+  final conn = connection;
+
+  bool enabled([CapState? capability]) =>
+      conn != null && (capability == null || !capability.isNo);
+
+  String? disabledReason([CapState? capability]) {
+    if (conn == null) return strings.drawerNeedInstance;
+    if (capability?.isNo ?? false) return strings.drawerUnsupported;
+    return null;
+  }
+
+  return [
+    HermesToolDestination(
+      id: 'appearance',
+      group: strings.drawerPersonalization,
+      icon: Icons.palette_outlined,
+      label: strings.setSecAppearance,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => AppearanceScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'mascotas',
+      group: strings.drawerPersonalization,
+      icon: Icons.pets_outlined,
+      label: strings.drawerMascots,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => const MascotasScreen(),
+    ),
+    HermesToolDestination(
+      id: 'instances',
+      group: strings.drawerGroupInstance,
+      icon: Icons.router_outlined,
+      label: strings.drawerInstances,
+      builder: (_) => GatewayManagerScreen(connManager: connManager),
+    ),
+    HermesToolDestination(
+      id: 'models',
+      group: strings.drawerGroupInstance,
+      icon: Icons.memory_outlined,
+      label: strings.drawerModels,
+      enabled: enabled(capabilities.modelsRead),
+      disabledReason: disabledReason(capabilities.modelsRead),
+      builder: (_) => ModelsScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'ssh',
+      group: strings.drawerGroupInstance,
+      icon: Icons.terminal_outlined,
+      label: strings.drawerSsh,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => SshScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'profiles',
+      group: strings.drawerGroupAgent,
+      icon: Icons.account_tree_outlined,
+      label: strings.drawerProfiles,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) =>
+          ProfilesScreen(connection: conn!, connManager: connManager),
+    ),
+    HermesToolDestination(
+      id: 'skills',
+      group: strings.drawerGroupAgent,
+      icon: Icons.extension_outlined,
+      label: strings.drawerSkills,
+      enabled: enabled(capabilities.skillsRead),
+      disabledReason: disabledReason(capabilities.skillsRead),
+      builder: (_) => SkillsScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'extensions',
+      group: strings.drawerGroupAgent,
+      icon: Icons.extension_outlined,
+      label: strings.drawerExtensions,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) {
+        final gateway = TuiGatewayClient(conn!);
+        return ExtensionsCenterScreen(
+          gateway: gateway,
+          readOnly: conn.readOnly,
+          disposeGateway: gateway.close,
+        );
+      },
+    ),
+    HermesToolDestination(
+      id: 'memory',
+      group: strings.drawerGroupAgent,
+      icon: Icons.psychology_outlined,
+      label: strings.drawerMemory,
+      enabled: enabled(capabilities.memoryRead),
+      disabledReason: disabledReason(capabilities.memoryRead),
+      builder: (_) => MemoryScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'cron',
+      group: strings.drawerGroupAgent,
+      icon: Icons.schedule_outlined,
+      label: strings.drawerCron,
+      enabled: enabled(capabilities.cronRead),
+      disabledReason: disabledReason(capabilities.cronRead),
+      builder: (_) => CronScreen(connection: conn!, connManager: connManager),
+    ),
+    HermesToolDestination(
+      id: 'soul',
+      group: strings.drawerGroupAgent,
+      icon: Icons.auto_awesome_outlined,
+      label: strings.drawerSoul,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => SoulScreen(connection: conn!),
+    ),
+    HermesToolDestination(
+      id: 'task-center',
+      group: strings.drawerGroupSystem,
+      icon: Icons.rocket_launch_outlined,
+      label: strings.drawerTaskCenter,
+      enabled: enabled(),
+      disabledReason: disabledReason(),
+      builder: (_) => TaskCenterScreen(
+        connection: conn!,
+        profile: connManager.activeProfileFor(conn.id),
+      ),
+    ),
+    HermesToolDestination(
+      id: 'activity',
+      group: strings.drawerGroupSystem,
+      icon: Icons.receipt_long_outlined,
+      label: strings.drawerActivity,
+      enabled: enabled(capabilities.logsRead),
+      disabledReason: disabledReason(capabilities.logsRead),
+      builder: (_) => ActivityScreen(connection: conn!),
+    ),
+  ];
+}
+
 class HermesDrawer extends StatelessWidget {
   /// Añade una banda táctil propia después del borde reservado por Android.
   ///
@@ -165,178 +318,26 @@ class HermesDrawer extends StatelessWidget {
     );
   }
 
-  Widget _agentsCenter(SavedConnection active) {
-    final gateway = TuiGatewayClient(active);
-    return AgentCenterScreen(
-      gateway: gateway,
-      readOnly: active.readOnly,
-      disposeGateway: gateway.close,
-    );
-  }
-
-  Widget _extensionsCenter(SavedConnection active) {
-    final gateway = TuiGatewayClient(active);
-    return ExtensionsCenterScreen(
-      gateway: gateway,
-      readOnly: active.readOnly,
-      disposeGateway: gateway.close,
-    );
-  }
-
   List<HermesToolDestination> _toolDestinations(
     BuildContext context,
     CapabilityMatrix capabilities,
-  ) {
-    final strings = Strings.of(context);
-    final conn = connection;
-
-    bool enabled([CapState? capability]) =>
-        conn != null && (capability == null || !capability.isNo);
-
-    String? disabledReason([CapState? capability]) {
-      if (conn == null) return strings.drawerNeedInstance;
-      if (capability?.isNo ?? false) return strings.drawerUnsupported;
-      return null;
-    }
-
-    return [
-      HermesToolDestination(
-        id: 'appearance',
-        group: strings.drawerPersonalization,
-        icon: Icons.palette_outlined,
-        label: strings.setSecAppearance,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => AppearanceScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'mascotas',
-        group: strings.drawerPersonalization,
-        icon: Icons.pets_outlined,
-        label: strings.drawerMascots,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => const MascotasScreen(),
-      ),
-      HermesToolDestination(
-        id: 'instances',
-        group: strings.drawerGroupInstance,
-        icon: Icons.router_outlined,
-        label: strings.drawerInstances,
-        builder: (_) => GatewayManagerScreen(connManager: connManager),
-      ),
-      HermesToolDestination(
-        id: 'models',
-        group: strings.drawerGroupInstance,
-        icon: Icons.memory_outlined,
-        label: strings.drawerModels,
-        enabled: enabled(capabilities.modelsRead),
-        disabledReason: disabledReason(capabilities.modelsRead),
-        builder: (_) => ModelsScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'ssh',
-        group: strings.drawerGroupInstance,
-        icon: Icons.terminal_outlined,
-        label: strings.drawerSsh,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => SshScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'profiles',
-        group: strings.drawerGroupAgent,
-        icon: Icons.account_tree_outlined,
-        label: strings.drawerProfiles,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) =>
-            ProfilesScreen(connection: conn!, connManager: connManager),
-      ),
-      HermesToolDestination(
-        id: 'agents',
-        group: strings.drawerGroupAgent,
-        icon: Icons.smart_toy_outlined,
-        label: strings.drawerAgents,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => _agentsCenter(conn!),
-      ),
-      HermesToolDestination(
-        id: 'skills',
-        group: strings.drawerGroupAgent,
-        icon: Icons.extension_outlined,
-        label: strings.drawerSkills,
-        enabled: enabled(capabilities.skillsRead),
-        disabledReason: disabledReason(capabilities.skillsRead),
-        builder: (_) => SkillsScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'extensions',
-        group: strings.drawerGroupAgent,
-        icon: Icons.extension_outlined,
-        label: strings.drawerExtensions,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => _extensionsCenter(conn!),
-      ),
-      HermesToolDestination(
-        id: 'memory',
-        group: strings.drawerGroupAgent,
-        icon: Icons.psychology_outlined,
-        label: strings.drawerMemory,
-        enabled: enabled(capabilities.memoryRead),
-        disabledReason: disabledReason(capabilities.memoryRead),
-        builder: (_) => MemoryScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'cron',
-        group: strings.drawerGroupAgent,
-        icon: Icons.schedule_outlined,
-        label: strings.drawerCron,
-        enabled: enabled(capabilities.cronRead),
-        disabledReason: disabledReason(capabilities.cronRead),
-        builder: (_) => CronScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'soul',
-        group: strings.drawerGroupAgent,
-        icon: Icons.auto_awesome_outlined,
-        label: strings.drawerSoul,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => SoulScreen(connection: conn!),
-      ),
-      HermesToolDestination(
-        id: 'task-center',
-        group: strings.drawerGroupSystem,
-        icon: Icons.rocket_launch_outlined,
-        label: strings.drawerTaskCenter,
-        enabled: enabled(),
-        disabledReason: disabledReason(),
-        builder: (_) => TaskCenterScreen(
-          connection: conn!,
-          profile: connManager.activeProfileFor(conn.id),
-        ),
-      ),
-      HermesToolDestination(
-        id: 'activity',
-        group: strings.drawerGroupSystem,
-        icon: Icons.receipt_long_outlined,
-        label: strings.drawerActivity,
-        enabled: enabled(capabilities.logsRead),
-        disabledReason: disabledReason(capabilities.logsRead),
-        builder: (_) => ActivityScreen(connection: conn!),
-      ),
-    ];
-  }
+  ) => buildHermesToolDestinations(
+    context: context,
+    connection: connection,
+    connManager: connManager,
+    capabilities: capabilities,
+  );
 
   void _openTools(BuildContext context, CapabilityMatrix capabilities) {
     final destinations = _toolDestinations(context, capabilities);
     _go(
       context,
       DrawerSection.tools,
-      () => ToolsHubScreen(destinations: destinations),
+      () => ToolsHubScreen(
+        destinations: destinations,
+        connection: connection,
+        connManager: connManager,
+      ),
     );
   }
 
@@ -411,7 +412,7 @@ class HermesDrawer extends StatelessWidget {
                 physics: const ClampingScrollPhysics(
                   parent: AlwaysScrollableScrollPhysics(),
                 ),
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(bottom: 8),
                 children: [
                   _DrawerHeader(
                     connectionLabel: conn?.label,
@@ -422,13 +423,31 @@ class HermesDrawer extends StatelessWidget {
                         connManager.activeConnectionId.value ?? conn?.id,
                     onSelected: (id) => _selectInstance(context, id),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+                    child: Divider(
+                      height: 1,
+                      color: colors.divider.withValues(alpha: 0.44),
+                    ),
+                  ),
+                  // Antes vivía anclado al fondo del drawer. La maqueta aprobada
+                  // lo pone como primera fila de la lista, justo bajo la
+                  // cabecera: sigue siendo lo primero que se ve al abrir el
+                  // drawer, sin necesitar una franja fija aparte.
+                  _NewChatItem(
+                    enabled: supports(capabilities.chatSupported),
+                    onTap: () => !hasConn
+                        ? _showNeedsGateway(context)
+                        : capabilities.chatSupported.isNo
+                        ? _showUnsupported(context)
+                        : _newChat(context),
+                  ),
                   _DrawerItem(
                     icon: Icons.home_outlined,
                     label: strings.drawerHome,
                     selected: current == DrawerSection.home,
                     onTap: () => _goHome(context),
                   ),
-                  const SizedBox(height: 2),
                   _DrawerItem(
                     icon: Icons.forum_outlined,
                     label: strings.drawerSessions,
@@ -450,6 +469,7 @@ class HermesDrawer extends StatelessWidget {
                             ),
                           ),
                   ),
+                  _DrawerSectionLabel(strings.drawerSectionWork),
                   _DrawerItem(
                     icon: Icons.folder_copy_outlined,
                     label: strings.drawerProjects,
@@ -470,7 +490,10 @@ class HermesDrawer extends StatelessWidget {
                         ? _go(
                             context,
                             DrawerSection.kanban,
-                            () => TasksScreen(connection: conn),
+                            () => TasksScreen(
+                              connection: conn,
+                              connManager: connManager,
+                            ),
                           )
                         : _showNeedsGateway(context),
                   ),
@@ -489,7 +512,34 @@ class HermesDrawer extends StatelessWidget {
                         : _go(
                             context,
                             DrawerSection.cron,
-                            () => CronScreen(connection: conn),
+                            () => CronScreen(
+                              connection: conn,
+                              connManager: connManager,
+                            ),
+                          ),
+                  ),
+                  _DrawerSectionLabel(strings.drawerSectionAgents),
+                  _DrawerItem(
+                    icon: Icons.hub_outlined,
+                    label: 'Bots',
+                    selected: current == DrawerSection.missionControl,
+                    enabled: hasConn,
+                    disabledHint: strings.drawerNeedInstance,
+                    // `connected` es la misma señal de salud de gateway que ya
+                    // muestra la cabecera; no es un estado por-bot, pero es la
+                    // mejor aproximación disponible sin datos nuevos.
+                    trailing: hasConn && connected
+                        ? _StatusDot(color: colors.success)
+                        : null,
+                    onTap: () => !hasConn
+                        ? _showNeedsGateway(context)
+                        : _go(
+                            context,
+                            DrawerSection.missionControl,
+                            () => MissionControlScreen(
+                              connection: conn,
+                              connManager: connManager,
+                            ),
                           ),
                   ),
                   _DrawerItem(
@@ -504,26 +554,14 @@ class HermesDrawer extends StatelessWidget {
                     ),
                   ),
                   _DrawerItem(
-                    icon: Icons.hub_outlined,
-                    label: 'Bots',
-                    selected: current == DrawerSection.missionControl,
-                    enabled: hasConn,
-                    disabledHint: strings.drawerNeedInstance,
-                    onTap: () => !hasConn
-                        ? _showNeedsGateway(context)
-                        : _go(
-                            context,
-                            DrawerSection.missionControl,
-                            () => MissionControlScreen(
-                              connection: conn,
-                              connManager: connManager,
-                            ),
-                          ),
-                  ),
-                  _DrawerItem(
                     icon: Icons.widgets_outlined,
                     label: strings.drawerTools,
                     selected: current == DrawerSection.tools,
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      size: 19,
+                      color: colors.textDisabled,
+                    ),
                     onTap: () => _openTools(context, capabilities),
                   ),
                   if (conn != null && supports(capabilities.sessionsRead))
@@ -544,58 +582,58 @@ class HermesDrawer extends StatelessWidget {
                         );
                       },
                     ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 6),
-                    child: Divider(
-                      height: 1,
-                      color: colors.divider.withValues(alpha: 0.44),
-                    ),
-                  ),
-                  _DrawerItem(
-                    icon: Icons.router_outlined,
-                    label: strings.drawerInstances,
-                    selected: current == DrawerSection.gateways,
-                    onTap: () => _go(
-                      context,
-                      DrawerSection.gateways,
-                      () => GatewayManagerScreen(connManager: connManager),
-                    ),
-                  ),
-                  _DrawerItem(
-                    icon: Icons.settings_outlined,
-                    label: strings.drawerSettings,
-                    selected: current == DrawerSection.settings,
-                    enabled: hasConn,
-                    onTap: () => _goWithConnection(
-                      context,
-                      DrawerSection.settings,
-                      (active) => SettingsScreen(
-                        connection: active,
-                        connManager: connManager,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
+            // Instancias/Ajustes fijos abajo: con las secciones nuevas
+            // (Trabajo/Agentes/Recientes) la lista ya no cabe entera en una
+            // pantalla de teléfono y estos dos quedaban fuera de la vista
+            // inicial, requiriendo scroll para llegar a ellos — se reportó
+            // como un problema real tras probar el rediseño en el Pixel.
             DecoratedBox(
               decoration: BoxDecoration(
                 color: colors.surface,
                 border: Border(
                   top: BorderSide(
-                    color: colors.divider.withValues(alpha: 0.52),
+                    color: colors.divider.withValues(alpha: 0.44),
                   ),
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 6, 0, 4),
-                child: _NewChatItem(
-                  enabled: supports(capabilities.chatSupported),
-                  onTap: () => !hasConn
-                      ? _showNeedsGateway(context)
-                      : capabilities.chatSupported.isNo
-                      ? _showUnsupported(context)
-                      : _newChat(context),
+                padding: const EdgeInsets.fromLTRB(0, 4, 0, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _DrawerItem(
+                        icon: Icons.router_outlined,
+                        label: strings.drawerInstances,
+                        selected: current == DrawerSection.gateways,
+                        dense: true,
+                        onTap: () => _go(
+                          context,
+                          DrawerSection.gateways,
+                          () => GatewayManagerScreen(connManager: connManager),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: _DrawerItem(
+                        icon: Icons.settings_outlined,
+                        label: strings.drawerSettings,
+                        selected: current == DrawerSection.settings,
+                        enabled: hasConn,
+                        dense: true,
+                        onTap: () => _goWithConnection(
+                          context,
+                          DrawerSection.settings,
+                          (active) => SettingsScreen(
+                            connection: active,
+                            connManager: connManager,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -677,60 +715,72 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
   Widget build(BuildContext context) {
     if (_sessions.isEmpty) return const SizedBox.shrink();
     final colors = Theme.of(context).hermes;
-    final rawLabel = Strings.of(context).drawerGroupRecent;
-    final sectionLabel = rawLabel.isEmpty
-        ? rawLabel
-        : '${rawLabel[0].toUpperCase()}${rawLabel.substring(1)}';
+    final strings = Strings.of(context);
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(22, 8, 18, 5),
-            child: Semantics(
-              header: true,
-              child: Text(
-                sectionLabel,
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-          for (final session in _sessions)
-            Semantics(
-              button: true,
-              label: session.displayTitle,
-              child: InkWell(
-                key: ValueKey('drawer-recent-${session.id}'),
-                onTap: () => widget.onOpen(session),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 22),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        session.displayTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _DrawerSectionLabel(strings.drawerGroupRecent),
+        for (final session in _sessions)
+          Semantics(
+            button: true,
+            label: session.displayTitle,
+            child: InkWell(
+              key: ValueKey('drawer-recent-${session.id}'),
+              onTap: () => widget.onOpen(session),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      // Solo `isActive` viene en el listado plano de
+                      // sesiones — no hay aquí una señal live de "esperando
+                      // aprobación" como en la maqueta (eso vive en el
+                      // stream de actividad de cada chat, no en este
+                      // endpoint). Sesión inactiva: sin punto, no uno gris.
+                      SizedBox(
+                        width: 7,
+                        child: session.isActive
+                            ? _StatusDot(color: colors.success)
+                            : null,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          session.displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w400,
+                          ),
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Text(
+                        formatSessionRelativeTime(
+                          session.lastActivityAt,
+                          strings,
+                        ),
+                        style: TextStyle(
+                          color: colors.textDisabled,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
@@ -981,6 +1031,11 @@ class _DrawerItem extends StatelessWidget {
   final bool enabled;
   final String? disabledHint;
   final VoidCallback onTap;
+  final Widget? trailing;
+  // Para filas que comparten la mitad del ancho (el pie fijo
+  // Instancias/Ajustes): icono, huecos y tipografía más pequeños para que
+  // "Instancias" quepa sin recortarse en un ~185px de ancho disponible.
+  final bool dense;
 
   const _DrawerItem({
     required this.icon,
@@ -989,6 +1044,8 @@ class _DrawerItem extends StatelessWidget {
     required this.onTap,
     this.enabled = true,
     this.disabledHint,
+    this.trailing,
+    this.dense = false,
   });
 
   @override
@@ -1018,26 +1075,26 @@ class _DrawerItem extends StatelessWidget {
           child: InkWell(
             onTap: onTap,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 52),
+              constraints: BoxConstraints(minHeight: dense ? 44 : 52),
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
+                padding: EdgeInsets.symmetric(
+                  horizontal: dense ? 10 : 14,
+                  vertical: dense ? 8 : 10,
                 ),
                 child: Row(
                   children: [
                     SizedBox.square(
-                      dimension: 28,
-                      child: Icon(icon, size: 20, color: fg),
+                      dimension: dense ? 22 : 28,
+                      child: Icon(icon, size: dense ? 18 : 20, color: fg),
                     ),
-                    const SizedBox(width: 12),
+                    SizedBox(width: dense ? 8 : 12),
                     Expanded(
                       child: Text(
                         label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 14.5,
+                          fontSize: dense ? 13 : 14.5,
                           fontWeight: selected
                               ? FontWeight.w600
                               : FontWeight.w500,
@@ -1045,6 +1102,10 @@ class _DrawerItem extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (trailing != null) ...[
+                      const SizedBox(width: 8),
+                      trailing!,
+                    ],
                   ],
                 ),
               ),
@@ -1052,6 +1113,55 @@ class _DrawerItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Uppercase group caption ("TRABAJO", "AGENTES") above a run of
+/// [_DrawerItem]s — same idiom as the existing "Recientes" section header,
+/// just applied consistently to every group instead of only the last one.
+class _DrawerSectionLabel extends StatelessWidget {
+  final String label;
+
+  const _DrawerSectionLabel(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 14, 18, 6),
+      child: Semantics(
+        header: true,
+        child: Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            color: colors.textDisabled,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small live-status dot for a [_DrawerItem]'s trailing slot. `null` color
+/// renders nothing (not even a dim placeholder) — absence of signal isn't
+/// itself a status worth showing.
+class _StatusDot extends StatelessWidget {
+  final Color? color;
+
+  const _StatusDot({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final dotColor = color;
+    if (dotColor == null) return const SizedBox.shrink();
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
     );
   }
 }

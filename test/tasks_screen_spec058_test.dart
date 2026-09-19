@@ -299,7 +299,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('kanban-task-other-task')), findsNothing);
-    expect(find.text('@infra'), findsOneWidget);
+    // "@infra" ahora aparece dos veces a propósito: en el chip del filtro
+    // activo y junto al avatar de la propia tarjeta (rediseño de lista que
+    // muestra el asignado como "@usuario", como en el resto del mockup).
+    expect(find.text('@infra'), findsWidgets);
 
     await tester.tap(find.byKey(const ValueKey('kanban-clear-filters')));
     await tester.pump();

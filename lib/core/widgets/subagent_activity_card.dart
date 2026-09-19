@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import 'compact_pill_text.dart';
 import '../models/subagent_activity.dart';
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
@@ -55,6 +56,11 @@ class SubagentActivityCard extends StatefulWidget {
   final bool background;
   final bool appForeground;
   final int safeChildCount;
+  // Called when the person taps the pill's × once every activity is
+  // terminal. The owner (chat_screen.dart) decides what "dismissed" means
+  // for its own display cache — this widget only offers the affordance
+  // when there's nothing still live to hide.
+  final VoidCallback? onDismiss;
 
   const SubagentActivityCard({
     required this.activities,
@@ -72,6 +78,7 @@ class SubagentActivityCard extends StatefulWidget {
     this.background = false,
     this.appForeground = true,
     this.safeChildCount = 0,
+    this.onDismiss,
     super.key,
   });
 
@@ -90,6 +97,20 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   bool _steerPending = false;
   String? _steerNotice;
   final Set<SubagentActivityKey> _stopAwaitingTerminal = {};
+  // Set while the detail bottom sheet is open: its content lives in a
+  // separate element tree (the Navigator overlay), so this widget's own
+  // setState does not reach it. Every state mutation below goes through
+  // _rebuild so the open sheet (tail output, steer status, selection)
+  // stays live instead of freezing at whatever it showed when it opened.
+  void Function(VoidCallback fn)? _sheetRefresh;
+  ModalRoute<void>? _detailRoute;
+  bool _sheetMounted = false;
+
+  void _rebuild(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+    _sheetRefresh?.call(() {});
+  }
 
   @override
   void didUpdateWidget(covariant SubagentActivityCard oldWidget) {
@@ -111,13 +132,37 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
     } else if (!oldWidget.appForeground && widget.appForeground) {
       _startTail();
     }
+    // The floating detail surface lives in its own route/element tree (see
+    // _openDetailSheet), so this rebuild — triggered by the framework, not
+    // by us — does not reach it on its own. Nudging its setState here would
+    // hit "setState called during build" (didUpdateWidget runs mid-build);
+    // defer it to right after this frame instead.
+    if (_sheetRefresh != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _sheetRefresh?.call(() {});
+      });
+    }
   }
 
   @override
   void dispose() {
     _stopTail();
-    _steerController.dispose();
+    _sheetRefresh = null;
+    final route = _detailRoute;
+    if (route != null) _closeDetailRoute(route);
+    // The overlay's EditableText may outlive this pill. Its unmount callback
+    // releases the controller after it has stopped using it.
+    if (!_sheetMounted) _steerController.dispose();
     super.dispose();
+  }
+
+  void _closeDetailRoute(ModalRoute<void> route) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = route.navigator;
+      if (navigator != null && navigator.mounted && route.isActive) {
+        navigator.removeRoute(route);
+      }
+    });
   }
 
   SubagentActivity? get _selectedActivity {
@@ -128,7 +173,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   }
 
   void _setExpanded(bool expanded) {
-    setState(() {
+    _rebuild(() {
       _expanded = expanded;
       if (expanded && widget.activities.length == 1) {
         _selectedKey = widget.activities.single.key;
@@ -142,9 +187,10 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   }
 
   void _select(SubagentActivity activity) {
+    if (!mounted) return;
     if (_selectedKey == activity.key) return;
     _stopTail();
-    setState(() {
+    _rebuild(() {
       _selectedKey = activity.key;
       _tail = null;
       _steerNotice = null;
@@ -162,7 +208,8 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
 
   void _startTail() {
     final activity = _selectedActivity;
-    if (!_expanded ||
+    if (!mounted ||
+        !_expanded ||
         !widget.appForeground ||
         activity == null ||
         activity.isTerminal ||
@@ -176,7 +223,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
     widget.onTail!(activity)
         .then((result) {
           if (!mounted || generation != _tailGeneration) return;
-          setState(() {
+          _rebuild(() {
             _tail = result;
             _tailLoading = false;
           });
@@ -184,7 +231,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
         })
         .onError((Object _, StackTrace _) {
           if (!mounted || generation != _tailGeneration) return;
-          setState(() {
+          _rebuild(() {
             // A transport failure is not authoritative `available: false`.
             // Preserve the last valid tail so polling cannot make it flicker.
             _tailLoading = false;
@@ -235,6 +282,11 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
     final hasFailure = activities.any(
       (a) => a.phase == SubagentActivityPhase.failed,
     );
+    final hasUnconfirmedSuccess = activities.any(
+      (a) =>
+          a.phase == SubagentActivityPhase.cancelled ||
+          a.phase == SubagentActivityPhase.unknown,
+    );
     final single = activities.length == 1 ? activities.single : null;
     final detailedSummary = single == null
         ? activities.isNotEmpty && unknown == activities.length
@@ -253,75 +305,242 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
               ? strings.subagentActivitySummary(displayCount, 0)
               : strings.subagentActivityRunning
         : detailedSummary;
-    final viewData = MediaQueryData.fromView(View.of(context));
-    final visibleHeight = viewData.size.height - viewData.viewInsets.bottom;
-    final maxPanelHeight = (visibleHeight * 0.32).clamp(88.0, 180.0);
-    final selectedActivity = _selectedActivity;
+    final pillLabel = summary;
+    final semanticLabel = widget.background
+        ? strings.chaBackgroundWorkTitle
+        : '${strings.subagentActivityTitle}, $displayCount';
 
-    return HermesInlineActivity(
-      key: const ValueKey('subagent-disclosure'),
-      title: genericOnly
-          ? strings.chaBackgroundWorkTitle
-          : strings.subagentActivityTitle,
-      summary: widget.background && !genericOnly
-          ? '$displayCount · $summary'
-          : summary,
-      titleMaxLines: 1,
-      summaryMaxLines: 1,
-      leading: Icon(
-        Icons.account_tree_outlined,
-        color: hasFailure
-            ? colors.error
-            : (genericOnly ? displayCount > 0 : widget.background || live > 0)
-            ? colors.accent
-            : colors.textSecondary,
-      ),
-      status: Text(
-        genericOnly
-            ? displayCount > 0
-                  ? '$displayCount'
-                  : strings.subagentActivityRunning
-            : widget.background
-            ? strings.chaBackgroundWorkTitle
-            : '$displayCount',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      detail: genericOnly
-          ? null
-          : ConstrainedBox(
-              key: const ValueKey('subagent-panel'),
-              constraints: BoxConstraints(maxHeight: maxPanelHeight),
-              child: SingleChildScrollView(
-                primary: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var index = 0; index < activities.length; index++)
-                      _SubagentRow(
-                        key: ValueKey(activities[index].key),
-                        activity: activities[index],
-                        index: index + 1,
-                        selected: activities[index].key == _selectedKey,
-                        onSelect: () => _select(activities[index]),
-                      ),
-                    if (selectedActivity != null)
-                      _buildSelectedDetail(selectedActivity, colors, strings),
-                  ],
+    // True compact chip (mockup: icon + one line + chevron, sized to its
+    // content, radius = stadium). The old shape reused HermesInlineActivity's
+    // full editorial header (title + right-aligned status + a separate "ver
+    // detalles" disclosure row), which forced full transcript width and
+    // read as a banner, not a pill. Tapping now opens a real bottom sheet
+    // instead of squeezing the detail into an ~180px inline sliver.
+    // Only offer the × once nothing is still live: dismissing in-progress
+    // work would hide a task someone might still want to steer or stop, and
+    // the point of persisting the pill past completion (rather than letting
+    // it vanish the moment `activities` empties out — see chat_screen.dart's
+    // `_displaySubagentActivities`) is to leave the "what did it do" review
+    // available until the person is done with it, not to auto-hide it.
+    final showDismiss =
+        !genericOnly && unknown == 0 && live <= 0 && widget.onDismiss != null;
+
+    return Semantics(
+      button: !genericOnly,
+      label: semanticLabel,
+      child: Material(
+        key: const ValueKey('subagent-disclosure'),
+        color: colors.surface,
+        shape: const StadiumBorder(),
+        clipBehavior: Clip.antiAlias,
+        elevation: 10,
+        shadowColor: Colors.black.withValues(alpha: 0.45),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: InkWell(
+                onTap: genericOnly ? null : () => _openDetailSheet(context),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      12,
+                      9,
+                      showDismiss ? 8 : 16,
+                      9,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildLeadingIndicator(
+                          colors: colors,
+                          hasFailure: hasFailure,
+                          hasUnconfirmedSuccess: hasUnconfirmedSuccess,
+                          live: genericOnly ? (displayCount > 0 ? 1 : 0) : live,
+                          completed: genericOnly ? 0 : completed,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 220),
+                            child: CompactPillText(
+                              label: pillLabel,
+                              compactLabel: strings.subagentPillCount(
+                                displayCount,
+                              ),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: colors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (!genericOnly) ...[
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 18,
+                            color: colors.textSecondary,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-      expanded: !genericOnly && _expanded,
-      onExpansionChanged: genericOnly ? null : _setExpanded,
-      disclosureLabel: genericOnly
-          ? null
-          : _expanded
-          ? strings.chaErrHideDetails
-          : strings.chaErrViewDetails,
-      semanticLabel: widget.background
-          ? strings.chaBackgroundWorkTitle
-          : '${strings.subagentActivityTitle}, $displayCount',
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            if (showDismiss)
+              Semantics(
+                button: true,
+                label: strings.inAppDismiss,
+                child: InkWell(
+                  onTap: widget.onDismiss,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minHeight: 48,
+                      minWidth: 48,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(6, 9, 12, 9),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 17,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openDetailSheet(BuildContext context) async {
+    if (_expanded || _sheetMounted || !mounted) return;
+    final strings = Strings.of(context);
+    _setExpanded(true);
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('subagent-panel'),
+      builder: (context) {
+        final route = ModalRoute.of<void>(context)!;
+        if (!mounted) {
+          _closeDetailRoute(route);
+          return const SizedBox.shrink();
+        }
+        _detailRoute = route;
+        _sheetMounted = true;
+        return _CallOnDispose(
+          // The awaited push below only clears `_sheetRefresh` once its
+          // Future resolves, which can lag behind the sheet's own element
+          // actually leaving the tree (e.g. an ancestor route being replaced
+          // out from under it) — that gap is enough for a deferred nudge
+          // (see didUpdateWidget) to fire `setState` on an already-disposed
+          // StatefulBuilder. Clearing it here, exactly on unmount, closes
+          // that gap regardless of why the sheet went away.
+          onDispose: () {
+            _sheetRefresh = null;
+            _detailRoute = null;
+            _sheetMounted = false;
+            if (!mounted) _steerController.dispose();
+          },
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              if (!mounted) return const SizedBox.shrink();
+              final colors = Theme.of(context).hermes;
+              _sheetRefresh = setSheetState;
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                shrinkWrap: true,
+                children: [
+                  Text(
+                    strings.subagentActivityTitle,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  for (var index = 0; index < widget.activities.length; index++)
+                    _SubagentRow(
+                      key: ValueKey(widget.activities[index].key),
+                      activity: widget.activities[index],
+                      index: index + 1,
+                      selected: widget.activities[index].key == _selectedKey,
+                      onSelect: () => _select(widget.activities[index]),
+                    ),
+                  if (_selectedActivity case final selected?)
+                    _buildSelectedDetail(selected, colors, strings),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+    _sheetRefresh = null;
+    if (mounted) _setExpanded(false);
+  }
+
+  // Small orange spinner (matches the pill mockup's "dot") instead of a
+  // literal subagent glyph; a green check badge overlays it once at least
+  // one activity has finished, and a plain check replaces it once none are
+  // still live.
+  Widget _buildLeadingIndicator({
+    required HermesThemeColors colors,
+    required bool hasFailure,
+    required bool hasUnconfirmedSuccess,
+    required int live,
+    required int completed,
+  }) {
+    if (hasFailure) {
+      return Icon(Icons.error_outline, size: 18, color: colors.error);
+    }
+    // Nothing live and nothing authoritatively completed (e.g. a batch
+    // that is entirely `unknown`) is not the same as "done" — a green
+    // check here would invent a success signal the data doesn't support.
+    if (live <= 0 && (completed <= 0 || hasUnconfirmedSuccess)) {
+      return Icon(
+        Icons.account_tree_outlined,
+        size: 18,
+        color: colors.textSecondary,
+      );
+    }
+    if (live <= 0) {
+      return Icon(Icons.check_circle, size: 18, color: colors.success);
+    }
+    final spinner = SizedBox(
+      width: 16,
+      height: 16,
+      child: CircularProgressIndicator(strokeWidth: 2.2, color: colors.accent),
+    );
+    if (completed <= 0 || hasUnconfirmedSuccess) return spinner;
+    return SizedBox(
+      width: 18,
+      height: 18,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(top: 1, left: 1, child: spinner),
+          Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              padding: const EdgeInsets.all(1),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.check_circle, size: 12, color: colors.success),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -359,9 +578,12 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
       ?_formatDuration(_elapsedSeconds(activity.details, widget.now)),
     ];
 
+    // Sin borde duro: hairline superior consistente con el resto de la app,
+    // tipografía coherente (no monoespaciado genérico salvo la salida en
+    // vivo, que recibe un tratamiento de bloque de código sutil).
     return Container(
       margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 10),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: colors.divider)),
       ),
@@ -373,11 +595,20 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
             strings.subagentActivityItem(index),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: colors.textPrimary,
+            ),
           ),
           if (goal != null && goal.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(goal, maxLines: 3, overflow: TextOverflow.ellipsis),
+            Text(
+              goal,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: colors.textPrimary),
+            ),
           ],
           if (facts.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -385,45 +616,76 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
               facts.join(' · '),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+              style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
             ),
           ],
           if (tail != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             if (!tail.available)
               Text(
                 strings.subagentTailUnavailable,
-                style: TextStyle(color: colors.textSecondary),
+                style: TextStyle(color: colors.textSecondary, fontSize: 12),
               )
             else ...[
               if (tail.content.trim().isNotEmpty)
-                SelectableText(
-                  tail.content,
-                  maxLines: 6,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                // Bloque de código sutil (surfaceVariant + radio) en vez de
+                // SelectableText monoespaciado a secas: la salida en vivo del
+                // subagente es contenido de log real, así que conserva el
+                // tratamiento mono pero contenido, no crudo.
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: SelectableText(
+                    tail.content,
+                    maxLines: 6,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      height: 1.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
                 ),
               if (tail.truncated)
-                Text(
-                  strings.subagentTailTruncated,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    strings.subagentTailTruncated,
+                    style: TextStyle(color: colors.textDisabled, fontSize: 11),
+                  ),
                 ),
             ],
           ],
           if (steerAllowed) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+            // Mismo estilo de campo que el composer/inputs del resto de la
+            // app (InputDecorationTheme global: relleno surfaceVariant,
+            // borde hairline, radio consistente).
             TextField(
               key: ValueKey('subagent-steer-input-${activity.key.stableId}'),
               controller: _steerController,
               minLines: 1,
               maxLines: 3,
               maxLength: 512,
+              style: TextStyle(fontSize: 14, color: colors.textPrimary),
               decoration: InputDecoration(
                 labelText: strings.subagentSteerLabel,
                 counterText: '',
+                isDense: true,
               ),
             ),
             if (steerNotice != null)
-              Text(steerNotice, style: TextStyle(color: colors.textSecondary)),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  steerNotice,
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                ),
+              ),
           ],
           if (canOpen || canStop || steerAllowed)
             Align(
@@ -436,7 +698,9 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                       key: ValueKey('subagent-open-${activity.key.stableId}'),
                       onPressed: widget.isOpenPending?.call(activity) == true
                           ? null
-                          : () => widget.onOpenConversation!(activity),
+                          : () {
+                              if (mounted) widget.onOpenConversation!(activity);
+                            },
                       style: TextButton.styleFrom(
                         minimumSize: const Size(48, 48),
                       ),
@@ -504,16 +768,17 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   }
 
   Future<void> _sendSteer(SubagentActivity activity) async {
+    if (!mounted) return;
     final text = _steerController.text.trim();
     if (text.isEmpty || _steerPending || widget.onSteer == null) return;
-    setState(() {
+    _rebuild(() {
       _steerPending = true;
       _steerNotice = null;
     });
     try {
       final result = await widget.onSteer!(activity, text);
       if (!mounted || _selectedKey != activity.key) return;
-      setState(() {
+      _rebuild(() {
         _steerPending = false;
         if (result.queued) {
           _steerController.clear();
@@ -524,7 +789,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
       });
     } catch (_) {
       if (!mounted || _selectedKey != activity.key) return;
-      setState(() {
+      _rebuild(() {
         _steerPending = false;
         _steerNotice = Strings.of(context).subagentSteerUnconfirmed;
       });
@@ -532,8 +797,9 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   }
 
   Future<void> _requestStop(SubagentActivity activity) async {
+    if (!mounted) return;
     if (!_stopAwaitingTerminal.add(activity.key)) return;
-    setState(() {});
+    _rebuild(() {});
     final requester = widget.onStopRequested;
     if (requester == null) {
       widget.onInterrupt?.call(activity);
@@ -546,7 +812,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
       acknowledged = false;
     }
     if (!mounted || acknowledged) return;
-    setState(() => _stopAwaitingTerminal.remove(activity.key));
+    _rebuild(() => _stopAwaitingTerminal.remove(activity.key));
   }
 }
 
@@ -650,6 +916,29 @@ class SubagentCompletionCard extends StatelessWidget {
   }
 }
 
+/// Runs [onDispose] exactly when [child] actually leaves the tree, not on a
+/// timing guess about when its owning route finishes closing.
+class _CallOnDispose extends StatefulWidget {
+  const _CallOnDispose({required this.onDispose, required this.child});
+
+  final VoidCallback onDispose;
+  final Widget child;
+
+  @override
+  State<_CallOnDispose> createState() => _CallOnDisposeState();
+}
+
+class _CallOnDisposeState extends State<_CallOnDispose> {
+  @override
+  Widget build(BuildContext context) => widget.child;
+
+  @override
+  void dispose() {
+    widget.onDispose();
+    super.dispose();
+  }
+}
+
 class _SubagentRow extends StatelessWidget {
   final SubagentActivity activity;
   final int index;
@@ -684,44 +973,63 @@ class _SubagentRow extends StatelessWidget {
       button: true,
       selected: selected,
       label: '$title, $label',
-      child: InkWell(
-        key: ValueKey('subagent-row-${activity.key.stableId}'),
-        onTap: onSelect,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
+      child: Material(
+        // Tinte suave de superficie en la fila seleccionada, sin borde:
+        // mismo lenguaje visual que el resto de listas rediseñadas.
+        color: selected
+            ? colors.surfaceVariant.withValues(alpha: 0.55)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          key: ValueKey('subagent-row-${activity.key.stableId}'),
+          onTap: onSelect,
+          borderRadius: BorderRadius.circular(10),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        [label, ?duration].join(' · '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: color, fontSize: 12),
-                      ),
-                    ],
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          [label, ?duration].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: color, fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Icon(
-                  selected ? Icons.chevron_right : Icons.chevron_right_outlined,
-                  color: colors.textSecondary,
-                ),
-              ],
+                  Icon(
+                    selected
+                        ? Icons.chevron_right
+                        : Icons.chevron_right_outlined,
+                    color: colors.textSecondary,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

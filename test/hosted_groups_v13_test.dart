@@ -18,7 +18,79 @@ class _TicketDashboardClient extends DashboardClient {
       );
 }
 
+// Shape from local backend 64ea66b03d44, methods_groups.py:216-245.
+// Readiness can be false while web_server.py starts the worker in a thread.
+Map<String, Object?> _localServerCapabilities({bool driver = true}) => {
+  'protocol_version': 2,
+  'driver': driver,
+  'persistent_process': false,
+  'authority_gateway_id': 'fixture-gateway',
+  'room_link': {
+    'enabled': false,
+    'reason': 'gateway_roomlink_secret_unavailable',
+  },
+  'features': [
+    'authority_epoch',
+    'coordinator_fencing',
+    'room_identity',
+    'monotonic_log',
+    'idempotent_send',
+    'replayable_disband',
+    'typed_events',
+    'actor_identity',
+    'log_replication',
+    'authority_takeover',
+  ],
+  'methods': [
+    'groups.capabilities',
+    'groups.list',
+    'groups.create',
+    'groups.state',
+    'groups.send',
+    'groups.rename',
+    'groups.log',
+    'groups.disband',
+    'groups.replicate',
+    'groups.replica_state',
+    'groups.promote',
+    'groups.demote',
+    'groups.stop',
+    'groups.retry',
+    'groups.approve',
+    'groups.peer.invite',
+    'groups.peer.revoke',
+    'groups.peer.register',
+  ],
+  'max_log_limit': 500,
+};
+
 void main() {
+  test(
+    'local server capabilities recover driver readiness on the same socket',
+    () async {
+      final cache = GroupsCapabilityCache();
+      var driver = false;
+      var calls = 0;
+      Future<GroupsCapabilities?> resolve() => cache.resolve(
+        connectionId: 'fixture',
+        generation: 7,
+        loader: () async {
+          calls++;
+          return _localServerCapabilities(driver: driver);
+        },
+      );
+      final starting = (await resolve())!;
+      expect(starting.hasSharedRoomSurface, isTrue);
+      expect(starting.supports(GroupMethod.send), isFalse);
+      driver = true;
+      final ready = (await resolve())!;
+      expect(ready.hasSharedRoomSurface, isTrue);
+      expect(ready.supports(GroupMethod.send), isTrue);
+      expect(calls, 2);
+      expect(await resolve(), same(ready));
+    },
+  );
+
   test('capabilities fail closed and cache by connection generation', () async {
     var calls = 0;
     final cache = GroupsCapabilityCache();
@@ -63,7 +135,7 @@ void main() {
     );
     expect(identical(first, same), isTrue);
     expect(calls, 2);
-    expect(first!.supports(GroupMethod.send), isFalse);
+    expect(first!.supports(GroupMethod.send), isTrue);
     expect(first.supports(GroupMethod.retry), isFalse);
     expect(first.supports(GroupMethod.promote), isFalse);
     expect(next!.generation, 8);
@@ -271,6 +343,38 @@ void main() {
     }
   });
 
+  test('hosted member display_name is optional and bounded', () {
+    Map<String, dynamic> member({Object? displayName, bool include = true}) => {
+      'member_id': 'member-1',
+      'profile': 'research',
+      'handle': 'research-home',
+      if (include) 'display_name': displayName,
+      'target': {'kind': 'local', 'profile': 'research'},
+    };
+
+    expect(
+      HostedGroupMember.fromJson(
+        member(displayName: 'Research Lead'),
+        authorityGatewayId: 'gateway-private',
+      ).displayName,
+      'Research Lead',
+    );
+    expect(
+      HostedGroupMember.fromJson(
+        member(include: false),
+        authorityGatewayId: 'gateway-private',
+      ).displayName,
+      isNull,
+    );
+    expect(
+      () => HostedGroupMember.fromJson(
+        member(displayName: 'x' * 201),
+        authorityGatewayId: 'gateway-private',
+      ),
+      throwsFormatException,
+    );
+  });
+
   group('groups.state rejects foreign room identity', () {
     for (final operation in const ['state', 'rename', 'stop', 'disband']) {
       test('$operation read-back cannot return a different room', () async {
@@ -467,40 +571,130 @@ void main() {
       },
     );
 
-    test('retired groups.send is rejected before any mutation frame', () async {
-      final harness = await _HostedRpcHarness.start((method, params) {
-        if (method == 'groups.send') {
-          return {
-            'accepted': true,
-            'client_event_id': params['event_id'],
-            'event': _event(params['room_id'] as String, 'foreign-event'),
-          };
-        }
-        if (method == 'groups.log') {
-          return {
-            'events': [_event(params['room_id'] as String, 'foreign-event')],
-            'cursor': 1,
-            'latest_seq': 1,
-            'has_more': false,
-            'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
-          };
-        }
-        throw StateError('unexpected hosted method $method');
-      });
-      addTearDown(harness.close);
+    test(
+      'groups.send exact acknowledgement proves itself in the log before returning',
+      () async {
+        final durableId = TuiGatewayClient.durableGroupEventId(
+          'requested-event',
+        );
+        final harness = await _HostedRpcHarness.start((method, params) {
+          if (method == 'groups.send') {
+            return {
+              'accepted': true,
+              'client_event_id': params['event_id'],
+              'event': _event(params['room_id'] as String, durableId),
+            };
+          }
+          if (method == 'groups.log') {
+            return {
+              'events': [_event(params['room_id'] as String, durableId)],
+              'cursor': 1,
+              'latest_seq': 1,
+              'has_more': false,
+              'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+            };
+          }
+          throw StateError('unexpected hosted method $method');
+        });
+        addTearDown(harness.close);
 
-      await expectLater(
-        harness.client.sendGroupText(
+        final page = await harness.client.sendGroupText(
           roomId: 'requested-room',
           text: 'hello',
           threadId: 'thread-1',
           eventId: 'requested-event',
           generation: harness.generation,
-        ),
-        throwsA(isA<TuiGatewayRpcError>()),
-      );
-      expect(harness.methods, ['groups.capabilities']);
-    });
+        );
+
+        expect(page.events, hasLength(1));
+        expect(page.events.single.eventId, durableId);
+        expect(harness.methods, [
+          'groups.capabilities',
+          'groups.send',
+          'groups.log',
+        ]);
+      },
+    );
+
+    for (final mention in ['all', 'everyone']) {
+      test('local capability envelope permits @$mention on the wire', () async {
+        final text = '@$mention reply once';
+        final durable = TuiGatewayClient.durableGroupEventId('mention-event');
+        Map<String, Object?> event() => {
+          ..._event('room-mentions', durable),
+          'payload': {'text': text, 'thread_id': 'thread-1'},
+        };
+        final harness = await _HostedRpcHarness.start((method, params) {
+          if (method == 'groups.send') {
+            expect(params['payload'], {'text': text, 'thread_id': 'thread-1'});
+            return {
+              'accepted': true,
+              'client_event_id': 'mention-event',
+              'event': event(),
+            };
+          }
+          return {
+            'events': [event()],
+            'cursor': 1,
+            'latest_seq': 1,
+            'has_more': false,
+            'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+          };
+        });
+        addTearDown(harness.close);
+        final page = await harness.client.sendGroupText(
+          roomId: 'room-mentions',
+          text: text,
+          eventId: 'mention-event',
+          threadId: 'thread-1',
+          generation: harness.generation,
+        );
+        expect(page.events.single.publicText, text);
+        expect(harness.methods, [
+          'groups.capabilities',
+          'groups.send',
+          'groups.log',
+        ]);
+      });
+    }
+
+    test(
+      'groups.send rejects a foreign acknowledgement before publishing it',
+      () async {
+        final harness = await _HostedRpcHarness.start((method, params) {
+          if (method == 'groups.send') {
+            return {
+              'accepted': true,
+              'client_event_id': params['event_id'],
+              'event': _event(params['room_id'] as String, 'foreign-event'),
+            };
+          }
+          if (method == 'groups.log') {
+            return {
+              'events': [_event(params['room_id'] as String, 'foreign-event')],
+              'cursor': 1,
+              'latest_seq': 1,
+              'has_more': false,
+              'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+            };
+          }
+          throw StateError('unexpected hosted method $method');
+        });
+        addTearDown(harness.close);
+
+        await expectLater(
+          harness.client.sendGroupText(
+            roomId: 'requested-room',
+            text: 'hello',
+            threadId: 'thread-1',
+            eventId: 'requested-event',
+            generation: harness.generation,
+          ),
+          throwsA(isA<TuiGatewayRpcError>()),
+        );
+        expect(harness.methods, ['groups.capabilities', 'groups.send']);
+      },
+    );
   });
 }
 
@@ -542,15 +736,7 @@ final class _HostedRpcHarness {
         methods.add(method);
         final params = Map<String, dynamic>.from(rpc['params'] as Map);
         final result = method == 'groups.capabilities'
-            ? {
-                'protocol_version': 2,
-                'driver': true,
-                'methods': GroupMethod.values
-                    .where((entry) => entry != GroupMethod.promote)
-                    .map((entry) => entry.wire)
-                    .toList(),
-                'max_log_limit': 500,
-              }
+            ? _localServerCapabilities()
             : resultFor(method, params);
         socket.add(
           jsonEncode({'jsonrpc': '2.0', 'id': rpc['id'], 'result': result}),

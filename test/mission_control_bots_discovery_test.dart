@@ -12,6 +12,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/mission_bot_activity_store.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/room_member_status.dart';
+import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -210,6 +212,10 @@ void main() {
   testWidgets('Executing Bot Chats are grouped under Active now', (
     tester,
   ) async {
+    // This test checks grouping; steady live motion has no settled frame.
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     final manager = await _manager();
     final chats = ActiveChatService();
     addTearDown(chats.dispose);
@@ -246,6 +252,78 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'Bots row and sheet share animated work detail, idle stays calm',
+    (tester) async {
+      final manager = await _manager();
+      addTearDown(manager.dispose);
+      final snapshot = _snapshot(
+        profiles: [
+          AgentProfile(
+            name: 'forja',
+            workerSession: AgentProfileWorkerSession(
+              id: 'w',
+              source: 'tool',
+              title: 'Revisando PR #38',
+              lastActive: DateTime.now().millisecondsSinceEpoch / 1000,
+            ),
+          ),
+          const AgentProfile(name: 'idle'),
+        ],
+      );
+      await tester.pumpWidget(_host(manager: manager, snapshot: snapshot));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 300));
+      final row = find.byKey(const ValueKey('mission-bot-row-forja'));
+      expect(
+        find.descendant(of: row, matching: find.byType(BotStatusLine)),
+        findsOneWidget,
+      );
+      expect(find.text('Trabajando · Revisando PR #38'), findsOneWidget);
+      expect(
+        tester
+            .widget<HermesBotFace>(
+              find.descendant(of: row, matching: find.byType(HermesBotFace)),
+            )
+            .animate,
+        isTrue,
+      );
+      final idle = find.byKey(const ValueKey('mission-bot-row-idle'));
+      expect(
+        tester
+            .widget<HermesBotFace>(
+              find.descendant(of: idle, matching: find.byType(HermesBotFace)),
+            )
+            .animate,
+        isFalse,
+      );
+      await tester.tap(find.byKey(const ValueKey('mission-bot-forja')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final sheet = find.byKey(const ValueKey('mission-agent-detail'));
+      expect(sheet, findsOneWidget);
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Trabajando · Revisando PR #38'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: sheet, matching: find.byType(BotStatusAvatar)),
+        findsOneWidget,
+      );
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('Opening a Bot Chat clears its scoped unread watermark', (
     tester,
@@ -286,9 +364,15 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
+    // Tocar la fila abre el detalle; abrir el Bot Chat pasa por "Abrir
+    // chat" en la hoja de acciones rápidas (mantener pulsada la fila o
+    // tocar el ⋯), según la especificación del mockup "Bots con fijados".
+    await tester.tap(find.byKey(const ValueKey('mission-bot-details-infra')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
+    final openChatItem = find.byKey(const ValueKey('bot-quick-open-chat'));
+    await tester.ensureVisible(openChatItem);
+    await tester.pumpAndSettle();
+    await tester.tap(openChatItem);
     final openedSession = await tester.runAsync(
       () => opened.future.timeout(const Duration(seconds: 1)),
     );

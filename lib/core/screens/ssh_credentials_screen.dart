@@ -203,7 +203,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
     final isKey = _method == SshAuthMethod.key;
     return Scaffold(
       backgroundColor: colors.background,
-      appBar: HermesAppBar(title: Text('configurar SSH')),
+      appBar: HermesAppBar(title: Text(Strings.of(context).sshSetupTitle)),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
         children: [

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../models/dock_config.dart' show DockItemId;
+import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
 
 String _withInitialUppercase(String value) {
@@ -36,9 +39,25 @@ class HermesToolDestination {
 /// las rutas avanzadas accesibles sin convertir la barra lateral en una lista
 /// de escritorio ni persistir acordeones entre aperturas.
 class ToolsHubScreen extends StatefulWidget {
-  const ToolsHubScreen({required this.destinations, super.key});
+  const ToolsHubScreen({
+    required this.destinations,
+    this.connection,
+    this.connManager,
+    super.key,
+  });
 
   final List<HermesToolDestination> destinations;
+
+  /// Ambos opcionales y usados juntos: cuando están presentes, envuelven
+  /// esta pantalla con [GeneralDockShell] (mismo dock flotante que ya usan
+  /// Ajustes y la lista de sesiones). Herramientas no tiene un concepto
+  /// natural de "crear" propio, así que el "+" del dock aquí cae al
+  /// fallback genérico de `GeneralDockShell` (nueva conversación) en vez de
+  /// abrir algo contextual. Null en call sites sin conexión activa: el hub
+  /// sigue funcionando igual (ya degrada sus filas vía `enabled`), solo sin
+  /// el dock.
+  final SavedConnection? connection;
+  final ConnectionManager? connManager;
 
   @override
   State<ToolsHubScreen> createState() => _ToolsHubScreenState();
@@ -95,90 +114,104 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
 
     return Scaffold(
       appBar: HermesAppBar(title: Text(strings.drawerTools)),
-      body: SafeArea(
-        top: false,
-        child: ListView(
-          key: const ValueKey('tools-hub-list'),
-          physics: const ClampingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-          children: [
-            TextField(
-              key: const ValueKey('tools-search'),
-              controller: _searchController,
-              onChanged: (value) => setState(() => _query = value),
-              textInputAction: TextInputAction.search,
-              style: TextStyle(fontSize: 15, color: colors.textPrimary),
-              decoration: InputDecoration(
-                hintText: strings.drawerToolsSearch,
-                hintStyle: TextStyle(color: colors.textSecondary),
-                prefixIcon: Icon(
-                  Icons.search_rounded,
-                  size: 21,
-                  color: colors.textSecondary,
-                ),
-                suffixIcon: _query.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: MaterialLocalizations.of(
-                          context,
-                        ).deleteButtonTooltip,
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _query = '');
-                        },
-                        icon: const Icon(Icons.close_rounded, size: 20),
-                      ),
-                filled: true,
-                fillColor: colors.surface,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 13,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide(color: colors.divider),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide(color: colors.divider),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide(color: colors.accent, width: 1.4),
+      body: _wrapWithDock(
+        SafeArea(
+          top: false,
+          child: ListView(
+            key: const ValueKey('tools-hub-list'),
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+            children: [
+              TextField(
+                key: const ValueKey('tools-search'),
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                textInputAction: TextInputAction.search,
+                style: TextStyle(fontSize: 15, color: colors.textPrimary),
+                decoration: InputDecoration(
+                  hintText: strings.drawerToolsSearch,
+                  hintStyle: TextStyle(color: colors.textSecondary),
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    size: 21,
+                    color: colors.textSecondary,
+                  ),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: MaterialLocalizations.of(
+                            context,
+                          ).deleteButtonTooltip,
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                        ),
+                  filled: true,
+                  fillColor: colors.surface,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: colors.divider),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: colors.divider),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: colors.accent, width: 1.4),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 14),
-            if (grouped.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 56),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.search_off_rounded,
-                      size: 34,
-                      color: colors.textDisabled,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      strings.drawerToolsEmpty,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: colors.textSecondary,
+              const SizedBox(height: 14),
+              if (grouped.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 56),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.search_off_rounded,
+                        size: 34,
+                        color: colors.textDisabled,
                       ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              for (final entry in grouped.entries) ...[
-                _ToolsGroupLabel(entry.key),
-                _ToolsGroup(destinations: entry.value, onOpen: _open),
-              ],
-          ],
+                      const SizedBox(height: 12),
+                      Text(
+                        strings.drawerToolsEmpty,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                for (final entry in grouped.entries) ...[
+                  _ToolsGroupLabel(entry.key),
+                  _ToolsGroup(destinations: entry.value, onOpen: _open),
+                ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _wrapWithDock(Widget body) {
+    final connection = widget.connection;
+    final connManager = widget.connManager;
+    if (connection == null || connManager == null) return body;
+    return GeneralDockShell(
+      connection: connection,
+      connManager: connManager,
+      currentDestination: DockItemId.tools,
+      body: body,
     );
   }
 }

@@ -8,6 +8,24 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('bot routine create and rename retain owning profile and canonical delivery', () async {
+    final requests = <http.Request>[];
+    final client = DashboardClient(host: 'hermes.local', manualToken: 'token', httpClientOverride: MockClient((request) async {
+      requests.add(request);
+      return http.Response(jsonEncode({'id': 'routine', 'name': 'ok'}), 200);
+    }));
+    addTearDown(client.close);
+    final repo = CronRepository(client, profile: 'builder', botRoutines: true);
+    final job = await repo.create(name: 'Morning', prompt: 'Check', schedule: 'every 1h', deliver: 'bot-chat', model: '', provider: '');
+    await repo.update(job, name: 'Evening', prompt: 'Check', schedule: 'every 2h', deliver: 'bot-chat', model: '', provider: '');
+    expect(requests.every((r) => r.url.queryParameters['profile'] == 'builder'), true);
+    final created = jsonDecode(requests.first.body) as Map;
+    final updated = (jsonDecode(requests.last.body) as Map)['updates'] as Map;
+    expect(created['name'], '[bot:builder] Morning'); expect(created['deliver'], 'bot-chat');
+    expect(updated['name'], '[bot:builder] Evening'); expect(updated['deliver'], 'bot-chat');
+    expect(botRoutineName('builder', '[bot:builder] Existing', ''), '[bot:builder] Existing');
+  });
+
   group('CronJob Desktop parity', () {
     test('explicit state wins and missing state falls back to enabled', () {
       expect(

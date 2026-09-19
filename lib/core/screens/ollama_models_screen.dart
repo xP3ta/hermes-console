@@ -322,7 +322,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: Text(Strings.of(context).commonClose),
           ),
         ],
       ),
@@ -732,7 +732,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const AlertDialog(
+      builder: (_) => AlertDialog(
         content: Row(
           children: [
             SizedBox(
@@ -743,9 +743,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             SizedBox(width: 16),
             Expanded(
               child: Text(
-                'Diagnosticando el agente local…\n'
-                'Si el bridge está desactualizado lo reinicio.\n'
-                'Puede tardar hasta ~1 min.',
+                Strings.of(context).ollamaDiagRunning,
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -796,7 +794,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const AlertDialog(
+      builder: (_) => AlertDialog(
         content: Row(
           children: [
             SizedBox(
@@ -807,9 +805,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             SizedBox(width: 16),
             Expanded(
               child: Text(
-                'Probando la GPU con llama.cpp…\n'
-                'Instalo llama.cpp si falta y mido GPU vs CPU.\n'
-                'Puede tardar VARIOS minutos. No cierres la app.',
+                Strings.of(context).ollamaGpuBenchRunning,
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -843,7 +839,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
     setState(() => _benchRunning = false);
-    await _showDiagDialog(summary, title: 'Benchmark GPU (llama.cpp)');
+    await _showDiagDialog(summary, title: Strings.of(context).ollamaGpuBenchTitle);
   }
 
   /// Sonda de ALCANCE de la GPU: ¿deja Android ver la GPU (OpenCL/Vulkan) a
@@ -856,7 +852,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const AlertDialog(
+      builder: (_) => AlertDialog(
         content: Row(
           children: [
             SizedBox(
@@ -867,9 +863,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             SizedBox(width: 16),
             Expanded(
               child: Text(
-                'Sondeando la GPU del sistema…\n'
-                'Instalo clinfo/vulkan-tools y compruebo si OpenCL o Vulkan '
-                'ven tu Mali. Puede tardar un par de minutos.',
+                Strings.of(context).ollamaGpuProbeRunning,
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -903,7 +897,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
     setState(() => _gpuProbeRunning = false);
-    await _showDiagDialog(summary, title: 'Sonda de GPU (OpenCL/Vulkan)');
+    await _showDiagDialog(summary, title: Strings.of(context).ollamaGpuProbeTitle);
   }
 
   Future<void> _showDiagDialog(String summary,
@@ -924,11 +918,11 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
               Clipboard.setData(ClipboardData(text: summary));
               _toast('Diagnóstico copiado');
             },
-            child: const Text('Copiar'),
+            child: Text(Strings.of(context).commonCopy),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: Text(Strings.of(context).commonClose),
           ),
         ],
       ),
@@ -945,19 +939,19 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           if (widget.connection.onDeviceLoopback)
             IconButton(
               icon: const Icon(Icons.health_and_safety_outlined),
-              tooltip: 'Diagnóstico local',
+              tooltip: Strings.of(context).ollamaDiagTooltip,
               onPressed: _diagRunning ? null : _runDiag,
             ),
           if (widget.connection.onDeviceLoopback)
             IconButton(
               icon: const Icon(Icons.developer_board_outlined),
-              tooltip: '¿GPU disponible? (OpenCL/Vulkan)',
+              tooltip: Strings.of(context).ollamaGpuAvailableTooltip,
               onPressed: _gpuProbeRunning ? null : _runGpuProbe,
             ),
           if (widget.connection.onDeviceLoopback)
             IconButton(
               icon: const Icon(Icons.speed_outlined),
-              tooltip: 'Probar GPU (llama.cpp)',
+              tooltip: Strings.of(context).ollamaGpuTestTooltip,
               onPressed: _benchRunning ? null : _runBench,
             ),
           IconButton(
@@ -1136,7 +1130,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
               _pill(
                 colors,
                 icon: Icons.refresh,
-                label: 'Comprobar',
+                label: Strings.of(context).ollamaCheck,
                 color: colors.accent,
                 onTap: _probeOlliteRt,
                 busy: _olliteRtProbing,
@@ -1165,7 +1159,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Modelos en OlliteRT',
+          Strings.of(context).ollamaOlliteModels,
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
@@ -1246,7 +1240,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       width: double.infinity,
       child: OutlinedButton.icon(
         icon: const Icon(Icons.storefront_outlined, size: 18),
-        label: const Text('Tienda de modelos GPU'),
+        label: Text(Strings.of(context).ollamaGpuStore),
         onPressed: () async {
           final picked = await Navigator.of(context).push<String>(
             MaterialPageRoute<String>(

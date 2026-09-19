@@ -10,6 +10,7 @@ import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
+import '../theme/component_profile.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_spark_mascot.dart';
 import 'hermes_pill.dart';
@@ -895,13 +896,11 @@ class ChatApprovalCard extends StatelessWidget {
                 children: [
                   if (allowed.contains('once'))
                     Expanded(
-                      flex: 3,
                       child: _ApprovalChoice(
                         label: s.cevAllow,
                         icon: Icons.check_rounded,
-                        color: colors.accent,
+                        color: colors.success,
                         busy: busy,
-                        filled: true,
                         onTap: () => onChoice('once'),
                       ),
                     ),
@@ -909,7 +908,6 @@ class ChatApprovalCard extends StatelessWidget {
                     const SizedBox(width: 9),
                   if (allowed.contains('deny'))
                     Expanded(
-                      flex: 2,
                       child: _ApprovalChoice(
                         label: s.cevDeny,
                         icon: Icons.close_rounded,
@@ -1005,14 +1003,12 @@ class _ScopeChip extends StatelessWidget {
   }
 }
 
+/// Permitir/Denegar del mismo peso visual; solo cambia el tinte semántico.
 class _ApprovalChoice extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
   final bool busy;
-
-  /// `true` = botón relleno (acción principal); `false` = solo borde.
-  final bool filled;
 
   final VoidCallback onTap;
 
@@ -1022,45 +1018,28 @@ class _ApprovalChoice extends StatelessWidget {
     required this.color,
     required this.busy,
     required this.onTap,
-    this.filled = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final onFilled = color.computeLuminance() > 0.5
-        ? const Color(0xFF0A0A0A)
-        : Colors.white;
-    final buttonStyle = filled
-        ? FilledButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: onFilled,
-            minimumSize: const Size.fromHeight(46),
-            shape: const StadiumBorder(),
-          )
-        : TextButton.styleFrom(
-            foregroundColor: color,
-            minimumSize: const Size.fromHeight(46),
-            shape: const StadiumBorder(),
-          );
-    return filled
-        ? FilledButton.icon(
-            onPressed: busy ? null : onTap,
-            style: buttonStyle,
-            icon: Icon(icon, size: 16),
-            label: Text(
-              label,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-          )
-        : TextButton.icon(
-            onPressed: busy ? null : onTap,
-            style: buttonStyle,
-            icon: Icon(icon, size: 16),
-            label: Text(
-              label,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-          );
+    final buttonStyle =
+        FilledButton.styleFrom(
+          backgroundColor: color.withValues(alpha: 0.14),
+          foregroundColor: color,
+          minimumSize: const Size.fromHeight(componentMinimumTapTarget),
+          shape: const StadiumBorder(),
+        ).copyWith(
+          overlayColor: WidgetStatePropertyAll(color.withValues(alpha: 0.12)),
+        );
+    return FilledButton.icon(
+      onPressed: busy ? null : onTap,
+      style: buttonStyle,
+      icon: Icon(icon, size: 16),
+      label: Text(
+        label,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      ),
+    );
   }
 }
 

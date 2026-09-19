@@ -131,6 +131,14 @@ class _FakeControlGateway implements HermesDesktopControlGateway {
     bool enabled, {
     String runtimeSessionId = '',
   }) => throw UnimplementedError();
+
+  @override
+  Future<SessionGoalSnapshot?> readSessionGoal(String runtimeSessionId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> sendGoalAction(String runtimeSessionId, String action) =>
+      throw UnimplementedError();
 }
 
 Widget _app(Widget home, {Locale locale = const Locale('es')}) => MaterialApp(

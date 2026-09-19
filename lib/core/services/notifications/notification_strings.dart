@@ -84,6 +84,14 @@ class NotifL10n {
   );
   String get sessionActivityBody =>
       _('Abre Hermes para ver el resultado.', 'Open Hermes to see the result.');
+
+  // ── Tarea en segundo plano (prompt.background / background.complete) ─────
+  String get backgroundTaskFinishedTitle =>
+      _('Tarea en segundo plano lista', 'Background task finished');
+  String get backgroundTaskFailedTitle =>
+      _('Tarea en segundo plano con error', 'Background task failed');
+  String get backgroundTaskBody =>
+      _('Abre Hermes para ver el resultado.', 'Open Hermes to see the result.');
   String get cronCompleted => _('Cron completado', 'Cron completed');
   String get cronFailed => _('Cron falló', 'Cron failed');
   String get kanbanCompleted =>
@@ -94,6 +102,14 @@ class NotifL10n {
       _('Kanban necesita tu atención', 'Kanban needs your attention');
   String get kanbanUpdated =>
       _('Tarea de Kanban actualizada', 'Kanban task updated');
+
+  // ── Standing goals ────────────────────────────────────────────────────────
+  String get goalDone => _('Goal terminado', 'Goal done');
+  String get goalPaused => _('Goal en pausa', 'Goal paused');
+  String get goalBlocked => _('Goal bloqueado', 'Goal blocked');
+  String get goalWaiting => _('Goal esperando', 'Goal waiting');
+  String goalBody(String title) =>
+      title.isEmpty ? _('Sin título', 'Untitled') : title;
 
   // ── Respuestas ────────────────────────────────────────────────────────────
   String replyTitle(String? session) {

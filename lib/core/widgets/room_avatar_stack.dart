@@ -23,10 +23,18 @@ final class RoomAvatarOfficialMember {
   final String displayName;
   final String handle;
 
+  /// Perfil real del bot cuando es local a ESTA conexión (mismo `gatewayId`
+  /// que la sala), para poder pintar su avatar/Blobatar de verdad en vez del
+  /// círculo de color neutro. Null para miembros de otra conexión (salas
+  /// federadas), de los que la app no tiene datos de avatar en caché — ahí
+  /// el círculo neutro sigue siendo lo correcto, no un bug.
+  final AgentProfile? profile;
+
   const RoomAvatarOfficialMember({
     required this.owner,
     required this.displayName,
     required this.handle,
+    this.profile,
   });
 }
 
@@ -117,10 +125,10 @@ class RoomAvatarStack extends StatelessWidget {
   const RoomAvatarStack.official({
     Iterable<AvatarOwner>? owners,
     Iterable<RoomAvatarOfficialMember>? members,
+    this.avatarCache,
     super.key,
   }) : connectionId = null,
        profiles = const <AgentProfile>[],
-       avatarCache = null,
        officialOwners = owners,
        officialMembers = members,
        assert(owners != null || members != null);
@@ -147,7 +155,7 @@ class RoomAvatarStack extends StatelessWidget {
     final visibleOwners = owners.take(3).toList(growable: false);
     final overflow = owners.length - visibleOwners.length;
     final colors = Theme.of(context).hermes;
-    final label = Strings.of(context).missionRoomAvatarMembers(owners.length);
+    final label = Strings.of(context).roomAvatarMembers(owners.length);
     return Semantics(
       key: const ValueKey('room-avatar-stack'),
       image: true,
@@ -178,27 +186,35 @@ class RoomAvatarStack extends StatelessWidget {
                             : _RoomAvatarOwnerKey(visibleOwners[index]),
                         width: 34,
                         height: 34,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: colors.background,
-                            width: 2,
-                          ),
+                        decoration: const BoxDecoration(shape: BoxShape.circle),
+                        // Antes tenía un anillo separador de 2px: primero en
+                        // `colors.background` (leía como borde negro sólido),
+                        // luego recoloreado a `colors.surface` (se fundía con
+                        // la tarjeta, pero seguía siendo un anillo oscuro
+                        // visible contra un avatar de color vivo — todavía
+                        // "bordito negro" para el ojo, confirmado en
+                        // dispositivo real). Sin decoración ni recorte aquí
+                        // los avatares solapan directamente, transparentes de
+                        // verdad, como se pidió.
+                        child: _memberAvatar(
+                          index: index,
+                          member: official == null && officialMemberList == null
+                              ? members[index]
+                              : null,
+                          // Un miembro "oficial" con perfil local adjunto (misma
+                          // conexión que la sala) SÍ tiene datos de avatar reales
+                          // — antes esta rama ignoraba `profile` por completo y
+                          // pintaba el círculo de color neutro incluso para tus
+                          // propios bots ("el equipo no mantiene los iconos
+                          // propios, añade otros", confirmado en dispositivo
+                          // real). El círculo neutro sigue siendo correcto solo
+                          // para miembros de OTRA conexión (salas federadas),
+                          // de los que de verdad no hay avatar en caché.
+                          officialProfile: officialMemberList == null
+                              ? null
+                              : officialMemberList[index].profile,
+                          owner: visibleOwners[index],
                         ),
-                        child: official == null && officialMemberList == null
-                            ? MissionProfileAvatar(
-                                profileName: members[index].profile.name,
-                                hasAvatar: members[index].profile.hasAvatar,
-                                cache: avatarCache,
-                                size: 30,
-                                shape: members[index].profile.botShape,
-                                colorHex: members[index].profile.botColorHex,
-                                imageKind: members[index].profile.botImageKind,
-                                privacySafeElementKeys: true,
-                              )
-                            : _SourceQualifiedNeutralAvatar(
-                                owner: visibleOwners[index],
-                              ),
                       ),
                     ),
                   if (owners.length == 1)
@@ -222,7 +238,7 @@ class RoomAvatarStack extends StatelessWidget {
                           color: colors.surfaceVariant,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: colors.background,
+                            color: colors.surface,
                             width: 1.5,
                           ),
                         ),
@@ -245,6 +261,28 @@ class RoomAvatarStack extends StatelessWidget {
               ),
       ),
     );
+  }
+
+  Widget _memberAvatar({
+    required int index,
+    required RoomAvatarMember? member,
+    required AgentProfile? officialProfile,
+    required AvatarOwner owner,
+  }) {
+    final profile = member?.profile ?? officialProfile;
+    if (profile != null) {
+      return MissionProfileAvatar(
+        profileName: profile.name,
+        hasAvatar: profile.hasAvatar,
+        cache: avatarCache,
+        size: 30,
+        shape: profile.botShape,
+        colorHex: profile.botColorHex,
+        imageKind: profile.botImageKind,
+        privacySafeElementKeys: true,
+      );
+    }
+    return _SourceQualifiedNeutralAvatar(owner: owner);
   }
 }
 

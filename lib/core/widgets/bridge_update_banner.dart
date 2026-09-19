@@ -7,6 +7,7 @@ import '../services/bridge_manager.dart';
 import '../services/bridge_update_service.dart';
 import '../services/bridge_version.dart';
 import '../services/connection_manager.dart';
+import '../theme/app_theme.dart';
 import 'platform_setup_commands.dart';
 
 /// Aviso de compatibilidad mínima: si el bridge remoto es más viejo que el asset
@@ -32,25 +33,23 @@ class BridgeUpdateBanner extends StatelessWidget {
     if (!bridge.connected || !BridgeVersion.isOutdated(running)) {
       return const SizedBox.shrink();
     }
-    final scheme = Theme.of(context).colorScheme;
+    // Bug real: usaba Theme.of(context).colorScheme en vez de `hermes`.
+    final colors = Theme.of(context).hermes;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
-      color: scheme.tertiaryContainer,
+      color: colors.warning.withValues(alpha: 0.1),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            const Icon(Icons.system_update_alt, size: 20),
+            Icon(Icons.system_update_alt, size: 20, color: colors.warning),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 Strings.of(
                   context,
                 ).bridgeOutdated(running ?? '?', BridgeVersion.expected),
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: scheme.onTertiaryContainer,
-                ),
+                style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
               ),
             ),
             const SizedBox(width: 8),

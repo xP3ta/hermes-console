@@ -1,5 +1,8 @@
+import '../utils/bot_mention_text.dart';
 import 'dart:convert';
 import 'dart:typed_data';
+
+import 'room_mirror.dart';
 
 /// Bounded roster projection returned by `profiles.list(include_sessions)`.
 ///
@@ -35,9 +38,9 @@ final class AgentProfileSessionSummary {
     return AgentProfileSessionSummary(
       id: id,
       resolvedId: _boundedText(map['resolved_id'], 512),
-      title: _boundedText(map['title'], 512) ?? '',
-      rootTitle: _boundedText(map['root_title'], 512) ?? '',
-      preview: _boundedText(map['preview'], 512) ?? '',
+      title: _boundedText(map['title'] is String ? stripBotMentionNote(map['title'] as String) : map['title'], 512) ?? '',
+      rootTitle: _boundedText(map['root_title'] is String ? stripBotMentionNote(map['root_title'] as String) : map['root_title'], 512) ?? '',
+      preview: _boundedText(map['preview'] is String ? stripBotMentionNote(map['preview'] as String) : map['preview'], 512) ?? '',
       startedAt: _nonNegativeFinite(map['started_at']),
       lastActive: _nonNegativeFinite(map['last_active']),
       messageCount: _nonNegativeInt(map['message_count']) ?? 0,
@@ -118,6 +121,20 @@ int? _nonNegativeInt(Object? raw) {
   return raw.toInt();
 }
 
+/// Same validation `AgentProfile.fromJson` applies to `ui_meta.hermes-bots.chat`:
+/// a durable gateway session id is never client-minted (`mob-` prefixed).
+String? _safeGatewaySessionId(String? raw) {
+  if (raw == null) return null;
+  final value = raw.trim();
+  if (value.isEmpty ||
+      value.startsWith('mob-') ||
+      value.length > 512 ||
+      value.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+    return null;
+  }
+  return value;
+}
+
 /// Perfil de agente devuelto por GET /api/profiles (Dashboard, puerto 9119).
 ///
 /// Cada perfil es un home aislado (`~/.hermes/profiles/<name>/`) con su propio
@@ -133,6 +150,9 @@ class AgentProfile {
   final int skillCount;
   final bool gatewayRunning;
   final String description;
+  final String displayName;
+  final String mentionHandle;
+  final String mentionTitle;
   final String? botChatSessionId;
   final Map<String, dynamic> botModeUiMeta;
   final bool botModeMetadataPublished;
@@ -140,6 +160,7 @@ class AgentProfile {
   final bool hasAvatar;
   final AgentProfileSessionSummary? lastSession;
   final AgentProfileSessionSummary? preferredSession;
+  final AgentProfileSessionSummary? canonicalSession;
   final AgentProfileWorkerSession? workerSession;
 
   /// Si proviene de una distribución (perfil compartido como repo Git).
@@ -147,6 +168,7 @@ class AgentProfile {
   final String? distributionVersion;
   final String? distributionSource;
   final bool hasAlias;
+  final RoomMirror roomMirror;
 
   const AgentProfile({
     required this.name,
@@ -158,6 +180,9 @@ class AgentProfile {
     this.skillCount = 0,
     this.gatewayRunning = false,
     this.description = '',
+    this.displayName = '',
+    this.mentionHandle = '',
+    this.mentionTitle = '',
     this.botChatSessionId,
     this.botModeUiMeta = const {},
     this.botModeMetadataPublished = false,
@@ -165,11 +190,13 @@ class AgentProfile {
     this.hasAvatar = false,
     this.lastSession,
     this.preferredSession,
+    this.canonicalSession,
     this.workerSession,
     this.distributionName,
     this.distributionVersion,
     this.distributionSource,
     this.hasAlias = false,
+    this.roomMirror = RoomMirror.empty,
   });
 
   bool get isDistribution =>
@@ -188,9 +215,43 @@ class AgentProfile {
           botModeUiMeta['chat'] != null &&
           botChatSessionId == null);
 
+  /// True only when Desktop explicitly wrote `chat: null` to reset the pin
+  /// (e.g. while recreating the forever-chat). A missing `chat` key is not a
+  /// reset — appearance-only `hermes-bots` metadata (title/shape/colour, no
+  /// `chat` key) is common on stock Agent installs and must not be treated
+  /// as one, or the existing hidden "Bot Chat" history gets orphaned.
+  bool get botChatPinExplicitlyReset =>
+      botModeUiMeta.containsKey('chat') && botModeUiMeta['chat'] == null;
+
+  /// Server-resolved forever-chat for this profile (`profiles.list`'s
+  /// `canonical_session`, present when `include_sessions` is requested).
+  /// Unlike the `ui_meta.hermes-bots.chat` pin, this is not a client-written
+  /// pointer: the gateway resolves it fresh on every call by title
+  /// uniqueness against the profile's own state.db, so it is the right
+  /// fallback when no pin has been published yet.
+  String? get canonicalBotChatSessionId {
+    final summary = canonicalSession;
+    if (summary == null) return null;
+    final id = _safeGatewaySessionId(summary.resolvedId) ?? _safeGatewaySessionId(summary.id);
+    return id;
+  }
+
   String? get botTitle => _botMetaText('title', 128);
 
   String? get botGroup => _botMetaText('group', 128);
+
+  String? get botSectionId => _sectionText('sectionId');
+
+  String? get botSectionName => _sectionText('sectionName');
+
+  String? _sectionText(String key) {
+    final raw = botModeUiMeta[key];
+    if (raw is! String || raw.length > 128) return null;
+    final value = raw.trim();
+    return value.isEmpty || RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)
+        ? null
+        : value;
+  }
 
   String? get botShape {
     final value = _botMetaText('shape', 82)?.toLowerCase();
@@ -266,14 +327,7 @@ class AgentProfile {
     String? botChatSessionId(Map<String, dynamic> botMeta) {
       final raw = botMeta['chat'];
       if (raw is! String) return null;
-      final value = raw.trim();
-      if (value.isEmpty ||
-          value.startsWith('mob-') ||
-          value.length > 512 ||
-          value.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
-        return null;
-      }
-      return value;
+      return _safeGatewaySessionId(raw);
     }
 
     final botMeta = botModeUiMeta();
@@ -288,6 +342,9 @@ class AgentProfile {
       skillCount: (json['skill_count'] as num?)?.toInt() ?? 0,
       gatewayRunning: json['gateway_running'] == true,
       description: (json['description'] ?? '').toString(),
+      displayName: _boundedText(json['display_name'], 512) ?? '',
+      mentionHandle: _boundedText(json['handle'], 256) ?? '',
+      mentionTitle: _boundedText(json['title'], 512) ?? '',
       botChatSessionId: botChatSessionId(botMeta),
       botModeUiMeta: botMeta,
       botModeMetadataPublished: botModeMetadataPublished,
@@ -297,11 +354,17 @@ class AgentProfile {
       preferredSession: AgentProfileSessionSummary.tryParse(
         json['preferred_session'],
       ),
+      canonicalSession: AgentProfileSessionSummary.tryParse(
+        json['canonical_session'],
+      ),
       workerSession: AgentProfileWorkerSession.tryParse(json['worker_session']),
       distributionName: str(json['distribution_name']),
       distributionVersion: str(json['distribution_version']),
       distributionSource: str(json['distribution_source']),
       hasAlias: json['has_alias'] == true,
+      roomMirror: json['name'] == 'default' && json['ui_meta'] is Map
+          ? RoomMirror.parse((json['ui_meta'] as Map)['hermes-bots-groups'])
+          : RoomMirror.empty,
     );
   }
 }

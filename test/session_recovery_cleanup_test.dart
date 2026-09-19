@@ -72,6 +72,30 @@ void main() {
     ),
   );
 
+  test(
+    'missing or mistyped delete evidence preserves local recovery',
+    () async {
+      await seedRecovery();
+      for (final body in ['{}', '{"deleted":null}', '{"deleted":"true"}']) {
+        final client = ApiClient(
+          baseUrl: 'https://example.invalid',
+          apiKey: 'test-only',
+          connectionId: 'conn-cleanup',
+          httpClient: MockClient((_) async => http.Response(body, 200)),
+        );
+        expect(await client.deleteSession('session-cleanup'), isFalse);
+        client.close();
+      }
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        (await ChatDraftStore(
+          prefs,
+        ).load('conn-cleanup', 'session-cleanup')).text,
+        'privado',
+      );
+    },
+  );
+
   test('confirmación remota limpia draft y outbox locales', () async {
     await seedRecovery();
     final client = clientWithDeleted(true);
@@ -215,6 +239,37 @@ void main() {
     );
     client.close();
   });
+
+  test(
+    'un cuerpo de delete no parseable no se asume borrado y conserva la recuperación local',
+    () async {
+      // Bug real: un 200 con un cuerpo que no es el JSON esperado (proxy o
+      // gateway a medio reiniciar) se daba por "borrado" sin evidencia,
+      // anunciando éxito con la fila todavía viva en el servidor.
+      await seedRecovery();
+      final client = ApiClient(
+        baseUrl: 'https://example.invalid',
+        apiKey: 'test-only',
+        connectionId: 'conn-cleanup',
+        httpClient: MockClient((_) async => http.Response('<html>', 200)),
+      );
+
+      expect(await client.deleteSession('session-cleanup'), isFalse);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        (await ChatDraftStore(
+          prefs,
+        ).load('conn-cleanup', 'session-cleanup')).text,
+        isNotEmpty,
+      );
+      expect(
+        await TurnOutboxStore().loadForChat('conn-cleanup', 'session-cleanup'),
+        isNotNull,
+      );
+      client.close();
+    },
+  );
 
   test('borrar conexión limpia toda su recuperación sin tocar otra', () async {
     SharedPreferences.setMockInitialValues({

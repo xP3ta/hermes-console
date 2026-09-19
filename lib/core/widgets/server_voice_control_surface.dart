@@ -465,7 +465,10 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
         ),
         if (widget.profile != null && widget.profile!.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
-          _InfoPill(label: 'Perfil · ${widget.profile}', accent: true),
+          _InfoPill(
+            label: Strings.of(context).voiceProfileLabel(widget.profile!),
+            accent: true,
+          ),
         ],
         if (widget.readOnly) ...[
           const SizedBox(height: 12),

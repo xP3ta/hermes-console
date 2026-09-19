@@ -13,6 +13,7 @@ import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
 import '../services/connection_health_tracker.dart';
+import '../services/dock_preferences_store.dart';
 import '../services/global_activity_aggregate.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
@@ -23,6 +24,7 @@ import '../services/tui_gateway_client.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
@@ -1221,6 +1223,16 @@ class _SessionListScreenState extends State<SessionListScreen>
           );
         }
         _evictDeletedSessions([session]);
+        // Sin esto, Inicio (que ya escucha este mismo bus para refrescarse
+        // solo — ver `home_dashboard_screen.dart`) no se enteraba de que una
+        // conversación borrada aquí debía desaparecer también de sus
+        // recientes hasta que algo más forzara un refresco manual (reportado
+        // en dispositivo real: "las conversaciones se borran de
+        // Conversaciones pero no de Inicio").
+        historyCleanupInvalidations.publish(
+          connectionId: widget.connection.id,
+          scope: HistoryCleanupScope.normalConversations,
+        );
         return true;
       case LinkedSessionDeleteStatus.cancelled:
         return false;
@@ -1522,12 +1534,33 @@ class _SessionListScreenState extends State<SessionListScreen>
     return list;
   }
 
-  /// Intercala cabeceras de fecha entre las sesiones (estilo Claude:
-  /// Fijadas / Hoy / Ayer / Últimos 7 días / Anteriores). Devuelve una lista
-  /// mixta de `String` (cabecera) y `Session`.
+  /// Intercala cabeceras de sección entre las sesiones (Fijadas / Hoy / Ayer /
+  /// Últimos 7 días / Anteriores) y marca la posición de cada fila dentro de su
+  /// sección.
+  ///
+  /// El mockup pinta UNA tarjeta redondeada por sección, con las filas
+  /// separadas por líneas finas, en vez de una caja por conversación. Se
+  /// devuelve una lista plana (cabecera / fila posicionada) en lugar de una
+  /// lista de grupos para que `ListView.builder` siga construyendo filas de
+  /// forma perezosa: la tarjeta se dibuja redondeando solo los extremos de
+  /// cada sección.
   List<Object> _groupedEntries(List<Session> sessions) {
+    final str = Strings.of(context);
+    List<Object> card(String label, List<Session> rows, {required bool first}) {
+      if (rows.isEmpty) return const <Object>[];
+      return <Object>[
+        _SessionGroupHeader(label: label, count: rows.length, first: first),
+        for (var i = 0; i < rows.length; i++)
+          _GroupedSessionRow(
+            rows[i],
+            first: i == 0,
+            last: i == rows.length - 1,
+          ),
+      ];
+    }
+
     if (_showArchived) {
-      return List<Object>.from(sessions);
+      return card(str.slFilterArchived, sessions, first: true);
     }
     final pinned = <Session>[];
     final rest = <Session>[];
@@ -1538,7 +1571,6 @@ class _SessionListScreenState extends State<SessionListScreen>
     final today = DateTime(now.year, now.month, now.day);
     final yesterday = today.subtract(const Duration(days: 1));
     final week = today.subtract(const Duration(days: 6));
-    final str = Strings.of(context);
     String bucketOf(Session s) {
       final d = DateTime.fromMillisecondsSinceEpoch(
         (s.lastActivityAt * 1000).round(),
@@ -1551,18 +1583,20 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
 
     final out = <Object>[];
-    if (pinned.isNotEmpty) {
-      out.add(str.sesPinned);
-      out.addAll(pinned);
-    }
-    String? current;
+    out.addAll(card(str.sesPinned, pinned, first: true));
+    // Agrupa por día conservando el orden por actividad que ya trae la lista.
+    final buckets = <String, List<Session>>{};
+    final order = <String>[];
     for (final s in rest) {
-      final b = bucketOf(s);
-      if (b != current) {
-        out.add(b);
-        current = b;
-      }
-      out.add(s);
+      final bucket = bucketOf(s);
+      final rows = buckets.putIfAbsent(bucket, () {
+        order.add(bucket);
+        return <Session>[];
+      });
+      rows.add(s);
+    }
+    for (final label in order) {
+      out.addAll(card(label, buckets[label]!, first: out.isEmpty));
     }
     return out;
   }
@@ -1664,7 +1698,18 @@ class _SessionListScreenState extends State<SessionListScreen>
         checking: _health.checking,
         onSectionReturn: _fetchSessions,
       ),
-      body: _buildBody(),
+      // "Ver todas" es alcanzable en 1 salto desde Inicio: sin el dock aquí
+      // el usuario lo veía "desaparecer" al salir de Inicio (bug confirmado
+      // en dispositivo real). `includeSessionsAction: false` evita apilar
+      // esta misma pantalla si el usuario activó el acceso opcional
+      // "Sesiones" del catálogo del dock.
+      body: GeneralDockShell(
+        connection: widget.connection,
+        connManager: widget.connManager,
+        onCreate: _createNewSession,
+        includeSessionsAction: false,
+        body: _buildBody(),
+      ),
     );
   }
 
@@ -1756,10 +1801,22 @@ class _SessionListScreenState extends State<SessionListScreen>
                     listenable: Listenable.merge([
                       _activeChats?.activeIds ?? _noActiveChats,
                       ?_globalActivity,
+                      // La reserva inferior depende de si el dock está
+                      // activado (interruptor global de Ajustes).
+                      DockPreferencesController.instance.listenable,
                     ]),
                     builder: (context, _) => ListView.builder(
                       controller: _libraryScrollController,
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                      // El dock se pinta ENCIMA de esta lista (overlay del
+                      // `GeneralDockShell`) y no reserva hueco: sin esta
+                      // reserva la última conversación queda detrás de la
+                      // barra (bug confirmado en dispositivo real).
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        4,
+                        16,
+                        12 + _dockBottomReservation(context),
+                      ),
                       itemCount: entries.length + (_loadingMore ? 1 : 0),
                       itemBuilder: (context, index) {
                         if (index == entries.length) {
@@ -1777,91 +1834,15 @@ class _SessionListScreenState extends State<SessionListScreen>
                           );
                         }
                         final entry = entries[index];
-                        if (entry is String) {
-                          return Padding(
-                            padding: EdgeInsets.fromLTRB(
-                              6,
-                              index == 0 ? 8 : 20,
-                              6,
-                              8,
-                            ),
-                            child: Text(
-                              entry,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          );
+                        if (entry is _SessionGroupHeader) {
+                          return _SessionSectionLabel(header: entry);
                         }
-                        final session = entry as Session;
-                        final archived = _isArchived(session);
-                        return Dismissible(
-                          key: ValueKey('${session.id}-$archived'),
-                          direction: DismissDirection.endToStart,
-                          background: Container(
-                            margin: const EdgeInsets.only(bottom: 5),
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: 18),
-                            decoration: BoxDecoration(
-                              color: colors.background,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  s.slSwipeManage,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Icon(
-                                  Icons.tune_rounded,
-                                  color: colors.textSecondary,
-                                  size: 20,
-                                ),
-                              ],
-                            ),
-                          ),
-                          confirmDismiss: (_) async {
-                            await _showSessionContextMenu(session);
-                            // El gesto abre las acciones; nunca borra por arrastre.
-                            return false;
-                          },
-                          child: _SessionTile(
-                            session: session,
-                            title: _titleFor(session),
-                            formattedTime: _relativeTime(
-                              session.lastActivityAt,
-                              s,
-                            ),
-                            pinned: _isPinned(session),
-                            activity: _globalForSession(session),
-                            streamActive:
-                                _isLocalActive(session) ||
-                                (_globalActivity?.isActive(
-                                      widget.connection.id,
-                                      Session.profileOwner(session.profile),
-                                      session.id,
-                                    ) ??
-                                    false) ||
-                                (_globalActivity?.isActive(
-                                      widget.connection.id,
-                                      Session.profileOwner(session.profile),
-                                      session.logicalId,
-                                    ) ??
-                                    false),
-                            onTap: () => _openChat(session),
-                            // El deslizamiento es la entrada visible al menú.
-                            // Long-press se conserva como alternativa para
-                            // TalkBack, teclado y usuarios que ya lo conocían.
-                            onLongPress: () => _showSessionContextMenu(session),
-                          ),
+                        final row = entry as _GroupedSessionRow;
+                        final session = row.session;
+                        return _SessionCardRow(
+                          first: row.first,
+                          last: row.last,
+                          child: _sessionRow(session, s, colors),
                         );
                       },
                     ),
@@ -1869,6 +1850,65 @@ class _SessionListScreenState extends State<SessionListScreen>
           ),
         ),
       ],
+    );
+  }
+
+  /// Fila deslizable de una conversación.
+  ///
+  /// Dos gestos, ninguno destructivo:
+  ///  - hacia la derecha: "Fijar arriba" / "Desfijar", la acción del mockup.
+  ///  - hacia la izquierda: "Gestionar", la entrada al menú de acciones que ya
+  ///    existía (y que sigue siendo la única vía a borrar, archivar, renombrar,
+  ///    detalles, ocultar y copiar ID).
+  /// Long-press se conserva como alternativa accesible para TalkBack y teclado.
+  Widget _sessionRow(Session session, Strings s, HermesThemeColors colors) {
+    final archived = _isArchived(session);
+    final pinned = _isPinned(session);
+    return Dismissible(
+      key: ValueKey('${session.id}-$archived'),
+      direction: DismissDirection.horizontal,
+      background: _SwipeAffordance(
+        alignment: Alignment.centerLeft,
+        icon: pinned ? Icons.push_pin_outlined : Icons.push_pin,
+        label: pinned ? s.slMenuUnpin : s.slMenuPin,
+      ),
+      secondaryBackground: _SwipeAffordance(
+        alignment: Alignment.centerRight,
+        icon: Icons.tune_rounded,
+        label: s.slSwipeManage,
+      ),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          await _togglePin(session);
+        } else {
+          await _showSessionContextMenu(session);
+        }
+        // El gesto abre acciones o fija; nunca borra por arrastre.
+        return false;
+      },
+      child: _SessionTile(
+        session: session,
+        title: _titleFor(session),
+        formattedTime: _relativeTime(session.lastActivityAt, s),
+        pinned: pinned,
+        activity: _globalForSession(session),
+        streamActive:
+            _isLocalActive(session) ||
+            (_globalActivity?.isActive(
+                  widget.connection.id,
+                  Session.profileOwner(session.profile),
+                  session.id,
+                ) ??
+                false) ||
+            (_globalActivity?.isActive(
+                  widget.connection.id,
+                  Session.profileOwner(session.profile),
+                  session.logicalId,
+                ) ??
+                false),
+        onTap: () => _openChat(session),
+        onLongPress: () => _showSessionContextMenu(session),
+      ),
     );
   }
 
@@ -1989,6 +2029,254 @@ class _LibraryScopeNotice extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // Private widgets
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Reserva inferior para que el dock flotante no tape el final de la lista.
+/// Alto de la barra (48) + su separación del borde (12) + el `lift` máximo del
+/// estilo "Flotante" (6) + el inset seguro del sistema. Con el interruptor
+/// global apagado el dock no existe y no se reserva nada.
+double _dockBottomReservation(BuildContext context) =>
+    DockPreferencesController.instance.value.useDock
+    ? 48 + 12 + 6 + MediaQuery.paddingOf(context).bottom
+    : 0;
+
+/// Cabecera de sección del listado: etiqueta en mayúsculas + cuenta.
+class _SessionGroupHeader {
+  final String label;
+  final int count;
+  final bool first;
+
+  const _SessionGroupHeader({
+    required this.label,
+    required this.count,
+    required this.first,
+  });
+}
+
+/// Una conversación y su posición dentro de la tarjeta de su sección.
+class _GroupedSessionRow {
+  final Session session;
+  final bool first;
+  final bool last;
+
+  const _GroupedSessionRow(
+    this.session, {
+    required this.first,
+    required this.last,
+  });
+}
+
+class _SessionSectionLabel extends StatelessWidget {
+  final _SessionGroupHeader header;
+
+  const _SessionSectionLabel({required this.header});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    // La cabecera respira sobre su tarjeta y separa secciones sin necesidad de
+    // una caja propia.
+    return Semantics(
+      header: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(4, header.first ? 6 : 26, 4, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Text(
+                header.label.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.4,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${header.count}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: colors.textDisabled,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Una fila dentro de la tarjeta redondeada de su sección: redondea solo los
+/// extremos y dibuja el separador fino salvo en la última.
+class _SessionCardRow extends StatelessWidget {
+  final bool first;
+  final bool last;
+  final Widget child;
+
+  const _SessionCardRow({
+    required this.first,
+    required this.last,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final radius = Radius.circular(
+      Theme.of(context).hermesComponents.profile.shape.groupRadius,
+    );
+    final shape = BorderRadius.vertical(
+      top: first ? radius : Radius.zero,
+      bottom: last ? radius : Radius.zero,
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(color: colors.surface, borderRadius: shape),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // El recorte mantiene el deslizamiento dentro de las esquinas
+          // redondeadas de la tarjeta.
+          ClipRRect(borderRadius: shape, child: child),
+          if (!last)
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Divider(
+                height: 1,
+                thickness: 1,
+                color: colors.divider.withValues(alpha: 0.55),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fondo revelado al deslizar una fila: icono + etiqueta sobre la superficie
+/// de la tarjeta, sin tintes de alarma (ninguna de las dos acciones borra).
+class _SwipeAffordance extends StatelessWidget {
+  final AlignmentGeometry alignment;
+  final IconData icon;
+  final String label;
+
+  const _SwipeAffordance({
+    required this.alignment,
+    required this.icon,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return ColoredBox(
+      color: colors.surfaceVariant,
+      child: Align(
+        alignment: alignment,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: colors.textPrimary),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Punto "en vivo" con anillo que se expande: la conversación está corriendo
+/// ahora mismo. El anillo se apaga cuando el sistema pide reducir movimiento.
+class _LiveDot extends StatefulWidget {
+  final Color color;
+
+  const _LiveDot({required this.color});
+
+  @override
+  State<_LiveDot> createState() => _LiveDotState();
+}
+
+class _LiveDotState extends State<_LiveDot>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _ring;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (reduceMotion) {
+      _ring?.dispose();
+      _ring = null;
+      return;
+    }
+    _ring ??= AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ring?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+    );
+    final ring = _ring;
+    if (ring == null) return dot;
+    return SizedBox(
+      width: 8,
+      height: 8,
+      child: AnimatedBuilder(
+        animation: ring,
+        builder: (context, child) {
+          final t = Curves.easeOut.transform(ring.value);
+          return Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Transform.scale(
+                scale: 1 + 1.6 * t,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: widget.color.withValues(alpha: 0.55 * (1 - t)),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+              ?child,
+            ],
+          );
+        },
+        child: dot,
+      ),
+    );
+  }
+}
 
 /// Empty state contextual para cuando hay sesiones pero el filtro/búsqueda
 /// las deja fuera.
@@ -2250,134 +2538,172 @@ class _SessionTile extends StatelessWidget {
     required this.onLongPress,
   });
 
+  /// Color del estado vivo: gris cuando el último estado conocido está
+  /// caducado, ámbar cuando la conversación te necesita, verde cuando corre.
+  Color _liveTone(HermesThemeColors colors) => activity?.stale == true
+      ? colors.textDisabled
+      : activity?.requiresAction == true
+      ? colors.warning
+      : colors.success;
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final hasPreview = session.cleanPreview.trim().isNotEmpty;
     final strings = Strings.of(context);
+    final preview = session.cleanPreview.trim();
     final activityLabel = activity == null
         ? strings.slRunningBadge
         : _globalActivityLabel(strings, activity!);
+    // El borrador se cuenta como texto descriptivo hilado en la línea de
+    // vista previa ("Borrador · Resume los cambios…"), no como una píldora
+    // de color aparte: es lo que pide el mockup y lo que evita las "cajitas".
+    final draftLabel = _sentenceCase(strings.slDraftBadge);
+    final previewText = session.hasLocalDraft
+        ? <String>[draftLabel, if (preview.isNotEmpty) preview].join(' · ')
+        : preview;
+    final liveTone = _liveTone(colors);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       onLongPress: onLongPress,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
+      child: ConstrainedBox(
+        // 64dp es el alto de fila del mockup y deja el objetivo táctil muy por
+        // encima del mínimo de 44dp.
+        constraints: const BoxConstraints(minHeight: 64),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (streamActive) ...[
+                          _LiveDot(color: liveTone),
+                          const SizedBox(width: 8),
+                        ],
+                        Flexible(
+                          child: Text(
+                            title.isNotEmpty ? title : strings.slNoTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              letterSpacing: -0.2,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        // Punto de "te necesita": la señal de atención del
+                        // mockup, sin robarle sitio al título.
+                        if (!streamActive &&
+                            activity?.requiresAction == true) ...[
+                          const SizedBox(width: 7),
+                          Container(
+                            key: ValueKey('session-attention-${session.id}'),
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: colors.warning,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                        if (session.isJob) ...[
+                          const SizedBox(width: 7),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.accent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              strings.slReportBadge,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: colors.accent,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (pinned) ...[
+                          const SizedBox(width: 7),
+                          Icon(
+                            Icons.push_pin,
+                            size: 13,
+                            color: colors.textDisabled,
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (streamActive)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Semantics(
+                          container: true,
+                          excludeSemantics: true,
+                          label: activityLabel,
+                          child: Text(
+                            activityLabel,
+                            key: ValueKey('session-running-${session.id}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.25,
+                              fontWeight: FontWeight.w500,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      )
+                    else if (previewText.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
                         child: Text(
-                          title.isNotEmpty
-                              ? title
-                              : Strings.of(context).slNoTitle,
+                          previewText,
+                          key: session.hasLocalDraft
+                              ? ValueKey('session-draft-${session.id}')
+                              : null,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 15,
-                            color: colors.textPrimary,
+                            fontSize: 13,
+                            height: 1.25,
+                            color: colors.textSecondary,
                           ),
                         ),
                       ),
-                      if (session.hasLocalDraft) ...[
-                        const SizedBox(width: 6),
-                        HermesPill(
-                          key: ValueKey('session-draft-${session.id}'),
-                          color: colors.accent,
-                          label: Strings.of(context).slDraftBadge,
-                          showDot: false,
-                        ),
-                      ],
-                      if (streamActive) ...[
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Semantics(
-                            container: true,
-                            excludeSemantics: true,
-                            label: activityLabel,
-                            child: HermesPill(
-                              key: ValueKey('session-running-${session.id}'),
-                              color: activity?.stale == true
-                                  ? colors.textDisabled
-                                  : activity?.requiresAction == true
-                                  ? colors.warning
-                                  : colors.success,
-                              label: activityLabel,
-                              showDot: false,
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (session.isJob) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colors.accent.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            Strings.of(context).slReportBadge,
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: colors.accent,
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (pinned) ...[
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.push_pin,
-                          size: 13,
-                          color: colors.textDisabled,
-                        ),
-                      ],
-                    ],
-                  ),
-                  if (hasPreview) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      session.cleanPreview.trim(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.3,
-                        color: colors.textSecondary,
-                      ),
-                    ),
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Padding(
-              padding: const EdgeInsets.only(top: 1),
-              child: Text(
+              const SizedBox(width: 12),
+              Text(
                 formattedTime,
-                style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: colors.textDisabled,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
+
+String _sentenceCase(String value) =>
+    value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
 
 /// Separador "·" del pie del tile (modelo · tiempo).
 

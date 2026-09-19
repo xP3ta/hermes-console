@@ -23,6 +23,7 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.backgroundColor,
     this.foregroundColor,
     this.elevation,
+    this.scrolledUnderElevation,
     this.titleSpacing,
     this.shape,
     this.surfaceTintColor,
@@ -40,6 +41,7 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   final Color? backgroundColor;
   final Color? foregroundColor;
   final double? elevation;
+  final double? scrolledUnderElevation;
   final double? titleSpacing;
   final ShapeBorder? shape;
   final Color? surfaceTintColor;
@@ -49,9 +51,8 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool automaticallyImplyLeading;
 
   @override
-  Size get preferredSize => Size.fromHeight(
-        kToolbarHeight + (bottom?.preferredSize.height ?? 0.0),
-      );
+  Size get preferredSize =>
+      Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0.0));
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +68,7 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
       backgroundColor: backgroundColor,
       foregroundColor: foregroundColor,
       elevation: elevation,
+      scrolledUnderElevation: scrolledUnderElevation,
       titleSpacing: titleSpacing,
       shape: shape,
       surfaceTintColor: surfaceTintColor,
@@ -124,12 +126,12 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 
   Text _upText(Text t) => Text(
-        (t.data ?? '').toUpperCase(),
-        style: t.style,
-        textAlign: t.textAlign,
-        overflow: t.overflow,
-        maxLines: t.maxLines,
-        softWrap: t.softWrap,
-        semanticsLabel: t.semanticsLabel ?? t.data,
-      );
+    (t.data ?? '').toUpperCase(),
+    style: t.style,
+    textAlign: t.textAlign,
+    overflow: t.overflow,
+    maxLines: t.maxLines,
+    softWrap: t.softWrap,
+    semanticsLabel: t.semanticsLabel ?? t.data,
+  );
 }

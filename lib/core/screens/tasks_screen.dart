@@ -8,6 +8,7 @@
 // Sin dependencias nuevas — drag & drop con LongPressDraggable + DragTarget;
 // tiempo real con dart:io WebSocket dentro de KanbanClient.
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -16,15 +17,27 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../models/agent_profile.dart';
 import '../models/connection.dart';
+import '../models/dock_config.dart' show DockItemId;
 import '../models/kanban.dart';
 import '../services/kanban_client.dart';
-import '../services/connection_manager.dart' show DashboardHttpException;
+import '../services/connection_manager.dart'
+    show ConnectionManager, DashboardHttpException;
+import '../services/dock_preferences_store.dart';
 import '../theme/app_theme.dart';
-import '../widgets/accent_card.dart';
+import '../utils/relative_time.dart';
+import '../widgets/dock_anchored_popover.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/kanban_task_detail_surface.dart';
 import 'lock_screen.dart';
+
+/// Las dos formas de mirar el mismo board: bandeja agrupada (una columna,
+/// prioriza atención) o tablero por columnas (para arrastrar entre estados).
+/// "Consola" del mockup no es una tercera pestaña: en el diseño real es el
+/// selector de tablero que ya existe en la AppBar (icono de Kanban), así que
+/// no se reproduce aquí para no duplicar esa función con otro aspecto.
+enum _TasksView { list, board }
 
 class TasksScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -34,8 +47,16 @@ class TasksScreen extends StatefulWidget {
   final String? initialTaskId;
   final String? initialAssignee;
 
+  /// Cuando no es null, envuelve esta pantalla con [GeneralDockShell] (mismo
+  /// dock flotante de Ajustes/Sesiones), con el "+" contextual abriendo una
+  /// creación rápida anclada al propio botón. Null en call sites sin un
+  /// `ConnectionManager` a mano (p.ej. dentro de una conversación abierta):
+  /// la pantalla funciona igual, solo sin el dock.
+  final ConnectionManager? connManager;
+
   const TasksScreen({
     required this.connection,
+    this.connManager,
     this.clientOverride,
     this.eventStreamOverride,
     this.initialBoard,
@@ -57,6 +78,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   KanbanMobileGroup? _taskFilter;
   String? _assigneeFilter;
   bool _includeArchived = false;
+  _TasksView _view = _TasksView.list;
 
   List<KanbanBoardRef> _boards = const [];
   late String? _selectedBoard;
@@ -616,20 +638,52 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       ),
       // FAB circular simple: el botón extendido se recortaba contra el borde.
       // Sólo cuando hay tareas (con el board vacío ya está el CTA grande).
-      floatingActionButton:
-          (_board != null &&
+      // Con el dock activo Y presente, su "+" contextual (creación rápida
+      // anclada) reemplaza a este FAB para no duplicar la acción ni
+      // competir visualmente con la barra flotante del dock. "Dock activo"
+      // (interruptor global "Usar dock flotante" en Ajustes) es una
+      // condición aparte de "pantalla compatible con dock"
+      // (`widget.connManager != null`): con el interruptor apagado el FAB
+      // debe reaparecer, o crear una tarea dejaría de ser posible desde
+      // aquí. Reactivo vía `ListenableBuilder` para no requerir reabrir la
+      // pantalla tras cambiar el interruptor.
+      floatingActionButton: ListenableBuilder(
+        listenable: DockPreferencesController.instance.listenable,
+        builder: (context, _) {
+          final dockActive =
+              widget.connManager != null &&
+              DockPreferencesController.instance.value.useDock;
+          final showFab =
+              !dockActive &&
+              _board != null &&
               _error == null &&
               _board!.taskCount > 0 &&
               !widget.connection.readOnly &&
-              _taskFilter != KanbanMobileGroup.archived)
-          ? FloatingActionButton(
-              backgroundColor: colors.accent,
-              tooltip: s.kanbanNewTask,
-              onPressed: () => _openTaskForm(),
-              child: Icon(Icons.add, color: colors.onAccent),
-            )
-          : null,
-      body: _buildBody(colors),
+              _taskFilter != KanbanMobileGroup.archived;
+          if (!showFab) return const SizedBox.shrink();
+          return FloatingActionButton(
+            backgroundColor: colors.accent,
+            tooltip: s.kanbanNewTask,
+            onPressed: () => _openTaskForm(),
+            child: Icon(Icons.add, color: colors.onAccent),
+          );
+        },
+      ),
+      body: _wrapWithDock(_buildBody(colors)),
+    );
+  }
+
+  Widget _wrapWithDock(Widget body) {
+    final connManager = widget.connManager;
+    if (connManager == null) return body;
+    return GeneralDockShell(
+      connection: widget.connection,
+      connManager: connManager,
+      onCreateAnchored: widget.connection.readOnly
+          ? null
+          : _showAnchoredQuickCreate,
+      currentDestination: DockItemId.tasks,
+      body: body,
     );
   }
 
@@ -664,8 +718,10 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       context: context,
       surfaceKey: const ValueKey('kanban-filter-surface'),
       maxWidth: 560,
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (sheetCtx, setSheet) => SingleChildScrollView(
+      builder: (sheetCtx) => DisposeControllersOnUnmount(
+        controllers: [queryCtrl],
+        child: StatefulBuilder(
+          builder: (sheetCtx, setSheet) => SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -727,9 +783,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
+        ),
       ),
     );
-    Future.delayed(const Duration(milliseconds: 400), queryCtrl.dispose);
     if (selected == null || !mounted) return;
     await _applyTaskFilter(selected);
   }
@@ -855,15 +911,53 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         onHelp: _showHelp,
       );
     }
-    // Bandeja agrupada: una sola lista vertical con secciones humanas. Los 8
-    // estados técnicos del motor de Hermes se proyectan a 5 grupos que un
-    // humano entiende; las secciones vacías no se muestran. Mover/reasignar
-    // se hace tocando la tarjeta (hoja de detalle), no con drag.
+    // Bandeja agrupada: los 8 estados técnicos del motor de Hermes se
+    // proyectan a 5 grupos que un humano entiende; las secciones vacías no se
+    // muestran. La "Lista" prioriza atención (una columna); el "Tablero"
+    // muestra los mismos grupos como columnas horizontales, con arrastre
+    // opcional entre ellas. Mover/reasignar también sigue disponible tocando
+    // la tarjeta (hoja de detalle) en ambas vistas.
     final groups = _buildGroups(board, s);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+          child: HermesSegmentedControl<_TasksView>(
+            value: _view,
+            semanticLabel: s.kanbanTitle,
+            onChanged: (v) => setState(() => _view = v),
+            segments: [
+              HermesSegment(
+                key: const ValueKey('kanban-view-list'),
+                value: _TasksView.list,
+                label: s.kanbanViewList,
+              ),
+              HermesSegment(
+                key: const ValueKey('kanban-view-board'),
+                value: _TasksView.board,
+                label: s.kanbanViewBoard,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _view == _TasksView.list
+              ? _buildListView(colors, s, groups)
+              : _buildBoardView(colors, s, groups),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildListView(
+    HermesThemeColors colors,
+    Strings s,
+    List<_TaskGroup> groups,
+  ) {
     return RefreshIndicator(
       onRefresh: _silentReload,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 100),
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 100),
         children: [
           if (_hasActiveFilters) ...[
             _FilterSummary(
@@ -899,22 +993,109 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               clearLabel: s.kanbanClearDone,
             ),
             const SizedBox(height: 8),
-            for (final t in g.tasks)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _TaskCard(
-                  colors: colors,
-                  task: t,
-                  statusColor: g.color,
-                  onTap: () => _openTaskSheet(t),
-                ),
-              ),
-            const SizedBox(height: 10),
+            _TaskListGroupCard(
+              colors: colors,
+              group: g,
+              trailingFor: (t) => _cardTrailing(s, g, t),
+              trailingColor: _cardTrailingColor(colors, g),
+              onTapTask: (t) => _openTaskSheet(t),
+            ),
+            const SizedBox(height: 14),
           ],
         ],
       ),
     );
   }
+
+  Widget _buildBoardView(
+    HermesThemeColors colors,
+    Strings s,
+    List<_TaskGroup> groups,
+  ) {
+    if (groups.isEmpty) {
+      return Center(
+        child: Text(
+          s.kanbanNoMatches,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colors.textSecondary),
+        ),
+      );
+    }
+    return ListView.builder(
+      key: const ValueKey('kanban-board-columns'),
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
+      itemCount: groups.length,
+      itemBuilder: (context, index) {
+        final group = groups[index];
+        return Padding(
+          padding: EdgeInsets.only(
+            right: index == groups.length - 1 ? 0 : 12,
+          ),
+          child: _BoardColumn(
+            colors: colors,
+            group: group,
+            canDrop: !widget.connection.readOnly,
+            trailingFor: (t) => _cardTrailing(s, group, t),
+            trailingColor: _cardTrailingColor(colors, group),
+            onTapTask: (t) => _openTaskSheet(t),
+            onDropTask: (t) => _handleBoardDrop(t, group),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Arrastrar una tarjeta a otra columna reutiliza exactamente [_move]: no
+  /// hay una ruta de movimiento nueva, solo un disparador visual más para la
+  /// que ya existe (la misma que usa la hoja "mover" del detalle).
+  void _handleBoardDrop(KanbanTask task, _TaskGroup targetGroup) {
+    final target = _boardDropStatus(targetGroup.key);
+    if (target == null || target == task.status) return;
+    _move(task, target);
+  }
+
+  /// Cada grupo móvil agrega varios estados reales; al soltar una tarjeta se
+  /// necesita UN estado destino concreto. Se elige el más representativo de
+  /// cada columna; "Trabajando ahora" apunta a 'running', que el propio
+  /// [_move] ya rechaza con el aviso existente ("lo gestiona el agente"),
+  /// así que soltar ahí no inventa un estado nuevo, solo confirma que no se
+  /// puede.
+  String? _boardDropStatus(String groupKey) {
+    switch (groupKey) {
+      case 'attention':
+        return 'blocked';
+      case 'working':
+        return 'running';
+      case 'queued':
+      case 'notes':
+        return 'todo';
+      case 'done':
+        return 'done';
+    }
+    return null;
+  }
+
+  /// Texto secundario de cada tarjeta: estado si necesita atención, progreso
+  /// si lo tiene, si no la fecha relativa más reciente disponible, y como
+  /// último recurso la etiqueta corta del grupo.
+  String _cardTrailing(Strings s, _TaskGroup group, KanbanTask task) {
+    if (group.key == 'attention') return _colLabel(s, task.status);
+    if (task.hasProgress) {
+      return s.kanbanCardProgress(task.progressDone, task.progressTotal);
+    }
+    final ts =
+        task.completedAt ?? task.lastHeartbeatAt ?? task.startedAt ?? task.createdAt;
+    if (ts != null && ts > 0) {
+      final lang = Localizations.localeOf(context).languageCode;
+      final rel = relativeTime(ts.toDouble(), languageCode: lang);
+      if (rel.isNotEmpty) return rel;
+    }
+    return group.shortLabel;
+  }
+
+  Color _cardTrailingColor(HermesThemeColors colors, _TaskGroup group) =>
+      group.key == 'attention' ? colors.error : colors.textSecondary;
 
   /// Proyecta los estados del board a grupos humanos, en orden de prioridad de
   /// atención. Sólo devuelve grupos no vacíos.
@@ -1092,6 +1273,112 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   /// Formulario de tarea: crea ([existing]==null) o edita una tarjeta. Al crear
   /// ofrece plantillas rápidas (bug/feature/investigar) que rellenan título y
   /// descripción.
+  /// Creación rápida anclada al "+" del dock: formulario mínimo (título +
+  /// prioridad) en vez del sheet completo de `_openTaskForm` (con
+  /// plantillas y selector de asignado) — el usuario que quiera esas
+  /// opciones sigue teniendo el FAB/CTA de la pantalla cuando no hay dock,
+  /// o puede abrir la tarea recién creada para completarla. Reutiliza
+  /// `_create` (misma llamada a `_client.createTask`) que ya usa el sheet
+  /// completo.
+  Future<void> _showAnchoredQuickCreate(GlobalKey anchorKey) async {
+    await _ensureProfiles();
+    if (!mounted) return;
+    final titleCtrl = TextEditingController();
+    var priority = 'normal';
+    await showDockAnchoredPopover<void>(
+      context: context,
+      anchorKey: anchorKey,
+      maxWidth: 320,
+      builder: (popoverContext) => DisposeControllersOnUnmount(
+        controllers: [titleCtrl],
+        child: StatefulBuilder(
+        builder: (popoverContext, setPopover) {
+          final colors = Theme.of(popoverContext).hermes;
+          final s = Strings.of(popoverContext);
+          void submit() {
+            final title = titleCtrl.text.trim();
+            if (title.isEmpty) return;
+            Navigator.of(popoverContext).pop();
+            _create(title, null, priority, _defaultAssignee());
+          }
+
+          return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    s.kanbanNewTask,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: titleCtrl,
+                    autofocus: true,
+                    decoration: InputDecoration(labelText: s.kanbanFieldTitle),
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => submit(),
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<String>(
+                    segments: [
+                      ButtonSegment(
+                        value: 'low',
+                        label: Text(s.kanbanPriorityLow),
+                      ),
+                      ButtonSegment(
+                        value: 'normal',
+                        label: Text(s.kanbanPriorityNormal),
+                      ),
+                      ButtonSegment(
+                        value: 'high',
+                        label: Text(s.kanbanPriorityHigh),
+                      ),
+                    ],
+                    selected: {priority},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (selection) =>
+                        setPopover(() => priority = selection.first),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(popoverContext).pop(),
+                        child: Text(
+                          MaterialLocalizations.of(
+                            popoverContext,
+                          ).cancelButtonLabel,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: colors.accent,
+                        ),
+                        onPressed: submit,
+                        child: Text(
+                          s.kanbanCreate,
+                          style: TextStyle(color: colors.onAccent),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+          );
+        },
+      ),
+      ),
+    );
+  }
+
   Future<void> _openTaskForm({KanbanTask? existing}) async {
     // Red de seguridad: asegura los perfiles antes de calcular el sugerido.
     await _ensureProfiles();
@@ -1117,7 +1404,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       surfaceKey: const ValueKey('kanban-task-form-surface'),
       maxWidth: 620,
       maxHeightFactor: 0.9,
-      builder: (sheetCtx) => Padding(
+      builder: (sheetCtx) => DisposeControllersOnUnmount(
+        controllers: [titleCtrl, bodyCtrl],
+        child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
         child: StatefulBuilder(
           builder: (sheetCtx, setSheet) => SingleChildScrollView(
@@ -1252,16 +1541,8 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
           ),
         ),
       ),
+      ),
     );
-    // Libera los controllers DESPUÉS de la animación de cierre del sheet.
-    // Liberarlos de inmediato (con la hoja aún cerrándose) hacía que el TextField
-    // re-escuchara un TextEditingController ya destruido en el siguiente frame
-    // → crash en cascada `_dependents.isEmpty`. Son variables locales: la closure
-    // sigue siendo válida aunque la pantalla se cierre antes.
-    Future.delayed(const Duration(milliseconds: 400), () {
-      titleCtrl.dispose();
-      bodyCtrl.dispose();
-    });
   }
 
   String _priorityLabel(Strings s, String value) {
@@ -1484,6 +1765,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             }
 
             final hydratedTask = detail.task;
+            final notif = context
+                .findAncestorStateOfType<HermesAppState>()
+                ?.notifications;
             return KanbanTaskDetailSurface(
               detail: detail,
               readOnly: widget.connection.readOnly,
@@ -1597,6 +1881,13 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                       Navigator.of(sheetCtx).pop();
                       _openTaskForm(existing: hydratedTask);
                     },
+              notificationsMuted: notif?.isTaskMuted(hydratedTask.id) ?? false,
+              onToggleNotificationsMuted: notif == null
+                  ? null
+                  : (muted) async {
+                      await notif.setTaskMuted(hydratedTask.id, muted);
+                      if (sheetCtx.mounted) setSheet(() {});
+                    },
             );
           },
         ),
@@ -1609,33 +1900,19 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     required String body,
     required String confirmLabel,
     bool destructive = false,
-  }) async {
-    final colors = Theme.of(context).hermes;
+  }) {
     final s = Strings.of(context);
-    final result = await showDialog<bool>(
+    // Shared floating dialog shell (see hermes_premium_ui.dart) instead of a
+    // raw AlertDialog: opaque surface, radius 22, no divider above the
+    // actions, destructive action as a filled red pill.
+    return showHermesConfirmDialog(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: Text(s.kanbanCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: Text(
-              confirmLabel,
-              style: TextStyle(
-                color: destructive ? colors.error : colors.accent,
-              ),
-            ),
-          ),
-        ],
-      ),
+      title: title,
+      message: body,
+      confirmLabel: confirmLabel,
+      cancelLabel: s.kanbanCancel,
+      destructive: destructive,
     );
-    return result == true;
   }
 
   Future<void> _uploadTaskAttachment(String taskId) async {
@@ -2227,6 +2504,8 @@ class _TaskDetailError extends StatelessWidget {
 
 /// Cabecera de sección de la bandeja: icono + nombre + recuento. Opcionalmente
 /// una acción "Limpiar" a la derecha (solo en Hechas).
+/// Cabecera de sección: nombre + recuento, sin caja. Opcionalmente una
+/// acción "Limpiar" a la derecha (solo en Hechas).
 class _GroupHeader extends StatelessWidget {
   final HermesThemeColors colors;
   final _TaskGroup group;
@@ -2243,38 +2522,31 @@ class _GroupHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 4, left: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
         children: [
-          Icon(group.icon, size: 16, color: group.color),
-          const SizedBox(width: 7),
           Expanded(
             child: Text(
               group.label.toUpperCase(),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.6,
-                color: colors.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+                color: colors.textSecondary,
               ),
             ),
           ),
-          const SizedBox(width: 7),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-            decoration: BoxDecoration(
-              color: group.color.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '${group.tasks.length}',
-              style: TextStyle(
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
-                color: group.color,
-              ),
+          const SizedBox(width: 8),
+          Text(
+            '${group.tasks.length}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: colors.textSecondary.withValues(alpha: 0.75),
             ),
           ),
           if (onClear != null) ...[
@@ -2305,144 +2577,356 @@ class _GroupHeader extends StatelessWidget {
   }
 }
 
-class _TaskCard extends StatelessWidget {
+/// Círculo con la inicial de quien lleva la tarea (perfil/bot). Sin avatar
+/// real: es una etiqueta visual ligera, no una carga de imagen de perfil.
+class _TaskAvatar extends StatelessWidget {
+  final HermesThemeColors colors;
+  final String assignee;
+
+  const _TaskAvatar({required this.colors, required this.assignee});
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = assignee.isNotEmpty ? assignee[0].toUpperCase() : '';
+    return Container(
+      width: 20,
+      height: 20,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: colors.textPrimary.withValues(alpha: 0.10),
+        shape: BoxShape.circle,
+      ),
+      child: initial.isEmpty
+          ? Icon(
+              Icons.sticky_note_2_outlined,
+              size: 11,
+              color: colors.textSecondary,
+            )
+          : Text(
+              initial,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: colors.textPrimary,
+              ),
+            ),
+    );
+  }
+}
+
+/// Contenido de una fila de tarea (título + quién la lleva + estado/tiempo).
+/// Se reutiliza tal cual dentro de la tarjeta agrupada de "Lista" y dentro de
+/// la tarjeta suelta de "Tablero"; sólo cambia lo que la envuelve por fuera.
+class _TaskRowTile extends StatelessWidget {
   final HermesThemeColors colors;
   final KanbanTask task;
-  final Color statusColor;
+  final String trailing;
+  final Color trailingColor;
   final VoidCallback onTap;
 
-  const _TaskCard({
+  const _TaskRowTile({
     required this.colors,
     required this.task,
-    required this.statusColor,
+    required this.trailing,
+    required this.trailingColor,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final assignee = task.assignee ?? '';
+    final assignee = (task.assignee ?? '').trim();
     final hasAssignee = assignee.isNotEmpty;
-    final highPrio = (task.priority == 'high');
-    return AccentCard(
+    final highPrio = task.priority == 'high';
+    return InkWell(
       key: ValueKey('kanban-task-${task.id}'),
-      background: colors.surface,
-      borderColor: statusColor.withValues(alpha: 0.30),
-      accent: statusColor,
-      accentWidth: 3,
-      borderRadius: const BorderRadius.all(Radius.circular(12)),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                task.title,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    task.title,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      height: 1.35,
+                      letterSpacing: -0.1,
+                      color: colors.textPrimary,
+                    ),
+                  ),
                 ),
-              ),
-              if (task.body.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  task.body,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.3,
+                if (highPrio) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.priority_high_rounded,
+                    size: 14,
+                    color: colors.error,
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _TaskAvatar(colors: colors, assignee: assignee),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    hasAssignee ? '@$assignee' : s.kanbanUnassigned,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+                  ),
+                ),
+                if (task.commentCount > 0) ...[
+                  Icon(
+                    Icons.mode_comment_outlined,
+                    size: 12,
                     color: colors.textSecondary,
                   ),
+                  const SizedBox(width: 2),
+                  Text(
+                    '${task.commentCount}',
+                    style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Text(
+                  trailing,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12.5, color: trailingColor),
                 ),
               ],
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  // Perfil ejecutor: lo más importante para entender si la
-                  // tarea se trabajará o es solo una nota.
-                  _Chip(
-                    colors: colors,
-                    icon: hasAssignee
-                        ? Icons.person_outline
-                        : Icons.sticky_note_2_outlined,
-                    label: hasAssignee ? assignee : s.kanbanUnassigned,
-                    color: hasAssignee ? colors.accent : colors.textSecondary,
-                  ),
-                  if (highPrio)
-                    _Chip(
-                      colors: colors,
-                      icon: Icons.priority_high_rounded,
-                      label: s.kanbanPriorityHigh,
-                      color: colors.error,
-                    ),
-                  if (task.hasProgress)
-                    _Chip(
-                      colors: colors,
-                      icon: Icons.donut_large_rounded,
-                      label: '${task.progressDone}/${task.progressTotal}',
-                      color: statusColor,
-                    ),
-                  if (task.commentCount > 0)
-                    _Chip(
-                      colors: colors,
-                      icon: Icons.mode_comment_outlined,
-                      label: '${task.commentCount}',
-                      color: colors.textSecondary,
-                    ),
-                ],
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-/// Chip compacto (icono + texto) para metadatos de una tarjeta: perfil
-/// ejecutor, prioridad alta, progreso, comentarios.
-class _Chip extends StatelessWidget {
+/// Vista "Lista": un grupo entero es una única superficie redondeada con las
+/// tareas separadas por líneas finas, en vez de tarjetas sueltas.
+class _TaskListGroupCard extends StatelessWidget {
   final HermesThemeColors colors;
-  final IconData icon;
-  final String label;
-  final Color color;
+  final _TaskGroup group;
+  final String Function(KanbanTask) trailingFor;
+  final Color trailingColor;
+  final ValueChanged<KanbanTask> onTapTask;
 
-  const _Chip({
+  const _TaskListGroupCard({
     required this.colors,
-    required this.icon,
-    required this.label,
-    required this.color,
+    required this.group,
+    required this.trailingFor,
+    required this.trailingColor,
+    required this.onTapTask,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.13),
-        borderRadius: BorderRadius.circular(8),
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < group.tasks.length; i++) ...[
+              if (i > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: colors.divider.withValues(alpha: 0.5),
+                  ),
+                ),
+              _TaskRowTile(
+                colors: colors,
+                task: group.tasks[i],
+                trailing: trailingFor(group.tasks[i]),
+                trailingColor: trailingColor,
+                onTap: () => onTapTask(group.tasks[i]),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Tarjeta suelta de "Tablero": mismo contenido que en Lista, pero cada
+/// tarea es su propia superficie redondeada (columnas, no secciones).
+class _BoardTaskCard extends StatelessWidget {
+  final HermesThemeColors colors;
+  final KanbanTask task;
+  final String trailing;
+  final Color trailingColor;
+  final VoidCallback onTap;
+  final bool elevated;
+
+  const _BoardTaskCard({
+    required this.colors,
+    required this.task,
+    required this.trailing,
+    required this.trailingColor,
+    required this.onTap,
+    this.elevated = false,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: elevated ? colors.surfaceVariant : colors.surface,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: elevated
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  blurRadius: 28,
+                  offset: const Offset(0, 14),
+                ),
+              ]
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: _TaskRowTile(
+          colors: colors,
+          task: task,
+          trailing: trailing,
+          trailingColor: trailingColor,
+          onTap: onTap,
+        ),
+      ),
+    );
+  }
+}
+
+/// Placeholder que deja una tarjeta en su columna de origen mientras se
+/// arrastra a otra (mismo hueco discreto del mockup "Tablero · arrastrando").
+class _BoardDragPlaceholder extends StatelessWidget {
+  const _BoardDragPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 76,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+    );
+  }
+}
+
+/// Una columna del tablero: cabecera + tarjetas arrastrables + zona de
+/// destino. El arrastre reutiliza [onDropTask] (que en la pantalla llama al
+/// mismo [_TasksScreenState._move] de siempre); esta clase sólo dibuja.
+class _BoardColumn extends StatelessWidget {
+  final HermesThemeColors colors;
+  final _TaskGroup group;
+  final bool canDrop;
+  final String Function(KanbanTask) trailingFor;
+  final Color trailingColor;
+  final ValueChanged<KanbanTask> onTapTask;
+  final ValueChanged<KanbanTask> onDropTask;
+
+  const _BoardColumn({
+    required this.colors,
+    required this.group,
+    required this.canDrop,
+    required this.trailingFor,
+    required this.trailingColor,
+    required this.onTapTask,
+    required this.onDropTask,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 260,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-              color: color,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+            child: _GroupHeader(colors: colors, group: group),
+          ),
+          Expanded(
+            child: DragTarget<KanbanTask>(
+              onWillAcceptWithDetails: (_) => canDrop,
+              onAcceptWithDetails: (details) => onDropTask(details.data),
+              builder: (context, candidateData, rejectedData) {
+                final highlighted = candidateData.isNotEmpty;
+                return DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: highlighted
+                        ? Colors.white.withValues(alpha: 0.03)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: ListView.separated(
+                    key: ValueKey('kanban-board-column-${group.key}'),
+                    padding: const EdgeInsets.only(bottom: 12),
+                    itemCount: group.tasks.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final task = group.tasks[index];
+                      final card = _BoardTaskCard(
+                        key: ValueKey('kanban-board-task-${task.id}'),
+                        colors: colors,
+                        task: task,
+                        trailing: trailingFor(task),
+                        trailingColor: trailingColor,
+                        onTap: () => onTapTask(task),
+                      );
+                      if (!canDrop) return card;
+                      return LongPressDraggable<KanbanTask>(
+                        data: task,
+                        childWhenDragging: const _BoardDragPlaceholder(),
+                        feedback: Material(
+                          color: Colors.transparent,
+                          child: Transform.rotate(
+                            angle: -2.5 * math.pi / 180,
+                            child: Transform.scale(
+                              scale: 1.04,
+                              child: SizedBox(
+                                width: 260,
+                                child: _BoardTaskCard(
+                                  colors: colors,
+                                  task: task,
+                                  trailing: trailingFor(task),
+                                  trailingColor: trailingColor,
+                                  onTap: () {},
+                                  elevated: true,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        child: card,
+                      );
+                    },
+                  ),
+                );
+              },
             ),
           ),
         ],

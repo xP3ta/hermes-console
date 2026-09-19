@@ -54,14 +54,8 @@ final class MissionControlCopy {
   String get bots => _strings.missionBotsLabel;
   String botCount(int count) =>
       _english ? '$count ${count == 1 ? 'bot' : 'bots'}' : '$count bots';
-  String get rooms => _english ? 'Local rooms' : 'Salas locales';
-  String get createLocalRoom =>
-      _english ? 'Create local room' : 'Crear sala local';
-  String get localRoomsExplanation => _english
-      ? 'Stored only on this device; this is not a shared Room.'
-      : 'Se guarda solo en este dispositivo; no es una Room compartida.';
   String get sharedRoomName =>
-      _english ? 'Shared room name' : 'Nombre de la sala compartida';
+      _english ? 'Room name' : 'Nombre de la sala';
   String get chooseSharedMembers =>
       _english ? 'Choose official members' : 'Elige miembros oficiales';
   String get viewMembers => _english ? 'View members' : 'Ver miembros';
@@ -71,14 +65,46 @@ final class MissionControlCopy {
   String get noRoomMessages => _english
       ? 'No messages have been published yet.'
       : 'Todavía no se han publicado mensajes.';
+
+  /// Estado del composer cuando hay un hilo elegido con "Responder en hilo".
+  /// Antes el único indicio era que el texto de sugerencia del campo cambiaba,
+  /// y no había forma de salir del hilo salvo enviar el mensaje.
+  String get replyingInThread =>
+      _english ? 'Replying in thread' : 'Respondiendo en el hilo';
+  String get stopReplyingInThread =>
+      _english ? 'Leave the thread' : 'Salir del hilo';
+
+  /// El protocolo real de una sala compartida (`groups.send`) solo acepta
+  /// `text` y `thread_id`: no hay campo de adjunto ni de imagen en ninguna
+  /// versión del evento. En vez de poner un botón que no puede funcionar, la
+  /// sala vacía lo dice una vez, en voz baja.
+  String get roomTextOnly => _english
+      ? 'Rooms are text-only for now.'
+      : 'Las salas son solo de texto por ahora.';
   String get sharedRooms => _strings.missionSharedRooms;
   String get createSharedRoom => _strings.missionCreateSharedRoom;
   String get noSharedRooms => _strings.missionNoSharedRooms;
   String get sharedRoomsUnavailable => _strings.missionSharedRoomsUnavailable;
+  String get roomDriverUnavailable => _english
+      ? 'The server room driver is unavailable. Refresh to check again.'
+      : 'El motor de salas del servidor no está disponible. Actualiza para comprobarlo.';
+  String get roomRefreshFailed => _english
+      ? 'Could not refresh this room. Reopen it to reconnect.'
+      : 'No se pudo actualizar esta sala. Vuelve a abrirla para reconectar.';
   String get sendSharedMessage => _strings.missionSendSharedMessage;
   String get renameSharedRoom => _strings.missionRenameSharedRoom;
+  // "¿Detener/Disolver la sala compartida?" es el título del diálogo de
+  // confirmación (pregunta, tiene sentido ahí) — reutilizado tal cual como
+  // etiqueta del ítem del menú de los "..." leía como una pregunta suelta,
+  // inconsistente con "Renombrar sala compartida" justo al lado (confirmado
+  // en dispositivo real). Los *Action de abajo son la forma imperativa,
+  // solo para las filas del menú; los diálogos de confirmación siguen
+  // usando `stopSharedRoom`/`disbandSharedRoom` tal cual.
   String get stopSharedRoom => _strings.missionStopSharedRoom;
   String get disbandSharedRoom => _strings.missionDisbandSharedRoom;
+  String get stopSharedRoomAction => _strings.missionStopSharedRoomAction;
+  String get disbandSharedRoomAction =>
+      _strings.missionDisbandSharedRoomAction;
   String get confirm => _strings.missionConfirm;
   String get hostedActionFailed => _strings.missionHostedActionFailed;
   String get retrySharedTaskAvailable => _strings.missionHostedRetryAvailable;
@@ -95,11 +121,6 @@ final class MissionControlCopy {
   String get createAgentDescription => _english
       ? 'Create a real Hermes profile with its own model and capabilities.'
       : 'Crea un profile real de Hermes con su modelo y capacidades.';
-  String get createRoom => _english ? 'Create room' : 'Crear sala';
-  String get createRoomDescription => _english
-      ? 'Choose 2–6 bots and open their coordination room.'
-      : 'Elige entre 2 y 6 bots y abre su sala de coordinación.';
-  String get startTeam => _english ? 'Build your team' : 'Crear tu equipo';
   String get newAgent => _english ? 'New agent' : 'Nuevo agente';
   String get botChat => 'Bot Chat';
   String get botDetails => _english ? 'Bot details' : 'Detalles del bot';
@@ -107,15 +128,10 @@ final class MissionControlCopy {
       ? 'A bot is a named teammate with its own memory, skills and chat. Create the first one to get started.'
       : 'Un bot es un compañero con nombre propio, memoria, skills y chat propios. Crea el primero para empezar.';
   String get botNeedsYou => _english ? 'needs you' : 'te necesita';
-  String get needMoreBots => _english
-      ? 'Create another bot before opening a room.'
-      : 'Crea otro bot antes de abrir una sala.';
-  String get needTwoAgents => _english
-      ? 'Create at least two bots before opening a team room.'
-      : 'Crea al menos dos bots antes de abrir una sala de equipo.';
   String get searchAgents => _english ? 'Search bots' : 'Buscar bots';
   String get clearSearch => _english ? 'Clear search' : 'Borrar búsqueda';
   String get activeNow => _english ? 'Active now' : 'Activos ahora';
+  String get pinnedBots => _english ? 'Pinned' : 'Fijados';
   String get otherBots => _english ? 'Other bots' : 'Otros bots';
   String get allBots => _english ? 'All bots' : 'Todos los bots';
   String get searchResults => _english ? 'Results' : 'Resultados';
@@ -131,45 +147,7 @@ final class MissionControlCopy {
       : 'Hermes no pudo actualizar este bot.';
   String get noMatchingAgents =>
       _english ? 'No matching bots' : 'No hay bots que coincidan';
-  String get roomCoordinator => _english ? 'Coordinator' : 'Coordinador';
-  String get roomSelectionHint =>
-      _english ? 'Choose 2 to 6 bots.' : 'Elige de 2 a 6 bots.';
-  String roomSelectionCount(int count) =>
-      _english ? '$count of 6 selected' : '$count de 6 seleccionados';
-  String agentCreated(String name) => _english
-      ? 'Bot @$name created. Add it to a room when you are ready.'
-      : 'Bot @$name creado. Añádelo a una sala cuando quieras.';
-  String get editRoom => _english ? 'Edit room' : 'Editar sala';
-  String get roomName => _english ? 'Room name' : 'Nombre de la sala';
-  String get roomHint => _english ? 'e.g. homelab' : 'p. ej. homelab';
-  String get roomPurpose => _english ? 'Purpose' : 'Objetivo';
-  String get roomPurposeHint => _english
-      ? 'e.g. Keep production stable'
-      : 'p. ej. Mantener producción estable';
-  String get roomNameInvalid => _english
-      ? 'Enter a name after the # symbol.'
-      : 'Escribe un nombre después del símbolo #.';
-  String get roomManager => _english ? 'Room manager' : 'Manager de la sala';
-  String get roomMembers => _english ? 'Room members' : 'Miembros de la sala';
-  String get roomCoordinatorShort => _english ? 'Coordinator' : 'Coordinador';
   String get roomTeam => _english ? 'Team' : 'Equipo';
-  String get roomSummary => _english ? 'Summary' : 'Resumen';
-  String get roomTasks => _english ? 'Room tasks' : 'Tareas de la sala';
-  String get roomActivity =>
-      _english ? 'Room activity' : 'Actividad de la sala';
-  String get roomReady => _english ? 'Ready' : 'Preparada';
-  String get roomActive => _english ? 'Active' : 'Activa';
-  String get roomReview => _english ? 'In review' : 'En revisión';
-  String get roomBlocked => _english ? 'Blocked' : 'Bloqueada';
-  String get roomNoPurpose =>
-      _english ? 'No goal defined yet' : 'Sin objetivo definido';
-  String get roomNoActivity => _english
-      ? 'No activity has been published for this room yet.'
-      : 'Todavía no hay actividad publicada para esta sala.';
-  String talkToCoordinator(String profile) =>
-      _english ? 'Talk to @$profile' : 'Hablar con @$profile';
-  String get roomNoLinkedWork =>
-      _english ? 'No linked work yet' : 'Sin trabajo enlazado todavía';
   String roomMemberCount(int count) => _strings.missionHostedMemberCount(count);
   String roomHomeSummary(int agents, int rooms) => _english
       ? '$agents ${agents == 1 ? 'agent' : 'agents'} · $rooms ${rooms == 1 ? 'room' : 'rooms'}'
@@ -178,26 +156,6 @@ final class MissionControlCopy {
   String attentionSummary(int approvals, int blocked) => _english
       ? '$approvals ${approvals == 1 ? 'approval' : 'approvals'} · $blocked blocked'
       : '$approvals ${approvals == 1 ? 'aprobación' : 'aprobaciones'} · $blocked bloqueados';
-  String get noRooms => _english
-      ? 'Create a room to start talking with your team.'
-      : 'Crea una sala para empezar a hablar con tu equipo.';
-  String get openRoom => _english ? 'Open room' : 'Abrir sala';
-  String get linkedWork => _english ? 'linked tasks' : 'tareas enlazadas';
-  String unavailableTaskLink(String boardId, String taskId) => _english
-      ? 'Board $boardId · $taskId · not loaded'
-      : 'Tablero $boardId · $taskId · no cargada';
-  String get unavailableLinkedWork =>
-      _english ? 'Linked work unavailable' : 'Trabajo enlazado no disponible';
-  String get roomContract => _english
-      ? 'The coordinator receives your messages and assigns confirmed work to the team.'
-      : 'El coordinador recibe tus mensajes y reparte el trabajo confirmado al equipo.';
-  String get deleteRoomTitle => _english ? 'Delete room?' : '¿Eliminar sala?';
-  String get deleteRoomBody => _english
-      ? 'Only this room is removed. Its chats and tasks are kept.'
-      : 'Solo se elimina esta sala. Sus chats y tareas se conservan.';
-  String get roomOperationPending => _english
-      ? 'Finish or recover the pending Room task before editing or deleting this Room.'
-      : 'Finaliza o recupera la tarea pendiente antes de editar o eliminar esta sala.';
   String get needsYou => _english ? 'Needs you' : 'Necesita tu atención';
   String get usage => _english ? 'Usage' : 'Uso';
   String get profilesUnavailable => _english
@@ -340,6 +298,9 @@ final class MissionControlCopy {
   String createAgentError(String detail) => _english
       ? 'Could not create the agent: $detail'
       : 'No se pudo crear el agente: $detail';
+  String agentCreated(String name) => _english
+      ? 'Bot @$name created. Add it to a room when you are ready.'
+      : 'Bot @$name creado. Añádelo a una sala cuando quieras.';
 
   String status(String value) => switch (value) {
     'idle' => _english ? 'Idle' : 'Inactivo',

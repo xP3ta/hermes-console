@@ -574,7 +574,28 @@ final class _BlobatarLayout {
     required this.bodyPath,
   });
 
+  // Un layout es inmutable una vez construido (los `..` sobre `body` de
+  // `_build` ocurren solo ahí) y deriva por completo de (seed, pinnedKind),
+  // así que se memoriza. `_HermesBotFacePainter` lo pedía en cada build de
+  // cada avatar (~40 hashes de rasgos + construcción de paths), y una lista de
+  // bots se reconstruye a menudo (refresco en vivo de Mission Control,
+  // scroll). Acotado: el orden de inserción del Map hace de FIFO simple.
+  static final Map<(String, String?), _BlobatarLayout> _layoutCache = {};
+  static const _layoutCacheLimit = 128;
+
   factory _BlobatarLayout.create(String seed, String? pinnedKind) {
+    final key = (seed, pinnedKind);
+    final cached = _layoutCache[key];
+    if (cached != null) return cached;
+    final layout = _BlobatarLayout._build(seed, pinnedKind);
+    if (_layoutCache.length >= _layoutCacheLimit) {
+      _layoutCache.remove(_layoutCache.keys.first);
+    }
+    _layoutCache[key] = layout;
+    return layout;
+  }
+
+  factory _BlobatarLayout._build(String seed, String? pinnedKind) {
     final traits = _BlobatarTraits(seed);
     final selected = pinnedKind ?? _pickShape(traits('shape'));
     if (!hermesBlobatarKinds.contains(selected)) {

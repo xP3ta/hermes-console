@@ -941,7 +941,7 @@ class _SkillsScreenState extends State<SkillsScreen>
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh installed',
+            tooltip: Strings.of(context).skillsRefreshInstalled,
             onPressed: _loadingInstalled ? null : _loadInstalled,
           ),
         ],
@@ -1074,8 +1074,8 @@ class _InstalledTab extends StatelessWidget {
     if (allSkills.isEmpty) {
       return _EmptyState(
         icon: Icons.extension_off,
-        title: 'no skills found',
-        subtitle: 'no skills are installed on this gateway',
+        title: Strings.of(context).skillsNoneFound,
+        subtitle: Strings.of(context).skillsNoneInstalled,
         colors: colors,
       );
     }
@@ -1095,7 +1095,7 @@ class _InstalledTab extends StatelessWidget {
             controller: searchController,
             style: TextStyle(fontSize: 13, color: colors.textPrimary),
             decoration: InputDecoration(
-              hintText: 'search installed skills…',
+              hintText: Strings.of(context).skillsSearchInstalledHint,
               prefixIcon: Icon(
                 Icons.search,
                 size: 18,
@@ -1123,8 +1123,8 @@ class _InstalledTab extends StatelessWidget {
           child: skills.isEmpty
               ? _EmptyState(
                   icon: Icons.search_off,
-                  title: 'no match',
-                  subtitle: 'no skills match your search',
+                  title: Strings.of(context).skillsNoMatch,
+                  subtitle: Strings.of(context).skillsNoMatchBody,
                   colors: colors,
                 )
               : RefreshIndicator(
@@ -1326,7 +1326,7 @@ class _DiscoverTab extends StatelessWidget {
                   controller: controller,
                   style: TextStyle(fontSize: 13, color: colors.textPrimary),
                   decoration: InputDecoration(
-                    hintText: 'search skills.sh…',
+                    hintText: Strings.of(context).skillsSearchHubHint,
                     prefixIcon: Icon(
                       Icons.search,
                       size: 18,

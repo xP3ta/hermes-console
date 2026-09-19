@@ -1,3 +1,4 @@
+import 'bot_mention_roster.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -223,7 +224,7 @@ final class _TuiMissionHostedGroupsGateway
       client.groupState(roomId, generation: generation);
   @override
   Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
-      client.groupLog(roomId, generation: generation);
+      client.groupLogComplete(roomId, generation: generation);
   @override
   Future<HostedGroupRoom> create({
     required String name,
@@ -394,11 +395,20 @@ abstract interface class MissionHostedGroupsDataSource {
   });
 }
 
+/// Optional room-only refresh for replies arriving after groups.send's ack.
+abstract interface class MissionHostedGroupsReadDataSource {
+  Future<HostedGroupWorkspaceReadback> readHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  });
+}
+
 final class MissionControlRepository
     implements
         MissionControlDataSource,
         MissionProfileAvatarDataSource,
-        MissionHostedGroupsDataSource {
+        MissionHostedGroupsDataSource,
+        MissionHostedGroupsReadDataSource {
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
@@ -428,13 +438,18 @@ final class MissionControlRepository
     final kanban = KanbanClient(connection, dashboardClient: dashboard);
     final desktop = TuiGatewayClient(connection, dashboard: dashboard);
     return MissionControlRepository(
-      profilesLoader: () => loadMissionControlProfiles(
+      profilesLoader: () async {
+        final rosterGeneration = BotMentionRoster.shared.generation(connection.id);
+        final profiles = await loadMissionControlProfiles(
         // One profiles.list snapshot now carries Desktop's last/preferred
         // session projections and hidden worker liveness. Older Gateways omit
         // those optional fields and keep returning the same profile roster.
         desktopLoader: () => desktop.listProfiles(includeSessions: true),
         legacyDashboardLoader: dashboard.getProfiles,
-      ),
+        );
+        BotMentionRoster.shared.replace(connection.id, connection.label, profiles, expectedGeneration: rosterGeneration);
+        return profiles;
+      },
       sessionsLoader: () => loadMissionControlSessions(
         dashboardGet: dashboard.apiGet,
         legacyGatewayLoader: () => gateway.getSessions(includeChildren: true),
@@ -493,6 +508,8 @@ final class MissionControlRepository
       kanbanCapability: _capability(boardResult),
       hostedGroups: groupsResult.value ?? HostedGroupsSnapshot.empty,
       hostedGroupsCapability: hostedGroupsGateway == null
+          ? MissionCapabilityState.unsupported
+          : groupsResult.value?.capabilities?.hasSharedRoomSurface == false
           ? MissionCapabilityState.unsupported
           : _capability(groupsResult),
       failures: failures,
@@ -559,6 +576,22 @@ final class MissionControlRepository
   }
 
   @override
+  Future<HostedGroupWorkspaceReadback> readHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  }) async {
+    final gateway = await _requireHosted(GroupMethod.state, generation);
+    final current = await gateway.state(room.roomId, generation: generation);
+    final log = await gateway.log(room.roomId, generation: generation);
+    return _verifiedWorkspaceReadback(
+      previous: room,
+      current: current,
+      log: log,
+      generation: generation,
+    );
+  }
+
+  @override
   Future<HostedGroupWorkspaceReadback> sendHostedGroupText(
     HostedGroupRoom room, {
     required String text,
@@ -566,13 +599,15 @@ final class MissionControlRepository
     required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.send, generation);
-    final log = await gateway.send(
+    await gateway.send(
       room.roomId,
       text: text,
       attempt: attempt,
       generation: generation,
     );
     final current = await gateway.state(room.roomId, generation: generation);
+    // send returns the acknowledgement tail, not the room's full conversation.
+    final log = await gateway.log(room.roomId, generation: generation);
     return _verifiedWorkspaceReadback(
       previous: room,
       current: current,
@@ -647,6 +682,8 @@ final class MissionControlRepository
     if (current.roomId != previous.roomId ||
         current.revision < previous.revision ||
         current.authorityEpoch != previous.authorityEpoch ||
+        current.authorityGatewayId != previous.authorityGatewayId ||
+        log.authority.gatewayId != current.authorityGatewayId ||
         log.authority.epoch != current.authorityEpoch) {
       throw const FormatException('incoherent hosted room mutation readback');
     }
@@ -675,6 +712,7 @@ final class MissionControlRepository
   }
 
   static bool _isUnsupported(Object? error) {
+    if (error is TuiGatewayRpcError && error.code == -32601) return true;
     if (error is DashboardHttpException) {
       return error.statusCode == 404 || error.statusCode == 405;
     }

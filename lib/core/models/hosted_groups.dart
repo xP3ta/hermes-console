@@ -21,7 +21,13 @@ enum GroupMethod {
 
   static GroupMethod? official(String wire) {
     for (final method in values) {
-      if (method == promote || method == retry || method == send) continue;
+      // `send` is official: Console now proves a complete room log before
+      // ever advertising it (see `HostedGroupLogPage.loadComplete` and
+      // `docs/hosted_identity_transition_matrix.md`). `retry` and `promote`
+      // stay retired for their own, unrelated reasons (no revision/log-
+      // position/execution-generation binding for retry; gateway-authority
+      // federation, not a client concern, for promote).
+      if (method == promote || method == retry) continue;
       if (method.wire == wire) return method;
     }
     return null;
@@ -144,7 +150,9 @@ final class GroupsCapabilityCache {
       parsed = null;
     }
     if (_connectionId == connectionId && _generation == generation) {
-      _value = parsed;
+      // Driver readiness is transient (startup/recovery), not a socket
+      // capability. Do not freeze an unavailable driver for this generation.
+      _value = parsed?.driverReady == true ? parsed : null;
       _flight = null;
     }
     return parsed;
@@ -257,11 +265,13 @@ final class HostedGroupCreateMember {
 final class HostedGroupMember {
   final String memberId;
   final String handle;
+  final String? displayName;
   final AvatarOwner owner;
 
   const HostedGroupMember._({
     required this.memberId,
     required this.handle,
+    required this.displayName,
     required this.owner,
   });
 
@@ -312,6 +322,12 @@ final class HostedGroupMember {
     return HostedGroupMember._(
       memberId: _string(raw['member_id'], 'member id'),
       handle: _string(raw['handle'], 'member handle'),
+      displayName: _optionalCanonicalString(
+        raw,
+        'display_name',
+        'member display name',
+        200,
+      ),
       owner: AvatarOwner(connectionId: connectionId, profile: profile),
     );
   }
@@ -660,6 +676,42 @@ final class HostedGroupRetryAction {
       _executionGeneration == other._executionGeneration;
 }
 
+/// Public, bounded room activity coordinates. Never expose prompts, errors or
+/// arbitrary payload fields through the presentation model.
+final class HostedGroupActivityDetails {
+  final String? memberId;
+  final String? discussionId;
+  final String? threadId;
+  final String? taskId;
+  final String? description;
+  final String? status;
+  final String? messageEventId;
+  final String? reasonCode;
+  final bool passed;
+
+  HostedGroupActivityDetails.fromJson(Map<String, dynamic> payload)
+    : memberId = _text(payload['member_id']),
+      discussionId = _text(payload['discussion_event_id']),
+      threadId = _text(payload['thread_id']),
+      taskId = _text(payload['task_id']),
+      description =
+          _text(payload['description']) ??
+          _text(payload['task_title']) ??
+          _text(payload['title']),
+      status = _text(payload['status']),
+      messageEventId = _text(payload['message_event_id']),
+      // Only translated, recognized codes are rendered, never raw errors.
+      reasonCode = _text(payload['reason_code']) ?? _text(payload['reason']),
+      passed = payload['passed'] == true;
+
+  static String? _text(Object? value) {
+    if (value is! String || value.trim().isEmpty || value.length > 512) {
+      return null;
+    }
+    return value.trim();
+  }
+}
+
 final class HostedGroupEvent {
   final String roomId;
   final int sequence;
@@ -671,6 +723,7 @@ final class HostedGroupEvent {
   final String? threadId;
   final num createdAt;
   final bool idempotent;
+  final HostedGroupActivityDetails activity;
   final String _canonicalPayload;
   final _HostedGroupDeferredTurn? _deferredTurn;
   final String? _terminalTaskId;
@@ -686,6 +739,7 @@ final class HostedGroupEvent {
     required this.threadId,
     required this.createdAt,
     required this.idempotent,
+    required this.activity,
     required this._canonicalPayload,
     required this._deferredTurn,
     required this._terminalTaskId,
@@ -746,6 +800,7 @@ final class HostedGroupEvent {
       threadId: thread,
       createdAt: createdAt,
       idempotent: idempotent,
+      activity: HostedGroupActivityDetails.fromJson(payload),
       canonicalPayload: jsonEncode(_canonicalJson(payload, 'event payload')),
       deferredTurn: deferredTurn,
       terminalTaskId: terminalTaskId,
@@ -825,6 +880,61 @@ final class HostedGroupLogPage {
       hasMore: more,
       authority: authority,
     );
+  }
+
+  /// Pages `loader` from the start of the room's log until it proves there is
+  /// nothing left (`has_more == false`), the same completeness standard
+  /// `groups.list` already holds itself to. Each page's own grammar is
+  /// verified by [fromJson]; this only adds the cross-page invariants a
+  /// single page can't see for itself: the continuation must advance
+  /// (`cursor > sinceSeq` requested), no event id repeats across pages, and
+  /// authority can't rotate mid-read (a rotation invalidates every page read
+  /// under the old epoch, so restarting is the only safe move — see
+  /// `docs/hosted_identity_transition_matrix.md`). Sending without this
+  /// proof would let Console reply to a conversation it never actually
+  /// finished loading.
+  static Future<HostedGroupLogPage> loadComplete({
+    required Future<HostedGroupLogPage> Function({
+      required int sinceSeq,
+      required int limit,
+    })
+    loader,
+    required int pageLimit,
+    int maxPages = 512,
+  }) async {
+    final events = <HostedGroupEvent>[];
+    final ids = <String>{};
+    var sinceSeq = 0;
+    HostedGroupAuthority? authority;
+    for (var page = 0; page < maxPages; page++) {
+      final result = await loader(sinceSeq: sinceSeq, limit: pageLimit);
+      if (authority != null &&
+          (result.authority.gatewayId != authority.gatewayId ||
+              result.authority.epoch != authority.epoch)) {
+        throw const FormatException('room authority rotated mid-load');
+      }
+      authority = result.authority;
+      for (final event in result.events) {
+        if (!ids.add(event.eventId)) {
+          throw const FormatException('duplicate event across log pages');
+        }
+      }
+      events.addAll(result.events);
+      if (!result.hasMore) {
+        return HostedGroupLogPage._(
+          events: List.unmodifiable(events),
+          cursor: result.cursor,
+          latestSeq: result.latestSeq,
+          hasMore: false,
+          authority: result.authority,
+        );
+      }
+      if (result.cursor <= sinceSeq) {
+        throw const FormatException('non-advancing log continuation');
+      }
+      sinceSeq = result.cursor;
+    }
+    throw const FormatException('room log pagination limit exceeded');
   }
 
   List<HostedGroupRetryAction> retryActions({

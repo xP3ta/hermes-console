@@ -9,6 +9,7 @@ import '../models/companion_animation_state.dart';
 import '../models/companion_presence_level.dart';
 import '../state/companion_controller.dart';
 import 'companion_view.dart';
+import '../../../l10n/app_localizations.dart';
 
 void showCompanionActionsSheet({
   required BuildContext context,
@@ -28,7 +29,8 @@ void showCompanionActionsSheet({
           ListTile(
             leading: Icon(Icons.swap_horiz, color: colors.accent),
             title: Text(
-              'Cambiar mascota',
+              Localizations.of<Strings>(context, Strings)?.mascotChange ??
+                  'Cambiar mascota',
               style: TextStyle(color: colors.textPrimary),
             ),
             onTap: () {
@@ -42,7 +44,8 @@ void showCompanionActionsSheet({
               color: colors.textSecondary,
             ),
             title: Text(
-              'Apagar mascota',
+              Localizations.of<Strings>(context, Strings)?.mascotTurnOff ??
+                  'Apagar mascota',
               style: TextStyle(color: colors.textPrimary),
             ),
             onTap: () {
@@ -53,7 +56,8 @@ void showCompanionActionsSheet({
           ListTile(
             leading: Icon(Icons.pets_outlined, color: colors.accent),
             title: Text(
-              'Abrir Mascotas',
+              Localizations.of<Strings>(context, Strings)?.mascotOpenPets ??
+                  'Abrir Mascotas',
               style: TextStyle(color: colors.textPrimary),
             ),
             onTap: () {

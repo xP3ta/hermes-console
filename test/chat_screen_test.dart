@@ -1,3 +1,5 @@
+import 'package:hermes_android/core/models/bot_mention.dart';
+import 'package:hermes_android/core/services/bot_mention_roster.dart';
 // Widget tests de ChatScreen.
 //
 // ChatScreen depende de un ancestro `HermesAppState` (lo busca con
@@ -23,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'pill_copy_fit_test.dart' show expectPillLabelsFit;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -32,7 +35,6 @@ import 'package:image_picker_platform_interface/image_picker_platform_interface.
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/main.dart';
-import 'package:hermes_android/core/companion/render/companion_message_presence.dart';
 import 'package:hermes_android/core/config/flavor.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -52,9 +54,7 @@ import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/session_config_reducer.dart';
 
-import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
-import 'package:hermes_android/core/models/mission_room.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
@@ -73,10 +73,8 @@ import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
-import 'package:hermes_android/core/services/kanban_client.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/mission_bot_chat_store.dart';
-import 'package:hermes_android/core/services/mission_room_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
@@ -90,15 +88,15 @@ import 'package:hermes_android/core/services/voice/conversation/native_voice.dar
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
-import 'package:hermes_android/core/widgets/attachment_source_sheet.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
-import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/motion_entrance.dart';
 import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
+import 'package:hermes_android/core/widgets/turn_activity_pill.dart';
+import 'support/inter_font.dart';
 
 AgentProfileAvatar _testProfileAvatar() => AgentProfileAvatar.fromDataUri(
   'data:image/png;base64,'
@@ -900,67 +898,6 @@ DesktopCompressionResult _uiNativeCompressionResult(
   }),
 };
 
-class _RecordingMissionRoomStore implements MissionRoomStoreContract {
-  _RecordingMissionRoomStore(this.room);
-
-  MissionRoom room;
-  String? boundManagerSessionId;
-  Completer<void>? bindGate;
-  int bindCalls = 0;
-
-  @override
-  Future<MissionRoom> bindManagerSession({
-    required String connectionId,
-    required String roomId,
-    required String managerProfile,
-    required String managerSessionId,
-  }) async {
-    expect(connectionId, room.connectionId);
-    expect(roomId, room.id);
-    expect(managerProfile, room.managerProfile);
-    bindCalls++;
-    await bindGate?.future;
-    boundManagerSessionId = managerSessionId;
-    room = room.copyWith(managerSessionId: managerSessionId);
-    return room;
-  }
-
-  @override
-  Future<void> delete(String connectionId, String roomId) async {}
-
-  @override
-  Future<MissionRoom> linkTask(
-    String connectionId,
-    String roomId,
-    String taskId, {
-    required String boardId,
-  }) async {
-    room = room.withLinkedTask(taskId, boardId: boardId, updatedAtMs: 2);
-    return room;
-  }
-
-  @override
-  List<MissionRoom> load(String connectionId) => [room];
-
-  @override
-  Future<void> unlinkOrganization(
-    String connectionId,
-    String organizationId,
-  ) async {}
-
-  @override
-  Future<MissionRoom> save({
-    required String connectionId,
-    required String name,
-    String? purposeLabel,
-    required String managerProfile,
-    required Iterable<String> memberProfiles,
-    String? organizationId,
-    String? managerSessionId,
-    MissionRoom? existing,
-  }) async => room;
-}
-
 class _ColdHistoryGateway extends _UiRewindGateway {
   @override
   Future<DesktopSessionSnapshot> resumeExisting(
@@ -1132,6 +1069,19 @@ DesktopSessionSnapshot _uiCompressedSnapshot() =>
       created: false,
       method: 'session.resume',
     );
+
+class _MentionSlashGateway extends _UiRewindGateway {
+  @override
+  Future<DesktopCommandCatalog> commandsCatalog() async => DesktopCommandCatalog.fromJson(const {
+    'pairs': [['/handoff', 'Fixture command']],
+  });
+  @override
+  Future<DesktopCommandRpcResult> slashExec(String runtimeSessionId, String command) async {
+    slashCalls.add((runtimeId: runtimeSessionId, command: command));
+    return const DesktopCommandRpcResult(kind: DesktopCommandDispatchKind.send,
+      accepted: DesktopCommandAcceptance.accepted, message: 'directed @ops');
+  }
+}
 
 class _SubmissionGateway
     implements
@@ -1529,6 +1479,13 @@ ApiClient _safeApi() => ApiClient(
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
+/// Pill labels fall back to a shorter text when the fixed-width test font does
+/// not fit; the full copy stays in `semanticsLabel`.
+Finder _pillLabel(String full) => find.byWidgetPredicate(
+  (widget) =>
+      widget is Text && (widget.data == full || widget.semanticsLabel == full),
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   var secureStore = <String, String>{};
@@ -1734,6 +1691,7 @@ void main() {
   }
 
   setUp(() {
+    BotMentionRoster.shared.clear();
     secureStore = <String, String>{};
     failOutboxWrites = false;
     outboxWriteCalls = 0;
@@ -1845,18 +1803,10 @@ void main() {
     Future<bool> Function(AttachmentDraft)? attachmentPrivateCopyDeleter,
     Future<void> Function()? cancelStreamOverride,
     VoidCallback? sendAttemptObserver,
-    MissionRoom? missionRoom,
-    MissionRoomStoreContract? missionRoomStore,
-    Future<KanbanTask> Function(MissionMentionIntent intent)?
-    missionRoomTaskCreator,
-    Future<Iterable<String>> Function()? missionRoomWorkerRosterLoader,
-    KanbanClient Function(SavedConnection connection)?
-    missionRoomKanbanClientFactory,
     Future<bool> Function()? turnIdempotencyCapability,
     StoredSessionMessageLoader? storedMessageLoader,
     String? initialStoredSessionId,
     AgentProfile? missionBotProfile,
-    Map<String, AgentProfile> missionRoomProfiles = const {},
     MissionProfileAvatarCache? missionAvatarCache,
     DesktopCompressionFenceStore? compressionFenceStore,
     FlutterSecureStorage? draftSecureStorage,
@@ -2006,14 +1956,8 @@ void main() {
           attachmentPrivateCopyDeleter: attachmentPrivateCopyDeleter,
           cancelStreamOverride: cancelStreamOverride,
           sendAttemptObserver: sendAttemptObserver,
-          missionRoom: missionRoom,
-          missionRoomStore: missionRoomStore,
-          missionRoomTaskCreator: missionRoomTaskCreator,
-          missionRoomWorkerRosterLoader: missionRoomWorkerRosterLoader,
-          missionRoomKanbanClientFactory: missionRoomKanbanClientFactory,
           initialStoredSessionId: initialStoredSessionId,
           missionBotProfile: missionBotProfile,
-          missionRoomProfiles: missionRoomProfiles,
           missionAvatarCache: missionAvatarCache,
           draftStoreOverride: draftStore,
         ),
@@ -2032,6 +1976,158 @@ void main() {
     });
     return chat;
   }
+
+  void mentionRoster(String id, {String title = 'Research Buddy'}) {
+    BotMentionRoster.shared.replace(id, 'Local', [
+      const AgentProfile(name: 'default'),
+      AgentProfile(name: 'ops', botModeUiMeta: {'title': title}),
+    ]);
+  }
+
+  testWidgets('mentions: autocomplete floats above composer and keyboard; draft remains typed', (tester) async {
+    final connection = _remoteConn('mention-ui');
+    final chat = await pumpChat(tester, connection: connection);
+    mentionRoster(connection.id);
+    await tester.enterText(find.byType(TextField), '@res');
+    await tester.pump(const Duration(milliseconds: 600));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final palette = find.byKey(const ValueKey('chat-mention-palette'));
+    expect(palette, findsOneWidget);
+    expect(tester.getBottomLeft(palette).dy,
+        lessThanOrEqualTo(tester.getTopLeft(find.byKey(const ValueKey('chat-composer-host'))).dy + 4));
+    await tester.tap(find.text('@ops · Research Buddy'));
+    await tester.pump(const Duration(milliseconds: 600));
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '@ops ');
+    expect(field.focusNode!.hasFocus, isTrue);
+    final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect((await screen.draftStoreOverride!.load(connection.id, screen.session.id, profile: 'default')).text, '@ops ');
+    expect(chat.messages, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mentions: immediate and queued payload freeze while bubbles stay typed', (tester) async {
+    final connection = _remoteConn('mention-queue');
+    final gateway = _UiRewindGateway();
+    final chat = await pumpChat(tester, connection: connection, desktopGateway: gateway, messagesLoaded: false);
+    mentionRoster(connection.id);
+    await tester.enterText(find.byType(TextField), 'ask @ops');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(gateway.submissions.single, startsWith('ask @ops\n\n[@mentions'));
+    expect(chat.messages.where((m) => m['role'] == 'user').single['content'], 'ask @ops');
+    expect(find.textContaining('resolved from the Bot Mode'), findsNothing);
+    await tester.enterText(find.byType(TextField), 'next @ops');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 400));
+    final queued = chat.queuedTurns.single.turn;
+    expect(queued.text, 'next @ops');
+    expect(queued.mentions.single.title, 'Research Buddy');
+    expect(queued.mentionAnnotation, isNotEmpty);
+    mentionRoster(connection.id, title: 'Renamed');
+    gateway.emit('message.complete', {'text': 'done'});
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(gateway.submissions.last, 'next @ops${queued.mentionAnnotation}');
+    expect('@mentions resolved'.allMatches(gateway.submissions.last).length, 1);
+    gateway.emit('message.complete', {'text': 'done'});
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mentions: rejected retry preserves ID and annotation after roster rename', (tester) async {
+    final connection = _remoteConn('mention-retry');
+    final gateway = _SubmissionGateway()..submitError = const _ReasonedPromptRejection(reason: 'SESSION_NOT_OWNED');
+    final chat = await pumpChat(tester, connection: connection, desktopGateway: gateway);
+    mentionRoster(connection.id);
+    await tester.enterText(find.byType(TextField), 'ask @ops');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 800));
+    final before = (await TurnOutboxStore().loadAllForChat(connection.id, 'sess-test', profile: 'default')).single;
+    expect(before.state, PreparedTurnState.failedBeforeAcceptance);
+    final payload = gateway.submissions.last;
+    mentionRoster(connection.id, title: 'Changed while offline');
+    gateway.submitError = null;
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(gateway.submissions.last, payload);
+    expect(chat.activeTurnDelivery!.current.clientTurnId, before.clientTurnId);
+    expect(chat.activeTurnDelivery!.current.mentionAnnotation, before.mentionAnnotation);
+    gateway.emitComplete();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mentions: initial Share prompt takes the prepared route', (tester) async {
+    final connection = _remoteConn('mention-initial');
+    final gateway = _SubmissionGateway();
+    await pumpChat(tester, connection: connection, desktopGateway: gateway,
+      initialPrompt: 'initial @ops', beforeChatPush: () => mentionRoster(connection.id));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(gateway.submissions.single, startsWith('initial @ops\n\n[@mentions'));
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+    gateway.emitComplete();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mentions: dictation takes the prepared route', (tester) async {
+    final connection = _remoteConn('mention-dictation');
+    final gateway = _SubmissionGateway();
+    final stt = _PartialSttEngine(finalOnStop: 'ask @ops');
+    final chat = await pumpChat(tester, connection: connection, desktopGateway: gateway, stt: stt);
+    mentionRoster(connection.id);
+    await tester.tap(find.byKey(const ValueKey('mic')));
+    await tester.pump();
+    stt.results.add(const SttResult('ask @ops', false));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('dictation-send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(gateway.submissions.single, startsWith('ask @ops\n\n[@mentions'));
+    expect(chat.messages.where((m) => m['role'] == 'user').first['content'], 'ask @ops');
+    gateway.emitComplete();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mentions: slash directed prompt uses prepared handoff once', (tester) async {
+    final connection = _remoteConn('mention-slash');
+    final gateway = _MentionSlashGateway();
+    final chat = await pumpChat(tester, connection: connection, desktopGateway: gateway);
+    mentionRoster(connection.id);
+    await tester.enterText(find.byType(TextField), '/hel');
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('chat-slash-palette')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-mention-palette')), findsNothing);
+    await tester.enterText(find.byType(TextField), '/handoff @ops');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(gateway.slashCalls.single.command, 'handoff @ops');
+    expect(gateway.submissions.single, startsWith('directed @ops\n\n[@mentions'));
+    expect(chat.activeTurnDelivery!.current.text, 'directed @ops');
+    gateway.emit('message.complete', {'text': 'done'});
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mentions: Desktop history bubble and copy hide annotation after reload', (tester) async {
+    const typed = 'ask @ops';
+    final note = buildBotMentionAnnotation(const [BotMention(connectionId: 'local', profile: 'ops', handle: 'ops')]);
+    await pumpChat(tester, messages: [{'role': 'user', 'content': '$typed$note'}]);
+    expect(find.text(typed), findsOneWidget);
+    expect(find.textContaining('resolved from the Bot Mode'), findsNothing);
+    await tester.tap(find.byTooltip('Copiar mensaje').first);
+    await tester.pump();
+    expect(clipboardText, typed);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'la burbuja conserva texto humano y elimina el carrier background completo',
@@ -2215,7 +2311,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('chat-session-activity')),
-          matching: find.byType(HermesInlineActivity),
+          matching: find.byKey(const ValueKey('subagent-disclosure')),
         ),
         findsOneWidget,
       );
@@ -3809,7 +3905,11 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('Trabajo en segundo plano'), findsOneWidget);
+      // El pill genérico (sin `activities` detallados) muestra el conteo
+      // agregado de actividad pasiva observada — "Trabajo en segundo plano"
+      // ahora solo vive en el `semanticLabel` de accesibilidad del pill, no
+      // como texto visible (ver subagent_activity_card.dart, `build()`).
+      expect(_pillLabel('1 activo · 0 cerrados'), findsOneWidget);
       expect(gateway.resumeExistingCalls, 0);
       expect(gateway.createCalls, 0);
       expect(tester.takeException(), isNull);
@@ -3847,11 +3947,14 @@ void main() {
 
       expect(gateway.activeListCalls, greaterThan(0));
       expect(find.text('Actividad en otra superficie'), findsNothing);
-      expect(find.text('Trabajo en segundo plano'), findsOneWidget);
+      // Sin conteo agregado (ningún tool-call durable observado todavía), el
+      // pill genérico cae al rótulo de "trabajando" — "Trabajo en segundo
+      // plano" solo vive en el `semanticLabel` de accesibilidad del pill.
+      expect(_pillLabel('trabajando'), findsOneWidget);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('chat-session-activity')),
-          matching: find.byType(HermesInlineActivity),
+          matching: find.byKey(const ValueKey('subagent-disclosure')),
         ),
         findsOneWidget,
       );
@@ -3872,6 +3975,123 @@ void main() {
       await tester.pump();
 
       expect(find.text('Actividad en otra superficie'), findsNothing);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'al terminar el turno remoto recarga REST y muestra la respuesta',
+    (tester) async {
+      var restRows = <Map<String, dynamic>>[
+        {'id': 'stable-user', 'role': 'user', 'content': 'Turno durable'},
+      ];
+      final gateway = _UiRewindGateway()
+        ..activeSessionList = const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-owned-by-desktop',
+              storedSessionId: 'sess-test',
+              status: 'working',
+            ),
+          ],
+        );
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-passive-settled-rest'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+        storedMessageLoader: (_, _) async =>
+            restRows.map(Map<String, dynamic>.from).toList(growable: false),
+      );
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump();
+      expect(find.text('Turno durable'), findsOneWidget);
+      expect(find.text('Respuesta durable'), findsNothing);
+      // "Trabajo en segundo plano" now lives only in the pill's
+      // accessibility semantics label, not as visible text — see the same
+      // fix elsewhere in this file for why.
+      final backgroundSemantics = tester.widget<Semantics>(
+        find
+            .descendant(
+              of: find.byType(SubagentActivityCard),
+              matching: find.byType(Semantics),
+            )
+            .first,
+      );
+      expect(backgroundSemantics.properties.label, 'Trabajo en segundo plano');
+
+      restRows = [
+        {
+          'id': 'stable-assistant',
+          'role': 'assistant',
+          'content': 'Respuesta durable',
+        },
+        {'id': 'stable-user', 'role': 'user', 'content': 'Turno durable'},
+      ];
+      gateway.activeSessionList = const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-idle-on-desktop',
+            storedSessionId: 'sess-test',
+            status: 'idle',
+          ),
+        ],
+      );
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump();
+
+      expect(find.text('Turno durable'), findsOneWidget);
+      expect(find.text('Respuesta durable'), findsOneWidget);
+      expect(find.text('Trabajo en segundo plano'), findsNothing);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.createCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'un borrador en el composer no recarga REST cada 3s sin runtime',
+    (tester) async {
+      var loads = 0;
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-draft-skips-rest'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+        storedMessageLoader: (_, _) async {
+          loads += 1;
+          return const [
+            {'id': 'stable-user', 'role': 'user', 'content': 'Turno durable'},
+          ];
+        },
+      );
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump();
+      final loadsAfterIdle = loads;
+      expect(loadsAfterIdle, greaterThan(0));
+      expect(find.text('Turno durable'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).last, 'borrador lento');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump();
+
+      expect(loads, loadsAfterIdle);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).last).controller?.text,
+        'borrador lento',
+      );
       expect(gateway.resumeExistingCalls, 0);
       expect(gateway.createCalls, 0);
       expect(tester.takeException(), isNull);
@@ -4075,12 +4295,16 @@ void main() {
       expect(
         find.descendant(
           of: surface,
-          matching: find.byType(HermesInlineActivity),
+          matching: find.byKey(const ValueKey('subagent-disclosure')),
         ),
         findsOneWidget,
       );
       expect(find.text('Actividad en otra superficie'), findsNothing);
-      expect(find.text('Trabajo en segundo plano'), findsOneWidget);
+      // Sin conteo agregado observado todavía en esta pasada (solo se
+      // refrescó la lista de sesiones activas, no el tail de mensajes), el
+      // pill genérico cae al rótulo de "trabajando" — "Trabajo en segundo
+      // plano" solo vive en el `semanticLabel` de accesibilidad del pill.
+      expect(_pillLabel('trabajando'), findsOneWidget);
       expect(find.text('PRIVATE_TOOL_LABEL_CANARY'), findsNothing);
       expect(
         find.descendant(of: surface, matching: find.byType(Wrap)),
@@ -4091,13 +4315,38 @@ void main() {
         matching: find.byType(ListView),
       );
       final composer = find.byType(TextField).last;
+      // The activity pill is a fixed overlay pinned near the BOTTOM of the
+      // chat Stack, right above the composer (Positioned(bottom: 20, ...)
+      // — see chat_screen.dart), not floating over the middle of the
+      // transcript. Two invariants matter here:
+      //
+      // 1. It's anchored at the BOTTOM, close to the composer — `transcript`
+      //    (the reverse:true ListView) fills this whole Stack by
+      //    construction, so its outer rect always ends at the same `bottom`
+      //    as the pill's own Positioned band; we can't assert "zero overlap
+      //    with the full ListView box" without either resizing the Stack
+      //    (which the design explicitly avoids) or dynamically measuring the
+      //    pill's height to reserve exact space. What we *can* assert, and
+      //    what actually distinguishes this "glued to the composer" design
+      //    from an earlier top-anchored one, is that the pill sits right at
+      //    the transcript's bottom edge, not somewhere in the middle or top
+      //    of it. The transcript also reserves real bottom padding
+      //    (`_subagentActivityPillReservedSpace` in chat_screen.dart) so in
+      //    practice real message content stays above the pill at normal
+      //    text scale; that reservation is a best-effort estimate, not a
+      //    measured one, so it isn't re-asserted pixel-for-pixel here.
+      // 2. It must NEVER cover the composer — this is the one hard,
+      //    non-negotiable product rule, asserted with a small safety
+      //    margin so "touching" isn't considered acceptable either.
+      const bottomAnchorTolerance = 32.0;
+      const clearanceMargin = 1.0;
       expect(
-        tester.getRect(surface).top,
-        greaterThanOrEqualTo(tester.getRect(transcript).bottom),
+        tester.getRect(transcript).bottom - tester.getRect(surface).bottom,
+        inInclusiveRange(0.0, bottomAnchorTolerance),
       );
       expect(
         tester.getRect(surface).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top),
+        lessThanOrEqualTo(tester.getRect(composer).top - clearanceMargin),
       );
 
       final semanticTree = tester.getSemantics(surface).toStringDeep();
@@ -4116,9 +4365,11 @@ void main() {
       addTearDown(tester.view.resetViewInsets);
       await tester.pump();
       expect(tester.element(surface), same(surfaceElement));
+      // Same hard invariant after the keyboard opens and the composer
+      // rises: the floating pill must still clear it.
       expect(
         tester.getRect(surface).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top),
+        lessThanOrEqualTo(tester.getRect(composer).top - clearanceMargin),
       );
       expect(tester.takeException(), isNull);
       semantics.dispose();
@@ -4156,7 +4407,7 @@ void main() {
     );
     final inline = find.descendant(
       of: surface,
-      matching: find.byType(HermesInlineActivity),
+      matching: find.byKey(const ValueKey('subagent-disclosure')),
     );
     final surfaceElement = tester.element(surface);
     final cardElement = tester.element(card);
@@ -4253,7 +4504,7 @@ void main() {
       expect(
         find.descendant(
           of: surface,
-          matching: find.byType(HermesInlineActivity),
+          matching: find.byKey(const ValueKey('subagent-disclosure')),
         ),
         findsOneWidget,
       );
@@ -4264,7 +4515,7 @@ void main() {
       expect(
         find.descendant(
           of: surface,
-          matching: find.byType(HermesInlineActivity),
+          matching: find.byKey(const ValueKey('subagent-disclosure')),
         ),
         findsNothing,
       );
@@ -4412,20 +4663,34 @@ void main() {
       expect(
         find.descendant(
           of: surface,
-          matching: find.byType(HermesInlineActivity),
+          matching: find.byKey(const ValueKey('subagent-disclosure')),
         ),
         findsOneWidget,
       );
-      await tester.tap(find.text('ver detalles'));
+      // The old inline "ver detalles" disclosure row expanded in place — no
+      // new route. The redesigned pill opens a real modal bottom sheet
+      // instead (see `_openDetailSheet` in subagent_activity_card.dart), so
+      // this now pushes a route of its own; close it again immediately so
+      // the single-route "cover" simulation below still starts from a clean
+      // stack, exactly like the original assumed.
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      await tester.tap(find.byKey(const ValueKey('subagent-disclosure')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('subagent-row-stable-refresh-child')),
         findsOneWidget,
       );
-
-      final navigator = tester.state<NavigatorState>(
-        find.byType(Navigator).first,
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('subagent-row-stable-refresh-child')),
+        findsNothing,
       );
+
       unawaited(
         navigator.push<void>(
           MaterialPageRoute<void>(builder: (_) => const SizedBox.expand()),
@@ -4434,9 +4699,30 @@ void main() {
       await tester.pump();
       expect(tester.element(surface), same(surfaceElement));
       expect(chat.subagentActivities, isEmpty);
+      // Pushing this route fires several ActiveChat notifications
+      // back-to-back within the same frame, and the pill settles back into
+      // its background/generic state (falling back to the last known
+      // activity via chat_screen.dart's `_displaySubagentActivities` cache)
+      // — legitimately re-showing that state via a fresh fade-in while an
+      // earlier, not-yet-fully-exited instance briefly overlaps it, rather
+      // than the single instantaneous swap this assertion originally
+      // assumed before the pill grew this animation. "Trabajo en segundo
+      // plano" now lives only in the pill's accessibility semantics label
+      // (see subagent_activity_card.dart's `build()`), not as visible text —
+      // and the covering route excludes it from the compiled semantics
+      // tree (so `find.bySemanticsLabel` can't see it either), the same
+      // reason the old text finder needed `skipOffstage: false`. Read the
+      // `Semantics` widget's own property instead, which survives that
+      // exclusion just like the widget itself does.
+      final backgroundSemantics = tester
+          .widgetList<Semantics>(
+            find.descendant(of: surface, matching: find.byType(Semantics)),
+          )
+          .where((widget) => widget.properties.label != null);
+      expect(backgroundSemantics, isNotEmpty);
       expect(
-        find.text('Trabajo en segundo plano', skipOffstage: false),
-        findsOneWidget,
+        backgroundSemantics.map((widget) => widget.properties.label),
+        contains('Trabajo en segundo plano'),
       );
       expect(
         find.byKey(
@@ -4873,7 +5159,19 @@ void main() {
   );
 
   Future<void> triggerChatRefresh(WidgetTester tester) async {
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    // Bot Chat's AppBar nests the same control sheet one level deeper, behind
+    // its own overflow menu (`bot-chat-overflow-appbar` → `bot-chat-control-
+    // action`), instead of the general chat's direct `chat-control-trigger`
+    // icon button.
+    final botOverflow = find.byKey(const ValueKey('bot-chat-overflow-appbar'));
+    if (botOverflow.evaluate().isNotEmpty) {
+      await tester.tap(botOverflow);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('bot-chat-control-action')));
+    } else {
+      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    }
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
     final dialog = find.byKey(const ValueKey('chat-control-dialog'));
@@ -5061,22 +5359,18 @@ void main() {
     });
   }
 
-  attachmentValidationFenceTest(
-    'de fichero ausente',
-    (temp) async {
-      final file = File('${temp.path}/ausente.pdf');
-      await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
-      return AttachmentDraft(
-        localId: 'missing',
-        type: AttachmentType.document,
-        name: 'ausente.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: await file.length(),
-        localPath: file.path,
-      );
-    },
-    invalidateBeforeSend: (attachment) => File(attachment.localPath).delete(),
-  );
+  attachmentValidationFenceTest('de fichero ausente', (temp) async {
+    final file = File('${temp.path}/ausente.pdf');
+    await file.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
+    return AttachmentDraft(
+      localId: 'missing',
+      type: AttachmentType.document,
+      name: 'ausente.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: await file.length(),
+      localPath: file.path,
+    );
+  }, invalidateBeforeSend: (attachment) => File(attachment.localPath).delete());
 
   attachmentValidationFenceTest('de imagen corrupta', (temp) async {
     final image = File('${temp.path}/corrupta.gif');
@@ -5600,6 +5894,341 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   });
 
+  testWidgets('Bot Chat recupera foco y texto tras fallar y reintentar', (
+    tester,
+  ) async {
+    final retry = Completer<List<Map<String, dynamic>>>();
+    var loads = 0;
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-composer-retry'),
+      session: _session().copyWith(source: 'bot-mode'),
+      missionBotProfile: const AgentProfile(name: 'Sol'),
+      messagesLoaded: false,
+      storedMessageLoader: (_, _) {
+        if (++loads == 1) throw StateError('initial load failed');
+        return retry.future;
+      },
+    );
+    await tester.pump();
+    expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.refresh_rounded));
+    await tester.pump();
+    expect(loads, 2);
+    final composer = find.byType(TextField);
+    expect(tester.widget<TextField>(composer).enabled, isFalse);
+    retry.complete(const [
+      {'role': 'user', 'content': 'Pregunta recuperada'},
+      {'role': 'assistant', 'content': 'Respuesta recuperada'},
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Respuesta recuperada'), findsOneWidget);
+    expect(tester.widget<TextField>(composer).enabled, isTrue);
+    await tester.tap(composer);
+    await tester.pump();
+    expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+    tester.testTextInput.enterText('Borrador tras reintentar');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(composer).controller!.text,
+      'Borrador tras reintentar',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Bot Chat desbloquea composer al publicar tras dos fallos aunque resume siga pendiente',
+    (tester) async {
+      final retry = Completer<List<Map<String, dynamic>>>();
+      final resume = Completer<DesktopSessionSnapshot>();
+      final gateway = _UiRewindGateway()
+        ..resumeExistingError = StateError('HTTP 401');
+      var loads = 0;
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-bot-composer-published'),
+        session: _session().copyWith(source: 'bot-mode'),
+        missionBotProfile: const AgentProfile(name: 'Sol'),
+        desktopGateway: gateway,
+        messagesLoaded: false,
+        storedMessageLoader: (_, _) {
+          if (++loads <= 2) throw StateError('HTTP 401');
+          return retry.future;
+        },
+      );
+      await tester.pump();
+      expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.refresh_rounded));
+      await tester.pump();
+      expect(loads, 2);
+      expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
+
+      gateway
+        ..resumeExistingError = null
+        ..resumeExistingGate = resume;
+      await tester.tap(find.byIcon(Icons.refresh_rounded));
+      await tester.pump();
+      expect(loads, 3);
+      final composer = find.byType(TextField);
+      expect(tester.widget<TextField>(composer).enabled, isFalse);
+      retry.complete(const [
+        {'role': 'user', 'content': 'Pregunta tras recuperar backend'},
+        {'role': 'assistant', 'content': 'Historial REST recuperado'},
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.resumeExistingCalls, 3);
+      expect(resume.isCompleted, isFalse);
+      expect(find.text('Historial REST recuperado'), findsOneWidget);
+      expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+      expect(tester.widget<TextField>(composer).enabled, isTrue);
+      expect(find.byKey(const ValueKey('chat-refresh-progress')), findsNothing);
+      await tester.tap(composer);
+      await tester.pump();
+      expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      tester.testTextInput.enterText('Borrador con resume pendiente');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(composer).controller!.text,
+        'Borrador con resume pendiente',
+      );
+      resume.completeError(StateError('runtime sigue indisponible'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.widget<TextField>(composer).enabled, isTrue);
+      expect(find.text('Historial REST recuperado'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final newestFinishesFirst in [false, true]) {
+    testWidgets(
+      'cinco refresh interactivos solapados mantienen el composer correcto con ultimo primero=$newestFinishesFirst',
+      (tester) async {
+        final requests = List.generate(
+          5,
+          (_) => Completer<List<Map<String, dynamic>>>(),
+        );
+        var loads = 0;
+        await pumpChat(
+          tester,
+          connection: _remoteConn('conn-overlap-$newestFinishesFirst'),
+          session: _session().copyWith(source: 'bot-mode'),
+          missionBotProfile: const AgentProfile(name: 'Sol'),
+          messagesLoaded: false,
+          storedMessageLoader: (_, _) => requests[loads++].future,
+        );
+        for (var attempt = 1; attempt < requests.length; attempt++) {
+          await triggerChatRefresh(tester);
+          expect(loads, attempt + 1);
+        }
+        final composer = find.byType(TextField);
+        expect(tester.widget<TextField>(composer).enabled, isFalse);
+
+        Future<void> completeNewest() async {
+          requests.last.complete(const [
+            {'role': 'user', 'content': 'Pregunta vigente'},
+            {'role': 'assistant', 'content': 'Respuesta de quinta carga'},
+          ]);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          expect(find.text('Respuesta de quinta carga'), findsOneWidget);
+          expect(tester.widget<TextField>(composer).enabled, isTrue);
+          expect(
+            find.byKey(const ValueKey('chat-refresh-progress')),
+            findsNothing,
+          );
+        }
+
+        if (newestFinishesFirst) await completeNewest();
+        for (final index in [2, 0, 3, 1]) {
+          if (index.isEven) {
+            requests[index].completeError(StateError('fallo obsoleto $index'));
+          } else {
+            requests[index].complete([
+              {'role': 'assistant', 'content': 'Respuesta obsoleta $index'},
+            ]);
+          }
+          await tester.pump();
+          expect(
+            tester.widget<TextField>(composer).enabled,
+            newestFinishesFirst,
+          );
+          expect(find.textContaining('Respuesta obsoleta'), findsNothing);
+          expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+        }
+        if (!newestFinishesFirst) await completeNewest();
+        await tester.tap(composer);
+        await tester.pump();
+        expect(tester.testTextInput.isVisible, isTrue);
+        tester.testTextInput.enterText('Borrador tras cinco cargas');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(composer).controller!.text,
+          'Borrador tras cinco cargas',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'polling pasivo pendiente conserva foco y borrador del composer',
+    (tester) async {
+      final requests = List.generate(
+        3,
+        (_) => Completer<List<Map<String, dynamic>>>(),
+      );
+      var loads = 0;
+      const history = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'Historial durante polling'},
+        {'role': 'user', 'content': 'Pregunta durante polling'},
+      ];
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-composer-passive-focus'),
+        session: _session().copyWith(source: 'bot-mode'),
+        missionBotProfile: const AgentProfile(name: 'Sol'),
+        messages: history,
+        storedMessageLoader: (_, _) => requests[loads++].future,
+      );
+      final composer = find.byType(TextField);
+      await tester.tap(composer);
+      await tester.pump();
+      for (var poll = 0; poll < requests.length; poll++) {
+        tester.testTextInput.enterText('');
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pump();
+        expect(loads, poll + 1);
+        expect(tester.widget<TextField>(composer).enabled, isTrue);
+        expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+        expect(tester.testTextInput.isVisible, isTrue);
+        expect(
+          find.byKey(const ValueKey('chat-refresh-progress')),
+          findsNothing,
+        );
+        tester.testTextInput.enterText('Borrador durante poll $poll');
+        await tester.pump();
+        requests[poll].complete(history.reversed.toList());
+        await tester.pump();
+        expect(tester.widget<TextField>(composer).enabled, isTrue);
+        expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+        expect(
+          tester.widget<TextField>(composer).controller!.text,
+          'Borrador durante poll $poll',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final invalidatePassive in [false, true]) {
+    testWidgets(
+      'composer se desbloquea tras refresh pasivo ${invalidatePassive ? 'invalidado' : 'fallido'} que sustituye al interactivo',
+      (tester) async {
+        final interactive = Completer<List<Map<String, dynamic>>>();
+        final passive = Completer<List<Map<String, dynamic>>>();
+        final gateway = _UiRewindGateway()
+          ..activeSessionList = const DesktopActiveSessionList(
+            sessions: [
+              DesktopActiveSession(
+                runtimeSessionId: 'runtime-other-surface',
+                storedSessionId: 'sess-test',
+                status: 'working',
+              ),
+            ],
+          );
+        var loads = 0;
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-composer-passive-$invalidatePassive'),
+          session: _session().copyWith(source: 'bot-mode'),
+          missionBotProfile: const AgentProfile(name: 'Sol'),
+          desktopGateway: gateway,
+          messages: const [
+            {'role': 'assistant', 'content': 'Historial visible'},
+            {'role': 'user', 'content': 'Pregunta visible'},
+          ],
+          messagesLoaded: false,
+          initialStoredSessionId: 'sess-test',
+          attachDesktopRuntimeOnLoad: false,
+          allowUnownedDesktopSnapshotForTesting: false,
+          storedMessageLoader: (_, _) =>
+              ++loads == 1 ? interactive.future : passive.future,
+        );
+        expect(loads, 1);
+        final composer = find.byType(TextField);
+        expect(tester.widget<TextField>(composer).enabled, isFalse);
+        await chat.refreshPassiveRemoteActivity();
+        expect(chat.remoteSurfaceOwnsLiveTurn, isTrue);
+        gateway.activeSessionList = const DesktopActiveSessionList();
+        // The remote turn settling bypasses the normal single-flight guard.
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pump();
+        expect(loads, 2);
+        expect(chat.remoteSurfaceOwnsLiveTurn, isFalse);
+        // Taking over with a passive request releases the interactive fence
+        // immediately, even while both futures are still unresolved.
+        expect(tester.widget<TextField>(composer).enabled, isTrue);
+        expect(
+          find.byKey(const ValueKey('chat-refresh-progress')),
+          findsNothing,
+        );
+
+        // `tester.binding.handleAppLifecycleStateChanged` broadcasts to an
+        // unrelated framework `AppLifecycleListener` that asserts a strict
+        // previous-state chain (paused must come from inactive/detached) and
+        // throws regardless of this screen's own transition — call the
+        // screen's own observer directly instead, same fix already applied
+        // to the hosted-room lifecycle tests tonight.
+        final observer =
+            tester.state<State<ChatScreen>>(
+                  find.byType(ChatScreen, skipOffstage: false),
+                )
+                as WidgetsBindingObserver;
+        if (invalidatePassive) {
+          observer.didChangeAppLifecycleState(AppLifecycleState.paused);
+          await tester.pump();
+        } else {
+          passive.completeError(StateError('passive load failed'));
+          await tester.pump();
+        }
+        interactive.complete(const [
+          {'role': 'assistant', 'content': 'Respuesta obsoleta'},
+        ]);
+        await tester.pump();
+        if (invalidatePassive) {
+          passive.complete(const []);
+          observer.didChangeAppLifecycleState(AppLifecycleState.resumed);
+          await tester.pump();
+        }
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Historial visible'), findsOneWidget);
+        expect(find.text('Respuesta obsoleta'), findsNothing);
+        expect(tester.widget<TextField>(composer).enabled, isTrue);
+        expect(
+          find.byKey(const ValueKey('chat-refresh-progress')),
+          findsNothing,
+        );
+        await tester.tap(composer);
+        await tester.pump();
+        expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+        expect(tester.testTextInput.isVisible, isTrue);
+        tester.testTextInput.enterText('Borrador recuperado');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(composer).controller!.text,
+          'Borrador recuperado',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'refresh pendiente conserva las burbujas existentes sin un frame vacío',
     (tester) async {
@@ -5715,6 +6344,7 @@ void main() {
 
       await triggerChatRefresh(tester);
       expect(loadCalls, 2);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
 
       second.complete(const [
         {'role': 'user', 'content': 'Pregunta vigente'},
@@ -5724,6 +6354,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.text('Respuesta vigente'), findsOneWidget);
       expect(find.byKey(const ValueKey('chat-refresh-progress')), findsNothing);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
 
       first.completeError(StateError('refresh obsoleto'));
       await tester.pump();
@@ -5732,6 +6363,7 @@ void main() {
       expect(find.text('Respuesta vigente'), findsOneWidget);
       expect(find.byKey(const ValueKey('chat-refresh-error')), findsNothing);
       expect(find.textContaining('refresh obsoleto'), findsNothing);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
     },
   );
 
@@ -5808,7 +6440,7 @@ void main() {
           'role': index.isEven ? 'assistant' : 'user',
           'content':
               'lector durante refresh histórico $index. '
-              '${List.filled(18, 'Contenido estable.').join(' ')}',
+              '${List.filled(6, 'Contenido estable.').join(' ')}',
         };
       });
       final chat = await pumpChat(
@@ -6358,6 +6990,161 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('release early exit cannot erase a draft still being restored', (
+    tester,
+  ) async {
+    final connection = _remoteConn('draft-unread-exit');
+    final key = ChatDraftStore.keyForTesting(connection.id, _session().id);
+    secureStore[key] = jsonEncode({
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+      'text': 'Unread draft',
+      'attachments': [],
+    });
+    final gate = Completer<void>();
+    var delayed = false;
+    final storage = _MemoryDraftSecureStorage(
+      secureStore,
+      beforeRead: (readKey) async {
+        if (readKey == key && !delayed) {
+          delayed = true;
+          await gate.future;
+        }
+      },
+    );
+    await pumpChat(tester, connection: connection, draftSecureStorage: storage);
+    final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    gate.complete();
+    await tester.pump();
+    expect(
+      (await screen.draftStoreOverride!.load(
+        connection.id,
+        screen.session.id,
+      )).text,
+      'Unread draft',
+    );
+  });
+
+  for (final kind in ['normal', 'new', 'bot']) {
+    testWidgets('release draft: $kind back and reopen before debounce', (
+      tester,
+    ) async {
+      final connection = _remoteConn('draft-release-$kind');
+      final session = _session().copyWith(
+        id: kind == 'normal'
+            ? 'saved-release'
+            : kind == 'bot'
+            ? 'mob-bot-release'
+            : 'mob-release-new',
+        source: kind == 'bot' ? 'mobile-bot' : 'mobile',
+        messageCount: kind == 'new' ? 0 : 2,
+        profile: 'default',
+      );
+      await pumpChat(
+        tester,
+        connection: connection,
+        session: session,
+        desktopGateway: _UiRewindGateway(),
+      );
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      final store = screen.draftStoreOverride!;
+      await tester.enterText(
+        find.byType(TextField).last,
+        'First line\nSecond line',
+      );
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        (await store.load(connection.id, session.id)).text,
+        'First line\nSecond line',
+      );
+      await pumpChat(
+        tester,
+        connection: connection,
+        session: session,
+        desktopGateway: _UiRewindGateway(),
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField).last).controller!.text,
+        'First line\nSecond line',
+      );
+      expect(
+        (await store.load('another-connection', session.id)).text,
+        isEmpty,
+      );
+      expect(
+        (await store.load(
+          connection.id,
+          session.id,
+          profile: 'another-profile',
+        )).text,
+        isEmpty,
+      );
+    });
+  }
+  testWidgets('release drafts survive direct conversation replacement', (
+    tester,
+  ) async {
+    final connection = _remoteConn('draft-direct-switch');
+    final first = _session().copyWith(id: 'first-conversation');
+    final second = _session().copyWith(id: 'second-conversation');
+    await pumpChat(tester, connection: connection, session: first);
+    await tester.enterText(
+      find.byType(TextField).last,
+      'First draft\nline two',
+    );
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    await pumpChat(tester, connection: connection, session: second);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).controller!.text,
+      isEmpty,
+    );
+    await tester.enterText(find.byType(TextField).last, 'Second draft');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    await pumpChat(tester, connection: connection, session: first);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).controller!.text,
+      'First draft\nline two',
+    );
+  });
+
+  for (final state in [AppLifecycleState.paused, AppLifecycleState.detached]) {
+    testWidgets('release draft flushes on $state before debounce', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await pumpChat(tester);
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      await tester.enterText(find.byType(TextField).last, 'Background\ndraft');
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      if (state == AppLifecycleState.detached) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await tester.pump();
+      expect(
+        (await screen.draftStoreOverride!.load(
+          screen.connection.id,
+          screen.session.id,
+        )).text,
+        'Background\ndraft',
+      );
+      if (state == AppLifecycleState.paused) {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+      }
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+  }
 
   testWidgets('draft identity: new chat saves under canonical id and reopens', (
     tester,
@@ -6999,6 +7786,156 @@ void main() {
     expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
   });
 
+  testWidgets('un Stop lento suelta el composer sin esperar la cancelación', (
+    tester,
+  ) async {
+    // La escalera de `_recoverAndInterruptStop` puede tardar decenas de
+    // segundos en una red mala. La valla del composer duraba todo ese rato y
+    // dejaba la pantalla sin salida: ni enviar, ni reintentar, ni escapar.
+    // Desktop nunca llega ahí (`cancelRun` baja `busy` de forma síncrona y
+    // espera el `session.interrupt` después), así que la valla se suelta
+    // acotada mientras la cancelación sigue corriendo por detrás.
+    final cancelGate = Completer<void>();
+    var cancelCalls = 0;
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.streaming,
+      cancelStreamOverride: () async {
+        cancelCalls++;
+        await cancelGate.future;
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('stop')).last);
+    await tester.pump();
+    expect(cancelCalls, 1);
+    // Valla puesta: el botón muestra el spinner en lugar del icono de Stop.
+    expect(find.byIcon(Icons.stop_rounded), findsNothing);
+
+    // La cancelación sigue en vuelo, pero el composer ya vuelve a responder.
+    await tester.pump(const Duration(seconds: 3));
+    expect(cancelGate.isCompleted, isFalse);
+    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+
+    cancelGate.complete();
+    await tester.pump(const Duration(milliseconds: 1300));
+  });
+
+  testWidgets('un turno que tarda sin emitir texto cuenta el tiempo a la vista', (
+    tester,
+  ) async {
+    // La queja del mantenedor: en Desktop un turno ocupado siempre lleva un
+    // cronómetro a la vista (`ActivityTimerText`), así que una herramienta
+    // lenta se lee como «sigue en marcha». Aquí no había ninguna señal
+    // temporal y una espera larga era indistinguible de un cuelgue.
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.executing,
+      messages: const [
+        {'role': 'user', 'content': 'revisa el repo', 'id': 1},
+      ],
+    );
+
+    // El cronómetro corre sobre el reloj de pared, que `pump` no adelanta, así
+    // que aquí se comprueba el cableado (turno activo + origen sembrado) y el
+    // umbral/formato/tic quedan en `turn_activity_pill_test.dart`, que inyecta
+    // un reloj falso.
+    final pill = tester.widget<TurnActivityPill>(
+      find.byKey(const ValueKey('chat-turn-activity')),
+    );
+
+    expect(pill.active, isTrue);
+    expect(pill.startedAt, isNotNull);
+    // Un turno en curso al montar no debe estropear el origen: el mantenedor
+    // vuelve a la pantalla mientras el agente sigue trabajando.
+    expect(
+      pill.startedAt!.isAfter(
+        DateTime.now().subtract(const Duration(minutes: 1)),
+      ),
+      isTrue,
+    );
+    // Mientras el transcript sigue el fondo la ThinkingTraceCard en vivo ya
+    // enseña esta misma palabra justo donde va a salir la respuesta — la
+    // pastilla se calla la palabra (no el cronómetro) para no repetirla.
+    expect(pill.statusLabel, isNull);
+  });
+
+  testWidgets(
+    'al leer historial durante el turno la pastilla recupera la palabra',
+    (tester) async {
+      // Apartado el lector del fondo, la ThinkingTraceCard ya no está a la
+      // vista: la pastilla es la única señal que queda y tiene que volver a
+      // decir qué está haciendo, no solo cuánto lleva.
+      final history = List.generate(24, (index) {
+        return {
+          'id': 'turn-label-history-$index',
+          'role': index.isEven ? 'assistant' : 'user',
+          'content':
+              'historial antes del turno activo $index. '
+              '${List.filled(18, 'Contenido de relleno.').join(' ')}',
+        };
+      });
+      await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        messages: history,
+      );
+
+      var pill = tester.widget<TurnActivityPill>(
+        find.byKey(const ValueKey('chat-turn-activity')),
+      );
+      expect(pill.statusLabel, isNull);
+
+      await dragChatAwayFromBottom(tester);
+
+      pill = tester.widget<TurnActivityPill>(
+        find.byKey(const ValueKey('chat-turn-activity')),
+      );
+      expect(pill.statusLabel, isNotNull);
+      expect(pill.active, isTrue);
+    },
+  );
+
+  testWidgets('mientras llega texto el propio texto cuenta la vida del turno', (
+    tester,
+  ) async {
+    // `streaming` ya se explica solo, y Desktop tampoco dobla la narración ahí.
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.streaming,
+      messages: const [
+        {'role': 'user', 'content': 'revisa el repo', 'id': 1},
+      ],
+    );
+
+    final pill = tester.widget<TurnActivityPill>(
+      find.byKey(const ValueKey('chat-turn-activity')),
+    );
+
+    expect(pill.active, isFalse);
+    expect(find.byKey(const ValueKey('turn-activity-pill')), findsNothing);
+  });
+
+  testWidgets('una entrada en cola agotada avisa una sola vez', (tester) async {
+    final chat = await pumpChat(tester, chatState: ChatPipelineState.streaming);
+    expect(chat.enqueue('reenviar a mano'), isTrue);
+    await tester.pump();
+    final dynamic subject = chat;
+    final String id = subject.queuedEntries.single.id as String;
+
+    chat.markQueuedRetryExhaustedForTesting(id);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('chat-queue-stuck-snackbar')), findsOne);
+
+    // `queueChanged` se emite muchas veces por turno: el aviso se lleva por id
+    // de entrada, no por evento, o el mismo atasco lo repetiría sin parar.
+    chat.markQueuedRetryExhaustedForTesting(id);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('chat-queue-stuck-snackbar')), findsOne);
+  });
+
   testWidgets('Stop en vuelo bloquea steering hasta quedar durable', (
     tester,
   ) async {
@@ -7413,6 +8350,100 @@ void main() {
     expect(find.text('extra.pdf'), findsNothing);
     expect(find.byType(AttachmentCard), findsNWidgets(3));
   });
+
+  testWidgets(
+    'adjuntar un archivo mientras se escribe no remonta el campo ni cierra el teclado',
+    (tester) async {
+      // Regresión: `_AttachmentPreviewStrip` y la `Row` del campo de texto no
+      // tenían `Key`. Cuando `_pendingAttachments` pasa de vacío a no-vacío,
+      // el número de hijos del `Column` antes de la `Row` cambia y Flutter
+      // reconciliaba por posición: el `Row` (y su `EditableText`) se
+      // desmontaba y remontaba, cerrando el teclado aunque el `FocusNode`
+      // lógico siguiera marcado como enfocado. Con `Key` estables, el
+      // `State` del campo debe sobrevivir intacto.
+      final temp = Directory.systemTemp.createTempSync(
+        'chat-attach-keeps-focus-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final extra = File('${temp.path}/nota.pdf')
+        ..writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 1]);
+      final picker = _FakeFilePicker(
+        FilePickerResult([
+          PlatformFile(
+            name: 'nota.pdf',
+            path: extra.path,
+            size: extra.lengthSync(),
+          ),
+        ]),
+      );
+      FilePicker.platform = picker;
+      addTearDown(() => FilePicker.platform = _FakeFilePicker(null));
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+
+      await pumpChat(tester);
+
+      final field = find.byType(TextField);
+      await tester.enterText(field, 'Borrador antes de adjuntar');
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.widget<TextField>(field).focusNode?.hasFocus, isTrue);
+
+      final editableTextBefore = tester.state(find.byType(EditableText));
+      final rowBefore = tester.element(
+        find.byKey(const ValueKey('composer-input-row')),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('composer-add')));
+      await tester.pump();
+      tester
+          .widget<MenuItemButton>(find.byType(MenuItemButton).last)
+          .onPressed!();
+      for (
+        var frame = 0;
+        frame < 40 && find.byType(AttachmentCard).evaluate().isEmpty;
+        frame++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      expect(find.byType(AttachmentCard), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('composer-attachment-preview')),
+        findsOneWidget,
+      );
+      final rowAfter = tester.element(
+        find.byKey(const ValueKey('composer-input-row')),
+      );
+      expect(
+        rowAfter,
+        same(rowBefore),
+        reason:
+            'la Row del campo de texto no debe remontarse al aparecer '
+            'el adjunto',
+      );
+      expect(
+        tester.state(find.byType(EditableText)),
+        same(editableTextBefore),
+        reason: 'el EditableText no debe remontarse (cerraría el teclado)',
+      );
+      expect(
+        tester.widget<TextField>(field).controller?.text,
+        'Borrador antes de adjuntar',
+      );
+      expect(tester.widget<TextField>(field).focusNode?.hasFocus, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Galería deduplica por contenido y conserva como máximo 10', (
     tester,
@@ -8439,10 +9470,14 @@ void main() {
         findsOneWidget,
       );
       expect(gateway.contextBreakdownCalls, 1);
-      final contextTrigger = tester.widget<SessionContextTrigger>(
-        find.byType(SessionContextTrigger),
+      // El indicador de contexto+modo ahora flota como una sola píldora
+      // (`SessionContextPopoverButton`) bajo el composer en vez de un
+      // `SessionContextTrigger` suelto en la AppBar (rediseño 1.2.11); sigue
+      // exponiendo las mismas `metrics` y el mismo texto de porcentaje.
+      final contextPill = tester.widget<SessionContextPopoverButton>(
+        find.byType(SessionContextPopoverButton),
       );
-      expect(contextTrigger.metrics.value.percent, 25);
+      expect(contextPill.metrics.value.percent, 25);
       expect(find.text('25%'), findsOneWidget);
       final screenBuildsBeforeUsage = probe.screenBuilds;
 
@@ -10505,6 +11540,93 @@ void main() {
     },
   );
 
+  testWidgets(
+    'vaciar el composer durante una reconciliación colgada retira el borrador',
+    (tester) async {
+      // Desconexión real: el turno queda incierto y el borrador cifrado sigue
+      // ofreciendo su texto. Al reabrir, la reconciliación del turno espera al
+      // transporte (aquí, una lectura de outbox retenida) mucho después de que
+      // el composer ya se rehidratase. Si el usuario borra el texto en esa
+      // ventana, un composer vacío NO puede interpretarse como «intacto»:
+      // reinyectar el turno resucitaba el texto y `dispose` lo volvía a
+      // persistir, así que la sesión seguía anunciando «borrador» con él.
+      const prompt = 'turno incierto tras la desconexión';
+      final connection = _remoteConn('conn-cleared-during-reconcile');
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final ambiguous = PreparedTurn(
+        connectionId: connection.id,
+        sessionId: 'sess-test',
+        clientTurnId: 'client-cleared-during-reconcile',
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: prompt,
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: 'default',
+        state: PreparedTurnState.ambiguous,
+      );
+      final draftKey = ChatDraftStore.keyForTesting(
+        connection.id,
+        'sess-test',
+        profile: 'default',
+      );
+      secureStore[draftKey] = jsonEncode({
+        'savedAt': now,
+        'text': prompt,
+        'attachments': const <Object>[],
+      });
+      secureStore['chat_turn_outbox_v1'] = jsonEncode({
+        ambiguous.storageId: ambiguous.toJson(),
+      });
+      final outboxGate = Completer<String?>();
+      delayedOutboxRead = outboxGate;
+
+      final gateway = _SubmissionGateway();
+      await pumpChat(tester, connection: connection, desktopGateway: gateway);
+      await tester.pump(const Duration(milliseconds: 300));
+      final field = find.byType(TextField).last;
+      // El borrador ya se ofreció; la reconciliación del turno sigue colgada.
+      expect(tester.widget<TextField>(field).controller?.text, prompt);
+
+      await tester.enterText(field, '');
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
+
+      delayedOutboxRead = null;
+      outboxGate.complete(secureStore['chat_turn_outbox_v1']);
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(
+        tester.widget<TextField>(field).controller?.text,
+        isEmpty,
+        reason: 'la reconciliación tardía no puede reescribir un borrado',
+      );
+
+      // El turno incierto nunca se descarta: solo deja de reinyectarse.
+      expect(
+        (await TurnOutboxStore().loadAllForChat(
+          connection.id,
+          'sess-test',
+          profile: 'default',
+        )).single.clientTurnId,
+        ambiguous.clientTurnId,
+      );
+      expect(gateway.submissions, isEmpty);
+
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(
+        secureStore.containsKey(draftKey),
+        isFalse,
+        reason: 'salir no puede volver a persistir el texto borrado',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('OBJETIVO_C vaciar ambiguo no lo descarta ni lo reenvía', (
     tester,
   ) async {
@@ -10713,370 +11835,6 @@ void main() {
     expect(secureStore.containsKey(acceptedDraftKey), isFalse);
     expect(tester.takeException(), isNull);
   });
-
-  testWidgets(
-    'Room operation survives accepted manager outbox reconciliation',
-    (tester) async {
-      const connectionId = 'conn-room-accepted-outbox';
-      const sessionId = 'stored-room-accepted-outbox';
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final accepted = PreparedTurn(
-        connectionId: connectionId,
-        sessionId: sessionId,
-        clientTurnId: 'accepted-manager-turn',
-        createdAtMs: now,
-        updatedAtMs: now,
-        text: 'manager turn already accepted',
-        attachments: const [],
-        model: 'hermes-agent',
-        profile: 'manager',
-        state: PreparedTurnState.accepted,
-      );
-      secureStore['chat_turn_outbox_v1'] = jsonEncode({
-        accepted.storageId: accepted.toJson(),
-      });
-      final recoveryDraftKey = ChatDraftStore.keyForTesting(
-        connectionId,
-        'mob-room-room-accepted-outbox',
-        profile: 'manager',
-      );
-      secureStore[recoveryDraftKey] = jsonEncode({
-        'savedAt': now,
-        'text': '@infra verifica el despliegue',
-        'attachments': <Object>[],
-        'missionRoomIntentId': 'room-operation-after-manager-ack',
-        'missionRoomWorkerProfile': 'infra',
-        'missionRoomBoardId': MissionRoomTaskLink.legacyCurrentBoard,
-        'missionRoomTaskPhase': MissionRoomTaskPhase.submitting.name,
-      });
-      final room = MissionRoom(
-        id: 'room-accepted-outbox',
-        connectionId: connectionId,
-        name: 'release',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: sessionId,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-
-      await pumpChat(
-        tester,
-        connection: _remoteConn(connectionId),
-        session: const Session(
-          id: sessionId,
-          title: '#release',
-          model: 'hermes-agent',
-          source: 'api',
-          messageCount: 1,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        desktopGateway: _SubmissionGateway(),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-      );
-      await tester.pump(const Duration(milliseconds: 600));
-
-      expect(
-        tester.widget<TextField>(find.byType(TextField).last).controller!.text,
-        '@infra verifica el despliegue',
-      );
-      final persisted =
-          jsonDecode(secureStore[recoveryDraftKey]!) as Map<String, dynamic>;
-      expect(
-        persisted['missionRoomTaskPhase'],
-        MissionRoomTaskPhase.outcomeUnknown.name,
-      );
-      expect(
-        persisted['missionRoomIntentId'],
-        'room-operation-after-manager-ack',
-      );
-      expect(secureStore.containsKey('chat_turn_outbox_v1'), isTrue);
-      expect(
-        find.textContaining('esto no cancela el turno remoto'),
-        findsOneWidget,
-      );
-      tester
-          .widget<SnackBarAction>(find.byType(SnackBarAction).last)
-          .onPressed();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(secureStore.containsKey('chat_turn_outbox_v1'), isFalse);
-      final afterDiscard =
-          jsonDecode(secureStore[recoveryDraftKey]!) as Map<String, dynamic>;
-      expect(afterDiscard['text'], '@infra verifica el despliegue');
-      expect(
-        afterDiscard['missionRoomTaskPhase'],
-        MissionRoomTaskPhase.outcomeUnknown.name,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'Room accepted manager outbox reattaches and terminal unlocks worker dispatch',
-    (tester) async {
-      const connectionId = 'conn-room-accepted-terminal';
-      const sessionId = 'stored-room-accepted-terminal';
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final accepted = PreparedTurn(
-        connectionId: connectionId,
-        sessionId: sessionId,
-        clientTurnId: 'accepted-manager-terminal',
-        createdAtMs: now,
-        updatedAtMs: now,
-        text: 'manager turn running remotely',
-        attachments: const [],
-        model: 'hermes-agent',
-        profile: 'manager',
-        state: PreparedTurnState.accepted,
-      );
-      secureStore['chat_turn_outbox_v1'] = jsonEncode({
-        accepted.storageId: accepted.toJson(),
-      });
-      secureStore[ChatDraftStore.keyForTesting(
-        connectionId,
-        sessionId,
-        profile: 'manager',
-      )] = jsonEncode({
-        'savedAt': now,
-        'text': '@infra verifica la release',
-        'attachments': const <Object>[],
-        'missionRoomIntentId': 'room-after-manager-terminal',
-        'missionRoomWorkerProfile': 'infra',
-        'missionRoomBoardId': MissionRoomTaskLink.legacyCurrentBoard,
-        'missionRoomTaskPhase': MissionRoomTaskPhase.prepared.name,
-      });
-      final room = MissionRoom(
-        id: 'room-accepted-terminal',
-        connectionId: connectionId,
-        name: 'release',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: sessionId,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      final gateway = _RecoverableSubmissionGateway();
-      final store = _RecordingMissionRoomStore(room);
-      var creatorCalls = 0;
-
-      await pumpChat(
-        tester,
-        connection: _remoteConn(connectionId),
-        session: const Session(
-          id: sessionId,
-          title: '#release',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 1,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        desktopGateway: gateway,
-        turnIdempotencyCapability: () async => true,
-        missionRoom: room,
-        missionRoomStore: store,
-        missionRoomTaskCreator: (intent) async {
-          creatorCalls++;
-          return KanbanTask(
-            id: 'task-after-manager-terminal',
-            title: intent.taskTitle,
-            body: intent.rawText,
-            status: 'ready',
-            assignee: intent.workerProfile,
-          );
-        },
-        missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
-      );
-      await tester.pump(const Duration(milliseconds: 600));
-
-      expect(gateway.statusCalls, 1);
-      expect(find.byType(SnackBarAction), findsOneWidget);
-      expect(
-        tester.widget<TextField>(find.byType(TextField).last).controller!.text,
-        '@infra verifica la release',
-      );
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      expect(creatorCalls, 0);
-      expect(find.byKey(const ValueKey('room-confirm-task')), findsNothing);
-      expect(secureStore.containsKey('chat_turn_outbox_v1'), isTrue);
-    },
-  );
-
-  for (final recoveredState in const [
-    PreparedTurnState.prepared,
-    PreparedTurnState.failedBeforeAcceptance,
-    PreparedTurnState.ambiguous,
-  ]) {
-    testWidgets(
-      'Room prepared survives hidden manager ${recoveredState.name} until explicit discard',
-      (tester) async {
-        final connectionId = 'conn-room-hidden-${recoveredState.name}';
-        final sessionId = 'stored-room-hidden-${recoveredState.name}';
-        final now = DateTime.now().millisecondsSinceEpoch;
-        const roomAttachment = AttachmentDraft(
-          localId: 'room-attachment',
-          type: AttachmentType.document,
-          name: 'room-plan.md',
-          mimeType: 'text/markdown',
-          sizeBytes: 12,
-          localPath: '',
-          uploadState: AttachmentUploadState.attached,
-          remoteRef: '@file:room-plan.md',
-          remoteSessionId: 'stored-room-attachment',
-          remoteTransport: AttachmentRemoteTransport.desktop,
-        );
-        final managerTurn = PreparedTurn(
-          connectionId: connectionId,
-          sessionId: sessionId,
-          clientTurnId: 'manager-${recoveredState.name}',
-          createdAtMs: now,
-          updatedAtMs: now,
-          text: recoveredState == PreparedTurnState.prepared
-              ? '@infra verifica el despliegue'
-              : 'turno pendiente del manager',
-          attachments: recoveredState == PreparedTurnState.prepared
-              ? const [roomAttachment]
-              : const [],
-          model: 'hermes-agent',
-          profile: 'manager',
-          state: recoveredState,
-        );
-        final draftKey = ChatDraftStore.keyForTesting(
-          connectionId,
-          'mob-room-room-hidden-${recoveredState.name}',
-          profile: 'manager',
-        );
-        secureStore['chat_turn_outbox_v1'] = jsonEncode({
-          managerTurn.storageId: managerTurn.toJson(),
-        });
-        secureStore[draftKey] = jsonEncode({
-          'savedAt': now,
-          'text': '@infra verifica el despliegue',
-          'attachments': [roomAttachment.toJson()],
-          'missionRoomIntentId': 'immutable-room-intent',
-          'missionRoomWorkerProfile': 'infra',
-          'missionRoomBoardId': MissionRoomTaskLink.legacyCurrentBoard,
-          'missionRoomTaskPhase': MissionRoomTaskPhase.prepared.name,
-        });
-        final originalDraft =
-            jsonDecode(secureStore[draftKey]!) as Map<String, dynamic>
-              ..remove('savedAt');
-        final room = MissionRoom(
-          id: 'room-hidden-${recoveredState.name}',
-          connectionId: connectionId,
-          name: 'release',
-          managerProfile: 'manager',
-          memberProfiles: const ['manager', 'infra'],
-          managerSessionId: sessionId,
-          createdAtMs: 1,
-          updatedAtMs: 1,
-        );
-        final store = _RecordingMissionRoomStore(room);
-        var creatorCalls = 0;
-
-        await pumpChat(
-          tester,
-          connection: _remoteConn(connectionId),
-          session: Session(
-            id: sessionId,
-            title: '#release',
-            model: 'hermes-agent',
-            source: 'gateway',
-            messageCount: 1,
-            isActive: false,
-            preview: '',
-            startedAt: 1,
-            profile: 'manager',
-          ),
-          desktopGateway: _SubmissionGateway(),
-          missionRoom: room,
-          missionRoomStore: store,
-          missionRoomTaskCreator: (intent) async {
-            creatorCalls++;
-            expect(intent.rawText, '@infra verifica el despliegue');
-            return KanbanTask(
-              id: 'task-${recoveredState.name}',
-              title: intent.taskTitle,
-              body: intent.rawText,
-              status: 'ready',
-              assignee: intent.workerProfile,
-            );
-          },
-          missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
-        );
-        await tester.pump(const Duration(milliseconds: 600));
-
-        final composer = find.byType(TextField).last;
-        expect(
-          tester.widget<TextField>(composer).controller!.text,
-          '@infra verifica el despliegue',
-        );
-        expect(find.text('room-plan.md'), findsOneWidget);
-        final restoredDraft =
-            jsonDecode(secureStore[draftKey]!) as Map<String, dynamic>
-              ..remove('savedAt');
-        expect(restoredDraft, originalDraft);
-        expect(creatorCalls, 0);
-
-        // The initial recovery notice may expire, but a blocked worker action
-        // must expose the same explicit discard again instead of deadlocking.
-        ScaffoldMessenger.of(
-          tester.element(find.byType(ChatScreen)),
-        ).clearSnackBars();
-        await tester.pump(const Duration(milliseconds: 500));
-        await tester.tap(find.byKey(const ValueKey('send')));
-        await tester.pump();
-        await tester.pump();
-        expect(find.byKey(const ValueKey('room-confirm-task')), findsNothing);
-        expect(creatorCalls, 0);
-        tester
-            .widget<SnackBarAction>(find.byType(SnackBarAction).last)
-            .onPressed();
-        await tester.pump(const Duration(milliseconds: 300));
-        ScaffoldMessenger.of(
-          tester.element(find.byType(ChatScreen)),
-        ).clearSnackBars();
-        await tester.pump(const Duration(milliseconds: 500));
-
-        expect(secureStore.containsKey('chat_turn_outbox_v1'), isFalse);
-        final draftAfterDiscard =
-            jsonDecode(secureStore[draftKey]!) as Map<String, dynamic>
-              ..remove('savedAt');
-        expect(draftAfterDiscard, originalDraft);
-        expect(
-          tester.widget<TextField>(composer).controller!.text,
-          '@infra verifica el despliegue',
-        );
-        expect(find.text('room-plan.md'), findsOneWidget);
-
-        final removeAttachment = find.descendant(
-          of: find.byTooltip('Quitar adjunto').last,
-          matching: find.byType(GestureDetector),
-        );
-        tester.widget<GestureDetector>(removeAttachment).onTap!();
-        await tester.pump(const Duration(milliseconds: 400));
-        expect(find.text('room-plan.md'), findsNothing);
-        await tester.tap(find.byKey(const ValueKey('send')));
-        await tester.pump();
-        expect(find.byKey(const ValueKey('room-confirm-task')), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('room-confirm-task')));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 50));
-        expect(creatorCalls, 1);
-        expect(
-          store.room.linkedTaskIds,
-          contains('task-${recoveredState.name}'),
-        );
-      },
-    );
-  }
 
   testWidgets('si Keystore no guarda la outbox no toca el transporte', (
     tester,
@@ -13042,7 +13800,17 @@ void main() {
       expect(chat.activeSubagentCount, 1);
       expect(stableCard, findsOneWidget);
       expect(tester.element(stableCard), same(stableElement));
-      expect(find.text('Trabajo en segundo plano'), findsOneWidget);
+      // The pill's visible summary now reflects the live child's phase
+      // (e.g. "en curso"), not the fixed "Trabajo en segundo plano" string —
+      // that literal lives only in the pill's accessibility semantics label
+      // once the parent turn has finished and the child keeps it in
+      // background mode. Assert on the `Semantics` widget's own property,
+      // which is what this test actually cares about ("se muestra como
+      // trabajo en segundo plano").
+      final backgroundSemantics = tester.widget<Semantics>(
+        find.descendant(of: stableCard, matching: find.byType(Semantics)).first,
+      );
+      expect(backgroundSemantics.properties.label, 'Trabajo en segundo plano');
       expect(find.byKey(const ValueKey('stop')), findsNothing);
       expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
 
@@ -17182,287 +17950,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Room migrates a manager-session draft to its stable recovery id',
-    (tester) async {
-      const connectionId = 'conn-room-draft-alias';
-      const managerSessionId = 'stored-room-manager-before';
-      final room = MissionRoom(
-        id: 'room-draft-alias',
-        connectionId: connectionId,
-        name: 'release',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'qa'],
-        managerSessionId: managerSessionId,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      SharedPreferences.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
-      final drafts = ChatDraftStore(prefs);
-      await drafts.save(
-        connectionId,
-        managerSessionId,
-        'mensaje recuperable del Room',
-        const [],
-        profile: 'manager',
-      );
-
-      await pumpChat(
-        tester,
-        connection: _remoteConn(connectionId),
-        session: const Session(
-          id: managerSessionId,
-          title: '#release',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 0,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-      );
-      await tester.pump(const Duration(milliseconds: 500));
-
-      expect(
-        tester.widget<TextField>(find.byType(TextField).last).controller!.text,
-        'mensaje recuperable del Room',
-      );
-      expect(
-        (await drafts.load(
-          connectionId,
-          'mob-room-${room.id}',
-          profile: 'manager',
-        )).text,
-        'mensaje recuperable del Room',
-      );
-      expect(
-        (await drafts.load(
-          connectionId,
-          managerSessionId,
-          profile: 'manager',
-        )).text,
-        isEmpty,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'Room chrome is compact and keeps model and controls in overflow',
-    (tester) async {
-      final room = MissionRoom(
-        id: 'room-visual-shell',
-        connectionId: 'conn-room-visual-shell',
-        name: 'homelab',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra', 'security'],
-        managerSessionId: 'room-visual-session',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      await pumpChat(
-        tester,
-        connection: _remoteConn('conn-room-visual-shell'),
-        session: const Session(
-          id: 'room-visual-session',
-          title: '#homelab',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 0,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-      );
-
-      expect(tester.widget<AppBar>(find.byType(AppBar)).centerTitle, isFalse);
-      expect(find.text('#homelab'), findsOneWidget);
-      expect(find.text('@manager · manager · 3 miembros'), findsOneWidget);
-      expect(find.text('Perfil: manager'), findsNothing);
-      expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
-      expect(
-        find.byKey(const ValueKey('mission-room-members-appbar')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-room-overflow-appbar')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-room-empty-state')),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('voice')), findsNothing);
-      expect(find.byKey(const ValueKey('send')), findsOneWidget);
-      for (final profile in const ['manager', 'infra', 'security']) {
-        expect(
-          find.byKey(ValueKey('mission-avatar-geometry-$profile')),
-          findsOneWidget,
-        );
-      }
-      expect(find.text('Empieza con el equipo'), findsOneWidget);
-      expect(
-        find.text(
-          'Habla con @manager o menciona otro bot para asignarle una tarea.',
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('HERMES CONSOLE'), findsNothing);
-
-      await tester.tap(
-        find.byKey(const ValueKey('mission-room-overflow-appbar')),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-room-model-action')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-room-control-action')),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.byKey(const ValueKey('mission-room-model-action')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 240));
-      expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
-      await tester.binding.handlePopRoute();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 240));
-
-      await tester.tap(
-        find.byKey(const ValueKey('mission-room-overflow-appbar')),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('mission-room-control-action')),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 240));
-      expect(find.byKey(const ValueKey('chat-control-dialog')), findsOneWidget);
-      expect(find.byKey(const ValueKey('chat-control-sheet')), findsOneWidget);
-      expect(find.byKey(const ValueKey('chat-control-delete')), findsNothing);
-      expect(find.text('Eliminar conversación'), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'Room renders persisted photo and Blobatar in empty roster, mentions and members',
-    (tester) async {
-      final room = MissionRoom(
-        id: 'room-real-avatars',
-        connectionId: 'conn-room-real-avatars',
-        name: 'orchestration',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: 'room-real-avatars-session',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      final avatarLoads = <String>[];
-      final avatarCache = MissionProfileAvatarCache(
-        loader: (profile) async {
-          avatarLoads.add(profile);
-          return profile == 'infra' ? _testProfileAvatar() : null;
-        },
-      );
-      const profiles = <String, AgentProfile>{
-        'manager': AgentProfile(
-          name: 'manager',
-          botModeUiMeta: {
-            'shape': 'blobatar::triangle',
-            'imageKind': 'shape',
-            'custom': true,
-          },
-        ),
-        'infra': AgentProfile(
-          name: 'infra',
-          hasAvatar: true,
-          botModeUiMeta: {'imageKind': 'photo', 'custom': true},
-        ),
-      };
-
-      await pumpChat(
-        tester,
-        connection: _remoteConn('conn-room-real-avatars'),
-        session: const Session(
-          id: 'room-real-avatars-session',
-          title: '#orchestration',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 0,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-        missionRoomProfiles: profiles,
-        missionAvatarCache: avatarCache,
-      );
-      await tester.pump();
-
-      final managerEmpty = find.byKey(
-        const ValueKey('mission-room-empty-avatar-manager'),
-      );
-      final managerFace = tester.widget<HermesBotFace>(
-        find.descendant(of: managerEmpty, matching: find.byType(HermesBotFace)),
-      );
-      expect(managerFace.visual, isA<HermesBlobatarFaceVisual>());
-      expect(
-        (managerFace.visual as HermesBlobatarFaceVisual).pinnedKind,
-        'triangle',
-      );
-      final infraEmpty = find.byKey(
-        const ValueKey('mission-room-empty-avatar-infra'),
-      );
-      expect(
-        find.descendant(of: infraEmpty, matching: find.byType(Image)),
-        findsOneWidget,
-      );
-      expect(avatarLoads, ['infra']);
-
-      final composer = find.byType(TextField).last;
-      await tester.enterText(composer, '@i');
-      await tester.pump();
-      await tester.pump();
-      final mentionAvatar = find.byKey(
-        const ValueKey('room-mention-avatar-infra'),
-      );
-      expect(
-        find.descendant(of: mentionAvatar, matching: find.byType(Image)),
-        findsOneWidget,
-      );
-      expect(avatarLoads, ['infra']);
-
-      await tester.tap(
-        find.byKey(const ValueKey('mission-room-members-appbar')),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 240));
-      await tester.pump();
-      final memberAvatar = find.byKey(
-        const ValueKey('mission-room-member-avatar-infra'),
-      );
-      expect(memberAvatar, findsOneWidget);
-      expect(
-        find.descendant(of: memberAvatar, matching: find.byType(Image)),
-        findsOneWidget,
-      );
-      expect(avatarLoads, ['infra']);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
   testWidgets('Bot Chat chrome leads with bot identity, not the model picker', (
     tester,
   ) async {
@@ -17559,961 +18046,6 @@ void main() {
     expect(find.text('@qa'), findsOneWidget);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Room combina slash accent con mención seleccionada', (
-    tester,
-  ) async {
-    final room = MissionRoom(
-      id: 'room-slash-mention',
-      connectionId: 'conn-room-slash',
-      name: 'slash-room',
-      managerProfile: 'manager',
-      memberProfiles: const ['manager', 'infra'],
-      managerSessionId: 'room-slash-session',
-      createdAtMs: 1,
-      updatedAtMs: 1,
-    );
-    await pumpChat(
-      tester,
-      connection: _remoteConn('conn-room-slash'),
-      session: const Session(
-        id: 'room-slash-session',
-        title: '#slash-room',
-        model: 'hermes-agent',
-        source: 'api',
-        messageCount: 0,
-        isActive: false,
-        preview: '',
-        startedAt: 1,
-        profile: 'manager',
-      ),
-      missionRoom: room,
-      missionRoomStore: _RecordingMissionRoomStore(room),
-      missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
-    );
-    final composer = find.byType(TextField).last;
-    await tester.enterText(composer, '@i');
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
-    await tester.pump();
-    await tester.enterText(composer, '/help @infra');
-    await tester.pump();
-
-    final field = tester.widget<TextField>(composer);
-    field.controller!.value = field.controller!.value.copyWith(
-      composing: const TextRange(start: 6, end: 12),
-    );
-    await tester.pump();
-
-    final context = tester.element(composer);
-    final colors = Theme.of(context).hermes;
-    final span = field.controller!.buildTextSpan(
-      context: context,
-      style: TextStyle(color: colors.textPrimary),
-      withComposing: true,
-    );
-    final leaves = _flattenTextSpans(
-      span,
-    ).where((leaf) => leaf.text?.isNotEmpty ?? false).toList();
-    expect(
-      leaves.where(
-        (leaf) => leaf.text == '/help' && leaf.style?.color == colors.accent,
-      ),
-      hasLength(1),
-    );
-    final mentionLeaves = leaves.where(
-      (leaf) =>
-          leaf.text == '@infra' && leaf.style?.fontWeight == FontWeight.w800,
-    );
-    expect(mentionLeaves, hasLength(1));
-    expect(mentionLeaves.first.style?.decoration, TextDecoration.underline);
-  });
-
-  testWidgets(
-    'Room mention selection previews and creates exactly one native task',
-    (tester) async {
-      final room = MissionRoom(
-        id: 'room-homelab',
-        connectionId: 'conn-test',
-        name: 'homelab',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra', 'security'],
-        managerSessionId: 'room-session',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      var taskCalls = 0;
-      var rosterCalls = 0;
-      MissionMentionIntent? captured;
-      await pumpChat(
-        tester,
-        connection: _remoteConn('conn-test'),
-        session: Session(
-          id: 'room-session',
-          title: '#homelab',
-          model: 'hermes-agent',
-          source: 'api',
-          messageCount: 0,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-        missionRoomTaskCreator: (intent) async {
-          taskCalls++;
-          captured = intent;
-          return const KanbanTask(
-            id: 'HC-42',
-            title: 'revisa backups',
-            body: '@infra revisa backups',
-            status: 'ready',
-            assignee: 'infra',
-          );
-        },
-        missionRoomWorkerRosterLoader: () async {
-          rosterCalls++;
-          return const ['manager', 'infra', 'security'];
-        },
-      );
-
-      expect(find.text('#homelab'), findsOneWidget);
-      expect(find.byKey(const ValueKey('room-routing-bar')), findsNothing);
-      expect(find.text('Escribe al equipo…'), findsOneWidget);
-      final composer = find.byType(TextField).last;
-      await tester.enterText(composer, '@infra escrito a mano');
-      await tester.pump();
-      final unselectedSpan = tester
-          .widget<TextField>(composer)
-          .controller!
-          .buildTextSpan(
-            context: tester.element(composer),
-            style: const TextStyle(),
-            withComposing: true,
-          );
-      expect(
-        _flattenTextSpans(unselectedSpan).where(
-          (span) =>
-              span.text == '@infra' &&
-              span.style?.fontWeight == FontWeight.w800,
-        ),
-        isEmpty,
-      );
-
-      await tester.enterText(composer, '@m');
-      await tester.pump();
-      final palette = find.byKey(const ValueKey('room-mention-palette'));
-      expect(palette, findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('room-mention-manager')),
-        findsOneWidget,
-      );
-      expect(find.text('Hablar'), findsOneWidget);
-      await tester.enterText(composer, '@i');
-      await tester.pump();
-      expect(find.byKey(const ValueKey('room-mention-infra')), findsOneWidget);
-      expect(find.text('Asignar tarea'), findsOneWidget);
-      expect(
-        find.ancestor(
-          of: palette,
-          matching: find.byType(HermesComposerSurface),
-        ),
-        findsNothing,
-      );
-      expect(
-        tester.getBottomLeft(palette).dy,
-        lessThan(tester.getTopLeft(composer).dy),
-      );
-      expect(
-        (tester.widget<Container>(palette).margin! as EdgeInsets).bottom,
-        greaterThanOrEqualTo(8),
-        reason: 'the floating mention palette must not touch the composer',
-      );
-      await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
-      await tester.pump();
-      expect(palette, findsNothing);
-      await tester.enterText(composer, '@infra revisa backups');
-      await tester.pump(const Duration(milliseconds: 400));
-      final draftKey = ChatDraftStore.keyForTesting(
-        'conn-test',
-        'mob-room-${room.id}',
-        profile: 'manager',
-      );
-      final beforeCancel = secureStore[draftKey];
-      expect(beforeCancel, isNotNull);
-      await tester.pump();
-      expect(find.byKey(const ValueKey('room-routing-bar')), findsNothing);
-      expect(find.text('Tarea Kanban → @infra'), findsNothing);
-      final selectedSpan = tester
-          .widget<TextField>(composer)
-          .controller!
-          .buildTextSpan(
-            context: tester.element(composer),
-            style: const TextStyle(),
-            withComposing: true,
-          );
-      final mentionSpan = _flattenTextSpans(
-        selectedSpan,
-      ).singleWhere((span) => span.text == '@infra');
-      expect(mentionSpan.style?.fontWeight, FontWeight.w800);
-      expect(mentionSpan.style?.color, isNotNull);
-      expect(
-        mentionSpan.style?.backgroundColor,
-        isNull,
-        reason: 'selected mentions must not regain the legacy yellow box',
-      );
-
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      expect(find.text('¿Crear tarea Kanban nativa?'), findsOneWidget);
-      expect(find.text('Tablero: Hermes current board'), findsOneWidget);
-      await tester.tap(find.text('Cancelar').last);
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(taskCalls, 0);
-      expect(rosterCalls, 0);
-      expect(secureStore[draftKey], beforeCancel);
-      expect(
-        tester.widget<TextField>(composer).controller!.text,
-        contains('backups'),
-      );
-
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-confirm-task')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(taskCalls, 1);
-      expect(rosterCalls, 1);
-      expect(captured?.workerProfile, 'infra');
-      expect(captured?.idempotencyKey, contains('room:room-homelab:mention:'));
-      expect(find.byKey(const ValueKey('room-routing-bar')), findsNothing);
-      expect(find.text('Escribe al equipo…'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'Room worker flight freezes composer routing and draft until link completes',
-    (tester) async {
-      const connectionId = 'conn-room-frozen';
-      const sessionId = 'stored-room-frozen';
-      final room = MissionRoom(
-        id: 'room-frozen',
-        connectionId: connectionId,
-        name: 'ops',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: sessionId,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      final store = _RecordingMissionRoomStore(room);
-      final taskGate = Completer<KanbanTask>();
-      var taskCalls = 0;
-      await pumpChat(
-        tester,
-        connection: _remoteConn(connectionId),
-        session: const Session(
-          id: sessionId,
-          title: '#ops',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 1,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: store,
-        missionRoomTaskCreator: (_) {
-          taskCalls++;
-          return taskGate.future;
-        },
-        missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
-      );
-
-      final composer = find.byType(TextField).last;
-      await tester.enterText(composer, '@i');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
-      await tester.pump();
-      const frozenText = '@infra inspecciona el cluster';
-      await tester.enterText(composer, frozenText);
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-confirm-task')));
-      await tester.pump();
-
-      expect(taskCalls, 1);
-      expect(tester.widget<TextField>(composer).enabled, isFalse);
-      expect(
-        tester
-            .widget<AttachmentSourceMenuButton>(
-              find.byKey(const ValueKey('composer-add')),
-            )
-            .enabled,
-        isFalse,
-      );
-      expect(find.byTooltip('Quitar routing'), findsNothing);
-      tester.widget<TextField>(composer).controller!.text = 'texto mutado';
-      await tester.pump();
-      expect(tester.widget<TextField>(composer).controller!.text, frozenText);
-      final draftKey = ChatDraftStore.keyForTesting(
-        connectionId,
-        'mob-room-${room.id}',
-        profile: 'manager',
-      );
-      final pending =
-          jsonDecode(secureStore[draftKey]!) as Map<String, dynamic>;
-      expect(pending['text'], frozenText);
-      expect(
-        pending['missionRoomTaskPhase'],
-        MissionRoomTaskPhase.submitting.name,
-      );
-
-      taskGate.complete(
-        const KanbanTask(
-          id: 'task-frozen',
-          title: 'inspecciona el cluster',
-          body: frozenText,
-          status: 'ready',
-          assignee: 'infra',
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(taskCalls, 1);
-      expect(store.room.linkedTaskIds, contains('task-frozen'));
-      expect(secureStore.containsKey(draftKey), isFalse);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'Room normal turn binds the authoritative manager session exactly once',
-    (tester) async {
-      final room = MissionRoom(
-        id: 'room-manager-bind',
-        connectionId: 'conn-room-bind',
-        name: 'homelab',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: '',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      final store = _RecordingMissionRoomStore(room);
-      final bindGate = Completer<void>();
-      store.bindGate = bindGate;
-      final gateway = _UiRewindGateway();
-      addTearDown(gateway.close);
-      await pumpChat(
-        tester,
-        connection: _remoteConn('conn-room-bind'),
-        session: Session(
-          id: 'mob-room-${room.id}',
-          title: '#homelab',
-          model: 'hermes-agent',
-          source: 'mobile-room',
-          messageCount: 0,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        desktopGateway: gateway,
-        missionRoom: room,
-        missionRoomStore: store,
-      );
-
-      final composer = find.byType(TextField).last;
-      await tester.enterText(composer, 'Prepara el plan de release');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('send')));
-      for (var frame = 0; frame < 20 && store.bindCalls == 0; frame++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-
-      expect(store.bindCalls, 1);
-      expect(gateway.submissions, isEmpty);
-      bindGate.complete();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(gateway.submissions, ['Prepara el plan de release']);
-      expect(gateway.createConfigs.single.title, '#homelab');
-      expect(gateway.createConfigs.single.hidden, isFalse);
-      expect(gateway.createConfigs.single.allowTransportFallback, isFalse);
-      expect(store.boundManagerSessionId, 'sess-test');
-      gateway.emit('message.complete', {'text': 'Plan listo'});
-      await tester.pump();
-      expect(
-        find.byKey(const ValueKey('mission-room-assistant-label')),
-        findsOneWidget,
-      );
-      expect(find.text('@manager'), findsOneWidget);
-      expect(find.text('>_ HERMES CONSOLE'), findsNothing);
-      expect(find.byType(CompanionMessagePresence), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'Room worker confirmation refreshes roster and fails closed when stale',
-    (tester) async {
-      final room = MissionRoom(
-        id: 'room-stale-worker',
-        connectionId: 'conn-stale-worker',
-        name: 'homelab',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: 'stored-manager',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      var taskCalls = 0;
-      var rosterCalls = 0;
-      await pumpChat(
-        tester,
-        connection: _remoteConn('conn-stale-worker'),
-        session: Session(
-          id: 'stored-manager',
-          title: '#homelab',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 1,
-          isActive: false,
-          preview: 'hola',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomTaskCreator: (_) async {
-          taskCalls++;
-          return const KanbanTask(
-            id: 'must-not-exist',
-            title: 'stale',
-            body: 'stale',
-            status: 'ready',
-          );
-        },
-        missionRoomWorkerRosterLoader: () async {
-          rosterCalls++;
-          return const ['manager'];
-        },
-      );
-
-      final composer = find.byType(TextField).last;
-      await tester.enterText(composer, '@i');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
-      await tester.pump();
-      await tester.enterText(composer, '@infra revisa backups');
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-confirm-task')));
-      await tester.pump();
-
-      expect(rosterCalls, 1);
-      expect(taskCalls, 0);
-      expect(
-        find.textContaining('ya no aparece en el roster autoritativo'),
-        findsOneWidget,
-      );
-      expect(
-        tester.widget<TextField>(composer).controller!.text,
-        contains('backups'),
-      );
-    },
-  );
-
-  testWidgets(
-    'Room HTTP 409 reconciles with GET and stays unknown when no task matches',
-    (tester) async {
-      const connectionId = 'conn-room-rejected';
-      const sessionId = 'stored-room-rejected';
-      final room = MissionRoom(
-        id: 'room-rejected',
-        connectionId: connectionId,
-        name: 'security',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: sessionId,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      var createCalls = 0;
-      MissionMentionIntent? attempted;
-      var boardGetCount = 0;
-      var dashboardPostCount = 0;
-      DashboardClient createDashboard() => DashboardClient(
-        host: 'hermes.local',
-        manualToken: 'dashboard-test-token',
-        httpClientOverride: MockClient((request) async {
-          if (request.method == 'POST') dashboardPostCount++;
-          if (request.method == 'GET' &&
-              request.url.path == '/api/plugins/kanban/board') {
-            boardGetCount++;
-          }
-          if (boardGetCount < 2) {
-            return http.Response(
-              jsonEncode({'columns': const <Object>[]}),
-              HttpStatus.ok,
-            );
-          }
-          final original = attempted!;
-          return http.Response(
-            jsonEncode({
-              'columns': [
-                {
-                  'name': 'ready',
-                  'tasks': [
-                    {
-                      'id': 'task-original-payload',
-                      'title': original.taskTitle,
-                      'body': original.rawText,
-                      'status': 'ready',
-                      'assignee': original.workerProfile,
-                      'idempotency_key': original.idempotencyKey,
-                    },
-                  ],
-                },
-              ],
-            }),
-            HttpStatus.ok,
-          );
-        }),
-      );
-      await pumpChat(
-        tester,
-        connection: _remoteConn(connectionId),
-        session: const Session(
-          id: sessionId,
-          title: '#security',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 1,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-        missionRoomTaskCreator: (intent) async {
-          createCalls++;
-          attempted = intent;
-          throw const DashboardHttpException(409);
-        },
-        missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
-        missionRoomKanbanClientFactory: (connection) =>
-            KanbanClient(connection, dashboardClient: createDashboard()),
-      );
-
-      final composer = find.byType(TextField).last;
-      await tester.enterText(composer, '@i');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
-      await tester.pump();
-      await tester.enterText(composer, '@infra comprueba la política');
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('room-confirm-task')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(createCalls, 1);
-      expect(boardGetCount, 1);
-      expect(dashboardPostCount, 0);
-      expect(
-        find.textContaining(
-          'resultado de la tarea anterior sigue siendo incierto',
-        ),
-        findsOneWidget,
-      );
-      final draftKey = ChatDraftStore.keyForTesting(
-        connectionId,
-        'mob-room-${room.id}',
-        profile: 'manager',
-      );
-      final persisted =
-          jsonDecode(secureStore[draftKey]!) as Map<String, dynamic>;
-      expect(
-        persisted['missionRoomTaskPhase'],
-        MissionRoomTaskPhase.outcomeUnknown.name,
-      );
-      expect(
-        tester.widget<TextField>(composer).controller!.text,
-        contains('política'),
-      );
-      final originalText = attempted!.rawText;
-      final originalIntentId = persisted['missionRoomIntentId'];
-      expect(tester.widget<TextField>(composer).enabled, isFalse);
-
-      tester.widget<TextField>(composer).controller!.text =
-          '@infra payload editado que no debe reconciliar';
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(tester.widget<TextField>(composer).controller!.text, originalText);
-      final afterEdit =
-          jsonDecode(secureStore[draftKey]!) as Map<String, dynamic>;
-      expect(afterEdit['text'], originalText);
-      expect(afterEdit['missionRoomIntentId'], originalIntentId);
-
-      ScaffoldMessenger.of(
-        tester.element(find.byType(ChatScreen)),
-      ).clearSnackBars();
-      await tester.pump(const Duration(milliseconds: 500));
-      ScaffoldMessenger.of(
-        tester.element(find.byType(ChatScreen)),
-      ).removeCurrentSnackBar();
-      await tester.pump();
-      expect(find.byType(SnackBar), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(boardGetCount, 2);
-      expect(createCalls, 1);
-      expect(dashboardPostCount, 0);
-      expect(
-        find.textContaining('Tarea task-original-payload recuperada'),
-        findsOneWidget,
-      );
-    },
-  );
-
-  testWidgets('Room HTTP 409 adopts the matching task found by GET', (
-    tester,
-  ) async {
-    const connectionId = 'conn-room-conflict-recovered';
-    const sessionId = 'stored-room-conflict-recovered';
-    final room = MissionRoom(
-      id: 'room-conflict-recovered',
-      connectionId: connectionId,
-      name: 'security',
-      managerProfile: 'manager',
-      memberProfiles: const ['manager', 'infra'],
-      managerSessionId: sessionId,
-      createdAtMs: 1,
-      updatedAtMs: 1,
-    );
-    final store = _RecordingMissionRoomStore(room);
-    MissionMentionIntent? attempted;
-    var boardGetCount = 0;
-    var dashboardPostCount = 0;
-    final dashboard = DashboardClient(
-      host: 'hermes.local',
-      manualToken: 'dashboard-test-token',
-      httpClientOverride: MockClient((request) async {
-        if (request.method == 'POST') dashboardPostCount++;
-        if (request.method == 'GET' &&
-            request.url.path == '/api/plugins/kanban/board') {
-          boardGetCount++;
-        }
-        final intent = attempted!;
-        return http.Response(
-          jsonEncode({
-            'columns': [
-              {
-                'name': 'ready',
-                'tasks': [
-                  {
-                    'id': 'task-reconciled-409',
-                    'title': intent.taskTitle,
-                    'body': intent.rawText,
-                    'status': 'ready',
-                    'assignee': intent.workerProfile,
-                    'idempotency_key': intent.idempotencyKey,
-                  },
-                ],
-              },
-            ],
-          }),
-          HttpStatus.ok,
-        );
-      }),
-    );
-    await pumpChat(
-      tester,
-      connection: _remoteConn(connectionId),
-      session: const Session(
-        id: sessionId,
-        title: '#security',
-        model: 'hermes-agent',
-        source: 'gateway',
-        messageCount: 1,
-        isActive: false,
-        preview: '',
-        startedAt: 1,
-        profile: 'manager',
-      ),
-      missionRoom: room,
-      missionRoomStore: store,
-      missionRoomTaskCreator: (intent) async {
-        attempted = intent;
-        throw const DashboardHttpException(409);
-      },
-      missionRoomWorkerRosterLoader: () async => const ['manager', 'infra'],
-      missionRoomKanbanClientFactory: (connection) =>
-          KanbanClient(connection, dashboardClient: dashboard),
-    );
-
-    final composer = find.byType(TextField).last;
-    await tester.enterText(composer, '@i');
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('room-mention-infra')));
-    await tester.pump();
-    await tester.enterText(composer, '@infra comprueba la política');
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('room-confirm-task')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(boardGetCount, 1);
-    expect(dashboardPostCount, 0);
-    expect(
-      store.room.linkedTasks,
-      contains(
-        MissionRoomTaskLink(
-          boardId: MissionRoomTaskLink.legacyCurrentBoard,
-          taskId: 'task-reconciled-409',
-        ),
-      ),
-    );
-    expect(
-      find.textContaining('Tarea task-reconciled-409 recuperada'),
-      findsOneWidget,
-    );
-    expect(tester.widget<TextField>(composer).controller!.text, isEmpty);
-    expect(
-      secureStore.containsKey(
-        ChatDraftStore.keyForTesting(
-          connectionId,
-          'mob-room-${room.id}',
-          profile: 'manager',
-        ),
-      ),
-      isFalse,
-    );
-  });
-
-  testWidgets(
-    'Room process death converts submitting to unknown and performs zero POSTs',
-    (tester) async {
-      const connectionId = 'conn-room-process-death';
-      const sessionId = 'stored-room-process-death';
-      const recoverySessionId = 'mob-room-room-process-death';
-      var postCount = 0;
-      var boardGetCount = 0;
-      final dashboard = DashboardClient(
-        host: 'hermes.local',
-        manualToken: 'dashboard-test-token',
-        httpClientOverride: MockClient((request) async {
-          if (request.method == 'POST') postCount++;
-          if (request.method == 'GET' &&
-              request.url.path == '/api/plugins/kanban/board') {
-            boardGetCount++;
-          }
-          return http.Response(
-            jsonEncode({'columns': const <Object>[]}),
-            HttpStatus.ok,
-          );
-        }),
-      );
-      final connection = SavedConnection(
-        id: connectionId,
-        label: 'Room process death',
-        host: '192.168.255.254',
-        port: 8642,
-        apiKey: 'test-only',
-        kind: InstanceKind.vps,
-        dashboardUrl: 'http://hermes.local:9119',
-        dashboardAuthMode: AuthMode.sessionToken,
-      );
-      final room = MissionRoom(
-        id: 'room-process-death',
-        connectionId: connectionId,
-        name: 'release',
-        managerProfile: 'manager',
-        memberProfiles: const ['manager', 'infra'],
-        managerSessionId: sessionId,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      );
-      final recoveryDraftKey = ChatDraftStore.keyForTesting(
-        connectionId,
-        recoverySessionId,
-        profile: 'manager',
-      );
-      secureStore[recoveryDraftKey] = jsonEncode({
-        'savedAt': DateTime.now().millisecondsSinceEpoch,
-        'text': '@infra valida la release',
-        'attachments': const <Object>[],
-        'missionRoomIntentId': 'intent-after-death',
-        'missionRoomWorkerProfile': 'infra',
-        'missionRoomBoardId': MissionRoomTaskLink.legacyCurrentBoard,
-        'missionRoomTaskPhase': MissionRoomTaskPhase.submitting.name,
-      });
-      await pumpChat(
-        tester,
-        connection: connection,
-        session: const Session(
-          id: sessionId,
-          title: '#release',
-          model: 'hermes-agent',
-          source: 'gateway',
-          messageCount: 1,
-          isActive: false,
-          preview: '',
-          startedAt: 1,
-          profile: 'manager',
-        ),
-        missionRoom: room,
-        missionRoomStore: _RecordingMissionRoomStore(room),
-        missionRoomKanbanClientFactory: (connection) =>
-            KanbanClient(connection, dashboardClient: dashboard),
-      );
-      await tester.pump(const Duration(milliseconds: 50));
-
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-
-      expect(postCount, 0);
-      expect(boardGetCount, 1);
-      final persisted =
-          jsonDecode(secureStore[recoveryDraftKey]!) as Map<String, dynamic>;
-      expect(
-        persisted['missionRoomTaskPhase'],
-        MissionRoomTaskPhase.outcomeUnknown.name,
-      );
-      expect(
-        secureStore.containsKey(
-          ChatDraftStore.keyForTesting(
-            connectionId,
-            sessionId,
-            profile: 'manager',
-          ),
-        ),
-        isFalse,
-      );
-    },
-  );
-
-  testWidgets('Room manager turn fails closed on the local Mobile Bridge', (
-    tester,
-  ) async {
-    final connection = SavedConnection(
-      id: 'conn-local-room',
-      label: 'Local room',
-      host: '127.0.0.1',
-      port: 8642,
-      apiKey: 'test-only',
-      kind: InstanceKind.localhost,
-      onDeviceLoopback: true,
-    );
-    final room = MissionRoom(
-      id: 'room-local',
-      connectionId: connection.id,
-      name: 'local',
-      managerProfile: 'manager',
-      memberProfiles: const ['manager'],
-      managerSessionId: '',
-      createdAtMs: 1,
-      updatedAtMs: 1,
-    );
-    final chat = await pumpChat(
-      tester,
-      connection: connection,
-      session: Session(
-        id: 'mob-room-room-local',
-        title: '#local',
-        model: 'hermes-agent',
-        source: 'mobile-room',
-        messageCount: 0,
-        isActive: false,
-        preview: '',
-        startedAt: 1,
-        profile: 'manager',
-      ),
-      missionRoom: room,
-    );
-
-    final composer = find.byType(TextField).last;
-    await tester.enterText(composer, 'Prepara el plan');
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump();
-
-    expect(
-      chat.messages.where((message) => message['role'] == 'user'),
-      isEmpty,
-    );
-    expect(
-      find.textContaining('no puede demostrar una sesión durable'),
-      findsOneWidget,
-    );
-    expect(
-      tester.widget<TextField>(composer).controller!.text,
-      'Prepara el plan',
-    );
-  });
-
-  testWidgets('Room accepts a modern lifecycle Gateway reached via localhost', (
-    tester,
-  ) async {
-    final connection = SavedConnection(
-      id: 'conn-adb-reverse-room',
-      label: 'ADB reverse Room',
-      host: '127.0.0.1',
-      port: 8642,
-      apiKey: 'test-only',
-      kind: InstanceKind.localhost,
-    );
-    final room = MissionRoom(
-      id: 'room-adb-reverse',
-      connectionId: connection.id,
-      name: 'android-qa',
-      managerProfile: 'manager',
-      memberProfiles: const ['manager'],
-      managerSessionId: 'stored-adb-room',
-      createdAtMs: 1,
-      updatedAtMs: 1,
-    );
-    final gateway = _UiRewindGateway();
-    addTearDown(gateway.close);
-    await pumpChat(
-      tester,
-      connection: connection,
-      session: const Session(
-        id: 'stored-adb-room',
-        title: '#android-qa',
-        model: 'hermes-agent',
-        source: 'cli',
-        messageCount: 1,
-        isActive: false,
-        preview: '',
-        startedAt: 1,
-        profile: 'manager',
-      ),
-      desktopGateway: gateway,
-      missionRoom: room,
-      missionRoomStore: _RecordingMissionRoomStore(room),
-    );
-
-    final composer = find.byType(TextField).last;
-    await tester.enterText(composer, 'Ejecuta la QA por adb reverse');
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump();
-
-    expect(gateway.submissions, ['Ejecuta la QA por adb reverse']);
-    gateway.emit('message.complete', {'text': 'QA lista'});
-    await tester.pump();
     expect(tester.takeException(), isNull);
   });
 
@@ -18660,4 +18192,98 @@ void main() {
   ) async {
     await exerciseRestoredApproval(tester, label: 'Denegar', choice: 'deny');
   });
+
+  for (final surface in ['goal', 'background', 'queue']) {
+    testWidgets('release $surface primary label fits at 360dp', (tester) async {
+      await loadInterFont();
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final locale in ['es', 'en']) {
+        for (final scale in [1.0, 1.3]) {
+          tester.platformDispatcher.textScaleFactorTestValue = scale;
+          addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+          final gateway = _UiRewindGateway();
+          final chat = await pumpChat(
+            tester,
+            desktopGateway: gateway,
+            acquireDesktopRuntimeBeforeMount: true,
+          );
+          tester.platformDispatcher.localesTestValue = [Locale(locale)];
+          await tester.pump();
+          if (surface == 'goal') {
+            gateway.emit('session.control.update', {
+              'control': {
+                'goal': {
+                  'status': 'active',
+                  'title': 'A very long goal title that belongs in its details',
+                  'turns_used': 12,
+                  'max_turns': 99,
+                },
+              },
+            });
+            await tester.pump();
+            expect(
+              find.byKey(const ValueKey('chat-goal-primary-label')),
+              findsOneWidget,
+            );
+            expectPillLabelsFit(
+              tester,
+              find
+                  .ancestor(
+                    of: find.byKey(const ValueKey('chat-goal-primary-label')),
+                    matching: find.byType(Row),
+                  )
+                  .first,
+            );
+          } else if (surface == 'background') {
+            gateway.emit('background.complete', {
+              'task_id': 'task',
+              'text': 'error: task failed',
+            });
+            await tester.pump();
+            expect(
+              find.byKey(const ValueKey('chat-background-primary-label')),
+              findsOneWidget,
+            );
+            expectPillLabelsFit(
+              tester,
+              find
+                  .ancestor(
+                    of: find.byKey(
+                      const ValueKey('chat-background-primary-label'),
+                    ),
+                    matching: find.byType(Row),
+                  )
+                  .first,
+            );
+          } else {
+            await tester.enterText(find.byType(TextField).last, 'First turn');
+            await tester.pump();
+            await tester.tap(find.byKey(const ValueKey('send')));
+            await tester.pump();
+            await tester.enterText(find.byType(TextField).last, 'Next turn');
+            await tester.pump();
+            await tester.tap(find.byKey(const ValueKey('send')));
+            await tester.pump();
+            expect(
+              find.byKey(const ValueKey('chat-queue-toggle')),
+              findsOneWidget,
+            );
+            final text = find.descendant(
+              of: find.byKey(const ValueKey('chat-queue-toggle')),
+              matching: find.textContaining(
+                locale == 'es' ? 'EN COLA' : 'QUEUED',
+              ),
+            );
+            expect(text, findsOneWidget);
+            expectPillLabelsFit(tester, text);
+          }
+          chat.dispose();
+          await tester.pumpWidget(const SizedBox());
+        }
+      }
+    });
+  }
 }

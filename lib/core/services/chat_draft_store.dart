@@ -11,38 +11,18 @@ import 'attachment_uploader.dart';
 import 'session_deletion.dart';
 import 'turn_outbox_store.dart';
 
-enum MissionRoomTaskPhase { prepared, submitting, outcomeUnknown }
-
 class ChatDraft {
   final String text;
   final List<AttachmentDraft> attachments;
   final String? preparedTurnClientTurnId;
-  final String? missionRoomIntentId;
-  final String? missionRoomWorkerProfile;
-  final String? missionRoomBoardId;
-  final String? missionRoomBoardQuery;
-  final MissionRoomTaskPhase? missionRoomTaskPhase;
+  final String? replyThreadId;
 
   const ChatDraft({
     required this.text,
     required this.attachments,
     this.preparedTurnClientTurnId,
-    this.missionRoomIntentId,
-    this.missionRoomWorkerProfile,
-    this.missionRoomBoardId,
-    this.missionRoomBoardQuery,
-    this.missionRoomTaskPhase,
+    this.replyThreadId,
   });
-
-  bool get missionRoomOutcomeUnknown =>
-      missionRoomTaskPhase == MissionRoomTaskPhase.outcomeUnknown;
-
-  bool get hasMissionRoomOperation =>
-      missionRoomIntentId != null ||
-      missionRoomWorkerProfile != null ||
-      missionRoomBoardId != null ||
-      missionRoomBoardQuery != null ||
-      missionRoomTaskPhase != null;
 }
 
 /// Entrada recuperable de un chat que todavía no existe en el servidor.
@@ -110,6 +90,7 @@ class ChatDraftStore {
   // that an acknowledged send already cleared. Static scope also covers the
   // short window where two widget lifecycles construct separate store objects.
   static final Map<String, Future<void>> _mutationTails = {};
+  static final Map<String, Future<void>> _admittedSaveTails = {};
   static final Map<String, int> _mutationGenerations = {};
   static final Map<
     String,
@@ -194,13 +175,8 @@ class ChatDraftStore {
       final savedAt = DateTime.fromMillisecondsSinceEpoch(
         (data['savedAt'] as num?)?.toInt() ?? 0,
       );
-      final roomTaskPhase = _taskPhase(data['missionRoomTaskPhase']);
-      final unresolvedRoomWrite =
-          roomTaskPhase == MissionRoomTaskPhase.submitting ||
-          roomTaskPhase == MissionRoomTaskPhase.outcomeUnknown;
       if (savedAt.millisecondsSinceEpoch <= 0 ||
-          (!unresolvedRoomWrite &&
-              DateTime.now().difference(savedAt) > maxAge)) {
+          DateTime.now().difference(savedAt) > maxAge) {
         return null;
       }
       final attachments = <AttachmentDraft>[];
@@ -221,27 +197,10 @@ class ChatDraftStore {
       final draft = ChatDraft(
         text: (data['text'] ?? '').toString(),
         attachments: attachments,
+        replyThreadId: _safeOpaqueIdentity(data['replyThreadId']),
         preparedTurnClientTurnId: _safeOpaqueIdentity(
           data['preparedTurnClientTurnId'],
         ),
-        missionRoomIntentId: _safeMetadata(
-          data['missionRoomIntentId'],
-          maxLength: 128,
-        ),
-        missionRoomWorkerProfile: _safeMetadata(
-          data['missionRoomWorkerProfile'],
-          maxLength: 64,
-          pattern: RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$'),
-        ),
-        missionRoomBoardId: _safeMetadata(
-          data['missionRoomBoardId'],
-          maxLength: 128,
-        ),
-        missionRoomBoardQuery: _safeMetadata(
-          data['missionRoomBoardQuery'],
-          maxLength: 128,
-        ),
-        missionRoomTaskPhase: roomTaskPhase,
       );
       if (draft.text.isEmpty && draft.attachments.isEmpty) return null;
       return ChatDraftEntry(
@@ -268,6 +227,8 @@ class ChatDraftStore {
     );
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
+    final admittedSave = _admittedSaveTails[_mutationScope(key)];
+    if (admittedSave != null) await admittedSave;
     final pendingMutation = _mutationTails[_mutationScope(key)];
     if (pendingMutation != null) await pendingMutation;
     final raw = await _secure.read(key: key);
@@ -338,12 +299,48 @@ class ChatDraftStore {
     String text,
     List<AttachmentDraft> attachments, {
     String profile = 'default',
-    String? missionRoomIntentId,
-    String? missionRoomWorkerProfile,
-    String? missionRoomBoardId,
-    String? missionRoomBoardQuery,
-    MissionRoomTaskPhase? missionRoomTaskPhase,
     String? preparedTurnClientTurnId,
+    String? replyThreadId,
+    LocalConversationLifecycle? lifecycle,
+    Future<bool>? afterSave,
+  }) {
+    final owner = profile.trim().isEmpty ? 'default' : profile.trim();
+    final scope = _mutationScope(_key(connectionId, sessionId, owner));
+    final previous = _admittedSaveTails[scope];
+    final result = _save(
+      connectionId,
+      sessionId,
+      text,
+      attachments,
+      profile: owner,
+      preparedTurnClientTurnId: preparedTurnClientTurnId,
+      replyThreadId: replyThreadId,
+      lifecycle: lifecycle,
+      afterSave: afterSave,
+    );
+    final tail = Future.wait<void>([
+      ?previous,
+      result.then<void>((_) {}, onError: (Object _) {}),
+    ]).then<void>((_) {});
+    _admittedSaveTails[scope] = tail;
+    unawaited(
+      tail.whenComplete(() {
+        if (identical(_admittedSaveTails[scope], tail)) {
+          _admittedSaveTails.remove(scope);
+        }
+      }),
+    );
+    return result;
+  }
+
+  Future<bool> _save(
+    String connectionId,
+    String sessionId,
+    String text,
+    List<AttachmentDraft> attachments, {
+    String profile = 'default',
+    String? preparedTurnClientTurnId,
+    String? replyThreadId,
     LocalConversationLifecycle? lifecycle,
     // Admit before waiting on a screen's two-key move. Cleanup must see this
     // request even while an earlier snapshot is still using storage.
@@ -433,35 +430,11 @@ class ChatDraftStore {
             LocalConversationCleanupFence.ensureOperationAllowed(
               journalOperation,
             );
-            final safeIntentId = _safeMetadata(
-              missionRoomIntentId,
-              maxLength: 128,
-            );
-            final safeWorker = _safeMetadata(
-              missionRoomWorkerProfile,
-              maxLength: 64,
-              pattern: RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$'),
-            );
-            final safeBoardId = _safeMetadata(
-              missionRoomBoardId,
-              maxLength: 128,
-            );
-            final safeBoardQuery = _safeMetadata(
-              missionRoomBoardQuery,
-              maxLength: 128,
-            );
-            final safePhase = safeIntentId != null && safeWorker != null
-                ? missionRoomTaskPhase
-                : null;
             final encoded = jsonEncode({
               'savedAt': DateTime.now().millisecondsSinceEpoch,
               'text': text,
+              'replyThreadId': ?_safeOpaqueIdentity(replyThreadId),
               'preparedTurnClientTurnId': ?safePreparedTurnId,
-              'missionRoomIntentId': ?safeIntentId,
-              'missionRoomWorkerProfile': ?safeWorker,
-              'missionRoomBoardId': ?safeBoardId,
-              'missionRoomBoardQuery': ?safeBoardQuery,
-              'missionRoomTaskPhase': ?safePhase?.name,
               'attachments': normalizedAttachments
                   .map((item) => item.toJson())
                   .toList(),
@@ -493,22 +466,6 @@ class ChatDraftStore {
     return didCommit;
   }
 
-  static String? _safeMetadata(
-    Object? value, {
-    required int maxLength,
-    RegExp? pattern,
-  }) {
-    if (value is! String) return null;
-    final normalized = value.trim();
-    if (normalized.isEmpty ||
-        normalized.length > maxLength ||
-        normalized.contains(RegExp(r'[\u0000-\u001f\u007f]')) ||
-        (pattern != null && !pattern.hasMatch(normalized))) {
-      return null;
-    }
-    return normalized;
-  }
-
   static String? _safeOpaqueIdentity(Object? value) {
     if (value is! String ||
         value.trim().isEmpty ||
@@ -519,25 +476,21 @@ class ChatDraftStore {
     return value;
   }
 
-  static MissionRoomTaskPhase? _taskPhase(Object? value) {
-    if (value is! String) return null;
-    for (final phase in MissionRoomTaskPhase.values) {
-      if (phase.name == value) return phase;
-    }
-    return null;
-  }
-
   Future<void> clear(
     String connectionId,
     String sessionId, {
     String profile = 'default',
     // Conservado para compatibilidad; nunca autoriza V1/V2 ambiguos.
     bool includeUnscoped = false,
+    String? onlyPreparedTurnClientTurnId,
   }) {
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
     final mutationScope = _mutationScope(key);
-    _advanceMutationGeneration(mutationScope);
+    if (onlyPreparedTurnClientTurnId == null) {
+      _advanceMutationGeneration(mutationScope);
+    }
+    final admittedSaves = _admittedSaveTails[mutationScope];
     final resource = LocalConversationResourceKey(
       connectionId: connectionId,
       profile: owner,
@@ -556,16 +509,32 @@ class ChatDraftStore {
     } catch (error, stackTrace) {
       return Future<void>.error(error, stackTrace);
     }
-    return _serializeMutation(
-      mutationScope,
-      () => _clearUnlocked(
+    Future<void> clearMatching() => _serializeMutation(mutationScope, () async {
+      if (onlyPreparedTurnClientTurnId != null) {
+        final raw = await _secure.read(key: key);
+        if (raw == null ||
+            _decodeEntry(
+                  sessionId,
+                  owner,
+                  raw,
+                )?.draft.preparedTurnClientTurnId !=
+                onlyPreparedTurnClientTurnId) {
+          return;
+        }
+      }
+      await _clearUnlocked(
         connectionId,
         sessionId,
         owner: owner,
         operation: journalOperation,
         resource: resource,
-      ),
-    );
+      );
+    });
+    // An acknowledged room send clears only its own captured draft.
+    if (onlyPreparedTurnClientTurnId != null && admittedSaves != null) {
+      return admittedSaves.then((_) => clearMatching());
+    }
+    return clearMatching();
   }
 
   Future<bool> _clearUnlocked(

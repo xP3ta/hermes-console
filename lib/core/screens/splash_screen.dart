@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_contrast.dart';
 import '../widgets/animated_hermes_logo.dart';
+import '../../l10n/app_localizations.dart';
 
 class SplashScreen extends StatefulWidget {
   final VoidCallback onDone;
@@ -223,7 +224,7 @@ class _StartupProgressBar extends StatelessWidget {
     final percent = (value * 100).round();
     final colors = Theme.of(context).hermes;
     return Semantics(
-      label: 'Progreso de carga',
+      label: Localizations.of<Strings>(context, Strings)?.splashLoadingProgress ?? 'Progreso de carga',
       value: '$percent%',
       child: SizedBox(
         key: const ValueKey('splash-progress-bar'),

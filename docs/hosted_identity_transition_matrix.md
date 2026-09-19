@@ -1,12 +1,20 @@
 # Hosted groups identity and completeness transition matrix
 
-The retained hosted-send parser/client boundary is request-bound. A client request ID (`C`) is not the
+The hosted-send parser/client boundary is request-bound. A client request ID (`C`) is not the
 durable event ID. The official durable ID is
 `S = "user:" + sha256(UTF-8(C)).hex`. A send attempt owns one immutable
 `C`/text/thread tuple for the duration of that invocation. Console performs no
-automatic compensation or resend after an ambiguous failure. Console 1.2.10
-does not advertise or invoke this boundary: `groups.send` is retired because
-the available log API cannot yet supply a complete conversation workspace.
+automatic compensation or resend after an ambiguous failure. `groups.send` is
+official as of 1.2.11: the completeness gap that retired it in 1.2.10 — the
+log API only ever supplying a bounded recent window, never a provable
+complete conversation — is closed by `HostedGroupLogPage.loadComplete`
+(`TuiGatewayClient.groupLogComplete`), which pages `groups.log` from `seq 0`
+until it proves `has_more == false`, to the same completeness standard
+`groups.list` already held itself to (see "List completeness" below). Every
+production room-log read — initial load, and the readback after
+send/rename/stop — goes through this path, so a room's transcript is never
+presented, nor a message ever sent against it, without first proving the
+complete history is in hand.
 
 | Boundary | Required evidence | Accepted transition | Fail-closed result |
 |---|---|---|---|
@@ -31,21 +39,36 @@ entire load. Room IDs must be unique across all pages. The client accumulates
 privately and returns one immutable ordered list only after the terminal page;
 the repository and UI therefore cannot receive an intermediate prefix.
 
+## Log completeness
+
+`HostedGroupLogPage.loadComplete` (`TuiGatewayClient.groupLogComplete`) holds
+`groups.log` to the same standard: it pages from `since_seq: 0` and follows
+each page's own `cursor` until a page proves `has_more == false`. Each page's
+internal grammar is verified by `HostedGroupLogPage.fromJson` (contiguous
+sequences, unique event IDs); the loader additionally rejects a non-advancing
+continuation, a duplicate event ID across pages, or the room's authority
+rotating mid-load (a rotation invalidates every page already read under the
+old epoch — restarting the whole load is the only safe move, not continuing
+under the new one). This is the production path for every hosted-room log
+read: the initial workspace open, and the readback after send, rename, or
+stop. A room's transcript and composer only ever render once this proof
+exists — see `_HostedRoomWorkspace` in `mission_control_screen.dart`, gated
+on `capabilities.supports(GroupMethod.send)`.
+
 ## Complete `groups.*` request audit
 
 All enabled official request paths are lease-bound: `groups.capabilities`,
 `groups.list`, `groups.state`, `groups.create`, `groups.rename`,
-`groups.log`, `groups.disband`, `groups.stop`, and `groups.approve`.
-Create/rename/stop/approve/disband use the mutation's
-captured lease for their nested `groups.state` readback. No nested readback calls `connect()` or
-captures a replacement channel. `groups.promote` remains non-official.
-Console retires server-advertised `groups.send` and `groups.retry`. Send is
-unavailable because initial/refresh loading cannot prove a complete long-room
-conversation and its ACK-tail readback cannot replace prior history. Retry is
-unavailable because the public action lacks
-revision, log position, deferred-event identity, and execution-generation
-binding, so a stale action could target a newer task incarnation. Both methods,
-plus promote, are rejected before any WebSocket frame is sent.
+`groups.log`, `groups.send`, `groups.disband`, `groups.stop`, and
+`groups.approve`. Create/rename/stop/approve/disband use the mutation's
+captured lease for their nested `groups.state` readback; send additionally
+reads back `groups.log` on the same lease to prove its ACK landed (see "ACK →
+log proof" above). No nested readback calls `connect()` or captures a
+replacement channel. `groups.promote` remains non-official. Console retires
+server-advertised `groups.retry`: the public action lacks revision, log
+position, deferred-event identity, and execution-generation binding, so a
+stale action could target a newer task incarnation. `retry` and `promote` are
+rejected before any WebSocket frame is sent.
 
 ## Message-send retry cases
 
@@ -60,10 +83,13 @@ plus promote, are rejected before any WebSocket frame is sent.
 
 The current upstream protocol has no `expected_authority_epoch` compare-and-swap
 field on send and does not carry `client_event_id` in the durable log event.
-The retained boundary validates the deterministic `C → S` mapping and complete
-ACK/log tuple but cannot invent stronger authority, retry evidence, or complete
-conversation pagination. Console therefore exposes no hosted send, reply,
-composer, or bounded log-prefix presentation in 1.2.10.
+The boundary validates the deterministic `C → S` mapping and complete
+ACK/log tuple but cannot invent stronger authority or retry evidence — that
+is why `groups.retry` stays retired even though `groups.send` is now official.
+Complete conversation pagination, the other upstream gap this boundary used
+to hit, is closed client-side by log completeness (above): the server's
+`groups.log` window is still bounded, but the client never treats a bounded
+window as the whole story.
 
 Executable coverage lives in `test/hosted_group_send_boundary_test.dart` and
 `test/hosted_group_completeness_boundary_test.dart`, with adjacent
@@ -74,9 +100,9 @@ DTO/wire/repository/UI/privacy coverage in
 ## Event parser entry-point audit
 
 Every production log event decode reaches the same grammar in
-`HostedGroupEvent.fromJson`. The retained, currently retired `groups.send`
-client would decode its ACK there, and
-`HostedGroupLogPage.fromJson` maps every `groups.log` row through it. The only
-production `HostedGroupLogPage.fromJson` caller is the generation-fenced
-`groupLog` client path. No alternate actor/payload decoder or map-level
+`HostedGroupEvent.fromJson`. The official `groups.send` client decodes its
+ACK there, and `HostedGroupLogPage.fromJson` maps every `groups.log` row
+through it, whether read as a single page (`groupLog`) or accumulated to
+completeness (`groupLogComplete`) — both share the same generation-fenced
+`_groupLogOnLease` path. No alternate actor/payload decoder or map-level
 ACK/log equality path exists.

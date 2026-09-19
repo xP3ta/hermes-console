@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/agent_profile.dart';
 import '../theme/app_theme.dart';
 import 'hermes_bot_face.dart';
+import 'bot_avatar_motion.dart';
 
 typedef MissionAvatarLoader =
     Future<AgentProfileAvatar?> Function(String profileName);
@@ -17,21 +18,35 @@ typedef MissionAvatarLoader =
 /// payload cuando un avatar aparece en Rooms, Team y Work.
 final class MissionProfileAvatarCache {
   final MissionAvatarLoader _loader;
+  final String? connectionId;
   final int maxEntries;
   final int maxConcurrent;
   final LinkedHashMap<String, Future<AgentProfileAvatar?>> _entries =
       LinkedHashMap();
+  // Resultados ya entregados, legibles de forma síncrona desde `build` (ver
+  // [resolved]). Se expulsan a la vez que su Future en [_entries].
+  final Map<String, AgentProfileAvatar?> _resolved = {};
   final Queue<_AvatarLoadJob> _queue = Queue();
   int _active = 0;
 
   factory MissionProfileAvatarCache({
     required MissionAvatarLoader loader,
+    String? connectionId,
     int maxEntries = 64,
     int maxConcurrent = 4,
-  }) => MissionProfileAvatarCache._(loader, maxEntries, maxConcurrent);
+  }) => MissionProfileAvatarCache._(
+    loader,
+    maxEntries,
+    maxConcurrent,
+    connectionId,
+  );
 
-  MissionProfileAvatarCache._(this._loader, this.maxEntries, this.maxConcurrent)
-    : assert(maxEntries > 0),
+  MissionProfileAvatarCache._(
+    this._loader,
+    this.maxEntries,
+    this.maxConcurrent,
+    this.connectionId,
+  ) : assert(maxEntries > 0),
       assert(maxConcurrent > 0),
       super();
 
@@ -44,17 +59,47 @@ final class MissionProfileAvatarCache {
       return cached;
     }
     while (_entries.length >= maxEntries) {
-      _entries.remove(_entries.keys.first);
+      _evict(_entries.keys.first);
     }
     final completer = Completer<AgentProfileAvatar?>();
     final future = completer.future;
     _entries[profile] = future;
+    // Solo se recuerda si la entrada sigue siendo esta misma carga: una
+    // expulsión (o `clear`) intermedia no debe resucitar el valor.
+    unawaited(
+      future.then((avatar) {
+        if (identical(_entries[profile], future)) _resolved[profile] = avatar;
+      }),
+    );
     _queue.add(_AvatarLoadJob(profile, completer));
     _pump();
     return future;
   }
 
-  void clear() => _entries.clear();
+  /// `true` si la carga de [profileName] ya terminó y su resultado (aunque
+  /// sea "sin avatar") sigue en caché: [resolved] puede leerse en `build` sin
+  /// pasar por un `FutureBuilder`.
+  bool hasResolved(String profileName) =>
+      _resolved.containsKey(profileName.trim());
+
+  /// Resultado ya cargado de [profileName], o `null`. Cuenta como uso reciente
+  /// igual que [load], para que un avatar visible no sea el primero en salir.
+  AgentProfileAvatar? resolved(String profileName) {
+    final profile = profileName.trim();
+    final entry = _entries.remove(profile);
+    if (entry != null) _entries[profile] = entry;
+    return _resolved[profile];
+  }
+
+  void clear() {
+    _entries.clear();
+    _resolved.clear();
+  }
+
+  void _evict(String profile) {
+    _entries.remove(profile);
+    _resolved.remove(profile);
+  }
 
   void _pump() {
     while (_active < maxConcurrent && _queue.isNotEmpty) {
@@ -94,6 +139,7 @@ class MissionProfileAvatar extends StatelessWidget {
   final String? colorHex;
   final String? imageKind;
   final bool privacySafeElementKeys;
+  final bool working;
 
   const MissionProfileAvatar({
     super.key,
@@ -106,6 +152,7 @@ class MissionProfileAvatar extends StatelessWidget {
     this.colorHex,
     this.imageKind,
     this.privacySafeElementKeys = false,
+    this.working = false,
   });
 
   @override
@@ -115,27 +162,48 @@ class MissionProfileAvatar extends StatelessWidget {
     // interoperability asset, not the selected identity: shape metadata must
     // continue through the native Blobatar renderer instead of becoming a
     // frozen raster in Android.
+    final avatarCache = cache;
     final shouldLoadAvatar =
-        hasAvatar && cache != null && imageKind?.toLowerCase() != 'shape';
-    final content = shouldLoadAvatar
-        ? FutureBuilder<AgentProfileAvatar?>(
-            future: cache!.load(profileName),
-            builder: (context, snapshot) => _AvatarFace(
-              profileName: profileName,
-              size: size,
-              avatar: snapshot.data,
-              shape: shape,
-              colorHex: colorHex,
-              privacySafeElementKeys: privacySafeElementKeys,
-            ),
-          )
-        : _AvatarFace(
-            profileName: profileName,
-            size: size,
-            shape: shape,
-            colorHex: colorHex,
-            privacySafeElementKeys: privacySafeElementKeys,
-          );
+        hasAvatar && avatarCache != null && imageKind?.toLowerCase() != 'shape';
+    final Widget content;
+    if (!shouldLoadAvatar) {
+      content = _AvatarFace(
+        profileName: profileName,
+        size: size,
+        shape: shape,
+        colorHex: colorHex,
+        privacySafeElementKeys: privacySafeElementKeys,
+        working: working,
+      );
+    } else if (avatarCache.hasResolved(profileName)) {
+      // Ya en caché: se pinta en este mismo frame. Con `FutureBuilder` hasta
+      // un Future ya completado tarda un microtask en entregar su valor, así
+      // que cada fila que una lista materializaba (scroll, refresco en vivo)
+      // pintaba primero el Blobatar de reserva y un frame después la imagen:
+      // un parpadeo visible y un layout+paint desperdiciados por fila.
+      content = _AvatarFace(
+        profileName: profileName,
+        size: size,
+        avatar: avatarCache.resolved(profileName),
+        shape: shape,
+        colorHex: colorHex,
+        privacySafeElementKeys: privacySafeElementKeys,
+        working: working,
+      );
+    } else {
+      content = FutureBuilder<AgentProfileAvatar?>(
+        future: avatarCache.load(profileName),
+        builder: (context, snapshot) => _AvatarFace(
+          profileName: profileName,
+          size: size,
+          avatar: snapshot.data,
+          shape: shape,
+          colorHex: colorHex,
+          privacySafeElementKeys: privacySafeElementKeys,
+          working: working,
+        ),
+      );
+    }
     return ExcludeSemantics(
       child: Container(
         width: size,
@@ -150,7 +218,10 @@ class MissionProfileAvatar extends StatelessWidget {
                 ),
               )
             : null,
-        child: content,
+        child: BotAvatarMotion(
+          enabled: working && shouldLoadAvatar,
+          child: content,
+        ),
       ),
     );
   }
@@ -163,6 +234,7 @@ class _AvatarFace extends StatelessWidget {
   final String? shape;
   final String? colorHex;
   final bool privacySafeElementKeys;
+  final bool working;
 
   const _AvatarFace({
     required this.profileName,
@@ -171,6 +243,7 @@ class _AvatarFace extends StatelessWidget {
     this.shape,
     this.colorHex,
     this.privacySafeElementKeys = false,
+    this.working = false,
   });
 
   @override
@@ -184,6 +257,8 @@ class _AvatarFace extends StatelessWidget {
                   ? 'mission-avatar-geometry'
                   : 'mission-avatar-geometry-$profileName',
             ),
+            animate: working,
+            motionState: HermesBotFaceMotionState.thinking,
             visual: visual,
             size: size,
           )

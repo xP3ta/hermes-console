@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import 'attachment_draft.dart';
+import 'bot_mention.dart';
 
 enum PreparedTurnState {
   prepared,
@@ -19,7 +20,7 @@ enum PreparedTurnTransport { desktop, rest, bridgeLocal, unknown }
 /// Lote local recuperable de un único envío. Todo el JSON se guarda cifrado;
 /// IDs, texto, nombres y rutas nunca deben copiarse a logs/diagnósticos.
 class PreparedTurn {
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   final String connectionId;
   final String sessionId;
@@ -33,6 +34,8 @@ class PreparedTurn {
   final String text;
   final String fullText;
   final String? desktopText;
+  final String mentionAnnotation;
+  final List<BotMention> mentions;
   final List<AttachmentDraft> attachments;
   final String model;
   final String profile;
@@ -51,6 +54,8 @@ class PreparedTurn {
     required this.text,
     String? fullText,
     this.desktopText,
+    this.mentionAnnotation = '',
+    this.mentions = const [],
     required this.attachments,
     required this.model,
     required this.profile,
@@ -70,6 +75,7 @@ class PreparedTurn {
       .where((item) => item.uploadState != AttachmentUploadState.removed)
       .toList(growable: false);
 
+  /// A matching composer retry must reuse every frozen payload field.
   /// Solo reutiliza la identidad al reintentar exactamente el mismo lote.
   /// Cambiar modelo, perfil o cualquier metadato del adjunto crea otro turno.
   bool matchesBatch({
@@ -97,6 +103,8 @@ class PreparedTurn {
   }
 
   PreparedTurn copyWith({
+    String? mentionAnnotation,
+    List<BotMention>? mentions,
     int? updatedAtMs,
     int? queueOrder,
     String? text,
@@ -118,6 +126,8 @@ class PreparedTurn {
     text: text ?? this.text,
     fullText: fullText ?? this.fullText,
     desktopText: desktopText ?? this.desktopText,
+    mentionAnnotation: mentionAnnotation ?? this.mentionAnnotation,
+    mentions: mentions ?? this.mentions,
     attachments: attachments ?? this.attachments,
     model: model,
     profile: profile ?? this.profile,
@@ -137,6 +147,9 @@ class PreparedTurn {
     if (queueOrder != null) 'queue_order': queueOrder,
     'text': text,
     'full_text': fullText,
+    if (mentionAnnotation.isNotEmpty) 'mention_annotation': mentionAnnotation,
+    if (mentions.isNotEmpty)
+      'mentions': mentions.map((bot) => bot.toJson()).toList(),
     if (desktopText != null) 'desktop_text': desktopText,
     'attachments': attachments.map((item) => item.toJson()).toList(),
     'model': model,
@@ -152,6 +165,7 @@ class PreparedTurn {
     if (persistedSchema != 1 &&
         persistedSchema != 2 &&
         persistedSchema != 3 &&
+        persistedSchema != 4 &&
         persistedSchema != schemaVersion) {
       throw const FormatException('Unsupported prepared turn schema');
     }
@@ -167,7 +181,8 @@ class PreparedTurn {
       throw const FormatException('Invalid prepared turn timestamps');
     }
     int? queueOrder;
-    if (persistedSchema == schemaVersion && json.containsKey('queue_order')) {
+    if ((persistedSchema == 4 || persistedSchema == schemaVersion) &&
+        json.containsKey('queue_order')) {
       final rawQueueOrder = json['queue_order'];
       if (rawQueueOrder is! int || rawQueueOrder < 0) {
         throw const FormatException('Invalid prepared turn queue order');
@@ -224,6 +239,12 @@ class PreparedTurn {
       desktopText: persistedSchema != 1 && persistedSchema != 2
           ? json['desktop_text']?.toString()
           : null,
+      mentionAnnotation: json['mention_annotation'] as String? ?? '',
+      mentions: List.unmodifiable(
+        (json['mentions'] as List? ?? const []).map(
+          (raw) => BotMention.fromJson(Map<String, dynamic>.from(raw as Map)),
+        ),
+      ),
       attachments: attachments,
       model: (json['model'] ?? '').toString(),
       profile: (json['profile'] ?? '').toString(),

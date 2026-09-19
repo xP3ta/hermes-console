@@ -71,6 +71,29 @@ void main() {
         );
   });
 
+  test('load waits for a save admitted before its persistence dependency', () async {
+    final store = ChatDraftStore(await SharedPreferences.getInstance());
+    final gate = Completer<bool>();
+    final saved = store.save('connection', 'session', 'Last keystroke', const [], afterSave: gate.future);
+    var loaded = false;
+    final read = store.load('connection', 'session').then((draft) { loaded = true; return draft; });
+    await Future<void>.delayed(Duration.zero);
+    expect(loaded, isFalse);
+    gate.complete(true);
+    expect(await saved, isTrue);
+    expect((await read).text, 'Last keystroke');
+  });
+
+  test('room reply draft preserves its thread and remains out of recovery lists', () async {
+    final store = ChatDraftStore(await SharedPreferences.getInstance());
+    await store.save('connection', 'mob-room-fixture', 'Reply\ntext', const [], profile: 'builder', replyThreadId: 'thread-one');
+    final draft = await store.load('connection', 'mob-room-fixture', profile: 'builder');
+    expect(draft.text, 'Reply\ntext');
+    expect(draft.replyThreadId, 'thread-one');
+    expect(await store.listForConnection('connection'), isEmpty);
+    expect((await store.load('connection', 'mob-room-fixture', profile: 'other')).text, isEmpty);
+  });
+
   test(
     'canonical draft scope: promotion keeps connection and profile fences',
     () async {
@@ -579,75 +602,6 @@ void main() {
     expect(restored.remoteRef, '@file:.hermes/fsm.pdf');
     expect(restored.remoteSessionId, 'runtime-a');
     expect(restored.remoteTransport, AttachmentRemoteTransport.desktop);
-  });
-
-  test(
-    'Room draft preserves the retry identity without plaintext prefs',
-    () async {
-      final prefs = await SharedPreferences.getInstance();
-      final store = ChatDraftStore(prefs);
-
-      await store.save(
-        'conn-room',
-        'mob-room-room-1',
-        '@infra revisa backups',
-        const [],
-        missionRoomIntentId: 'intent-stable-42',
-        missionRoomWorkerProfile: 'infra',
-        missionRoomBoardId: 'board-homelab',
-        missionRoomBoardQuery: 'homelab',
-        missionRoomTaskPhase: MissionRoomTaskPhase.submitting,
-      );
-      final restored = await store.load('conn-room', 'mob-room-room-1');
-
-      expect(restored.missionRoomIntentId, 'intent-stable-42');
-      expect(restored.missionRoomWorkerProfile, 'infra');
-      expect(restored.missionRoomBoardId, 'board-homelab');
-      expect(restored.missionRoomBoardQuery, 'homelab');
-      expect(restored.missionRoomTaskPhase, MissionRoomTaskPhase.submitting);
-      expect(restored.missionRoomOutcomeUnknown, isFalse);
-      expect(
-        prefs.getKeys().where((key) => key.contains('intent-stable-42')),
-        isEmpty,
-      );
-      expect(
-        secureStore[ChatDraftStore.keyForTesting(
-          'conn-room',
-          'mob-room-room-1',
-        )],
-        contains('intent-stable-42'),
-      );
-    },
-  );
-
-  test('unresolved Room writes do not expire before reconciliation', () async {
-    final old = DateTime.now().subtract(const Duration(days: 31));
-    final unknownKey = ChatDraftStore.keyForTesting('conn-room', 'unknown');
-    final ordinaryKey = ChatDraftStore.keyForTesting('conn-room', 'ordinary');
-    secureStore[unknownKey] = jsonEncode({
-      'savedAt': old.millisecondsSinceEpoch,
-      'text': '@infra verifica el resultado',
-      'attachments': const <Object>[],
-      'missionRoomIntentId': 'intent-unknown',
-      'missionRoomWorkerProfile': 'infra',
-      'missionRoomBoardId': 'homelab',
-      'missionRoomTaskPhase': MissionRoomTaskPhase.outcomeUnknown.name,
-    });
-    secureStore[ordinaryKey] = jsonEncode({
-      'savedAt': old.millisecondsSinceEpoch,
-      'text': 'borrador ordinario antiguo',
-      'attachments': const <Object>[],
-    });
-    final store = ChatDraftStore(await SharedPreferences.getInstance());
-
-    final unknown = await store.load('conn-room', 'unknown');
-    final ordinary = await store.load('conn-room', 'ordinary');
-
-    expect(unknown.missionRoomTaskPhase, MissionRoomTaskPhase.outcomeUnknown);
-    expect(unknown.missionRoomIntentId, 'intent-unknown');
-    expect(ordinary.text, isEmpty);
-    expect(secureStore.containsKey(unknownKey), isTrue);
-    expect(secureStore.containsKey(ordinaryKey), isFalse);
   });
 
   test(

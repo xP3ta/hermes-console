@@ -89,7 +89,8 @@ class SshManager {
   String? derivedHostFor(String connectionId) => _conn(connectionId)?.host;
 
   /// true si la instancia es solo lectura (SFTP no debe escribir).
-  bool isReadOnly(String connectionId) => _conn(connectionId)?.readOnly ?? false;
+  bool isReadOnly(String connectionId) =>
+      _conn(connectionId)?.readOnly ?? false;
 
   /// Carga la config SSH guardada, o null si la instancia no tiene SSH.
   Future<SshConfig?> loadConfig(String connectionId) async {
@@ -101,7 +102,7 @@ class SshManager {
         : (derivedHostFor(connectionId) ?? '');
     final port =
         int.tryParse((await _secure.readSsh(connectionId, 'port')) ?? '') ??
-            defaultPort;
+        defaultPort;
     final method = SshAuthMethod.fromId(
       await _secure.readSsh(connectionId, 'method'),
     );
@@ -129,9 +130,11 @@ class SshManager {
     if (privateKeyPem != null) {
       await _secure.writeSsh(connectionId, 'privkey', privateKeyPem);
     }
-    // Passphrase siempre se escribe (vacío = clave sin passphrase) para que al
-    // editar no quede una vieja colgando.
-    await _secure.writeSsh(connectionId, 'passphrase', passphrase ?? '');
+    // An omitted secret preserves the stored one. Replacing a key without a
+    // passphrase explicitly clears the old key's passphrase.
+    if (privateKeyPem != null || passphrase != null) {
+      await _secure.writeSsh(connectionId, 'passphrase', passphrase ?? '');
+    }
   }
 
   Future<void> clear(String connectionId) => _secure.deleteSsh(connectionId);
@@ -157,7 +160,9 @@ class SshManager {
     try {
       final s = utf8.decode(raw);
       if (s.startsWith('SHA256:') || s.startsWith('MD5:')) return s;
-    } catch (_) {/* cae al hash de los bytes crudos */}
+    } catch (_) {
+      /* cae al hash de los bytes crudos */
+    }
     return 'SHA256:${base64.encode(sha256.convert(raw).bytes).replaceAll('=', '')}';
   }
 
@@ -168,7 +173,7 @@ class SshManager {
     try {
       return SSHKeyPair.isEncryptedPem(pem.trim());
     } catch (e) {
-      debugPrint('[ssh-manager] excepción silenciada (se asume false): $e');
+      debugPrint('[ssh-manager] invalid key (${e.runtimeType})');
       return false;
     }
   }
@@ -189,8 +194,8 @@ class SshManager {
       return 'Incorrect passphrase for this key.';
     } on SSHKeyDecodeError {
       return 'Unrecognized key format (use PEM OpenSSH or RSA).';
-    } catch (e) {
-      return 'Invalid key: $e';
+    } catch (_) {
+      return 'Invalid private key.';
     }
   }
 

@@ -309,6 +309,7 @@ class NotificationDeliveryStore {
     'kanban_transition',
     'approval',
     'chat_reply',
+    'goal_transition',
   };
   static const sourceKinds = <String>{
     'approval',
@@ -316,6 +317,7 @@ class NotificationDeliveryStore {
     'cron',
     'kanban',
     'chat_reply',
+    'local_agent',
   };
   static const eventKindsBySource = <String, Set<String>>{
     'approval': <String>{'pending'},
@@ -323,6 +325,7 @@ class NotificationDeliveryStore {
     'cron': <String>{'terminal'},
     'kanban': <String>{'done', 'blocked', 'triage'},
     'chat_reply': <String>{'terminal'},
+    'local_agent': <String>{'status'},
   };
   static const lastStatesBySource = <String, Set<String>>{
     'approval': <String>{'pending', 'responded', 'cancelled'},
@@ -348,6 +351,7 @@ class NotificationDeliveryStore {
       'done',
     },
     'chat_reply': <String>{'completed', 'failed', 'cancelled'},
+    'local_agent': <String>{'active', 'paused', 'done', 'waiting', 'blocked'},
   };
   static const presentationSurfaces = <String>{'alert', 'inline'};
 

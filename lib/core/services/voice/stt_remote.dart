@@ -120,6 +120,11 @@ class _ServerListenOperation {
   bool cancelled = false;
   bool started = false;
   bool endpointObserved = false;
+  bool finalReceived = false;
+  bool audioSent = false;
+  bool eofSent = false;
+  int connectionRetries = 0;
+  Completer<bool>? readiness;
 }
 
 class ServerSttEngine implements SttEngine {
@@ -330,7 +335,12 @@ class ServerSttEngine implements SttEngine {
   /// este cambio) — fallback documentado para servidores viejos.
   Future<_SttChannel> _connectWithAuth(Duration readyTimeout) async {
     final ch = WebSocketChannel.connect(_uri);
-    await ch.ready.timeout(readyTimeout);
+    try {
+      await ch.ready.timeout(readyTimeout);
+    } catch (_) {
+      await _closeQuietly(ch);
+      rethrow;
+    }
     if (token.isEmpty) {
       // Sin token no hay nada que autenticar: comportamiento igual que
       // antes, sin handshake extra.
@@ -427,6 +437,8 @@ class ServerSttEngine implements SttEngine {
     _hold = continuous;
     _closing = false;
     _turnPeakLevel = 0;
+    lastAudioAt = null;
+    if (!persistent) muteToServer = false;
     final stopBeforeStart = _stopTail;
     _startupTail = _startupTail.then(
       (_) async {
@@ -527,43 +539,88 @@ class ServerSttEngine implements SttEngine {
         return;
       }
 
-      session = await _connector(_uri);
-      if (!_isCurrent(operation)) {
-        await _discardLate(recorder: recorder, session: session);
-        if (identical(_recorder, recorder)) _recorder = null;
-        if (identical(_session, session)) _session = null;
-        return;
-      }
-      _session = session;
-      wsSub = session.messages.listen(
-        (raw) {
-          if (_isCurrent(operation)) _onServerMessage(operation, raw);
-        },
-        onError: (Object _) {
-          if (_isCurrent(operation)) {
-            _failTurn('Server connection error.');
-          }
-        },
-        onDone: () {
+      while (_isCurrent(operation)) {
+        try {
+          session = await _connector(_uri);
+        } catch (_) {
           if (!_isCurrent(operation)) return;
-          _session = null;
-          if (_persistent) {
-            _failTurn('Server closed connection unexpectedly');
-          } else if (!controller.isClosed) {
-            controller.add(const SttResult('', true));
-            unawaited(controller.close());
+          if (operation.connectionRetries++ == 0) continue;
+          rethrow;
+        }
+        if (!_isCurrent(operation)) {
+          await _discardLate(recorder: recorder, session: session);
+          if (identical(_recorder, recorder)) _recorder = null;
+          return;
+        }
+        _session = session;
+        final ready = Completer<bool>();
+        operation.readiness = ready;
+        var disconnectedHandled = false;
+        void receive(dynamic raw) {
+          if (!_isCurrent(operation)) return;
+          if (raw is String) {
+            try {
+              if ((jsonDecode(raw) as Map)['type'] == 'ready' &&
+                  !ready.isCompleted) {
+                ready.complete(true);
+              }
+            } catch (_) {}
           }
-        },
-      );
-      _wsSub = wsSub;
-      if (session.firstMessage != null) {
-        _onServerMessage(operation, session.firstMessage);
+          _onServerMessage(operation, raw);
+        }
+
+        void disconnected() {
+          if (!_isCurrent(operation) ||
+              (operation.finalReceived && !_persistent) ||
+              _closing ||
+              disconnectedHandled) {
+            return;
+          }
+          disconnectedHandled = true;
+          _session = null;
+          if (!ready.isCompleted) {
+            ready.complete(false);
+          } else if (!operation.audioSent &&
+              !operation.eofSent &&
+              operation.connectionRetries++ == 0) {
+            operation.started = false;
+            _startupTail = _startupTail.then(
+              (_) => _startOperation(operation, onCaptureReady),
+            );
+          } else {
+            _failTurn(
+              'Server closed before transcription finished. Please retry.',
+            );
+          }
+        }
+
+        wsSub = session.messages.listen(
+          receive,
+          onError: (Object _) => disconnected(),
+          onDone: disconnected,
+        );
+        _wsSub = wsSub;
+        if (session.firstMessage != null) receive(session.firstMessage);
+        final isReady = await ready.future.timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => false,
+        );
+        if (!_isCurrent(operation) || _closing) return;
+        if (isReady) break;
+        await wsSub.cancel();
+        await session.close();
+        if (operation.connectionRetries++ > 0) {
+          _failTurn(
+            'Server closed before speech recognition was ready. Please retry.',
+          );
+          return;
+        }
       }
-      if (!_isCurrent(operation)) return;
+      if (!_isCurrent(operation) || session == null) return;
       session.add(jsonEncode({'type': 'reset'}));
       final stream = await recorder.startStream(_streamConfig);
       if (!_isCurrent(operation)) {
-        await wsSub.cancel();
+        await wsSub?.cancel();
         if (identical(_wsSub, wsSub)) _wsSub = null;
         await _discardLate(recorder: recorder, session: session);
         if (identical(_recorder, recorder)) _recorder = null;
@@ -603,7 +660,13 @@ class ServerSttEngine implements SttEngine {
         onLevel?.call(level);
         final session = _session;
         if (session != null && !_closing && !muteToServer) {
-          session.add(bytes);
+          try {
+            session.add(bytes);
+            if (bytes.isNotEmpty) operation.audioSent = true;
+          } catch (_) {
+            _failTurn('Server connection error. Please retry.');
+            return;
+          }
           // `speechLastAboveThreshold` describe la última muestra de voz que
           // cruzó realmente la frontera de red de ESTA operación. PCM vacío,
           // silenciado o que no alcanzó el servidor nunca rellena la marca.
@@ -665,6 +728,8 @@ class ServerSttEngine implements SttEngine {
         if (!ignoreServerEndpoint) _onSpeechEnd?.call();
         break;
       case 'final':
+        if (operation.finalReceived && !_persistent) return;
+        operation.finalReceived = true;
         // Turn-based: cerrar todo (WS + recorder + controller).
         // Persistente: solo emitir SttResult(isFinal:true); el controller
         // PERMANECE ABIERTO toda la sesión WS. Cerrarlo aquí terminaba una
@@ -687,6 +752,7 @@ class ServerSttEngine implements SttEngine {
         // del gate server-side. Antes solo se logueaba; ahora también viaja en
         // SttResult.meta (spec 025 F2) para que un consumidor (p.ej. el VAD
         // local o un futuro adaptador) lo use sin reimplementar el parseo.
+        if (_persistent) operation.eofSent = false;
         final meta = serverSttPublicMeta(msg['meta']);
         debugPrint(
           '[VOICE] stt-server final len=${text.length}'
@@ -724,6 +790,8 @@ class ServerSttEngine implements SttEngine {
   }
 
   void _failTurn(String message) {
+    final readiness = _operation?.readiness;
+    if (readiness != null && !readiness.isCompleted) readiness.complete(false);
     final controller = _controller;
     if (controller != null && !controller.isClosed) {
       controller.addError(Exception(message));
@@ -792,6 +860,10 @@ class ServerSttEngine implements SttEngine {
     final wsSub = _wsSub;
     final persistent = _persistent;
     if (wasStarting) {
+      final readiness = operation.readiness;
+      if (readiness != null && !readiness.isCompleted) {
+        readiness.complete(false);
+      }
       operation.cancelled = true;
       _operation = null;
       _generation++;
@@ -839,7 +911,11 @@ class ServerSttEngine implements SttEngine {
     }
     // Parar manual (tap): pide al servidor cerrar la frase en curso y espera su
     // final. Si no llega pronto, cerramos igualmente.
-    if (session != null && !_closing) {
+    if (session != null &&
+        !_closing &&
+        operation != null &&
+        !operation.eofSent) {
+      operation.eofSent = true;
       try {
         session.add(jsonEncode({'type': 'eof'}));
       } catch (_) {}
@@ -861,7 +937,7 @@ class ServerSttEngine implements SttEngine {
       if (persistent) {
         _endTurn();
       } else if (!_closing) {
-        unawaited(_finish(expected: expected));
+        _failTurn('Server transcription timed out. Please retry.');
       }
     });
   }
@@ -880,7 +956,8 @@ class ServerSttEngine implements SttEngine {
       _markLocalEndpoint(operation);
     }
     final c = _session;
-    if (c == null || _closing) return;
+    if (c == null || _closing || operation == null || operation.eofSent) return;
+    operation.eofSent = true;
     try {
       c.add(jsonEncode({'type': 'eof'}));
     } catch (error) {

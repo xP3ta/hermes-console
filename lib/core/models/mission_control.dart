@@ -1,6 +1,7 @@
 import 'agent_profile.dart';
 import 'hosted_groups.dart';
 import 'kanban.dart';
+import 'room_mirror.dart';
 import 'session.dart';
 
 enum MissionCapabilityState { available, unsupported, unavailable }
@@ -138,6 +139,12 @@ final class MissionOrganization {
 }
 
 final class MissionBackendSnapshot {
+  RoomMirrorIdentity? roomIdentity(HostedGroupRoom room) {
+    final defaults = profiles.where((profile) => profile.name == 'default');
+    if (defaults.length != 1) return null;
+    return defaults.single.roomMirror.match(room, hostedGroups.rooms);
+  }
+
   final List<AgentProfile> profiles;
   final List<Session> sessions;
   final KanbanBoard? board;
@@ -402,6 +409,7 @@ final class MissionAgent {
   final MissionAgentStatus status;
   final String statusEvidence;
   final Session? currentSession;
+  final String? liveSessionTitle;
   final KanbanTask? currentTask;
   final MissionUsage usage;
   final MissionApproval? approval;
@@ -409,11 +417,20 @@ final class MissionAgent {
   final String? model;
   final String? provider;
 
+  /// Shared by Bots and room presence; a gateway being online is not a turn.
+  bool get activeNow => switch (status) {
+    MissionAgentStatus.thinking ||
+    MissionAgentStatus.working ||
+    MissionAgentStatus.responding => true,
+    _ => false,
+  };
+
   const MissionAgent({
     required this.profile,
     required this.status,
     required this.statusEvidence,
     this.currentSession,
+    this.liveSessionTitle,
     this.currentTask,
     required this.usage,
     this.approval,
@@ -566,6 +583,12 @@ abstract final class MissionProjector {
           status: status,
           statusEvidence: _statusEvidence(status, chat, task, worker),
           currentSession: currentSession,
+          liveSessionTitle: chat != null && chat.phase != MissionLivePhase.idle
+              ? _firstNonEmpty([
+                  chat.title,
+                  _sessionForChat(sessions, chat)?.title,
+                ])
+              : null,
           currentTask: task,
           usage: MissionUsage.fromSessions(sessions),
           approval: approval,

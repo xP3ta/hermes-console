@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../app_header_title.dart';
 import '../config/flavor.dart';
 import '../models/home_widget_snapshot.dart';
+import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
 import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
@@ -25,6 +26,9 @@ import '../utils/home_recent_sessions.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/relative_time.dart';
 import '../widgets/attachment_source_sheet.dart';
+import '../widgets/dock.dart';
+import '../widgets/dock_shortcuts.dart';
+import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/home_prompt_composer.dart';
@@ -42,10 +46,12 @@ import '../widgets/session_title_editor_route.dart';
 import 'chat_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'local_instance_control_screen.dart';
+import 'mission_control_screen.dart';
 import 'onboarding/local_install_screen.dart';
 import 'onboarding/local_uninstall_screen.dart';
 import 'onboarding/welcome_mode_screen.dart';
 import 'session_list_screen.dart';
+import 'settings_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
 import '../../l10n/app_localizations.dart';
@@ -133,7 +139,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void didPush() => unawaited(DrawerGestureExclusion.setEnabled(true));
 
   @override
-  void didPopNext() => unawaited(DrawerGestureExclusion.setEnabled(true));
+  void didPopNext() {
+    unawaited(DrawerGestureExclusion.setEnabled(true));
+    // Volver de cualquier pantalla empujada (Conversaciones, un chat, Bots…)
+    // no refrescaba los recientes de Inicio por sí solo — solo lo hacían los
+    // sitios que encadenaban `.then(() => _refreshStatus())` a su propio
+    // `Navigator.push`, y el drawer (usado desde varias pantallas, no solo
+    // Inicio) nunca lo encadenaba. Resultado: borrar una conversación en
+    // Conversaciones no la quitaba de Inicio hasta forzar un refresco manual
+    // (reportado en dispositivo real). `RouteAware.didPopNext` es justo el
+    // gancho para esto — se dispara siempre que esta pantalla vuelve a ser
+    // visible, sin depender de qué call site abrió la pantalla anterior.
+    unawaited(_refreshStatus());
+  }
 
   @override
   void didPushNext() => unawaited(DrawerGestureExclusion.setEnabled(false));
@@ -703,9 +721,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final visibleSessions = merged.values.toList()
       ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
     final recentSessions = visibleSessions
-        // Los informes generados por cron tienen su apartado propio en
-        // Conversaciones > Resultados cron. No desplazan chats reales en Inicio.
-        .where((s) => !s.isJob && !archive.isHidden(s.id))
+        // Los informes de cron y demás fuentes de automatización (kanban,
+        // subagent, tool, acp, hermes_flow, vulcan_delegate, webhook) tienen
+        // su propio apartado en Conversaciones > Automatización/Todo. Antes
+        // solo se excluía `isJob` (cron), así que una tarea de Kanban o una
+        // sesión de herramienta/subagente sí aparecía aquí pero no en la
+        // pestaña "Chats" de Conversaciones (la que abre "Ver todas" por
+        // defecto) — el "aparece en Inicio y luego no está" reportado en
+        // dispositivo real. Mismo criterio que `SessionCategory.chats`.
+        .where(
+          (s) =>
+              !s.isJob &&
+              !archive.isHidden(s.id) &&
+              SessionCategory.chats.includesSource(s.source),
+        )
         .toList();
     final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1283,142 +1312,276 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         checking: _checking,
         onSectionReturn: _reload,
       ),
-      body: () {
-        final active = _active;
-        if (_connections.isEmpty || active == null) {
-          return _EmptyHomeState(onAdd: _showAddDialog);
-        }
-        // Instancia local sin gateway en marcha: el chat no es usable, así que
-        // se oculta y solo se muestra el card de estado/arranque del agente.
-        final isLocalAndOffline =
-            active.kind == InstanceKind.localhost && !_healthOk && !_checking;
-        // Instancia remota caída: la única señal era el punto del appbar; el
-        // cuerpo necesita un estado visible con reintento, equivalente a la
-        // tarjeta de la instancia local apagada (spec 028 A-025).
-        final isRemoteAndOffline =
-            active.kind != InstanceKind.localhost && !_healthOk && !_checking;
-        final content = RefreshIndicator(
-          color: colors.accent,
-          onRefresh: _refreshStatus,
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-            children: [
-              // U-13 (spec 028): la instancia local está retirada de la UI
-              // para el lanzamiento (kLocalAgentEnabled, default false).
-              if (kLocalAgentEnabled &&
-                  (_installInProgress || _uninstallInProgress))
-                _LocalOpBanner(
-                  colors: colors,
-                  isInstall: _installInProgress,
-                  connManager: widget.connManager,
-                  onDismiss: () => setState(() {
-                    _installInProgress = false;
-                    _uninstallInProgress = false;
-                  }),
-                  onResume: () async {
-                    if (_installInProgress) {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => LocalInstallScreen(
-                            connManager: widget.connManager,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(
+            child: () {
+              final active = _active;
+              if (_connections.isEmpty || active == null) {
+                return _EmptyHomeState(onAdd: _showAddDialog);
+              }
+              // Instancia local sin gateway en marcha: el chat no es usable, así que
+              // se oculta y solo se muestra el card de estado/arranque del agente.
+              final isLocalAndOffline =
+                  active.kind == InstanceKind.localhost &&
+                  !_healthOk &&
+                  !_checking;
+              // Instancia remota caída: la única señal era el punto del appbar; el
+              // cuerpo necesita un estado visible con reintento, equivalente a la
+              // tarjeta de la instancia local apagada (spec 028 A-025).
+              final isRemoteAndOffline =
+                  active.kind != InstanceKind.localhost &&
+                  !_healthOk &&
+                  !_checking;
+              // El dock flotante (`Dock`) se pinta como overlay
+              // (Positioned) ENCIMA de esta lista, no reserva espacio por sí
+              // mismo. Sin este margen extra, el último item de recientes
+              // quedaba tapado/cortado por el dock (confirmado por captura
+              // real del dispositivo). Reserva: alto del dock (48) + su
+              // separación del borde (12) + el lift máximo de la profundidad
+              // "Flotante" (6) + el inset seguro inferior del sistema +
+              // un margen de aire adicional para que no quede pegado.
+              final dockBottomClearance =
+                  48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16;
+              final showChat = !kLocalAgentEnabled || !isLocalAndOffline;
+              final banners = <Widget>[
+                if (kLocalAgentEnabled &&
+                    (_installInProgress || _uninstallInProgress))
+                  _LocalOpBanner(
+                    colors: colors,
+                    isInstall: _installInProgress,
+                    connManager: widget.connManager,
+                    onDismiss: () => setState(() {
+                      _installInProgress = false;
+                      _uninstallInProgress = false;
+                    }),
+                    onResume: () async {
+                      if (_installInProgress) {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => LocalInstallScreen(
+                              connManager: widget.connManager,
+                            ),
                           ),
-                        ),
-                      );
-                    } else {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => LocalUninstallScreen(
-                            connManager: widget.connManager,
+                        );
+                      } else {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => LocalUninstallScreen(
+                              connManager: widget.connManager,
+                            ),
                           ),
-                        ),
-                      );
-                    }
-                    _reload();
-                  },
-                ),
-              if (kLocalAgentEnabled && isLocalAndOffline)
-                _LocalAgentOfflineCard(
-                  colors: colors,
-                  starting: _localStarting,
-                  onStart: _startLocalAgent,
-                  onManage: _openLocalControl,
-                ),
-              if (isRemoteAndOffline)
-                _RemoteInstanceOfflineCard(
-                  colors: colors,
-                  label: active.label,
-                  onRetry: _refreshStatus,
-                  onEditInstance: _openInstances,
-                ),
-              // El chat solo tiene sentido si hay un gateway que responde. Con
-              // la instancia local apagada se oculta por completo y solo queda
-              // el card de arranque de arriba.
-              if (!kLocalAgentEnabled || !isLocalAndOffline) ...[
-                const SizedBox(height: 8),
-                // La mascota vive únicamente sobre la pista del compositor.
-                // Sin Companion o con teclado, el input recupera ese espacio.
-                FadeSlideIn(
-                  delayMs: reduceMotion ? 0 : 30,
-                  duration: reduceMotion
-                      ? Duration.zero
-                      : const Duration(milliseconds: 220),
-                  child: _buildPromptStage(
-                    enabled: !isRemoteAndOffline,
-                    dimmed: isRemoteAndOffline,
+                        );
+                      }
+                      _reload();
+                    },
                   ),
-                ),
-                if (_recentSessions.isNotEmpty) ...[
-                  const SizedBox(height: 14),
+                if (kLocalAgentEnabled && isLocalAndOffline)
+                  _LocalAgentOfflineCard(
+                    colors: colors,
+                    starting: _localStarting,
+                    onStart: _startLocalAgent,
+                    onManage: _openLocalControl,
+                  ),
+                if (isRemoteAndOffline)
+                  _RemoteInstanceOfflineCard(
+                    colors: colors,
+                    label: active.label,
+                    onRetry: _refreshStatus,
+                    onEditInstance: _openInstances,
+                  ),
+              ];
+              // El compositor y los avisos de estado viven fuera del área que
+              // scrollea: solo la lista de conversaciones recientes se mueve
+              // al hacer scroll, para que el compositor no "desaparezca" al
+              // bajar por la lista (confirmado como bug real en dispositivo).
+              // Sin gateway que responda (instancia local apagada) no hay
+              // lista de conversaciones que mostrar: los avisos vuelven a
+              // vivir en un `ListView` normal para conservar el pull-to-
+              // refresh de esa pantalla.
+              if (!showChat) {
+                return RefreshIndicator(
+                  color: colors.accent,
+                  onRefresh: _refreshStatus,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                    children: banners,
+                  ),
+                );
+              }
+              final content = Column(
+                children: [
                   Padding(
-                    padding: const EdgeInsets.only(left: 4, bottom: 2),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Expanded(
-                          child: Text(
-                            Strings.of(context).homeChatsSection,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: _openSessions,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            foregroundColor: colors.accentHover,
-                          ),
-                          child: Text(
-                            Strings.of(context).homeSearch,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colors.accentHover,
-                            ),
+                        ...banners,
+                        const SizedBox(height: 8),
+                        // La mascota vive únicamente sobre la pista del compositor.
+                        // Sin Companion o con teclado, el input recupera ese espacio.
+                        FadeSlideIn(
+                          delayMs: reduceMotion ? 0 : 30,
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 220),
+                          child: _buildPromptStage(
+                            enabled: !isRemoteAndOffline,
+                            dimmed: isRemoteAndOffline,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  ..._buildRecentRows(active, recentLimit),
-                ] else if (!isRemoteAndOffline) ...[
-                  const SizedBox(height: 10),
-                  HermesEmptyState(
-                    key: const ValueKey('home-empty-conversations'),
-                    compact: true,
-                    title: Strings.of(context).homeEmptyConversationsTitle,
-                    body: Strings.of(context).homeEmptyConversationsBody,
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+                  Expanded(
+                    child: RefreshIndicator(
+                      color: colors.accent,
+                      onRefresh: _refreshStatus,
+                      child: ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: EdgeInsets.fromLTRB(
+                          20,
+                          14,
+                          20,
+                          dockBottomClearance,
+                        ),
+                        children: [
+                          if (_recentSessions.isNotEmpty) ...[
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                left: 4,
+                                bottom: 2,
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      Strings.of(context).homeChatsSection,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: _openSessions,
+                                    style: TextButton.styleFrom(
+                                      minimumSize: const Size(48, 44),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                      ),
+                                      foregroundColor: colors.accentHover,
+                                    ),
+                                    child: Text(
+                                      Strings.of(context).homeSearch,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: colors.accentHover,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            ..._buildRecentRows(active, recentLimit),
+                          ] else if (!isRemoteAndOffline) ...[
+                            const SizedBox(height: 10),
+                            HermesEmptyState(
+                              key: const ValueKey('home-empty-conversations'),
+                              compact: true,
+                              title: Strings.of(
+                                context,
+                              ).homeEmptyConversationsTitle,
+                              body: Strings.of(
+                                context,
+                              ).homeEmptyConversationsBody,
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                18,
+                                18,
+                                22,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ),
                 ],
-              ],
-            ],
+              );
+              return content;
+            }(),
           ),
-        );
-        return content;
-      }(),
+          Dock(
+            profileId: DockProfileId.general,
+            showBackContext: dockShowsBack(context),
+            onBack: () => Navigator.of(context).maybePop(),
+            actions: {
+              // Este dock YA vive en Inicio: "Inicio" se pinta como sección
+              // activa y sin acción propia, en vez de navegar a sí mismo.
+              DockItemId.home: const DockItemAction(selected: true),
+              DockItemId.create: DockItemAction(
+                onTap: _active == null ? null : _newChat,
+              ),
+              DockItemId.bots: DockItemAction(
+                onTap: _active == null
+                    ? null
+                    : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => MissionControlScreen(
+                            connection: _active!,
+                            connManager: widget.connManager,
+                          ),
+                        ),
+                      ).then((_) => _refreshStatus()),
+              ),
+              DockItemId.settings: DockItemAction(
+                onTap: _active == null
+                    ? null
+                    : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SettingsScreen(
+                            connection: _active!,
+                            connManager: widget.connManager,
+                          ),
+                        ),
+                      ).then((_) => _reload()),
+              ),
+              // Accesos directos opcionales (ocultos de fábrica en el
+              // catálogo); mismas pantallas/criterios que ya usa HermesDrawer.
+              DockItemId.cron: DockItemAction(
+                onTap: _active == null
+                    ? null
+                    : () => openDockCron(context, _active!, widget.connManager),
+              ),
+              DockItemId.tasks: DockItemAction(
+                onTap: _active == null
+                    ? null
+                    : () =>
+                          openDockTasks(context, _active!, widget.connManager),
+              ),
+              DockItemId.sessions: DockItemAction(
+                onTap: _active == null
+                    ? null
+                    : () => openDockSessions(
+                        context,
+                        _active!,
+                        widget.connManager,
+                      ),
+              ),
+              DockItemId.tools: DockItemAction(
+                onTap: () =>
+                    openDockTools(context, _active, widget.connManager),
+              ),
+            },
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1869,6 +2032,136 @@ class _RecentGroupHeader extends StatelessWidget {
   }
 }
 
+/// Contraste mínimo WCAG AA para texto pequeño.
+const double _kMinActivityContrast = 4.5;
+
+double _contrastRatio(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  final hi = la > lb ? la : lb;
+  final lo = la > lb ? lb : la;
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/// Tono legible para la línea de "actividad en curso" sobre [background].
+///
+/// `colors.secondary` cambia radicalmente entre los ~8 temas del catálogo
+/// (de `#1540B1` en Nous claro a `#FFE600` en alto contraste, pasando por
+/// `#606060` en Mono): en varios queda por debajo de 4.5:1 sobre la
+/// superficie y el usuario lo veía "en blanco", indistinguible del título de
+/// la conversación. En vez de fijar un color que solo funciona en un tema, el
+/// tono del tema se aclara —u oscurece, en temas claros— hasta cruzar el
+/// umbral, conservando su identidad.
+@visibleForTesting
+Color readableActivityTone(Color tone, Color background) {
+  if (_contrastRatio(tone, background) >= _kMinActivityContrast) return tone;
+  final target = background.computeLuminance() < 0.5
+      ? Colors.white
+      : Colors.black;
+  var candidate = tone;
+  for (var step = 1; step <= 10; step++) {
+    candidate = Color.lerp(tone, target, step / 10)!;
+    if (_contrastRatio(candidate, background) >= _kMinActivityContrast) {
+      return candidate;
+    }
+  }
+  return candidate;
+}
+
+/// Contraste mínimo para que un tono se perciba como distinto del título.
+const double _kMinTitleSeparation = 1.3;
+
+/// Tono definitivo de la línea de actividad para un tema concreto.
+///
+/// Dos trampas reales del catálogo, las dos con el mismo síntoma (la
+/// actividad acaba con el color del título, que es literalmente la queja
+/// "no se aprecia la diferencia con el título"):
+///  - Mono: `secondary` ya es el gris claro del título (`#EAEAEA`), y
+///    aclararlo para cumplir AA lo deja idéntico. Su `accent` gris medio sí
+///    se separa.
+///  - Cyberpunk: ni `secondary` ni `accent` se separan del `textPrimary`
+///    neón. Ahí se atenúa el tono hacia el fondo hasta separarlo, sin bajar
+///    nunca del umbral AA.
+@visibleForTesting
+Color resolveActivityTone(HermesThemeColors colors) {
+  bool separated(Color tone) =>
+      _contrastRatio(tone, colors.textPrimary) >= _kMinTitleSeparation;
+
+  Color? fallback;
+  for (final candidate in <Color>[colors.secondary, colors.accent]) {
+    final tone = readableActivityTone(candidate, colors.background);
+    if (separated(tone)) return tone;
+    fallback ??= tone;
+  }
+  var tone = fallback!;
+  for (var step = 1; step <= 12; step++) {
+    final dimmed = Color.lerp(fallback, colors.background, step / 20)!;
+    if (_contrastRatio(dimmed, colors.background) < _kMinActivityContrast) {
+      break;
+    }
+    tone = dimmed;
+    if (separated(dimmed)) return dimmed;
+  }
+  return tone;
+}
+
+String _sentenceCase(String value) =>
+    value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
+
+/// Línea de actividad en curso: píldora con tinte propio, punto de estado y
+/// texto en peso medio.
+///
+/// Antes era un `Text` del mismo tamaño y peso que la vista previa normal,
+/// pintado con `colors.secondary` a pelo: en la mayoría de temas se leía
+/// lavado y no se distinguía del título, así que no se sabía qué estaba
+/// haciendo la conversación. El tinte de fondo + el punto + el peso dan la
+/// diferencia sin depender de que el `secondary` del tema tenga contraste.
+class _ActivityLine extends StatelessWidget {
+  const _ActivityLine({required this.label, super.key});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final tone = resolveActivityTone(colors);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: tone.withValues(alpha: 0.13),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600,
+                  color: tone,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _RecentSessionTile extends StatelessWidget {
   final Session session;
   final String title;
@@ -1895,16 +2188,25 @@ class _RecentSessionTile extends StatelessWidget {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final userPreview = summary.user;
     final assistantPreview = summary.assistant;
-    final assistantOrActivity =
-        activityLabel ??
-        (assistantPreview == null
-            ? null
-            : projectAssistantOperationalArtifacts(
-                assistantPreview,
-                subagentLabel: strings.subagentActivityItem,
-                resultLabel: strings.commonResult,
-              ).visibleMarkdown);
-    final visualPreview = assistantOrActivity ?? userPreview;
+    final assistantText = assistantPreview == null
+        ? null
+        : projectAssistantOperationalArtifacts(
+            assistantPreview,
+            subagentLabel: strings.subagentActivityItem,
+            resultLabel: strings.commonResult,
+          ).visibleMarkdown;
+    final assistantOrActivity = activityLabel ?? assistantText;
+    // Borrador: texto descriptivo hilado en la línea de vista previa
+    // ("Borrador · Resume los cambios…"), como el mockup de Conversaciones, en
+    // vez de una píldora "BORRADOR" en mayúsculas junto al título — las
+    // "cajitas feas" que pedía quitar el mantenedor.
+    final basePreview = assistantText ?? userPreview;
+    final previewText = session.hasLocalDraft
+        ? <String>[
+            _sentenceCase(strings.slDraftBadge),
+            ?basePreview,
+          ].join(' · ')
+        : basePreview;
 
     // Fila ligera: jerarquía por texto y divisor, sin cards pesadas.
     // Semantics compone una descripción legible para TalkBack (título, turno
@@ -1961,27 +2263,33 @@ class _RecentSessionTile extends StatelessWidget {
                               : const Duration(milliseconds: 160),
                           switchInCurve: Curves.easeOut,
                           switchOutCurve: Curves.easeIn,
-                          child: visualPreview == null
+                          child: activityLabel != null
+                              ? Padding(
+                                  key: ValueKey('activity-$activityLabel'),
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: _ActivityLine(
+                                    key: ValueKey(
+                                      'home-activity-${session.id}',
+                                    ),
+                                    label: activityLabel!,
+                                  ),
+                                )
+                              : previewText == null
                               ? const SizedBox.shrink()
                               : Padding(
-                                  key: ValueKey(
-                                    '${activityLabel == null ? 'preview' : 'activity'}'
-                                    '-$visualPreview',
-                                  ),
+                                  key: ValueKey('preview-$previewText'),
                                   padding: const EdgeInsets.only(top: 3),
                                   child: Text(
-                                    visualPreview,
+                                    previewText,
+                                    key: session.hasLocalDraft
+                                        ? ValueKey('home-draft-${session.id}')
+                                        : null,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontSize: 12.5,
                                       height: 1.2,
-                                      fontWeight: activityLabel == null
-                                          ? FontWeight.w400
-                                          : FontWeight.w600,
-                                      color: activityLabel == null
-                                          ? colors.textSecondary
-                                          : colors.secondary,
+                                      color: colors.textSecondary,
                                     ),
                                   ),
                                 ),
@@ -1990,15 +2298,6 @@ class _RecentSessionTile extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (session.hasLocalDraft) ...[
-                  const SizedBox(width: 8),
-                  HermesPill(
-                    key: ValueKey('home-draft-${session.id}'),
-                    color: colors.accent,
-                    label: Strings.of(context).slDraftBadge,
-                    showDot: false,
-                  ),
-                ],
                 const SizedBox(width: 12),
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
@@ -2050,6 +2349,51 @@ class _RecentSessionTile extends StatelessWidget {
       child: tile,
     );
   }
+}
+
+/// Envoltorio público de la fila de "recientes" para blindar con widget tests
+/// su presentación (borrador hilado, actividad legible) sin levantar el
+/// dashboard completo con su red, su companion y su compositor.
+@visibleForTesting
+class HomeRecentSessionTileForTesting extends StatelessWidget {
+  const HomeRecentSessionTileForTesting({
+    required this.sessionId,
+    required this.title,
+    this.userPreview,
+    this.assistantPreview,
+    this.activityLabel,
+    this.hasLocalDraft = false,
+    this.relativeTime = '12:40',
+    super.key,
+  });
+
+  final String sessionId;
+  final String title;
+  final String? userPreview;
+  final String? assistantPreview;
+  final String? activityLabel;
+  final bool hasLocalDraft;
+  final String relativeTime;
+
+  @override
+  Widget build(BuildContext context) => _RecentSessionTile(
+    session: Session(
+      id: sessionId,
+      title: title,
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 2,
+      isActive: false,
+      preview: userPreview ?? '',
+      startedAt: 1,
+      hasLocalDraft: hasLocalDraft,
+    ),
+    title: title,
+    summary: HomeRecentSummary(user: userPreview, assistant: assistantPreview),
+    activityLabel: activityLabel,
+    relativeTime: relativeTime,
+    onTap: () {},
+  );
 }
 
 enum _RecentAction { rename, delete }

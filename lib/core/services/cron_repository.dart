@@ -19,8 +19,9 @@ class CronJobListing {
 class CronRepository {
   final DashboardClient client;
   final String profile;
+  final bool botRoutines;
 
-  const CronRepository(this.client, {this.profile = ''});
+  const CronRepository(this.client, {this.profile = '', this.botRoutines = false});
 
   String _query({bool hasQuery = false}) {
     if (profile.isEmpty) return '';
@@ -204,7 +205,8 @@ class CronRepository {
       body: {
         'prompt': prompt,
         'schedule': schedule,
-        if (name.isNotEmpty) 'name': name,
+        if (botRoutines) 'name': botRoutineName(profile, name, prompt)
+        else if (name.isNotEmpty) 'name': name,
         'deliver': deliver.isEmpty ? 'local' : deliver,
         if (model.isNotEmpty) 'model': model,
         if (model.isNotEmpty && provider.isNotEmpty) 'provider': provider,
@@ -223,7 +225,7 @@ class CronRepository {
     required String provider,
   }) async {
     final updates = <String, dynamic>{
-      'name': name,
+      'name': botRoutines ? botRoutineName(profile, name, prompt) : name,
       'schedule': schedule,
       'deliver': deliver,
       if (!job.isScriptOnly || prompt.isNotEmpty) 'prompt': prompt,
@@ -263,4 +265,12 @@ class CronRepository {
     );
     return CronJob.fromJson(data);
   }
+}
+
+String botRoutineName(String profile, String name, String prompt) {
+  final owner = profile.trim().isEmpty ? 'default' : profile.trim();
+  final prefix = '[bot:$owner] ';
+  if (name.startsWith(prefix)) return name;
+  final title = name.trim().isNotEmpty ? name.trim() : prompt.trim().split('\n').first;
+  return '$prefix${title.length > 80 ? title.substring(0, 80) : title}';
 }

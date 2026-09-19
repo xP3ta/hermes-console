@@ -1,3 +1,5 @@
+import '../models/bot_mention.dart';
+import '../widgets/chat_mention_palette.dart';
 // Chat screen with real-time streaming via REST API.
 // Uses REST endpoints: POST /api/sessions/{id}/chat and
 // GET /api/sessions/{id}/messages.
@@ -54,12 +56,11 @@ import '../models/desktop_session_config.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/generated_artifact.dart';
 import '../models/interactive_prompt.dart';
-import '../models/kanban.dart';
-import '../models/mission_room.dart';
 import '../models/prepared_turn.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
 import '../navigation/chat_route.dart';
+import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
 import '../services/artifact_export_service.dart';
@@ -70,8 +71,6 @@ import '../services/bridge_update_service.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
-import '../services/kanban_client.dart';
-import '../services/mission_room_store.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/drawer_gesture_exclusion.dart';
@@ -149,8 +148,8 @@ import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
+import '../widgets/turn_activity_pill.dart';
 import '../widgets/platform_setup_commands.dart';
-import '../widgets/hermes_pill.dart';
 import '../widgets/read_only.dart';
 import '../widgets/read_aloud_button.dart';
 import '../widgets/reasoning_block.dart';
@@ -1000,27 +999,14 @@ class ChatScreen extends StatefulWidget {
   final bool initialVoiceMode;
   final bool requestComposerFocus;
   final String? initialStoredSessionId;
-  final MissionRoom? missionRoom;
-  final MissionRoomStoreContract? missionRoomStore;
 
-  /// Roster autoritativo y caché de identidad que Mission Control ya mantiene.
-  /// Solo los consumen las superficies Bot/Room; el chat normal no depende de
-  /// estos datos ni abre lecturas adicionales de avatars.
-  final Map<String, AgentProfile> missionRoomProfiles;
+  /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
   /// Identidad del bot cuando la superficie es un Bot Chat (`_isBotChatSurface`).
   /// La aporta Mission Control, que ya tiene el `AgentProfile` autoritativo;
   /// sin ella la cabecera cae al nombre del profile de la sesión.
   final AgentProfile? missionBotProfile;
-  @visibleForTesting
-  final Future<KanbanTask> Function(MissionMentionIntent intent)?
-  missionRoomTaskCreator;
-  @visibleForTesting
-  final Future<Iterable<String>> Function()? missionRoomWorkerRosterLoader;
-  @visibleForTesting
-  final KanbanClient Function(SavedConnection connection)?
-  missionRoomKanbanClientFactory;
   @visibleForTesting
   final ChatPerformanceProbe? performanceProbe;
   @visibleForTesting
@@ -1044,14 +1030,8 @@ class ChatScreen extends StatefulWidget {
     this.initialVoiceMode = false,
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
-    this.missionRoom,
-    this.missionRoomStore,
-    this.missionRoomProfiles = const {},
     this.missionAvatarCache,
     this.missionBotProfile,
-    this.missionRoomTaskCreator,
-    this.missionRoomWorkerRosterLoader,
-    this.missionRoomKanbanClientFactory,
     this.performanceProbe,
     this.attachmentMaterializer,
     this.attachmentPrivateCopyDeleter,
@@ -1116,14 +1096,26 @@ class _ChatScreenState extends State<ChatScreen>
   List<ChatTraceEvent> get _trace => _chat.trace;
   String get _lastPrompt => _chat.lastPrompt;
 
-  bool _loading = true;
   String? _error;
   bool _loadingEarlierMessages = false;
   int _messageRefreshEpoch = 0;
-  int? _messageRefreshInFlightEpoch;
-  int? _passiveMessageRefreshEpoch;
+  ({int epoch, bool passiveOnly, bool published})? _messageRefreshInFlight;
+  int? get _messageRefreshInFlightEpoch => _messageRefreshInFlight?.epoch;
+  int? get _messageRefreshPublishedEpoch =>
+      _messageRefreshInFlight?.published == true
+      ? _messageRefreshInFlight?.epoch
+      : null;
+
+  // Only the current interactive read awaiting transcript publication fences
+  // editing. REST can publish before runtime resume finishes; passive polling
+  // and superseded futures must never keep a usable transcript's composer shut.
+  // Identity, kind and publication travel together, with no separate busy flag
+  // to inherit from a predecessor or forget to clear on an early return.
+  bool get _interactiveMessageRefreshPending =>
+      _messageRefreshInFlight != null &&
+      !_messageRefreshInFlight!.passiveOnly &&
+      !_messageRefreshInFlight!.published;
   int? _messageRefreshAnchorEpoch;
-  int? _messageRefreshPublishedEpoch;
   bool _messageRefreshReanchorScheduled = false;
   ForegroundConversationReader? _passiveConversationReader;
   bool _chatRouteVisible = false;
@@ -1142,6 +1134,40 @@ class _ChatScreenState extends State<ChatScreen>
   // páginas anteriores al llegar al extremo del timeline.
   bool _coreReadCoverageNoticeDismissed = false;
 
+  // The subagent-activity pill is a UI-layer cache on top of
+  // `_chat.subagentActivities`: the service clears that list once work is
+  // retired (see active_chat_service.dart's `_rememberRetiredSubagentTerminals`
+  // + `_subagentActivities = null`), which used to make the pill vanish the
+  // instant everything finished — right when someone actually wants to open
+  // it and check what happened. This widget-local copy keeps showing the
+  // last known activities after they go empty, until the person dismisses
+  // it (×) or genuinely new work starts. It never touches the service's own
+  // retirement/reconciliation logic, only what this screen displays.
+  List<SubagentActivity> _lastNonEmptySubagentActivities =
+      const <SubagentActivity>[];
+  bool _subagentPillDismissed = false;
+
+  List<SubagentActivity> get _displaySubagentActivities {
+    final live = _chat.subagentActivities;
+    if (live.isNotEmpty) {
+      _lastNonEmptySubagentActivities = live;
+      if (live.any((a) => !a.isTerminal)) _subagentPillDismissed = false;
+    }
+    // A momentarily empty `live` (a poll gap, a cover/pause/reconnect cycle)
+    // is not proof of retirement — this getter runs on every build, so
+    // clearing the cache here on a single empty read reintroduces the exact
+    // flicker it exists to prevent. Genuine retirement is instead confirmed
+    // event-driven, at a new turn's `ActiveChatEvent.started` (see
+    // `_onChatEvent`), which is the actual authoritative "this is over" signal.
+    return _subagentPillDismissed
+        ? const <SubagentActivity>[]
+        : _lastNonEmptySubagentActivities;
+  }
+
+  void _dismissSubagentPill() {
+    setState(() => _subagentPillDismissed = true);
+  }
+
   // Chat sending state — derived from pipeline state.
   late final TextEditingController _textController;
   final _textFocusNode = FocusNode();
@@ -1158,18 +1184,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool _composerEmpty = true;
   // Sugerencias de comandos slash mientras se escribe `/…` en el compositor.
   List<SlashCommand> _slashSuggestions = const [];
-  List<String> _roomMentionSuggestions = const [];
-  final Set<String> _selectedRoomMentions = {};
-  String _roomMentionIntentId = const Uuid().v4();
-  bool _roomTaskSubmitting = false;
-  String? _roomTaskFrozenText;
-  String? _roomTaskBoardId;
-  String? _roomTaskBoardQuery;
-  MissionRoomTaskPhase? _roomTaskPhase;
-  static final Set<String> _roomTaskFlights = <String>{};
-  String? _boundMissionManagerSessionId;
-  String? _missionManagerBindFlightId;
-  Future<void>? _missionManagerBindFlight;
   DesktopCommandCatalog? _desktopCommandCatalog;
   Timer? _slashCompletionDebounce;
   int _slashCompletionEpoch = 0;
@@ -1219,6 +1233,15 @@ class _ChatScreenState extends State<ChatScreen>
   late final ValueChanged<List<AttachmentDraft>> _attachmentListener;
   Timer? _draftTimer;
   bool _restoringDraft = false;
+  bool _draftLoaded = false;
+  // Un composer vacío NO prueba que nadie lo haya tocado: también es el estado
+  // exacto en el que queda cuando el usuario borra el texto a mano. La
+  // recuperación de un turno puede reconciliar mucho después de abrir el chat
+  // (una sesión desconectada tarda hasta que el transporte responde o expira),
+  // y sin esta marca reinyectaría en el composer el texto que el usuario acaba
+  // de borrar; al salir, el flush de `dispose` volvía a persistirlo y la sesión
+  // seguía anunciando «borrador» con ese mismo texto.
+  bool _composerEmptiedByUser = false;
   // Cubre el intervalo previo a ActiveChat.send (aprobación + subida + copia
   // local). Sin este estado, varios taps podían iniciar la misma subida.
   bool _attachmentSubmitting = false;
@@ -1229,25 +1252,11 @@ class _ChatScreenState extends State<ChatScreen>
   // sustituye `_sending`: después del ACK el composer vuelve a aceptar texto y
   // Hermes puede tratarlo como steering durante el run actual.
   bool _composerSubmissionInFlight = false;
+  // Suelta acotada de la valla anterior durante un Stop. Ver `_cancelStream`.
+  Timer? _composerStopLockTimer;
   bool _imagePickerOpen = false;
   bool _documentPickerOpen = false;
   static const int _maxPendingImages = 10;
-
-  bool get _hasDurableRoomTaskOperation =>
-      widget.missionRoom != null &&
-      _selectedRoomMentions.isNotEmpty &&
-      _roomTaskPhase != null;
-
-  bool get _roomTaskOutcomeUnknown =>
-      _roomTaskPhase == MissionRoomTaskPhase.outcomeUnknown;
-
-  bool get _roomTaskMutationLocked =>
-      _roomTaskSubmitting || _roomTaskOutcomeUnknown;
-
-  bool get _hasUnresolvedPreparedTurn {
-    final prepared = _preparedTurn;
-    return prepared != null && prepared.state != PreparedTurnState.terminal;
-  }
 
   // Developer diagnostics mode (ex verbose)
   bool _devDiagnostics = false;
@@ -1339,8 +1348,11 @@ class _ChatScreenState extends State<ChatScreen>
   int? _surfaceTurnSerial;
   bool _surfaceTurnTerminal = false;
 
+  // Aspecto acotado a propósito: `MediaQuery.maybeOf` suscribía este State
+  // entero a CUALQUIER cambio de MediaQuery (cada frame de la animación del
+  // teclado incluido), no solo a la preferencia de movimiento reducido.
   bool get _reduceMotion =>
-      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
   void _clearRetainedTerminalReferences() {
     final retained = _retainedTerminalAssistant;
@@ -1575,11 +1587,7 @@ class _ChatScreenState extends State<ChatScreen>
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
     _appInForeground =
         lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
-    _textController = widget.missionRoom == null
-        ? _SlashAccentTextEditingController()
-        : _RoomMentionTextEditingController(
-            selectedMentions: () => _selectedRoomMentions,
-          );
+    _textController = _SlashAccentTextEditingController();
     _attachmentListener = _applyAttachmentProjection;
     _sessionUsageSnapshot = widget.session;
     WidgetsBinding.instance.addObserver(this);
@@ -1683,8 +1691,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   String get _draftRecoverySessionId {
-    final room = widget.missionRoom;
-    if (room != null) return 'mob-room-${room.id}';
     if (!_isBotChatSurface &&
         widget.session.isUnpersistedMobileDraft &&
         _chatBound &&
@@ -1706,9 +1712,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _authorizeDraftDestination(String sessionId) {
-    if (widget.missionRoom == null &&
-        !_isBotChatSurface &&
-        sessionId != widget.session.id) {
+    if (!_isBotChatSurface && sessionId != widget.session.id) {
       LocalConversationCleanupFence.authorizeCreatedSession(
         _localConversationLifecycle,
         sessionId,
@@ -1725,17 +1729,14 @@ class _ChatScreenState extends State<ChatScreen>
     'bot-mode-local',
   }.contains(widget.session.source.trim().toLowerCase());
 
-  bool get _allowsDedicatedVoiceLaunch =>
-      widget.missionRoom == null && !_isBotChatSurface;
+  bool get _allowsDedicatedVoiceLaunch => !_isBotChatSurface;
 
   Set<String> get _draftRecoveryAliases {
-    final room = widget.missionRoom;
-    if (room == null && !_isBotChatSurface) return <String>{};
+    if (!_isBotChatSurface) return <String>{};
     return <String>{
       widget.session.id,
       widget.session.logicalId,
       ?widget.initialStoredSessionId?.trim(),
-      ?room?.managerSessionId.trim(),
     }..removeWhere((id) => id.isEmpty || id == _draftRecoverySessionId);
   }
 
@@ -1782,11 +1783,6 @@ class _ChatScreenState extends State<ChatScreen>
         legacy.attachments,
         profile: profile,
         preparedTurnClientTurnId: legacy.preparedTurnClientTurnId,
-        missionRoomIntentId: legacy.missionRoomIntentId,
-        missionRoomWorkerProfile: legacy.missionRoomWorkerProfile,
-        missionRoomBoardId: legacy.missionRoomBoardId,
-        missionRoomBoardQuery: legacy.missionRoomBoardQuery,
-        missionRoomTaskPhase: legacy.missionRoomTaskPhase,
         lifecycle: _localConversationLifecycle,
       );
       await store.clear(
@@ -1810,13 +1806,12 @@ class _ChatScreenState extends State<ChatScreen>
     final outbox = TurnOutboxStore(lifecycle: _localConversationLifecycle);
     // El borrador pinta primero: la reconciliación adicional de outbox no debe
     // retrasar el composer ni introducir una carrera visible al navegar rápido.
+    _draftStore = store;
     var draft = await _loadDraftWithRecoveryMigration(store);
     if (!mounted) return;
-    _draftStore = store;
     _turnOutbox = outbox;
     final linkedDiscard = draft.preparedTurnClientTurnId;
-    if (widget.missionRoom == null &&
-        linkedDiscard != null &&
+    if (linkedDiscard != null &&
         await outbox.isFailedBeforeAcceptanceDiscarded(
           connectionId: widget.connection.id,
           profile: _recoveryProfile,
@@ -1832,10 +1827,11 @@ class _ChatScreenState extends State<ChatScreen>
       );
       draft = const ChatDraft(text: '', attachments: []);
     }
+    if (!mounted || _disposed) return;
+    _draftLoaded = true;
     final liveDeliveryAtRestore = _chatBound ? _chat.activeTurnDelivery : null;
     final liveOwnsRestoredDraft =
         liveDeliveryAtRestore != null &&
-        !draft.hasMissionRoomOperation &&
         draft.text == liveDeliveryAtRestore.current.text &&
         _sameAttachmentDrafts(
           draft.attachments,
@@ -1844,48 +1840,19 @@ class _ChatScreenState extends State<ChatScreen>
     _restoringDraft = true;
     setState(() {
       _composerPreparedTurnClientTurnId = draft.preparedTurnClientTurnId;
-      if (!liveOwnsRestoredDraft && _textController.text.isEmpty) {
+      if (!liveOwnsRestoredDraft &&
+          !_composerEmptiedByUser &&
+          _textController.text.isEmpty) {
         _textController.text = draft.text;
       }
-      if (!liveOwnsRestoredDraft && _pendingAttachments.isEmpty) {
+      if (!liveOwnsRestoredDraft &&
+          !_composerEmptiedByUser &&
+          _pendingAttachments.isEmpty) {
         _pendingAttachments.addAll(draft.attachments);
       }
-      final room = widget.missionRoom;
-      final worker = draft.missionRoomWorkerProfile;
-      final intentId = draft.missionRoomIntentId;
-      if (room != null &&
-          worker != null &&
-          worker != room.managerProfile &&
-          room.memberProfiles.contains(worker) &&
-          intentId != null &&
-          RegExp(
-            '(^|\\s)@${RegExp.escape(worker)}(?=\\s|\$|[.,;:!?])',
-          ).hasMatch(draft.text)) {
-        _selectedRoomMentions
-          ..clear()
-          ..add(worker);
-        _roomMentionIntentId = intentId;
-        _roomTaskBoardId = draft.missionRoomBoardId;
-        _roomTaskBoardQuery = draft.missionRoomBoardQuery;
-        _roomTaskPhase =
-            draft.missionRoomTaskPhase == MissionRoomTaskPhase.submitting
-            ? MissionRoomTaskPhase.outcomeUnknown
-            : draft.missionRoomTaskPhase;
-      }
     });
-    if (_roomTaskOutcomeUnknown) {
-      _roomTaskFrozenText = draft.text;
-    }
     _restoringDraft = false;
     _syncProducerAttachmentRetention();
-    if (draft.missionRoomTaskPhase == MissionRoomTaskPhase.submitting &&
-        _selectedRoomMentions.isNotEmpty) {
-      // The process disappeared after the operation was durably marked as
-      // submitting. Never infer that the POST failed: persist the ambiguity
-      // and make the next action read-only reconciliation.
-      await _saveDraftSnapshot(draft.text, draft.attachments);
-      if (!mounted) return;
-    }
 
     // Si el servicio sigue vivo, él posee la frontera de transporte. Leer la
     // outbox con `loadForChat` convertiría un `submitting` legítimo en ambiguo
@@ -1947,37 +1914,13 @@ class _ChatScreenState extends State<ChatScreen>
             PreparedTurnState.running ||
             PreparedTurnState.terminal => false,
           };
-    final preservesMissionRoomOperation =
-        widget.missionRoom != null && _selectedRoomMentions.isNotEmpty;
-    if (preservesMissionRoomOperation) {
-      // A manager turn owns only its encrypted outbox entry. The current draft
-      // is an independent durable Room worker operation with its own
-      // idempotency key/FSM. No manager outbox state may replace its composer,
-      // attachments, mention or identity.
-      if (prepared.state == PreparedTurnState.terminal) {
-        try {
-          await outbox.delete(prepared);
-        } catch (error) {
-          debugPrint(
-            '[turn-outbox] reconciled cleanup failed (${error.runtimeType})',
-          );
-        }
-        if (identical(_preparedTurn, prepared)) _preparedTurn = null;
-      } else if (prepared.state == PreparedTurnState.ambiguous ||
-          prepared.state == PreparedTurnState.prepared ||
-          prepared.state == PreparedTurnState.failedBeforeAcceptance) {
-        _showHiddenRecoveredTurn(prepared);
-      } else if ((prepared.state == PreparedTurnState.accepted ||
-              prepared.state == PreparedTurnState.running) &&
-          reconciledDelivery == null) {
-        _showHiddenRecoveredTurn(prepared);
-      }
-      return;
-    }
     // Solo reconciliamos si el usuario no empezó a editar mientras se leía el
-    // Keystore. Nunca pisamos escritura nueva con un snapshot tardío.
+    // Keystore. Nunca pisamos escritura nueva con un snapshot tardío. Vaciar el
+    // composer a mano cuenta como escritura nueva: un vacío deliberado no es un
+    // composer intacto, aunque el texto coincida con «nada».
     final composerStillAtDraft =
-        _textController.text.isEmpty || _textController.text == draft.text;
+        !_composerEmptiedByUser &&
+        (_textController.text.isEmpty || _textController.text == draft.text);
     final attachmentsStillAtDraft = _sameAttachmentDrafts(
       _pendingAttachments,
       draft.attachments,
@@ -2005,7 +1948,6 @@ class _ChatScreenState extends State<ChatScreen>
     _syncProducerAttachmentRetention();
     if (recoverPrepared &&
         prepared.state == PreparedTurnState.failedBeforeAcceptance &&
-        widget.missionRoom == null &&
         draft.preparedTurnClientTurnId != prepared.clientTurnId) {
       // Backfill para drafts creados por v23: a partir de aquí cualquier
       // corte entre tombstone y clear puede atribuirlos al intento exacto.
@@ -2045,8 +1987,6 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _showHiddenRecoveredTurn(PreparedTurn prepared) {
     if (!mounted || prepared.state == PreparedTurnState.terminal) return;
-    final preserveRoomDraft =
-        widget.missionRoom != null && _selectedRoomMentions.isNotEmpty;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !identical(_preparedTurn, prepared)) return;
       final ambiguous = prepared.state == PreparedTurnState.ambiguous;
@@ -2061,39 +2001,29 @@ class _ChatScreenState extends State<ChatScreen>
                 ? Strings.of(context).chaAmbiguousRestored
                 : acknowledged
                 ? english
-                      ? 'Hermes could not reattach a manager turn that may still be running. Worker tasks stay blocked. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
-                      : 'Hermes no pudo reanexar un turno del manager que aún podría seguir activo. Las tareas worker quedan bloqueadas. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
+                      ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
+                      : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
                 : english
-                ? 'A pending manager turn was recovered. The Room task stays unchanged; discard the manager recovery to continue.'
-                : 'Se recuperó un turno pendiente del manager. La tarea de la Sala sigue intacta; descarta la recuperación del manager para continuar.',
+                ? 'A pending turn was recovered. Discard the recovery to continue.'
+                : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.',
           ),
           duration: const Duration(seconds: 8),
           action: SnackBarAction(
             label: Strings.of(context).chaDiscardRecovered,
-            onPressed: () => unawaited(
-              _discardRecoveredTurn(
-                prepared,
-                preserveRoomDraft: preserveRoomDraft,
-              ),
-            ),
+            onPressed: () => unawaited(_discardRecoveredTurn(prepared)),
           ),
         ),
       );
     });
   }
 
-  Future<void> _discardRecoveredTurn(
-    PreparedTurn prepared, {
-    bool preserveRoomDraft = false,
-  }) async {
-    final composerStillMatches =
-        !preserveRoomDraft &&
-        prepared.matchesBatch(
-          text: _textController.text,
-          attachments: List<AttachmentDraft>.of(_pendingAttachments),
-          model: prepared.model,
-          profile: prepared.profile,
-        );
+  Future<void> _discardRecoveredTurn(PreparedTurn prepared) async {
+    final composerStillMatches = prepared.matchesBatch(
+      text: _textController.text,
+      attachments: List<AttachmentDraft>.of(_pendingAttachments),
+      model: prepared.model,
+      profile: prepared.profile,
+    );
     try {
       await (await _outboxStore()).delete(prepared);
     } catch (error) {
@@ -2120,7 +2050,6 @@ class _ChatScreenState extends State<ChatScreen>
   void _maybeDiscardFailedTurnFromExplicitEmptyComposer() {
     if (_restoringDraft ||
         _composerSubmissionInFlight ||
-        widget.missionRoom != null ||
         _textController.text.isNotEmpty ||
         _pendingAttachments.isNotEmpty) {
       return;
@@ -2239,7 +2168,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _scheduleDraftSave() {
     _syncProducerAttachmentRetention();
-    if (_restoringDraft || _roomTaskSubmitting) return;
+    if (_restoringDraft) return;
     _draftTimer?.cancel();
     final text = _textController.text;
     final attachments = List<AttachmentDraft>.of(_pendingAttachments);
@@ -2270,13 +2199,20 @@ class _ChatScreenState extends State<ChatScreen>
     bool finalDisposeSnapshot = false,
   }) async {
     if (_disposed && !finalDisposeSnapshot) return false;
+    // Leaving during secure restore must not replace unread content with empty UI.
+    if (!_draftLoaded &&
+        text.isEmpty &&
+        attachments.isEmpty &&
+        !_composerEmptiedByUser) {
+      return false;
+    }
     final previous = _draftSnapshotTail;
     final completed = Completer<void>();
     _draftSnapshotTail = completed.future;
     try {
       final recoveryId = _draftRecoverySessionId;
       _authorizeDraftDestination(recoveryId);
-      final retiredId = widget.missionRoom != null || _isBotChatSurface
+      final retiredId = _isBotChatSurface
           ? null
           : recoveryId == widget.session.id
           ? _normalCanonicalDraftId
@@ -2285,16 +2221,6 @@ class _ChatScreenState extends State<ChatScreen>
       final store =
           _draftStore ?? ChatDraftStore(await SharedPreferences.getInstance());
       _draftStore ??= store;
-      String? roomWorker;
-      final room = widget.missionRoom;
-      if (room != null) {
-        for (final selected in _selectedRoomMentions) {
-          if (selected != room.managerProfile) {
-            roomWorker = selected;
-            break;
-          }
-        }
-      }
       final saved = store.save(
         widget.connection.id,
         recoveryId,
@@ -2304,11 +2230,6 @@ class _ChatScreenState extends State<ChatScreen>
         preparedTurnClientTurnId: preparedTurnAuthorityCaptured
             ? preparedTurnClientTurnId
             : preparedTurnClientTurnId ?? _composerPreparedTurnClientTurnId,
-        missionRoomIntentId: roomWorker == null ? null : _roomMentionIntentId,
-        missionRoomWorkerProfile: roomWorker,
-        missionRoomBoardId: roomWorker == null ? null : _roomTaskBoardId,
-        missionRoomBoardQuery: roomWorker == null ? null : _roomTaskBoardQuery,
-        missionRoomTaskPhase: roomWorker == null ? null : _roomTaskPhase,
         lifecycle: _localConversationLifecycle,
         afterSave: previous.then((_) => true),
       );
@@ -2342,10 +2263,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<bool> _clearDraft({bool allowRoomTaskOperation = false}) async {
-    if (_roomTaskSubmitting && !allowRoomTaskOperation) return false;
+  Future<bool> _clearDraft() async {
     _draftTimer?.cancel();
-    if (widget.missionRoom == null && !_isBotChatSurface) {
+    if (!_isBotChatSurface) {
       return _saveDraftSnapshot('', const []);
     }
     try {
@@ -2425,10 +2345,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _applyAttachmentProjection(List<AttachmentDraft> projected) {
-    if (_disposed ||
-        !mounted ||
-        _pendingAttachments.isEmpty ||
-        _hasDurableRoomTaskOperation) {
+    if (_disposed || !mounted || _pendingAttachments.isEmpty) {
       return;
     }
     final byId = <String, AttachmentDraft>{
@@ -2479,7 +2396,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _removePendingAttachment(String localId) async {
-    if (_roomTaskMutationLocked) return;
     final delivery = await _attachmentDeliveryForMutation();
     if (delivery != null &&
         delivery.current.attachments.any((item) => item.localId == localId)) {
@@ -2500,7 +2416,6 @@ class _ChatScreenState extends State<ChatScreen>
     final removedAttachment = _pendingAttachments[removed];
     setState(() {
       _pendingAttachments.removeAt(removed);
-      _invalidatePreparedRoomTaskForMutation();
     });
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
@@ -2512,7 +2427,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _retryPendingAttachment(String localId) async {
-    if (_roomTaskMutationLocked) return;
     final delivery = await _attachmentDeliveryForMutation();
     if (delivery == null) return;
     await delivery.retryAttachment(localId);
@@ -2578,43 +2492,15 @@ class _ChatScreenState extends State<ChatScreen>
     if (_isRecording || _transcribing) {
       return;
     }
-    if (_roomTaskMutationLocked) {
-      final frozen = _roomTaskFrozenText;
-      if (frozen != null && text != frozen) {
-        _textController.value = TextEditingValue(
-          text: frozen,
-          selection: TextSelection.collapsed(offset: frozen.length),
-        );
-      }
-      return;
-    }
     final isEmpty = text.isEmpty;
+    // Intención explícita del usuario sobre ESTE composer. Los vaciados
+    // programáticos (restaurar, descartar, soltar el lote al enviar) ya se
+    // envuelven en `_restoringDraft` y no la marcan.
+    if (isEmpty && !_restoringDraft) _composerEmptiedByUser = true;
     final suggestions = slashSuggestionsFor(text, Strings.of(context));
-    final roomSuggestions = _missionRoomSuggestions(text);
-    final selectedBefore = Set<String>.of(_selectedRoomMentions);
-    _selectedRoomMentions.removeWhere(
-      (profile) => !RegExp(
-        '(^|\\s)@${RegExp.escape(profile)}(?=\\s|\$|[.,;:!?])',
-      ).hasMatch(text),
-    );
-    if (_selectedRoomMentions.isEmpty) {
-      _roomTaskBoardId = null;
-      _roomTaskBoardQuery = null;
-      _roomTaskPhase = null;
-    } else if (_roomTaskPhase == MissionRoomTaskPhase.prepared) {
-      // Any edit before the write is a new payload and therefore a new
-      // idempotency identity. Ambiguous operations stay locked until the user
-      // explicitly clears the mention; silently rotating them could duplicate.
-      _roomMentionIntentId = const Uuid().v4();
-      _roomTaskBoardId = null;
-      _roomTaskBoardQuery = null;
-      _roomTaskPhase = null;
-    }
     final changed =
         isEmpty != _composerEmpty ||
         suggestions.length != _slashSuggestions.length ||
-        !_sameStrings(roomSuggestions, _roomMentionSuggestions) ||
-        !_sameStringSets(selectedBefore, _selectedRoomMentions) ||
         (suggestions.isNotEmpty &&
             _slashSuggestions.isNotEmpty &&
             suggestions.first.name != _slashSuggestions.first.name);
@@ -2622,7 +2508,6 @@ class _ChatScreenState extends State<ChatScreen>
       setState(() {
         _composerEmpty = isEmpty;
         _slashSuggestions = suggestions;
-        _roomMentionSuggestions = roomSuggestions;
       });
     }
     _slashCompletionDebounce?.cancel();
@@ -2639,76 +2524,6 @@ class _ChatScreenState extends State<ChatScreen>
     _scheduleDraftSave();
   }
 
-  List<String> _missionRoomSuggestions(String text) {
-    final room = widget.missionRoom;
-    if (room == null) return const [];
-    final match = RegExp(
-      r'(^|\s)@([a-z0-9_-]*)$',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (match == null) return const [];
-    final query = (match.group(2) ?? '').toLowerCase();
-    final candidates =
-        room.memberProfiles
-            .where((profile) => profile.toLowerCase().startsWith(query))
-            .toList(growable: false)
-          ..sort((left, right) {
-            if (left == room.managerProfile) return -1;
-            if (right == room.managerProfile) return 1;
-            return left.compareTo(right);
-          });
-    return candidates.take(8).toList(growable: false);
-  }
-
-  void _pickRoomMention(String profile) {
-    if (_roomTaskMutationLocked) return;
-    final text = _textController.text;
-    final match = RegExp(
-      r'(^|\s)@[a-z0-9_-]*$',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (match == null) return;
-    final leading = match.group(1) ?? '';
-    final next = '${text.substring(0, match.start)}$leading@$profile ';
-    _textController.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(offset: next.length),
-    );
-    setState(() {
-      _selectedRoomMentions
-        ..clear()
-        ..add(profile);
-      _roomMentionSuggestions = const [];
-      _roomMentionIntentId = const Uuid().v4();
-      _roomTaskBoardId = null;
-      _roomTaskBoardQuery = null;
-      _roomTaskPhase = null;
-    });
-    _scheduleDraftSave();
-  }
-
-  void _invalidatePreparedRoomTaskForMutation() {
-    if (_roomTaskPhase != MissionRoomTaskPhase.prepared ||
-        _selectedRoomMentions.isEmpty) {
-      return;
-    }
-    _roomMentionIntentId = const Uuid().v4();
-    _roomTaskBoardId = null;
-    _roomTaskBoardQuery = null;
-    _roomTaskPhase = null;
-  }
-
-  bool _sameStrings(List<String> left, List<String> right) {
-    if (left.length != right.length) return false;
-    for (var index = 0; index < left.length; index++) {
-      if (left[index] != right[index]) return false;
-    }
-    return true;
-  }
-
-  bool _sameStringSets(Set<String> left, Set<String> right) =>
-      left.length == right.length && left.containsAll(right);
-
   Future<bool> _useAssistantSuggestion(
     Map<String, dynamic> sourceMessage,
     String suggestion,
@@ -2720,7 +2535,10 @@ class _ChatScreenState extends State<ChatScreen>
       isLatestAssistant: _isLatestAssistant(sourceMessage),
       isTerminal: sourceMessage['_cancelled'] != true,
       chatBusy:
-          _loading || _sending || _attachmentSubmitting || _compressingSession,
+          _interactiveMessageRefreshPending ||
+          _sending ||
+          _attachmentSubmitting ||
+          _compressingSession,
       writable: !widget.connection.readOnly,
       composerEmpty: _textController.text.trim().isEmpty,
       attachmentsEmpty: _pendingAttachments.isEmpty,
@@ -2896,29 +2714,22 @@ class _ChatScreenState extends State<ChatScreen>
 
   DesktopSessionCreateConfig get _firstSubmitConfig {
     final source = widget.session.source.trim().toLowerCase();
-    final isMissionRoom = widget.missionRoom != null;
     final createsBotChat = source == 'mobile-bot' || source == 'bot-mode-local';
     final isOfficialBotPin = source == 'bot-mode';
     return DesktopSessionCreateConfig(
       model: _selectedModelPair,
       reasoningEffort: _selectedReasoning,
       fastMode: _selectedFastMode,
-      title: isMissionRoom
-          ? widget.session.title
-          : createsBotChat
-          ? 'Bot Chat'
-          : null,
+      title: createsBotChat ? 'Bot Chat' : null,
       hidden: createsBotChat,
       createIfMissing: !isOfficialBotPin,
       // Bot surfaces own a durable canonical pin. Their -32601 compatibility
       // fallback is handled by the pin hook itself; falling back to REST here
-      // would submit without the verified pin after an RMW failure. A Room is
-      // likewise valid only after the TUI lifecycle confirms its manager id.
+      // would submit without the verified pin after an RMW failure.
       allowTransportFallback:
           widget.connection.kind == InstanceKind.localhost &&
           widget.connection.onDeviceLoopback &&
           !isOfficialBotPin &&
-          !isMissionRoom &&
           !createsBotChat,
     );
   }
@@ -3742,12 +3553,9 @@ class _ChatScreenState extends State<ChatScreen>
         initialStoredSessionId: widget.initialStoredSessionId,
         localConversationLifecycle: _localConversationLifecycle,
         authoritativeStoredSessionBinding: _isBotChatSurface,
-        notificationSurface: widget.missionRoom != null
-            ? NotificationChatSurface.room
-            : _isBotChatSurface
+        notificationSurface: _isBotChatSurface
             ? NotificationChatSurface.bot
             : NotificationChatSurface.normal,
-        notificationRoomId: widget.missionRoom?.id,
         selectedProvider: _selectedProvider,
       );
       _passiveConversationReader = ForegroundConversationReader(
@@ -3763,7 +3571,10 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
-      unawaited(_persistMissionManagerSession());
+      // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
+      // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
+      // del agente, así que sin esto el cronómetro del turno nunca arrancaba.
+      _syncTurnActivityClock();
       unawaited(_persistBotChatPin());
       unawaited(_loadChatPreferences());
       app.voice.voiceConsent.addListener(_onVoicePreferenceChanged);
@@ -3780,6 +3591,7 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_refreshPublishedSessionUsage());
       }
       unawaited(_loadDesktopCommandCatalog());
+      unawaited(_chat.loadMentionRoster());
       // Observa el modo voz global: re-renderiza el overlay al cambiar de fase,
       // y muestra el diálogo de "dictado no disponible" cuando el servicio lo
       // pida (necesita un BuildContext, que el servicio no tiene).
@@ -3793,7 +3605,6 @@ class _ChatScreenState extends State<ChatScreen>
       if (_chat.isStreaming || _chat.messagesLoaded) {
         // Reengancha a un chat ya vivo o ya cargado: no recargues (clobbearía
         // el parcial en curso).
-        _loading = false;
         // Al volver a una sesión viva materializa el subtree aislado con todo lo
         // que el servicio ya publicó. No espera otro token ni reconstruye el
         // Scaffold para continuar el stream.
@@ -3814,7 +3625,6 @@ class _ChatScreenState extends State<ChatScreen>
         // session.resume + REST aquí solo enseña un loader hasta recibir el
         // 4007 esperado; el borrador local está listo para escribir al instante.
         _chat.messagesLoaded = true;
-        _loading = false;
       } else {
         // A screen created while the app is already backgrounded may perform
         // its one durable read, but it must not connect to or acquire a live
@@ -3837,16 +3647,23 @@ class _ChatScreenState extends State<ChatScreen>
       hermesRouteObserver.subscribe(this, route);
       if (route.isCurrent) _markChatVisible(true);
     }
+  }
 
-    // Keep the latest message visible when the keyboard slides in.
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    if (bottomInset > 0) {
-      _keyboardScrollTimer?.cancel();
-      _keyboardScrollTimer = Timer(
-        const Duration(milliseconds: 150),
-        _scrollToBottom,
-      );
-    }
+  /// Keep the latest message visible when the keyboard slides in.
+  ///
+  /// Lo alimenta [_KeyboardInsetWatcher] (ver [build]), no una lectura de
+  /// `MediaQuery.of(context).viewInsets` en [didChangeDependencies]: aquella
+  /// suscribía este State entero a cada cambio de `viewInsets`, y Android
+  /// anima la entrada/salida del teclado frame a frame, así que CADA frame
+  /// reconstruía la pantalla completa (transcript incluido) solo para
+  /// reprogramar este temporizador.
+  void _onKeyboardBottomInset(double bottomInset) {
+    if (_disposed || !mounted || bottomInset <= 0) return;
+    _keyboardScrollTimer?.cancel();
+    _keyboardScrollTimer = Timer(
+      const Duration(milliseconds: 150),
+      _scrollToBottom,
+    );
   }
 
   void _onVoicePreferenceChanged() {
@@ -4038,22 +3855,30 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<bool> _refreshPassiveTranscript() async {
     if (!_canProbePassiveRemoteActivity) return true;
+    final ownedLiveTurn = _chat.remoteSurfaceOwnsLiveTurn;
     await _chat.refreshPassiveRemoteActivity();
-    if (!_canPassivelyRefreshTranscript) return true;
+    if (!_canProbePassiveRemoteActivity) return true;
+    // Another surface's assistant is not in REST until the turn ends. The
+    // busy poll therefore never sees the reply; fetch once more on idle.
+    final remoteTurnSettled = ownedLiveTurn && !_chat.remoteSurfaceOwnsLiveTurn;
+    if (!_canPassivelyRefreshTranscript && !remoteTurnSettled) {
+      return true;
+    }
+    if (!_composerEmpty &&
+        !_chat.remoteSurfaceOwnsLiveTurn &&
+        !remoteTurnSettled) {
+      return true;
+    }
     return _fetchMessages(passiveOnly: true);
   }
 
   void _invalidatePassiveMessageRefresh() {
-    final passiveEpoch = _passiveMessageRefreshEpoch;
-    if (!_chatBound || passiveEpoch == null) return;
+    if (!_chatBound || _messageRefreshInFlight?.passiveOnly != true) return;
     _chat.invalidatePassiveRead();
-    _passiveMessageRefreshEpoch = null;
-    if (_messageRefreshInFlightEpoch == passiveEpoch) {
-      _messageRefreshEpoch += 1;
-      _messageRefreshInFlightEpoch = null;
-      _messageRefreshPublishedEpoch = null;
-      _cancelMessageRefreshViewportAnchor();
-    }
+    _messageRefreshEpoch += 1;
+    _messageRefreshInFlight = null;
+    _cancelMessageRefreshViewportAnchor();
+    if (!_disposed && mounted) setState(() {});
   }
 
   void _invalidateOwnedNativeVoicePreparation() {
@@ -4147,9 +3972,8 @@ class _ChatScreenState extends State<ChatScreen>
       mounted &&
       !_disposed &&
       ModalRoute.of(context)?.isCurrent == true &&
-      !_loading &&
+      !_interactiveMessageRefreshPending &&
       !widget.connection.readOnly &&
-      !_roomTaskMutationLocked &&
       !_attachmentSubmitting &&
       !_compressingSession &&
       !_isRecording &&
@@ -4161,8 +3985,89 @@ class _ChatScreenState extends State<ChatScreen>
   /// Reacciona a un cambio del chat activo (token, herramienta, fin, error):
   /// re-renderiza desde el estado del servicio. La parte de voz la maneja el
   /// controlador de conversación, suscrito al mismo chat por su cuenta.
+  /// Origen del cronómetro de [TurnActivityPill]. El servicio solo publica
+  /// `desktopTurnStartedAt` para los turnos que nacen en el runtime remoto, así
+  /// que el turno local se marca aquí, donde llegan todas las transiciones.
+  DateTime? _turnActivityStartedAt;
+
+  /// Un turno está «trabajando sin contarlo» mientras hay run vivo y el
+  /// pipeline aún no emite tokens. Es exactamente la ventana de la que se
+  /// queja el mantenedor: `connecting` / `waiting` / `executing`. En cuanto
+  /// pasa a `streaming` el propio texto ya prueba que está vivo, y la pastilla
+  /// se aparta. Entre herramientas el pipeline vuelve a `executing`, así que
+  /// reaparece sin reiniciar el contador.
+  bool get _turnWorkingWithoutOutput =>
+      _chat.isStreaming &&
+      (_pipelineState == ChatPipelineState.connecting ||
+          _pipelineState == ChatPipelineState.waiting ||
+          _pipelineState == ChatPipelineState.executing);
+
+  /// La pastilla de subagentes ya narra su propia espera con su duración. Dos
+  /// pastillas contando lo mismo es la doble narración que Desktop evita con
+  /// `toolNarratesWait`; gana la más específica.
+  ///
+  /// Esta pastilla sigue viva pase lo que pase con el scroll: su razón de
+  /// ser —avisar que el turno «parado» (sin texto aún) sigue trabajando de
+  /// verdad, con un cronómetro que lo demuestra— no depende de si el lector
+  /// está mirando el fondo o el historial. Lo que sí depende del scroll es
+  /// si repite la palabra de estado: ver `_turnActivityPillLabel`.
+  bool get _showTurnActivityPill =>
+      _turnWorkingWithoutOutput &&
+      _turnActivityStartedAt != null &&
+      !_compressingSession &&
+      _displaySubagentActivities.isEmpty &&
+      !_chat.hasRecentPassiveRemoteActivity &&
+      _chat.safeActiveSubagentCount <= 0;
+
+  /// Palabra de estado que muestra la pastilla, o `null` para omitirla y dejar
+  /// solo el spinner + cronómetro. Mientras el transcript sigue el fondo
+  /// (`_autoFollowStreaming`), la `ThinkingTraceCard` en vivo —mascota grande
+  /// + la misma palabra, animada— ya está a la vista en el sitio exacto donde
+  /// va a salir la respuesta; repetirla en la pastilla es la doble narración
+  /// reportada en dispositivo real. El cronómetro no es redundante en ningún
+  /// caso (la tarjeta no cuenta tiempo), así que la pastilla se queda —solo se
+  /// calla la palabra— hasta que el lector se aparta del fondo y la tarjeta
+  /// deja de ser la señal más específica.
+  String? get _turnActivityPillLabel =>
+      _autoFollowStreaming ? null : _traceHeadline();
+
+  /// Mismo principio que `_showTurnActivityPill` de arriba, aplicado a la
+  /// cabecera del Bot Chat: su subtítulo («@nombre · Pensando») y esta
+  /// pastilla narraban el mismo estado a la vez una vez el turno pasaba de
+  /// unos 3 s (reportado en dispositivo real: "la píldora y la burbuja
+  /// general... hacen lo mismo"). Antes de esos 3 s la pastilla de
+  /// `TurnActivityPill` (`revealAfter`) todavía no se ha revelado, así que la
+  /// cabecera sigue siendo la única señal de un turno recién empezado; solo
+  /// se calla la palabra de estado justo cuando la pastilla ya se ve.
+  bool get _turnActivityPillRevealed {
+    final startedAt = _turnActivityStartedAt;
+    if (!_showTurnActivityPill || startedAt == null) return false;
+    return DateTime.now().difference(startedAt) >= const Duration(seconds: 3);
+  }
+
+  void _syncTurnActivityClock() {
+    if (_chat.isStreaming) {
+      // Un solo origen por turno: los tics posteriores no deben reiniciarlo o
+      // el contador volvería a cero en cada herramienta.
+      //
+      // Deliberadamente local y no `desktopTurnStartedAt`: ese campo pertenece
+      // al turno del runtime remoto y sobrevive a la reconciliación, así que
+      // usarlo podía pintar un contador ya en marcha (o directamente de otro
+      // turno). Tras un resume en frío esto se queda corto, lo que subestima la
+      // espera — nunca la exagera, que es el único error que alarmaría.
+      _turnActivityStartedAt ??= DateTime.now();
+      return;
+    }
+    _turnActivityStartedAt = null;
+  }
+
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    if (event == ActiveChatEvent.started) {
+      _lastNonEmptySubagentActivities = const <SubagentActivity>[];
+      _subagentPillDismissed = false;
+    }
+    _syncTurnActivityClock();
     _syncSubagentPolling();
     if (_chat.hasDesktopRuntime) {
       // The service publishes attachment on its event stream. Fence a passive
@@ -4194,8 +4099,8 @@ class _ChatScreenState extends State<ChatScreen>
       // A terminal runtime event is the authoritative end of an acknowledged
       // delivery. ActiveChat deletes its outbox asynchronously, so the
       // observed delivery may still expose `running` during this callback.
-      // Detach it now to prevent a stale manager recovery from re-locking a
-      // Room worker draft after the remote run has already ended.
+      // Detach it now so stale recovery state cannot re-lock the composer after
+      // the remote run has already ended.
       _preparedTurn = null;
       _observeAttachmentDelivery(null);
     }
@@ -4216,7 +4121,6 @@ class _ChatScreenState extends State<ChatScreen>
       // y su ancla visual. El evento del servicio solo fuerza el rebuild; no
       // puede cerrar el overlay ni programar otro scroll por fuera de ese vuelo.
       if (_messageRefreshInFlightEpoch == null) {
-        _loading = false;
         _error = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // La hidratación diferida del historial (0.20) o una compactación
@@ -4283,7 +4187,6 @@ class _ChatScreenState extends State<ChatScreen>
     if (event == ActiveChatEvent.connected ||
         event == ActiveChatEvent.sessionInfo ||
         event == ActiveChatEvent.done) {
-      unawaited(_persistMissionManagerSession());
       unawaited(_persistBotChatPin());
     }
     // Los tokens solo sustituyen el mapa de cabeza y pueden reutilizar el plan
@@ -4440,86 +4343,53 @@ class _ChatScreenState extends State<ChatScreen>
           );
         }
         break;
+      case ActiveChatEvent.queueChanged:
+        // El panel ya refleja la entrada atascada con el setState genérico de
+        // arriba, pero eso solo se ve si el panel está abierto. Desktop avisa
+        // además con un toast al agotar `MAX_AUTO_DRAIN_ATTEMPTS`
+        // (`use-composer-queue.ts` / `use-background-queue-drain.ts`).
+        _notifyExhaustedQueuedRetries();
+        break;
       case ActiveChatEvent.cancelled:
       case ActiveChatEvent.connected:
       case ActiveChatEvent.waiting:
       case ActiveChatEvent.messagesHydrated:
       case ActiveChatEvent.earlierMessagesLoaded:
       case ActiveChatEvent.responseMetrics:
-      case ActiveChatEvent.queueChanged:
       case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.dashboardAuthChanged:
+      case ActiveChatEvent.goalUpdated:
+      // The generic setState above already repaints _buildGoalStrip; no
+      // extra behavior (scrolling, etc.) is needed for a status change.
+      case ActiveChatEvent.backgroundTaskComplete:
         break;
     }
   }
 
-  Future<void> _persistMissionManagerSession() async {
-    final room = widget.missionRoom;
-    final store = widget.missionRoomStore;
-    final durableId = _chat.storedSessionId?.trim();
-    if (widget.connection.readOnly ||
-        room == null ||
-        store == null ||
-        durableId == null ||
-        durableId.isEmpty ||
-        durableId == room.managerSessionId ||
-        durableId == _boundMissionManagerSessionId) {
-      return;
-    }
-    try {
-      await _bindMissionManagerSessionBeforePrompt(durableId);
-    } catch (_) {
-      // The room may have been deleted or reassigned while chat was open.
-      // Fail closed: never bind a runtime to a different manager.
-      if (_boundMissionManagerSessionId == durableId) {
-        _boundMissionManagerSessionId = null;
-      }
-    }
-  }
+  /// Ids ya avisados. `queueChanged` se emite muchas veces por turno (y otra
+  /// vez por cada reintento de la misma entrada), así que sin esto el mismo
+  /// atasco repetiría el snackbar. Mismo criterio que `_queuedRetryAttempts`:
+  /// el estado se lleva por id de entrada, no por evento.
+  final Set<String> _notifiedExhaustedQueueIds = <String>{};
 
-  /// Room manager turns may start only after the opaque session id returned by
-  /// Hermes is durably linked to the Room. This is awaited from ActiveChat in
-  /// the narrow gap between session.create/resume and prompt.submit.
-  Future<void> _bindMissionManagerSessionBeforePrompt(
-    String durableSessionId,
-  ) async {
-    final room = widget.missionRoom;
-    final store = widget.missionRoomStore;
-    final durableId = durableSessionId.trim();
-    if (widget.connection.readOnly || room == null || store == null) {
-      throw StateError('Room manager session persistence is unavailable');
-    }
-    if (!MissionRoom.isDurableManagerSessionId(durableId)) {
-      throw StateError('Hermes did not confirm a durable manager session');
-    }
-    if (durableId == room.managerSessionId ||
-        durableId == _boundMissionManagerSessionId) {
-      return;
-    }
-    final activeFlight = _missionManagerBindFlight;
-    if (activeFlight != null && _missionManagerBindFlightId == durableId) {
-      await activeFlight;
-      return;
-    }
-    final Future<void> flight = () async {
-      await store.bindManagerSession(
-        connectionId: widget.connection.id,
-        roomId: room.id,
-        managerProfile: room.managerProfile,
-        managerSessionId: durableId,
-      );
-    }();
-    _missionManagerBindFlightId = durableId;
-    _missionManagerBindFlight = flight;
-    try {
-      await flight;
-      _boundMissionManagerSessionId = durableId;
-    } finally {
-      if (identical(_missionManagerBindFlight, flight)) {
-        _missionManagerBindFlight = null;
-        _missionManagerBindFlightId = null;
-      }
-    }
+  void _notifyExhaustedQueuedRetries() {
+    final exhausted = _chat.queuedRetriesExhausted;
+    // Una entrada que volvió a la cola viva (reenvío manual, edición) puede
+    // agotarse otra vez más tarde y merece un aviso nuevo.
+    _notifiedExhaustedQueueIds.retainWhere(exhausted.contains);
+    final fresh = exhausted
+        .where((id) => !_notifiedExhaustedQueueIds.contains(id))
+        .toList(growable: false);
+    if (fresh.isEmpty) return;
+    _notifiedExhaustedQueueIds.addAll(fresh);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        key: const ValueKey('chat-queue-stuck-snackbar'),
+        content: Text(Strings.of(context).chaQueueStuck),
+        duration: const Duration(seconds: 8),
+      ),
+    );
   }
 
   Future<void> _persistBotChatPin() async {
@@ -4832,9 +4702,9 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'No se pudo guardar Stop de forma segura. Reinténtalo.',
+            Strings.of(context).chatStopSaveFailed,
           ),
         ),
       );
@@ -4885,6 +4755,8 @@ class _ChatScreenState extends State<ChatScreen>
     _voice?.voiceConsent.removeListener(_onVoicePreferenceChanged);
     _vcUnavailableSub?.cancel();
     _slashCompletionDebounce?.cancel();
+    _composerStopLockTimer?.cancel();
+    _composerStopLockTimer = null;
     _stopFallback?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
     // modo voz: ese debe seguir si está hablando en segundo plano.
@@ -5551,7 +5423,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<bool> _fetchMessages({bool passiveOnly = false}) async {
     await _profileReady;
-    if (!mounted) return false;
+    if (_disposed || !mounted) return false;
     // No recargues sobre un stream en curso: clobbearía el parcial que llega.
     if (_chat.isStreaming) {
       if (!passiveOnly && mounted) {
@@ -5566,7 +5438,6 @@ class _ChatScreenState extends State<ChatScreen>
       _chat.messagesLoaded = true;
       if (mounted) {
         setState(() {
-          _loading = false;
           _error = null;
         });
       }
@@ -5581,49 +5452,48 @@ class _ChatScreenState extends State<ChatScreen>
         _appInForeground &&
         viewerGeneration == _viewerAttachGeneration;
     final hadTranscript = _messages.isNotEmpty;
-    _messageRefreshInFlightEpoch = refreshEpoch;
-    if (passiveOnly) _passiveMessageRefreshEpoch = refreshEpoch;
-    _messageRefreshPublishedEpoch = null;
-    if (hadTranscript) {
-      _beginMessageRefreshViewportAnchor(refreshEpoch);
-    }
-    if (!passiveOnly) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-    }
-
+    setState(() {
+      _messageRefreshInFlight = (
+        epoch: refreshEpoch,
+        passiveOnly: passiveOnly,
+        published: false,
+      );
+      if (!passiveOnly) _error = null;
+    });
     try {
+      if (hadTranscript) {
+        _beginMessageRefreshViewportAnchor(refreshEpoch);
+      }
       await _chat.loadMessages(
         expectedMessageCount: widget.session.messageCount,
         profile: _effectiveSessionProfile,
         passiveOnly: passiveOnly,
         stillOwningVisible: passiveOnly ? null : stillOwningVisible,
         onMessagesPublished: () {
-          if (!mounted ||
+          if (_disposed ||
+              !mounted ||
               refreshEpoch != _messageRefreshEpoch ||
               _messageRefreshInFlightEpoch != refreshEpoch) {
             return;
           }
-          _messageRefreshPublishedEpoch = refreshEpoch;
+          setState(() {
+            _messageRefreshInFlight = (
+              epoch: refreshEpoch,
+              passiveOnly: passiveOnly,
+              published: true,
+            );
+          });
         },
       );
-      if (!mounted || refreshEpoch != _messageRefreshEpoch) return false;
+      if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
+        return false;
+      }
       if (!passiveOnly) {
         // Una carga interactiva puede enlazar una sesión durable anterior. El
         // observador pasivo nunca intenta enlazar, reanudar ni adquirir runtime.
         unawaited(_ensureDesktopRuntimeAndBootstrapContext());
         _syncDesktopSessionConfig();
       }
-      _messageRefreshInFlightEpoch = null;
-      if (_passiveMessageRefreshEpoch == refreshEpoch) {
-        _passiveMessageRefreshEpoch = null;
-      }
-      _messageRefreshPublishedEpoch = null;
-      setState(() {
-        _loading = false;
-      });
       if (!hadTranscript) {
         _scrollToBottom();
       } else {
@@ -5631,12 +5501,9 @@ class _ChatScreenState extends State<ChatScreen>
       }
       return true;
     } catch (e) {
-      if (!mounted || refreshEpoch != _messageRefreshEpoch) return false;
-      _messageRefreshInFlightEpoch = null;
-      if (_passiveMessageRefreshEpoch == refreshEpoch) {
-        _passiveMessageRefreshEpoch = null;
+      if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
+        return false;
       }
-      _messageRefreshPublishedEpoch = null;
       _cancelMessageRefreshViewportAnchor();
       if (passiveOnly) return false;
       final errStr = e.toString();
@@ -5656,7 +5523,6 @@ class _ChatScreenState extends State<ChatScreen>
           if (!isUnpersistedMobileChat) {
             _error = errStr;
           }
-          _loading = false;
         });
         if (!isUnpersistedMobileChat) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -5667,9 +5533,16 @@ class _ChatScreenState extends State<ChatScreen>
       }
       setState(() {
         _error = errStr;
-        _loading = false;
       });
       return false;
+    } finally {
+      // Success, failure and early returns all retire the same owner. An
+      // obsolete completion cannot retire (or re-lock) any newer request,
+      // irrespective of how many requests have superseded it.
+      if (_messageRefreshInFlightEpoch == refreshEpoch) {
+        _messageRefreshInFlight = null;
+        if (!_disposed && mounted) setState(() {});
+      }
     }
   }
 
@@ -5690,7 +5563,6 @@ class _ChatScreenState extends State<ChatScreen>
   /// files are uploaded through the Dashboard file API before chat streaming.
   Future<bool> _sendMessage({String? initialText}) async {
     if (_composerSubmissionInFlight ||
-        _roomTaskSubmitting ||
         _attachmentSubmitting ||
         _attachmentMutationInFlight ||
         _compressingSession) {
@@ -5724,467 +5596,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<bool?> _routeSelectedRoomMention({
-    required String text,
-    required List<AttachmentDraft> attachments,
-  }) async {
-    final room = widget.missionRoom;
-    if (room == null || _selectedRoomMentions.isEmpty) return null;
-    if (widget.connection.readOnly) return false;
-    final parsed = MissionMentionParser.parse(
-      room: room,
-      text: text,
-      selectedProfiles: _selectedRoomMentions,
-      intentId: _roomMentionIntentId,
-    );
-    final observedDelivery = _attachmentDelivery;
-    if (observedDelivery != null) {
-      _preparedTurn = observedDelivery.current;
-    }
-    final acknowledgedManagerTerminal =
-        observedDelivery != null &&
-        observedDelivery.acknowledged &&
-        observedDelivery.current.state == PreparedTurnState.terminal;
-    // ActiveChat keeps `sending` true while it reconciles the terminal
-    // transcript. Once the acknowledged delivery itself is terminal, that is
-    // visual catch-up rather than a live manager run and must not block a
-    // native Room worker task.
-    final managerTransportBusy = _sending && !acknowledgedManagerTerminal;
-    if (!managerTransportBusy && parsed.selectedWorkers.isNotEmpty) {
-      final recovered = _preparedTurn;
-      if (recovered != null &&
-          (recovered.state == PreparedTurnState.accepted ||
-              recovered.state == PreparedTurnState.running)) {
-        final resolved = await _chat.reconcileAmbiguousTurn(
-          recovered,
-          await _outboxStore(),
-        );
-        if (!mounted) return false;
-        _preparedTurn = resolved;
-        final adopted = _chatBound ? _chat.activeTurnDelivery : null;
-        if (adopted != null) _observeAttachmentDelivery(adopted);
-        if (resolved.state == PreparedTurnState.terminal) {
-          _preparedTurn = null;
-        } else if (adopted == null) {
-          _showHiddenRecoveredTurn(resolved);
-          return false;
-        }
-      }
-    }
-    if ((managerTransportBusy || _hasUnresolvedPreparedTurn) &&
-        parsed.selectedWorkers.isNotEmpty) {
-      final recovered = _preparedTurn;
-      if (!_sending &&
-          recovered != null &&
-          (recovered.state == PreparedTurnState.ambiguous ||
-              recovered.state == PreparedTurnState.prepared ||
-              recovered.state == PreparedTurnState.failedBeforeAcceptance)) {
-        // The recovery SnackBar is intentionally finite. Retrying the worker
-        // action must always surface its safe discard affordance again instead
-        // of leaving an invisible permanent lock.
-        _showHiddenRecoveredTurn(recovered);
-        return false;
-      }
-      final english = Localizations.localeOf(context).languageCode == 'en';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            english
-                ? 'Wait for the manager turn to finish before creating a worker task.'
-                : 'Espera a que termine el turno del manager antes de crear una tarea para un worker.',
-          ),
-        ),
-      );
-      return false;
-    }
-    if (parsed.selectedWorkers.isEmpty &&
-        parsed.managerMentioned &&
-        parsed.invalidSelections.isEmpty) {
-      return null;
-    }
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    if (!parsed.canDispatch || parsed.intent == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            english
-                ? 'Select one current room member from the mention list. Multiple workers are not sent automatically.'
-                : 'Selecciona un miembro actual desde la lista de menciones. No se envía a varios workers automáticamente.',
-          ),
-        ),
-      );
-      return false;
-    }
-    if (attachments.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            english
-                ? 'Worker delegation does not attach files in this version. Send the files to the manager or add them from Kanban.'
-                : 'La delegación a workers no adjunta archivos en esta versión. Envíalos al manager o añádelos desde Kanban.',
-          ),
-        ),
-      );
-      return false;
-    }
-    final intent = parsed.intent!;
-    // Acquire the Room-wide flight before capability probes, board resolution
-    // or the confirmation dialog. Two routes can observe the same draft, but
-    // only one may advance its immutable payload toward a Kanban write.
-    final flightKey = '${widget.connection.id}\u0000${room.id}';
-    if (!_roomTaskFlights.add(flightKey)) return false;
-    _roomTaskFrozenText = text;
-    setState(() => _roomTaskSubmitting = true);
-    try {
-      if (_roomTaskPhase == MissionRoomTaskPhase.outcomeUnknown) {
-        return await _reconcileUnknownRoomTask(
-          room: room,
-          intent: intent,
-          text: text,
-          english: english,
-        );
-      }
-      final creator = widget.missionRoomTaskCreator;
-      KanbanClient? ownedClient;
-      var taskTarget = const KanbanTaskTarget(
-        boardId: MissionRoomTaskLink.legacyCurrentBoard,
-        boardQuery: null,
-        displayName: 'Hermes current board',
-      );
-      if (creator == null) {
-        ownedClient =
-            widget.missionRoomKanbanClientFactory?.call(widget.connection) ??
-            KanbanClient(widget.connection);
-        try {
-          final supported = await ownedClient.supportsIdempotentTrackedCreate();
-          if (!supported) {
-            ownedClient.close();
-            ownedClient = null;
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    english
-                        ? 'This Hermes version cannot prove safe idempotent task creation. Update Hermes to use worker mentions.'
-                        : 'Esta versión de Hermes no puede demostrar una creación idempotente segura. Actualiza Hermes para usar menciones a workers.',
-                  ),
-                ),
-              );
-            }
-            return false;
-          }
-          taskTarget = await ownedClient.resolveCurrentTaskTarget();
-        } catch (_) {
-          ownedClient?.close();
-          ownedClient = null;
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  english
-                      ? 'Hermes task capabilities could not be verified. No task was written.'
-                      : 'No se pudieron verificar las capacidades de tareas de Hermes. No se escribió ninguna tarea.',
-                ),
-              ),
-            );
-          }
-          return false;
-        }
-      }
-      final resumesPreparedOperation =
-          _roomTaskPhase != null && _roomTaskBoardId != null;
-      if (resumesPreparedOperation) {
-        taskTarget = KanbanTaskTarget(
-          boardId: _roomTaskBoardId!,
-          boardQuery: _roomTaskBoardQuery,
-          displayName: _roomTaskBoardId!,
-        );
-      }
-      if (!mounted) {
-        ownedClient?.close();
-        return false;
-      }
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(
-            english
-                ? 'Create native Kanban task?'
-                : '¿Crear tarea Kanban nativa?',
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('@${intent.workerProfile}'),
-              const SizedBox(height: 8),
-              Text(intent.taskTitle),
-              const SizedBox(height: 8),
-              Text(
-                english
-                    ? 'Board: ${taskTarget.displayName}'
-                    : 'Tablero: ${taskTarget.displayName}',
-                style: Theme.of(dialogContext).textTheme.labelMedium,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                english
-                    ? 'Confirming writes one task to Hermes Kanban. If the dispatcher is active, work may start immediately. This text is not also sent to the manager.'
-                    : 'Al confirmar se escribe una tarea en Kanban de Hermes. Si el dispatcher está activo, el trabajo puede empezar inmediatamente. Este texto no se envía también al manager.',
-                style: Theme.of(dialogContext).textTheme.bodySmall,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(
-                MaterialLocalizations.of(dialogContext).cancelButtonLabel,
-              ),
-            ),
-            FilledButton(
-              key: const ValueKey('room-confirm-task'),
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(english ? 'Create task' : 'Crear tarea'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) {
-        ownedClient?.close();
-        return false;
-      }
-      // Confirmation is the first local mutation of the Room operation. This
-      // keeps Cancel bit-for-bit side-effect free while still making the exact
-      // payload durable before any roster refresh or POST can begin.
-      _roomTaskBoardId = taskTarget.boardId;
-      _roomTaskBoardQuery = taskTarget.boardQuery;
-      _roomTaskPhase = MissionRoomTaskPhase.prepared;
-      if (!await _saveDraftSnapshot(text, attachments)) {
-        ownedClient?.close();
-        return false;
-      }
-      var writeStarted = false;
-      try {
-        final Iterable<String> freshRoster;
-        final injectedRoster = widget.missionRoomWorkerRosterLoader;
-        if (injectedRoster != null) {
-          freshRoster = await injectedRoster();
-        } else if (ownedClient != null) {
-          freshRoster = (await ownedClient.getProfilesAuthoritative()).map(
-            (profile) => profile.name,
-          );
-        } else {
-          throw StateError('Authoritative worker roster is unavailable');
-        }
-        final workerStillAssignable = freshRoster
-            .map((profile) => profile.trim())
-            .where((profile) => profile.isNotEmpty)
-            .contains(intent.workerProfile);
-        if (!workerStillAssignable) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  english
-                      ? '@${intent.workerProfile} is no longer in the authoritative Kanban roster. No task was written.'
-                      : '@${intent.workerProfile} ya no aparece en el roster autoritativo de Kanban. No se escribió ninguna tarea.',
-                ),
-              ),
-            );
-          }
-          return false;
-        }
-        _roomTaskPhase = MissionRoomTaskPhase.submitting;
-        if (!await _saveDraftSnapshot(text, attachments)) {
-          return false;
-        }
-        writeStarted = true;
-        final task = creator != null
-            ? await creator(intent)
-            : await ownedClient!.createTaskTracked(
-                title: intent.taskTitle,
-                body: intent.rawText,
-                assignee: intent.workerProfile,
-                idempotencyKey: intent.idempotencyKey,
-                board: taskTarget.boardQuery,
-              );
-        final store = widget.missionRoomStore;
-        if (task.id.trim().isEmpty || store == null) {
-          throw StateError('Kanban task could not be linked durably');
-        }
-        await store.linkTask(
-          widget.connection.id,
-          room.id,
-          task.id,
-          boardId: taskTarget.boardId,
-        );
-        if (!mounted) return true;
-        if (_textController.text.trim() == text) {
-          _roomTaskFrozenText = null;
-          _textController.clear();
-          await _clearDraft(allowRoomTaskOperation: true);
-        }
-        if (!mounted) return true;
-        setState(() {
-          _selectedRoomMentions.clear();
-          _roomMentionSuggestions = const [];
-          _roomMentionIntentId = const Uuid().v4();
-          _roomTaskBoardId = null;
-          _roomTaskBoardQuery = null;
-          _roomTaskPhase = null;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              english
-                  ? 'Task ${task.id} created for @${intent.workerProfile}'
-                  : 'Tarea ${task.id} creada para @${intent.workerProfile}',
-            ),
-          ),
-        );
-        return true;
-      } catch (error) {
-        if (writeStarted) {
-          final conflict = _isRoomTaskWriteConflict(error);
-          _roomTaskPhase = conflict
-              ? MissionRoomTaskPhase.outcomeUnknown
-              : _isDeterministicRoomTaskWriteFailure(error)
-              ? MissionRoomTaskPhase.prepared
-              : MissionRoomTaskPhase.outcomeUnknown;
-          await _saveDraftSnapshot(text, attachments);
-          if (conflict) {
-            return await _reconcileUnknownRoomTask(
-              room: room,
-              intent: intent,
-              text: text,
-              english: english,
-              client: ownedClient,
-            );
-          }
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                writeStarted && !_isDeterministicRoomTaskWriteFailure(error)
-                    ? english
-                          ? 'Hermes did not confirm the task. The draft and idempotency key are kept; verify Kanban before retrying.'
-                          : 'Hermes no confirmó la tarea. Se conservan el borrador y la clave idempotente; verifica Kanban antes de reintentar.'
-                    : writeStarted
-                    ? english
-                          ? 'Hermes rejected the task deterministically. No task was written; the draft is kept.'
-                          : 'Hermes rechazó la tarea de forma determinista. No se escribió ninguna tarea; se conserva el borrador.'
-                    : english
-                    ? 'The authoritative Kanban roster could not be refreshed. No task was written.'
-                    : 'No se pudo actualizar el roster autoritativo de Kanban. No se escribió ninguna tarea.',
-              ),
-            ),
-          );
-        }
-        return false;
-      } finally {
-        ownedClient?.close();
-      }
-    } finally {
-      _roomTaskFlights.remove(flightKey);
-      if (!_roomTaskOutcomeUnknown) {
-        _roomTaskFrozenText = null;
-      }
-      if (mounted) {
-        setState(() => _roomTaskSubmitting = false);
-      } else {
-        _roomTaskSubmitting = false;
-      }
-    }
-  }
-
-  Future<bool> _reconcileUnknownRoomTask({
-    required MissionRoom room,
-    required MissionMentionIntent intent,
-    required String text,
-    required bool english,
-    KanbanClient? client,
-  }) async {
-    final boardId = _roomTaskBoardId;
-    if (boardId == null || boardId.isEmpty) return false;
-    final ownsClient = client == null;
-    client ??=
-        widget.missionRoomKanbanClientFactory?.call(widget.connection) ??
-        KanbanClient(widget.connection);
-    KanbanTask? recovered;
-    try {
-      // This branch is deliberately read-only. It must not execute the
-      // capability POST probe or createTaskTracked after process death.
-      recovered = await client.reconcileTrackedTask(
-        title: intent.taskTitle,
-        body: intent.rawText,
-        assignee: intent.workerProfile,
-        idempotencyKey: intent.idempotencyKey,
-        board: _roomTaskBoardQuery,
-      );
-      final store = widget.missionRoomStore;
-      if (recovered != null && store != null) {
-        await store.linkTask(
-          widget.connection.id,
-          room.id,
-          recovered.id,
-          boardId: boardId,
-        );
-      } else {
-        recovered = null;
-      }
-    } catch (_) {
-      recovered = null;
-    } finally {
-      if (ownsClient) client.close();
-    }
-    if (recovered == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              english
-                  ? 'The previous task result is still unknown. Kanban was checked and no new task was sent. Clear the mention only after verifying the board.'
-                  : 'El resultado de la tarea anterior sigue siendo incierto. Se comprobó Kanban y no se envió otra tarea. Borra la mención solo después de verificar el tablero.',
-            ),
-          ),
-        );
-      }
-      return false;
-    }
-    if (_textController.text.trim() == text) {
-      _roomTaskFrozenText = null;
-      _textController.clear();
-    }
-    await _clearDraft(allowRoomTaskOperation: true);
-    if (!mounted) return true;
-    setState(() {
-      _selectedRoomMentions.clear();
-      _roomMentionSuggestions = const [];
-      _roomMentionIntentId = const Uuid().v4();
-      _roomTaskBoardId = null;
-      _roomTaskBoardQuery = null;
-      _roomTaskPhase = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          english
-              ? 'Recovered task ${recovered.id} for @${intent.workerProfile}'
-              : 'Tarea ${recovered.id} recuperada para @${intent.workerProfile}',
-        ),
-      ),
-    );
-    return true;
-  }
-
-  bool _isDeterministicRoomTaskWriteFailure(Object error) =>
-      isDeterministicRoomTaskWriteFailure(error);
-
-  bool _isRoomTaskWriteConflict(Object error) =>
-      error is DashboardHttpException && error.statusCode == 409;
-
   Future<bool> _sendMessageOnce({
     bool skipSlashRouting = false,
     String? textOverride,
@@ -6192,7 +5603,7 @@ class _ChatScreenState extends State<ChatScreen>
   }) async {
     await _profileReady;
     final outboxRecoveryAvailable = await _initialOutboxRead.future;
-    if (!mounted || _roomTaskSubmitting) return false;
+    if (!mounted) return false;
     if (_chat.mutationsBlockedByOwnershipConflict &&
         !_chat.manualOwnershipProbeAvailable) {
       return false;
@@ -6284,25 +5695,6 @@ class _ChatScreenState extends State<ChatScreen>
         recoveredAmbiguous.state == PreparedTurnState.ambiguous &&
         recoveredAmbiguous.text == text) {
       _showHiddenRecoveredTurn(recoveredAmbiguous);
-      return false;
-    }
-
-    final roomRouting = usesComposerState
-        ? await _routeSelectedRoomMention(text: text, attachments: attachments)
-        : null;
-    if (!mounted) return false;
-    if (roomRouting != null) return roomRouting;
-    if (widget.missionRoom != null && !_chat.canBindDurableMissionSession) {
-      final english = Localizations.localeOf(context).languageCode == 'en';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            english
-                ? 'This connection cannot prove a durable Hermes manager session. Nothing was sent.'
-                : 'Esta conexión no puede demostrar una sesión durable del manager en Hermes. No se envió nada.',
-          ),
-        ),
-      );
       return false;
     }
 
@@ -6461,6 +5853,11 @@ class _ChatScreenState extends State<ChatScreen>
       fullText = text;
     }
 
+    if (RegExp(r'(^|\s)@[a-z0-9]', caseSensitive: false).hasMatch(text)) {
+      await _chat.loadMentionRoster();
+    }
+    final mentions = List<BotMention>.unmodifiable(_chat.mentionResolver.resolve(text));
+    final mentionAnnotation = buildBotMentionAnnotation(mentions);
     final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
     // Every queued composer turn is written to the encrypted outbox before the
     // composer is cleared. This preserves FIFO across process death and keeps a
@@ -6476,6 +5873,8 @@ class _ChatScreenState extends State<ChatScreen>
         text: text,
         fullText: fullText,
         desktopText: desktopText,
+        mentions: mentions,
+        mentionAnnotation: mentionAnnotation,
         attachments: attachments,
         model: selectedModel,
         profile: _effectiveSessionProfile,
@@ -6558,8 +5957,10 @@ class _ChatScreenState extends State<ChatScreen>
       createdAtMs: sameRecoveredBatch ? existing!.createdAtMs : now,
       updatedAtMs: now,
       text: text,
-      fullText: fullText,
-      desktopText: desktopText,
+      fullText: sameRecoveredBatch ? existing!.fullText : fullText,
+      desktopText: sameRecoveredBatch ? existing!.desktopText : desktopText,
+      mentions: sameRecoveredBatch ? existing!.mentions : mentions,
+      mentionAnnotation: sameRecoveredBatch ? existing!.mentionAnnotation : mentionAnnotation,
       attachments: attachments,
       model: selectedModel,
       profile: profile,
@@ -6594,7 +5995,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (replacesProvenRejectedProjection) {
-      _removeLatestFailedPromptProjection(fullText);
+      _removeLatestFailedPromptProjection(prepared.fullText);
     }
 
     // Historial conversacional para el run (formato OpenAI, orden cronológico).
@@ -6614,18 +6015,16 @@ class _ChatScreenState extends State<ChatScreen>
     final delivery = ActiveTurnDelivery(prepared: prepared, store: outbox);
     _observeAttachmentDelivery(delivery);
     final acceptedFuture = _chat.send(
-      fullText: fullText,
+      fullText: prepared.fullText,
       model: selectedModel,
       history: history,
       profile: _effectiveSessionProfile,
       slowModel: (_activeModel?.provider ?? '').toLowerCase().startsWith('moa'),
       nativeAttachments: attachments,
-      desktopText: desktopText,
+      desktopText: prepared.desktopText,
       delivery: delivery,
       sessionConfig: firstSubmitConfig,
-      beforeDesktopPromptSubmit: widget.missionRoom != null
-          ? _bindMissionManagerSessionBeforePrompt
-          : _usesLocalBotChatPin
+      beforeDesktopPromptSubmit: _usesLocalBotChatPin
           ? _persistBotChatPinBeforePrompt
           : _usesOfficialBotChatPin
           ? _assertOfficialBotChatPinBeforePrompt
@@ -6760,6 +6159,24 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Techo de la valla del composer durante un Stop.
+  ///
+  /// Desktop no tiene esta valla en absoluto: `cancelRun`
+  /// (`use-prompt-actions/index.ts`) baja `busy` de forma **síncrona** y solo
+  /// después espera `session.interrupt`, de modo que un stop lento o fallido
+  /// nunca congela el input; el fallo se cuenta con un toast (`copy.stopFailed`)
+  /// y el turno ya quedó cerrado en la UI.
+  ///
+  /// Aquí `_chat.cancel()` hace bastante más (tombstone durable +
+  /// `_recoverAndInterruptStop`, que en una red mala recorre la escalera de
+  /// backoff durante decenas de segundos). Mantener la valla durante TODO ese
+  /// tiempo dejaba el composer muerto sin ninguna salida. Se conserva solo lo
+  /// justo para serializar el doble tap del caso rápido (que se resuelve en
+  /// milisegundos) y luego se suelta, mientras la cancelación sigue en segundo
+  /// plano: `_buildStopStatusStrip` ya narra stopping/retrying y ofrece
+  /// «Reintentar Stop» al fallar, así que la señal no se pierde al soltar.
+  static const Duration _composerStopLockTimeout = Duration(seconds: 2);
+
   Future<void> _cancelStream() async {
     if (_composerSubmissionInFlight) return;
     if (mounted) {
@@ -6767,9 +6184,29 @@ class _ChatScreenState extends State<ChatScreen>
     } else {
       _composerSubmissionInFlight = true;
     }
+    var lockReleased = false;
+    void releaseComposerLock() {
+      if (lockReleased) return;
+      lockReleased = true;
+      _composerStopLockTimer?.cancel();
+      _composerStopLockTimer = null;
+      if (mounted) {
+        setState(() => _composerSubmissionInFlight = false);
+      } else {
+        _composerSubmissionInFlight = false;
+      }
+    }
+
+    _composerStopLockTimer?.cancel();
+    _composerStopLockTimer = Timer(
+      _composerStopLockTimeout,
+      releaseComposerLock,
+    );
     var cancelled = false;
     // La cancelación no se confirma visualmente hasta que el tombstone cifrado
     // queda durable; así un cierre inmediato no puede resucitar la respuesta.
+    // Un segundo tap tras la suelta acotada es inofensivo: `cancel()` devuelve
+    // el `_durableCancelFlight` en curso en lugar de abrir otro Stop.
     try {
       final override = widget.cancelStreamOverride;
       if (override != null) {
@@ -6785,11 +6222,7 @@ class _ChatScreenState extends State<ChatScreen>
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _composerSubmissionInFlight = false);
-      } else {
-        _composerSubmissionInFlight = false;
-      }
+      releaseComposerLock();
     }
     if (!cancelled || !mounted) return;
     setState(() {});
@@ -6896,6 +6329,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     var failed = false;
+    var authRequired = false;
     Object? failure;
     _editingRewriteSubmitted = true;
     try {
@@ -6905,7 +6339,15 @@ class _ChatScreenState extends State<ChatScreen>
         model: _selectedModel,
         profile: _effectiveSessionProfile,
       );
-      _chatService.markStarted(widget.connection.id, widget.session.id);
+      // Un rechazo previo al arranque no lanza: `rewrite` rebobina y lo deja
+      // marcado. Sin consultarlo, la edición fracasaba en silencio — el turno
+      // vivo ya interrumpido y ni respuesta ni aviso en pantalla.
+      if (_chat.takeRewindRestoredOnError()) {
+        failed = true;
+        authRequired = _chat.takeRewindDashboardAuthRequired();
+      } else {
+        _chatService.markStarted(widget.connection.id, widget.session.id);
+      }
     } catch (error) {
       final rpc = error is TuiGatewayRpcError ? error : null;
       debugPrint(
@@ -6926,9 +6368,10 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
     if (failed) {
+      final str = Strings.of(context);
       final message = failure is DashboardAuthException
-          ? localizedApiError(Strings.of(context), failure)
-          : Strings.of(context).chaEditFailed;
+          ? localizedApiError(str, failure)
+          : (authRequired ? str.dashboardAuthLoginRequired : str.chaEditFailed);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -6999,6 +6442,10 @@ class _ChatScreenState extends State<ChatScreen>
         model: _selectedModel,
         profile: _effectiveSessionProfile,
       );
+      if (_chat.takeRewindRestoredOnError()) {
+        _chat.takeRewindDashboardAuthRequired();
+        throw StateError('regenerate rejected before it started');
+      }
       _chatService.markStarted(widget.connection.id, widget.session.id);
       if (mounted) setState(() {});
     } catch (_) {
@@ -7838,13 +7285,7 @@ class _ChatScreenState extends State<ChatScreen>
               ? null
               : () => select(_ChatControlAction.extensions),
           onReleaseDesktop: () => select(_ChatControlAction.releaseDesktop),
-          // A Mission Room owns a durable manager-session binding. Deleting
-          // that session from the generic chat sheet would strand the Room.
-          // Room removal remains available from Mission Control, where it
-          // intentionally preserves the Hermes transcript and linked work.
-          onDelete: widget.missionRoom == null
-              ? () => select(_ChatControlAction.delete)
-              : null,
+          onDelete: () => select(_ChatControlAction.delete),
         );
       },
     );
@@ -8416,7 +7857,6 @@ class _ChatScreenState extends State<ChatScreen>
   // ─── Attachment handling ──────────────────────────────────────────────────
 
   Future<void> _selectAttachmentSource(AttachmentSourceChoice source) async {
-    if (_roomTaskMutationLocked) return;
     switch (source) {
       case AttachmentSourceChoice.camera:
         await _pickImage(ImageSource.camera);
@@ -8491,7 +7931,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _insertKeyboardContentNow(
     KeyboardInsertedContent content,
   ) async {
-    if (_roomTaskMutationLocked || _attachmentSubmitting) return;
+    if (_attachmentSubmitting) return;
     final bytes = content.data;
     if (bytes == null || bytes.isEmpty) {
       if (mounted) {
@@ -8551,13 +7991,12 @@ class _ChatScreenState extends State<ChatScreen>
           localPath: source.path,
         ),
       );
-      if (persisted == null || !mounted || _roomTaskMutationLocked) {
+      if (persisted == null || !mounted) {
         if (persisted != null) await _deletePrivateAttachmentCopy(persisted);
         return;
       }
       setState(() {
         _pendingAttachments.add(persisted!);
-        _invalidatePreparedRoomTaskForMutation();
       });
       _scheduleDraftSave();
     } catch (_) {
@@ -8581,7 +8020,7 @@ class _ChatScreenState extends State<ChatScreen>
       _serializeAttachmentMutation(() => _pickImageNow(source));
 
   Future<void> _pickImageNow(ImageSource source) async {
-    if (_roomTaskMutationLocked || _imagePickerOpen || _attachmentSubmitting) {
+    if (_imagePickerOpen || _attachmentSubmitting) {
       return;
     }
     _imagePickerOpen = true;
@@ -8689,14 +8128,13 @@ class _ChatScreenState extends State<ChatScreen>
         knownDigests.add(digest);
         batchBytes += persisted.sizeBytes;
       }
-      if (!mounted || _roomTaskMutationLocked) {
+      if (!mounted) {
         await _deleteUncommittedAttachmentCopies(drafts);
         return;
       }
       if (drafts.isNotEmpty) {
         setState(() {
           _pendingAttachments.addAll(drafts);
-          _invalidatePreparedRoomTaskForMutation();
         });
         _scheduleDraftSave();
         drafts.clear();
@@ -8747,9 +8185,7 @@ class _ChatScreenState extends State<ChatScreen>
       _serializeAttachmentMutation(_pickDocumentNow);
 
   Future<void> _pickDocumentNow() async {
-    if (_roomTaskMutationLocked ||
-        _documentPickerOpen ||
-        _attachmentSubmitting) {
+    if (_documentPickerOpen || _attachmentSubmitting) {
       return;
     }
     _documentPickerOpen = true;
@@ -8826,14 +8262,13 @@ class _ChatScreenState extends State<ChatScreen>
         knownDigests.add(digest);
         batchBytes += persisted.sizeBytes;
       }
-      if (!mounted || _roomTaskMutationLocked) {
+      if (!mounted) {
         await _deleteUncommittedAttachmentCopies(drafts);
         return;
       }
       if (drafts.isNotEmpty) {
         setState(() {
           _pendingAttachments.addAll(drafts);
-          _invalidatePreparedRoomTaskForMutation();
         });
         _scheduleDraftSave();
         drafts.clear();
@@ -8908,56 +8343,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _showMissionRoomMembers() {
-    final room = widget.missionRoom;
-    if (room == null) return;
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('mission-room-members'),
-      maxWidth: 520,
-      maxHeightFactor: 0.82,
-      builder: (context) => ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(18, 16, 18, 22),
-        children: [
-          Text('#${room.name}', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(
-            english
-                ? 'The manager owns this conversation. Workers receive work only through a confirmed native Kanban task.'
-                : 'El manager es propietario de esta conversación. Los workers solo reciben trabajo mediante una tarea Kanban nativa confirmada.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          for (final profile in room.memberProfiles)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: _missionIdentityAvatar(
-                key: ValueKey('mission-room-member-avatar-$profile'),
-                profileName: profile,
-                profiles: widget.missionRoomProfiles,
-                cache: widget.missionAvatarCache,
-                size: 40,
-                manager: profile == room.managerProfile,
-              ),
-              title: Text('@$profile'),
-              subtitle: Text(
-                profile == room.managerProfile
-                    ? (english
-                          ? 'Manager · chat owner'
-                          : 'Manager · dueño del chat')
-                    : (english
-                          ? 'Worker · Kanban target'
-                          : 'Worker · destino Kanban'),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     widget.performanceProbe?.screenBuilds++;
@@ -8968,528 +8353,555 @@ class _ChatScreenState extends State<ChatScreen>
     final connManager = context
         .findAncestorStateOfType<HermesAppState>()
         ?.connManager;
-    // Un Bot Chat es superficie propia como una Room: identidad del bot en la
-    // cabecera, sin drawer ni "nueva sesión", y modelo/controles al overflow.
-    final botSurface = widget.missionRoom == null && _isBotChatSurface;
-    final missionChrome = widget.missionRoom != null || botSurface;
-    return Scaffold(
-      drawerEnableOpenDragGesture: true,
-      drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
-      drawer: missionChrome || connManager == null
-          ? null
-          : HermesDrawer(
-              connection: widget.connection,
-              connManager: connManager,
-              current: DrawerSection.chat,
-              connected: true,
-            ),
-      appBar: HermesAppBar(
-        centerTitle: !missionChrome,
-        titleSpacing: 0,
-        bottom: missionChrome || _activeProfile == null
+    // Un Bot Chat es una superficie propia: identidad del bot en la cabecera,
+    // sin drawer ni "nueva sesión", y modelo/controles al overflow.
+    final botSurface = _isBotChatSurface;
+    final dedicatedChrome = botSurface;
+    // El observador del teclado envuelve al Scaffold en vez de leerse desde
+    // este State: así la dependencia de `viewInsets` (que cambia en cada
+    // frame de la animación del IME) vive en un elemento hoja y el Scaffold
+    // —misma instancia de widget— no se vuelve a construir por ello.
+    return _KeyboardInsetWatcher(
+      onBottomInset: _onKeyboardBottomInset,
+      child: Scaffold(
+        drawerEnableOpenDragGesture: true,
+        drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
+        drawer: dedicatedChrome || connManager == null
             ? null
-            : _ProfileContextChip(
-                label: str.chaProfileChip(_activeProfile!),
-                colors: colors,
+            : HermesDrawer(
+                connection: widget.connection,
+                connManager: connManager,
+                current: DrawerSection.chat,
+                connected: true,
               ),
-        automaticallyImplyLeading: missionChrome || connManager == null,
-        leading: missionChrome || connManager == null
-            ? null
-            : Builder(
-                builder: (ctx) => Center(
-                  child: IconButton(
-                    icon: const Icon(Icons.menu_rounded, size: 20),
-                    tooltip: str.chaMenuTooltip,
-                    // Botón circular sutil, estilo Claude.
-                    style: IconButton.styleFrom(
-                      backgroundColor: colors.surfaceVariant.withValues(
-                        alpha: 0.5,
+        appBar: HermesAppBar(
+          centerTitle: !dedicatedChrome,
+          titleSpacing: 0,
+          // Cabecera plana: sin línea/sombra de elevación al hacer scroll del
+          // transcript por debajo (Material 3 la añade por defecto vía
+          // `scrolledUnderElevation`). Se funde con el chat en vez de
+          // cortarlo con un borde.
+          scrolledUnderElevation: 0,
+          bottom: dedicatedChrome || _activeProfile == null
+              ? null
+              : _ProfileContextChip(
+                  label: str.chaProfileChip(_activeProfile!),
+                  colors: colors,
+                ),
+          automaticallyImplyLeading: dedicatedChrome || connManager == null,
+          leading: dedicatedChrome || connManager == null
+              ? null
+              : Builder(
+                  builder: (ctx) => Center(
+                    child: IconButton(
+                      icon: const Icon(Icons.menu_rounded, size: 20),
+                      tooltip: str.chaMenuTooltip,
+                      // Botón circular sutil, estilo Claude.
+                      style: IconButton.styleFrom(
+                        backgroundColor: colors.surfaceVariant.withValues(
+                          alpha: 0.5,
+                        ),
+                        shape: const CircleBorder(),
+                        minimumSize: const Size(48, 48),
                       ),
-                      shape: const CircleBorder(),
-                      minimumSize: const Size(48, 48),
+                      onPressed: () => Scaffold.of(ctx).openDrawer(),
                     ),
-                    onPressed: () => Scaffold.of(ctx).openDrawer(),
                   ),
                 ),
-              ),
-        // A Mission Room is the primary context. Generic chats keep the model
-        // selector as their title, while Rooms lead with the place and team.
-        title: widget.missionRoom != null
-            ? _MissionRoomAppBarTitle(room: widget.missionRoom!)
-            : botSurface
-            ? _BotChatAppBarTitle(
-                key: const ValueKey('bot-chat-header'),
-                profile: widget.missionBotProfile,
-                fallbackName: Session.profileOwner(widget.session.profile),
-                activity: _chatBound ? _chat.activityKind : null,
-                avatarCache: widget.missionAvatarCache,
-              )
-            : Semantics(
-                button: !showVoiceSurface,
-                label: str.chaModelSheetTitle,
-                excludeSemantics: true,
-                child: InkWell(
-                  onTap: showVoiceSurface ? null : _showModelSheet,
-                  borderRadius: BorderRadius.circular(10),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 48),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 180),
-                      child: Padding(
-                        key: ValueKey(_activeModelLabel),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 6,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                _activeModelLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w600,
-                                  color: colors.textPrimary,
+          title: botSurface
+              ? _BotChatAppBarTitle(
+                  key: const ValueKey('bot-chat-header'),
+                  profile: widget.missionBotProfile,
+                  fallbackName: Session.profileOwner(widget.session.profile),
+                  activity: _chatBound && !_turnActivityPillRevealed
+                      ? _chat.activityKind
+                      : null,
+                  avatarCache: widget.missionAvatarCache,
+                )
+              : Semantics(
+                  button: !showVoiceSurface,
+                  label: str.chaModelSheetTitle,
+                  excludeSemantics: true,
+                  child: InkWell(
+                    onTap: showVoiceSurface ? null : _showModelSheet,
+                    borderRadius: BorderRadius.circular(10),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: Padding(
+                          key: ValueKey(_activeModelLabel),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  _activeModelLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: colors.textPrimary,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 3),
-                            Icon(
-                              Icons.expand_more_rounded,
-                              size: 19,
-                              color: colors.textSecondary,
+                              const SizedBox(width: 3),
+                              Icon(
+                                Icons.expand_more_rounded,
+                                size: 19,
+                                color: colors.textSecondary,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+          actions: showVoiceSurface
+              ? [
+                  IconButton(
+                    key: const ValueKey('voice-stage-minimize'),
+                    icon: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 26,
+                    ),
+                    tooltip: str.chaVoiceMinimizeTooltip,
+                    onPressed: _vc?.minimizeOverlay,
+                  ),
+                  const SizedBox(width: 4),
+                ]
+              : botSurface
+              ? [
+                  PopupMenuButton<_BotChatHeaderAction>(
+                    key: const ValueKey('bot-chat-overflow-appbar'),
+                    tooltip: str.chaControlTitle,
+                    icon: const Icon(Icons.more_vert_rounded),
+                    onSelected: (action) {
+                      switch (action) {
+                        case _BotChatHeaderAction.model:
+                          _showModelSheet();
+                        case _BotChatHeaderAction.controls:
+                          unawaited(_showChatControlSheet());
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        key: const ValueKey('bot-chat-model-action'),
+                        value: _BotChatHeaderAction.model,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.tune_rounded, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                str.chaModelSheetTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                      PopupMenuItem(
+                        key: const ValueKey('bot-chat-control-action'),
+                        value: _BotChatHeaderAction.controls,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.settings_outlined, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                str.chaControlTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ),
-        actions: showVoiceSurface
-            ? [
-                IconButton(
-                  key: const ValueKey('voice-stage-minimize'),
-                  icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 26),
-                  tooltip: str.chaVoiceMinimizeTooltip,
-                  onPressed: _vc?.minimizeOverlay,
-                ),
-                const SizedBox(width: 4),
-              ]
-            : widget.missionRoom != null
-            ? [
-                IconButton(
-                  key: const ValueKey('mission-room-members-appbar'),
-                  icon: const Icon(Icons.group_outlined),
-                  tooltip: Localizations.localeOf(context).languageCode == 'en'
-                      ? 'Room members'
-                      : 'Miembros de la sala',
-                  onPressed: _showMissionRoomMembers,
-                ),
-                PopupMenuButton<_MissionRoomHeaderAction>(
-                  key: const ValueKey('mission-room-overflow-appbar'),
-                  tooltip: str.chaControlTitle,
-                  icon: const Icon(Icons.more_vert_rounded),
-                  onSelected: (action) {
-                    switch (action) {
-                      case _MissionRoomHeaderAction.model:
-                        _showModelSheet();
-                      case _MissionRoomHeaderAction.controls:
-                        unawaited(_showChatControlSheet());
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      key: const ValueKey('mission-room-model-action'),
-                      value: _MissionRoomHeaderAction.model,
-                      child: Row(
-                        children: [
-                          const Icon(Icons.tune_rounded, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              str.chaModelSheetTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
+                  const SizedBox(width: 4),
+                ]
+              : [
+                  // La presencia del Companion ya NO vive en el AppBar (ni el
+                  // spinner de carga): el estado vivo lo expresa la mascota
+                  // dentro del propio turno de Hermes.
+                  // El indicador de contexto+modo (antes aquí, como pill de
+                  // modo + SessionContextPopoverButton) ya no vive en la
+                  // AppBar: flota como una sola píldora combinada bajo el
+                  // composer — ver `_buildFloatingStatusPill` en
+                  // `_buildInputBar`.
+                  IconButton(
+                    key: const ValueKey('chat-new-session'),
+                    icon: Transform.translate(
+                      offset: const Offset(3, 0),
+                      child: const Icon(Icons.add_rounded, size: 26),
                     ),
-                    PopupMenuItem(
-                      key: const ValueKey('mission-room-control-action'),
-                      value: _MissionRoomHeaderAction.controls,
-                      child: Row(
-                        children: [
-                          const Icon(Icons.settings_outlined, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              str.chaControlTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 4),
-              ]
-            : botSurface
-            ? [
-                PopupMenuButton<_MissionRoomHeaderAction>(
-                  key: const ValueKey('bot-chat-overflow-appbar'),
-                  tooltip: str.chaControlTitle,
-                  icon: const Icon(Icons.more_vert_rounded),
-                  onSelected: (action) {
-                    switch (action) {
-                      case _MissionRoomHeaderAction.model:
-                        _showModelSheet();
-                      case _MissionRoomHeaderAction.controls:
-                        unawaited(_showChatControlSheet());
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      key: const ValueKey('bot-chat-model-action'),
-                      value: _MissionRoomHeaderAction.model,
-                      child: Row(
-                        children: [
-                          const Icon(Icons.tune_rounded, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              str.chaModelSheetTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem(
-                      key: const ValueKey('bot-chat-control-action'),
-                      value: _MissionRoomHeaderAction.controls,
-                      child: Row(
-                        children: [
-                          const Icon(Icons.settings_outlined, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              str.chaControlTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 4),
-              ]
-            : [
-                // La presencia del Companion ya NO vive en el AppBar (ni el
-                // spinner de carga): el estado vivo lo expresa la mascota
-                // dentro del propio turno de Hermes.
-                _buildModeBadge(colors),
-                SessionContextPopoverButton(
-                  metrics: _sessionContextMetrics,
-                  loadBreakdown: _loadSessionContextDetails,
-                  onMetricsSnapshot: (metrics) {
-                    if (_disposed || !mounted) return;
-                    _commitSessionContextMetrics(metrics);
-                  },
-                ),
-                IconButton(
-                  key: const ValueKey('chat-new-session'),
-                  icon: Transform.translate(
-                    offset: const Offset(3, 0),
-                    child: const Icon(Icons.add_rounded, size: 26),
+                    tooltip: str.chaNewChatTooltip,
+                    color: (_messages.isNotEmpty || _sending)
+                        ? colors.accent
+                        : colors.textSecondary,
+                    onPressed: _newChat,
                   ),
-                  tooltip: str.chaNewChatTooltip,
-                  color: (_messages.isNotEmpty || _sending)
-                      ? colors.accent
-                      : colors.textSecondary,
-                  onPressed: _newChat,
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  key: const ValueKey('chat-control-trigger'),
-                  icon: const Icon(Icons.more_vert),
-                  tooltip: str.chaControlTitle,
-                  onPressed: _showChatControlSheet,
-                ),
-              ],
-      ),
-      body: showVoiceSurface
-          ? ColoredBox(
-              color: colors.background,
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: Responsive.isTablet(context)
-                        ? 800
-                        : double.infinity,
+                  const SizedBox(width: 4),
+                  IconButton(
+                    key: const ValueKey('chat-control-trigger'),
+                    icon: const Icon(Icons.more_vert),
+                    tooltip: str.chaControlTitle,
+                    onPressed: _showChatControlSheet,
                   ),
-                  child: _voiceConversationSurface(),
-                ),
-              ),
-            )
-          : Stack(
-              children: [
-                Center(
+                ],
+        ),
+        body: showVoiceSurface
+            ? ColoredBox(
+                color: colors.background,
+                child: Center(
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
                       maxWidth: Responsive.isTablet(context)
                           ? 800
                           : double.infinity,
                     ),
-                    child: Column(
-                      children: [
-                        if (_chat.dashboardAuthRequired)
-                          _DesktopAuthRequiredBanner(
-                            message: str.chaDesktopAuthRequiredBanner,
-                          ),
-                        if (_chat.localTranscriptOlderHistoryTruncated)
-                          _LocalTranscriptTruncationNotice(
-                            message: str.chaLocalTranscriptTruncated,
-                          ),
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              _buildBody(),
-                              if (_chat.hasEarlierMessages)
+                    child: _voiceConversationSurface(),
+                  ),
+                ),
+              )
+            : Stack(
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: Responsive.isTablet(context)
+                            ? 800
+                            : double.infinity,
+                      ),
+                      child: Column(
+                        children: [
+                          if (_chat.dashboardAuthRequired)
+                            _DesktopAuthRequiredBanner(
+                              message: str.chaDesktopAuthRequiredBanner,
+                            ),
+                          if (_chat.localTranscriptOlderHistoryTruncated)
+                            _LocalTranscriptTruncationNotice(
+                              message: str.chaLocalTranscriptTruncated,
+                            ),
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                _buildBody(),
+                                if (_chat.hasEarlierMessages)
+                                  Positioned(
+                                    top: 8,
+                                    left: 0,
+                                    right: 0,
+                                    height: 48,
+                                    child: Center(
+                                      child: _LoadEarlierMessagesButton(
+                                        key: const ValueKey(
+                                          'chat-load-earlier',
+                                        ),
+                                        loading: _loadingEarlierMessages,
+                                        onTap: _loadEarlierMessages,
+                                      ),
+                                    ),
+                                  ),
+                                if (_chat.earlierMessagesLoadFailed &&
+                                    !_coreReadCoverageNoticeDismissed)
+                                  Positioned(
+                                    top: 64,
+                                    left: 12,
+                                    right: 12,
+                                    child: _CoreReadPartialCoverageNotice(
+                                      message: str.chaEarlierMessagesError,
+                                      onDismiss: () => setState(
+                                        () => _coreReadCoverageNoticeDismissed =
+                                            true,
+                                      ),
+                                    ),
+                                  ),
                                 Positioned(
-                                  top: 8,
                                   left: 0,
                                   right: 0,
+                                  bottom: 8,
                                   height: 48,
-                                  child: Center(
-                                    child: _LoadEarlierMessagesButton(
-                                      key: const ValueKey('chat-load-earlier'),
-                                      loading: _loadingEarlierMessages,
-                                      onTap: _loadEarlierMessages,
-                                    ),
-                                  ),
-                                ),
-                              if (_chat.earlierMessagesLoadFailed &&
-                                  !_coreReadCoverageNoticeDismissed)
-                                Positioned(
-                                  top: 64,
-                                  left: 12,
-                                  right: 12,
-                                  child: _CoreReadPartialCoverageNotice(
-                                    message: str.chaEarlierMessagesError,
-                                    onDismiss: () => setState(
-                                      () => _coreReadCoverageNoticeDismissed =
-                                          true,
-                                    ),
-                                  ),
-                                ),
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                bottom: 8,
-                                height: 48,
-                                child: ValueListenableBuilder<bool>(
-                                  valueListenable: _scrollToBottomVisibility,
-                                  builder: (context, showScrollToBottom, _) {
-                                    return ExcludeSemantics(
-                                      excluding: !showScrollToBottom,
-                                      child: IgnorePointer(
-                                        ignoring: !showScrollToBottom,
-                                        child: Center(
-                                          child: AnimatedOpacity(
-                                            key: ValueKey(
-                                              showScrollToBottom
-                                                  ? 'scroll-to-bottom-visible'
-                                                  : 'scroll-to-bottom-hidden',
-                                            ),
-                                            opacity: showScrollToBottom ? 1 : 0,
-                                            duration: _reduceMotion
-                                                ? Duration.zero
-                                                : const Duration(
-                                                    milliseconds: 160,
-                                                  ),
-                                            curve: Curves.easeOutCubic,
-                                            child: AnimatedScale(
-                                              scale: showScrollToBottom
+                                  child: ValueListenableBuilder<bool>(
+                                    valueListenable: _scrollToBottomVisibility,
+                                    builder: (context, showScrollToBottom, _) {
+                                      return ExcludeSemantics(
+                                        excluding: !showScrollToBottom,
+                                        child: IgnorePointer(
+                                          ignoring: !showScrollToBottom,
+                                          child: Center(
+                                            child: AnimatedOpacity(
+                                              key: ValueKey(
+                                                showScrollToBottom
+                                                    ? 'scroll-to-bottom-visible'
+                                                    : 'scroll-to-bottom-hidden',
+                                              ),
+                                              opacity: showScrollToBottom
                                                   ? 1
-                                                  : 0.94,
+                                                  : 0,
                                               duration: _reduceMotion
                                                   ? Duration.zero
                                                   : const Duration(
                                                       milliseconds: 160,
                                                     ),
                                               curve: Curves.easeOutCubic,
-                                              child: _ScrollToBottomButton(
-                                                key: const ValueKey(
-                                                  'chat-scroll-to-bottom',
+                                              child: AnimatedScale(
+                                                scale: showScrollToBottom
+                                                    ? 1
+                                                    : 0.94,
+                                                duration: _reduceMotion
+                                                    ? Duration.zero
+                                                    : const Duration(
+                                                        milliseconds: 160,
+                                                      ),
+                                                curve: Curves.easeOutCubic,
+                                                child: _ScrollToBottomButton(
+                                                  key: const ValueKey(
+                                                    'chat-scroll-to-bottom',
+                                                  ),
+                                                  onTap: _scrollToBottom,
                                                 ),
-                                                onTap: _scrollToBottom,
                                               ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    );
-                                  },
+                                      );
+                                    },
+                                  ),
                                 ),
-                              ),
-                              if (_chat.pendingInteractivePrompt != null)
-                                Positioned.fill(
-                                  child: Stack(
-                                    children: [
-                                      // Dim the transcript instead of hiding
-                                      // it: the question stays anchored above
-                                      // the composer like Desktop's inline
-                                      // clarify, not as a blank full screen.
-                                      Positioned.fill(
-                                        child: ColoredBox(
-                                          color: colors.background.withAlpha(
-                                            178,
+                                // Floating subagent-activity pill: anchored
+                                // near the BOTTOM of this transcript Stack,
+                                // right above the composer (matches the
+                                // design mockup — a small pill glued close to
+                                // the input, not floating in the middle of the
+                                // transcript). Reply text always stays above
+                                // it because `_subagentActivityPillReservedSpace`
+                                // pads the transcript's bottom by the same
+                                // amount whenever this pill is showing. This
+                                // sits close enough to the scroll-to-bottom
+                                // button (`bottom: 8, height: 48`) that the two
+                                // can visually overlap in the rare case both
+                                // show at once (mid-scroll while work is also
+                                // active) — accepted tradeoff for keeping the
+                                // pill glued to the composer like the mockup.
+                                Positioned(
+                                  bottom: 20,
+                                  left: 0,
+                                  right: 0,
+                                  child: Center(
+                                    // Se excluyen entre sí (ver
+                                    // `_showTurnActivityPill`), así que la que no
+                                    // toca colapsa a cero y la columna no crece.
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TurnActivityPill(
+                                          key: const ValueKey(
+                                            'chat-turn-activity',
+                                          ),
+                                          active: _showTurnActivityPill,
+                                          startedAt: _turnActivityStartedAt,
+                                          statusLabel: _turnActivityPillLabel,
+                                        ),
+                                        KeyedSubtree(
+                                          key: const ValueKey(
+                                            'chat-session-activity',
+                                          ),
+                                          child: SubagentActivityCard(
+                                            key: const ValueKey(
+                                              'chat-subagent-status',
+                                            ),
+                                            activities:
+                                                _displaySubagentActivities,
+                                            onDismiss: _dismissSubagentPill,
+                                            safeChildCount:
+                                                _chat.safeActiveSubagentCount >
+                                                    (_chat.hasRecentPassiveRemoteActivity
+                                                        ? _chat
+                                                              .passiveActivityAggregate
+                                                              .total
+                                                        : 0)
+                                                ? _chat.safeActiveSubagentCount
+                                                : (_chat.hasRecentPassiveRemoteActivity
+                                                      ? _chat
+                                                            .passiveActivityAggregate
+                                                            .total
+                                                      : 0),
+                                            background:
+                                                _chat
+                                                    .hasRecentPassiveRemoteActivity ||
+                                                _chat.safeActiveSubagentCount >
+                                                    0,
+                                            canInterrupt:
+                                                _chat.canInterruptSubagent,
+                                            canSteer: _chat.canSteerSubagent,
+                                            isInterruptPending: _chat
+                                                .isSubagentInterruptPending,
+                                            appForeground:
+                                                _appInForeground &&
+                                                _chatRouteVisible,
+                                            onTail: (activity) async {
+                                              final result = await _chat
+                                                  .tailSubagent(activity);
+                                              return SubagentTailView(
+                                                available: result.available,
+                                                content: result.content,
+                                                truncated: result.truncated,
+                                              );
+                                            },
+                                            onSteer: (activity, text) async {
+                                              final result = await _chat
+                                                  .steerSubagent(
+                                                    activity,
+                                                    text,
+                                                  );
+                                              return SubagentSteerView(
+                                                status: result.status,
+                                              );
+                                            },
+                                            isOpenPending:
+                                                _isSubagentOpenPending,
+                                            onOpenConversation: (activity) {
+                                              unawaited(
+                                                _openSubagentConversation(
+                                                  activity,
+                                                ),
+                                              );
+                                            },
+                                            onStopRequested:
+                                                _confirmInterruptSubagent,
                                           ),
                                         ),
-                                      ),
-                                      Positioned(
-                                        left: 0,
-                                        right: 0,
-                                        bottom: 0,
-                                        child: InteractivePromptCard(
-                                          key: ValueKey(
-                                            'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
-                                            '${_chat.pendingInteractivePrompt!.key.requestId}',
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (_chat.pendingInteractivePrompt != null)
+                                  Positioned.fill(
+                                    child: Stack(
+                                      children: [
+                                        // Light, un-blurred barrier — same
+                                        // idiom as the app's other floating
+                                        // popovers (session_context_usage.dart)
+                                        // — instead of a ~70% dim: the agent is
+                                        // just paused, not blocking the whole
+                                        // screen, so the transcript stays
+                                        // legible behind the card.
+                                        Positioned.fill(
+                                          child: ColoredBox(
+                                            color: colors.background.withAlpha(
+                                              41,
+                                            ),
                                           ),
-                                          entry:
-                                              _chat.pendingInteractivePrompt!,
-                                          busy:
-                                              _resolvingInteractivePrompt ||
-                                              _chat
-                                                      .pendingInteractivePrompt!
-                                                      .status ==
-                                                  InteractivePromptStatus
-                                                      .responding,
-                                          onSubmit: (value) {
-                                            unawaited(
-                                              _resolveInteractivePrompt(value),
-                                            );
-                                          },
-                                          onSubmitBatch: (answers) {
-                                            return _resolveInteractivePromptBatch(
-                                              answers,
-                                            );
-                                          },
-                                          onCancel: _cancelInteractivePrompt,
+                                        ),
+                                        Positioned(
+                                          left: 16,
+                                          right: 16,
+                                          bottom: 16,
+                                          child: InteractivePromptCard(
+                                            key: ValueKey(
+                                              'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
+                                              '${_chat.pendingInteractivePrompt!.key.requestId}',
+                                            ),
+                                            entry:
+                                                _chat.pendingInteractivePrompt!,
+                                            busy:
+                                                _resolvingInteractivePrompt ||
+                                                _chat
+                                                        .pendingInteractivePrompt!
+                                                        .status ==
+                                                    InteractivePromptStatus
+                                                        .responding,
+                                            onSubmit: (value) {
+                                              unawaited(
+                                                _resolveInteractivePrompt(
+                                                  value,
+                                                ),
+                                              );
+                                            },
+                                            onSubmitBatch: (answers) {
+                                              return _resolveInteractivePromptBatch(
+                                                answers,
+                                              );
+                                            },
+                                            onCancel: _cancelInteractivePrompt,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          // Ownership conflicts keep the transcript and composer
+                          // mounted while fencing every mutation.
+                          if (_chat.conflictReadOnly)
+                            _buildRuntimeOwnershipBanner(),
+                          // Aprobación inline: aparece justo encima del composer cuando el
+                          // agente pide permiso (motor /v1/runs).
+                          if (_chat.pendingApproval != null)
+                            ChatApprovalCard(
+                              approval: _chat.pendingApproval!,
+                              busy: _resolvingApproval,
+                              onChoice: _resolveChatApproval,
+                              companion: context
+                                  .findAncestorStateOfType<HermesAppState>()
+                                  ?.companion,
+                            ),
+                          if (_chat.desktopContinuationRequired)
+                            Semantics(
+                              container: true,
+                              label:
+                                  Strings.of(context).chatContinueOnDesktop,
+                              child: Card(
+                                key: const ValueKey('desktop-continuation-required'),
+                                child: Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.desktop_windows_outlined),
+                                      SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          Strings.of(context).chatContinueOnDesktop,
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                            ],
-                          ),
-                        ),
-                        // Ownership conflicts keep the transcript and composer
-                        // mounted while fencing every mutation.
-                        if (_chat.conflictReadOnly)
-                          _buildRuntimeOwnershipBanner(),
-                        // Aprobación inline: aparece justo encima del composer cuando el
-                        // agente pide permiso (motor /v1/runs).
-                        if (_chat.pendingApproval != null)
-                          ChatApprovalCard(
-                            approval: _chat.pendingApproval!,
-                            busy: _resolvingApproval,
-                            onChoice: _resolveChatApproval,
-                            companion: context
-                                .findAncestorStateOfType<HermesAppState>()
-                                ?.companion,
-                          ),
-                        if (_chat.desktopContinuationRequired)
-                          Semantics(
-                            container: true,
-                            label: 'Continúa esta solicitud en Hermes Desktop',
-                            child: const Card(
-                              key: ValueKey('desktop-continuation-required'),
-                              child: Padding(
-                                padding: EdgeInsets.all(16),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.desktop_windows_outlined),
-                                    SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        'Continúa esta solicitud en Hermes Desktop',
-                                      ),
-                                    ),
-                                  ],
-                                ),
                               ),
                             ),
-                          ),
-                        KeyedSubtree(
-                          key: const ValueKey('chat-session-activity'),
-                          child: SubagentActivityCard(
-                            key: const ValueKey('chat-subagent-status'),
-                            activities: _chat.subagentActivities,
-                            safeChildCount:
-                                _chat.safeActiveSubagentCount >
-                                    (_chat.hasRecentPassiveRemoteActivity
-                                        ? _chat.passiveActivityAggregate.total
-                                        : 0)
-                                ? _chat.safeActiveSubagentCount
-                                : (_chat.hasRecentPassiveRemoteActivity
-                                      ? _chat.passiveActivityAggregate.total
-                                      : 0),
-                            background:
-                                _chat.hasRecentPassiveRemoteActivity ||
-                                _chat.safeActiveSubagentCount > 0,
-                            canInterrupt: _chat.canInterruptSubagent,
-                            canSteer: _chat.canSteerSubagent,
-                            isInterruptPending:
-                                _chat.isSubagentInterruptPending,
-                            appForeground:
-                                _appInForeground && _chatRouteVisible,
-                            onTail: (activity) async {
-                              final result = await _chat.tailSubagent(activity);
-                              return SubagentTailView(
-                                available: result.available,
-                                content: result.content,
-                                truncated: result.truncated,
-                              );
-                            },
-                            onSteer: (activity, text) async {
-                              final result = await _chat.steerSubagent(
-                                activity,
-                                text,
-                              );
-                              return SubagentSteerView(status: result.status);
-                            },
-                            isOpenPending: _isSubagentOpenPending,
-                            onOpenConversation: (activity) {
-                              unawaited(_openSubagentConversation(activity));
-                            },
-                            onStopRequested: _confirmInterruptSubagent,
-                          ),
-                        ),
-                        _buildStopStatusStrip(colors),
-                        _buildQueueStrip(colors),
-                        if ((_vc?.active ?? false) && !showVoiceSurface)
-                          _buildVoiceReturnBar(
-                            colors,
-                            ownsCurrentChat: voiceSessionActive,
-                          ),
-                        if (!showVoiceSurface) _buildInputBar(),
-                      ],
+                          // The subagent activity indicator now floats as an
+                          // overlay anchored above the transcript (see the
+                          // inner Stack below) instead of living here, so its
+                          // live/completed count changes never resize this
+                          // Column or shift the composer.
+                          _buildStopStatusStrip(colors),
+                          _buildGoalStrip(colors),
+                          _buildBackgroundTaskStrip(colors),
+                          _buildQueueStrip(colors),
+                          if ((_vc?.active ?? false) && !showVoiceSurface)
+                            _buildVoiceReturnBar(
+                              colors,
+                              ownsCurrentChat: voiceSessionActive,
+                            ),
+                          if (!showVoiceSurface) _buildInputBar(),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -10132,15 +9544,30 @@ class _ChatScreenState extends State<ChatScreen>
         _modelSource != _ModelSource.desktop ||
         (desktopOption != null && !desktopOption.unavailable);
     final unavailableLabel = Strings.of(sheetCtx).chaModelUnavailable;
+    final dotColor = !isUsable
+        ? colors.textDisabled
+        : isActive
+        ? colors.accent
+        : colors.textSecondary;
     return ListTile(
       dense: true,
-      leading: Icon(
-        Icons.smart_toy_outlined,
-        color: !isUsable
-            ? colors.textDisabled
-            : isActive
-            ? colors.accent
-            : colors.textSecondary,
+      leading: SizedBox(
+        width: 24,
+        height: 24,
+        child: Center(
+          child: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive && isUsable ? dotColor : Colors.transparent,
+              border: Border.all(
+                color: dotColor,
+                width: isActive && isUsable ? 0 : 1.5,
+              ),
+            ),
+          ),
+        ),
       ),
       title: Text(
         friendlyModelName(modelId),
@@ -10202,35 +9629,76 @@ class _ChatScreenState extends State<ChatScreen>
     _ => colors.accent,
   };
 
-  Widget _buildModeBadge(HermesThemeColors colors) {
+  /// (label, color) para el segmento de modo de la píldora combinada
+  /// contexto+modo, o `null` cuando el modo es el normal (nada que destacar).
+  /// Misma condición "prominent" que usaba el antiguo pill de la AppBar
+  /// (YOLO / solo lectura / override por sesión).
+  (String, Color)? _modeFlag(HermesThemeColors colors) {
     final policy = context
         .findAncestorStateOfType<HermesAppState>()
         ?.approvalPolicy;
-    if (policy == null) return const SizedBox.shrink();
+    if (policy == null) return null;
     final override = policy.sessionMode(widget.session.id);
     final effective = policy.effectiveMode(widget.session.id);
-    // Pill visible cuando hay algo que destacar (YOLO/solo lectura/override);
-    // si no, un icono discreto para acceder al selector sin meter ruido.
     final prominent =
         effective == ApprovalMode.yolo ||
         effective == ApprovalMode.readOnly ||
         override != null;
-    // Limpio (estilo Claude): si el modo es el normal, NO metemos icono en la
-    // barra (se cambia desde el menú ⋮ → "Permisos / modo"). Solo cuando hay
-    // algo que avisar (YOLO / solo lectura / override por sesión) mostramos el
-    // pill de color como señal de seguridad.
-    if (!prominent) return const SizedBox.shrink();
-    return InkWell(
-      borderRadius: BorderRadius.circular(6),
-      onTap: () => _showModeSheet(policy),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        child: HermesPill(
-          color: _modeColor(effective, colors),
-          label: effective.label,
-        ),
+    if (!prominent) return null;
+    return (effective.label, _modeColor(effective, colors));
+  }
+
+  /// Lista de opciones de modo (radio buttons), compartida por el sheet
+  /// independiente (menú ⋮ → "Permisos") y la sección de modo embebida en el
+  /// popover de contexto — una sola fuente de verdad para evitar duplicar el
+  /// bucle de `ListTile`s en dos sitios. [dismissHost] cierra la superficie
+  /// que aloja esta lista (el sheet o el popover) antes de aplicar el modo.
+  List<Widget> _approvalModeOptionTiles({
+    required BuildContext ctx,
+    required ApprovalPolicyService policy,
+    required HermesThemeColors colors,
+    required VoidCallback dismissHost,
+  }) {
+    final s = Strings.of(ctx);
+    final override = policy.sessionMode(widget.session.id);
+    // null = usar global; los demás = override de sesión.
+    final options = <(ApprovalMode?, String, String)>[
+      (null, s.chaModeGlobalTitle, s.chaModeGlobalSub),
+      (ApprovalMode.yolo, 'YOLO', s.chaModeYoloSub),
+      (
+        ApprovalMode.interactive,
+        s.chaModeInteractiveTitle,
+        s.chaModeInteractiveSub,
       ),
-    );
+      (
+        ApprovalMode.conservative,
+        s.chaModeConservativeTitle,
+        s.chaModeConservativeSub,
+      ),
+      (ApprovalMode.readOnly, s.chaModeReadOnlyTitle, s.chaModeReadOnlySub),
+    ];
+    return [
+      for (final (mode, title, sub) in options)
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            (override == mode)
+                ? Icons.radio_button_checked
+                : Icons.radio_button_unchecked,
+            color: mode == null ? colors.accent : _modeColor(mode, colors),
+          ),
+          title: Text(title),
+          subtitle: Text(
+            sub,
+            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+          ),
+          onTap: () async {
+            dismissHost();
+            await _selectSessionMode(policy, mode);
+          },
+        ),
+    ];
   }
 
   void _showModeSheet(ApprovalPolicyService policy) {
@@ -10241,23 +9709,6 @@ class _ChatScreenState extends State<ChatScreen>
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
         final s = Strings.of(ctx);
-        final override = policy.sessionMode(widget.session.id);
-        // null = usar global; los demás = override de sesión.
-        final options = <(ApprovalMode?, String, String)>[
-          (null, s.chaModeGlobalTitle, s.chaModeGlobalSub),
-          (ApprovalMode.yolo, 'YOLO', s.chaModeYoloSub),
-          (
-            ApprovalMode.interactive,
-            s.chaModeInteractiveTitle,
-            s.chaModeInteractiveSub,
-          ),
-          (
-            ApprovalMode.conservative,
-            s.chaModeConservativeTitle,
-            s.chaModeConservativeSub,
-          ),
-          (ApprovalMode.readOnly, s.chaModeReadOnlyTitle, s.chaModeReadOnlySub),
-        ];
         return ListView(
           shrinkWrap: true,
           padding: const EdgeInsets.only(bottom: 10),
@@ -10286,30 +9737,57 @@ class _ChatScreenState extends State<ChatScreen>
                 ),
               ),
             ),
-            for (final (mode, title, sub) in options)
-              ListTile(
-                leading: Icon(
-                  (override == mode)
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: mode == null
-                      ? colors.accent
-                      : _modeColor(mode, colors),
-                ),
-                title: Text(title),
-                subtitle: Text(
-                  sub,
-                  style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _selectSessionMode(policy, mode);
-                },
-              ),
+            ..._approvalModeOptionTiles(
+              ctx: ctx,
+              policy: policy,
+              colors: colors,
+              dismissHost: () => Navigator.pop(ctx),
+            ),
             const SizedBox(height: 8),
           ],
         );
       },
+    );
+  }
+
+  /// Sección de modo embebida al final del popover de contexto (ver
+  /// `showSessionContextPopover`'s `modeSectionBuilder`): mismo contenido que
+  /// `_showModeSheet`, reutilizado vía `_approvalModeOptionTiles` en vez de
+  /// duplicar el listado. [closePopover] es el `onClose` del propio popover.
+  Widget _buildApprovalModeSection(
+    BuildContext ctx,
+    VoidCallback closePopover,
+  ) {
+    final policy = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.approvalPolicy;
+    if (policy == null) return const SizedBox.shrink();
+    final colors = Theme.of(ctx).hermes;
+    final s = Strings.of(ctx);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          s.chaModeSheetTitle,
+          style: Theme.of(
+            ctx,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          s.chaModeSheetEffective(
+            policy.effectiveMode(widget.session.id).label,
+          ),
+          style: TextStyle(fontSize: 12, color: colors.textSecondary),
+        ),
+        ..._approvalModeOptionTiles(
+          ctx: ctx,
+          policy: policy,
+          colors: colors,
+          dismissHost: closePopover,
+        ),
+      ],
     );
   }
 
@@ -11108,10 +10586,7 @@ class _ChatScreenState extends State<ChatScreen>
       publicCommentary: vc.publicCommentary,
       fallbackLabel: safeNote.isEmpty ? phaseLabel : safeNote,
     );
-    final voiceProfile =
-        widget.missionBotProfile ??
-        widget.missionRoomProfiles[_effectiveSessionProfile] ??
-        widget.missionRoomProfiles[widget.missionRoom?.managerProfile];
+    final voiceProfile = widget.missionBotProfile;
     final profileName = voiceProfile?.name.trim().isNotEmpty == true
         ? voiceProfile!.name
         : _effectiveSessionProfile;
@@ -11282,7 +10757,333 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// Indicaciones que no pudieron entrar en el turno vivo. Viven junto al
+  /// Live standing-goal status, one line above the composer — same slot
+  /// family as [_buildStopStatusStrip]. Tap opens the detail sheet with the
+  /// contract, criteria, gates and the pause/resume/clear actions. This is
+  /// deliberately not a card: goals are ambient state, not an interruption.
+  Widget _buildGoalStrip(HermesThemeColors colors) {
+    final goal = _chat.goal;
+    if (goal == null) return const SizedBox.shrink();
+    final s = Strings.of(context);
+    final blocked = goal.isBlocked;
+    final label = blocked
+        ? s.chaGoalBlocked
+        : switch (goal.status) {
+            'paused' => s.chaGoalPaused,
+            'waiting' => s.chaGoalWaiting,
+            'done' => s.chaGoalDoneTurns(goal.turnsUsed),
+            _ => s.chaGoalTurnLabel(goal.turnsUsed, goal.maxTurns),
+          };
+    final icon = blocked
+        ? Icons.flag_circle_outlined
+        : switch (goal.status) {
+            'paused' => Icons.pause_circle_outlined,
+            'waiting' => Icons.hourglass_empty_rounded,
+            'done' => Icons.flag_outlined,
+            _ => Icons.flag_circle_outlined,
+          };
+    final color = blocked
+        ? colors.error
+        : switch (goal.status) {
+            'paused' || 'waiting' => colors.warning,
+            'done' => colors.textSecondary,
+            _ => colors.accent,
+          };
+    final reason = goal.displayReason;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      child: Semantics(
+        liveRegion: true,
+        label: [
+          label,
+          goal.title,
+          reason,
+        ].where((part) => part.isNotEmpty).join('. '),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => unawaited(_showGoalSheet(goal)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        key: const ValueKey('chat-goal-primary-label'),
+                        maxLines: 1,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: color),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (reason.isNotEmpty)
+                        Text(
+                          reason,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: colors.textSecondary),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: colors.textDisabled,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendGoalAction(String action) async {
+    try {
+      await _chat.sendGoalAction(action);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaGoalActionFailed)),
+      );
+    }
+  }
+
+  Future<void> _showGoalSheet(SessionGoalSnapshot goal) async {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('chat-goal-dialog'),
+      maxWidth: 560,
+      builder: (sheetContext) {
+        Widget section(String title, String body) {
+          if (body.isEmpty) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(sheetContext).textTheme.labelMedium?.copyWith(
+                    color: colors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(body),
+              ],
+            ),
+          );
+        }
+
+        return ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          children: [
+            Text(
+              goal.title.isEmpty ? s.chaGoalSheetTitle : goal.title,
+              style: Theme.of(sheetContext).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            section(s.chaGoalSheetOutcome, goal.outcome),
+            section(s.chaGoalSheetVerification, goal.verification),
+            section(s.chaGoalSheetConstraints, goal.constraints),
+            section(s.chaGoalSheetBoundaries, goal.boundaries),
+            section(s.chaGoalSheetStopWhen, goal.stopWhen),
+            if (goal.subgoals.isNotEmpty)
+              section(s.chaGoalSheetSubgoals, goal.subgoals.join('\n')),
+            if (goal.gates.isNotEmpty)
+              section(
+                s.chaGoalSheetGates,
+                goal.gates
+                    .map(
+                      (g) =>
+                          '${g.command} (${g.attempts}/${g.maxRetries + 1}'
+                          '${g.lastExitCode == null ? '' : ', exit ${g.lastExitCode}'})',
+                    )
+                    .join('\n'),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (goal.isActive)
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_sendGoalAction('goal.pause'));
+                    },
+                    child: Text(s.chaGoalActionPause),
+                  ),
+                if (goal.isPaused)
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_sendGoalAction('goal.resume'));
+                    },
+                    child: Text(s.chaGoalActionResume),
+                  ),
+                if (goal.isWaiting)
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_sendGoalAction('goal.unwait'));
+                    },
+                    child: Text(s.chaGoalActionResumeNow),
+                  ),
+                if (!goal.isDone)
+                  TextButton(
+                    onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: sheetContext,
+                        builder: (dialogContext) => AlertDialog(
+                          title: Text(s.chaGoalClearConfirmTitle),
+                          content: Text(s.chaGoalClearConfirmBody),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(false),
+                              child: Text(
+                                MaterialLocalizations.of(
+                                  dialogContext,
+                                ).cancelButtonLabel,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(true),
+                              child: Text(s.chaGoalActionClear),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true && sheetContext.mounted) {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(_sendGoalAction('goal.clear'));
+                      }
+                    },
+                    child: Text(s.chaGoalActionClear),
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Resultado de una tarea de `prompt.background` (Agent Center). Una sola
+  /// línea, sin `ListTile` ni chevron — tocar abre el texto completo, la X
+  /// descarta sin verlo. Si hay más de una pendiente, se muestra la más
+  /// reciente con un contador; las demás esperan su turno.
+  Widget _buildBackgroundTaskStrip(HermesThemeColors colors) {
+    final outcomes = _chat.backgroundTaskOutcomes;
+    if (outcomes.isEmpty) return const SizedBox.shrink();
+    final s = Strings.of(context);
+    final taskId = outcomes.keys.last;
+    final outcome = outcomes[taskId]!;
+    final extra = outcomes.length - 1;
+    final label = extra > 0
+        ? '${outcome.isError ? s.chaBackgroundTaskErrorShort : s.chaBackgroundTaskDoneShort} (+$extra)'
+        : (outcome.isError
+              ? s.chaBackgroundTaskErrorShort
+              : s.chaBackgroundTaskDoneShort);
+    final color = outcome.isError ? colors.error : colors.accent;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      child: Semantics(
+        liveRegion: true,
+        label: label,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Row(
+            children: [
+              Icon(
+                outcome.isError
+                    ? Icons.error_outline_rounded
+                    : Icons.task_alt_rounded,
+                size: 16,
+                color: color,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () =>
+                      unawaited(_showBackgroundTaskResult(taskId, outcome)),
+                  child: Text(
+                    label,
+                    key: const ValueKey('chat-background-primary-label'),
+                    maxLines: 1,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: color),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              IconButton(
+                iconSize: 16,
+                // Objetivo táctil real de 44dp aunque el icono visible sea de
+                // 16dp: `BoxConstraints()` vacío colapsaba el hit-test al
+                // tamaño del icono, justo al lado del composer.
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                tooltip: s.inAppDismiss,
+                onPressed: () => _chat.dismissBackgroundTaskOutcome(taskId),
+                icon: Icon(Icons.close_rounded, color: colors.textDisabled),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showBackgroundTaskResult(
+    String taskId,
+    ({String text, bool isError}) outcome,
+  ) async {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('chat-background-task-result'),
+      maxWidth: 560,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              outcome.isError
+                  ? s.chaBackgroundTaskError
+                  : s.chaBackgroundTaskDone,
+              style: Theme.of(sheetContext).textTheme.titleSmall?.copyWith(
+                color: outcome.isError ? colors.error : colors.accent,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              outcome.text,
+              style: Theme.of(sheetContext).textTheme.bodyMedium,
+            ),
+          ],
+        ),
+      ),
+    );
+    _chat.dismissBackgroundTaskOutcome(taskId);
+  }
+
   /// composer, no como burbujas apiladas, y pueden cancelarse antes de enviarse.
   Widget _buildQueueStrip(HermesThemeColors colors) {
     final queuedEntries = _chat.queuedEntries;
@@ -11546,9 +11347,7 @@ class _ChatScreenState extends State<ChatScreen>
                 icon: Icons.graphic_eq_rounded,
                 semanticLabel: Strings.of(context).chaVoiceModeTooltip,
                 onPressed: widget.connection.readOnly ? null : _enterVoiceMode,
-                backgroundColor: widget.missionRoom != null
-                    ? colors.accent
-                    : colors.secondary,
+                backgroundColor: colors.secondary,
                 foregroundColor: colors.onAccent,
                 enabled: !widget.connection.readOnly,
                 size: 42,
@@ -11560,7 +11359,6 @@ class _ChatScreenState extends State<ChatScreen>
               child: _SendButton(
                 busy:
                     _composerSubmissionInFlight ||
-                    _roomTaskSubmitting ||
                     _attachmentSubmitting ||
                     _compressingSession,
                 mode: _sending && _nothingToSend
@@ -11568,7 +11366,6 @@ class _ChatScreenState extends State<ChatScreen>
                     : _SendMode.send,
                 enabled:
                     !_composerSubmissionInFlight &&
-                    !_roomTaskSubmitting &&
                     !_attachmentSubmitting &&
                     !_compressingSession &&
                     (!_attachmentMutationInFlight ||
@@ -11643,17 +11440,6 @@ class _ChatScreenState extends State<ChatScreen>
         : _chat.desktopCompressionAwaitingReconciliation
         ? strings.chaCompressionPending
         : strings.chaCompressionProgress;
-    final roomMentionController = _textController;
-    if (roomMentionController is _RoomMentionTextEditingController) {
-      roomMentionController.mentionColor = colors.accent;
-    }
-    final media = MediaQuery.of(context);
-    // En horizontal el IME ocupa más de media pantalla. El composer normal
-    // (campo de hasta cuatro líneas + fila de acciones + SafeArea) puede quedar
-    // más alto que el viewport restante y provocar un RenderFlex overflow.
-    final compactIme =
-        media.viewInsets.bottom > 0 &&
-        media.orientation == Orientation.landscape;
     if (widget.connection.readOnly) {
       // Mantiene la misma huella y superficie que el composer para no convertir
       // un estado persistente en una alerta separada del lugar al que afecta.
@@ -11661,35 +11447,41 @@ class _ChatScreenState extends State<ChatScreen>
         padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
         color: colors.background,
         child: SafeArea(
-          child: HermesComposerSurface(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            unfocusedHorizontalInset: 0,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.visibility_outlined,
-                    size: 18,
-                    color: colors.textSecondary,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      Strings.of(context).readOnlyNotice,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.25,
-                        fontWeight: FontWeight.w600,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              HermesComposerSurface(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                unfocusedHorizontalInset: 0,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.visibility_outlined,
+                        size: 18,
                         color: colors.textSecondary,
                       ),
-                    ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          Strings.of(context).readOnlyNotice,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.25,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
+              _buildFloatingStatusPill(colors),
+            ],
           ),
         ),
       );
@@ -11698,255 +11490,309 @@ class _ChatScreenState extends State<ChatScreen>
     // posible mientras Hermes responde. Solo se cierra el `+` durante estados
     // locales que podrían mezclar el lote que se está enviando o subiendo.
     final attachmentInteractive =
-        !_loading &&
+        !_interactiveMessageRefreshPending &&
         !_composerSubmissionInFlight &&
-        !_roomTaskMutationLocked &&
         !_attachmentSubmitting &&
         !_compressingSession;
     // El dictado es otra forma de rellenar el mismo composer. Debe seguir
     // disponible mientras Hermes piensa o ejecuta herramientas; al enviarlo se
     // aplica la misma cola de siguiente turno que al texto escrito.
     final dictationInteractive =
-        !_loading &&
-        !_roomTaskMutationLocked &&
+        !_interactiveMessageRefreshPending &&
         !_attachmentSubmitting &&
         !_compressingSession;
-    final roomMentionPalette =
-        _isRecording ||
-            _transcribing ||
-            widget.missionRoom == null ||
-            _roomMentionSuggestions.isEmpty
-        ? null
-        : _RoomMentionPalette(
-            room: widget.missionRoom!,
-            profiles: _roomMentionSuggestions,
-            profileRoster: widget.missionRoomProfiles,
-            avatarCache: widget.missionAvatarCache,
-            onPick: _pickRoomMention,
-          );
     final slashPalette =
         _isRecording || _transcribing || _slashSuggestions.isEmpty
         ? null
         : _SlashPalette(commands: _slashSuggestions, onPick: _pickSlash);
-    final floatingPalette = roomMentionPalette ?? slashPalette;
+    final floatingPalette = slashPalette ?? (_isRecording || _transcribing
+        ? null : ChatMentionPalette(
+            controller: _textController,
+            focusNode: _textFocusNode,
+            connectionId: widget.connection.id,
+            profile: _effectiveSessionProfile,
+          ));
     // Composer premium (referencia live-chat): contenedor con borde sutil,
     // campo sin marco y fila inferior de acciones con send cuadrado ámbar.
-    return Container(
-      key: const ValueKey('chat-composer-host'),
-      padding: compactIme
-          ? const EdgeInsets.fromLTRB(12, 2, 12, 3)
-          : const EdgeInsets.fromLTRB(14, 4, 14, 10),
-      color: colors.background,
-      child: SafeArea(
-        bottom: !compactIme,
-        child: HermesComposerSurface(
-          focused: _textFocusNode.hasFocus,
-          unfocusedHorizontalInset: 12,
+    //
+    // La lectura de `viewInsets`/orientación vive en un `Builder` propio: así
+    // solo este subárbol se reconstruye con cada frame de la animación del
+    // teclado, en vez de suscribir el State completo (y con él el transcript)
+    // a `MediaQuery.of`.
+    return Builder(
+      builder: (imeContext) {
+        // En horizontal el IME ocupa más de media pantalla. El composer normal
+        // (campo de hasta cuatro líneas + fila de acciones + SafeArea) puede
+        // quedar más alto que el viewport restante y provocar un RenderFlex
+        // overflow.
+        final compactIme =
+            MediaQuery.viewInsetsOf(imeContext).bottom > 0 &&
+            MediaQuery.orientationOf(imeContext) == Orientation.landscape;
+        return Container(
+          key: const ValueKey('chat-composer-host'),
           padding: compactIme
-              ? const EdgeInsets.symmetric(horizontal: 4)
-              : EdgeInsets.zero,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_pendingAttachments.isNotEmpty)
-                _AttachmentPreviewStrip(
-                  attachments: _pendingAttachments,
-                  onRemove: _roomTaskMutationLocked
-                      ? null
-                      : (localId) =>
-                            unawaited(_removePendingAttachment(localId)),
-                  onRetry: _roomTaskMutationLocked
-                      ? null
-                      : (localId) =>
-                            unawaited(_retryPendingAttachment(localId)),
-                ),
-              if (_compressingSession)
-                Semantics(
-                  key: const ValueKey('desktop-session-compression-progress'),
-                  liveRegion: true,
-                  label: compressionProgressLabel,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: _chat.desktopCompressionNeedsConfirmation
-                              ? Icon(
-                                  Icons.info_outline,
-                                  size: 16,
-                                  color: colors.accent,
-                                )
-                              : CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: colors.accent,
-                                ),
+              ? const EdgeInsets.fromLTRB(12, 2, 12, 3)
+              : const EdgeInsets.fromLTRB(14, 4, 14, 10),
+          color: colors.background,
+          child: SafeArea(
+            bottom: !compactIme,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                HermesComposerSurface(
+                  focused: _textFocusNode.hasFocus,
+                  unfocusedHorizontalInset: 12,
+                  padding: compactIme
+                      ? const EdgeInsets.symmetric(horizontal: 4)
+                      : EdgeInsets.zero,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_pendingAttachments.isNotEmpty)
+                        _AttachmentPreviewStrip(
+                          key: const ValueKey('composer-attachment-preview'),
+                          attachments: _pendingAttachments,
+                          onRemove: (localId) =>
+                              unawaited(_removePendingAttachment(localId)),
+                          onRetry: (localId) =>
+                              unawaited(_retryPendingAttachment(localId)),
                         ),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: Text(
-                            compressionProgressLabel,
-                            style: TextStyle(
-                              color: colors.textSecondary,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
+                      if (_compressingSession)
+                        Semantics(
+                          key: const ValueKey(
+                            'desktop-session-compression-progress',
+                          ),
+                          liveRegion: true,
+                          label: compressionProgressLabel,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      _chat.desktopCompressionNeedsConfirmation
+                                      ? Icon(
+                                          Icons.info_outline,
+                                          size: 16,
+                                          color: colors.accent,
+                                        )
+                                      : CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: colors.accent,
+                                        ),
+                                ),
+                                const SizedBox(width: 9),
+                                Expanded(
+                                  child: Text(
+                                    compressionProgressLabel,
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (!_isRecording)
-                    AttachmentSourceMenuButton(
-                      key: const ValueKey('composer-add'),
-                      semanticLabel: Strings.of(context).chaAttachTooltip,
-                      onSelected: (source) =>
-                          unawaited(_selectAttachmentSource(source)),
-                      enabled: attachmentInteractive,
-                    ),
-                  if (_isRecording) _buildDictationCancelAction(colors),
-                  Expanded(
-                    child: SizedBox(
-                      height: _isRecording ? _dictationComposerHeight : null,
-                      child: Stack(
-                        alignment: Alignment.center,
+                      Row(
+                        key: const ValueKey('composer-input-row'),
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          ExcludeSemantics(
-                            excluding: _isRecording,
-                            child: CallbackShortcuts(
-                              bindings: {
-                                const SingleActivator(
-                                  LogicalKeyboardKey.enter,
-                                  control: true,
-                                ): _composerKeyboardSubmit,
-                                const SingleActivator(
-                                  LogicalKeyboardKey.enter,
-                                  meta: true,
-                                ): _composerKeyboardSubmit,
-                              },
-                              child: TextField(
-                                controller: _textController,
-                                focusNode: _textFocusNode,
-                                style: _isRecording
-                                    ? const TextStyle(color: Colors.transparent)
-                                    : null,
-                                cursorColor: _isRecording
-                                    ? Colors.transparent
-                                    : null,
-                                decoration: InputDecoration(
-                                  hintText: _attachmentSubmitting
-                                      ? Strings.of(
-                                          context,
-                                        ).chaUploadingAttachment
-                                      : _pendingAttachments.isNotEmpty
-                                      ? Strings.of(context).chaHintSystem
-                                      : widget.missionRoom != null
-                                      ? (Localizations.localeOf(
+                          if (!_isRecording)
+                            AttachmentSourceMenuButton(
+                              key: const ValueKey('composer-add'),
+                              semanticLabel: Strings.of(
+                                context,
+                              ).chaAttachTooltip,
+                              onSelected: (source) =>
+                                  unawaited(_selectAttachmentSource(source)),
+                              enabled: attachmentInteractive,
+                            ),
+                          if (_isRecording) _buildDictationCancelAction(colors),
+                          Expanded(
+                            child: SizedBox(
+                              height: _isRecording
+                                  ? _dictationComposerHeight
+                                  : null,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  ExcludeSemantics(
+                                    excluding: _isRecording,
+                                    child: CallbackShortcuts(
+                                      bindings: {
+                                        const SingleActivator(
+                                          LogicalKeyboardKey.enter,
+                                          control: true,
+                                        ): _composerKeyboardSubmit,
+                                        const SingleActivator(
+                                          LogicalKeyboardKey.enter,
+                                          meta: true,
+                                        ): _composerKeyboardSubmit,
+                                      },
+                                      child: TextField(
+                                        controller: _textController,
+                                        focusNode: _textFocusNode,
+                                        style: _isRecording
+                                            ? const TextStyle(
+                                                color: Colors.transparent,
+                                              )
+                                            : null,
+                                        cursorColor: _isRecording
+                                            ? Colors.transparent
+                                            : null,
+                                        decoration: InputDecoration(
+                                          hintText: _attachmentSubmitting
+                                              ? Strings.of(
                                                   context,
-                                                ).languageCode ==
-                                                'en'
-                                            ? 'Message the team…'
-                                            : 'Escribe al equipo…')
-                                      : Strings.of(context).chaHintUser,
-                                  hintStyle: TextStyle(
-                                    color: _isRecording
-                                        ? Colors.transparent
-                                        : colors.textSecondary,
-                                    fontSize: 14,
-                                  ),
-                                  filled: false,
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  disabledBorder: InputBorder.none,
-                                  contentPadding: EdgeInsets.fromLTRB(
-                                    4,
-                                    compactIme ? 10 : 12,
-                                    4,
-                                    _isRecording
-                                        ? _dictationWaveHeight + 8
-                                        : (compactIme ? 10 : 12),
-                                  ),
-                                  isDense: true,
-                                ),
-                                minLines: 1,
-                                maxLines: compactIme ? 2 : 4,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                keyboardType: TextInputType.multiline,
-                                contentInsertionConfiguration:
-                                    ContentInsertionConfiguration(
-                                      allowedMimeTypes: const [
-                                        'image/png',
-                                        'image/jpeg',
-                                        'image/gif',
-                                        'image/webp',
-                                      ],
-                                      onContentInserted: (content) => unawaited(
-                                        _insertKeyboardContent(content),
+                                                ).chaUploadingAttachment
+                                              : _pendingAttachments.isNotEmpty
+                                              ? Strings.of(
+                                                  context,
+                                                ).chaHintSystem
+                                              : Strings.of(context).chaHintUser,
+                                          hintStyle: TextStyle(
+                                            color: _isRecording
+                                                ? Colors.transparent
+                                                : colors.textSecondary,
+                                            fontSize: 14,
+                                          ),
+                                          filled: false,
+                                          border: InputBorder.none,
+                                          enabledBorder: InputBorder.none,
+                                          focusedBorder: InputBorder.none,
+                                          disabledBorder: InputBorder.none,
+                                          contentPadding: EdgeInsets.fromLTRB(
+                                            4,
+                                            compactIme ? 10 : 12,
+                                            4,
+                                            _isRecording
+                                                ? _dictationWaveHeight + 8
+                                                : (compactIme ? 10 : 12),
+                                          ),
+                                          isDense: true,
+                                        ),
+                                        minLines: 1,
+                                        maxLines: compactIme ? 2 : 4,
+                                        textCapitalization:
+                                            TextCapitalization.sentences,
+                                        keyboardType: TextInputType.multiline,
+                                        contentInsertionConfiguration:
+                                            ContentInsertionConfiguration(
+                                              allowedMimeTypes: const [
+                                                'image/png',
+                                                'image/jpeg',
+                                                'image/gif',
+                                                'image/webp',
+                                              ],
+                                              onContentInserted: (content) =>
+                                                  unawaited(
+                                                    _insertKeyboardContent(
+                                                      content,
+                                                    ),
+                                                  ),
+                                            ),
+                                        textInputAction:
+                                            TextInputAction.newline,
+                                        // A retained invocation may keep focus without
+                                        // authorizing edits or a second submission.
+                                        readOnly: _compressingSession,
+                                        enabled:
+                                            !_interactiveMessageRefreshPending &&
+                                            !_attachmentSubmitting &&
+                                            (!_compressingSession ||
+                                                _compressionDraftFocusRetained),
                                       ),
                                     ),
-                                textInputAction: TextInputAction.newline,
-                                // A retained invocation may keep focus without
-                                // authorizing edits or a second submission.
-                                readOnly: _compressingSession,
-                                enabled:
-                                    !_loading &&
-                                    !_roomTaskMutationLocked &&
-                                    !_attachmentSubmitting &&
-                                    (!_compressingSession ||
-                                        _compressionDraftFocusRetained),
+                                  ),
+                                  if (_isRecording && _voice != null)
+                                    SizedBox(
+                                      key: const ValueKey(
+                                        'dictation-recording-area',
+                                      ),
+                                      height: _dictationComposerHeight,
+                                      child: Center(
+                                        child: IgnorePointer(
+                                          child: _DictationVisualizer(
+                                            key: const ValueKey(
+                                              'dictation-visualizer',
+                                            ),
+                                            level: _voice!.micLevel,
+                                            color: colors.textSecondary,
+                                            mutedColor: colors.textDisabled,
+                                            transcribing: _transcribing,
+                                            listeningLabel: Strings.of(
+                                              context,
+                                            ).chaVoiceListeningLabel,
+                                            transcribingLabel: Strings.of(
+                                              context,
+                                            ).chaVoiceTranscribingLabel,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           ),
-                          if (_isRecording && _voice != null)
-                            SizedBox(
-                              key: const ValueKey('dictation-recording-area'),
-                              height: _dictationComposerHeight,
+                          _buildComposerDictationAction(
+                            colors,
+                            dictationInteractive: dictationInteractive,
+                          ),
+                          if (_isRecording) _buildDictationSendAction(colors),
+                          if (!_isRecording) ...[
+                            const SizedBox(width: 2),
+                            SizedBox.square(
+                              dimension: 48,
                               child: Center(
-                                child: IgnorePointer(
-                                  child: _DictationVisualizer(
-                                    key: const ValueKey('dictation-visualizer'),
-                                    level: _voice!.micLevel,
-                                    color: colors.textSecondary,
-                                    mutedColor: colors.textDisabled,
-                                    transcribing: _transcribing,
-                                    listeningLabel: Strings.of(
-                                      context,
-                                    ).chaVoiceListeningLabel,
-                                    transcribingLabel: Strings.of(
-                                      context,
-                                    ).chaVoiceTranscribingLabel,
-                                  ),
-                                ),
+                                child: _buildComposerPrimaryAction(colors),
                               ),
                             ),
+                          ],
                         ],
                       ),
-                    ),
+                    ],
                   ),
-                  _buildComposerDictationAction(
-                    colors,
-                    dictationInteractive: dictationInteractive,
-                  ),
-                  if (_isRecording) _buildDictationSendAction(colors),
-                  if (!_isRecording) ...[
-                    const SizedBox(width: 2),
-                    SizedBox.square(
-                      dimension: 48,
-                      child: Center(child: _buildComposerPrimaryAction(colors)),
-                    ),
-                  ],
-                ],
-              ),
-            ],
+                )._withComposerPalette(floatingPalette),
+                _buildFloatingStatusPill(colors),
+              ],
+            ),
           ),
-        )._withComposerPalette(floatingPalette),
+        );
+      },
+    );
+  }
+
+  /// Píldora combinada contexto+modo flotando bajo el composer (ver mockup
+  /// aprobado "v8 · estado debajo del input"): sustituye a los antiguos
+  /// `_buildModeBadge` + `SessionContextPopoverButton` de la AppBar. Oculta
+  /// en Bot Chat, igual que ocultaban esos widgets antes.
+  /// Sigue abriendo el mismo `showSessionContextPopover`; la sección de modo
+  /// se reutiliza de `_buildApprovalModeSection` en vez de duplicarla.
+  Widget _buildFloatingStatusPill(HermesThemeColors colors) {
+    if (_isBotChatSurface) {
+      return const SizedBox.shrink();
+    }
+    final flag = _modeFlag(colors);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Center(
+        child: SessionContextPopoverButton(
+          key: const ValueKey('chat-status-pill'),
+          metrics: _sessionContextMetrics,
+          loadBreakdown: _loadSessionContextDetails,
+          onMetricsSnapshot: (metrics) {
+            if (_disposed || !mounted) return;
+            _commitSessionContextMetrics(metrics);
+          },
+          modeLabel: flag?.$1,
+          modeColor: flag?.$2,
+          modeSectionBuilder: _buildApprovalModeSection,
+        ),
       ),
     );
   }
@@ -11956,10 +11802,39 @@ class _ChatScreenState extends State<ChatScreen>
     child: _buildBodyContent(),
   );
 
+  /// Vertical space reserved at the BOTTOM of the transcript (just above
+  /// the composer) so the floating subagent-activity pill
+  /// (`chat-session-activity`, pinned via `Positioned(bottom: 64, ...)` in
+  /// the same Stack) never paints over the last real message. Zero when
+  /// there's nothing to show. Scales a little with the text-scale factor
+  /// since the pill's own content grows with it too — this is a fixed
+  /// estimate, not a measured value, so at very large accessibility scales
+  /// the reservation may run slightly short.
+  double get _subagentActivityPillReservedSpace {
+    // Must match the pill's own visibility, not just the live flags: once
+    // work retires, `_chat`'s live counts drop to zero but the pill itself
+    // keeps showing (see `_displaySubagentActivities`) until dismissed, so
+    // the reservation has to stay too or the persisted pill overlaps the
+    // reply text right under it.
+    final hasActivity =
+        _displaySubagentActivities.isNotEmpty ||
+        _chat.hasRecentPassiveRemoteActivity ||
+        _chat.safeActiveSubagentCount > 0 ||
+        // La pastilla del turno ocupa el mismo hueco y es excluyente con la de
+        // subagentes, así que necesita la misma reserva o taparía la respuesta.
+        // Se reserva desde que el turno empieza, sin esperar su `revealAfter`:
+        // el hueco llega antes que la pastilla y así aparecer no da un salto de
+        // layout (el propio widget se autorrevela con su ticker interno).
+        _showTurnActivityPill;
+    if (!hasActivity) return 0;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return 56 * textScale.clamp(1.0, 2.0);
+  }
+
   Widget _buildBodyContent() {
     final colors = Theme.of(context).hermes;
     if (_messages.isEmpty &&
-        (_loading || !_chat.messagesLoaded) &&
+        (_interactiveMessageRefreshPending || !_chat.messagesLoaded) &&
         _error == null) {
       // Estado de carga con la mascota (006): si la presencia está activa, el
       // Companion "piensa" mientras carga; si está apagada, cae al spinner.
@@ -12074,13 +11949,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (_messages.isEmpty) {
       return KeyedSubtree(
         key: const ValueKey('chat-empty-state'),
-        child: _EmptyChatState(
-          model: _activeModelLabel,
-          agentName: _agentName,
-          missionRoom: widget.missionRoom,
-          missionRoomProfiles: widget.missionRoomProfiles,
-          missionAvatarCache: widget.missionAvatarCache,
-        ),
+        child: _EmptyChatState(model: _activeModelLabel, agentName: _agentName),
       );
     }
 
@@ -12103,7 +11972,17 @@ class _ChatScreenState extends State<ChatScreen>
         physics: _ChatStreamingViewportPhysics(lock: _streamingViewportLock),
         // Deja aire real bajo la última respuesta. Con solo 4 dp el cierre del
         // texto quedaba pegado al compositor y parecía visualmente recortado.
-        padding: const EdgeInsets.only(bottom: 12),
+        // `bottom` también reserva sitio para el pill flotante de actividad de
+        // subagentes (anclado justo encima del composer, ver
+        // Positioned('chat-session-activity') más abajo): así el pill nunca
+        // tapa el último mensaje real, sin necesidad de redimensionar el
+        // Stack — solo empuja el contenido scrolleable, que sigue ocupando
+        // la misma caja. `EdgeInsets.bottom` es el borde físico inferior de
+        // la pantalla incluso con `reverse: true` (reverse solo cambia el
+        // orden de los hijos, no qué lado físico representa cada inset).
+        padding: EdgeInsets.only(
+          bottom: 12 + _subagentActivityPillReservedSpace,
+        ),
         reverse: true,
         // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
         // se materializan entradas frías en medio de un frame de scroll.
@@ -12224,7 +12103,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
     );
     return ChatRefreshStatusOverlay(
-      loading: _loading,
+      loading: _interactiveMessageRefreshPending,
       errorMessage: _error == null
           ? null
           : Strings.of(context).chaMessagesError,
@@ -12519,7 +12398,7 @@ class _ChatScreenState extends State<ChatScreen>
           isLatestAssistant: _isLatestAssistant(msg),
           isTerminal: !isStreaming && !isCancelled,
           chatBusy:
-              _loading ||
+              _interactiveMessageRefreshPending ||
               _sending ||
               _attachmentSubmitting ||
               _compressingSession,
@@ -12546,7 +12425,6 @@ class _ChatScreenState extends State<ChatScreen>
         fetchLinkPreview: _fetchLinkPreview,
         firstUrl: _firstUrl,
         agentName: _agentName,
-        roomManagerProfile: widget.missionRoom?.managerProfile,
         slice: displaySlice,
         terminalProjection: terminalProjection,
         technicalDetails: operationalProjection.technicalDetails,
@@ -12576,7 +12454,6 @@ class _ChatScreenState extends State<ChatScreen>
           _voice?.settings.readAloudStopBehavior ??
           ReadAloudStopBehavior.pauseAndResume,
       agentName: _agentName,
-      roomManagerProfile: widget.missionRoom?.managerProfile,
       isStreaming: isStreaming,
       assistantSlice: displaySlice,
       terminalProjection: terminalProjection,
@@ -12638,7 +12515,6 @@ class _ChatScreenState extends State<ChatScreen>
         fetchLinkPreview: _fetchLinkPreview,
         firstUrl: _firstUrl,
         agentName: _agentName,
-        roomManagerProfile: widget.missionRoom?.managerProfile,
         technicalDetails: projection.technicalDetails,
         onRegenerate: _isLatestAssistant(frame.metadata)
             ? _regenerateLastResponse
@@ -12658,7 +12534,6 @@ class _ChatScreenState extends State<ChatScreen>
           _voice?.settings.readAloudStopBehavior ??
           ReadAloudStopBehavior.pauseAndResume,
       agentName: _agentName,
-      roomManagerProfile: widget.missionRoom?.managerProfile,
       isStreaming: frame.isStreaming,
       compact: compact,
       performanceProbe: widget.performanceProbe,
@@ -12810,6 +12685,38 @@ class _ChatScreenState extends State<ChatScreen>
   }
 }
 
+/// Elemento hoja que observa `MediaQuery.viewInsets.bottom` y avisa a su
+/// dueño en cada cambio, sin propagar la dependencia hacia arriba.
+///
+/// [child] se devuelve tal cual (misma instancia), así que una reconstrucción
+/// de este widget por un cambio de insets no reconstruye el subárbol: solo se
+/// dispara el callback. Sustituye a la lectura de `MediaQuery.of` que hacía
+/// `_ChatScreenState.didChangeDependencies`, la cual convertía cada frame de
+/// la animación del teclado en un build completo de la pantalla de chat.
+class _KeyboardInsetWatcher extends StatefulWidget {
+  final ValueChanged<double> onBottomInset;
+  final Widget child;
+
+  const _KeyboardInsetWatcher({
+    required this.onBottomInset,
+    required this.child,
+  });
+
+  @override
+  State<_KeyboardInsetWatcher> createState() => _KeyboardInsetWatcherState();
+}
+
+class _KeyboardInsetWatcherState extends State<_KeyboardInsetWatcher> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    widget.onBottomInset(MediaQuery.viewInsetsOf(context).bottom);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 class _DesktopAuthRequiredBanner extends StatelessWidget {
   const _DesktopAuthRequiredBanner({required this.message});
 
@@ -12910,7 +12817,7 @@ class _CoreReadPartialCoverageNotice extends StatelessWidget {
               ),
               IconButton(
                 key: const ValueKey('core-read-partial-coverage-dismiss'),
-                tooltip: 'Cerrar',
+                tooltip: Strings.of(context).commonClose,
                 onPressed: onDismiss,
                 icon: const Icon(Icons.close),
                 iconSize: 18,
@@ -13126,52 +13033,7 @@ class _UserTurnGroup {
   _UserTurnGroup(this.primary);
 }
 
-class _MissionRoomAppBarTitle extends StatelessWidget {
-  final MissionRoom room;
-
-  const _MissionRoomAppBarTitle({required this.room});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    final memberCount = room.memberProfiles.length;
-    return Padding(
-      key: const ValueKey('mission-room-header'),
-      padding: const EdgeInsetsDirectional.only(start: 4, end: 4),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '#${room.name}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 17.5,
-              letterSpacing: -0.15,
-            ),
-          ),
-          Text(
-            '@${room.managerProfile} · manager · $memberCount '
-            '${english ? (memberCount == 1 ? 'member' : 'members') : (memberCount == 1 ? 'miembro' : 'miembros')}',
-            key: const ValueKey('mission-room-header-subtitle'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontSize: 11.5,
-              height: 1.15,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-enum _MissionRoomHeaderAction { model, controls }
+enum _BotChatHeaderAction { model, controls }
 
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven
@@ -13399,224 +13261,6 @@ class _SlashAccentTextEditingController extends TextEditingController {
   }
 }
 
-class _RoomMentionTextEditingController
-    extends _SlashAccentTextEditingController {
-  final Set<String> Function() selectedMentions;
-  Color? mentionColor;
-
-  _RoomMentionTextEditingController({required this.selectedMentions});
-
-  @override
-  TextSpan buildTextSpan({
-    required BuildContext context,
-    TextStyle? style,
-    required bool withComposing,
-  }) {
-    final text = value.text;
-    final slashRange = slashCommandRange();
-    final mentions = selectedMentions()
-        .map((mention) => mention.trim())
-        .where((mention) => mention.isNotEmpty)
-        .toSet();
-    if (text.isEmpty || mentions.isEmpty) {
-      return super.buildTextSpan(
-        context: context,
-        style: style,
-        withComposing: withComposing,
-      );
-    }
-
-    final alternatives = mentions.map(RegExp.escape).join('|');
-    final mentionRanges =
-        RegExp(
-              '(^|\\s)(@(?:$alternatives))(?=\\s|\$|[.,;:!?])',
-              caseSensitive: false,
-            )
-            .allMatches(text)
-            .map((match) {
-              final leadingLength = (match.group(1) ?? '').length;
-              return TextRange(
-                start: match.start + leadingLength,
-                end: match.end,
-              );
-            })
-            .toList(growable: false);
-    if (mentionRanges.isEmpty) {
-      return super.buildTextSpan(
-        context: context,
-        style: style,
-        withComposing: withComposing,
-      );
-    }
-
-    final composing = composingRange(value, withComposing);
-    final cuts = <int>{0, text.length};
-    if (slashRange != null) {
-      cuts
-        ..add(slashRange.start)
-        ..add(slashRange.end);
-    }
-    for (final range in mentionRanges) {
-      cuts
-        ..add(range.start)
-        ..add(range.end);
-    }
-    if (!composing.isCollapsed) {
-      cuts
-        ..add(composing.start)
-        ..add(composing.end);
-    }
-    final orderedCuts = cuts.toList()..sort();
-    final spans = <InlineSpan>[];
-    for (var index = 0; index < orderedCuts.length - 1; index++) {
-      final start = orderedCuts[index];
-      final end = orderedCuts[index + 1];
-      if (start == end) continue;
-      final isSlash =
-          slashRange != null &&
-          start >= slashRange.start &&
-          end <= slashRange.end;
-      final isMention = mentionRanges.any(
-        (range) => start >= range.start && end <= range.end,
-      );
-      final isComposing =
-          !composing.isCollapsed &&
-          start >= composing.start &&
-          end <= composing.end;
-      var segmentStyle = style;
-      if (isSlash) {
-        segmentStyle = (segmentStyle ?? const TextStyle()).copyWith(
-          color: Theme.of(context).hermes.accent,
-        );
-      }
-      if (isMention) {
-        segmentStyle = (segmentStyle ?? const TextStyle()).merge(
-          TextStyle(color: mentionColor, fontWeight: FontWeight.w800),
-        );
-      }
-      if (isComposing) {
-        segmentStyle = (segmentStyle ?? const TextStyle()).merge(
-          const TextStyle(decoration: TextDecoration.underline),
-        );
-      }
-      spans.add(
-        TextSpan(text: text.substring(start, end), style: segmentStyle),
-      );
-    }
-    return TextSpan(style: style, children: spans);
-  }
-}
-
-class _RoomMentionPalette extends StatelessWidget {
-  final MissionRoom room;
-  final List<String> profiles;
-  final Map<String, AgentProfile> profileRoster;
-  final MissionProfileAvatarCache? avatarCache;
-  final ValueChanged<String> onPick;
-
-  const _RoomMentionPalette({
-    required this.room,
-    required this.profiles,
-    required this.profileRoster,
-    required this.avatarCache,
-    required this.onPick,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    return Container(
-      key: const ValueKey('room-mention-palette'),
-      margin: const EdgeInsets.fromLTRB(10, 0, 10, 9),
-      constraints: const BoxConstraints(maxHeight: 224),
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.72)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.28),
-            blurRadius: 22,
-            offset: const Offset(0, 9),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(17),
-        child: Material(
-          color: Colors.transparent,
-          child: ListView.separated(
-            shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            itemCount: profiles.length,
-            separatorBuilder: (_, _) => Divider(
-              height: 1,
-              indent: 58,
-              color: colors.divider.withValues(alpha: 0.45),
-            ),
-            itemBuilder: (context, index) {
-              final profile = profiles[index];
-              final manager = profile == room.managerProfile;
-              return InkWell(
-                key: ValueKey('room-mention-$profile'),
-                onTap: () => onPick(profile),
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 9, 14, 9),
-                  child: Row(
-                    children: [
-                      _missionIdentityAvatar(
-                        key: ValueKey('room-mention-avatar-$profile'),
-                        profileName: profile,
-                        profiles: profileRoster,
-                        cache: avatarCache,
-                        size: 34,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          '@$profile',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.08,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Icon(
-                        manager
-                            ? Icons.forum_outlined
-                            : Icons.view_kanban_outlined,
-                        size: 15,
-                        color: manager ? colors.accent : colors.textSecondary,
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        manager
-                            ? (english ? 'Talk' : 'Hablar')
-                            : (english ? 'Assign task' : 'Asignar tarea'),
-                        style: TextStyle(
-                          color: manager ? colors.accent : colors.textSecondary,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// Paleta de comandos slash: aparece sobre el compositor al escribir `/…` y
 /// lista los comandos que coinciden. Tocar uno lo ejecuta o rellena su nombre.
 class _SlashPalette extends StatelessWidget {
@@ -13759,6 +13403,7 @@ class _AttachmentPreviewStrip extends StatelessWidget {
     required this.attachments,
     required this.onRemove,
     required this.onRetry,
+    super.key,
   });
 
   @override
@@ -13846,66 +13491,12 @@ class _AttachmentPreviewStrip extends StatelessWidget {
 class _EmptyChatState extends StatelessWidget {
   final String model;
   final String agentName;
-  final MissionRoom? missionRoom;
-  final Map<String, AgentProfile> missionRoomProfiles;
-  final MissionProfileAvatarCache? missionAvatarCache;
 
-  const _EmptyChatState({
-    required this.model,
-    this.agentName = 'hermes',
-    this.missionRoom,
-    this.missionRoomProfiles = const {},
-    this.missionAvatarCache,
-  });
+  const _EmptyChatState({required this.model, this.agentName = 'hermes'});
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final room = missionRoom;
-    if (room != null) {
-      final english = Localizations.localeOf(context).languageCode == 'en';
-      return Center(
-        key: const ValueKey('mission-room-empty-state'),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _MissionRoomEmptyRoster(
-                  room: room,
-                  profiles: missionRoomProfiles,
-                  avatarCache: missionAvatarCache,
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  english ? 'Start with the team' : 'Empieza con el equipo',
-                  style: TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w700,
-                    color: colors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  english
-                      ? 'Talk to @${room.managerProfile} or mention another bot to assign a task.'
-                      : 'Habla con @${room.managerProfile} o menciona otro bot para asignarle una tarea.',
-                  key: const ValueKey('mission-room-empty-manager'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    height: 1.42,
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
     return Center(
       child: FittedBox(
         fit: BoxFit.scaleDown,
@@ -13991,85 +13582,6 @@ class _EmptyChatState extends StatelessWidget {
   }
 }
 
-class _MissionRoomEmptyRoster extends StatelessWidget {
-  final MissionRoom room;
-  final Map<String, AgentProfile> profiles;
-  final MissionProfileAvatarCache? avatarCache;
-
-  const _MissionRoomEmptyRoster({
-    required this.room,
-    required this.profiles,
-    required this.avatarCache,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final members = <String>[
-      room.managerProfile,
-      ...room.memberProfiles.where((profile) => profile != room.managerProfile),
-    ].take(4).toList(growable: false);
-    const size = 42.0;
-    const overlap = 29.0;
-    return SizedBox(
-      width: size + ((members.length - 1) * overlap),
-      height: size,
-      child: Stack(
-        children: [
-          for (var index = 0; index < members.length; index++)
-            PositionedDirectional(
-              start: index * overlap,
-              child: Container(
-                width: size,
-                height: size,
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: colors.background,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: index == 0
-                        ? colors.warning.withValues(alpha: 0.72)
-                        : colors.divider,
-                  ),
-                ),
-                child: _missionIdentityAvatar(
-                  key: ValueKey('mission-room-empty-avatar-${members[index]}'),
-                  profileName: members[index],
-                  profiles: profiles,
-                  cache: avatarCache,
-                  size: size - 6,
-                  manager: index == 0,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-Widget _missionIdentityAvatar({
-  required Key key,
-  required String profileName,
-  required Map<String, AgentProfile> profiles,
-  required MissionProfileAvatarCache? cache,
-  required double size,
-  bool manager = false,
-}) {
-  final profile = profiles[profileName];
-  return MissionProfileAvatar(
-    key: key,
-    profileName: profileName,
-    hasAvatar: profile?.hasAvatar ?? false,
-    cache: cache,
-    size: size,
-    manager: manager,
-    shape: profile?.botShape,
-    colorHex: profile?.botColorHex,
-    imageKind: profile?.botImageKind,
-  );
-}
-
 /// Cursor de terminal que parpadea (▍). Usado en el chat vacío para dar un
 /// toque animado al "Escríbeme para empezar".
 class _BlinkingCursor extends StatefulWidget {
@@ -14103,7 +13615,7 @@ class _BlinkingCursorState extends State<_BlinkingCursor>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final reduced = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final tickerEnabled = TickerMode.valuesOf(context).enabled;
     final changed =
         _reduceMotion != reduced || _tickerModeEnabled != tickerEnabled;
@@ -14408,7 +13920,6 @@ class _AssistantMessageWithMark extends StatelessWidget {
   final Future<void> Function(String url) fetchLinkPreview;
   final String? Function(String text) firstUrl;
   final String agentName;
-  final String? roomManagerProfile;
   final _AssistantRenderSlice? slice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
@@ -14423,7 +13934,6 @@ class _AssistantMessageWithMark extends StatelessWidget {
     this.verbose = false,
     this.metadata = const {},
     this.agentName = 'hermes',
-    this.roomManagerProfile,
     this.slice,
     this.terminalProjection,
     this.technicalDetails = const [],
@@ -14445,7 +13955,6 @@ class _AssistantMessageWithMark extends StatelessWidget {
           fetchLinkPreview: fetchLinkPreview,
           firstUrl: firstUrl,
           agentName: agentName,
-          roomManagerProfile: roomManagerProfile,
           slice: slice,
           terminalProjection: terminalProjection,
           technicalDetails: technicalDetails,
@@ -14649,7 +14158,6 @@ class _MessageBubble extends StatelessWidget {
   final String? readAloudMessageKey;
   final ReadAloudStopBehavior readAloudStopBehavior;
   final String agentName;
-  final String? roomManagerProfile;
   final bool isStreaming;
   final _AssistantRenderSlice? assistantSlice;
   final _AssistantTerminalProjection? terminalProjection;
@@ -14673,7 +14181,6 @@ class _MessageBubble extends StatelessWidget {
     this.readAloudMessageKey,
     this.readAloudStopBehavior = ReadAloudStopBehavior.pauseAndResume,
     this.agentName = 'hermes',
-    this.roomManagerProfile,
     this.isStreaming = false,
     this.assistantSlice,
     this.terminalProjection,
@@ -14707,7 +14214,6 @@ class _MessageBubble extends StatelessWidget {
             readAloudMessageKey: readAloudMessageKey,
             readAloudStopBehavior: readAloudStopBehavior,
             agentName: agentName,
-            roomManagerProfile: roomManagerProfile,
             isStreaming: isStreaming,
             slice: assistantSlice,
             terminalProjection: terminalProjection,
@@ -15010,6 +14516,7 @@ AssistantOperationalProjection _projectOperationalArtifacts(
 ({List<_ParsedAttachment> attachments, String text}) _parseUserContent(
   String raw,
 ) {
+  raw = stripBotMentionNote(raw);
   // Quita los blobs de SISTEMA que no son del usuario: preámbulo de cron/skill y
   // el resumen de compactación de contexto. Si tras ellos hay un mensaje real,
   // se muestra ese; si no, el llamador ya lo habrá pintado como chip.
@@ -15808,11 +15315,13 @@ class _GatedChatImageState extends State<_GatedChatImage> {
       );
     }
     // A-115 (spec 028): anuncia imagen + acción de ampliar para TalkBack.
-    final imgHost = widget.uri.host.isNotEmpty ? ' de ${widget.uri.host}' : '';
+    final imgLabel = widget.uri.host.isNotEmpty
+        ? Strings.of(context).chatImageFromHostTapToEnlarge(widget.uri.host)
+        : Strings.of(context).chatImageTapToEnlarge;
     return Semantics(
       image: true,
       button: true,
-      label: 'Imagen$imgHost, toca para ampliar',
+      label: imgLabel,
       child: GestureDetector(
         onTap: () => Navigator.push(
           context,
@@ -15880,7 +15389,6 @@ class _AssistantMessage extends StatelessWidget {
   final String? readAloudMessageKey;
   final ReadAloudStopBehavior readAloudStopBehavior;
   final String agentName;
-  final String? roomManagerProfile;
   final bool isStreaming;
   final _AssistantRenderSlice? slice;
   final _AssistantTerminalProjection? terminalProjection;
@@ -15902,7 +15410,6 @@ class _AssistantMessage extends StatelessWidget {
     this.readAloudMessageKey,
     this.readAloudStopBehavior = ReadAloudStopBehavior.pauseAndResume,
     this.agentName = 'hermes',
-    this.roomManagerProfile,
     this.isStreaming = false,
     this.slice,
     this.terminalProjection,
@@ -16183,46 +15690,34 @@ class _AssistantMessage extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Row(
                   children: [
-                    // La Companion local representa a Hermes Console, no al
-                    // perfil manager de una Mission Room. Mostrarla junto a
-                    // `@manager` atribuiría una identidad falsa. Las salas
-                    // usarán aquí el avatar/PetDex profile-aware cuando el
-                    // Gateway lo entregue; hasta entonces conservan la etiqueta
-                    // textual honesta.
-                    if (roomManagerProfile == null)
-                      Builder(
-                        builder: (ctx) {
-                          final app = ctx
-                              .findAncestorStateOfType<HermesAppState>();
-                          if (app == null) return const SizedBox.shrink();
-                          final mood = isStreaming
-                              ? HermesSparkMood.thinking
-                              : HermesSparkMood.idle;
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: CompanionMessagePresence(
-                              companion: app.companion,
-                              mood: mood,
-                              size: 32,
-                            ),
-                          );
-                        },
-                      ),
+                    Builder(
+                      builder: (ctx) {
+                        final app = ctx
+                            .findAncestorStateOfType<HermesAppState>();
+                        if (app == null) return const SizedBox.shrink();
+                        final mood = isStreaming
+                            ? HermesSparkMood.thinking
+                            : HermesSparkMood.idle;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: CompanionMessagePresence(
+                            companion: app.companion,
+                            mood: mood,
+                            size: 32,
+                          ),
+                        );
+                      },
+                    ),
                     Expanded(
                       child: Text(
-                        roomManagerProfile == null
-                            ? '>_ ${agentName.toUpperCase()}'
-                            : '@$roomManagerProfile',
-                        key: roomManagerProfile == null
-                            ? null
-                            : const ValueKey('mission-room-assistant-label'),
+                        '>_ ${agentName.toUpperCase()}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: roomManagerProfile == null ? 12.5 : 13.5,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           color: colors.accent,
-                          letterSpacing: roomManagerProfile == null ? 0.5 : 0,
+                          letterSpacing: 0.5,
                         ),
                       ),
                     ),
@@ -17382,7 +16877,7 @@ class _QueuedRow extends StatelessWidget {
                   ),
                 if (entry.blocked)
                   Text(
-                    'Envío pendiente. Reintenta.',
+                    Strings.of(context).chatQueueBlockedRetry,
                     key: ValueKey('chat-queue-blocked-${entry.id}'),
                     style: TextStyle(fontSize: 10.5, color: colors.warning),
                   ),

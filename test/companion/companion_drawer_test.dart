@@ -53,6 +53,22 @@ Future<GlobalKey<ScaffoldState>> _pumpDrawer(
   return key;
 }
 
+// Encuentra un item del drawer arrastrando su Scrollable hasta que aparezca:
+// la cabecera de conexión más el separador que agrupa la navegación puede
+// empujar entradas tardías (p. ej. "Herramientas") fuera del viewport de test.
+Future<void> _revealDrawerItem(WidgetTester tester, String label) async {
+  final item = find.text(label);
+  final scrollable = find
+      .descendant(of: find.byType(Drawer), matching: find.byType(Scrollable))
+      .first;
+  for (var attempt = 0; attempt < 4 && item.evaluate().isEmpty; attempt++) {
+    await tester.drag(scrollable, const Offset(0, -120));
+    await tester.pump();
+  }
+  await tester.scrollUntilVisible(item, 80, scrollable: scrollable);
+  await tester.pump();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -62,6 +78,7 @@ void main() {
     final manager = await _emptyManager();
     await _pumpDrawer(tester, manager);
 
+    await _revealDrawerItem(tester, 'Herramientas');
     expect(find.text('Herramientas'), findsOneWidget);
     expect(find.text('Mascotas'), findsNothing);
 
@@ -88,6 +105,7 @@ void main() {
     final manager = await _emptyManager();
     await _pumpDrawer(tester, manager);
 
+    await _revealDrawerItem(tester, 'Herramientas');
     await tester.tap(find.text('Herramientas'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Mascotas'));

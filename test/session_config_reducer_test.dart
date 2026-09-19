@@ -355,6 +355,61 @@ void main() {
     );
   });
 
+  test('sin efectivo previo conocido, info tardío distinto no confirma con '
+      'valor equivocado', () {
+    // Escenario de carrera real: se pide un modelo nuevo en un scope
+    // recién adoptado (p.ej. tras un reconnect) ANTES de que llegue el
+    // primer session.info que establecería el efectivo previo. Si luego
+    // llega un session.info tardío/obsoleta que reporta otro modelo
+    // distinto al pedido, no hay forma de distinguir "eco del estado
+    // anterior" de "cambio genuino del servidor" sin una línea base, así
+    // que NUNCA debe confirmarse con ese valor ajeno: la cabecera debe
+    // seguir mostrando el modelo pedido por el usuario.
+    final scope = _scope();
+    var state = const SessionConfigReducerState.empty();
+    final requested = _model('model-b', 'provider-b');
+    state = _start(state, scope, requested, 1);
+    expect(
+      state.changeFor(scope, DesktopSessionConfigKey.model)!.requestedValue,
+      requested,
+    );
+    expect(
+      state
+          .changeFor(scope, DesktopSessionConfigKey.model)!
+          .previousEffectiveValue,
+      isNull,
+    );
+
+    state = _observe(
+      state,
+      scope,
+      infoEpoch: 1,
+      observedRequestEpoch: 1,
+      model: 'model-a',
+      provider: 'provider-a',
+    );
+
+    final change = state.changeFor(scope, DesktopSessionConfigKey.model)!;
+    expect(change.status, isNot(SessionConfigChangeStatus.confirmed));
+    expect(change.displayValue, requested);
+    expect(state[scope]!.effective.model, isNull);
+
+    // Una vez llega el session.info que sí confirma el modelo pedido, el
+    // cambio se cierra con normalidad.
+    state = _observe(
+      state,
+      scope,
+      infoEpoch: 2,
+      observedRequestEpoch: 1,
+      model: 'model-b',
+      provider: 'provider-b',
+    );
+    final confirmed = state.changeFor(scope, DesktopSessionConfigKey.model)!;
+    expect(confirmed.status, SessionConfigChangeStatus.confirmed);
+    expect(confirmed.authoritativeValue, requested);
+    expect(confirmed.displayValue, requested);
+  });
+
   test('connection, stored, runtime, perfil y epoch aíslan homónimos', () {
     final a = _scope();
     final otherConnection = _scope(connection: 'connection-b');

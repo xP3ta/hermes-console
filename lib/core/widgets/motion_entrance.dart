@@ -35,6 +35,10 @@ class _MotionEntranceState extends State<MotionEntrance>
     vsync: this,
     duration: Motion.base,
   );
+  late final CurvedAnimation _curved = CurvedAnimation(
+    parent: _controller,
+    curve: Motion.enter,
+  );
   Timer? _delayTimer;
   bool _entranceStarted = false;
 
@@ -63,19 +67,19 @@ class _MotionEntranceState extends State<MotionEntrance>
   @override
   void dispose() {
     _delayTimer?.cancel();
+    _curved.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final curved = CurvedAnimation(parent: _controller, curve: Motion.enter);
     return FadeTransition(
-      opacity: curved,
+      opacity: _curved,
       child: AnimatedBuilder(
-        animation: curved,
+        animation: _curved,
         builder: (context, child) => Transform.translate(
-          offset: Offset(0, widget.offset * (1 - curved.value)),
+          offset: Offset(0, widget.offset * (1 - _curved.value)),
           child: child,
         ),
         child: widget.child,

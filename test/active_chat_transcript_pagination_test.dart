@@ -185,6 +185,25 @@ class _DeferrableGateway
   }
 }
 
+class _HistoryGateway extends _DeferrableGateway
+    implements HermesDesktopSessionHistoryGateway {
+  Future<SessionMessagesPage> Function()? loader;
+  bool connected = true;
+  final historyRequests = <({String sessionId, String? profile})>[];
+
+  @override
+  bool get isConnected => connected;
+
+  @override
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  }) async {
+    historyRequests.add((sessionId: sessionId, profile: profile));
+    return loader!();
+  }
+}
+
 SavedConnection _connection(String id) => SavedConnection(
   id: id,
   label: id,
@@ -457,6 +476,161 @@ List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'native history waits for resume and loads a profile whose REST is 401',
+    () async {
+      final rows = _rows(300);
+      final gateway = _HistoryGateway()
+        ..resumeGate = Completer<DesktopSessionSnapshot>()
+        ..loader = () async => SessionMessagesPage.fromRaw(
+          rawMessages: [
+            for (final row in rows)
+              {
+                'role': row['role'],
+                'text': row['content'],
+                'row_id': row['id'],
+              },
+          ],
+          pagination: null,
+          paginationProvided: false,
+        );
+      var restCalls = 0;
+      final chat = _chat(
+        'native-profile-history',
+        MockClient((_) async {
+          restCalls++;
+          return http.Response('Unauthorized', 401);
+        }),
+        gateway: gateway,
+      );
+      addTearDown(chat.dispose);
+      final loading = chat.loadMessages(profile: 'builder');
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.historyRequests, isEmpty);
+      expect(restCalls, 0);
+      gateway.resumeGate!.complete(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'resolved-runtime',
+          storedSessionId: 'stored-chat',
+          created: false,
+          messageCount: 300,
+        ),
+      );
+      await loading;
+      expect(gateway.historyRequests, [
+        (sessionId: 'resolved-runtime', profile: 'builder'),
+      ]);
+      expect(restCalls, 0);
+      expect(
+        chat.messages.map((row) => row['content']),
+        rows.reversed.map((row) => row['content']),
+      );
+      expect(chat.transcriptExtentForTesting, 'complete');
+      expect(chat.hasEarlierMessages, isFalse);
+      expect(await chat.loadEarlierMessages(), isFalse);
+      expect(gateway.historyRequests, hasLength(1));
+    },
+  );
+
+  for (final disconnected in [false, true]) {
+    test(
+      'native history falls back to REST when ${disconnected ? 'disconnected' : 'RPC fails'}',
+      () async {
+        final server = _TranscriptServer(paginate: false)
+          ..rows.addAll(_rows(4));
+        final gateway = _HistoryGateway()
+          ..connected = !disconnected
+          ..snapshot = const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime',
+            storedSessionId: 'stored-chat',
+            created: false,
+          )
+          ..loader = () async => throw const TuiGatewayRpcError(
+            'session.history',
+            'unsupported',
+            code: -32601,
+          );
+        final chat = _chat(
+          'native-fallback-$disconnected',
+          server.client(),
+          gateway: gateway,
+        );
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        expect(server.requests, hasLength(1));
+        expect(
+          chat.messages.map((row) => row['content']),
+          _rows(4).reversed.map((row) => row['content']),
+        );
+        expect(chat.hasEarlierMessages, isFalse);
+        expect(gateway.historyRequests, hasLength(disconnected ? 0 : 1));
+      },
+    );
+  }
+
+  test(
+    'late native history cannot publish after its load was invalidated',
+    () async {
+      final pending = Completer<SessionMessagesPage>();
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime',
+          storedSessionId: 'stored-chat',
+          created: false,
+        )
+        ..loader = () => pending.future;
+      final chat = _chat(
+        'native-stale',
+        MockClient((_) async => http.Response('Unauthorized', 401)),
+        gateway: gateway,
+      );
+      addTearDown(chat.dispose);
+      final loading = chat.loadMessages();
+      while (gateway.historyRequests.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final previousExtent = chat.transcriptExtentForTesting;
+      final previousEarlier = chat.hasEarlierMessages;
+      chat.invalidatePassiveRead();
+      pending.complete(
+        SessionMessagesPage(messages: _rows(4), pagination: null),
+      );
+      await loading;
+      expect(chat.messages, isEmpty);
+      expect(chat.transcriptExtentForTesting, previousExtent);
+      expect(chat.hasEarlierMessages, previousEarlier);
+    },
+  );
+
+  test(
+    'native full history replaces a REST tail during earlier-page load',
+    () async {
+      final server = _TranscriptServer(paginate: true)..rows.addAll(_rows(300));
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime',
+          storedSessionId: 'stored-chat',
+          created: false,
+        )
+        ..loader = () async => throw StateError('temporarily unavailable');
+      final chat = _chat('native-backfill', server.client(), gateway: gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(chat.hasEarlierMessages, isTrue);
+      gateway.loader = () async =>
+          SessionMessagesPage(messages: _rows(300), pagination: null);
+      await chat.loadEarlierMessages();
+      expect(chat.messages, hasLength(300));
+      expect(
+        chat.messages.map((row) => row['content']).toSet(),
+        hasLength(300),
+      );
+      expect(chat.transcriptExtentForTesting, 'complete');
+      expect(chat.hasEarlierMessages, isFalse);
+      expect(server.requests, hasLength(1));
+    },
+  );
 
   test('passive activity request is fenced by every authority coordinate', () {
     const baseline = (
@@ -9222,21 +9396,29 @@ void main() {
 
       discardPages = true;
       final accepted = await chat.send(
-        fullText: 'turno que debe seguir bloqueado',
+        fullText: 'turno posterior al Stop',
         model: 'hermes-agent',
         history: chat.buildHistory(),
       );
 
-      expect(accepted, isFalse);
+      // La reparación sigue intentándose y consume su página, pero ya no puede
+      // secuestrar la sesión: un Stop correcto no deja el chat inservible.
+      expect(accepted, isTrue);
       expect(chat.coreReadLineageComplete, isFalse);
       expect(chat.hasEarlierMessages, isTrue);
       expect(
         chat.messages.any(
-          (message) => message['content'] == 'turno que debe seguir bloqueado',
+          (message) => message['content'] == 'turno posterior al Stop',
         ),
-        isFalse,
+        isTrue,
       );
       expect(requests.where((uri) => uri.path.endsWith('/messages')).length, 2);
+
+      // La ambigüedad que esto protegía sigue cerrada donde toca: el tombstone
+      // del turno nuevo no se puede anclar cruzando la fila detenida sin
+      // identidad, así que Stop falla de forma visible y reintentable.
+      await expectLater(chat.cancel(), throwsA(isA<StateError>()));
+      expect(chat.stopConfirmationState, StopConfirmationState.failed);
     });
   });
 }

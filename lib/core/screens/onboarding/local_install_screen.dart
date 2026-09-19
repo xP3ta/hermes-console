@@ -2127,7 +2127,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Sin API key · Privacidad total',
+                    Strings.of(context).installLocalNoKeyPrivacy,
                     style: TextStyle(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w700,
@@ -2136,7 +2136,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'RAM: $ramText · ${compat.length} modelos compatibles',
+                    Strings.of(context).installRamCompatible(ramText, compat.length),
                     style: TextStyle(
                       fontSize: 11.5,
                       color: colors.textSecondary,
@@ -2199,7 +2199,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Usar API de IA (OpenAI, Anthropic, Mistral…)',
+                    Strings.of(context).installUseAiApi,
                     style: TextStyle(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w700,
@@ -2208,7 +2208,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'Requiere tu propia API key · ideal si el modelo local no arranca',
+                    Strings.of(context).installUseAiApiHint,
                     style: TextStyle(
                       fontSize: 11.5,
                       color: colors.textSecondary,
@@ -2366,7 +2366,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             if (_apiAuthUrl != null) ...[
               const SizedBox(height: 12),
               HermesPrimaryButton(
-                label: 'Abrir en navegador →',
+                label: Strings.of(context).licOpenInBrowser,
                 icon: Icons.open_in_new_rounded,
                 onTap: _openApiAuthUrl,
               ),
@@ -2417,7 +2417,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Elige un modelo compatible',
+            Strings.of(context).installPickCompatibleModel,
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -2429,8 +2429,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Text(
-                'No hay modelos compatibles con la RAM de este dispositivo. '
-                'Necesitas al menos 1 GB de RAM libre para ejecutar un modelo local.',
+                Strings.of(context).installNoCompatibleModels,
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             )
@@ -2505,7 +2504,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Modelo personalizado',
+                    Strings.of(context).installCustomModel,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -2715,7 +2714,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           ),
           const SizedBox(height: 10),
           HermesSecondaryButton(
-            label: 'Reintentar',
+            label: Strings.of(context).commonRetry,
             icon: Icons.refresh_rounded,
             onTap: () => setState(() {
               _ollamaPhase = 0;
@@ -2726,7 +2725,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           const SizedBox(height: 6),
           // Salida de rescate: si el modelo local no arranca, usar API en la nube.
           HermesSecondaryButton(
-            label: 'Usar API en la nube',
+            label: Strings.of(context).installUseCloudApi,
             icon: Icons.cloud_outlined,
             onTap: () => setState(() {
               _ollamaPhase = 0;
@@ -2738,7 +2737,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           ),
           const SizedBox(height: 6),
           HermesSecondaryButton(
-            label: 'Arrancar sin modelo local',
+            label: Strings.of(context).installStartWithoutLocalModel,
             icon: Icons.skip_next_rounded,
             onTap: _launchAndEnter,
           ),

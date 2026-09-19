@@ -8,6 +8,7 @@ import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart';
 import 'chat_screen.dart';
 
@@ -136,116 +137,123 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: _loading && snapshot == null
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+      body: GeneralDockShell(
+        connection: widget.connection,
+        connManager: widget.connectionManager,
+        body: SafeArea(
+          child: _loading && snapshot == null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 18),
+                        Text(
+                          strings.projectsCenterLoading,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : _failure != null && snapshot == null
+              ? _CenterFailure(
+                  message: _failureText(_failure!, strings),
+                  onRetry: _load,
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                     children: [
-                      const CircularProgressIndicator(),
-                      const SizedBox(height: 18),
-                      Text(
-                        strings.projectsCenterLoading,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: colors.textSecondary,
-                          height: 1.4,
+                      if (_loading && snapshot != null)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 10),
+                          child: LinearProgressIndicator(minHeight: 2),
+                        ),
+                      HermesPanel(
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.info_outline_rounded,
+                                color: colors.accent,
+                                size: 21,
+                              ),
+                              const SizedBox(width: 11),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      strings.projectsCenterHowItWorksTitle,
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      strings.projectsCenterIntro,
+                                      style: TextStyle(
+                                        color: colors.textSecondary,
+                                        fontSize: 12.5,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
+                      HermesSectionHeader(
+                        strings.projectsCenterWorkspacesSection,
+                      ),
+                      if (snapshot == null || snapshot.projects.isEmpty)
+                        _EmptyCenter(
+                          icon: Icons.folder_open_outlined,
+                          title: strings.projectsCenterEmptyTitle,
+                          body: strings.projectsCenterEmptyBody,
+                        )
+                      else
+                        ...snapshot.projects.map(
+                          (project) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _ProjectCard(
+                              project: project,
+                              active: snapshot.activeId == project.id,
+                              onTap: () => _openProject(project),
+                            ),
+                          ),
+                        ),
+                      if (_failure != null && snapshot != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            strings.projectsCenterStaleView(
+                              _failureText(_failure!, strings),
+                            ),
+                            style: TextStyle(
+                              color: colors.warning,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              )
-            : _failure != null && snapshot == null
-            ? _CenterFailure(
-                message: _failureText(_failure!, strings),
-                onRetry: _load,
-              )
-            : RefreshIndicator(
-                onRefresh: _load,
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-                  children: [
-                    if (_loading && snapshot != null)
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 10),
-                        child: LinearProgressIndicator(minHeight: 2),
-                      ),
-                    HermesPanel(
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              Icons.info_outline_rounded,
-                              color: colors.accent,
-                              size: 21,
-                            ),
-                            const SizedBox(width: 11),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    strings.projectsCenterHowItWorksTitle,
-                                    style: TextStyle(
-                                      color: colors.textPrimary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    strings.projectsCenterIntro,
-                                    style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontSize: 12.5,
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    HermesSectionHeader(
-                      strings.projectsCenterWorkspacesSection,
-                    ),
-                    if (snapshot == null || snapshot.projects.isEmpty)
-                      _EmptyCenter(
-                        icon: Icons.folder_open_outlined,
-                        title: strings.projectsCenterEmptyTitle,
-                        body: strings.projectsCenterEmptyBody,
-                      )
-                    else
-                      ...snapshot.projects.map(
-                        (project) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _ProjectCard(
-                            project: project,
-                            active: snapshot.activeId == project.id,
-                            onTap: () => _openProject(project),
-                          ),
-                        ),
-                      ),
-                    if (_failure != null && snapshot != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          strings.projectsCenterStaleView(
-                            _failureText(_failure!, strings),
-                          ),
-                          style: TextStyle(color: colors.warning, fontSize: 12),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+        ),
       ),
     );
   }

@@ -354,6 +354,10 @@ void main() {
       materializer: _FakePetVisualMaterializer(log: log),
     );
 
+    // "Identidad visual" es una fila colapsable de "Personalizar" (mockup
+    // de crear/editar bot): hay que abrirla antes de tocar sus controles.
+    await _tapVisible(tester, const ValueKey('bot-create-identity-row'));
+
     expect(find.byKey(const ValueKey('bot-create-mode-pet')), findsOneWidget);
     expect(find.byKey(const ValueKey('bot-create-mode-image')), findsOneWidget);
     expect(find.byKey(const ValueKey('bot-create-mode-face')), findsOneWidget);
@@ -419,6 +423,7 @@ void main() {
     );
 
     await _enterName(tester, 'Infra Lead');
+    await _tapVisible(tester, const ValueKey('bot-create-identity-row'));
     await _tapVisible(tester, const ValueKey('bot-create-blobatar-sun'));
     await tester.tap(find.byKey(const ValueKey('bot-create-submit')));
     await tester.pumpAndSettle();
@@ -446,6 +451,7 @@ void main() {
     );
 
     await _enterName(tester, 'vision');
+    await _tapVisible(tester, const ValueKey('bot-create-identity-row'));
     await _tapVisible(tester, const ValueKey('bot-create-mode-image'));
     await _tapVisible(tester, const ValueKey('bot-create-pick-image'));
     await tester.pumpAndSettle();
@@ -479,6 +485,7 @@ void main() {
     );
 
     await _enterName(tester, 'nimbus-bot');
+    await _tapVisible(tester, const ValueKey('bot-create-identity-row'));
     await _tapVisible(tester, const ValueKey('bot-create-mode-pet'));
     await tester.pumpAndSettle();
     await _tapVisible(tester, const ValueKey('bot-create-sprite-nimbus'));
@@ -516,6 +523,7 @@ void main() {
     );
 
     await _enterName(tester, 'vision');
+    await _tapVisible(tester, const ValueKey('bot-create-identity-row'));
     await _tapVisible(tester, const ValueKey('bot-create-mode-image'));
     await _tapVisible(tester, const ValueKey('bot-create-pick-image'));
     await tester.pumpAndSettle();

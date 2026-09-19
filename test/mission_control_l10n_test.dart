@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/bot_mode_dock.dart';
+import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -38,11 +38,38 @@ void main() {
                     connectionId: 'public-owner',
                     profiles: [],
                   ),
-                  BotModeDock(
-                    selectedIndex: 0,
-                    onDestinationSelected: (_) {},
-                    onCreateBot: () {},
-                    onCreateRoom: () {},
+                  // Las etiquetas de las órbitas salen de las cadenas
+                  // generadas, igual que en Mission Control: eso es
+                  // justamente lo que este test comprueba.
+                  Builder(
+                    builder: (context) => Dock(
+                      profileId: DockProfileId.bots,
+                      actions: const {
+                        DockItemId.home: DockItemAction(),
+                        DockItemId.bots: DockItemAction(
+                          selected: true,
+                          semanticsKey: ValueKey('mission-destination-bots'),
+                        ),
+                        DockItemId.work: DockItemAction(
+                          semanticsKey: ValueKey('mission-destination-work'),
+                        ),
+                        DockItemId.create: DockItemAction(),
+                      },
+                      createOrbits: [
+                        DockCreateOrbit(
+                          controlKey: const ValueKey('bot-mode-create-bot'),
+                          label: Strings.of(context).missionCreateBotLabel,
+                          icon: Icons.smart_toy_outlined,
+                          onTap: () {},
+                        ),
+                        DockCreateOrbit(
+                          controlKey: const ValueKey('bot-mode-create-room'),
+                          label: Strings.of(context).missionCreateRoomLabel,
+                          icon: Icons.groups_2_outlined,
+                          onTap: () {},
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -51,7 +78,17 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text(entry.value[0]), findsOneWidget);
+        // El dock real pinta solo iconos (ver dock.dart): la
+        // etiqueta ya no es un Text visible en la barra, así que la
+        // localización se comprueba por el `label` semántico publicado.
+        expect(
+          tester
+              .getSemantics(
+                find.byKey(const ValueKey('mission-destination-work')),
+              )
+              .label,
+          entry.value[0],
+        );
         final create = find.byKey(const ValueKey('bot-mode-dock-create'));
         expect(tester.getSemantics(create).label, entry.value[1]);
         await tester.tap(create);
@@ -75,7 +112,7 @@ void main() {
           entry.key == 'en' ? '0 members' : '0 miembros',
         );
         expect(
-          Strings.of(tester.element(create)).missionRoomAvatarMembers(1),
+          Strings.of(tester.element(create)).roomAvatarMembers(1),
           entry.value[4],
         );
       },

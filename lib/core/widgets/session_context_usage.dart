@@ -12,12 +12,21 @@ import '../theme/app_theme.dart';
 typedef SessionContextBreakdownLoader =
     Future<DesktopContextBreakdown?> Function();
 
+/// Builds an optional extra section appended to the popover's content — used
+/// by the chat screen to fold its approval-mode radio list into the same
+/// surface the combined context+mode pill opens, instead of a second sheet.
+/// [closePopover] dismisses this popover; callers invoke it before applying a
+/// selection, mirroring how the standalone mode sheet pops itself first.
+typedef SessionContextModeSectionBuilder =
+    Widget Function(BuildContext context, VoidCallback closePopover);
+
 Future<void> showSessionContextPopover({
   required BuildContext context,
   required Rect anchorRect,
   required ValueListenable<SessionContextMetrics> metrics,
   required SessionContextBreakdownLoader loadBreakdown,
   required ValueChanged<SessionContextMetrics> onMetricsSnapshot,
+  SessionContextModeSectionBuilder? modeSectionBuilder,
 }) {
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final navigator = Navigator.of(context);
@@ -36,6 +45,7 @@ Future<void> showSessionContextPopover({
           metrics: metrics,
           loadBreakdown: loadBreakdown,
           onMetricsSnapshot: onMetricsSnapshot,
+          modeSectionBuilder: modeSectionBuilder,
           onClose: navigator.pop,
         ),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
@@ -64,6 +74,7 @@ class _SessionContextPopoverFrame extends StatelessWidget {
     required this.loadBreakdown,
     required this.onMetricsSnapshot,
     required this.onClose,
+    this.modeSectionBuilder,
   });
 
   final Rect anchorRect;
@@ -71,6 +82,7 @@ class _SessionContextPopoverFrame extends StatelessWidget {
   final SessionContextBreakdownLoader loadBreakdown;
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
   final VoidCallback onClose;
+  final SessionContextModeSectionBuilder? modeSectionBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -126,6 +138,7 @@ class _SessionContextPopoverFrame extends StatelessWidget {
                 loadBreakdown: loadBreakdown,
                 onMetricsSnapshot: onMetricsSnapshot,
                 onClose: onClose,
+                modeSectionBuilder: modeSectionBuilder,
               ),
             ),
           ),
@@ -308,18 +321,37 @@ int _boundedContextPercent({
   return raw.round().clamp(0, 100).toInt();
 }
 
-/// Anchored context control used by the chat app bar.
+/// Anchored context+mode control. Was two separate app-bar widgets (a
+/// context-usage ring trigger plus a colored approval-mode pill); the
+/// 1.2.11 redesign merges both into one compact floating pill — ring,
+/// percentage, and (only when the mode isn't the plain default) a small
+/// red-flag segment — that now lives below the composer instead of in
+/// `actions:`. Still opens the same [showSessionContextPopover]; when
+/// [modeSectionBuilder] is given, that popover also grows an approval-mode
+/// section built from it, so mode selection is reachable from the same
+/// surface without duplicating the mode-radio-list logic that already lives
+/// in the chat screen.
 class SessionContextPopoverButton extends StatefulWidget {
   const SessionContextPopoverButton({
     required this.metrics,
     required this.loadBreakdown,
     required this.onMetricsSnapshot,
+    this.modeLabel,
+    this.modeColor,
+    this.modeSectionBuilder,
     super.key,
   });
 
   final ValueListenable<SessionContextMetrics> metrics;
   final SessionContextBreakdownLoader loadBreakdown;
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
+
+  /// Non-null only when the approval mode is worth flagging (YOLO / read-only
+  /// / a per-session override) — same "prominent" gate the old app-bar mode
+  /// pill used. Null hides the mode segment entirely.
+  final String? modeLabel;
+  final Color? modeColor;
+  final SessionContextModeSectionBuilder? modeSectionBuilder;
 
   @override
   State<SessionContextPopoverButton> createState() =>
@@ -345,6 +377,7 @@ class _SessionContextPopoverButtonState
         metrics: widget.metrics,
         loadBreakdown: widget.loadBreakdown,
         onMetricsSnapshot: widget.onMetricsSnapshot,
+        modeSectionBuilder: widget.modeSectionBuilder,
       );
     } finally {
       _opening = false;
@@ -353,10 +386,114 @@ class _SessionContextPopoverButtonState
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
     return Padding(
       key: _anchorKey,
       padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: SessionContextTrigger(metrics: widget.metrics, onPressed: _open),
+      child: ValueListenableBuilder<SessionContextMetrics>(
+        valueListenable: widget.metrics,
+        builder: (context, value, _) {
+          final percent = value.percent;
+          final cumulative = value.cumulativeTotal;
+          final cumulativeLabel = cumulative != null && cumulative > 0
+              ? '${compactSessionContextTokens(cumulative)} tok'
+              : null;
+          final semanticValue = percent == null
+              ? cumulativeLabel == null
+                    ? strings.chaContextWindowUnavailable
+                    : '${compactSessionContextTokens(cumulative!)} '
+                          '${strings.chaContextTotal}'
+              : strings.chaContextUsagePercent(percent);
+          final modeLabel = widget.modeLabel;
+          return Semantics(
+            button: true,
+            onTap: _open,
+            label: strings.chaContextUsageOpen,
+            value: modeLabel == null
+                ? semanticValue
+                : '$semanticValue · $modeLabel',
+            excludeSemantics: true,
+            child: Tooltip(
+              message: strings.chaContextUsageOpen,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  key: const ValueKey('desktop-context-usage-status'),
+                  onTap: _open,
+                  customBorder: const StadiumBorder(),
+                  child: Container(
+                    height: 30,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: colors.surfaceVariant.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: colors.divider.withValues(alpha: 0.7),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.24),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SessionContextRing(
+                          percent: percent,
+                          size: 14,
+                          strokeWidth: 2,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          percent == null
+                              ? (cumulativeLabel ?? '—')
+                              : '$percent%',
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        if (modeLabel != null) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            height: 12,
+                            width: 1,
+                            color: colors.divider,
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: widget.modeColor ?? colors.error,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            modeLabel,
+                            style: TextStyle(
+                              color: widget.modeColor ?? colors.error,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -503,6 +640,7 @@ class SessionContextFloatingPanel extends StatefulWidget {
     required this.loadBreakdown,
     required this.onMetricsSnapshot,
     required this.onClose,
+    this.modeSectionBuilder,
     super.key,
   });
 
@@ -512,6 +650,7 @@ class SessionContextFloatingPanel extends StatefulWidget {
   final SessionContextBreakdownLoader loadBreakdown;
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
   final VoidCallback onClose;
+  final SessionContextModeSectionBuilder? modeSectionBuilder;
 
   @override
   State<SessionContextFloatingPanel> createState() =>
@@ -581,6 +720,7 @@ class _SessionContextFloatingPanelState
                   loading: _loading,
                   error: _error,
                   onClose: widget.onClose,
+                  modeSectionBuilder: widget.modeSectionBuilder,
                 );
               },
             ),
@@ -598,6 +738,7 @@ class _PanelContents extends StatelessWidget {
     required this.loading,
     required this.error,
     required this.onClose,
+    this.modeSectionBuilder,
   });
 
   final SessionContextMetrics metrics;
@@ -605,6 +746,7 @@ class _PanelContents extends StatelessWidget {
   final bool loading;
   final Object? error;
   final VoidCallback onClose;
+  final SessionContextModeSectionBuilder? modeSectionBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -665,6 +807,12 @@ class _PanelContents extends StatelessWidget {
             icon: Icons.layers_clear_outlined,
             text: strings.chaContextUsageEmpty,
           ),
+        if (modeSectionBuilder != null) ...[
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          modeSectionBuilder!(context, onClose),
+        ],
       ],
     );
   }

@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/bot_mode_dock.dart';
 import 'package:hermes_android/core/widgets/chat_surface_coordinator.dart';
+import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 Widget _host(ChatSurfaceCoordinator coordinator) => MaterialApp(
@@ -21,12 +21,32 @@ Widget _host(ChatSurfaceCoordinator coordinator) => MaterialApp(
     ),
     child: Scaffold(
       resizeToAvoidBottomInset: true,
-      body: BotModeDock(
+      // Montado igual que en Mission Control: perfil Bots, el coordinador de
+      // la superficie y su mismo inset inferior.
+      body: Dock(
+        profileId: DockProfileId.bots,
         coordinator: coordinator,
-        selectedIndex: 0,
-        onDestinationSelected: (_) {},
-        onCreateBot: () {},
-        onCreateRoom: () {},
+        bottomInset: coordinator.bottomInset,
+        actions: const {
+          DockItemId.home: DockItemAction(),
+          DockItemId.bots: DockItemAction(selected: true),
+          DockItemId.work: DockItemAction(),
+          DockItemId.create: DockItemAction(),
+        },
+        createOrbits: [
+          DockCreateOrbit(
+            controlKey: const ValueKey('bot-mode-create-bot'),
+            label: 'Nuevo bot',
+            icon: Icons.smart_toy_outlined,
+            onTap: () {},
+          ),
+          DockCreateOrbit(
+            controlKey: const ValueKey('bot-mode-create-room'),
+            label: 'Nueva sala',
+            icon: Icons.groups_2_outlined,
+            onTap: () {},
+          ),
+        ],
       ),
     ),
   ),

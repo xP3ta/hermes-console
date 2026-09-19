@@ -167,7 +167,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'backup guardado: ${file.path}',
+            Strings.of(context).memoryBackupSaved(file.path),
             style: const TextStyle(fontSize: 11),
           ),
           duration: const Duration(seconds: 4),
@@ -225,7 +225,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
               )
             else if (_info != null)
               Text(
-                '${_info!.configuredCount} / ${_info!.providers.length} configuradas',
+                Strings.of(context).memoryConfiguredCount(_info!.configuredCount, _info!.providers.length),
                 style: TextStyle(fontSize: 11, color: colors.textSecondary),
               ),
           ],
@@ -321,7 +321,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
               controller: _filterController,
               style: TextStyle(fontSize: 13, color: colors.textPrimary),
               decoration: InputDecoration(
-                hintText: 'filtrar providers y archivos…',
+                hintText: Strings.of(context).memoryFilterHint,
                 prefixIcon: Icon(
                   Icons.search,
                   size: 18,
@@ -365,7 +365,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 32),
                     child: Center(
                       child: Text(
-                        'sin coincidencias para "$_filter"',
+                        Strings.of(context).memoryNoMatches(_filter),
                         style: TextStyle(
                           fontSize: 13,
                           color: colors.textDisabled,
@@ -758,7 +758,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
                         )
                       else if (!provider.configured)
                         Text(
-                          'not configured',
+                          Strings.of(context).memoryProviderNotConfigured,
                           style: TextStyle(
                             fontSize: 10,
                             color: colors.textDisabled,

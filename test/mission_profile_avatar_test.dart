@@ -160,4 +160,76 @@ void main() {
     expect((face.visual as HermesBlobatarFaceVisual).pinnedKind, 'triangle');
     expect(tester.takeException(), isNull);
   });
+
+  test(
+    'resolved lookup is synchronous once loaded and leaves with its entry',
+    () async {
+      final cache = MissionProfileAvatarCache(
+        maxEntries: 1,
+        loader: (profile) async => profile == 'none' ? null : _avatar(),
+      );
+      expect(cache.hasResolved('manager'), isFalse);
+      final pending = cache.load('manager');
+      expect(cache.hasResolved('manager'), isFalse, reason: 'still in flight');
+      final loaded = await pending;
+      expect(loaded, isNotNull);
+      expect(cache.hasResolved('manager'), isTrue);
+      expect(identical(cache.resolved('manager'), loaded), isTrue);
+      expect(
+        cache.hasResolved(' manager '),
+        isTrue,
+        reason: 'trimmed like load',
+      );
+
+      // A resolved "no avatar" is still a resolved answer, not a cache miss.
+      await cache.load('none');
+      expect(cache.hasResolved('none'), isTrue);
+      expect(cache.resolved('none'), isNull);
+      // maxEntries: 1 → loading `none` evicted `manager` together with its value.
+      expect(cache.hasResolved('manager'), isFalse);
+
+      cache.clear();
+      expect(cache.hasResolved('none'), isFalse);
+    },
+  );
+
+  test('an eviction before completion never resurrects the value', () async {
+    final gate = Completer<AgentProfileAvatar?>();
+    final cache = MissionProfileAvatarCache(
+      maxEntries: 1,
+      loader: (profile) => profile == 'slow' ? gate.future : Future.value(),
+    );
+    final slow = cache.load('slow');
+    await cache.load('other'); // evicts `slow` while still in flight
+    gate.complete(_avatar());
+    await slow;
+    expect(cache.hasResolved('slow'), isFalse);
+    expect(cache.hasResolved('other'), isTrue);
+  });
+
+  testWidgets('a cached avatar paints on the first frame, no FutureBuilder', (
+    tester,
+  ) async {
+    final cache = MissionProfileAvatarCache(loader: (_) async => _avatar());
+    await cache.load('manager');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.fromId('dark'),
+        home: Scaffold(
+          body: MissionProfileAvatar(
+            profileName: 'manager',
+            hasAvatar: true,
+            cache: cache,
+          ),
+        ),
+      ),
+    );
+    // Deliberately no extra pump: the image must be there in the very first
+    // frame instead of one microtask later (which showed the fallback face).
+    expect(find.byType(FutureBuilder<AgentProfileAvatar?>), findsNothing);
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(HermesBotFace), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

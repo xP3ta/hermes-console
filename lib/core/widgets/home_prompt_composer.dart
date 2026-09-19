@@ -42,23 +42,34 @@ class HomePromptComposer extends StatefulWidget {
 class _HomePromptComposerState extends State<HomePromptComposer> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  bool _hasText = false;
 
-  bool get _canSubmit => widget.enabled && _controller.text.trim().isNotEmpty;
+  bool get _canSubmit => widget.enabled && _hasText;
 
   @override
   void initState() {
     super.initState();
     _focusNode.addListener(_handleFocusChanged);
+    _controller.addListener(_handleTextChanged);
   }
 
   void _handleFocusChanged() => setState(() {});
+
+  void _handleTextChanged() {
+    final hasText = _controller.text.trim().isNotEmpty;
+    // Solo cambia el chrome al alternar voz/envío. El campo gestiona sus
+    // propias ediciones, incluida la limpieza programática tras enviar.
+    if (hasText != _hasText) setState(() => _hasText = hasText);
+  }
 
   @override
   void dispose() {
     _focusNode
       ..removeListener(_handleFocusChanged)
       ..dispose();
-    _controller.dispose();
+    _controller
+      ..removeListener(_handleTextChanged)
+      ..dispose();
     super.dispose();
   }
 
@@ -108,7 +119,6 @@ class _HomePromptComposerState extends State<HomePromptComposer> {
                 maxLines: 4,
                 keyboardType: TextInputType.multiline,
                 textInputAction: TextInputAction.newline,
-                onChanged: (_) => setState(() {}),
                 onTapOutside: (_) =>
                     FocusManager.instance.primaryFocus?.unfocus(),
                 style: TextStyle(

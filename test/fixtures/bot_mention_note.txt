@@ -1,0 +1,3 @@
+
+
+[@mentions resolved from the Bot Mode roster — the user is referring to: @ops = agent profile "ops". If they want one of these agents contacted, compose your own message and send it with your message_agent tool (agents on other connected machines are reachable too — the Desktop relays it); never forward the user’s text verbatim. If this session has no message_agent tool, agent messaging is unavailable here — say so.]

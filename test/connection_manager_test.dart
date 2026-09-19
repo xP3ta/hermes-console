@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -15,6 +16,34 @@ import 'package:hermes_android/core/services/session_repository.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // `_loadApiKeys` now reads Keystore for every connection without a plaintext
+  // key (not just migrating ones), and a storage failure there aborts init
+  // instead of being swallowed as corrupt metadata — see connection_manager.dart.
+  // Without this mock, that read throws MissingPluginException in every test
+  // that constructs a ConnectionManager, regardless of what it's testing.
+  final secureStorageValues = <String, String>{};
+  setUp(() {
+    secureStorageValues.clear();
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+          (call) async {
+            final args = (call.arguments as Map).cast<String, dynamic>();
+            final key = args['key'] as String?;
+            switch (call.method) {
+              case 'read':
+                return secureStorageValues[key];
+              case 'readAll':
+                return Map<String, String>.of(secureStorageValues);
+              case 'write':
+                secureStorageValues[key!] = args['value'] as String;
+              case 'delete':
+                secureStorageValues.remove(key);
+            }
+            return null;
+          },
+        );
+  });
   group('SavedConnection', () {
     test('normalizes bare HTTP gateway hosts with fallback port', () {
       final normalized = SavedConnection.normalizeHostAndPort(

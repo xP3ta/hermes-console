@@ -244,27 +244,123 @@ void main() {
     );
   });
 
-  test('groups.send retirement emits no mutation frame', () async {
-    final harness = await _HostedBoundaryHarness.start(
-      (method, params) => _validResult(method, params),
-    );
-    addTearDown(harness.close);
+  test(
+    'groups.send proves its acknowledgement in the log over one exact lease',
+    () async {
+      final durableId = TuiGatewayClient.durableGroupEventId('client-event-1');
+      final harness = await _HostedBoundaryHarness.start((method, params) {
+        if (method == 'groups.send') {
+          return {
+            'accepted': true,
+            'client_event_id': params['event_id'],
+            'event': {
+              'room_id': 'room-1',
+              'seq': 1,
+              'event_id': durableId,
+              'kind': 'message.user',
+              'actor': {'kind': 'user', 'id': 'desktop'},
+              'authority_epoch': 1,
+              'payload': {'text': 'hello there', 'thread_id': 'thread-1'},
+              'created_at': 1.0,
+              'idempotent': false,
+            },
+          };
+        }
+        if (method == 'groups.log') {
+          return {
+            'events': [
+              {
+                'room_id': 'room-1',
+                'seq': 1,
+                'event_id': durableId,
+                'kind': 'message.user',
+                'actor': {'kind': 'user', 'id': 'desktop'},
+                'authority_epoch': 1,
+                'payload': {'text': 'hello there', 'thread_id': 'thread-1'},
+                'created_at': 1.0,
+                'idempotent': false,
+              },
+            ],
+            'cursor': 1,
+            'latest_seq': 1,
+            'has_more': false,
+            'authority': {'gateway_id': 'gateway-1', 'epoch': 1},
+          };
+        }
+        return _validResult(method, params);
+      });
+      addTearDown(harness.close);
 
-    await expectLater(
-      harness.client.sendGroupText(
+      final page = await harness.client.sendGroupText(
         roomId: 'room-1',
-        text: 'not sent',
+        text: 'hello there',
         threadId: 'thread-1',
         eventId: 'client-event-1',
         generation: harness.generation,
-      ),
-      throwsA(isA<TuiGatewayRpcError>()),
-    );
-    expect(
-      harness.requests.where((request) => request['method'] == 'groups.send'),
-      isEmpty,
-    );
-  });
+      );
+
+      expect(page.events.single.eventId, durableId);
+      expect(
+        harness.requests.map((request) => request['method']),
+        containsAllInOrder(['groups.send', 'groups.log']),
+      );
+      expect(harness.sockets, hasLength(1));
+    },
+  );
+
+  test(
+    'groups.log.complete pages the whole room history over one exact lease',
+    () async {
+      const total = 3;
+      final harness = await _HostedBoundaryHarness.start((method, params) {
+        if (method != 'groups.log') return _validResult(method, params);
+        final sinceSeq = params['since_seq'] as int;
+        final seq = sinceSeq + 1;
+        return {
+          'events': seq > total
+              ? <Object?>[]
+              : [
+                  {
+                    'room_id': 'room-1',
+                    'seq': seq,
+                    'event_id': 'user:seq-$seq',
+                    'kind': 'message.user',
+                    'actor': {'kind': 'user', 'id': 'desktop'},
+                    'authority_epoch': 1,
+                    'payload': {'text': 'message $seq', 'thread_id': 'thread-1'},
+                    'created_at': seq.toDouble(),
+                    'idempotent': false,
+                  },
+                ],
+          'cursor': seq > total ? sinceSeq : seq,
+          'latest_seq': total,
+          'has_more': seq < total,
+          'authority': {'gateway_id': 'gateway-1', 'epoch': 1},
+        };
+      });
+      addTearDown(harness.close);
+
+      final page = await harness.client.groupLogComplete(
+        'room-1',
+        pageLimit: 1,
+        generation: harness.generation,
+      );
+
+      expect(page.events, hasLength(total));
+      expect(
+        page.events.map((event) => event.publicText),
+        ['message 1', 'message 2', 'message 3'],
+      );
+      expect(page.hasMore, isFalse);
+      expect(
+        harness.requests
+            .where((request) => request['method'] == 'groups.log')
+            .length,
+        total,
+      );
+      expect(harness.sockets, hasLength(1));
+    },
+  );
 
   test(
     'groups.list follows official offsets through an empty terminal page and publishes once',

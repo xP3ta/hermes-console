@@ -1,3 +1,4 @@
+import 'bot_mention_roster.dart';
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
@@ -507,11 +508,10 @@ class ConnectionManager {
     final validConnections = <SavedConnection>[];
 
     for (final j in jsonList) {
+      final Map<String, dynamic> map;
+      final SavedConnection conn;
       try {
-        final map = jsonDecode(j) as Map<String, dynamic>;
-        // Migración: el agente local exponía el chat/estado en :8642 (gateway de
-        // mensajería), pero esa API la sirve el dashboard en :9119. Reapuntamos
-        // las conexiones locales antiguas para que "online" y el chat funcionen.
+        map = jsonDecode(j) as Map<String, dynamic>;
         final storedKind = (map['kind'] as String?)?.trim();
         final isLegacyLocalKind =
             storedKind == null ||
@@ -524,34 +524,29 @@ class ConnectionManager {
           map['dashboard_url'] = 'http://127.0.0.1:9119';
           needsResave = true;
         }
-        final conn = SavedConnection.fromMap(map);
-        validConnections.add(conn);
-
-        final plainKey = (map['api_key'] as String?) ?? '';
-        if (plainKey.isNotEmpty) {
-          // Migration: plaintext key found in JSON → move to Keystore
-          await _secure.writeApiKey(conn.id, plainKey);
-          _apiKeyCache[conn.id] = plainKey;
-          needsResave = true;
-        } else {
-          final stored = await _secure.readApiKey(conn.id);
-          if (stored != null && stored.isNotEmpty) {
-            _apiKeyCache[conn.id] = stored;
-          }
-        }
-      } catch (e) {
-        debugPrint(
-          '[connection] excepción silenciada (se continúa sin propagar): $e',
-        );
-        // Corrupt SharedPrefs entry — exclude from re-save
+        conn = SavedConnection.fromMap(map);
+      } catch (error) {
+        // FormatException can include the original JSON, including a legacy
+        // plaintext key. Never log its source or exception message.
+        debugPrint('[connection] invalid metadata (${error.runtimeType})');
         needsResave = true;
         continue;
       }
+      // Storage failures are not corrupt metadata. Abort initialization before
+      // rewriting prefs or pruning anything: migration must not remove the
+      // only remaining copy of a key when the Keystore write failed.
+      final plainKey = (map['api_key'] as String?) ?? '';
+      if (plainKey.isNotEmpty) {
+        await _secure.writeApiKey(conn.id, plainKey);
+        _apiKeyCache[conn.id] = plainKey;
+        needsResave = true;
+      } else {
+        final stored = await _secure.readApiKey(conn.id);
+        if (stored != null && stored.isNotEmpty) _apiKeyCache[conn.id] = stored;
+      }
+      validConnections.add(conn);
     }
-
-    if (needsResave) {
-      await _saveAll(validConnections);
-    }
+    if (needsResave) await _saveAll(validConnections);
   }
 
   /// Returns connections with API keys injected from the in-memory cache.
@@ -626,6 +621,7 @@ class ConnectionManager {
   }
 
   Future<void> updateApiKey(String connId, String apiKey) async {
+    if (apiKey.trim().isEmpty) return;
     _publishConnectionWillChange(connId);
     await _secure.writeApiKey(connId, apiKey);
     _apiKeyCache[connId] = apiKey;
@@ -650,11 +646,10 @@ class ConnectionManager {
     final idx = current.indexWhere((c) => c.id == id);
     if (idx == -1) return;
     final existing = current[idx];
-    final nextApiKey = apiKey != null && apiKey.isNotEmpty
+    final nextApiKey = apiKey != null && apiKey.trim().isNotEmpty
         ? apiKey
         : existing.apiKey;
-    final updated = SavedConnection(
-      id: id,
+    final updated = existing.copyWith(
       label: label,
       host: host,
       port: port,
@@ -666,8 +661,9 @@ class ConnectionManager {
     );
     final metadataChanged = !_samePersistedConnection(existing, updated);
     final apiKeyChanged =
-        apiKey != null && apiKey.isNotEmpty && apiKey != existing.apiKey;
+        apiKey != null && apiKey.trim().isNotEmpty && apiKey != existing.apiKey;
     if (!metadataChanged && !apiKeyChanged) return;
+    BotMentionRoster.shared.remove(id);
 
     // La tarjeta de Ajustes puede tener un debounce pendiente. La frontera se
     // publica antes de tocar Keystore o prefs para que nunca use el cliente
@@ -695,7 +691,7 @@ class ConnectionManager {
         existing != null && !_samePersistedConnection(existing, conn);
     final apiKeyChanged =
         existing != null &&
-        conn.apiKey.isNotEmpty &&
+        conn.apiKey.trim().isNotEmpty &&
         conn.apiKey != existing.apiKey;
     if (existing != null && !metadataChanged && !apiKeyChanged) return;
 
@@ -705,7 +701,7 @@ class ConnectionManager {
       // autenticado anterior.
       _publishConnectionWillChange(conn.id);
     }
-    if (conn.apiKey.isNotEmpty) {
+    if (conn.apiKey.trim().isNotEmpty) {
       await _secure.writeApiKey(conn.id, conn.apiKey);
       _apiKeyCache[conn.id] = conn.apiKey;
     }
@@ -724,40 +720,80 @@ class ConnectionManager {
 
   // ── Secretos del Dashboard (Keystore) ─────────────────────────────────
 
-  Future<DashboardSecrets> getDashboardSecrets(String connId) async {
-    return DashboardSecrets(
-      sessionToken: await _secure.readDashboardSecret(connId, 'token'),
-      username: await _secure.readDashboardSecret(connId, 'user'),
-      password: await _secure.readDashboardSecret(connId, 'pass'),
+  Future<DashboardSecrets> getDashboardSecrets(String connId) {
+    // Serialize reads too: a login must not observe a new username paired
+    // with the old password while a save is between secure-storage writes.
+    final reading = _dashboardAccessTail.then(
+      (_) async => DashboardSecrets(
+        sessionToken: await _secure.readDashboardSecret(connId, 'token'),
+        username: await _secure.readDashboardSecret(connId, 'user'),
+        password: await _secure.readDashboardSecret(connId, 'pass'),
+      ),
     );
+    _dashboardAccessTail = reading.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return reading;
   }
+
+  Future<void> _dashboardAccessTail = Future<void>.value();
 
   Future<void> setDashboardSecrets(
     String connId, {
     String? sessionToken,
     String? username,
     String? password,
-  }) async {
-    var changed = false;
-    if (sessionToken != null || username != null || password != null) {
-      _publishConnectionWillChange(connId);
-    }
-    if (sessionToken != null) {
-      await _secure.writeDashboardSecret(connId, 'token', sessionToken);
-      changed = true;
-    }
-    if (username != null) {
-      await _secure.writeDashboardSecret(connId, 'user', username);
-      changed = true;
-    }
-    if (password != null) {
-      await _secure.writeDashboardSecret(connId, 'pass', password);
-      changed = true;
-    }
-    if (changed) {
+  }) {
+    final edits = <String, String>{
+      if (sessionToken != null && sessionToken.trim().isNotEmpty)
+        'token': sessionToken,
+      if (username != null && username.trim().isNotEmpty) 'user': username,
+      if (password != null && password.isNotEmpty) 'pass': password,
+    };
+    if (edits.isEmpty) return Future<void>.value();
+    // Fence pending authenticated writes synchronously, before queueing any
+    // storage access (the settings debounce relies on this boundary).
+    _publishConnectionWillChange(connId);
+    final saving = _dashboardAccessTail.then((_) async {
+      final previous = <String, String?>{};
+      for (final field in edits.keys) {
+        previous[field] = await _secure.readDashboardSecret(connId, field);
+      }
+      final written = <String>[];
+      try {
+        for (final edit in edits.entries) {
+          written.add(edit.key);
+          await _secure.writeDashboardSecret(connId, edit.key, edit.value);
+        }
+      } catch (_) {
+        var restored = true;
+        for (final field in written.reversed) {
+          try {
+            final value = previous[field];
+            if (value == null) {
+              await _secure.deleteDashboardSecret(connId, field);
+            } else {
+              await _secure.writeDashboardSecret(connId, field, value);
+            }
+          } catch (_) {
+            restored = false;
+          }
+        }
+        // Invalidate readers even when the storage device rejected rollback.
+        _publishConnectionRevision(connId);
+        connectionsRevision.value += 1;
+        if (!restored) throw StateError('Dashboard credential rollback failed');
+        rethrow;
+      }
       _publishConnectionRevision(connId);
       connectionsRevision.value += 1;
-    }
+    });
+    _dashboardAccessTail = saving.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return saving;
   }
 
   // ── Mobile Bridge (Keystore) ──────────────────────────────────────────
@@ -1004,6 +1040,7 @@ class ConnectionManager {
   }
 
   Future<void> deleteConnection(String id) async {
+    BotMentionRoster.shared.remove(id);
     _publishConnectionWillChange(id);
     // Cada authority local se limpia de forma independiente: un plugin dañado
     // no puede impedir que los demás stores olviden la conexión.
@@ -1696,10 +1733,15 @@ class ApiClient {
     bool deleted;
     try {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
-      deleted = data['deleted'] != false; // ausente → asumir borrada
+      deleted = data['deleted'] == true;
     } catch (e) {
-      debugPrint('[connection] excepción silenciada (se asume true): $e');
-      deleted = true;
+      // Un cuerpo que no se puede parsear (p.ej. un proxy o un gateway a
+      // medio reiniciar devolviendo HTML/vacío con 200) no es evidencia de
+      // que se borró — asumir `true` aquí anunciaba "conversación borrada"
+      // con la fila todavía en el servidor. `false` la manda al cubo
+      // "rechazada" de deleteRemoteSession en vez de darla por buena.
+      debugPrint('[connection] invalid delete response (${e.runtimeType})');
+      deleted = false;
     }
     if (deleted) await _clearSessionRecovery(sessionId, profile: profile);
     return deleted;

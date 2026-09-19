@@ -255,7 +255,15 @@ void main() {
     );
   });
 
-  test('retired hosted send is excluded from official capabilities', () {
-    expect(GroupMethod.official('groups.send'), isNull);
-  });
+  test(
+    'official hosted send requires a proven-complete log; retry and promote stay retired',
+    () {
+      // `send` became official once loading a room's log could prove
+      // completeness (`HostedGroupLogPage.loadComplete`) rather than only a
+      // bounded recent window — see `docs/hosted_identity_transition_matrix.md`.
+      expect(GroupMethod.official('groups.send'), GroupMethod.send);
+      expect(GroupMethod.official('groups.retry'), isNull);
+      expect(GroupMethod.official('groups.promote'), isNull);
+    },
+  );
 }

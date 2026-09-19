@@ -1,3 +1,4 @@
+import '../../utils/bot_mention_text.dart';
 // Notificaciones locales del agente — 100% on-device, sin FCM/Google/push.
 //
 // Las dispara la propia app para avisar de eventos importantes mientras está
@@ -16,10 +17,11 @@ import '../../utils/markdown_clipboard.dart';
 import '../new_session_launch_coordinator.dart';
 import 'notification_delivery_coordinator.dart';
 import 'notification_delivery_store.dart';
+import 'notification_mute_store.dart';
 import 'notification_strings.dart';
 
 /// Tipos de evento que pueden notificar (cada uno con su toggle).
-enum NotificationKind { approval, run, reply, test, localAgent }
+enum NotificationKind { approval, run, reply, test, localAgent, goal }
 
 /// Superficie propietaria de una sesión accionable.
 ///
@@ -273,6 +275,7 @@ class NotificationService
     implements RunNotificationFacade, NotificationDeliveryPresenter {
   final SharedPreferences _prefs;
   late final NotificationDeliveryCoordinator _delivery;
+  late final NotificationMuteStore muteStore;
   final Map<String, _DurableDisplay> _pendingDisplays =
       <String, _DurableDisplay>{};
   final FlutterLocalNotificationsPlugin _plugin =
@@ -389,6 +392,7 @@ class NotificationService
       store: deliveryStore ?? NotificationDeliveryStore(),
       presenter: this,
     );
+    muteStore = NotificationMuteStore(_prefs);
   }
 
   Future<void> closeDelivery() => _delivery.close();
@@ -495,6 +499,7 @@ class NotificationService
   static const _kRuns = 'notif_runs';
   static const _kCronResults = 'notif_cron_results';
   static const _kKanbanResults = 'notif_kanban_results';
+  static const _kLocalAgentResults = 'notif_local_agent_results';
   static const _kReplies = 'notif_replies';
   static const _kForeground = 'notif_even_foreground';
   static const _kHideSensitive = 'notif_hide_sensitive_content';
@@ -558,6 +563,26 @@ class NotificationService
           (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
   Future<void> setNotifyKanbanResults(bool v) =>
       _prefs.setBool(_kKanbanResults, v);
+
+  /// Standing goals (Console-observed live, not background-discovered) y
+  /// `background.complete`. Opt-in propio, mismo criterio de herencia que
+  /// Kanban: si nunca se tocó, hereda el opt-in general de automatizaciones.
+  bool get notifyLocalAgentResults =>
+      automationNotificationsEnabled &&
+      (_prefs.getBool(_kLocalAgentResults) ??
+          (_prefs.getBool(backgroundListenPreferenceKey) ?? false));
+  Future<void> setNotifyLocalAgentResults(bool v) =>
+      _prefs.setBool(_kLocalAgentResults, v);
+
+  /// Silenciado por elemento concreto: un cron job o una tarea de Kanban
+  /// puede desactivar SU aviso sin tocar el toggle global de arriba, y
+  /// viceversa (apagar el global no borra estas preferencias).
+  bool isJobMuted(String jobId) => muteStore.isJobMuted(jobId);
+  bool isTaskMuted(String taskId) => muteStore.isTaskMuted(taskId);
+  Future<void> setJobMuted(String jobId, bool muted) =>
+      muteStore.setJobMuted(jobId, muted);
+  Future<void> setTaskMuted(String taskId, bool muted) =>
+      muteStore.setTaskMuted(taskId, muted);
 
   bool get notifyReplies => _prefs.getBool(_kReplies) ?? true;
   Future<void> setNotifyReplies(bool v) => _prefs.setBool(_kReplies, v);
@@ -1107,6 +1132,81 @@ class NotificationService
     }
   }
 
+  /// Un standing goal (`/goal`) cambió a un estado que necesita atención:
+  /// paused, blocked, waiting o done. Console lo observa en vivo mientras el
+  /// socket de la sesión sigue conectado ([ActiveChatService._syncGoalWatch])
+  /// — a diferencia de cron/kanban, no hay un sondeo en segundo plano con la
+  /// app totalmente cerrada, porque `session.control.read` es un RPC del
+  /// canal de control (requiere conexión activa), no un endpoint REST que el
+  /// isolate de servicio pueda sondear igual que `plugins/kanban/board`.
+  /// Límite honesto: si el proceso muere del todo, no hay aviso hasta la
+  /// próxima vez que se abra esa sesión.
+  Future<void> goalTransition({
+    required String title,
+    required String status,
+    String? connId,
+    String? sessionId,
+    String? profile,
+  }) async {
+    if (!notifyLocalAgentResults) return;
+    final connection = connId?.trim() ?? '';
+    final normalizedProfile = profile?.trim().isNotEmpty == true
+        ? profile!.trim().toLowerCase()
+        : 'default';
+    final session = sessionId?.trim() ?? '';
+    if (connection.isEmpty || session.isEmpty) {
+      _log('goal transition suprimida: identidad durable incompleta');
+      return;
+    }
+    final identity = NotificationEventIdentity(
+      connId: connection,
+      profile: normalizedProfile,
+      sourceKind: 'local_agent',
+      objectId: session,
+      eventKind: 'status',
+      sourceVersion: status,
+    );
+    final t = NotifL10n.of(_prefs);
+    final notifTitle = switch (status) {
+      'done' => t.goalDone,
+      'paused' => t.goalPaused,
+      'waiting' => t.goalWaiting,
+      _ => t.goalBlocked,
+    };
+    _pendingDisplays[identity.eventKey] = _DurableDisplay(
+      kind: NotificationKind.goal,
+      title: notifTitle,
+      body: t.goalBody(title),
+      targetSessionId: session,
+      payload: _encodePayload(
+        connection,
+        session,
+        title,
+        profile: normalizedProfile,
+      ),
+    );
+    try {
+      await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
+        SourceCursorUpdate(
+          scopeKey: '$connection/$normalizedProfile/local_agent/$session',
+          connId: connection,
+          profile: normalizedProfile,
+          sourceKind: 'local_agent',
+          objectId: session,
+          lastState: status,
+          lastVersion: status,
+          generation: 1,
+          initialized: true,
+          events: <DeliveryEventSpec>[
+            DeliveryEventSpec(identity: identity, destinationKind: 'goal_transition', sessionId: session),
+          ],
+        ),
+      ]);
+    } finally {
+      _pendingDisplays.remove(identity.eventKey);
+    }
+  }
+
   /// Resultado de una automatización cron descubierta desde las sesiones de
   /// Hermes Desktop. Usa su propio opt-in ([notifyCronResults]), independiente
   /// del de Kanban y del toggle de runs iniciadas desde Task Center.
@@ -1121,6 +1221,7 @@ class NotificationService
     String? preview,
   }) async {
     if (!notifyCronResults) return;
+    if (isJobMuted(jobId)) return;
     final normalizedProfile = profile?.trim().isNotEmpty == true
         ? profile!.trim().toLowerCase()
         : 'default';
@@ -1187,7 +1288,7 @@ class NotificationService
     String? raw, {
     required String fallback,
   }) {
-    final source = (raw ?? '')
+    final source = stripBotMentionNote(raw ?? '')
         .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), ' ')
         .replaceAll(RegExp(r'[\u202A-\u202E\u2066-\u2069]'), ' ');
     final compact = markdownToCompactText(source).trim();
@@ -1211,6 +1312,7 @@ class NotificationService
     String sourceVersion = 'current',
   }) async {
     if (!notifyKanbanResults) return;
+    if (isTaskMuted(taskId)) return;
     final connection = connId.trim();
     final task = taskId.trim();
     final normalizedProfile = profile.trim().toLowerCase();
@@ -1329,6 +1431,34 @@ class NotificationService
         _ => t.sessionActivityFinishedTitle,
       },
       body: t.sessionActivityBody,
+      targetSessionId: sessionId,
+      payload: _encodePayload(connId, sessionId, null, profile: profile),
+      compact: true,
+    );
+  }
+
+  /// Una tarea de `prompt.background` lanzada desde el Agent Center terminó.
+  /// Igual que [sessionActivityFinished], nunca se repite el texto de
+  /// respuesta en la bandeja del sistema — solo el estado; el resultado
+  /// completo vive dentro de la app.
+  Future<void> backgroundTaskFinished({
+    required bool isError,
+    String? connId,
+    String? sessionId,
+    String? taskId,
+    String? profile,
+  }) {
+    if (!notifyRuns) return Future.value();
+    final t = NotifL10n.of(_prefs);
+    return _show(
+      kind: NotificationKind.localAgent,
+      id: eventNotificationId(
+        base: 7600,
+        span: 512,
+        parts: [connId ?? '', taskId ?? ''],
+      ),
+      title: isError ? t.backgroundTaskFailedTitle : t.backgroundTaskFinishedTitle,
+      body: t.backgroundTaskBody,
       targetSessionId: sessionId,
       payload: _encodePayload(connId, sessionId, null, profile: profile),
       compact: true,
@@ -1467,7 +1597,7 @@ class NotificationService
   /// Los títulos proceden del servidor y pueden contener Markdown, controles o
   /// varias líneas. La bandeja solo necesita una etiqueta breve y legible.
   static String compactSessionLabel(String? raw) {
-    final source = (raw ?? '')
+    final source = stripBotMentionNote(raw ?? '')
         .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), ' ')
         .replaceAll(RegExp(r'[\u202A-\u202E\u2066-\u2069]'), ' ');
     final compact = markdownToCompactText(
@@ -1718,6 +1848,7 @@ class NotificationService
         );
       case NotificationKind.run:
       case NotificationKind.localAgent:
+      case NotificationKind.goal:
         return (
           id: _chRuns,
           name: t.chRuns,

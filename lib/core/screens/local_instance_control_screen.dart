@@ -169,7 +169,7 @@ class _LocalInstanceControlScreenState
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: const Text('Log del bridge'),
+        title: Text(Strings.of(context).bridgeLogTitle),
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
@@ -188,7 +188,7 @@ class _LocalInstanceControlScreenState
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: Text(Strings.of(context).commonClose),
           ),
         ],
       ),
@@ -805,9 +805,13 @@ class _LocalInstanceControlScreenState
                     IconButton(
                       icon: const Icon(Icons.refresh, size: 18),
                       tooltip: str.statusRefresh,
-                      visualDensity: VisualDensity.compact,
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.all(4),
+                      // Objetivo táctil real de 44dp aunque el icono visible
+                      // sea de 18dp: `BoxConstraints()` vacío colapsaba el
+                      // hit-test al tamaño del icono.
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
                       color: colors.accentHover,
                       onPressed: _probeBridge,
                     ),
@@ -829,7 +833,7 @@ class _LocalInstanceControlScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Diagnóstico',
+                      Text(Strings.of(context).setDiagnostics,
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -853,7 +857,7 @@ class _LocalInstanceControlScreenState
                           onPressed: _bridgeBusy ? null : _showBridgeLog,
                           icon: Icon(Icons.article_outlined,
                               size: 16, color: colors.accent),
-                          label: Text('Ver log del bridge',
+                          label: Text(Strings.of(context).bridgeViewLog,
                               style: TextStyle(color: colors.accent)),
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 4),

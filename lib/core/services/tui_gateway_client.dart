@@ -1,3 +1,6 @@
+import 'bot_room_link.dart';
+import 'bot_mention_roster.dart';
+import 'bot_profile_client.dart';
 // Cliente del protocolo oficial usado por Hermes Desktop y el Dashboard.
 //
 // Transporte: WebSocket `/api/ws` + JSON-RPC 2.0. A diferencia de `/v1/runs`,
@@ -7,6 +10,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -248,6 +252,15 @@ abstract class HermesDesktopGateway {
   });
 
   Future<void> close();
+}
+
+/// Optional read surface; legacy transports retain their REST fallback.
+abstract class HermesDesktopSessionHistoryGateway {
+  /// [sessionId] is the runtime returned by resume/activate, never a stored id.
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  });
 }
 
 final class DesktopApprovalResult {
@@ -1181,9 +1194,14 @@ final class _SessionRosterSocketLease {
 class TuiGatewayClient
     implements
         HermesDesktopGateway,
+        BotMentionRosterGateway,
+        BotRoomLinkGateway,
+        BotProfileGateway,
+        BotAvatarGenerationGateway,
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
         HermesDesktopSessionLifecycleGateway,
+        HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
         HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopRosterBoundRecoveryGateway,
@@ -2285,7 +2303,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _request(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     await connect();
     return _requestConnected(method, params, timeout: timeout);
@@ -2306,7 +2324,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestExclusiveSessionMutation(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
     bool preserveCapabilityFailure = false,
   }) async {
     try {
@@ -2467,7 +2485,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestConnected(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
     bool redactRemoteError = false,
   }) {
     final channel = _channel;
@@ -2585,7 +2603,7 @@ class TuiGatewayClient
     _SessionRosterSocketLease lease,
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     final result = await _awaitSessionRosterLease(
       lease,
@@ -2598,6 +2616,39 @@ class TuiGatewayClient
       () => Future<void>.delayed(Duration.zero),
     );
     return result;
+  }
+
+  @override
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  }) async {
+    // A read must not reconnect and reuse a runtime from the previous socket.
+    const method = 'session.history';
+    final lease = _captureSessionRosterLease(method);
+    final result = await _requestSessionRosterLease(lease, method, {
+      'session_id': sessionId,
+      if (profile != null && profile.trim().isNotEmpty)
+        'profile': profile.trim(),
+    }, timeout: const Duration(seconds: 15));
+    final messages = result['messages'];
+    if (result['count'] is! int ||
+        (result['count'] as int) < 0 ||
+        messages is! List ||
+        messages.any((row) => row is! Map || row['role'] is! String)) {
+      throw const FormatException('Invalid session history');
+    }
+    // count counts source history rows; projection can expand/filter them.
+    // Keep text, row_id and display_metadata intact: the shared display
+    // normalizer accepts both REST content and Desktop text.
+    // No requested REST limit/offset: this RPC returns the entire transcript,
+    // including ancestors. Absent pagination is the one-shot completeness
+    // evidence consumed by ActiveChat (even on a loadEarlier request).
+    return SessionMessagesPage.fromRaw(
+      rawMessages: messages,
+      pagination: null,
+      paginationProvided: false,
+    );
   }
 
   static const int _maxGroupListPages = 512;
@@ -2694,7 +2745,7 @@ class TuiGatewayClient
     _GroupSocketLease lease,
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     final result = await _awaitGroupSocketLease(
       lease,
@@ -2814,6 +2865,32 @@ class TuiGatewayClient
       limit: limit,
       capabilities: proof.capabilities,
       lease: proof.lease,
+    );
+  }
+
+  /// The complete room log from the beginning, proven gap-free — see
+  /// `HostedGroupLogPage.loadComplete`. Every page after the first reuses the
+  /// same authenticated lease, so a transport close mid-load surfaces as a
+  /// connection-lost error instead of silently rebasing onto a new socket.
+  Future<HostedGroupLogPage> groupLogComplete(
+    String roomId, {
+    int pageLimit = 100,
+    int? generation,
+  }) async {
+    final proof = await _requireGroupMethod(
+      GroupMethod.log,
+      generation: generation,
+    );
+    final limit = min(pageLimit, proof.capabilities.maxLogLimit);
+    return HostedGroupLogPage.loadComplete(
+      pageLimit: limit,
+      loader: ({required sinceSeq, required limit}) => _groupLogOnLease(
+        roomId,
+        sinceSeq: sinceSeq,
+        limit: limit,
+        capabilities: proof.capabilities,
+        lease: proof.lease,
+      ),
     );
   }
 
@@ -3094,10 +3171,21 @@ class TuiGatewayClient
     String model = '',
   }) => resumeExisting(storedSessionId, profile: profile);
 
+  @override
+  Future<List<AgentProfile>> loadMentionProfiles() async {
+    try {
+      return await listProfiles();
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code != -32601 && error.code != 404 && error.code != 405) rethrow;
+      return _dashboard.getProfiles();
+    }
+  }
+
   Future<List<AgentProfile>> listProfiles({
     bool includeSessions = false,
     Map<String, String> preferredSessionIds = const {},
   }) async {
+    final rosterGeneration = BotMentionRoster.shared.generation(_connection.id);
     await connect();
     final safePreferredSessionIds = <String, String>{};
     if (includeSessions) {
@@ -3125,12 +3213,14 @@ class TuiGatewayClient
       );
     }
     try {
-      return List<AgentProfile>.unmodifiable(
+      final profiles = List<AgentProfile>.unmodifiable(
         rawProfiles
             .whereType<Map>()
             .map((raw) => AgentProfile.fromJson(Map<String, dynamic>.from(raw)))
             .where((profile) => profile.name.trim().isNotEmpty),
       );
+      BotMentionRoster.shared.replace(_connection.id, _connection.label, profiles, expectedGeneration: rosterGeneration);
+      return profiles;
     } on FormatException {
       throw const TuiGatewayRpcError(
         'profiles.list',
@@ -3158,6 +3248,7 @@ class TuiGatewayClient
     bool shareAuth = true,
   }) async {
     const method = 'profiles.create';
+    if (_connection.readOnly) { throw const TuiGatewayRpcError(method, 'Connection is read only'); }
     final profile = name.trim();
     final source = cloneFrom?.trim();
     final selectedModel = model.trim();
@@ -3188,6 +3279,7 @@ class TuiGatewayClient
       'clone_from': source == null || source.isEmpty ? null : source,
       'no_skills': noSkills,
       'share_auth': shareAuth,
+      'mirror_credentials': shareAuth,
       if (soul.trim().isNotEmpty) 'soul': soul,
       if (selectedModel.isNotEmpty) ...{
         'model': selectedModel,
@@ -3246,7 +3338,7 @@ class TuiGatewayClient
   /// reemplaza entero server-side (es UNA entrada de `ui_meta`), así que la
   /// escritura relee el roster justo antes — el mismo patrón RMW de
   /// [persistCanonicalBotChat] — para no pisar campos ajenos (`chat`,
-  /// `group`, `image`/`pet` heredados, …).
+  /// `group` y extensiones desconocidas). Los assets image/pet no se reescriben.
   @override
   Future<void> saveProfileBotMeta({
     required String profile,
@@ -3281,18 +3373,11 @@ class TuiGatewayClient
       throw const TuiGatewayRpcError(method, 'Invalid bot creation stamp');
     }
 
-    await connect();
-    final current = await _botModeProfile(owner);
-    if (current.hasInvalidBotModeMetadata) {
-      throw const TuiGatewayRpcError(method, 'Bot Mode metadata is malformed');
-    }
-    final botMeta = <String, dynamic>{...current.botModeUiMeta};
+    final botMeta = <String, dynamic>{};
+    final remove = <String>{};
     if (title != null) {
-      if (safeTitle!.isEmpty) {
-        botMeta.remove('title');
-      } else {
-        botMeta['title'] = safeTitle;
-      }
+      if (safeTitle!.isEmpty) { remove.add('title'); }
+      else { botMeta['title'] = safeTitle; }
     }
     if (shape != null) botMeta['shape'] = safeShape;
     if (colorHex != null) botMeta['color'] = safeColor;
@@ -3303,27 +3388,56 @@ class TuiGatewayClient
     if (hidden != null) botMeta['hidden'] = hidden;
     if (pinned != null) botMeta['pinned'] = pinned;
     if (createdAtMs != null) botMeta['created'] = createdAtMs;
-    if (identity != null) {
-      botMeta
-        ..remove('image')
-        ..remove('pet')
-        ..addAll(identity.toBotModeMetadata());
-    }
+    if (identity != null) botMeta.addAll(identity.toBotModeMetadata());
+    try {
+      await patchBotMetadata(owner, botMeta, remove: remove);
+    } on TuiGatewayRpcError { rethrow; }
+    catch (_) { throw const TuiGatewayRpcError(method, 'Hermes did not persist the bot identity'); }
 
-    final configured = await _request(method, {
-      'name': owner,
-      'ui_meta': {'hermes-bots': botMeta},
-    });
-    final applied = configured['applied'];
-    if (configured['ok'] != true ||
-        applied is! Map ||
-        applied['ui_meta'] != true) {
-      throw const TuiGatewayRpcError(
-        method,
-        'Hermes did not persist the bot identity',
-      );
-    }
   }
+
+  @override
+  Future<Map<String, dynamic>> roomLinkRequest(String method, Map<String, dynamic> params) async {
+    const allowed = {'groups.capabilities', 'groups.peer.invite', 'groups.peer.register', 'groups.peer.revoke'};
+    if (!allowed.contains(method) || (_connection.readOnly && method != 'groups.capabilities')) {
+      throw TuiGatewayRpcError(method, 'Room linking unavailable');
+    }
+    await connect();
+    return _request(method, params);
+  }
+
+  late final BotProfileClient _botProfiles = BotProfileClient((method, params) async {
+    if (_connection.readOnly) {
+      throw const TuiGatewayRpcError('profiles.configure', 'Connection is read only');
+    }
+    await connect();
+    return _request(method, params);
+  });
+
+  @override
+  Future<void> patchBotMetadata(String profile, Map<String, dynamic> patch,
+      {Set<String> remove = const {}}) =>
+      _botProfiles.patchBotMetadata(profile, patch, remove: remove);
+
+  @override
+  Future<Map<String, dynamic>> describeBotProfile(String profile) =>
+      _botProfiles.describeBotProfile(profile);
+
+  @override
+  Future<Map<String, dynamic>> configureBotProfile(
+      String profile, Map<String, dynamic> changes) =>
+      _botProfiles.configureBotProfile(profile, changes);
+
+  @override
+  Future<bool> canGenerateBotAvatar() => _botProfiles.canGenerateBotAvatar();
+
+  @override
+  Future<AgentProfileAvatar> generateBotAvatar(String prompt) =>
+      _botProfiles.generateBotAvatar(prompt);
+
+  @override
+  Future<String> duplicateBotProfile(String profile) =>
+      _botProfiles.duplicateBotProfile(profile);
 
   /// Escribe el avatar del profile en el asset store server-side, como hace
   /// el editor de Hermes Desktop al guardar (la imagen no cabe en `ui_meta`,
@@ -4522,7 +4636,7 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _controlRequest(
     String method,
     Map<String, dynamic> params, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 120),
     DesktopGatewayCapability? capability,
   }) async {
     if (capability != null && !_capabilityCache.canAttempt(capability)) {
@@ -5201,6 +5315,35 @@ class TuiGatewayClient
     if (result['cwd'] is! String) {
       _invalidControlResponse(DesktopGatewayCapability.projectsCenter);
     }
+  }
+
+  static const Set<String> _validGoalActions = {
+    'goal.pause',
+    'goal.resume',
+    'goal.clear',
+    'goal.unwait',
+  };
+
+  @override
+  Future<SessionGoalSnapshot?> readSessionGoal(String runtimeSessionId) async {
+    final result = await _controlRequest('session.control.read', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+    }, capability: DesktopGatewayCapability.sessionControl);
+    final control = result['control'];
+    if (control is! Map) return null;
+    return SessionGoalSnapshot.tryParse(control['goal']);
+  }
+
+  @override
+  Future<void> sendGoalAction(String runtimeSessionId, String action) async {
+    if (!_validGoalActions.contains(action)) {
+      throw ArgumentError.value(action, 'action', 'not a supported goal action');
+    }
+    _requireWritableControlConnection();
+    await _controlRequest('session.control', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      'action': action,
+    }, capability: DesktopGatewayCapability.sessionControl);
   }
 
   @override

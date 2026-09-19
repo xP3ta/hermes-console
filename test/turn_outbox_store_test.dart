@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/models/bot_mention.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -96,6 +97,26 @@ void main() {
     expect(secure.values.single, contains('mensaje privado'));
     // El mapa observado pertenece al mock del plugin; en producción el valor
     // completo vive detrás de flutter_secure_storage/Keystore, no en prefs.
+  });
+
+  test('mention identities and annotation survive encrypted outbox restore independently of draft text', () async {
+    const bot = BotMention(connectionId: 'remote', profile: 'ops', handle: 'ops-remote', remote: true);
+    final note = buildBotMentionAnnotation([bot]);
+    final prepared = turn(text: '@ops-remote', profile: 'default', queueOrder: 1, queued: true).copyWith(
+      fullText: '@ops-remote\nattachment', desktopText: '@ops-remote',
+      mentionAnnotation: note, mentions: const [bot],
+    );
+    await TurnOutboxStore().save(prepared);
+    final restored = (await TurnOutboxStore().loadAllForChat('c1', 's1', profile: 'default')).single;
+    expect(restored.mentionAnnotation, note);
+    expect(restored.mentions.single.toJson(), bot.toJson());
+    expect(restored.text, '@ops-remote');
+    expect(restored.fullText, prepared.fullText);
+    expect(restored.desktopText, prepared.desktopText);
+    expect(restored.clientTurnId, prepared.clientTurnId);
+    expect((await SharedPreferences.getInstance()).getKeys(), isNot(contains('mentions')));
+    await TurnOutboxStore().delete(restored);
+    expect(await TurnOutboxStore().loadAllForChat('c1', 's1', profile: 'default'), isEmpty);
   });
 
   test('recupera todos los turnos queued del chat en orden FIFO', () async {

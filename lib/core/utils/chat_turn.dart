@@ -1,3 +1,4 @@
+import 'bot_mention_text.dart';
 final RegExp _asyncDelegationMarkerPattern = RegExp(
   r'^\[ASYNC DELEGATION (?:BATCH )?COMPLETE — deleg_[0-9a-f]{8}\](?:\r?\n|$)',
 );
@@ -42,7 +43,8 @@ bool isBackgroundProcessFlattenedPreview(String raw) => RegExp(
 /// identity, terminal status, `Command`/`Output` structure, closing bracket and
 /// either the start of the row or a paragraph boundary.
 String projectedUserVisibleContent(Map<String, dynamic> message) {
-  final raw = (message['content'] ?? message['text'] ?? '').toString();
+  final source = (message['content'] ?? message['text'] ?? '').toString();
+  final raw = message['role'] == 'user' ? stripBotMentionNote(source) : source;
   if (message['role'] != 'user' ||
       message['_steer'] == true ||
       message['_optimistic'] == true) {

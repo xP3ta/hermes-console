@@ -2,10 +2,10 @@
 
 ## Current status
 
-`1.2.10` is the source-current publication candidate. Its final signed
+`1.2.11` is the source-current publication candidate. Its final signed
 distribution artifacts remain pending until the independent emulator and
 Desktop release gates close. Any QA profile build is for internal validation
-only. `1.2.9` is the latest release published through GitHub
+only. `1.2.10` is the latest release published through GitHub
 Releases/Obtainium; verify Google Play's displayed version in the listing before
 assuming channel parity.
 

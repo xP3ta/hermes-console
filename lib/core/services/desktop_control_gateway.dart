@@ -1,6 +1,9 @@
 import '../models/desktop_control_center.dart';
 import '../models/admin_integrations.dart';
 
+export '../models/desktop_control_center.dart'
+    show SessionGoalSnapshot, SessionGoalGate, SessionGoalWaitBarrier;
+
 enum DesktopControlFailureKind {
   unsupported,
   unavailable,
@@ -69,6 +72,15 @@ abstract class HermesDesktopControlGateway {
   Future<ProjectNode?> projectSessions(String projectId);
 
   Future<void> setSessionWorkingDirectory(String runtimeSessionId, String path);
+
+  /// Reads the live standing-goal snapshot for a session (`session.control.read`,
+  /// `control.goal` in the response). Null when there is no active goal.
+  Future<SessionGoalSnapshot?> readSessionGoal(String runtimeSessionId);
+
+  /// Sends a `session.control` action (`goal.pause`, `goal.resume`,
+  /// `goal.unwait` or `goal.clear`). `goal.gate*` and subgoal editing are
+  /// intentionally not exposed here — use the `/goal` text command for those.
+  Future<void> sendGoalAction(String runtimeSessionId, String action);
 }
 
 /// Optional authenticated Dashboard seam for installing and administering

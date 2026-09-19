@@ -107,6 +107,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   late final TextEditingController _dashTokenCtrl;
   late final TextEditingController _dashUserCtrl;
   late final TextEditingController _dashPassCtrl;
+  bool _dashUserEdited = false;
 
   // Diagnóstico
   ConnectionDiagnostics? _diag;
@@ -126,6 +127,21 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   // Aviso de datos precargados desde un deep link `hermes://pair`: visible
   // hasta que el usuario edite la URL del gateway o guarde.
   bool _showDeepLinkBanner = false;
+
+  // Disclosures de "avanzado" (mobile bridge manual + tipo de instancia): en
+  // una instancia ya guardada empiezan colapsados porque son configuración
+  // excepcional, no de todos los días. En una alta nueva empiezan abiertos
+  // porque el flujo de QR/enlace los rellena y el usuario quiere verlos.
+  // Se inicializan en initState (no aquí: `widget` aún no está disponible en
+  // los inicializadores de campo de un State).
+  bool _bridgeAdvancedExpanded = false;
+  bool _kindAdvancedExpanded = false;
+
+  // Usuario/contraseña del Dashboard a mano: plegado siempre al entrar (el
+  // camino recomendado es "Autoconfigurar dashboard"). Se abre solo cuando
+  // algún flujo deja una contraseña nueva en el formulario, para que siga
+  // estando VISIBLE como antes.
+  bool _dashCredsExpanded = false;
 
   // Un pairing puede llegar dos veces (initial link + stream de app_links, o un
   // rebuild mientras se resuelve el primer frame). La huella evita repetir los
@@ -150,6 +166,10 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     _kind = init?.kind ?? InstanceKind.vps;
     _kindManuallySet = init != null;
     _localChatMode = init?.localChatMode ?? LocalChatMode.auto;
+    // Alta nueva: los disclosures de "avanzado" empiezan abiertos (el flujo de
+    // QR/enlace los rellena). Instancia ya guardada: empiezan colapsados.
+    _bridgeAdvancedExpanded = init == null;
+    _kindAdvancedExpanded = init == null;
     _gatewayUrlCtrl = TextEditingController(
       text: init == null ? '' : init.gatewayUrl,
     );
@@ -169,12 +189,20 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       _detectedMatrix = widget.connManager.loadCapabilities(init.id);
       _bridgeConfigLoad = _loadBridgeConfig(init.id);
       // Los secretos existentes no se muestran; campo vacío = no cambiar.
-      widget.connManager.getDashboardSecrets(init.id).then((s) {
-        if (!mounted) return;
-        if ((s.username?.isNotEmpty ?? false) && _dashUserCtrl.text.isEmpty) {
-          _dashUserCtrl.text = s.username!;
-        }
-      });
+      widget.connManager
+          .getDashboardSecrets(init.id)
+          .then((s) {
+            if (!mounted) return;
+            if ((s.username?.isNotEmpty ?? false) &&
+                _dashUserCtrl.text.isEmpty) {
+              _dashUserCtrl.text = s.username!;
+            }
+          })
+          .catchError((Object error) {
+            debugPrint(
+              '[instance-edit] dashboard secrets unavailable (${error.runtimeType})',
+            );
+          });
     }
     // Alta precargada (draft sin identidad): rellena el formulario pero el
     // guardado sigue siendo un alta (id UUID nuevo, token obligatorio).
@@ -334,6 +362,10 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       }
       _kind = InstanceKind.vps;
       _kindManuallySet = true;
+      // Un QR/enlace acaba de rellenar el bridge: aunque sea una instancia ya
+      // guardada, el usuario quiere ver lo que se cargó, no un disclosure
+      // colapsado ocultándolo.
+      _bridgeAdvancedExpanded = true;
     });
     if (notify && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -518,6 +550,9 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       _dashAuthMode = AuthMode.basicAuth;
       _dashUserCtrl.text = result.username;
       _dashPassCtrl.text = result.password;
+      // Solo presentación: los campos viven detrás de un disclosure, así que
+      // se abre para que la contraseña recién fijada siga a la vista.
+      _dashCredsExpanded = true;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).ieDashboardConfiguredSave)),
@@ -582,11 +617,25 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           return false;
         }
         final finalUser = (res['username'] ?? user).toString();
+        // The remote rotation has already happened. Persist even if the
+        // editor was closed while that request was in flight.
+        final existingId = widget.initial?.id;
+        if (existingId != null) {
+          await widget.connManager.setDashboardSecrets(
+            existingId,
+            username: finalUser,
+            password: pass,
+          );
+        }
         if (!mounted) return false;
         setState(() {
           _dashAuthMode = AuthMode.basicAuth;
           _dashUserCtrl.text = finalUser;
           _dashPassCtrl.text = pass;
+          // Solo presentación (no toca el flujo): abre el disclosure de
+          // credenciales para que la contraseña generada siga VISIBLE en el
+          // campo, como cuando los campos estaban al nivel superior.
+          _dashCredsExpanded = true;
           if (_dashboardUrlCtrl.text.trim().isEmpty) {
             final pub = (creds['public_url'] ?? '').toString().trim();
             final uri = Uri.tryParse(_gatewayUrlCtrl.text.trim());
@@ -704,11 +753,18 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     );
     var apiKey = _gatewayTokenCtrl.text.trim();
     if (apiKey.isEmpty && widget.initial != null) {
-      apiKey = widget.initial!.apiKey;
+      apiKey =
+          widget.connManager
+              .getConnections()
+              .where((connection) => connection.id == id)
+              .firstOrNull
+              ?.apiKey ??
+          '';
     }
     final stored = widget.initial == null
         ? const DashboardSecrets()
         : await widget.connManager.getDashboardSecrets(id);
+    if (!mounted) throw StateError('Instance editor closed');
     final secrets = DashboardSecrets(
       sessionToken: _dashTokenCtrl.text.trim().isNotEmpty
           ? _dashTokenCtrl.text.trim()
@@ -753,7 +809,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   /// español (sin volcar "SocketException: … (OS Error: …)" al banner). El
   /// detalle técnico queda en el log de debug y en "copiar diagnóstico".
   String _friendlyError(Object e) {
-    debugPrint('[instance-edit] detalle técnico del error: $e');
+    debugPrint('[instance-edit] error (${e.runtimeType})');
     final str = Strings.of(context);
     if (e is TimeoutException) {
       return str.ieErrTimeout;
@@ -1005,7 +1061,17 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       await _pairingAutomationFuture;
       if (!mounted) return;
       await _bridgeConfigLoad;
+      if (!mounted) return;
       final (conn, _) = await _draftConnection();
+      if (!mounted) return;
+      // Capture the intended edits before the first persistence await. Blank
+      // secrets mean preserve the CURRENT stored value, not the initial model.
+      final gatewayKey = _gatewayTokenCtrl.text.trim();
+      final dashboardToken = _dashTokenCtrl.text.trim();
+      final dashboardUser = _dashUserCtrl.text.trim();
+      final dashboardPassword = _dashPassCtrl.text;
+      final bridgeUrl = _bridgeUrlCtrl.text;
+      final bridgeToken = _bridgeTokenCtrl.text;
       final withCheck = _detectedMatrix?.checkedAtMs == null
           ? conn
           : SavedConnection(
@@ -1024,21 +1090,23 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               localChatMode: conn.localChatMode,
               kind: conn.kind,
             );
-      await widget.connManager.upsertConnection(withCheck);
+      await widget.connManager.upsertConnection(
+        withCheck.copyWith(apiKey: gatewayKey),
+      );
       await widget.connManager.setDashboardSecrets(
         conn.id,
-        sessionToken: _dashTokenCtrl.text.trim().isNotEmpty
-            ? _dashTokenCtrl.text.trim()
+        sessionToken: dashboardToken.isNotEmpty ? dashboardToken : null,
+        username:
+            (_isNew || _dashUserEdited || dashboardPassword.isNotEmpty) &&
+                dashboardUser.isNotEmpty
+            ? dashboardUser
             : null,
-        username: _dashUserCtrl.text.trim().isNotEmpty
-            ? _dashUserCtrl.text.trim()
-            : null,
-        password: _dashPassCtrl.text.isNotEmpty ? _dashPassCtrl.text : null,
+        password: dashboardPassword.isNotEmpty ? dashboardPassword : null,
       );
       await widget.connManager.setBridgeConfig(
         conn.id,
-        url: _bridgeUrlCtrl.text,
-        token: _bridgeTokenCtrl.text,
+        url: _isNew || _bridgeUrlEdited ? bridgeUrl : null,
+        token: bridgeToken,
       );
       final matrix = _detectedMatrix;
       if (matrix != null && matrix.checkedAtMs != null) {
@@ -1061,10 +1129,165 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
 
   // ── UI ────────────────────────────────────────────────────────────────
 
+  /// Ritmo vertical ÚNICO de las cabeceras de sección: mucho hueco arriba y
+  /// poco abajo, para que cada cabecera se lea pegada a su grupo y separada
+  /// del bloque anterior. Con el hueco por defecto (18/8) las secciones se
+  /// distinguían menos que los propios controles y todo parecía una única
+  /// lista continua.
+  static const EdgeInsets _sectionPadding = EdgeInsets.fromLTRB(4, 26, 4, 9);
+
+  /// Decoración plana (sin caja propia) para un campo que vive dentro de un
+  /// [HermesGroup]: la jerarquía visual la da el grupo (superficie + divisor
+  /// entre filas), no cada campo por separado. Mismo controller/callbacks que
+  /// antes: es un cambio puramente de presentación.
+  ///
+  /// La tipografía es explícita para que el campo tenga jerarquía real:
+  /// etiqueta pequeña y tenue arriba, valor grande y legible debajo. Antes
+  /// etiqueta, valor y ayuda pesaban casi lo mismo y el formulario se leía
+  /// como un muro de controles idénticos.
+  InputDecoration _rowDecoration(
+    BuildContext context, {
+    required String label,
+    String? hint,
+    String? helper,
+    int? helperMaxLines,
+  }) {
+    final colors = Theme.of(context).hermes;
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      helperText: helper,
+      helperMaxLines: helperMaxLines ?? 2,
+      isDense: true,
+      filled: false,
+      contentPadding: const EdgeInsets.only(top: 4, bottom: 8),
+      labelStyle: TextStyle(fontSize: 14.5, color: colors.textSecondary),
+      floatingLabelStyle: TextStyle(
+        fontSize: 11.5,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.1,
+        color: colors.textSecondary,
+      ),
+      hintStyle: TextStyle(fontSize: 14, color: colors.textDisabled),
+      helperStyle: TextStyle(
+        fontSize: 11.5,
+        height: 1.35,
+        color: colors.textDisabled,
+      ),
+      border: InputBorder.none,
+      enabledBorder: InputBorder.none,
+      disabledBorder: InputBorder.none,
+      focusedBorder: UnderlineInputBorder(
+        borderSide: BorderSide(color: colors.accent.withValues(alpha: 0.55)),
+      ),
+    );
+  }
+
+  /// Estilo único del VALOR de cualquier campo del formulario.
+  TextStyle _valueStyle() => TextStyle(
+    fontSize: 15,
+    height: 1.25,
+    fontWeight: FontWeight.w500,
+    color: Theme.of(context).hermes.textPrimary,
+  );
+
+  /// Campo de texto del formulario: misma tipografía y mismo ritmo en todas
+  /// las secciones y también dentro de los disclosures, en vez de una mezcla
+  /// de campos planos (arriba) y campos con caja del tema (en "avanzado").
+  Widget _field({
+    Key? key,
+    required TextEditingController controller,
+    required String label,
+    String? hint,
+    String? helper,
+    bool obscure = false,
+    bool autocorrect = true,
+    TextInputType? keyboardType,
+    int? maxLines = 1,
+    int? minLines,
+    ValueChanged<String>? onChanged,
+  }) => TextField(
+    key: key,
+    controller: controller,
+    obscureText: obscure,
+    autocorrect: autocorrect,
+    enableSuggestions: !obscure,
+    keyboardType: keyboardType,
+    maxLines: obscure ? 1 : maxLines,
+    minLines: minLines,
+    style: _valueStyle(),
+    decoration: _rowDecoration(
+      context,
+      label: label,
+      hint: hint,
+      helper: helper,
+    ),
+    onChanged: onChanged,
+  );
+
+  /// Fila de campo dentro de un [HermesGroup]. El hueco vertical iguala la
+  /// altura de una fila-campo con la de una fila de switch/navegación: antes
+  /// los campos medían ~40 dp y el switch ~72 dp DENTRO DEL MISMO grupo, y esa
+  /// mezcla es la que hacía que todo pareciera apelotonado.
+  Widget _fieldRow(Widget field) =>
+      Padding(padding: const EdgeInsets.fromLTRB(16, 7, 16, 7), child: field);
+
+  /// Nota al pie de una sección. UN solo estilo para toda la ayuda de nivel
+  /// superior (antes convivían 11, 11,5 y 12 px con huecos de 4, 6, 8 y 10).
+  Widget _footnote(String text) => Padding(
+    padding: const EdgeInsets.fromLTRB(6, 9, 6, 0),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: 12,
+        height: 1.45,
+        color: Theme.of(context).hermes.textSecondary,
+      ),
+    ),
+  );
+
+  /// Nota dentro de un disclosure: un peso por debajo de [_footnote] para que
+  /// el contenido anidado no compita con el nivel de sección.
+  Widget _nestedNote(String text) => Text(
+    text,
+    style: TextStyle(
+      fontSize: 11.5,
+      height: 1.4,
+      color: Theme.of(context).hermes.textDisabled,
+    ),
+  );
+
+  /// Reclasifica el transporte e infiere el tipo al teclear la URL del
+  /// gateway. Extraído del `onChanged` inline para que la lista de secciones
+  /// se lea de un vistazo (era el bloque más largo del `build`).
+  void _onGatewayUrlChanged(String v) {
+    final transport = TransportPrivacy.classify(v);
+    InstanceKind? inferred;
+    if (!_kindManuallySet) {
+      final n = SavedConnection.normalizeHostAndPort(v.trim(), 8642);
+      final candidate = inferInstanceKind(n.host);
+      if (candidate != _kind) inferred = candidate;
+    }
+    if (transport != _gatewayTransport ||
+        inferred != null ||
+        _showDeepLinkBanner) {
+      setState(() {
+        _gatewayTransport = transport;
+        if (inferred != null) _kind = inferred;
+        // El usuario ya tocó la URL: deja de avisar de precarga.
+        _showDeepLinkBanner = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
+    // Estado del disclosure de credenciales visible ya plegado: si hay usuario
+    // conocido se anuncia en el subtítulo, así que no hace falta abrirlo para
+    // saber si el Dashboard está configurado.
+    final dashUser = _dashUserCtrl.text.trim();
     return Scaffold(
       appBar: HermesAppBar(
         // Título estándar del tema (color/peso/espaciado/tamaño coherentes con
@@ -1072,10 +1295,10 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         title: Text(_isNew ? s.ieNewInstanceTitle : s.homeEditInstance),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 32),
         children: [
           if (_error != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             HermesInfoBanner(
               _error!,
               icon: Icons.error_outline,
@@ -1083,7 +1306,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             ),
           ],
           if (_showDeepLinkBanner) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             HermesInfoBanner(
               s.ieExternalLinkBanner,
               icon: Icons.link,
@@ -1091,243 +1314,284 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             ),
           ],
           if (widget.initial == null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             FilledButton.tonalIcon(
               onPressed: _scanQr,
               icon: const Icon(Icons.qr_code_scanner),
-              label: Text(Strings.of(context).qrScanTitle),
+              label: Text(s.qrScanTitle),
             ),
-            const SizedBox(height: 4),
-            Text(
-              Strings.of(context).instQrFasterHint,
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
-            ),
-            const SizedBox(height: 8),
+            _footnote(s.instQrFasterHint),
           ],
-          HermesSectionHeader(s.ieSectionGeneral),
-          TextField(
-            controller: _nameCtrl,
-            decoration: InputDecoration(labelText: Strings.of(context).ieName),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _notesCtrl,
-            maxLines: 2,
-            minLines: 1,
-            decoration: InputDecoration(
-              labelText: Strings.of(context).ieNote,
-              hintText: Strings.of(context).ieNoteHint,
-            ),
-          ),
-          const SizedBox(height: 4),
-          HermesSwitchTile(
-            contentPadding: EdgeInsets.zero,
-            title: Strings.of(context).ieReadOnly,
-            subtitle: Strings.of(context).ieReadOnlySub,
-            value: _readOnly,
-            onChanged: (v) => setState(() => _readOnly = v),
-          ),
-          if (_kind == InstanceKind.localhost) ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<LocalChatMode>(
-              initialValue: _localChatMode,
-              style: Theme.of(context).dropdownMenuTheme.textStyle,
-              decoration: InputDecoration(
-                labelText: Strings.of(context).ieLocalChatMode,
-              ),
-              items: LocalChatMode.values
-                  .map(
-                    (m) => DropdownMenuItem(
-                      value: m,
-                      child: Text(switch (m) {
-                        LocalChatMode.auto => s.ieLocalModeAuto,
-                        LocalChatMode.simple => s.ieLocalModeSimple,
-                        LocalChatMode.agent => s.ieLocalModeAgent,
-                      }, style: const TextStyle(fontSize: 14)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _localChatMode = v);
-              },
-            ),
-            if (_localChatMode != LocalChatMode.agent)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, left: 2),
-                child: Text(
-                  _localChatMode == LocalChatMode.auto
-                      ? Strings.of(context).instChatSimpleAuto
-                      : Strings.of(context).instChatSimpleNoTools,
-                  style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+
+          // ── Identidad: nombre, nota, solo-lectura ──────────────────────
+          HermesSectionHeader(s.ieSectionGeneral, padding: _sectionPadding),
+          HermesGroup(
+            children: [
+              _fieldRow(_field(controller: _nameCtrl, label: s.ieName)),
+              _fieldRow(
+                _field(
+                  controller: _notesCtrl,
+                  label: s.ieNote,
+                  hint: s.ieNoteHint,
+                  maxLines: 2,
+                  minLines: 1,
                 ),
               ),
-          ],
-          HermesSectionHeader(s.ieSectionGateway),
-          TextField(
-            key: const ValueKey('instance-gateway-url'),
-            controller: _gatewayUrlCtrl,
-            autocorrect: false,
-            keyboardType: TextInputType.url,
-            decoration: InputDecoration(
-              labelText: Strings.of(context).ieGatewayUrl,
-              hintText: s.ieGatewayUrlHint,
-            ),
-            onChanged: (v) {
-              final transport = TransportPrivacy.classify(v);
-              InstanceKind? inferred;
-              if (!_kindManuallySet) {
-                final n = SavedConnection.normalizeHostAndPort(v.trim(), 8642);
-                final candidate = inferInstanceKind(n.host);
-                if (candidate != _kind) inferred = candidate;
-              }
-              if (transport != _gatewayTransport ||
-                  inferred != null ||
-                  _showDeepLinkBanner) {
-                setState(() {
-                  _gatewayTransport = transport;
-                  if (inferred != null) _kind = inferred;
-                  // El usuario ya tocó la URL: deja de avisar de precarga.
-                  _showDeepLinkBanner = false;
-                });
-              }
-            },
+              // `Material(type: transparency)`: ver nota en
+              // dock_settings_screen.dart sobre `HermesGroup` +
+              // `HermesSwitchTile` (el fondo del grupo, sin un `Material` de
+              // por medio, deja el ripple del switch invisible en depuración).
+              Material(
+                type: MaterialType.transparency,
+                child: HermesSwitchTile(
+                  dense: true,
+                  title: s.ieReadOnly,
+                  subtitle: s.ieReadOnlySub,
+                  value: _readOnly,
+                  onChanged: (v) => setState(() => _readOnly = v),
+                ),
+              ),
+            ],
           ),
-          if (_gatewayUrlCtrl.text.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _TransportPrivacyNote(transport: _gatewayTransport),
-          ],
-          const SizedBox(height: 10),
-          TextField(
-            key: const ValueKey('instance-gateway-token'),
-            controller: _gatewayTokenCtrl,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: _isNew
-                  ? Strings.of(context).ieGatewayToken
-                  : Strings.of(context).ieGatewayTokenEmpty,
-            ),
+
+          // ── Conexión: gateway URL + token ───────────────────────────────
+          HermesSectionHeader(s.ieSectionGateway, padding: _sectionPadding),
+          HermesGroup(
+            children: [
+              _fieldRow(
+                _field(
+                  key: const ValueKey('instance-gateway-url'),
+                  controller: _gatewayUrlCtrl,
+                  label: s.ieGatewayUrl,
+                  hint: s.ieGatewayUrlHint,
+                  autocorrect: false,
+                  keyboardType: TextInputType.url,
+                  onChanged: _onGatewayUrlChanged,
+                ),
+              ),
+              _fieldRow(
+                _field(
+                  key: const ValueKey('instance-gateway-token'),
+                  controller: _gatewayTokenCtrl,
+                  label: _isNew ? s.ieGatewayToken : s.ieGatewayTokenEmpty,
+                  obscure: true,
+                  autocorrect: false,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
           const ApiKeyHelpLink(),
-          HermesSectionHeader(s.ieSectionBridge),
-          HermesInfoBanner(s.ieBridgeQrHint, icon: Icons.hub_outlined),
-          const SizedBox(height: 10),
-          TextField(
-            key: const ValueKey('instance-bridge-token'),
-            controller: _bridgeTokenCtrl,
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: InputDecoration(
-              labelText: _isNew ? s.bridgeToken : s.ieBridgeTokenEmpty,
-              hintText: s.bridgeTokenHint,
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            key: const ValueKey('instance-bridge-url'),
-            controller: _bridgeUrlCtrl,
-            autocorrect: false,
-            keyboardType: TextInputType.url,
-            decoration: InputDecoration(
-              labelText: s.bridgeUrlAdvanced,
-              hintText:
-                  _effectiveBridgeUrlFromForm() ?? 'http://100.x.x.x:9131',
-              helperText: s.ieBridgeUrlEmptyHint,
-              helperMaxLines: 2,
-            ),
-            onChanged: (_) => setState(() => _bridgeUrlEdited = true),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            s.bridgeTokenNote,
-            style: TextStyle(fontSize: 11, color: colors.textDisabled),
-          ),
-          HermesSectionHeader(s.ieSectionDashboard),
-          TextField(
-            controller: _dashboardUrlCtrl,
-            autocorrect: false,
-            keyboardType: TextInputType.url,
-            decoration: InputDecoration(
-              labelText: Strings.of(context).ieDashboardUrl,
-              hintText:
-                  widget.initial?.effectiveDashboardUrl ?? s.ieDashboardUrlHint,
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Camino recomendado: un toque, sin teclear nada. Provisiona el
-          // bridge, fija una contraseña nueva y la deja cargada (visible).
-          FilledButton.icon(
-            onPressed: _autoDashBusy ? null : _confirmAndAutoConfigureDashboard,
-            icon: _autoDashBusy
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.auto_fix_high_outlined),
-            label: Text(Strings.of(context).ieAutoconfigDash),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _setupDashboardViaBridge,
-            icon: const Icon(Icons.key_outlined),
-            label: Text(Strings.of(context).instDashPwBridge),
-          ),
-          Text(
-            Strings.of(context).instDashPwHint,
-            style: TextStyle(fontSize: 12, color: colors.textSecondary),
-          ),
-          // Solo Basic Auth: usuario + contraseña, siempre visibles.
-          const SizedBox(height: 10),
-          TextField(
-            controller: _dashUserCtrl,
-            autocorrect: false,
-            decoration: InputDecoration(
-              labelText: Strings.of(context).commonUser,
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _dashPassCtrl,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: _isNew
-                  ? Strings.of(context).commonPassword
-                  : Strings.of(context).iePasswordEmpty,
-            ),
-          ),
-          const SizedBox(height: 8),
-          HermesInfoBanner(
-            Strings.of(context).ieDashboardProtected,
-            icon: Icons.shield_outlined,
-            tone: colors.warning,
-          ),
-          HermesSectionHeader(s.ieSectionType),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: InstanceKind.values.map((k) {
-              final sel = k == _kind;
-              return ChoiceChip(
-                label: Text(
-                  k.label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: sel ? colors.onAccent : colors.textSecondary,
-                  ),
+          if (_gatewayUrlCtrl.text.trim().isNotEmpty)
+            _TransportPrivacyNote(transport: _gatewayTransport),
+
+          // ── Dashboard / admin ───────────────────────────────────────────
+          HermesSectionHeader(s.ieSectionDashboard, padding: _sectionPadding),
+          HermesGroup(
+            children: [
+              _fieldRow(
+                _field(
+                  controller: _dashboardUrlCtrl,
+                  label: s.ieDashboardUrl,
+                  hint:
+                      widget.initial?.effectiveDashboardUrl ??
+                      s.ieDashboardUrlHint,
+                  autocorrect: false,
+                  keyboardType: TextInputType.url,
                 ),
-                selected: sel,
-                selectedColor: colors.accent,
-                visualDensity: VisualDensity.compact,
-                onSelected: (_) => setState(() {
-                  _kind = k;
-                  _kindManuallySet = true;
-                }),
-              );
-            }).toList(),
+              ),
+              // Camino recomendado: un toque, sin teclear nada. Provisiona el
+              // bridge, fija una contraseña nueva y la deja cargada (visible).
+              // Era un FilledButton a media pantalla que competía con
+              // "guardar instancia" por el papel de acción principal; como
+              // fila de acento dentro del grupo sigue siendo lo primero que se
+              // ve del Dashboard sin robarle el foco al guardado.
+              _GroupActionRow(
+                icon: Icons.auto_fix_high_outlined,
+                title: s.ieAutoconfigDash,
+                busy: _autoDashBusy,
+                onTap: _autoDashBusy ? null : _confirmAndAutoConfigureDashboard,
+              ),
+              // Usuario/contraseña a mano es el camino de excepción: quien usa
+              // la autoconfiguración no necesita verlos, y se abren solos
+              // cuando hay algo que mirar (contraseña recién generada).
+              _AdvancedDisclosure(
+                icon: Icons.password_outlined,
+                title: '${s.commonUser} · ${s.commonPassword}',
+                subtitle: dashUser.isEmpty ? null : dashUser,
+                expanded: _dashCredsExpanded,
+                onToggle: () =>
+                    setState(() => _dashCredsExpanded = !_dashCredsExpanded),
+                content: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _field(
+                      controller: _dashUserCtrl,
+                      onChanged: (_) => _dashUserEdited = true,
+                      label: s.commonUser,
+                      autocorrect: false,
+                    ),
+                    const SizedBox(height: 10),
+                    _field(
+                      controller: _dashPassCtrl,
+                      label: _isNew ? s.commonPassword : s.iePasswordEmpty,
+                      obscure: true,
+                    ),
+                    const SizedBox(height: 12),
+                    // La ayuda vive junto a lo que explica: responde "no sé el
+                    // usuario/contraseña", que es justo lo que hace el botón de
+                    // abajo. Antes era un párrafo suelto a media pantalla.
+                    _nestedNote(s.instDashPwHint),
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: _setupDashboardViaBridge,
+                        icon: const Icon(Icons.key_outlined, size: 18),
+                        label: Text(s.instDashPwBridge),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          HermesSectionHeader(s.ieConnectionCheckTitle),
+          // El Dashboard/Admin necesita su propia protección (VPN, firewall o
+          // auth) porque no lleva la del Gateway. Antes era un banner ámbar
+          // permanente (se veía como una alerta activa aunque no hubiera
+          // ningún problema real); ahora es una nota discreta junto al campo,
+          // reservando el ámbar para avisos que sí requieren atención.
+          _footnote(s.ieDashboardProtected),
+
+          // ── Avanzado: bridge manual + tipo de instancia ─────────────────
+          // Los dos disclosures viven en UN grupo (antes eran dos cajas
+          // sueltas separadas por aire, y cada una parecía una sección nueva).
+          HermesSectionHeader(s.ieAdvancedSection, padding: _sectionPadding),
+          HermesGroup(
+            children: [
+              _AdvancedDisclosure(
+                icon: Icons.hub_outlined,
+                title: s.ieSectionBridge,
+                subtitle: s.ieBridgeAdvancedSubtitle,
+                expanded: _bridgeAdvancedExpanded,
+                onToggle: () => setState(
+                  () => _bridgeAdvancedExpanded = !_bridgeAdvancedExpanded,
+                ),
+                content: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _nestedNote(s.ieBridgeQrHint),
+                    const SizedBox(height: 12),
+                    _field(
+                      key: const ValueKey('instance-bridge-token'),
+                      controller: _bridgeTokenCtrl,
+                      label: _isNew ? s.bridgeToken : s.ieBridgeTokenEmpty,
+                      hint: s.bridgeTokenHint,
+                      obscure: true,
+                      autocorrect: false,
+                    ),
+                    const SizedBox(height: 10),
+                    _field(
+                      key: const ValueKey('instance-bridge-url'),
+                      controller: _bridgeUrlCtrl,
+                      label: s.bridgeUrlAdvanced,
+                      hint:
+                          _effectiveBridgeUrlFromForm() ??
+                          'http://100.x.x.x:9131',
+                      helper: s.ieBridgeUrlEmptyHint,
+                      autocorrect: false,
+                      keyboardType: TextInputType.url,
+                      onChanged: (_) => setState(() => _bridgeUrlEdited = true),
+                    ),
+                    const SizedBox(height: 10),
+                    _nestedNote(s.bridgeTokenNote),
+                  ],
+                ),
+              ),
+              _AdvancedDisclosure(
+                icon: Icons.category_outlined,
+                title: s.ieSectionType,
+                subtitle: _kind.label,
+                expanded: _kindAdvancedExpanded,
+                onToggle: () => setState(
+                  () => _kindAdvancedExpanded = !_kindAdvancedExpanded,
+                ),
+                content: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: InstanceKind.values.map((k) {
+                        final sel = k == _kind;
+                        return ChoiceChip(
+                          label: Text(
+                            k.label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: sel
+                                  ? colors.onAccent
+                                  : colors.textSecondary,
+                            ),
+                          ),
+                          selected: sel,
+                          selectedColor: colors.accent,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) => setState(() {
+                            _kind = k;
+                            _kindManuallySet = true;
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                    // El modo de chat local solo existe para instancias
+                    // localhost: vive junto al tipo, no suelto en "identidad",
+                    // donde aparecía y desaparecía sin relación con el resto.
+                    if (_kind == InstanceKind.localhost) ...[
+                      const SizedBox(height: 6),
+                      DropdownButtonFormField<LocalChatMode>(
+                        initialValue: _localChatMode,
+                        style: Theme.of(context).dropdownMenuTheme.textStyle,
+                        decoration: _rowDecoration(
+                          context,
+                          label: s.ieLocalChatMode,
+                        ),
+                        items: LocalChatMode.values
+                            .map(
+                              (m) => DropdownMenuItem(
+                                value: m,
+                                child: Text(switch (m) {
+                                  LocalChatMode.auto => s.ieLocalModeAuto,
+                                  LocalChatMode.simple => s.ieLocalModeSimple,
+                                  LocalChatMode.agent => s.ieLocalModeAgent,
+                                }, style: const TextStyle(fontSize: 14)),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) setState(() => _localChatMode = v);
+                        },
+                      ),
+                      if (_localChatMode != LocalChatMode.agent) ...[
+                        const SizedBox(height: 6),
+                        _nestedNote(
+                          _localChatMode == LocalChatMode.auto
+                              ? s.instChatSimpleAuto
+                              : s.instChatSimpleNoTools,
+                        ),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          // ── Diagnóstico: una sola fila, el detalle vive en su propia
+          // pantalla (_InstanceDiagnosticsScreen) ─────────────────────────
+          HermesSectionHeader(
+            s.ieConnectionCheckTitle,
+            padding: _sectionPadding,
+          ),
           HermesGroup(
             children: [
               _DiagnosticsEntry(
@@ -1338,7 +1602,8 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          // Única acción principal de la pantalla.
+          const SizedBox(height: 28),
           HermesPrimaryButton(
             key: const ValueKey('instance-save'),
             label: _saving ? s.ieSaving : s.ieSaveInstance,
@@ -1346,6 +1611,172 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             onTap: _saving ? null : _save,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Fila-disclosure para configuración excepcional: colapsada muestra solo
+/// icono + título + subtítulo opcional + chevron; expandida revela [content]
+/// justo debajo, sin abrir una pantalla nueva. El estado (expandido/no) vive
+/// en el padre para que sobreviva a rebuilds del formulario.
+///
+/// NO se envuelve en [HermesGroup]: es UNA fila más del grupo que la contiene,
+/// así varios disclosures comparten superficie y divisores en vez de dibujar
+/// una caja por cada uno (antes "avanzado" eran dos cajas sueltas separadas
+/// por aire y cada una se leía como una sección nueva).
+class _AdvancedDisclosure extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget content;
+
+  const _AdvancedDisclosure({
+    required this.icon,
+    required this.title,
+    required this.expanded,
+    required this.onToggle,
+    required this.content,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final sub = subtitle;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          button: true,
+          label: sub == null ? title : '$title, $sub',
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 19, color: colors.textSecondary),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Mismo peso y tamaño que cualquier otra fila de la
+                          // pantalla (navegación, acción, diagnóstico): antes
+                          // el título del disclosure medía 13,5 y se confundía
+                          // con una cabecera de sección (13).
+                          Text(
+                            title,
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                          if (sub != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    AnimatedRotation(
+                      turns: expanded ? 0.25 : 0,
+                      duration: const Duration(milliseconds: 160),
+                      child: Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: colors.textDisabled,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: content,
+          ),
+      ],
+    );
+  }
+}
+
+/// Fila de ACCIÓN dentro de un [HermesGroup]: el título va en acento para
+/// distinguirla de las filas de datos sin necesidad de un botón relleno que
+/// compita con la acción principal de la pantalla ("guardar instancia").
+class _GroupActionRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final bool busy;
+  final VoidCallback? onTap;
+
+  const _GroupActionRow({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.busy = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final enabled = onTap != null;
+    final tone = enabled ? colors.accentHover : colors.textDisabled;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 19,
+                  height: 19,
+                  child: busy
+                      ? const CircularProgressIndicator(strokeWidth: 2)
+                      : Icon(icon, size: 19, color: tone),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      color: tone,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1453,43 +1884,46 @@ class _DiagnosticsEntry extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-        child: Row(
-          children: [
-            indicator,
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              indicator,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.35,
-                      color: colors.textSecondary,
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: colors.textSecondary,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
-          ],
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
+            ],
+          ),
         ),
       ),
     );
@@ -1956,16 +2390,44 @@ class _TransportPrivacyNote extends StatelessWidget {
     switch (transport) {
       case TransportPrivacyClass.secure:
         return const SizedBox.shrink();
+      // Un http:// dentro de Tailscale/LAN es el caso NORMAL de esta app: era
+      // una tarjeta elevada con borde en medio del formulario (una caja más
+      // compitiendo, y con pinta de alerta activa). Como nota al pie informa
+      // igual sin romper la sección; el ámbar se reserva para el caso público,
+      // que sí requiere actuar.
       case TransportPrivacyClass.privateCleartext:
-        return HermesInfoBanner(
-          Strings.of(context).commonCleartextPrivate,
-          icon: Icons.lock_open_outlined,
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(6, 2, 6, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.lock_open_outlined,
+                size: 14,
+                color: colors.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  Strings.of(context).commonCleartextPrivate,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.45,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       case TransportPrivacyClass.publicCleartext:
-        return HermesInfoBanner(
-          Strings.of(context).commonCleartextPublic,
-          icon: Icons.warning_amber_outlined,
-          tone: colors.warning,
+        return Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: HermesInfoBanner(
+            Strings.of(context).commonCleartextPublic,
+            icon: Icons.warning_amber_outlined,
+            tone: colors.warning,
+          ),
         );
     }
   }

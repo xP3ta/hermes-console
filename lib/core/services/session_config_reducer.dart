@@ -800,6 +800,16 @@ abstract final class SessionConfigReducer {
       }
       if (change.previousEffectiveValue case final previous?) {
         if (_sameReportedValue(reported, previous)) return false;
+      } else {
+        // No authoritative baseline was ever observed for this scope before
+        // the request was sent (e.g. a brand-new session/runtime scope whose
+        // first `session.info` hasn't landed yet). Without a previous value
+        // we cannot tell a stale echo of the pre-request state apart from a
+        // genuine, unrelated server-side change, so a mismatching report
+        // must not be allowed to confirm the pending change with a value the
+        // user never picked. Stay pending until a report matching
+        // `requestedValue` arrives (or the request times out/gets rejected).
+        return false;
       }
       return !change.supersededRequestedValues.any(
         (value) => _sameReportedValue(reported, value),

@@ -191,6 +191,7 @@ void main() {
         'clone_from': 'default',
         'no_skills': false,
         'share_auth': true,
+        'mirror_credentials': true,
         'soul': '# QA\nVerify the build.',
         'model': 'gpt-5.6-codex',
         'provider': 'openai-codex',

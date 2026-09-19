@@ -56,9 +56,10 @@ class HermesPageTransitionsBuilder extends PageTransitionsBuilder {
       curve: Motion.enter,
       reverseCurve: Motion.exit,
     );
-    // La pantalla entrante se desliza desde la derecha (estilo Telegram/push)
-    // con fade, y la saliente se desplaza un poco a la izquierda (parallax),
-    // para que "entrar en los sitios" se sienta claramente, no un empujón.
+    // La pantalla entrante se desliza desde la derecha (estilo iOS/push) y la
+    // saliente se desplaza un poco a la izquierda (parallax). Sin fade: un
+    // FadeTransition sobre una ruta a pantalla completa obliga a repintarla
+    // en una capa offscreen en cada frame de la transición.
     final outgoing = CurvedAnimation(
       parent: secondaryAnimation,
       curve: Motion.enter,
@@ -69,15 +70,12 @@ class HermesPageTransitionsBuilder extends PageTransitionsBuilder {
         begin: Offset.zero,
         end: const Offset(-0.25, 0),
       ).animate(outgoing),
-      child: FadeTransition(
-        opacity: curved,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        ),
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(1, 0),
+          end: Offset.zero,
+        ).animate(curved),
+        child: child,
       ),
     );
   }

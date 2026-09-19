@@ -1,10 +1,11 @@
+import 'bot_mention_text.dart';
 import 'package:markdown/markdown.dart' as md;
 
 /// Texto que se copia desde un mensaje escrito por la propia persona.
 ///
 /// Se mantiene separado del copiado de respuestas para poder preservar el
 /// contrato de round-trip del mensaje original.
-String userMessageClipboardText(String markdown) => markdown;
+String userMessageClipboardText(String markdown) => stripBotMentionNote(markdown);
 
 /// Convierte el Markdown de un mensaje en el texto legible que ve el usuario.
 ///
