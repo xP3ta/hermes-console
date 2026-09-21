@@ -18111,6 +18111,57 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('writable Bot Chat keeps send but hides steering controls', (
+    tester,
+  ) async {
+    final connection = _conn().copyWith(id: 'writable-bot-chat');
+    final gateway = _RecordingBotModeGateway(connection);
+    addTearDown(gateway.close);
+    final chat = await pumpChat(
+      tester,
+      connection: connection,
+      desktopGateway: gateway,
+      chatState: ChatPipelineState.streaming,
+      initialStoredSessionId: 'stored-writable-bot-chat',
+      session: const Session(
+        id: 'mob-writable-bot-chat',
+        lineageRootId: 'stored-writable-bot-chat',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        startedAt: 0,
+        profile: 'manager',
+      ),
+      missionBotProfile: const AgentProfile(name: 'manager'),
+    );
+
+    expect(find.byType(TextField), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField).first,
+      'ordinary bot message',
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('send')), findsOneWidget);
+    expect(chat.enqueue('keep as next turn'), isTrue);
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+    final id = chat.queuedEntries.single.id;
+    expect(find.byKey(ValueKey('chat-queue-steer-$id')), findsNothing);
+    expect(find.byKey(ValueKey('chat-queue-send-now-$id')), findsOneWidget);
+
+    await tester.enterText(
+      find.byType(TextField).first,
+      'ordinary bot message',
+    );
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    expect(chat.queuedMessages, contains('ordinary bot message'));
+  });
+
   testWidgets('Steer se oculta para comandos slash en cola', (tester) async {
     final chat = await pumpChat(tester, chatState: ChatPipelineState.streaming);
     expect(chat.enqueue('/compact'), isTrue);

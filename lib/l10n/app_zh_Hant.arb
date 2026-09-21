@@ -1,0 +1,5868 @@
+{
+  "@@locale": "zh_Hant",
+  "languageSettingTitle": "語言",
+  "languageSystemDefault": "跟隨系統",
+  "languageSpanish": "Español",
+  "languageEnglish": "English",
+  "settingsTitle": "設定",
+  "commonCancel": "取消",
+  "commonOk": "知道了",
+  "commonSave": "儲存",
+  "homeStatusChecking": "檢查中 · {label}",
+  "homeStatusOnline": "Agent 已上線 · {label}",
+  "homeStatusOffline": "離線 · {label}",
+  "homeStatusAgentConsole": "Agent 主控台",
+  "homeHelpPrompt": "今天要做甚麼？",
+  "homeChatsSection": "對話",
+  "homeRecentToday": "今天",
+  "homeRecentYesterday": "昨天",
+  "homeRecentEarlier": "較早",
+  "homeSearch": "檢視全部",
+  "homeEmptyConversationsTitle": "尚未有對話",
+  "homeEmptyConversationsBody": "在上方輸入內容即可開始。最近的對話會顯示在這裏。",
+  "homeActivityAwaitingApproval": "等待批准…",
+  "homeGreetingMorning": "早晨",
+  "homeGreetingAfternoon": "下午好",
+  "homeGreetingNight": "晚上好",
+  "homeInstallInProgress": "正在安裝",
+  "homeUninstallInProgress": "正在解除安裝",
+  "homeInstallingSub": "代理程式正在 Termux 中安裝。",
+  "homeUninstallingSub": "代理程式正在 Termux 中解除安裝。",
+  "homeResume": "繼續",
+  "homeHide": "隱藏",
+  "homeAskHermes": "向 Hermes 提問…",
+  "homeNoInstances": "▸ 未設定實例",
+  "homePort8642": "連接埠 8642",
+  "homeAddInstance": "新增實例",
+  "homeLocalAgentOff": "關閉",
+  "homeLocalAgentStarting": "正在啟動代理程式，可能需時最多 60 秒…",
+  "homeLocalAgentInstalledNotRunning": "Hermes 代理程式已安裝於 Termux，但尚未執行。",
+  "homeStartAgent": "啟動代理程式",
+  "homeAgentControlPanel": "代理程式控制面板",
+  "drawerNeedInstance": "請先設定實例",
+  "drawerGroupRecent": "最近",
+  "drawerGroupWorkspace": "主要",
+  "drawerHome": "主頁",
+  "drawerSessions": "對話",
+  "drawerPersonalization": "個人化",
+  "drawerAdvanced": "進階",
+  "drawerTools": "工具",
+  "drawerToolsSearch": "搜尋工具…",
+  "drawerToolsEmpty": "沒有符合搜尋條件的工具。",
+  "drawerUnsupported": "連線的 Hermes 實例不支援此功能。",
+  "drawerMascots": "寵物",
+  "drawerKanban": "Kanban",
+  "drawerSsh": "SSH / 終端機",
+  "drawerSkills": "技能",
+  "drawerCron": "排程工作",
+  "drawerSoul": "SOUL",
+  "drawerGroupInstance": "實例",
+  "drawerInstances": "實例",
+  "drawerModels": "模型",
+  "drawerProjects": "專案",
+  "drawerGroupAgent": "代理程式",
+  "drawerProfiles": "個人檔案",
+  "drawerAgents": "代理程式",
+  "drawerExtensions": "擴充功能",
+  "drawerMemory": "記憶",
+  "drawerGroupSystem": "系統",
+  "drawerTaskCenter": "工作中心",
+  "drawerActivity": "記錄",
+  "drawerSettings": "設定",
+  "drawerNewChat": "新對話",
+  "homeSemanticChat": "對話：{title}、{count} 訊息",
+  "@homeSemanticChat": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "drawerNoConversations": "沒有對話",
+  "drawerUntitled": "未命名",
+  "shareNeedsInstance": "共用內容已儲存。設定實例以開啟。",
+  "shareFilesRejected": "共用檔案太大或已不再可用。",
+  "shareSomeFilesRejected": "部分共享檔案未能加入（每個上限 8 MB）。",
+  "shareOpenFailed": "共享內容未能準備。仍已儲存，待重試。",
+  "statusReadOnly": "唯讀",
+  "statusChecking": "檢查中",
+  "statusPanelTitle": "實例狀態",
+  "statusLocalAgent": "本機代理程式",
+  "statusNotifications": "通知",
+  "statusConnected": "已連線",
+  "statusOffline": "離線",
+  "statusNotEnabled": "未啟用",
+  "statusNeedsToken": "需要 Token",
+  "statusRunning": "執行中",
+  "statusStopped": "已停止",
+  "statusEnabled": "已啟用",
+  "statusDisabled": "已停用",
+  "statusRefresh": "重新檢查",
+  "statusBridgeEnable": "點按以啟用",
+  "statusBridgeEnabling": "啟用中…",
+  "statusBridgeFailed": "未能啟用",
+  "statusBridgeRestart": "重新啟動本機代理程式",
+  "statusBridgeRestartHint": "Token 或程序已停止 — 重新啟動以重新啟用",
+  "statusBridgeServerHint": "必須在伺服器上執行",
+  "statusBridgeRepair": "修復 Bridge",
+  "statusBridgeRepairHint": "使用 Gateway API 金鑰重新配置 Token",
+  "statusBridgeRepairing": "修復中…",
+  "readOnlyBadge": "唯讀",
+  "readOnlyNotice": "唯讀實例 — 動作已停用",
+  "lockReasonDefault": "解鎖 Hermes",
+  "lockTooManyAttempts": "嘗試次數過多。請等待 {sec} 秒。",
+  "lockWrongPin": "PIN 錯誤",
+  "lockUnlock": "解鎖 Hermes",
+  "lockUseBiometrics": "使用生物識別",
+  "themesTitle": "主題",
+  "themesDesktopSection": "Hermes Desktop · {count}",
+  "@themesDesktopSection": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "themesDesktopModesHint": "每個主題均包括其官方淺色及深色版本。",
+  "themesDarkSection": "深色 · {count}",
+  "themesLightSection": "淺色 · {count}",
+  "themesActivePrefix": "目前主題：",
+  "themesHint": "{count} 個內置主題 · 點按以套用",
+  "themesControlStyle": "控制項樣式",
+  "themesMyThemes": "我的主題",
+  "themesCreate": "建立主題",
+  "themesImport": "匯入主題",
+  "themesExport": "匯出",
+  "themesEdit": "編輯",
+  "themesDuplicate": "複製",
+  "themesDraft": "草稿",
+  "themesEmptyCustom": "複製內置主題，或建立主題以手動編輯顏色。",
+  "themesDeleteTitle": "刪除主題",
+  "themesDeleteBody": "「{name}」將會被刪除。內置主題不會變更。",
+  "themesDeleteAction": "刪除",
+  "themesCopySuffix": "複製",
+  "themesImportValid": "對比度有效。它不會自動啟用。",
+  "themesImportDraft": "由於需要調整對比度，系統會將其儲存為草稿。",
+  "themesImportFallbacks": "匯入時會套用{count}安全備用方案。",
+  "themesImported": "主題已匯入。",
+  "themesFutureSchema": "此主題需要較新的 Hermes Console 版本。",
+  "themesInvalidUtf8": "檔案並非有效的 UTF-8。",
+  "themesLimitTitle": "16 個主題上限",
+  "themesLimitBody": "選擇要替換的項目。系統不會自動移除任何項目。",
+  "themesStudioTitle": "自訂主題",
+  "themesLivePreview": "即時預覽",
+  "themesNameLabel": "主題名稱",
+  "themesBasic": "基本",
+  "themesAdvanced": "進階",
+  "themesBaseColors": "顏色",
+  "themesDerivedHint": "支援顏色會從此調色板安全地衍生。",
+  "themesPaletteSubtitle": "點按調色板以編輯。每項變更都會在預覽中顯示。",
+  "themesAllTokens": "進階顏色",
+  "themesAdvancedSubtitle": "精確控制每個標記。只在需要微調細節時使用。",
+  "themesVisualCharacter": "字型及模式",
+  "themesTypographySubtitle": "在此試用字型；儲存前預覽會隨之變更。",
+  "themesTypography": "字型",
+  "themesRepairTitle": "修復對比度",
+  "themesRepairBody": "這些顏色將會變更。你可以在儲存前檢視。",
+  "themesRepairApply": "套用修復",
+  "themesRepairIncomplete": "找不到適用於此組合的安全修復方案。請調整其中一種基礎顏色，或將其保留為草稿。",
+  "themesRepairApplied": "對比度已修復。儲存前請查看預覽。",
+  "themesInvalidFields": "請檢查主題名稱和欄位。",
+  "themesUnsafeContrast": "對比度尚未符合安全要求。請修復，或儲存為草稿。",
+  "themesDraftSaved": "草稿已儲存。",
+  "themesContrastPending": "{count} 項對比度修復尚待處理。你可以將主題儲存為草稿。",
+  "themesContrastReady": "對比度已可啟用。",
+  "themesProposeRepair": "提出修復方案",
+  "themesSaveDraft": "儲存草稿",
+  "themesSaveActivate": "儲存並啟用",
+  "themesDarkChoice": "深色",
+  "themesLightChoice": "淺色",
+  "themesBackground": "背景",
+  "themesSurface": "表面",
+  "themesAccent": "強調色",
+  "themesSecondary": "次要",
+  "themesPrimaryText": "主要文字",
+  "themesPreviewAssistant": "正在準備簡潔的回覆…",
+  "themesPreviewUser": "完美，就是這個樣子。",
+  "themesPreviewInput": "撰寫訊息",
+  "themesColorFormatError": "使用 #RRGGBB 或 #AARRGGBB",
+  "commonDelete": "刪除",
+  "homeDeleteChatTitle": "刪除對話",
+  "homeDeleteChatBody": "刪除「{title}」？",
+  "homeDeleteCronChatBody": "刪除「{title}」及其排程工作？",
+  "cronDeleteChoiceTitle": "你想刪除甚麼？",
+  "cronDeleteChoiceBody": "「{title}」來自排程工作。",
+  "cronDeleteConversationOnly": "僅對話",
+  "cronDeleteConversationOnlyHelp": "保持排程工作啟用。",
+  "cronDeleteConversationAndSchedule": "對話及排程工作",
+  "cronDeleteConversationAndScheduleHelp": "亦停止日後執行。",
+  "cronLinkedDeleteFailed": "無法停止排程工作，因此保留了對話：{error}",
+  "cronStoppedChatKept": "排程工作已刪除。伺服器保留了舊對話，但不會再次執行。",
+  "cronStoppedChatDeleteFailed": "排程工作已刪除，但無法刪除其對話。它不會再次執行。",
+  "sessionDeletionLineageUnavailable": "無法檢查完整對話。請檢查連線後再試。",
+  "sessionDeletionCronLinkUnavailable": "無法識別已連結的排程工作，因此保留了對話。",
+  "sessionDeletionCronManagerUnavailable": "排程工作管理器無法使用，因此保留了對話。",
+  "sessionDeletionCronFailed": "無法停止排程工作，因此保留了對話。請檢查連線後再試。",
+  "sessionDeletionSessionFailed": "無法刪除工作階段。請檢查連線後再試。",
+  "homeChatDeleted": "對話已刪除",
+  "chatAddToChat": "加入對話",
+  "chatAttachCamera": "相機",
+  "chatAttachPhotos": "圖庫",
+  "chatAttachFiles": "檔案",
+  "chatAttachmentExtensions": "擴充功能",
+  "chatAttachmentIntelligence": "智能",
+  "chaCantSendApproval": "無法傳送批准：{err}",
+  "chaTextFileError": "無法讀取文字檔案",
+  "chaOutboxUnavailable": "無法安全儲存這次對話內容。訊息未有傳送；你的訊息仍在此處，可重試。",
+  "chaAmbiguousRestored": "應用程式無法確認此訊息是否已送達伺服器。再次傳送前，請先查看對話。",
+  "chaDiscardRecovered": "放棄已還原內容",
+  "chaUploadTitle": "上載附件",
+  "chaUploadError": "無法上載附件：{err}",
+  "chaNoMatch": "找不到符合「{arg}」的項目。請選擇一項：",
+  "chaModelChangeTitle": "更改使用中的模型",
+  "chaModelChangeBody": "代理程式將從下一次訊息開始，在所有工作階段使用 {model}（{provider}）。",
+  "chaCancel": "取消",
+  "chaChange": "更改",
+  "chaModelActive": "使用中的模型：{model}",
+  "chaModelActiveViaDashboard": "使用中的模型：{model}（透過 Dashboard）",
+  "chaModelChangeFailed": "無法更改模型：{err}",
+  "chaSlashHelpTitle": "指令",
+  "chaSlashHelpBody": "在聊天中輸入「/」以查看此伺服器上可用的指令。未知指令不會作為提示詞傳送。",
+  "chaStatusConnecting": "連線中…",
+  "chaStatusWaiting": "等待中…",
+  "chaStatusExecuting": "執行中…",
+  "chaStatusStreaming": "回應中…",
+  "chaStatusFailed": "錯誤",
+  "chaStatusCancelled": "已取消",
+  "chaSessionDetailsTitle": "工作階段詳細資料",
+  "chaDetailId": "ID",
+  "chaDetailModel": "模型",
+  "chaDetailMessages": "訊息",
+  "chaDetailSource": "來源",
+  "chaMenuTooltip": "選單",
+  "chaProfileChip": "個人檔案：{name}",
+  "@chaProfileChip": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaNewChatTooltip": "新對話",
+  "chaPermissionsTitle": "權限／模式",
+  "chaUpdateTitle": "重新整理",
+  "chaSessionDetailsAction": "查看工作階段詳細資料",
+  "chaModelSheetTitle": "模型及工作階段",
+  "chaModelSheetSubtitleDefault": "建立此對話時將套用",
+  "chaModelSheetSubtitleActive": "此工作階段：{model} · {provider}",
+  "chaModelSheetSubtitleActiveOnly": "此工作階段：{model}",
+  "chaModelSheetError": "無法載入已設定的模型。請在設定中檢查此實例的 Dashboard 連線。",
+  "chaModelSheetEmpty": "沒有可用模型的已驗證供應商。請在 Hermes 的 Models 畫面中設定供應商，以便在此選擇。",
+  "chaSessionReasoningLabel": "推理",
+  "chaSessionFastLabel": "快速模式",
+  "chaSessionFastNormal": "正常",
+  "chaSessionFastEnabled": "快速",
+  "chaSessionConfigRequires019": "每個工作階段的設定需要 Hermes Desktop 0.19",
+  "chaSessionModelUnsupported": "此連線不支援每個工作階段的模型設定",
+  "chaSessionReasoningUnsupported": "此連線不支援每個工作階段的推理設定",
+  "chaSessionFastUnsupported": "此連線不支援每個工作階段的快速模式",
+  "chaModelUnavailable": "無法使用",
+  "chaModelReasoningUnavailable": "此模型不支援調整推理設定。",
+  "chaModelFastUnavailable": "此模型不支援快速模式。",
+  "chaSessionInvalidModel": "模型識別碼無效",
+  "chaSessionReconciling": "結果正等待核對",
+  "chaContextUsageOpen": "開啟上下文用量",
+  "chaContextUsageTitle": "上下文用量",
+  "chaContextUsageSummary": "{used}／{max} 個 token",
+  "@chaContextUsageSummary": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "max": {
+        "type": "String"
+      }
+    }
+  },
+  "chaContextUsagePercent": "已使用 {percent}%",
+  "@chaContextUsagePercent": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "chaContextUsageLoading": "正在計算此工作階段的詳細用量…",
+  "chaContextUsageUnavailable": "此伺服器尚未提供詳細用量。上方的總數仍會即時更新。",
+  "chaContextUsageError": "無法載入詳細用量。用量摘要仍可使用。",
+  "chaContextUsageEmpty": "Hermes 未返回此工作階段的分類。",
+  "chaContextRuntimeTitle": "工作階段狀態",
+  "chaContextModel": "模型",
+  "chaContextProvider": "供應商",
+  "chaContextReasoning": "推理",
+  "chaContextFast": "速度",
+  "chaContextTier": "服務",
+  "chaContextVersion": "Hermes",
+  "chaContextBranch": "分支",
+  "chaContextCalls": "呼叫次數",
+  "chaContextInput": "輸入",
+  "chaContextOutput": "輸出",
+  "chaContextTotal": "token 總數",
+  "chaContextCost": "費用",
+  "chaContextCategorySystem": "系統提示",
+  "chaContextCategoryTools": "工具定義",
+  "chaContextCategoryRules": "專案規則",
+  "chaContextCategorySkills": "技能",
+  "chaContextCategoryMcp": "MCP",
+  "chaContextCategorySubagents": "子代理定義",
+  "chaContextCategoryMemory": "記憶",
+  "chaContextCategoryConversation": "對話",
+  "chaContextObservedTtft": "TTFT · 由應用程式測量",
+  "chaContextCacheRead": "快取讀取",
+  "chaContextCacheWrite": "快取寫入",
+  "chaContextNotMeasured": "當 Hermes 顯示回應的首段文字時測量",
+  "chaContextNotPublished": "Hermes 沒有發佈",
+  "chaContextWindowUnavailable": "Hermes 尚未發佈此工作階段的內容視窗。",
+  "chaCompressNow": "立即壓縮",
+  "chaCompressionConfigTitle": "自動壓縮",
+  "chaCompressionConfigIntro": "當此設定檔達到上限時，Hermes 可以摘要較早的歷史記錄。這些是儲存在伺服器上的原生桌面版設定。",
+  "chaCompressionConfigEnabled": "自動壓縮",
+  "chaCompressionConfigEnabledHint": "當達到已設定的閾值時，Hermes 會開始壓縮。",
+  "chaCompressionConfigThreshold": "從 {percent}% 開始",
+  "@chaCompressionConfigThreshold": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "chaCompressionConfigTarget": "降低至閾值的 {percent}%",
+  "@chaCompressionConfigTarget": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "chaCompressionConfigProtect": "完整保留最後 {count} 則訊息",
+  "@chaCompressionConfigProtect": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chaCompressionConfigThresholdTokens": "Token 絕對上限",
+  "chaCompressionConfigThresholdTokensHint": "可選。Hermes 會使用此上限與百分比閾值兩者中較低的值。",
+  "chaCompressionConfigThresholdTokensApply": "套用 Token 上限",
+  "chaCompressionConfigMinTailUsers": "完整保留最近的使用者訊息",
+  "chaCompressionConfigMinTailUsersHint": "當工具輸出填滿最近尾段時，逐字保留指定數量的實際使用者回合。",
+  "chaCompressionConfigMinTailUsersDecrease": "少保留一則使用者訊息",
+  "chaCompressionConfigMinTailUsersIncrease": "多保留一則使用者訊息",
+  "chaCompressionConfigProgressNotices": "進度通知",
+  "chaCompressionConfigProgressNoticesHint": "在支援的聊天頻道顯示例行壓縮進度。",
+  "chaCompressionConfigAdvanced": "微調設定",
+  "chaCompressionConfigLoading": "正在載入設定檔的壓縮設定…",
+  "chaCompressionConfigUnsupported": "此 Hermes 版本沒有提供原生壓縮設定。",
+  "chaCompressionConfigLoadFailed": "無法載入壓縮設定。沒有任何變更。",
+  "chaCompressionConfigSaveFailed": "Hermes 拒絕了變更。先前的設定仍然生效。",
+  "chaCompressionConfigSaving": "正在儲存至 Hermes…",
+  "chaCompressionConfigSaved": "已儲存至 Hermes",
+  "chaCompressionConfigReadOnly": "唯讀模式：無法變更這些伺服器設定。",
+  "chaCompressionConfigDefaultProfile": "預設設定檔",
+  "chaCompressionConfigProfile": "設定檔：{profile}",
+  "@chaCompressionConfigProfile": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "chaControlTitle": "對話設定",
+  "chaControlScope": "僅限此對話",
+  "chaControlSectionSession": "工作階段",
+  "chaControlSectionPreferences": "偏好設定",
+  "chaControlSectionTools": "工具",
+  "chaControlSectionDanger": "敏感操作",
+  "chaControlModel": "模型及推理",
+  "chaControlDensity": "聊天密度",
+  "chaControlAutoRead": "朗讀回覆",
+  "chaControlNotifications": "回覆通知",
+  "chaControlInherit": "使用一般設定",
+  "chaControlOn": "開啟",
+  "chaControlOff": "關閉",
+  "chaControlComfortable": "舒適",
+  "chaControlCompact": "精簡",
+  "chaControlRecovery": "檔案復原",
+  "chaControlAdvanced": "更多工具",
+  "chaControlAgents": "代理及子代理",
+  "chaYoloTitle": "要在此工作階段啟用 YOLO？",
+  "chaYoloBody": "Hermes 將在此工作階段執行所有操作，而不會要求確認，包括高風險操作（刪除、sudo、重新啟動……）。只有唯讀模式可覆寫 YOLO。",
+  "chaActivate": "啟用",
+  "chaModeApplied": "模式「{label}」· 由現在起套用",
+  "chaDictationError": "聽寫：{err}",
+  "chaVoiceNotRecognized": "未能識別語音。請在設定 › 語音中檢查聽寫語言，或嘗試使用 Whisper。",
+  "chaVoiceNeedWhisperTitle": "下載語音模型",
+  "chaVoiceNeedWhisperBody": "你選擇了 Whisper（私隱保護的裝置端聽寫）。在設定 › 語音中下載一次模型，即可離線進行聽寫。",
+  "chaVoiceNeedMicTitle": "麥克風權限",
+  "chaVoiceNeedMicBody": "請授予麥克風存取權限以進行聽寫。如果你之前拒絕了權限，請在此應用程式的系統設定中啟用。",
+  "chaVoiceNoSystemTitle": "沒有系統語音辨識器",
+  "chaVoiceNoSystemBody": "你的裝置沒有系統語音辨識器（GrapheneOS 或沒有 Google 服務的裝置常見此情況）。請在設定 › 語音中啟用裝置端 Whisper：保障私隱，並可離線運作。",
+  "chaVoiceSettingsCta": "設定語音",
+  "chaVoiceWhisperCta": "啟用 Whisper",
+  "chaVoiceNotNow": "現在不要",
+  "chaVoiceError": "語音：{err}",
+  "chaVoiceReturnOverlay": "返回語音模式",
+  "chaVoiceActiveElsewhere": "語音模式已在「{title}」中啟用",
+  "chaVoiceMinimizeTooltip": "縮小語音模式",
+  "chaVoiceExitTooltip": "結束語音模式",
+  "chaVoiceYouLabel": "你",
+  "chaVoiceHermesLabel": "HERMES",
+  "chaVoiceYouEmpty": "說話即可在此查看文字記錄。",
+  "chaVoiceHermesEmpty": "回應會在此顯示。",
+  "chaVoicePause": "暫停",
+  "chaVoicePlay": "繼續",
+  "chaVoiceStopAndTalk": "停止並說話",
+  "chaVoiceCancelRun": "取消工作",
+  "chaVoicePausedLabel": "已暫停",
+  "chaVoicePausedHint": "繼續即可從目前句子接續。",
+  "chaVoiceCanInterruptHint": "HERMES 思考或回應時，你可以說話打斷。你亦可以暫停語音或取消工作。",
+  "chaVoiceListeningLabel": "聆聽中…",
+  "chaVoiceListeningHintSys": "自然說話即可。",
+  "chaVoiceListeningHintVad": "自然說話即可。",
+  "chaVoiceListeningHintTap": "說完後，點按「完成」。",
+  "chaVoiceFinishListening": "完成說話",
+  "chaVoiceRetry": "重試",
+  "chaVoiceTranscribingLabel": "正在轉錄你的語音…",
+  "chaVoiceTranscribingHint": "正在將音訊轉換成文字。",
+  "chaVoiceRespondingLabel": "回應中…",
+  "chaVoiceThinkingLabel": "思考中…",
+  "chaVoiceCancelHint": "你可以隨時說話。",
+  "chaVoiceSpeakingLabel": "說話中…",
+  "chaVoiceSkipHint": "你可以隨時說話。",
+  "chaVoiceToolCallLabel": "執行中：{tool}",
+  "chaVoiceToolCallGeneric": "正在執行工具…",
+  "chaVoiceToolCallHint": "代理程式正在執行",
+  "chaVoicePhaseSearching": "搜尋中…",
+  "chaVoicePhaseBrowsing": "瀏覽中…",
+  "chaVoicePhaseReviewing": "檢閱中…",
+  "chaVoicePhaseWriting": "準備變更中…",
+  "chaVoicePhaseExecuting": "執行中…",
+  "chaVoicePhaseApplying": "套用變更中…",
+  "chaVoicePhaseCoordinating": "協調工作中…",
+  "chaVoicePhaseChecking": "檢查中…",
+  "chaVoicePhaseWorking": "工作中…",
+  "chaVoiceWaitingLabel": "等待你批准",
+  "chaVoiceWaitingHintTool": "工具：{tool}",
+  "chaVoiceWaitingHintGeneric": "檢閱要求以繼續。",
+  "chaVoiceIdleLabel": "點按以說話",
+  "chaVoiceNeedsPermission": "代理程式需要你的許可才能繼續。",
+  "chaVoiceViewApproval": "檢視批准",
+  "chaVoiceFullResponse": "完整回應",
+  "chaVoiceFooter": "語音模式 · {model}",
+  "chaMessagesError": "無法載入訊息",
+  "chaRetry": "↺ 重試",
+  "chaGalleryError": "無法開啟圖庫。",
+  "chaFilesError": "無法開啟檔案選擇器。",
+  "chaErrConnection": "連線錯誤",
+  "chaErrModel": "模型／API 錯誤",
+  "chaErrTool": "工具錯誤",
+  "chaErrLocal": "本機代理程式無法使用",
+  "chaErrLocalColdStart": "本機模型載入中",
+  "chaErrFirstTokenTimeout": "模型沒有回應",
+  "chaErrSearchToolUnavailable": "網絡搜尋未設定",
+  "chaErrUnknown": "錯誤",
+  "chaErrHintConnection": "檢查實例、網絡或 Tailscale，然後重試。",
+  "chaErrHintModel": "檢查金鑰／憑證或目前使用的模型。",
+  "chaErrHintLocal": "本機代理程式已停止或無法連線。確保其正在執行，然後重試。",
+  "chaErrHintLocalColdStart": "本機模型尚未產生第一個 token。稍候幾秒，或切換至較輕量的模型。",
+  "chaErrHintFirstTokenTimeout": "伺服器已連線，但未能在 90 秒內開始生成內容。模型可能正在載入，或伺服器負載過高。稍後再試。",
+  "chaErrHintSearchToolUnavailable": "此供應商／模型沒有啟用中的網絡搜尋工具，因此無法查找最新新聞或即時資訊。在 Gateway 設定中設定搜尋工具。",
+  "chaCopied": "已複製",
+  "chaSelectText": "選取文字",
+  "chaBackgroundWorkTitle": "背景工作",
+  "chaBackgroundWorkFinished": "已完成",
+  "chaBackgroundAgentsFinished": "{count, plural, =1{1 agent finished} other{{count} 代理程式已完成}}",
+  "@chaBackgroundAgentsFinished": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chaBackgroundAgentsFailed": "{count, plural, =1{1 failed} other{{count} 代理程式失敗}}",
+  "@chaBackgroundAgentsFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chaTimelineModelChanged": "模型已變更",
+  "chaTimelineAutoContinued": "回合已恢復",
+  "chaTimelineSystemEvent": "系統事件",
+  "chaCodeCopyTooltip": "複製程式碼",
+  "chaCodeCopy": "複製",
+  "chaCodeCopied": "已複製",
+  "chaLinkLoading": "預覽載入中…",
+  "chaLinkFailed": "預覽無法使用",
+  "chaLinkPreview": "預覽",
+  "chaModeSheetTitle": "工作階段權限",
+  "chaModeSheetEffective": "生效模式：{mode}",
+  "chaModeGlobalTitle": "使用全域設定",
+  "chaModeGlobalSub": "沿用設定中的模式",
+  "chaModeYoloSub": "不作詢問，自動批准所有操作（如 CLI 中的 --yolo）",
+  "chaModeInteractiveTitle": "詢問",
+  "chaModeInteractiveSub": "每項操作均會詢問權限",
+  "chaModeConservativeTitle": "保守",
+  "chaModeConservativeSub": "敏感操作會詢問權限",
+  "chaModeReadOnlyTitle": "唯讀",
+  "chaModeReadOnlySub": "無法批准任何操作",
+  "chaYoloLockReason": "為此工作階段啟用 YOLO",
+  "chaVoiceDictationTooltip": "語音聽寫",
+  "chaDictationLiveLabel": "即時轉錄",
+  "chaStopDictationTooltip": "暫停聽寫",
+  "chaContinueDictationTooltip": "繼續聽寫",
+  "chaVoiceModeTooltip": "開始語音對話",
+  "chaErrViewDetails": "查看詳細資料",
+  "chaErrHideDetails": "隱藏詳細資料",
+  "chaModelServer": "伺服器模型",
+  "chaApproveAlways": "一律允許此代理程式操作",
+  "chaApproveOnce": "批准代理程式操作",
+  "chaAttachContent": "附加檔案內容「{name}」：",
+  "@chaAttachContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaAttachUploaded": "檔案已上載至代理程式：{path}",
+  "@chaAttachUploaded": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "chaPipelineConnecting": "正在連線…",
+  "chaPipelineExecuting": "正在執行工具…",
+  "chaPipelineStreaming": "正在回應…",
+  "chaPipelineThinking": "思考中…",
+  "chaHintSystem": "指示（選填）…",
+  "chaHintUser": "詢問 Hermes…",
+  "chaAttachTooltip": "附加檔案",
+  "chaSendTooltip": "傳送訊息",
+  "chaQueueTooltip": "佇列 · 完成後傳送",
+  "chaStopTooltip": "停止",
+  "chaSteerTextOnly": "Hermes 工作期間，你只能新增文字。附件會保留至下一輪。",
+  "chaSteerSupplementsLabel": "已在 Hermes 工作期間新增",
+  "chaSteerUnsupported": "此實例無法使用 Hermes Desktop 聊天頻道。現有回應未被取消，而你的文字仍在輸入框中。",
+  "chaSteerFailed": "指示無法加入目前執行。執行並未取消；你可以再試一次。",
+  "chaSteerQueued": "訊息已加入佇列：Hermes 完成後，將作為下一輪傳送。",
+  "commonAdd": "新增",
+  "commonEdit": "編輯",
+  "commonRefresh": "重新整理",
+  "commonReload": "重新載入",
+  "commonRetry": "重試",
+  "genImgSemanticLabel": "代理程式產生的圖片",
+  "genImgDownloading": "正在下載圖片…",
+  "genImgError": "無法下載圖片",
+  "genImgGone": "圖片已不再於伺服器上提供",
+  "genImgHint": "代理程式已在伺服器上產生圖片。更新 Mobile Bridge 以在此查看。",
+  "imgSaveToGallery": "儲存至圖庫",
+  "imgSavedToGallery": "圖片已儲存至圖庫",
+  "imgSaveFailed": "無法儲存圖片",
+  "moaConfigureRecipe": "設定配方",
+  "moaTitle": "MoA 配方",
+  "moaPreset": "預設",
+  "moaCommittee": "委員會（參考資料）",
+  "moaAggregator": "彙總器",
+  "moaAddReference": "新增參考資料",
+  "moaFineTuning": "設定",
+  "moaPickModel": "選擇供應商及模型",
+  "moaNoCredential": "此模型將無法回答（供應商沒有憑證）",
+  "moaActivate": "啟用 MoA 作為模型",
+  "moaSaved": "配方已儲存",
+  "moaActivated": "已啟用 MoA 作為模型",
+  "moaSaveError": "無法儲存：{err}",
+  "@moaSaveError": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
+  "moaNoDashboard": "無法載入配方：無法連線至 Dashboard。",
+  "moaUnset": "未設定",
+  "moaEnabled": "已啟用預設",
+  "moaReferenceTemp": "參考資料溫度",
+  "moaAggregatorTemp": "彙總器溫度",
+  "moaMaxTokens": "彙總器最大 token 數",
+  "moaAuto": "自動",
+  "moaCachedReadOnly": "無法連線至 Dashboard — 顯示上次儲存的配方（唯讀）。",
+  "moaFanout": "扇出（唯讀）：{value}",
+  "@moaFanout": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "moaReferenceMaxTokens": "每個參考的 Token 上限（唯讀）：{value}",
+  "@moaReferenceMaxTokens": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "provTitle": "供應商",
+  "provConfigured": "已設定",
+  "commonAll": "全部",
+  "actTitle": "記錄",
+  "actTabLog": "記錄",
+  "actTabRuns": "執行",
+  "actReadingLogs": "正在讀取記錄…",
+  "memTitle": "記憶體",
+  "memFormat": "格式",
+  "commonSave2": "儲存",
+  "lockUnlockShort": "解鎖",
+  "kanbanTitle": "KANBAN",
+  "kanbanColBacklog": "待辦",
+  "kanbanColInProgress": "進行中",
+  "kanbanColDone": "已完成",
+  "kanbanPrioHigh": "高",
+  "kanbanPrioMedium": "中",
+  "kanbanPrioLow": "低",
+  "kanbanEmpty": "代理程式的看板是空的",
+  "kanbanFilterByPriority": "按優先次序篩選",
+  "kanbanAllPriorities": "所有優先次序",
+  "kanbanNewTask": "新增任務",
+  "kanbanEditTask": "編輯任務",
+  "kanbanDeleteTask": "刪除工作",
+  "kanbanDeleteTaskConfirm": "刪除「{title}」？",
+  "kanbanMoveTo": "移至 {col}",
+  "kanbanTaskField": "工作",
+  "kanbanTaskHint": "工作描述",
+  "kanbanAssignee": "指派給（可選）",
+  "kanbanAssigneeHint": "hermes、手動、…",
+  "kanbanPriority": "優先級",
+  "gwTitle": "實例",
+  "gwActiveInstance": "使用中實例：{label}",
+  "gwDefaultInstance": "預設：{label} · 應用程式會以此實例開啟",
+  "gwNoDefault": "沒有預設實例",
+  "gwCantDeleteActive": "無法刪除使用中的實例",
+  "gwDeleteInstanceTitle": "刪除實例",
+  "gwDeleteInstanceBody": "刪除「{label}」？其 API 金鑰亦會一併刪除。",
+  "gwDelete": "刪除",
+  "gwAddInstance": "新增實例",
+  "gwDefaultBadge": "預設實例",
+  "gwActiveBadge": "使用中",
+  "gwReadOnly": "唯讀",
+  "gwReconnect": "重新連線",
+  "gwSetActive": "設為使用中",
+  "gwUnsetDefault": "取消預設",
+  "gwSetDefault": "設為預設",
+  "gwTestConnection": "測試連線",
+  "gwNoInstances": "未設定實例",
+  "gwAddInstanceLower": "新增實例",
+  "sshOpenTerminalOf": "開啟 {label} 的 SSH 終端機",
+  "sshTitle": "終端機",
+  "sshFilesSftp": "檔案 (SFTP)",
+  "sshCloseSession": "關閉 SSH 工作階段",
+  "sshConnecting": "正在透過 SSH 連線…",
+  "sshConnError": "連線錯誤",
+  "sshRetry": "重試",
+  "sshSessionClosed": "工作階段已關閉",
+  "sshReconnect": "重新連線",
+  "sshEditQuickCmds": "編輯快捷指令",
+  "sshNewCommand": "新增指令",
+  "sshEditCommand": "編輯指令",
+  "sshLabel": "標籤",
+  "sshCommand": "指令",
+  "sshQuickCommands": "快捷指令",
+  "sshNoCommands": "沒有指令。新增一按即用的捷徑。",
+  "sshKeyChangedTitle": "伺服器金鑰已變更",
+  "sshNewServerTitle": "新增伺服器",
+  "sshKeyChangedBody": "指紋與你之前信任的指紋不相符。這可能是伺服器的正常變更，也可能是有人嘗試攔截連線（中間人攻擊，MITM）。如果你並非預期會發生此情況，請勿繼續。",
+  "sshNewServerBody": "這是你首次連線到此伺服器。信任前，請確認指紋與伺服器相符。",
+  "sshCheckCmd": "在伺服器上使用以下指令檢查：",
+  "sshTrustAnyway": "仍然信任",
+  "sshTrustBtn": "信任",
+  "ollTitle": "本機模型",
+  "ollChecking": "正在檢查 Ollama…",
+  "ollStarting": "正在啟動 Ollama…",
+  "ollStartFailed": "無法啟動 Ollama — 是否已安裝 Termux 並授予 RUN_COMMAND 權限？",
+  "ollNoResponse": "Ollama 沒有回應 — 請確認已安裝 Termux 及 Ollama",
+  "ollInitializing": "正在啟動…",
+  "ollNotActive": "Ollama 未在 :11434 執行 — 請從控制畫面啟動",
+  "ollDownloadFailed": "無法下載 {name}",
+  "ollDownloadCancelled": "已取消下載「{tag}」",
+  "ollDeleteModelTitle": "刪除模型",
+  "ollDeleteModelBody": "「{tag}」將從裝置移除。你稍後可以再次下載。繼續？",
+  "ollDelete": "刪除",
+  "ollModelDeleted": "已刪除模型「{tag}」",
+  "ollDeleteFailed": "無法刪除「{tag}」",
+  "ollModelPinned": "已將模型「{tag}」固定為目前使用",
+  "ollPinFailed": "無法固定模型",
+  "ollPinFailedErr": "無法固定：{error}",
+  "ollRefresh": "重新整理",
+  "ollSearching": "正在 :11434 搜尋模型…",
+  "ollIntro": "在此裝置上執行的 Ollama 模型。下載符合你 RAM 容量的模型，然後點按「使用」將其固定為本機代理的模型。",
+  "ollNoModels": "尚未下載任何模型。請從下方目錄選擇一個。",
+  "ollInUse": "使用中",
+  "ollUse": "使用",
+  "ollCatalogIntro": "任何 Ollama 模型（例如 llama3.3）或 HuggingFace（hf.co/user/repo）。",
+  "ollTagHint": "標籤或 hf.co/user/repo",
+  "ollDownload": "下載",
+  "ollDownloading": "下載中…",
+  "ollCancelDownload": "取消下載",
+  "ollRam": "記憶體：{gb} GB",
+  "ollMarkedNeedMoreRam": "已標記的項目所需記憶體超出可用容量。",
+  "ollRequiresMoreRam": "需要更多記憶體",
+  "ollSecDownloaded": "已下載",
+  "ollSecDownloadByTag": "按標籤下載",
+  "ollSecCatalog": "目錄",
+  "ollSetActiveTitle": "設定使用中的模型",
+  "soulTplTechName": "技術助理",
+  "soulTplTechDesc": "用於編程及系統管理工作的設定檔。",
+  "soulTplHomelabName": "家庭實驗室管理員",
+  "soulTplHomelabDesc": "用於管理家用基礎設施的設定檔。",
+  "soulTplMinimalName": "極簡代理",
+  "soulTplMinimalDesc": "沒有額外指示，僅使用基礎模型。",
+  "soulTplEmptyName": "空白",
+  "soulTplEmptyDesc": "由空白文件開始。",
+  "soulApplyToServer": "將 SOUL 套用至伺服器",
+  "soulServerLoaded": "伺服器 SOUL 已載入",
+  "soulProfileLoaded": "設定檔「{profile}」的 SOUL 已載入",
+  "soulLoadFailed": "無法載入：{error}",
+  "soulApplyProfileTitle": "將 SOUL 套用至設定檔「{profile}」",
+  "soulApplyProfileBody": "這段文字將在伺服器上寫入為設定檔「{profile}」的 SOUL，不會影響預設設定檔。",
+  "soulApply": "套用",
+  "soulApplyGateTitle": "為設定檔 {profile} 套用 SOUL",
+  "soulProfileApplied": "已套用設定檔「{profile}」的 SOUL",
+  "soulApplyFailed": "無法套用：{error}",
+  "soulCopied": "文件已複製到剪貼簿",
+  "soulPrevSaved": "上一個副本已儲存 · 點擊 ⟲ 還原",
+  "soulApplyTemplateTitle": "套用「{template}」",
+  "soulApplyTemplateBody": "草稿中已有內容。你想怎樣處理？系統會儲存上一個副本，以便你想還原時使用。",
+  "soulAppendToEnd": "附加至結尾",
+  "soulReplace": "取代",
+  "soulRestorePrevTitle": "還原上一個副本",
+  "soulRestorePrevBody": "目前內容將被套用範本前最後儲存的副本取代。",
+  "soulRestore": "還原",
+  "soulRestored": "副本已還原",
+  "soulProfileLabelFmt": "設定檔：{profile}",
+  "soulDraftSaved": "草稿已儲存",
+  "soulLocalDoc": "本機文件",
+  "soulConfigBridge": "設定 Mobile Bridge",
+  "soulCopyAll": "全部複製",
+  "soulTemplatesTitle": "範本",
+  "soulSaveDraft": "儲存草稿",
+  "soulEditorHint": "# 身份　描述代理程式的個性、風格及價值觀……",
+  "soulApplying": "套用中……",
+  "soulReload": "重新載入",
+  "soulLocalDocNote": "本機文件。Hermes 不會透過 HTTP 提供 SOUL（已驗證：Gateway 或 Dashboard 均不存在 /api/soul）——請在此編輯，然後透過 CLI 在伺服器上套用。",
+  "soulPickTemplateReplaces": "選取範本會取代目前的草稿。",
+  "actCopyVisibleLines": "複製可見行",
+  "actLogsReadError": "無法讀取日誌",
+  "actLogEmpty": "檔案 {file}.log 為空",
+  "actLineCopied": "已複製行",
+  "actNoMatchesFor": "找不到符合「{filter}」的項目",
+  "actForLevel": "日誌級別為 {level}",
+  "actSearchHint": "搜尋日誌…",
+  "bridgeCfgTitle": "Mobile Bridge",
+  "bridgeAutoUrl": "已從你的實例（{url}）自動偵測 URL。通常只需貼上 Bridge token。",
+  "bridgeOptionalService": "可選的伺服器服務（連接埠 9131），用於讀取及套用 memory/SOUL/cron，並提供備份及差異比較。",
+  "bridgeToken": "Bridge 權杖",
+  "bridgeTokenHint": "在此貼上伺服器 token",
+  "bridgeUrlAdvanced": "Bridge URL（進階）",
+  "bridgeUrlHint": "保持不變以自動偵測",
+  "bridgeSaveConnect": "儲存並連線",
+  "bridgeTokenNote": "除傳送至此 Bridge 外，token 絕不會離開裝置。",
+  "provModelActive": "目前模型：{modelId}",
+  "provChangeError": "變更模型時發生錯誤：{error}",
+  "provLoadError": "無法載入提供者",
+  "provUnconfigured": "未設定",
+  "provNoModelsLower": "沒有可用模型",
+  "provNotConfigured": "未設定",
+  "provApiKeysTitle": "提供者 API 金鑰",
+  "provApiKeysNote": "每個提供者的憑證（OpenRouter、OpenAI、Anthropic…）均在 Hermes Gateway 的伺服器端進行設定。此應用程式只會將每個實例的連線 API 金鑰儲存於 Android Keystore。",
+  "provNoModelsAvail": "沒有可用模型",
+  "memBackupSaveError": "儲存備份時發生錯誤：{error}",
+  "memBackupJson": "備份 JSON",
+  "memLoadError": "無法載入記憶",
+  "memSize": "大小",
+  "memNoFileEndpoint": "/api/memory API 只會傳回中繼資料（名稱 + 大小）。沒有可讀取或寫入檔案內容的端點。",
+  "memOpenDraft": "開啟本機草稿",
+  "memCreateDraft": "建立本機草稿",
+  "memActiveProviderLabel": "目前提供者",
+  "memNoneValue": "無",
+  "memBuiltinFiles": "內置檔案",
+  "memProvidersSection": "提供者",
+  "memReadOnlyNote": "此實例為唯讀：Dashboard 的 /api/memory 僅支援 GET（已驗證）。編輯工作在伺服器上進行；你可在此使用本機草稿及 JSON 備份。",
+  "aboutScreenTitle": "關於",
+  "aboutReleaseStatus": "非官方用戶端 · XPeta Lab",
+  "aboutTagline": "私人、遠端 Android 用戶端，適用於自行託管的 Hermes Agent。專為透過 Tailscale 或 LAN 連線至你的 Gateway 而設，不會向 XPeta Lab 傳送遙測資料；外部服務一律為可選項。",
+  "aboutLicensesTitle": "開放原始碼授權",
+  "aboutThirdParty": "應用程式內置的第三方程式庫",
+  "aboutBaseProject": "第三方程式碼",
+  "aboutAttributions": "包含根據 MIT 授權提供的第三方程式碼。完整致謝資料載於 THIRD_PARTY_NOTICES.md。",
+  "aboutPrivacyTitle": "私隱",
+  "aboutPrivacyBody": "XPeta Lab 不會接收任何遙測資料、對話或認證資料。資料會傳送至你所設定的伺服器，以及（如適用）私隱政策中列明的服務。",
+  "aboutUnofficial": "非官方應用程式。兼容自行託管的 Hermes Agent；與 Nous Research 或 Hermes Agent 作者沒有關聯。",
+  "aboutWebsiteTitle": "網站",
+  "aboutWebsiteSub": "hermes.xpetalab.dev — 安裝指南及最新消息",
+  "aboutPrivacyPolicyTitle": "私隱政策",
+  "aboutPrivacyPolicySub": "官方網站上的完整文件",
+  "aboutLinkError": "無法開啟連結",
+  "obSubtitleBrand": "隨身攜帶的自架 Hermes 代理程式。",
+  "obTitleControl": "控制你的代理程式",
+  "obSubtitleControl": "即時聊天、對話、技能、模型、Cron 及個人檔案。全部集中於簡潔的主控台。",
+  "obTitleProfiles": "按你的方式建立個人檔案",
+  "obSubtitleProfiles": "建立具備獨立模型、SOUL 及技能的隔離個人檔案。一按即可切換個性。",
+  "obTitleSecure": "以私密為本",
+  "obSubtitleSecure": "以 Tailscale 為先、PIN 或生物識別鎖定，且沒有 XPeta Lab 追蹤。你的金鑰永不離開裝置。",
+  "obSkip": "略過",
+  "obStart": "開始",
+  "commonNext": "下一步",
+  "lmHfError": "無法查詢 Hugging Face。",
+  "lmExpNoDevice": "實驗性功能。從 Hugging Face 下載 GGUF 模型，在裝置上進行推理。將模型連線至代理程式需手動操作。",
+  "lmExpRam": "實驗性功能。你的手機擁有約 {gb} GB RAM；我們會顯示（估算上）適合的 GGUF 模型，並按能力排序。將模型連線至代理程式需手動操作。",
+  "lmSearchHint": "搜尋（例如 qwen、gemma、llama）…",
+  "lmFitOnly": "只顯示適合我的手機的模型",
+  "lmListFilesError": "無法列出檔案。",
+  "lmDownloadStarted": "已在系統管理程式中開始下載。",
+  "lmDownloadOpenError": "無法開啟下載項目。沒有可處理此項目的瀏覽器或管理程式。",
+  "lmCopyLink": "複製連結",
+  "lmNoneFit": "沒有任何結果（估算上）適合你手機的 RAM，或無法估算大小。",
+  "lmShowAll": "仍然顯示全部",
+  "bfeApplyChanges": "將變更套用至伺服器",
+  "bfeConfigureBody": "設定 Mobile Bridge（雲端圖示）以檢視伺服器中的 {label}。",
+  "bfeReadOnlyView": "伺服器的唯讀檢視畫面。機密資料已遮蔽；無法在此套用。",
+  "bfeCopied": "已複製到剪貼簿",
+  "bfeReloadTitle": "從伺服器重新載入",
+  "bfeReloadBody": "這會以伺服器內容取代編輯器內容。未儲存的本機變更將會遺失。",
+  "bfeLoadedBytes": "已從伺服器載入（{size} 位元組）",
+  "@bfeLoadedBytes": {
+    "placeholders": {
+      "size": {
+        "type": "Object"
+      }
+    }
+  },
+  "bfeFileNotOnServer": "伺服器上尚未有此檔案",
+  "bfeBridgeError": "橋接：{message}",
+  "@bfeBridgeError": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "bfeLoadError": "無法載入：{error}",
+  "@bfeLoadError": {
+    "placeholders": {
+      "error": {
+        "type": "Object"
+      }
+    }
+  },
+  "bfeApplyTitle": "將 {target} 套用至伺服器",
+  "@bfeApplyTitle": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "bfeNoDiff": "（沒有變更）",
+  "bfeAppliedWithBackup": "已套用至伺服器 · 備份 {id}",
+  "@bfeAppliedWithBackup": {
+    "placeholders": {
+      "id": {
+        "type": "Object"
+      }
+    }
+  },
+  "bfeAppliedOk": "已套用至伺服器",
+  "bfeApplyError": "無法套用：{error}",
+  "@bfeApplyError": {
+    "placeholders": {
+      "error": {
+        "type": "Object"
+      }
+    }
+  },
+  "bfeBridgeConnectedWrite": "橋接已連線 · 可寫入：是",
+  "bfeBridgeConnectedNoWrite": "橋接已連線 · 可寫入：否",
+  "bfeBridgeTokenInvalid": "已偵測到橋接，但權杖無效",
+  "bfeBridgeConnectFailed": "無法連線至 {url} 的橋接",
+  "@bfeBridgeConnectFailed": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "bfeBannerConnectedWrite": "Mobile 橋接已連線：你正在編輯實際伺服器內容；「套用」會連同備份及差異比較一起儲存。",
+  "bfeBannerConnectedReadOnly": "Mobile 橋接處於唯讀模式：你可以載入伺服器內容，但無法套用。",
+  "bfeBannerNeedsToken": "已在 {url} 偵測到橋接。點擊雲端圖示以連線。",
+  "@bfeBannerNeedsToken": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "bfeBannerAuthFailed": "已偵測到橋接，但權杖無效。透過雲端圖示檢查。",
+  "bfeBannerUnreachable": "{url} 未啟用橋接。目前使用本機文件。",
+  "@bfeBannerUnreachable": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "bfeReadOnlyBadge": "唯讀",
+  "bfeServerBadge": "伺服器",
+  "bfeNoBridgeConnected": "未連線至任何橋接。",
+  "bfeApply": "套用",
+  "bfeApplying": "套用中…",
+  "cevToolFallback": "工具",
+  "cevExitOk": "已完成 · 結束碼 0",
+  "cevExitFailed": "失敗 · 結束碼 {exit}",
+  "@cevExitFailed": {
+    "placeholders": {
+      "exit": {
+        "type": "int"
+      }
+    }
+  },
+  "cevCopyTooltip": "複製指令",
+  "cevHide": "隱藏",
+  "cevShowFull": "顯示完整指令",
+  "cevActivity": "活動",
+  "cevStepCount": "{count, plural, =1{1 step} other{{count} 個步驟}}",
+  "@cevStepCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cevStatusApproval": "批准",
+  "cevStatusCall": "呼叫",
+  "cevStatusDone": "已完成",
+  "cevPermissionTitle": "執行權限",
+  "cevAllow": "允許",
+  "cevDeny": "拒絕",
+  "cevThisSession": "此工作階段",
+  "cevAlways": "一律",
+  "cevPermissionHeadline": "Hermes 要求你的批准",
+  "cevRemember": "記住",
+  "cevSendError": "無法傳送：{error}",
+  "@cevSendError": {
+    "placeholders": {
+      "error": {
+        "type": "Object"
+      }
+    }
+  },
+  "cevApprovalResolved": "批准已處理",
+  "cevApprovalDenied": "已拒絕",
+  "cevApprovalGranted": "已批准",
+  "cevApprovalRequired": "需要批准",
+  "cevApprovalPending": "待處理",
+  "cevApprovalHistorical": "批准（歷史記錄）",
+  "cevApprovalDefaultStatus": "已解決",
+  "cevOpenInRuns": "在「執行」中開啟",
+  "cevResolveInRuns": "批准會在「活動」→「執行」中處理。",
+  "cevResolvedRecord": "已解決批准的記錄。",
+  "cevTraceRunning": "正在執行工具 · {count, plural, =1{1 completed} other{{count} 已完成}}",
+  "@cevTraceRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cevTraceFailed": "錯誤 · 查看詳細資料",
+  "cevTraceRecovered": "已完成 · 已重試（查看詳細資料）",
+  "cevTraceCompleted": "已完成",
+  "cevTraceCompletedActions": "已完成 · {count, plural, =1{1 action} other{{count} 個動作}}",
+  "@cevTraceCompletedActions": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cevPatternKey": "模式：{key}",
+  "@cevPatternKey": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "commonDownload": "下載",
+  "commonUser": "使用者",
+  "commonPassword": "密碼",
+  "commonPort": "連接埠",
+  "ssh2HostKeyForgotten": "已忘記主機金鑰 · 重新連線時會重新驗證",
+  "ssh2RemoveSsh": "移除 SSH",
+  "ssh2RemoveSshBody": "刪除此實例已儲存的使用者、憑證及主機金鑰。你需要重新設定。",
+  "ssh2Remove": "移除",
+  "ssh2AccessTitle": "伺服器的 SSH 存取權",
+  "ssh2AccessBody": "透過互動式終端機及 SFTP 傳輸檔案至 {host}。",
+  "ssh2Configure": "設定 SSH",
+  "ssh2OpenTerminal": "開啟終端機",
+  "ssh2OpenTerminalSub": "具備快速指令的互動式 Shell",
+  "ssh2FilesSub": "瀏覽、下載及上載檔案",
+  "ssh2EditCreds": "編輯認證資料",
+  "ssh2EditCredsSub": "使用者、主機、連接埠及驗證",
+  "ssh2ForgetHostKey": "忘記主機金鑰",
+  "ssh2ForgetHostKeySub": "下次連線時重新驗證伺服器",
+  "ssh2RemoveSshSub": "刪除此實例的認證資料",
+  "sftpListError": "無法列出 {path}：{error}",
+  "sftpDownloading": "正在背景下載 {file}…",
+  "sftpReadError": "無法讀取檔案。",
+  "sftpDeleteTitle": "刪除檔案",
+  "sftpDeleteBody": "從伺服器刪除「{file}」？",
+  "sftpDeleted": "已刪除：{file}",
+  "sftpDeleteError": "刪除時發生錯誤：{error}",
+  "sftpOpenOf": "開啟 {label} 的檔案（SFTP）",
+  "sftpUpload": "上載檔案",
+  "sftpUpLevel": "上移一層",
+  "sftpEmpty": "空白資料夾",
+  "sshcNotText": "無法以文字格式讀取檔案（是否為 PEM 金鑰？）",
+  "sshcMissingHost": "缺少主機。",
+  "sshcInvalidPort": "連接埠無效。",
+  "sshcMissingUser": "缺少使用者。",
+  "sshcWritePassword": "輸入密碼。",
+  "sshcPasteKey": "貼上或匯入私密金鑰。",
+  "sshcSaved": "SSH 認證資料已儲存",
+  "sshcHostHint": "伺服器 IP 或網域",
+  "sshcAuthMethod": "驗證方式",
+  "sshcPrivateKey": "私密金鑰",
+  "sshcTesting": "測試中…",
+  "sshcTest": "測試連線",
+  "sshcPrivateKeyPem": "私密金鑰 (PEM)",
+  "sshcImportFile": "匯入檔案",
+  "sshcPassphrase": "密碼短語（如金鑰設有密碼短語）",
+  "sshcRecommended": "建議為此應用程式使用專用金鑰（在伺服器上設定最少權限）。",
+  "sshcPasswordNote": "密碼會以加密方式儲存於 Keystore。如需更高安全性，請使用私密金鑰。",
+  "sshcConnOk": "連線正常：\n{text}",
+  "ieGatewayUrlBeforeTest": "請先輸入 Gateway URL，然後再進行測試。",
+  "apiKeyHelpTitle": "Gateway API 金鑰",
+  "apiKeyHelpBody1": "這是 Hermes Agent 的 API 伺服器金鑰（API_SERVER_KEY 變數），並非 OpenAI 或 OpenRouter 金鑰——這些金鑰會在 Gateway 本身進行設定。",
+  "apiKeyHelpGatewayLabel": "在執行 Gateway 的機器上：",
+  "apiKeyHelpBody2": "如不存在，請在該 .env 檔案加入 API_SERVER_KEY=<value>，然後重新啟動 Gateway。金鑰會以加密方式儲存於 Android Keystore，並只會傳送至你的 Gateway。",
+  "apiKeyHelpCopied": "指令已複製",
+  "apiKeyHelpOk": "知道了",
+  "ieGatewayUrlRequired": "必須提供 Gateway URL。",
+  "ieGatewayTokenRequired": "必須提供 Gateway 權杖——即 ~/.hermes/.env 中的 API_SERVER_KEY。",
+  "ieName": "名稱",
+  "ieNote": "備註（可選）",
+  "ieReadOnly": "唯讀",
+  "ieReadOnlySub": "阻止此實例的所有遠端寫入",
+  "ieGatewayUrl": "Gateway URL",
+  "ieGatewayToken": "Gateway 權杖（API_SERVER_KEY）",
+  "ieGatewayTokenEmpty": "Gateway 權杖（留空 = 不變更）",
+  "ieDashboardUrl": "Dashboard／Admin URL（可選）",
+  "ieDashboardAuth": "Dashboard 驗證",
+  "ieDashboardAuthAuto": "自動（Dashboard 權杖）",
+  "ieDashboardAuthSession": "工作階段權杖（手動）",
+  "ieDashboardAuthBasic": "使用者名稱及密碼（Basic Auth）",
+  "ieDashboardSessionToken": "Dashboard 工作階段權杖",
+  "iePasswordEmpty": "密碼（留空 = 不變更）",
+  "ieDashboardProtected": "Dashboard／Admin 必須受到 VPN、防火牆或驗證保護 — 切勿將其暴露於互聯網。",
+  "ieSecGateway": "GATEWAY",
+  "ieSecDashboard": "DASHBOARD／ADMIN",
+  "ieDiagCopied": "已複製診斷資料（不含權杖）",
+  "ieNetworkNote": "應用程式使用 Android 系統網絡。如使用 VPN／Tailscale／WireGuard，請在測試連線前先啟用。",
+  "ieCapabilitiesDetected": "已偵測功能",
+  "ieDeclaredByCapabilities": "由 /v1/capabilities 宣告",
+  "setTitle": "設定",
+  "setSecurity": "安全性",
+  "setSecuritySub": "應用程式鎖定、私隱及憑證保護",
+  "setPermissions": "權限／批准",
+  "setPermissionsSub": "Hermes 要求權限的方式：YOLO、互動、保守或唯讀",
+  "setServerConfig": "伺服器設定（唯讀）",
+  "setServerConfigSub": "透過 Mobile Bridge 檢視代理程式的實際 config.yaml，並遮蓋機密資料",
+  "setActivePrefix": "使用中：",
+  "setFontStyle": "字型樣式",
+  "setAppliesInstantly": "即時套用至整個應用程式",
+  "setTextSize": "文字大小",
+  "setTextSizeSmaller": "較小",
+  "setTextSizeStandard": "標準",
+  "setTextSizeLarger": "較大",
+  "setTextSizePreview": "Hermes 的回覆保持清晰易讀。",
+  "setLanguage": "語言",
+  "setLanguageNote": "更改應用程式語言",
+  "setLanguageSystem": "系統",
+  "kanbanRefresh": "重新整理",
+  "kanbanFieldTitle": "標題",
+  "kanbanFieldDesc": "描述（可選）",
+  "kanbanFieldPriority": "優先次序",
+  "kanbanFieldAssignee": "執行此任務的設定檔",
+  "kanbanAssigneeNone": "未分配（僅限備註）",
+  "kanbanAssigneeHintRun": "代理程式會使用此設定檔自動處理這項任務。",
+  "kanbanAssigneeHintNote": "僅記錄在看板上；代理程式不會執行這項任務。",
+  "kanbanGroupAttention": "需要你處理",
+  "kanbanGroupWorking": "正在處理",
+  "kanbanGroupQueued": "排隊中",
+  "kanbanGroupNotes": "備註（未分配）",
+  "kanbanGroupDone": "已完成",
+  "kanbanUnassigned": "未分配",
+  "kanbanEmptyTitle": "你與 Hermes 的看板",
+  "kanbanEmptyBody": "建立任務並指派給設定檔：代理程式會自行執行，並將任務移至「已完成」。如未選取設定檔，這只是一則備註。",
+  "kanbanEmptyCta": "建立第一項任務",
+  "kanbanHelpTooltip": "運作方式",
+  "kanbanHelpTitle": "看板運作方式",
+  "kanbanHelpBody": "這是你與 Hermes 共用的看板。 • 建立任務並選取設定檔 → 代理程式會自行執行。 • 正在處理：代理程式目前正在處理。 • 排隊中：已指派，正在等待處理。 • 需要你處理：處理受阻或等待你審閱。 • 備註：沒有設定檔；代理程式不會處理這些備註（僅作提醒）。 點按任何任務即可查看、編輯、重新指派或移動。",
+  "kanbanReassign": "指派給設定檔",
+  "kanbanClearDone": "清除",
+  "kanbanClearDoneTitle": "清除已完成工作",
+  "kanbanClearDoneConfirm": "{count}已完成的工作將從看板移除，並會保留在伺服器的封存資料中（不會刪除歷史紀錄）。",
+  "@kanbanClearDoneConfirm": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "kanbanCleared": "看板已清除",
+  "kanbanPriorityLow": "低",
+  "kanbanPriorityNormal": "正常",
+  "kanbanPriorityHigh": "高",
+  "kanbanCreate": "建立",
+  "kanbanDelete": "刪除",
+  "kanbanCancel": "取消",
+  "kanbanDeleteTitle": "刪除工作",
+  "kanbanDeleteConfirm": "刪除「{title}」？",
+  "@kanbanDeleteConfirm": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "kanbanManagedByAgent": "「{column}」由代理程式管理。",
+  "@kanbanManagedByAgent": {
+    "placeholders": {
+      "column": {}
+    }
+  },
+  "kanbanLoadError": "無法載入代理程式的 Kanban",
+  "kanbanRetry": "重試",
+  "kanbanBoardLabel": "看板",
+  "kanbanFilterTitle": "篩選工作",
+  "kanbanSearch": "搜尋工作",
+  "kanbanClearFilters": "清除篩選條件",
+  "kanbanFilterAll": "全部",
+  "kanbanFilterArchived": "已封存",
+  "kanbanNoMatches": "沒有工作符合這些篩選條件。",
+  "kanbanArchive": "封存",
+  "kanbanArchiveTitle": "封存工作",
+  "kanbanArchiveConfirm": "要封存「{title}」？它會離開使用中的看板，但仍可在伺服器上復原。",
+  "@kanbanArchiveConfirm": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "kanbanArchived": "任務已封存",
+  "kanbanDeletePermanent": "永久刪除",
+  "kanbanDeletePermanentConfirm": "要從伺服器永久刪除「{title}」嗎？此操作無法復原。",
+  "@kanbanDeletePermanentConfirm": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "kanbanDetailLoadError": "無法載入任務詳情",
+  "kanban020ReadOnly": "此實例為唯讀。",
+  "kanban020Result": "結果",
+  "kanban020LatestSummary": "最新摘要",
+  "kanban020Diagnostics": "診斷",
+  "kanban020Dependencies": "依賴項",
+  "kanban020Parents": "取決於",
+  "kanban020Children": "解除阻塞",
+  "kanban020BlockedBy": "被阻塞於",
+  "kanban020Blocks": "阻塞",
+  "kanban020ChildTasks": "子任務",
+  "kanban020Comments": "留言",
+  "kanban020NoComments": "尚未有留言。",
+  "kanban020AddComment": "新增留言",
+  "kanban020MessageWorker": "向工作人員傳送訊息",
+  "kanban020Send": "傳送",
+  "kanban020Attachments": "附件",
+  "kanban020NoAttachments": "沒有附件。",
+  "kanban020UploadAttachment": "上載附件",
+  "kanban020Download": "下載",
+  "kanban020DeleteAttachment": "刪除附件",
+  "kanban020Runs": "執行紀錄",
+  "kanban020Inspect": "檢視",
+  "kanban020Terminate": "終止執行",
+  "kanban020WorkerLog": "Worker 日誌",
+  "kanban020Activity": "活動",
+  "kanban020Operations": "操作",
+  "kanban020TaskModel": "任務模型",
+  "kanban020InheritModel": "從設定檔繼承模型",
+  "kanban020Reassign": "重新指派",
+  "kanban020Reclaim": "取回並重新排入佇列",
+  "kanban020Specify": "指定",
+  "kanban020Decompose": "拆解",
+  "kanban020ActionUnavailable": "伺服器不支援此操作。",
+  "kanban020AttachmentTooLarge": "附件超出官方 25 MiB 限制。",
+  "kanban020AttachmentUploaded": "附件已上載。",
+  "kanban020AttachmentSaved": "附件已儲存。",
+  "kanban020AttachmentDeleted": "附件已刪除。",
+  "kanban020ModelOptionsUnavailable": "此伺服器不會發佈 Kanban 模型選項。",
+  "kanban020ReasoningEffort": "推理力度",
+  "kanban020InheritEffort": "從設定檔繼承推理力度",
+  "kanban020BulkPartialTitle": "部分任務未有變更",
+  "kanban020BulkPartial": "{succeeded} 已封存；{failed} 無法變更。",
+  "@kanban020BulkPartial": {
+    "placeholders": {
+      "succeeded": {},
+      "failed": {}
+    }
+  },
+  "kanban020DecomposeResult": "拆解完成：{count} 個子任務。",
+  "@kanban020DecomposeResult": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "setVoice": "語音：聽寫及朗讀回覆（TTS/ElevenLabs）",
+  "setNotifications": "通知",
+  "setNotificationsSub": "批准、執行及回覆的提示",
+  "setHeaderTitle": "標頭名稱",
+  "setManageInstances": "管理實例",
+  "setActiveModelLabel": "目前模型",
+  "setClearConvos": "清除一般對話",
+  "setClearConvosSub": "清除對話及本機資料；自動化功能及 Cron 結果會予以保留",
+  "setClearConvosBody": "清除所有一般伺服器對話，包括隱藏工作階段及其延續？",
+  "setClearAll": "全部刪除",
+  "setClearError": "無法清除：{error}",
+  "setVerifyToClear": "驗證以清理歷史記錄",
+  "setDashTokenNote": "Dashboard 需要權杖（連接埠 9119）。",
+  "setServerUnreachable": "無法連線至伺服器。",
+  "setUpdateUnconfirmed": "Hermes 已收到更新要求，但應用程式目前仍未能確認新版本。請稍後再檢查。",
+  "setStatusCheckError": "無法檢查狀態。",
+  "setUpdateHermes": "更新 Hermes",
+  "setUpdate": "更新",
+  "setVerifyToUpdate": "驗證以更新 Hermes",
+  "setUpdateLocalTitle": "更新本機代理程式",
+  "setUpdateLocalBody": "本機代理程式需要從其面板重新安裝（修復／重新安裝），而不是在此處更新。此方式只會安裝所需內容，並避免在裝置上更新失敗。",
+  "setUpdateStarted": "更新已開始。正在重新整理狀態…",
+  "setUpdateError": "無法更新：{error}",
+  "setRestartGateway": "重新啟動 Gateway",
+  "setRestart": "重新啟動",
+  "setVerifyToRestart": "驗證以重新啟動 Gateway",
+  "setGatewayRestarting": "Gateway 正在重新啟動…",
+  "setRestartError": "無法重新啟動：{error}",
+  "setUpdateConfigSchema": "更新設定結構",
+  "setVerifyToMigrate": "確認更新設定",
+  "setMigrateStarted": "已開始遷移。正在檢查…",
+  "setConfigUpToDate": "設定已是最新 ✓",
+  "setMigrateFailed": "伺服器無法遷移設定。",
+  "setMigrateError": "無法遷移設定：{error}",
+  "setGatewayNotRunning": "Gateway 未有執行。",
+  "setCheckingStatus": "正在檢查狀態…",
+  "setStatusUnavailable": "無法取得狀態",
+  "setAllGood": "一切正常",
+  "setReloadStatus": "重新載入狀態",
+  "setApply": "套用",
+  "setSecAppearance": "外觀",
+  "setSecConnection": "連線",
+  "setSecChat": "聊天",
+  "setSecSecurity": "安全性",
+  "setSecConfig": "設定",
+  "setSecSystem": "系統",
+  "setSecData": "資料",
+  "setSecAbout": "關於",
+  "setMaintenance": "維護",
+  "setDiagnostics": "診斷",
+  "setUpdateBody": "「hermes update」將在伺服器上執行： • 下載新程式碼{behind}（{method}） • 重新安裝相依套件 • 重新啟動正在執行的 Gateway。這可能需時數分鐘，並會中斷使用中的工作階段。是否繼續？",
+  "setRestartGatewayBody": "重新啟動 Gateway 程序，但不會更新任何內容。可用於恢復 Hermes Console 連線或套用設定變更。這會短暫中斷使用中的工作階段。是否繼續？",
+  "setMigrateBody": "將 config.yaml 從 v{cur} 遷移至 v{latest}。這是增量遷移：只會加入具有預設值的新選項，並提升版本號碼。不會刪除或變更目前設定中的任何內容。",
+  "setUpdateSchemaShort": "更新結構（v{from} → v{to}）",
+  "setAddsNewOptions": "只會新增選項，不會變更目前的設定。",
+  "setNoRemoteUpdate": "此版本不會顯示遠端更新。",
+  "setUpdateDashboardAccessRequired": "Hermes 支援遠端更新檢查，但 Dashboard 需要登入。",
+  "setConfigureDashboardAccess": "設定 Dashboard 存取權限",
+  "setReconnectsPlatforms": "重新連線至平台並套用變更，不會進行更新。",
+  "setThemesAvailable": "·  {total} 可用",
+  "setConvosCleared": "{count, plural, one{1 conversation deleted} other{已刪除 {count} 個對話}}",
+  "setConvosClearedPartial": "已刪除 {deleted} 個 · 伺服器未刪除 {rejected} 個 · {failed} 個失敗",
+  "setRemoteClearUnavailable": "無法列出伺服器上的對話",
+  "setLocalConvosCleared": "{count, plural, one{1 local conversation deleted} other{已刪除 {count} 個本地對話}}",
+  "setDraftsCleared": "{count, plural, one{1 local draft deleted} other{已刪除 {count} 個本地草稿}}",
+  "setPendingTurnsCleared": "{count, plural, one{1 pending turn deleted} other{已刪除 {count} 個待處理回合}}",
+  "setLocalClearFailures": "{count, plural, one{1 local store couldn't be cleared} other{{count} 個本地儲存資料無法清除}}",
+  "setActiveSessions": "Hermes 現況",
+  "setActiveSessionsIdle": "閒置",
+  "setActiveSessionsRunning": "{count, plural, one{1 recent session} other{{count} 個最近工作階段}}",
+  "@setActiveSessionsRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "setActiveSessionsNote": "這會計算過去 5 分鐘內活躍的未完成 Hermes 工作階段；單純開啟或離開閒置中的聊天不會計入。",
+  "setClientVersion": "自行託管用戶端  •  v{version}",
+  "setVoiceTitle": "語音",
+  "setPlatformStatus": "平台 {platform}：{status}。",
+  "@setPlatformStatus": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "modeGlobalDefault": "全域設定",
+  "modeYolo": "YOLO",
+  "modeInteractive": "詢問",
+  "modeConservative": "保守",
+  "modeReadOnly": "只讀",
+  "riskLow": "低風險",
+  "riskMedium": "中風險",
+  "approvalHighRisk": "高風險操作。確認要繼續嗎？",
+  "approvalAllow": "允許",
+  "riskHigh": "高風險",
+  "permTitle": "權限",
+  "permEnableYoloGlobal": "啟用全域 YOLO",
+  "permEnableYoloQ": "啟用 YOLO？",
+  "permYoloBody": "YOLO 會自動批准所有操作，包括高風險操作（刪除、sudo、重新啟動……），而不要求確認。只應在信任的實例上使用。",
+  "permEnableYolo": "啟用 YOLO",
+  "permDefaultMode": "預設模式",
+  "permDefaultModeNote": "Hermes 要求權限以執行操作的方式。可按個別實例調整。",
+  "permOptions": "選項",
+  "permOptionsNote": "此模式適用於所有實例中的記憶、技能、SOUL、模型及對話操作。",
+  "permAppLock": "批准前啟用應用程式鎖定",
+  "permAppLockSub": "需要解鎖才能批准敏感操作。",
+  "permConfirmAlways": "確認「一律允許」",
+  "permConfirmAlwaysSub": "建立永久規則前需要額外確認。",
+  "permConfirmHighRisk": "確認高風險操作",
+  "permConfirmHighRiskSub": "對高風險操作進行雙重確認。",
+  "permRememberSession": "按工作階段記住權限",
+  "permRememberSessionSub": "允許在批准時選擇「在此工作階段允許」。",
+  "permAllowAlways": "允許「一律」規則",
+  "permAllowAlwaysSub": "允許建立永久自動批准規則。",
+  "permSavedPerms": "已儲存「一律」權限",
+  "permActivity": "權限活動紀錄",
+  "permClear": "清除",
+  "permModeYoloDesc": "自動批准所有操作而不作詢問，包括高風險操作。僅限受信任的實例。",
+  "permModeAskDesc": "每項操作均會要求批准，並提供一次／工作階段／一律選項。",
+  "permModeConservativeDesc": "要求批准，並在高風險操作上要求額外確認。",
+  "permModeReadOnlyDesc": "不允許任何寫入或執行操作；僅限讀取。",
+  "permRisk": "風險",
+  "permNoSaved": "此實例沒有儲存任何「一律」權限。",
+  "permRevoke": "撤銷",
+  "permNoActivity": "尚無權限活動紀錄。",
+  "runsTitle": "執行",
+  "runsNewRun": "新增執行",
+  "runsInstructionHint": "給代理程式的指示……",
+  "runsNewRunNote": "代理程式會在伺服器上執行。如操作需要批准，我會在此向你提出。",
+  "runsLaunch": "啟動",
+  "runsLaunchError": "無法啟動執行：{error}",
+  "runsListNote": "從此應用程式啟動的執行。Gateway 不會在執行完成後保留這些項目。",
+  "runsRefreshStates": "重新整理狀態",
+  "runsEmpty": "尚無執行",
+  "runsEmptySub": "按「+」按鈕向代理程式啟動工作",
+  "runsDelete": "刪除",
+  "runsDeleted": "已刪除執行",
+  "runsClear": "清除",
+  "runsClearTitle": "清除執行",
+  "runsClearConfirm": "{count} 次執行記錄將從清單中移除。這只是本機記錄，不會影響伺服器。",
+  "@runsClearConfirm": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "runsCleared": "清單已清除",
+  "runsAgentTask": "代理程式工作",
+  "runsApprovalRequested": "要求批准",
+  "runsAutoApproved": "已自動批准 · {reason}",
+  "runsAutoApproveError": "無法自動批准：{error}",
+  "runsAllowAlwaysThis": "永久允許此代理程式操作",
+  "runsApproveHighRisk": "批准高風險操作",
+  "runsApproveAction": "批准代理程式操作",
+  "runsApprovalSent": "已送出批准",
+  "runsResolveError": "無法處理批准要求：{error}",
+  "runsAllowAlwaysQ": "永久允許？",
+  "runsAllowAlwaysBody": "伺服器會記住此決定，代理程式日後可在無需詢問的情況下重複執行此操作。",
+  "runsHighRiskWarn": "高風險：此模式看似具破壞性。除非非常確定，否則避免選擇「永久允許」。",
+  "runsAllowAlways": "永久允許",
+  "runsStopError": "無法停止：{error}",
+  "runsStop": "停止",
+  "runsRefreshState": "重新整理狀態",
+  "runsExpired": "Gateway 不再保留此執行項目（重新啟動後，執行狀態不會保留）。",
+  "runsReplyCopied": "回覆已複製",
+  "runsError": "錯誤：{error}",
+  "runsAgentAsksApproval": "代理程式要求批准",
+  "runsCommandCopied": "指令已複製",
+  "runsReadOnlyNote": "實例處於唯讀模式：已停用批准。",
+  "runsApprove": "批准",
+  "runsDeny": "拒絕",
+  "runsStatusQueued": "已排隊",
+  "runsStatusRunning": "執行中",
+  "runsStatusWaiting": "等待批准",
+  "runsStatusStopping": "正在停止",
+  "runsStatusCompleted": "已完成",
+  "runsStatusFailed": "失敗",
+  "runsStatusCancelled": "已取消",
+  "runsStatusExpired": "已過期",
+  "runsDetailTitle": "執行",
+  "runsInstanceInfo": "實例 {inst}",
+  "@runsInstanceInfo": {
+    "placeholders": {
+      "inst": {
+        "type": "String"
+      }
+    }
+  },
+  "runsInstanceSessionInfo": "實例 {inst} · 工作階段 {sess}",
+  "@runsInstanceSessionInfo": {
+    "placeholders": {
+      "inst": {
+        "type": "String"
+      },
+      "sess": {
+        "type": "String"
+      }
+    }
+  },
+  "runsRunIdCopied": "執行 ID 已複製",
+  "runsAgentBusy": "代理程式工作中…",
+  "runsActivitySection": "代理程式活動",
+  "runsReplySection": "回覆",
+  "runsToolCompleted": "已完成",
+  "runsToolFailed": "失敗",
+  "runsApprovalResolved": "批准已處理：{choice}",
+  "@runsApprovalResolved": {
+    "placeholders": {
+      "choice": {
+        "type": "String"
+      }
+    }
+  },
+  "runsAutoApprovedScope": "自動批准（{scope}）",
+  "@runsAutoApprovedScope": {
+    "placeholders": {
+      "scope": {
+        "type": "String"
+      }
+    }
+  },
+  "runsApprovalSummary": "已要求批准",
+  "runsAllowedOnce": "允許一次",
+  "runsAllowedSession": "允許此工作階段",
+  "runsAllowedAlways": "永久允許",
+  "runsDenied": "已拒絕",
+  "runsApprovedOnce": "已批准（僅一次）",
+  "runsApprovedSession": "已批准整個工作階段",
+  "runsApprovedAlways": "此模式一律獲批准",
+  "runsDeniedAction": "動作已拒絕",
+  "runsApproveOnce": "僅一次",
+  "runsApproveSession": "此工作階段",
+  "voiceTitle": "語音",
+  "voiceConversationEnabledTitle": "對話模式",
+  "voiceConversationEnabledSub": "顯示與 Hermes 進行逐輪對話的對話模式。關閉此選項後，仍可使用聽寫及朗讀功能。",
+  "voiceContinueLockedSettingTitle": "螢幕鎖定時繼續",
+  "voiceContinueLockedSettingSub": "允許透過語音通知繼續聆聽及對話。",
+  "voiceBargeInTitle": "以說話中斷",
+  "voiceBargeInSub": "開始說話時停止回覆。此功能只會在防回音的音訊路徑上啟用。",
+  "voiceDisclosureTitle": "使用語音模式前",
+  "voiceDisclosureBody": "應用程式會將你的語音轉換為文字，並將對話傳送至你選取的 Hermes 實例。視乎你的語音引擎而定，音訊或文字亦可能在此手機、你自己的伺服器或你設定的外部服務上處理。XPeta Lab 不會加入任何遙測資料，亦不會接收對話內容。選擇何時可以繼續聆聽。",
+  "nativeVoiceConsentTitle": "由你的伺服器負責語音處理",
+  "nativeVoiceConsentBody": "此 Hermes 提供與桌面應用程式相同的語音引擎。啟用後，你的語音只會傳送至你自己的伺服器進行轉錄，而回覆會使用該處設定的語音。伺服器失效時，路由不會切換至本機語音：你可以重試，或在語音設定中選取此手機。",
+  "nativeVoiceConsentAccept": "使用伺服器語音",
+  "nativeVoiceConsentAcceptSub": "與桌面版相同的語音；音訊只會傳送至你的伺服器。",
+  "nativeVoiceConsentDecline": "保留裝置上的語音",
+  "nativeVoiceConsentDeclineSub": "所有音訊均會如以往一樣留在此手機上。",
+  "voiceConversationEngineTitle": "對話語音位置",
+  "voiceConversationEngineSub": "隨時在此手機與你的 Hermes 伺服器之間切換。",
+  "voiceConversationEngineChecking": "正在檢查伺服器語音…",
+  "voiceConversationEngineUnavailable": "此伺服器不包含相容的語音。對話將繼續使用你的手機；無需安裝任何項目。",
+  "voiceConversationEngineCheckFailed": "目前無法檢查伺服器語音。對話會繼續使用你的手機。",
+  "voiceForegroundOnlyTitle": "只限應用程式開啟期間",
+  "voiceForegroundOnlySub": "鎖定或離開應用程式會暫停咪高峰和 Hermes 語音。",
+  "voiceContinueLockedTitle": "螢幕鎖定時繼續",
+  "voiceContinueLockedSub": "透過顯示通知及暫停或結束控制項，讓咪高峰保持啟用。",
+  "voiceSttSection": "聽寫 · 語音轉文字",
+  "voiceTtsSection": "朗讀 · 文字轉語音",
+  "voiceOptionsSection": "選項",
+  "voiceWhisperLabel": "完成後轉錄",
+  "voiceWhisperSub": "先錄音，停止後轉換為文字 · 支援離線使用",
+  "voiceDeviceLabel": "Android 語音",
+  "voiceDeviceSub": "使用 Android 已安裝的語音引擎 · GrapheneOS 可能未有語音引擎",
+  "voiceNeuralLabel": "離線語音",
+  "voiceNeuralSub": "由應用程式使用已下載的語音產生 · 無需 Google 服務",
+  "voiceElevenSub": "神經網絡 · 雲端 · 你的 API 金鑰",
+  "voiceVadTitle": "偵測到無聲時停止（VAD）",
+  "voiceVadSub": "偵測到約 1.5 秒無聲後自動結束錄音並傳送，無需再次點按。停用後可手動控制。",
+  "voiceAutoSpeakTitle": "自動朗讀回應",
+  "voiceAutoSpeakSub": "每次助理回應完成後，系統會朗讀回應。",
+  "voiceReadBehaviorTitle": "你再次點按喇叭時",
+  "voicePauseAndResumeTitle": "暫停及繼續",
+  "voicePauseAndResumeSub": "立即停止朗讀。再次點按即可從暫停時所在的句子繼續。",
+  "voiceStopAndRestartTitle": "停止並重新開始",
+  "voiceStopAndRestartSub": "停止朗讀並捨棄進度。下一次點按會從頭開始。",
+  "voiceNeuralDisclaimer": "完全在手機上運行的神經網絡語音：無需雲端、金鑰或遙測資料。下載一次語音後即可離線使用。",
+  "voiceElevenDisclaimer": "ElevenLabs 會使用你的金鑰，將回應文字傳送至其雲端。金鑰會以加密方式儲存在裝置上。",
+  "voiceElevenKeyLabel": "ElevenLabs 金鑰（xi-api-key）",
+  "voiceSaveKey": "儲存金鑰",
+  "voiceKeySaved": "金鑰已儲存。",
+  "voiceTestButton": "測試語音",
+  "voiceTestPreparing": "正在準備語音…",
+  "voiceTestPlayed": "語音測試已播放。",
+  "voiceDownloadFailed": "下載失敗：{error}",
+  "@voiceDownloadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceNoPreview": "無法播放：{error}",
+  "@voiceNoPreview": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceDownloadFirst": "請先下載此語音的模型。",
+  "voicePreparingVoice": "正在準備語音…",
+  "voiceDownloadingPct": "正在下載 {pct}%",
+  "@voiceDownloadingPct": {
+    "placeholders": {
+      "pct": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceDownloadButton": "下載語音",
+  "voiceDeleteButton": "從裝置刪除",
+  "voiceQualityInfo": "{locale} · 品質 {quality} · 約 {size} MB",
+  "@voiceQualityInfo": {
+    "placeholders": {
+      "locale": {
+        "type": "String"
+      },
+      "quality": {
+        "type": "String"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceQualityLight": "輕量",
+  "voiceQualityMedium": "中等",
+  "voiceQualityHigh": "高",
+  "sttModelWhisperBaseSub": "平衡 · 低 RAM 用量 · 建議",
+  "sttModelWhisperSmallSub": "更準確 · 中等 RAM 用量",
+  "sttModelParakeetSub": "最高準確度 · 約 1.2 GB RAM",
+  "voiceSampleText": "你好，我是 Hermes Console。這是神經網絡語音測試。",
+  "voiceWhisperTinySub": "快速 · 約 75 MB",
+  "voiceWhisperBaseSub": "準確 · 約 142 MB",
+  "voiceWhisperReady": "Whisper 模型（{name}）已準備就緒 · 私密",
+  "@voiceWhisperReady": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceWhisperNotReady": "Whisper 模型（{name}）· 約 {size} MB，只需下載一次",
+  "@voiceWhisperNotReady": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceDownloadModelButton": "下載模型",
+  "notifTitle": "通知",
+  "notifPrivacyNote": "私人且在裝置上運作：不使用 Google、FCM 或推送伺服器。由手機上的應用程式觸發。",
+  "notifDiagSection": "診斷",
+  "notifRefreshTooltip": "重新檢查",
+  "notifPermLabel": "通知權限",
+  "notifPermGranted": "已授予",
+  "notifPermDenied": "未授予",
+  "notifChannelLabel": "批准頻道",
+  "notifChannelActive": "啟用",
+  "notifChannelBlocked": "被系統封鎖",
+  "notifChannelMissing": "尚未建立",
+  "notifNoPermWarning": "沒有系統權限便不會收到提示。請在下方授予權限；如果你之前拒絕過，請在「系統設定 › 應用程式 › Hermes Console › 通知」中啟用。",
+  "notifChannelBlockedWarning": "你已獲授予權限，但「Hermes Alerts」頻道已在系統設定中被封鎖。請在「系統設定 › 應用程式 › Hermes Console › 通知 › Hermes Alerts」中重新啟用。",
+  "notifChannelMissingWarning": "初始化通知時會建立頻道。請點擊重新載入；如果仍未顯示，請發送測試通知。",
+  "notifPermCardTitle": "通知權限已停用",
+  "notifPermCardSub": "授予權限以接收代理程式提示。沒有任何資料會透過網絡傳送。",
+  "notifGrantButton": "授予權限",
+  "notifMasterTitle": "啟用通知",
+  "notifMasterSub": "每項提示的主要控制項",
+  "notifApprovalsTitle": "批准",
+  "notifApprovalsSub": "當 Hermes 需要你的批准時",
+  "notifCronResultsTitle": "自動化結果",
+  "notifCronResultsSub": "已完成的 Cron 工作及重要 Kanban 變更",
+  "notifRunsTitle": "執行",
+  "notifRunsSub": "執行成功完成或發生錯誤時",
+  "notifRepliesTitle": "回覆",
+  "notifRepliesSub": "Hermes 在背景執行時收到的回覆",
+  "notifForegroundTitle": "前景時亦發出提示",
+  "notifForegroundSub": "使用 Hermes 時顯示提示",
+  "notifBgTitle": "在背景監聽",
+  "notifBgSub": "應用程式關閉時接收提示 · 使用持續通知",
+  "notifBgActive": "已啟用 · 正在監聽代理程式事件",
+  "notifTestButton": "測試通知",
+  "notifTestSent": "測試通知已發送。",
+  "notifTestFailed": "無法發送。請檢查系統權限。",
+  "commonNotAvailable": "無法使用",
+  "licGatewayLogTitle": "Gateway 記錄",
+  "licGatewayLogUnavail": "Gateway 未能啟動，且無法讀取其記錄（:8645 上的診斷伺服器沒有回應：可能未有提供 python3，或 60 秒時限已過）。請重試「啟動代理程式」，並在失敗後立即開啟此對話框。",
+  "licLogCopied": "記錄已複製",
+  "licCopy": "複製",
+  "licClose": "關閉",
+  "licConfigSavedRestarted": "設定已儲存，代理程式已重新啟動。",
+  "licConfigSaved": "設定已儲存。",
+  "licOAuthStarting": "正在開始驗證…",
+  "licOAuthNoUrl": "伺服器沒有返回驗證 URL。",
+  "licOAuthOpenUrl": "點按以開啟驗證 URL。",
+  "licOAuthEnterCode": "開啟 URL，並輸入所顯示的代碼。",
+  "licOAuthCompleted": "驗證完成。啟動代理程式。",
+  "licOAuthError": "錯誤：{detail}",
+  "@licOAuthError": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "licOAuthTimeout": "逾時。請重試。",
+  "licOAuthFailed": "無法啟動 OAuth：{error}",
+  "@licOAuthFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "licModelSelected": "已選取模型「{tag}」· 儲存設定",
+  "@licModelSelected": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "licCheckingOllama": "檢查 Ollama…",
+  "licStartingOllama": "正在啟動 Ollama…",
+  "licOllamaNoTermux": "無法啟動 Ollama — 是否已安裝 Termux 並授予 RUN_COMMAND 權限？",
+  "licOllamaNoResponse": "Ollama 沒有回應 — 檢查是否已安裝 Termux 和 Ollama",
+  "licAgentStarting": "啟動中…",
+  "licOllamaNotActive": "Ollama 未在 :11434 運作 — 從控制面板啟動",
+  "licDownloadFailed": "無法下載 {model}：{error}",
+  "@licDownloadFailed": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "licUpdating": "更新中…",
+  "licRunning": "運作中",
+  "licStopped": "已停止",
+  "licUptime": "運作時間：{uptime}",
+  "@licUptime": {
+    "placeholders": {
+      "uptime": {
+        "type": "String"
+      }
+    }
+  },
+  "licControlsSection": "控制項",
+  "licStartAgent": "啟動代理程式",
+  "licRepairAgent": "修復本機代理程式",
+  "licResumeRepair": "檢視進度（進行中）",
+  "licResumeRepairHint": "安裝或修復正在進行。點按以返回並按照流程操作。",
+  "licRepairHint": "如果代理程式因依賴項損壞而無法啟動，重建 Python 環境。保留設定、SOUL、技能和設定檔。",
+  "licRepairConfirmTitle": "修復本機代理程式？",
+  "licRepairConfirmBody": "以即時進度重建 Python 環境（venv）。你的設定、SOUL、技能和設定檔會保留。可能需要幾分鐘。",
+  "licStopAgent": "停止代理程式",
+  "licConfigSection": "代理程式設定",
+  "licModelSection": "模型",
+  "licManageModels": "模型及供應商",
+  "licChangeModel": "更改模型",
+  "licBridgeSection": "流動橋接",
+  "licBridgeChecking": "檢查中…",
+  "licBridgeConnected": "已啟用",
+  "licBridgeConnectedHint": "寫入技能、記憶及 SOUL",
+  "licBridgeUnlinked": "正在執行但未連結",
+  "licBridgeUnlinkedHint": "橋接正在執行，但金鑰不符",
+  "licBridgeNotDetected": "未偵測到",
+  "licBridgeNotDetectedHint": "此裝置上的橋接沒有回應",
+  "licBridgeRepair": "修復（重新啟動代理程式）",
+  "licBridgeInstall": "安裝並啟動",
+  "licBridgeRetry": "重試連結",
+  "licBridgeRetryFailed": "無法連結；請嘗試修復",
+  "licAdvancedConfig": "進階設定",
+  "licSaving": "儲存中…",
+  "licSaveRestart": "儲存並重新啟動",
+  "licSaveConfig": "儲存設定",
+  "licProviderLabel": "供應商",
+  "licApiKeyLabel": "API 金鑰",
+  "licOAuthBrowser": "OAuth（瀏覽器）",
+  "licLocalLabel": "本機",
+  "licModelLabel": "模型",
+  "licModelHint": "輸入模型",
+  "licApiKeyRequired": "必須提供 API 金鑰",
+  "licVerificationCode": "驗證碼",
+  "licCopyCode": "複製代碼",
+  "licCodeCopied": "代碼已複製",
+  "licOAuthBrowserNote": "此供應商使用瀏覽器驗證（無需 API 金鑰）。點按「驗證」，網址出現後，在瀏覽器中開啟該網址以登入。完成後，啟動代理程式。",
+  "licAuthenticating": "正在驗證…",
+  "licAuthenticateWith": "使用 {provider} 進行驗證",
+  "@licAuthenticateWith": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "licOpenInBrowser": "在瀏覽器中開啟 →",
+  "licBaseUrlLabel": "基本 URL",
+  "licDownloadedModels": "已下載模型",
+  "licRefresh": "重新整理",
+  "licSearchingModels": "正在 :11434 搜尋模型…",
+  "licCustomModelLabel": "模型（例如：llama3.2:1b、phi3:mini）",
+  "licCustomModelHint": "輸入模型",
+  "licCustomModelSub": "可選 · 例如：qwen2.5:0.5b",
+  "licCustomModel": "自訂模型",
+  "licDownloadModels": "下載模型",
+  "licRamInfo": "RAM：{gb} GB",
+  "@licRamInfo": {
+    "placeholders": {
+      "gb": {
+        "type": "String"
+      }
+    }
+  },
+  "licRamNote": "在已安裝的模型上點按「使用」以選取。標記的模型所需 RAM 超出可用容量。",
+  "licModelSize": "~{size} GB · RAM {ram} GB",
+  "@licModelSize": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      },
+      "ram": {
+        "type": "String"
+      }
+    }
+  },
+  "licNeedsMoreRam": "需要更多 RAM",
+  "licDownloadPct": "{pct} %",
+  "@licDownloadPct": {
+    "placeholders": {
+      "pct": {
+        "type": "String"
+      }
+    }
+  },
+  "licDownloadButton": "下載",
+  "licDownloading": "正在下載…",
+  "licInUse": "使用中",
+  "licUseButton": "使用",
+  "licSystemLogsSection": "系統記錄",
+  "licHideLogs": "隱藏記錄",
+  "licShowLogs": "顯示記錄",
+  "licRefreshLogs": "重新整理",
+  "licReadingLogs": "正在讀取記錄…",
+  "licLogsNotAvailable": "（應用程式無法直接取得系統記錄）",
+  "licSysInfoSection": "系統資訊",
+  "licApiLocal": "本機 API（Dashboard）",
+  "licAgentVersion": "Agent 版本",
+  "licCopied": "已複製：{value}",
+  "@licCopied": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "sklActiveProfile": "設定檔：{profile}",
+  "@sklActiveProfile": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "sklStatsApi": "{enabled} 已啟用 · 共 {total} 個 · /api/skills",
+  "@sklStatsApi": {
+    "placeholders": {
+      "enabled": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "sklStatsSource": "共 {total} 個 · {source}",
+  "@sklStatsSource": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      },
+      "source": {
+        "type": "String"
+      }
+    }
+  },
+  "sklTabInstalled": "已安裝",
+  "sklTabDiscover": "探索",
+  "sklBridgeActiveTooltip": "原生管理已啟用（Bridge）",
+  "sklBridgeDetectedTooltip": "已偵測到 Bridge · 點擊以連線",
+  "sklBridgeUnavailableTooltip": "Bridge 無法使用（僅可透過指令管理）",
+  "sklProfileBlockMsg": "在設定檔「{profile}」啟用時編輯技能會修改全域設定。切換至預設設定檔以進行編輯。",
+  "@sklProfileBlockMsg": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "sklUseDefault": "使用預設設定檔",
+  "sklActivate": "啟用技能",
+  "sklDeactivate": "停用技能",
+  "sklActivated": "技能已啟用：{name} · 重新啟動 Agent 以套用",
+  "@sklActivated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklDeactivated": "技能已停用：{name} · 重新啟動 Agent 以套用",
+  "@sklDeactivated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklToggleFailed": "無法變更「{name}」",
+  "@sklToggleFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklBridgeError": "Bridge：{msg}",
+  "@sklBridgeError": {
+    "placeholders": {
+      "msg": {
+        "type": "String"
+      }
+    }
+  },
+  "sklError": "錯誤：{msg}",
+  "@sklError": {
+    "placeholders": {
+      "msg": {
+        "type": "String"
+      }
+    }
+  },
+  "sklRemoveTitle": "移除技能",
+  "sklRemoveConfirm": "要從伺服器移除「{name}」嗎？稍後可從 Discover 重新安裝。",
+  "@sklRemoveConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklCancel": "取消",
+  "sklRemove": "移除",
+  "sklRemoveNeedsBridge": "移除技能需要本機代理程式（Bridge）保持連線。",
+  "sklNoBridgeConnection": "未能連線至本機代理程式（Bridge）。",
+  "sklBuiltinArchived": "內置技能已封存：{name}",
+  "@sklBuiltinArchived": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklRemoved": "技能已移除：{name}",
+  "@sklRemoved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklRemoveFailed": "無法移除「{name}」（返回碼 {rc}）",
+  "@sklRemoveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "rc": {
+        "type": "String"
+      }
+    }
+  },
+  "sklNoInstallSource": "此技能沒有可安裝的擁有者／repo 來源。",
+  "sklInstallTitle": "安裝 {name}",
+  "@sklInstallTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklInstallWarning": "⚠ 技能可以在你的伺服器上執行程式碼。只安裝你信任來源的技能。\n\n{cmd}",
+  "@sklInstallWarning": {
+    "placeholders": {
+      "cmd": {
+        "type": "String"
+      }
+    }
+  },
+  "sklInstall": "安裝",
+  "sklInstalled": "技能已安裝：{name}",
+  "@sklInstalled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sklInstallFailed": "安裝失敗（返回碼 {rc}）",
+  "@sklInstallFailed": {
+    "placeholders": {
+      "rc": {
+        "type": "String"
+      }
+    }
+  },
+  "sklDetailHintBridge": "使用清單切換按鈕啟用／停用，使用垃圾桶圖示刪除。你也可以複製指令。",
+  "sklDetailHintNoBridge": "/api/skills 僅支援 GET。連線 Mobile Bridge（雲端圖示）即可原生啟用／停用、安裝及移除，或複製以下指令。",
+  "sklModeNative": "原生管理（Bridge）",
+  "sklModeCli": "CLI 管理",
+  "sklRecommended": "推薦 · skills.sh 上最常用",
+  "sklDiscoverTitle": "探索技能",
+  "sklSearchHintBridge": "按名稱搜尋技能（例如 git、pdf、search）",
+  "sklSearchHintCli": "搜尋 skills.sh 技能登錄庫",
+  "sklWebOnlyTitle": "只可透過網頁瀏覽目錄",
+  "sklWebOnlyBody": "skills.sh 沒有公開 API — 無需任何金鑰。在瀏覽器中瀏覽目錄，然後複製安裝指令，在你的 Gateway 上執行。",
+  "sklOpenSkillsSh": "開啟 skills.sh",
+  "sklNoResultsTitle": "沒有結果",
+  "sklNoResultsFor": "找不到「{query}」的技能",
+  "@sklNoResultsFor": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "sklSearchOnline": "搜尋 skills.sh",
+  "sklInstalling": "安裝中…",
+  "sklInstallButton": "安裝",
+  "sklCommandButton": "指令",
+  "sklPendingReload": "技能變更正在等待套用。請前往設定 › 維護，重新啟動代理程式以套用變更。",
+  "sklNoApiNote": "skills.sh 沒有公開 API（無需金鑰）。在瀏覽器中瀏覽目錄。",
+  "sklOpen": "開啟",
+  "sklBridgeDetectedTitle": "偵測到 Mobile Bridge",
+  "sklBridgeDisabledTitle": "已停用流動技能管理",
+  "sklBridgeCanView": "你可以在 Gateway 上查看已安裝技能清單。",
+  "sklBridgeNoActions": "沒有 Bridge，你無法在應用程式中啟用／停用、安裝或移除技能（只能複製指令）。",
+  "sklBridgeRunningNote": "當實例設有 Gateway token（API_SERVER_KEY）時，Bridge 會自動連線。否則，點按此處手動連線。",
+  "sklBridgeNotRunningNote": "Mobile Bridge 是讓應用程式控制技能的連結；需要在此應用程式中設定本機 Hermes agent。",
+  "sklBridgeConnect": "連線 Bridge",
+  "sklBridgeConfigure": "設定 Bridge",
+  "sklCliCatalogIntro": "skills.sh 作為網頁目錄運作 — 無需 API 金鑰。在瀏覽器中瀏覽，然後在此為你的伺服器產生安裝指令。",
+  "sklRepoLabel": "技能擁有者／儲存庫",
+  "sklRepoHint": "例如 vercel-labs/agent-skills",
+  "sklCopyCommand": "複製指令",
+  "sklCommandCopied": "指令已複製 — 請在你的 Hermes 伺服器上執行",
+  "sklCliOnlyNote": "僅複製指令：Gateway 不會提供安全的遠端安裝端點（已驗證），因此應用程式不會向伺服器傳送任何資料。",
+  "sklSecurityWarning": "技能會以代理程式的權限在你的伺服器上執行程式碼。安裝任何項目前，請先檢視儲存庫。",
+  "mdlVision": "視覺（圖片）",
+  "mdlWebExtract": "網頁擷取",
+  "mdlCompression": "上下文壓縮",
+  "mdlSkillsHub": "技能中心",
+  "mdlApproval": "批准",
+  "mdlMcp": "MCP",
+  "mdlTitleGeneration": "標題生成",
+  "mdlTriageSpecifier": "分流／指定器",
+  "mdlKanbanDecomposer": "Kanban 分解器",
+  "mdlProfileDescriber": "個人檔案描述器",
+  "mdlCurator": "策展器",
+  "mdlAffectsRunningAgent": "影響執行中的代理程式",
+  "mdlConfirmMainModelBody": "你目前位於個人檔案「{profile}」，但執行中的 Gateway 使用主要模型（只有一個）。將其更改為「{modelId}」也會更改使用中代理程式的模型，而不只是此個人檔案。",
+  "@mdlConfirmMainModelBody": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlChangeAnyway": "仍然更改",
+  "mdlActiveModelSet": "使用中模型：{modelId}",
+  "@mdlActiveModelSet": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlActiveModelSetViaDashboard": "使用中模型：{modelId}（經由 Dashboard）",
+  "@mdlActiveModelSetViaDashboard": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlErrorChangingModel": "更改模型時發生錯誤：{e}",
+  "@mdlErrorChangingModel": {
+    "placeholders": {
+      "e": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlAuxResetToAuto": "輔助模型已重設為自動",
+  "commonError": "錯誤：{e}",
+  "@commonError": {
+    "placeholders": {
+      "e": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlPickModelSubtitle": "選擇此功能使用的模型，或選擇自動。",
+  "mdlAutomatic": "自動",
+  "mdlUsesMainModel": "使用主要模型",
+  "mdlDisconnectProviderTitle": "中斷連線 {name}",
+  "@mdlDisconnectProviderTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlDisconnectApiKeyBody": "金鑰 {keyEnv} 將從伺服器刪除，並取消設定供應商。",
+  "@mdlDisconnectApiKeyBody": {
+    "placeholders": {
+      "keyEnv": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlDisconnectActiveWarningModel": "",
+  "mdlDisconnectOAuthBody": "{name} 的 OAuth 工作階段將在伺服器上關閉。",
+  "@mdlDisconnectOAuthBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlDisconnectActiveWarning": "",
+  "mdlDisconnect": "中斷連線",
+  "mdlProviderDisconnected": "{name}：已中斷連線",
+  "@mdlProviderDisconnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthStartError": "無法開始登入：{e}",
+  "@mdlOAuthStartError": {
+    "placeholders": {
+      "e": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthNotAvailable": "{name} 不提供登入功能",
+  "@mdlOAuthNotAvailable": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlProviderConnected": "{name}：已連線",
+  "@mdlProviderConnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlFallbackDisabled": "已停用備用",
+  "mdlFallbackActive": "備用：{model}",
+  "@mdlFallbackActive": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlTitle": "模型",
+  "mdlProfile": "設定檔：{profile}",
+  "@mdlProfile": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlReload": "重新載入",
+  "mdlAgentOffline": "Hermes 未啟用",
+  "mdlLoadError": "無法載入模型",
+  "mdlAgentOfflineHint": "啟動本機代理程式後返回此處，以檢視及設定模型。",
+  "mdlCheckConnection": "檢查與伺服器的連線。",
+  "mdlGatewayFallbackTitle": "Dashboard 管理功能無法使用",
+  "mdlGatewayFallbackHint": "Dashboard 需要獨立登入。正在顯示 Gateway 的模型（使用相同權杖）。",
+  "mdlAvailableModels": "可用模型",
+  "mdlRetry": "重試",
+  "mdlLocalModels": "本機模型（Ollama）",
+  "mdlLocalModelsHint": "在此手機上下載及使用裝置內模型",
+  "mdlActiveLabel": "目前模型",
+  "mdlCtxKTokens": "{k}k 個 token",
+  "@mdlCtxKTokens": {
+    "placeholders": {
+      "k": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlCtxTokens": "{ctx} 個 token",
+  "@mdlCtxTokens": {
+    "placeholders": {
+      "ctx": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlFallbackTitle": "備用模型",
+  "mdlFallbackSubtitle": "主要模型失效時使用。",
+  "mdlNoFallback": "沒有備用模型",
+  "mdlRemoveFallback": "移除備用模型",
+  "mdlAuxSection": "按功能分類的模型",
+  "mdlAuxAllAuto": "全部自動",
+  "mdlAuxCustomized": "{customized} 個自訂 · {total} 項功能",
+  "@mdlAuxCustomized": {
+    "placeholders": {
+      "customized": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "mdlAuxResetAll": "全部重設為自動",
+  "mdlAuxAutoMain": "自動（主要模型）",
+  "mdlMainProviders": "主要模型 · 供應商",
+  "mdlUnconfiguredProviders": "未設定的供應商",
+  "mdlUnconfiguredHint": "{count} 個可用 · 點按以設定",
+  "@mdlUnconfiguredHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mdlModelCount": "{count} 個模型",
+  "@mdlModelCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mdlActiveBadge": "目前使用",
+  "mdlReconnect": "重新連線（重新驗證）",
+  "mdlReconnectHint": "模型因工作階段過期而失效時",
+  "mdlUpdateKey": "更新金鑰",
+  "mdlDisconnectProvider": "中斷供應商連線",
+  "mdlLoginOAuth": "登入（OAuth）",
+  "mdlNeedsKey": "需要{keyEnv}",
+  "@mdlNeedsKey": {
+    "placeholders": {
+      "keyEnv": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthExternal": "外部 OAuth：在伺服器上使用其 CLI 進行設定",
+  "mdlConfigureOnServer": "在伺服器上設定（hermes setup）",
+  "mdlLoginBtn": "登入",
+  "mdlConfigureBtn": "設定",
+  "mdlCodeExpired": "代碼已過期。重新開始登入。",
+  "mdlLoginNotCompleted": "登入未完成（{status}）",
+  "@mdlLoginNotCompleted": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlCodeExpiry": "將於 {time} 後到期",
+  "@mdlCodeExpiry": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthTitle": "連線 · {name}",
+  "@mdlOAuthTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthBrowserOpened": "瀏覽器已開啟。請授權 {name}，然後返回此處：此畫面會自動偵測。",
+  "@mdlOAuthBrowserOpened": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthOpenBrowser": "點按「開啟瀏覽器」，授權 {name}，然後返回此處。",
+  "@mdlOAuthOpenBrowser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlOAuthCodeLabel": "你的代碼（已複製）",
+  "mdlCodeCopied": "代碼已複製",
+  "mdlReopenBrowser": "重新開啟瀏覽器",
+  "mdlOpenBrowser": "開啟瀏覽器",
+  "mdlCheckNow": "立即檢查",
+  "mdlWaitingAuth": "正在等待授權…",
+  "mdlOAuthSecurityNote": "安全：權杖由伺服器取得及儲存；應用程式只會顯示代碼及檢查狀態。",
+  "mdlSave": "儲存",
+  "mdlApiKeyTitle": "供應商 API 金鑰",
+  "mdlApiKeyHint": "儲存於伺服器上的 {keyEnv} 變數（由 .env 管理，絕不會儲存於 config.yaml 或應用程式中）。",
+  "@mdlApiKeyHint": {
+    "placeholders": {
+      "keyEnv": {
+        "type": "String"
+      }
+    }
+  },
+  "mdlApiKeyHintText": "將 API 金鑰貼到此處",
+  "mdlSaveKey": "儲存金鑰",
+  "mdlProviderKeySaved": "{name}：金鑰已儲存",
+  "@mdlProviderKeySaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "crnTitle": "排程工作",
+  "crnProfile": "設定檔：{profile}",
+  "@crnProfile": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "crnEditJobsJson": "編輯 jobs.json（伺服器）",
+  "crnApplyJobsJson": "將 jobs.json 套用至伺服器",
+  "crnJobsJsonLabel": "jobs.json",
+  "crnAddNew": "新增 Cron 工作",
+  "crnLoadError": "無法載入 Cron 工作",
+  "crnEmpty": "沒有已排程工作",
+  "crnAddJob": "新增工作",
+  "crnAdd": "建立",
+  "crnEditJob": "編輯工作",
+  "crnDeleteTitle": "刪除工作",
+  "crnDeleteConfirm": "要刪除「{name}」嗎？",
+  "@crnDeleteConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDelete": "刪除",
+  "crnJobDeleted": "已刪除「{name}」",
+  "@crnJobDeleted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDeleteRejected": "伺服器保留了這項受保護的已排程工作。沒有刪除任何內容。",
+  "crnCleanupTooltip": "清理 Cron 結果",
+  "crnCleanupTitle": "清理 Cron 結果",
+  "crnCleanupBody": "此設定檔中的 {count} 個非使用中、未釘選的 Cron 結果將會被刪除。已排程工作不會被刪除，其未來執行仍會保持啟用。",
+  "crnCleanupEmpty": "沒有非使用中、未釘選的 Cron 結果可供清理。",
+  "crnCleanupDone": "已刪除的 Cron 對話：{count}。",
+  "crnCleanupPartial": "已刪除：{deleted}。保留：{preserved}。",
+  "crnCleanupFailed": "無法清理的 Cron 對話：{error}",
+  "crnJobResumed": "工作已恢復",
+  "crnJobPaused": "工作已暫停",
+  "crnJobTriggered": "已要求執行",
+  "crnJobCreated": "工作已建立",
+  "crnJobUpdated": "工作已更新",
+  "crnFieldName": "名稱（可選）",
+  "crnFieldNameHint": "例如：每日摘要",
+  "crnFieldPrompt": "代理程式指示",
+  "crnFieldPromptHint": "Hermes 應做甚麼？",
+  "crnFieldFrequency": "頻率",
+  "crnFieldCronExpr": "Cron 運算式",
+  "crnFieldCronExprAdv": "Cron 運算式（進階）",
+  "crnNoAgentTitle": "直接指令（不使用 AI）",
+  "crnNoAgentSubtitle": "開啟：原樣執行指令或指令碼（例如備份）。關閉：Hermes 使用 AI 和工具解讀你的指示。",
+  "crnFieldRequired": "完成指示並排程",
+  "crnStatusPaused": "已暫停",
+  "crnStatusActive": "啟用中",
+  "crnStatusOk": "正常",
+  "crnStatusError": "錯誤",
+  "crnStatusScheduled": "已排程",
+  "crnStatusRunning": "執行中",
+  "crnStatusDisabled": "已停用",
+  "crnStatusCompleted": "已完成",
+  "crnOpenFromConversation": "開啟已連結的排程",
+  "crnMetaDelivery": "送達：{value}",
+  "@crnMetaDelivery": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "crnMetaModel": "模型：{value}",
+  "@crnMetaModel": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "crnMetaProvider": "提供者：{value}",
+  "@crnMetaProvider": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "crnMetaContext": "上下文：{value}",
+  "@crnMetaContext": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "crnMetaWorkdir": "資料夾：{value}",
+  "@crnMetaWorkdir": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "crnScriptBadge": "指令碼",
+  "crnRunNow": "立即執行",
+  "crnCronEdit": "編輯",
+  "crnResume": "繼續",
+  "crnPause": "暫停",
+  "crnRunHistory": "執行記錄",
+  "crnLoadingHistory": "正在載入歷程記錄…",
+  "crnNoRuns": "沒有執行記錄。",
+  "crnHistoryUnavailable": "此伺服器版本不提供歷程記錄。",
+  "crnSearch": "搜尋工作",
+  "crnCreateDescription": "選擇 Hermes 的執行時間，以及結果的儲存位置。",
+  "crnEditDescription": "變更排程而不會遺失其歷程記錄。",
+  "crnStartFrom": "開始於",
+  "crnCustomSetup": "自訂設定",
+  "crnDeliveryLabel": "目的地",
+  "crnDeliveryLocal": "只儲存於伺服器",
+  "crnDeliveryNeedsHome": "先設定主頻道",
+  "crnModelLabel": "模型",
+  "crnModelDefault": "伺服器預設值",
+  "crnModelUnavailable": "目錄無法使用；目前值將會保留。",
+  "crnScriptOnlyHint": "此工作會在沒有代理程式的情況下執行指令碼。你可以變更其名稱、排程、目的地及選填指示；指令碼會予以保留。",
+  "crnPromptLabel": "指示",
+  "crnScheduleRequired": "選擇排程。",
+  "crnPromptRequired": "描述 Hermes 應執行的工作。",
+  "crnPromptScheduleRequired": "新增指示並選擇排程。",
+  "crnLastRunLabel": "上次執行",
+  "crnNextRunLabel": "下次執行",
+  "crnNever": "永不",
+  "crnOpenRun": "開啟對話",
+  "crnBlueprintCreate": "排程自動化",
+  "crnJobIdUnavailable": "工作 ID 不可用。",
+  "crnLastError": "錯誤：{error}",
+  "@crnLastError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "crnFreqHourly": "每小時",
+  "crnFreqEvery15m": "每 15 分鐘",
+  "crnFreqEvery2h": "每 2 小時",
+  "crnFreqEvery6h": "每 6 小時",
+  "crnFreqDailyMidnight": "每天（午夜）",
+  "crnFreqDailyMorning": "每天（09:00）",
+  "crnFreqWeekdays": "平日（09:00）",
+  "crnFreqWeekly": "每週（星期一 08:00）",
+  "crnFreqMonthly": "每月（第 1 日）",
+  "crnFreqCustom": "自訂",
+  "crnDescHourly": "每小時整點",
+  "crnDescEveryNHours": "每隔 {n} 小時",
+  "@crnDescEveryNHours": {
+    "placeholders": {
+      "n": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDescDailyAt": "每天 {h}:00",
+  "@crnDescDailyAt": {
+    "placeholders": {
+      "h": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDescWeekdaysAt": "平日 {h}:00",
+  "@crnDescWeekdaysAt": {
+    "placeholders": {
+      "h": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDescWeeklyAt": "每逢{day}於{h}:00",
+  "@crnDescWeeklyAt": {
+    "placeholders": {
+      "day": {
+        "type": "String"
+      },
+      "h": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDescMonthly": "每月第一日",
+  "crnDayMon": "星期一",
+  "crnDayTue": "星期二",
+  "crnDayWed": "星期三",
+  "crnDayThu": "星期四",
+  "crnDayFri": "星期五",
+  "crnDaySat": "星期六",
+  "crnDaySun": "星期日",
+  "crnAgoSec": "{n}秒前",
+  "@crnAgoSec": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnAgoMin": "{n}分鐘前",
+  "@crnAgoMin": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnAgoHour": "{n}小時前",
+  "@crnAgoHour": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnAgoDays": "{n}日前",
+  "@crnAgoDays": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnInSec": "{n}秒後",
+  "@crnInSec": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnInMin": "{n}分鐘後",
+  "@crnInMin": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnInHour": "{n}小時後",
+  "@crnInHour": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnInDays": "{n}日後",
+  "@crnInDays": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "crnCancel": "取消",
+  "crnSave": "儲存",
+  "crnRetry": "↺ 重試",
+  "crnFailed": "錯誤：{error}",
+  "@crnFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDeleteFailed": "刪除失敗：{error}",
+  "@crnDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "crnAddFailed": "新增工作失敗：{error}",
+  "@crnAddFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "crnUpdateFailed": "更新工作失敗：{error}",
+  "@crnUpdateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "secTitle": "安全性",
+  "secSectionLock": "本機鎖定",
+  "secLockTitle": "應用程式鎖",
+  "secLockSubtitle": "開啟應用程式及進行敏感操作時使用自訂 PIN 碼",
+  "secBioTitle": "生物特徵解鎖",
+  "secBioSubtitle": "指紋或臉部辨識，PIN 碼作為備用",
+  "secBioUnavailable": "此裝置未設定生物特徵辨識",
+  "secLockTimeout": "離開時鎖定",
+  "secTimeoutInstant": "立即",
+  "secTimeout1min": "1 分鐘後",
+  "secTimeout5min": "5 分鐘後",
+  "secTimeout15min": "15 分鐘後",
+  "secChangePin": "更改 PIN",
+  "secSectionCredentials": "登入憑證",
+  "secSectionPrivacy": "畫面私隱",
+  "secSectionStatus": "安全狀態",
+  "secHideNotificationsTitle": "隱藏通知詳情",
+  "secHideNotificationsSub": "在鎖定畫面隱藏內容及快速批准。",
+  "secBlockScreenshotsTitle": "封鎖螢幕截圖及錄影",
+  "secBlockScreenshotsSub": "保護應用程式及其在最近使用的應用程式中的預覽。",
+  "secConnectionTitle": "目前連線",
+  "secConnectionNone": "沒有使用中的實例",
+  "secConnectionNoneSub": "連線至實例以評估其傳輸方式。",
+  "secConnectionHttps": "使用 HTTPS 加密",
+  "secConnectionTailscale": "受 Tailscale 保護",
+  "secConnectionPrivateHttp": "私人網絡 · HTTP",
+  "secConnectionPublicHttp": "公開 HTTP · 不安全",
+  "secConnectionFor": "使用中的實例：{name}",
+  "@secConnectionFor": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "secConnectionPublicHttpSub": "{name} 可透過未加密的公開 HTTP 存取。輸入登入憑證前，請使用 HTTPS 或 Tailscale。",
+  "@secConnectionPublicHttpSub": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "secCredentialStorageTitle": "憑證儲存",
+  "secCredentialStorageSub": "API 金鑰及密碼會儲存於 Android Keystore，不會存放在一般偏好設定中。",
+  "secStatusProtected": "受保護",
+  "secStatusReview": "檢視",
+  "secLockStatusOn": "開啟應用程式及執行敏感操作時，PIN 保護已啟用。",
+  "secLockStatusOff": "如其他人可以使用此裝置，請啟用應用程式鎖。",
+  "secWipeKeysTitle": "刪除所有 API 金鑰",
+  "secWipeKeysSubtitle": "從 Keystore 移除金鑰。保留實例。",
+  "secOrphanTitle": "清理孤立資料",
+  "secOrphanSubtitle": "移除已刪除實例的殘留資料（功能、個人檔案、批准、工作階段……）。不會影響使用中的實例或設定。",
+  "secSectionModel": "安全性模型",
+  "secItem1Title": "Android Keystore 中的 API 金鑰",
+  "secItem1Body": "每個 Gateway 的金鑰均透過 flutter_secure_storage 加密儲存。絕不會寫入 SharedPreferences 或記錄檔。",
+  "secItem2Title": "沒有 XPeta Lab 遙測",
+  "secItem2Body": "XPeta Lab 不會接收你的資料。應用程式會連線至你的 Gateway，以及私隱權政策中列出的可選服務。QR 掃描完全在裝置上使用開源 ZXing，絕不會傳送相機畫面、QR 內容、結果或統計資料。",
+  "secItem3Title": "Tailscale 優先",
+  "secItem3Body": "專為透過私有網絡（Tailscale 或 LAN）存取 Gateway 而設計。當 Gateway 提供 HTTPS 時支援使用 HTTPS。",
+  "secItem4Title": "最少權限",
+  "secItem4Body": "INTERNET、通知、語音所需的麥克風、QR 或附件所需的相機、可選的生物識別，以及附加檔案時所需的相片／文件存取權限。不會存取位置、聯絡人或進行背景擷取。",
+  "secItem5Title": "透過 HTML 取得 Dashboard 權杖",
+  "secItem5Body": "Dashboard 功能（連接埠 9119）會使用伺服器頁面上公開的工作階段權杖。請將該連接埠的存取限制於你的私有網絡。",
+  "secItem6Title": "URL 中的 WebSocket 權杖",
+  "secItem6Body": "Gateway 會在 WebSocket 中以查詢參數形式使用權杖，因為其不支援 WS 中的 Authorization 標頭。建議使用 Tailscale／VPN，並不要將 Hermes 直接公開到互聯網。",
+  "secStatusOk": "確定",
+  "secStatusWarning": "警告",
+  "secVerifyDisableLock": "驗證以停用鎖定",
+  "secVerifyChangePin": "驗證以更改 PIN",
+  "secVerifyWipe": "驗證以刪除認證資料",
+  "secVerifyBiometrics": "確認生物識別以啟用",
+  "secPinUpdated": "PIN 已更新",
+  "secWipeTitle": "刪除憑證",
+  "secWipeContent": "{count} 實例的 API 金鑰將從加密儲存空間中移除。實例仍會保留設定，但會再次要求輸入金鑰。此操作無法復原。",
+  "@secWipeContent": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "secCancel": "取消",
+  "secWipeButton": "刪除",
+  "secKeysWiped": "API 金鑰已從 Keystore 移除",
+  "secNoOrphans": "清理完成：找不到孤立資料 ✓",
+  "secOrphansRemoved": "已清理 {removed} 個孤立項目",
+  "@secOrphansRemoved": {
+    "placeholders": {
+      "removed": {
+        "type": "int"
+      }
+    }
+  },
+  "secCleanFailed": "清理失敗：{error}",
+  "@secCleanFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "secSetupPinTitle": "設定 PIN",
+  "secPinDescription": "請選擇 4 至 8 位數字的 PIN。PIN 會以加密形式（雜湊 + salt）儲存於 Keystore；絕不以純文字儲存。",
+  "secPinLabel": "PIN（4–8 位數字）",
+  "secPinRepeatLabel": "再次輸入 PIN",
+  "secPinErrorLength": "至少 4 位數字",
+  "secPinErrorMismatch": "PIN 不相符",
+  "secPinSave": "儲存 PIN",
+  "memCancel": "取消",
+  "memApply": "套用",
+  "memReload": "重新載入",
+  "memDiscard": "捨棄",
+  "memReloadTitle": "從伺服器重新載入",
+  "memReloadContent": "這會以伺服器內容取代編輯器內容。未套用的本機變更將會遺失。",
+  "memDiscardTitle": "捨棄草稿",
+  "memDiscardContent": "刪除此本機草稿？此操作無法復原。",
+  "memApplyDiffTitle": "在伺服器上套用至 {target}",
+  "@memApplyDiffTitle": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "memNoDiff": "（沒有變更）",
+  "memLoadedFromServer": "從伺服器載入（{bytes} 位元組）",
+  "@memLoadedFromServer": {
+    "placeholders": {
+      "bytes": {
+        "type": "String"
+      }
+    }
+  },
+  "memFileNotOnServer": "伺服器上尚未有此檔案",
+  "memBridgeError": "Bridge：{message}",
+  "@memBridgeError": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "memLoadFailed": "無法載入：{error}",
+  "@memLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "memApplyFailed": "無法套用：{error}",
+  "@memApplyFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "memApplyReason": "將記憶套用至伺服器",
+  "memApplied": "已套用至伺服器",
+  "memAppliedWithBackup": "已套用至伺服器 · 備份 {backup}",
+  "@memAppliedWithBackup": {
+    "placeholders": {
+      "backup": {
+        "type": "String"
+      }
+    }
+  },
+  "memBridgeConnectedSnack": "Bridge 已連線 · 寫入：{write}",
+  "@memBridgeConnectedSnack": {
+    "placeholders": {
+      "write": {
+        "type": "String"
+      }
+    }
+  },
+  "memBridgeInvalidToken": "已偵測到 Bridge，但 token 無效",
+  "memBridgeConnFailed": "無法連線至 {url} 的 Bridge",
+  "@memBridgeConnFailed": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "memBridgeConnectedRW": "Mobile Bridge 已連線：你正在編輯伺服器的即時內容；「套用」會建立備份並儲存差異。",
+  "memBridgeConnectedRO": "Mobile Bridge 已以唯讀模式連線：你可以載入及檢視伺服器內容，但不能套用。",
+  "memBridgeNeedsToken": "已在 {url} 偵測到 Bridge。點按雲端圖示並貼上 token，以讀取／編輯即時檔案。",
+  "@memBridgeNeedsToken": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "memBridgeAuthFailed": "已偵測到 Bridge，但 token 無效。請在雲端圖示中檢查。",
+  "memBridgeUnreachable": "{url} 未啟用 Bridge。暫時使用本機草稿。請在伺服器上啟用，以讀取／套用。",
+  "@memBridgeUnreachable": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "memBridgeNotConfigured": "API 不支援遠端儲存記憶。僅限本機草稿；請為伺服器設定 Mobile Bridge（雲端圖示）。",
+  "memBadgeBridge": "Bridge",
+  "memBadgeDraft": "本機草稿",
+  "memConfigureBridge": "設定 Mobile Bridge",
+  "memEditorHint": "# {filename}.md 的備註…在此輸入稍後要套用至伺服器的內容（透過 CLI 複製 → 貼上）。",
+  "@memEditorHint": {
+    "placeholders": {
+      "filename": {
+        "type": "String"
+      }
+    }
+  },
+  "memUnsaved": "未儲存",
+  "memAutosaved": "已自動儲存 {time}",
+  "@memAutosaved": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "memButtonLoading": "載入中…",
+  "memButtonReload": "重新載入",
+  "memButtonApplying": "套用中…",
+  "memButtonApply": "套用",
+  "memButtonCopy": "複製",
+  "memButtonExport": "匯出",
+  "memButtonDiscard": "捨棄",
+  "memCopied": "草稿已複製到剪貼簿",
+  "memExported": "已匯出：{path}",
+  "@memExported": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "memExportFailed": "匯出失敗：{error}",
+  "@memExportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "memYes": "是",
+  "memNo": "否",
+  "sesScreenTitle": "工作階段",
+  "sesTabSummary": "摘要",
+  "sesTabMessages": "訊息",
+  "sesTabContext": "上下文",
+  "sesRefreshTooltip": "重新整理",
+  "sesDuplicateTitle": "複製工作階段",
+  "sesDuplicateContent": "將建立一個包含此工作階段完整歷史記錄的新工作階段。原工作階段將標記為已分支並關閉，與 CLI 中的 /branch 語義相同。",
+  "sesCancel": "取消",
+  "sesDuplicate": "複製",
+  "sesDuplicated": "工作階段已複製：{title}",
+  "@sesDuplicated": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "sesDuplicateFailed": "無法複製：{error}",
+  "@sesDuplicateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "sesDeleteTitle": "刪除工作階段",
+  "sesDeleteContent": "要從伺服器刪除「{title}」嗎？此操作無法復原。",
+  "@sesDeleteContent": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "sesDelete": "刪除",
+  "sesDeleteFailed": "無法刪除：{error}",
+  "@sesDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "sesCopiedSummary": "摘要已複製",
+  "sesCopiedMessage": "訊息已複製",
+  "sesReadOnlyNotice": "實例處於唯讀模式：複製及刪除功能已停用。仍可繼續對話（查詢）及封存（本機）。",
+  "sesActionDisclaimer": "封存只會儲存於此裝置。複製及刪除操作會在伺服器上執行。",
+  "sesSectionMetrics": "指標",
+  "sesSectionLastMessage": "最新訊息",
+  "sesSectionActions": "操作",
+  "sesSectionContext": "對話內容",
+  "sesActionResume": "繼續對話",
+  "sesActionDuplicate": "複製",
+  "sesActionArchive": "封存",
+  "sesActionUnarchive": "取消封存",
+  "sesActionCopySummary": "複製摘要",
+  "sesActionDelete": "刪除",
+  "sesLastActivity": "最近活動 {time}",
+  "@sesLastActivity": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "sesBranchedFrom": "分支自 {id}",
+  "@sesBranchedFrom": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "sesBranchedInfo": "此對話已建立分支：較新的複本會繼續其歷程。",
+  "sesNoTitle": "無標題",
+  "sesLoadingMessages": "正在載入訊息…",
+  "sesMessagesError": "無法載入訊息",
+  "sesMessagesRetry": "重試",
+  "sesNoMessages": "對話沒有訊息",
+  "sesMetricMessages": "訊息",
+  "sesMetricToolCalls": "工具呼叫",
+  "sesMetricTokens": "Token",
+  "sesMetricTokensIn": "輸入 Token",
+  "sesMetricTokensOut": "輸出 Token",
+  "sesMetricDuration": "持續時間",
+  "sesMetricApiCalls": "API 呼叫",
+  "sesMetricCost": "費用",
+  "sesMetricCostEst": "估算費用",
+  "sesCtxId": "ID",
+  "sesCtxBranchedFrom": "分支來源",
+  "sesCtxModel": "模型",
+  "sesCtxSource": "來源",
+  "sesCtxInstance": "實例",
+  "sesCtxCreated": "建立時間",
+  "sesCtxLastActivity": "最後活動時間",
+  "sesCtxClosed": "已關閉",
+  "sesCtxCloseReason": "關閉原因",
+  "sesCtxSystemPrompt": "系統提示",
+  "sesCtxSystemPromptDefined": "在伺服器上定義",
+  "sesCtxSystemPromptNone": "無",
+  "sesCtxCacheTokens": "快取 Token（讀取）",
+  "sesCtxReasoningTokens": "推理 Token",
+  "sesCtxDisclaimer": "資料由 Gateway 透過 GET /api/sessions/‹id› 回報。長按標記的數值即可複製。",
+  "sesRoleYou": "你",
+  "sesRoleAgent": "代理程式",
+  "sesRoleTool": "工具",
+  "sesCopySessionLabel": "工作階段：{title}",
+  "@sesCopySessionLabel": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "sesCopyStateLabel": "狀態：{state}",
+  "@sesCopyStateLabel": {
+    "placeholders": {
+      "state": {
+        "type": "String"
+      }
+    }
+  },
+  "sesCopyInstanceLabel": "實例：{instance}",
+  "@sesCopyInstanceLabel": {
+    "placeholders": {
+      "instance": {
+        "type": "String"
+      }
+    }
+  },
+  "sesCopyModelLabel": "模型：{model}",
+  "@sesCopyModelLabel": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "sesCopyMessagesLabel": "訊息：{count}",
+  "@sesCopyMessagesLabel": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sesCopyDurationLabel": "持續時間：{duration}",
+  "@sesCopyDurationLabel": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "sesCopyLastMessageLabel": "最後訊息：{preview}",
+  "@sesCopyLastMessageLabel": {
+    "placeholders": {
+      "preview": {
+        "type": "String"
+      }
+    }
+  },
+  "sesDateToday": "今天",
+  "sesDateYesterday": "昨天",
+  "sesDateLast7": "最近 7 天",
+  "sesDateOlder": "更早",
+  "sesPinned": "已置頂",
+  "sesClearViewNote": "只會清除檢視內容；不會刪除伺服器上的資料",
+  "slScreenTitle": "對話",
+  "slFilterAll": "聊天",
+  "slFilterAutomation": "自動化",
+  "slFilterEverything": "全部",
+  "slFilterReports": "Cron 結果",
+  "slFilterActive": "啟用中",
+  "slFilterCompleted": "已完成",
+  "slFilterArchived": "封存",
+  "slReportBadge": "報告",
+  "slDraftBadge": "草稿",
+  "slRelativeNow": "現在",
+  "slRelativeMinutes": "{count}分鐘前",
+  "@slRelativeMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "slRelativeHours": "{count}小時前",
+  "@slRelativeHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "slRelativeDays": "{count}日前",
+  "@slRelativeDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "slSearchHint": "搜尋對話…",
+  "slClearSearch": "清除搜尋",
+  "slRunningBadge": "執行中",
+  "slSearchLoadedOnly": "只搜尋已載入的對話",
+  "slLibraryLimited": "伺服器提供的清單有限，部分對話可能會遺漏",
+  "slNewSession": "新工作階段",
+  "slMoreOptions": "更多選項",
+  "slMenuRefresh": "重新整理",
+  "slMenuCleanOld": "清理舊工作階段",
+  "slMenuTooltip": "選單",
+  "slLoading": "載入中…",
+  "slNoSessions": "沒有工作階段",
+  "slLoadError": "無法載入工作階段",
+  "slRetry": "重試",
+  "slEmptyFilter": "沒有符合此篩選條件的結果",
+  "slDeleteTitle": "刪除工作階段",
+  "slDeleteContent": "要從伺服器刪除「{title}」嗎？",
+  "@slDeleteContent": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "slCancel": "取消",
+  "slDeleteFailed": "無法刪除工作階段：{error}",
+  "@slDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "slDeletingProgress": "正在刪除{done}/{total}…",
+  "@slDeletingProgress": {
+    "placeholders": {
+      "done": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "slSomeDeleteFailed": "部分項目無法刪除",
+  "slSomeDeleteFailedDetail": "要在本機隱藏刪除失敗的項目嗎？",
+  "slNo": "否",
+  "slHide": "隱藏",
+  "slRenameTitle": "重新命名對話",
+  "slRenameSave": "儲存",
+  "slRenameLabel": "名稱",
+  "slRenameEmpty": "名稱不能為空白",
+  "slRenamed": "對話已重新命名",
+  "slRestored": "對話已還原",
+  "slArchived": "對話已封存",
+  "slRestoredLocalOnly": "只在此裝置上還原；伺服器無法同步封存狀態",
+  "slArchivedLocalOnly": "只在此裝置上封存；伺服器無法同步封存狀態",
+  "slArchiveSyncFailed": "無法在伺服器確認封存狀態；已還原先前狀態",
+  "slNoOldTitle": "沒有舊對話",
+  "slNoOldSubtitle": "沒有過時或非活躍的未封存對話。",
+  "slDeleteCount": "在伺服器刪除 {count}",
+  "@slDeleteCount": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "slDeleteCountSubtitle": "永久刪除。失敗的項目可以隱藏。",
+  "slHideAll": "在本機隱藏全部（{count}）",
+  "@slHideAll": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "slHideAllSubtitle": "清理檢視畫面，不會影響伺服器。",
+  "slRestoreHidden": "還原已隱藏項目（{count}）",
+  "@slRestoreHidden": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "slMenuPin": "置頂",
+  "slMenuUnpin": "取消置頂",
+  "slMenuArchive": "封存",
+  "slMenuUnarchive": "取消封存",
+  "slMenuRename": "更改標題",
+  "slMenuDetails": "對話詳情",
+  "slMenuHide": "在本機隱藏",
+  "slMenuShow": "顯示（停止隱藏）",
+  "slMenuDelete": "刪除工作階段",
+  "slMenuCopyId": "複製 ID",
+  "slSwipeManage": "管理",
+  "slIdCopied": "ID 已複製到剪貼簿",
+  "slLastActivity": "最後活動 {time}",
+  "@slLastActivity": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "slPinned": "已釘選",
+  "slArchiveLabel": "已封存",
+  "slHiddenLabel": "已隱藏",
+  "slMsgCount": "{count} 則訊息",
+  "@slMsgCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "slDeleteConfirm": "刪除",
+  "slDismissed": "工作階段已刪除",
+  "slOfferHideContent": "伺服器沒有刪除對話。對話可能仍在使用中或已重新建立；你可以在本機隱藏它。",
+  "slHideAction": "隱藏",
+  "slCleanupTitle": "清理舊工作階段",
+  "slDeleteStrongTitle": "刪除 {count} 個工作階段",
+  "@slDeleteStrongTitle": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "slDeleteStrongMessage": "將嘗試從伺服器刪除 {count} 個舊工作階段。此操作無法復原。",
+  "@slDeleteStrongMessage": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "slDeleteHiddenTitle": "刪除已隱藏工作階段",
+  "slDeleteHiddenMessage": "將嘗試從伺服器刪除你在本機隱藏的工作階段。",
+  "slDeletedSome": "已刪除 {count} 個工作階段。",
+  "@slDeletedSome": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "slSomeDeleteFailedContent": "伺服器不允許刪除 {failed} 個工作階段（可能仍在使用中、受保護或已不存在）。已刪除：{deleted}。",
+  "@slSomeDeleteFailedContent": {
+    "placeholders": {
+      "failed": {
+        "type": "int"
+      },
+      "deleted": {
+        "type": "int"
+      }
+    }
+  },
+  "slEmptySearchTitle": "沒有結果",
+  "slEmptySearchSubtitle": "嘗試使用其他關鍵字",
+  "slEmptyArchivedTitle": "沒有封存項目",
+  "slEmptyArchivedSubtitle": "你封存的工作階段會顯示在這裡",
+  "slEmptyTitle": "沒有對話",
+  "slEmptySubtitle": "按「+」按鈕開始新的工作階段",
+  "slEmptyCronResultsTitle": "沒有 Cron 結果",
+  "slEmptyCronResultsSubtitle": "排程工作執行後，其結果會顯示在這裡。",
+  "slEmptyAutomationTitle": "沒有自動化工作階段",
+  "slEmptyAutomationSubtitle": "Cron、工具、API、ACP、流程、委派及 Webhook 會顯示在這裡。",
+  "slToggleChildrenOn": "顯示全部（包括子工作階段）",
+  "slToggleChildrenOff": "一般檢視（僅限主要工作階段）",
+  "slToggleChildrenShow": "顯示子工作階段",
+  "slToggleChildrenHide": "隱藏子工作階段",
+  "slConnectionError": "連線錯誤",
+  "slNoGateway": "沒有 Gateway 連線",
+  "slGatewayHelp": "請確認你的 Hermes 伺服器正在執行。",
+  "slNoTitle": "未命名",
+  "slashDescHelp": "顯示可用指令",
+  "slashDescModel": "變更目前使用的模型（或開啟選擇器）",
+  "slashDescNew": "開始新的對話",
+  "slashDescClear": "開始新的對話（清除對話）",
+  "slashArgCompress": "[可選主題]",
+  "slashDescCompress": "壓縮此對話的內容",
+  "chaCommandAttachmentsUnsupported": "執行指令前移除附件。",
+  "chaCommandUnknown": "伺服器上無法使用指令 /{name}。",
+  "@chaCommandUnknown": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaCompactUnavailable": "/compact 並非 Hermes Desktop 指令。請使用 /compress 壓縮此對話的內容。",
+  "chaCommandFailed": "Hermes 無法執行該指令。",
+  "chaCommandAccepted": "指令 {command} 已接受。",
+  "@chaCommandAccepted": {
+    "placeholders": {
+      "command": {
+        "type": "String"
+      }
+    }
+  },
+  "chaCompressionAccepted": "Hermes 已接受壓縮請求。新的內容準備就緒後，對話將會重新整理。",
+  "chaCompressionProgress": "正在最佳化對話……",
+  "chaCompressionSuccess": "內容已壓縮：{beforeMessages} → {afterMessages} 則訊息 · ~{beforeTokens} → ~{afterTokens} 個代幣",
+  "@chaCompressionSuccess": {
+    "placeholders": {
+      "beforeMessages": {
+        "type": "int"
+      },
+      "afterMessages": {
+        "type": "int"
+      },
+      "beforeTokens": {
+        "type": "String"
+      },
+      "afterTokens": {
+        "type": "String"
+      }
+    }
+  },
+  "chaCompressionNoop": "無需壓縮：{messages} 則訊息 · ~{tokens} 個代幣",
+  "@chaCompressionNoop": {
+    "placeholders": {
+      "messages": {
+        "type": "int"
+      },
+      "tokens": {
+        "type": "String"
+      }
+    }
+  },
+  "chaCompressionBusy": "Hermes 仍在處理中。請等待處理完成，或先停止回合再進行壓縮。",
+  "chaCompressionNoRuntime": "此聊天尚未有可供壓縮的有效工作階段。",
+  "chaCompressionUnsupported": "此伺服器不支援手動壓縮。請更新 Hermes Agent。",
+  "chaCompressionBackendFailed": "Hermes 無法產生摘要。請檢查供應商、模型，以及壓縮後端是否可連線。",
+  "chaCompressionUnknown": "無法確認壓縮是否完成。請重新開啟聊天後再試。",
+  "slashDescModels": "管理模型及供應商",
+  "slashDescSkills": "開啟代理程式技能",
+  "slashDescMemory": "開啟記憶",
+  "slashDescSoul": "開啟 SOUL（個性）",
+  "slashDescKanban": "開啟任務看板",
+  "slashDescActivity": "開啟活動及記錄",
+  "prfScreenTitle": "設定檔",
+  "prfReload": "重新載入",
+  "prfNewProfile": "新增設定檔",
+  "prfActivatedDefault": "預設設定檔已啟用",
+  "prfActivated": "設定檔「{name}」已啟用 · 模型及技能現正使用此設定檔",
+  "@prfActivated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfModelApplied": "已將設定檔模型套用至聊天：{model}",
+  "@prfModelApplied": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "prfModelApplyFailed": "設定檔已啟用，但無法將其模型套用至聊天",
+  "prfRenameDialogTitle": "重新命名設定檔",
+  "prfDeleteVerifyReason": "確認刪除設定檔",
+  "prfDeleteTitle": "刪除設定檔",
+  "prfDeleteContent": "設定檔「{name}」及其整個主目錄（設定、SOUL、技能、工作階段）將會刪除。此操作無法復原。",
+  "@prfDeleteContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfCancel": "取消",
+  "prfDeleteConfirm": "刪除",
+  "prfRenamedTo": "已重新命名為「{name}」",
+  "@prfRenamedTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfRenameError": "無法重新命名：{error}",
+  "@prfRenameError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfDeleted": "設定檔「{name}」已刪除",
+  "@prfDeleted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfDeleteError": "無法刪除：{error}",
+  "@prfDeleteError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfCreatedActive": "設定檔「{name}」已建立並設為使用中",
+  "@prfCreatedActive": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfCreateError": "無法建立設定檔：{error}",
+  "@prfCreateError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfLoadErrorVersion": "此版本的 Hermes 尚未提供設定檔功能。請更新伺服器。",
+  "prfLoadError": "無法載入設定檔：{error}",
+  "@prfLoadError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfUseAsActive": "設為使用中",
+  "prfInUse": "使用中",
+  "prfRenameTooltip": "重新命名",
+  "prfEditBotTooltip": "編輯機械人身份",
+  "prfDeleteTooltip": "刪除",
+  "prfDeleteDisabledTooltip": "無法刪除預設設定檔",
+  "prfSkillCount": "{count} 技能",
+  "@prfSkillCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "prfNameLabel": "設定檔名稱",
+  "prfNameHint": "research-bot",
+  "prfSave": "儲存",
+  "prfNameFormatHint": "只可使用小寫字母、數字、連字符及底線。",
+  "prfNameExists": "此名稱的設定檔已存在",
+  "prfNameInvalid": "名稱無效",
+  "prfNameTaken": "已存在",
+  "prfBuilderTitle": "新增設定檔",
+  "prfCreatingMsg": "正在建立設定檔…",
+  "prfWritingSoulMsg": "正在寫入 SOUL…",
+  "prfAssigningModelMsg": "正在指派模型…",
+  "prfSoulWarning": "設定檔已建立，但未能儲存 SOUL：{error}",
+  "@prfSoulWarning": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfModelWarning": "設定檔已建立，但未能指派模型：{error}",
+  "@prfModelWarning": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfApplyModelTitle": "將模型套用至執行中的代理程式",
+  "prfApplyModelContent": "指派「{model}」會變更執行中代理程式的模型（單一 Gateway），而不只是變更此設定檔。否則，設定檔會繼承基本模型建立，不會作出任何變更。",
+  "@prfApplyModelContent": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "prfSkipModel": "只建立設定檔",
+  "prfApplyModel": "仍然套用",
+  "prfStep1Title": "身份",
+  "prfStep1Subtitle": "名稱、描述及初始個性",
+  "prfNameLabelRequired": "設定檔名稱 *",
+  "prfDescLabel": "描述（可選）",
+  "prfDescHint": "具備網絡及視覺功能的研究代理程式",
+  "prfSoulTitle": "初始個性（SOUL）",
+  "prfSoulSubtitle": "選擇起點。你稍後可以在 SOUL 中進一步調整。",
+  "prfSoulLabel": "SOUL.md（可選）",
+  "prfSoulHint": "# 身份",
+  "prfStep2Title": "主要模型",
+  "prfStep2Subtitle": "此設定檔預設使用的模型",
+  "prfInheritBase": "繼承基本設定檔",
+  "prfInheritFromClone": "使用「{name}」中的模型",
+  "@prfInheritFromClone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfInheritDefault": "使用代理程式的預設模型",
+  "prfRemoveModelTooltip": "移除（還原為繼承）",
+  "prfChangeModel": "更改模型",
+  "prfChooseModel": "選擇特定模型",
+  "prfStep3Title": "起始點",
+  "prfStep3Subtitle": "從另一個設定檔繼承技能、金鑰及設定",
+  "prfCloneToggle": "從現有設定檔複製",
+  "prfCloneToggleDesc": "從基礎設定檔繼承技能及設定。",
+  "prfCloneFrom": "複製自：",
+  "prfNoCloneInfo": "不進行複製：設定檔會以全新狀態開始（沒有技能或金鑰）。你需要從頭進行設定。",
+  "prfStep4Title": "摘要",
+  "prfStep4Subtitle": "檢視並建立設定檔",
+  "prfSummaryName": "名稱",
+  "prfSummaryDesc": "描述",
+  "prfSummaryModel": "模型",
+  "prfSummaryBase": "基礎設定檔",
+  "prfSummarySoul": "SOUL",
+  "prfSummaryInheritModel": "從基礎設定檔繼承",
+  "prfSummaryCloneFrom": "複製自「{name}」",
+  "@prfSummaryCloneFrom": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "prfSummaryCleanBase": "全新（不進行複製）",
+  "prfSummarySoulEmpty": "已繼承／空白",
+  "prfSummarySoulContent": "{count} 個字元（{preset}）",
+  "@prfSummarySoulContent": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "preset": {
+        "type": "String"
+      }
+    }
+  },
+  "prfSummaryWithModel": "Hermes 會透過其以設定檔為範圍的 Gateway 合約，一併建立此設定檔、SOUL 及模型。其他設定檔及正在使用的預設模型不會變更。",
+  "prfSummaryNoModel": "Hermes 會透過其以設定檔為範圍的 Gateway 合約建立此設定檔。此設定檔會繼承所選的基礎設定檔，而不會變更其他設定檔。",
+  "prfBack": "返回",
+  "prfCreate": "建立設定檔",
+  "prfNext": "下一步",
+  "prfModelsLoadError": "無法載入模型：{error}",
+  "@prfModelsLoadError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "prfConnectedOnly": "僅限已連線",
+  "prfNotConnected": "未連線",
+  "prfConnectInModels": "請在「模型」中連線，以查看其模型。",
+  "prfRetry": "重試",
+  "prfLoadErrorToken": "Dashboard 需要權杖。請在實例設定中進行設定（連接埠 9119）。",
+  "prfNameRequired": "輸入名稱",
+  "prfNamePatternError": "只可使用小寫字母、數字、_ 和 -（最多 64 個字元，必須以字母或數字開頭）",
+  "prfPickerTitle": "選擇模型",
+  "prfNoModelsHint": "沒有可用模型。在「模型」中連線供應商（使用金鑰或登入），或停用「僅限已連線」以查看所有供應商。",
+  "prfPresetInherit": "沿用基礎設定",
+  "prfPresetTechnical": "技術助理",
+  "prfPresetHomelab": "家用實驗室操作員",
+  "prfPresetMinimal": "極簡主義",
+  "wlcScreenTitle": "設定 Hermes Console",
+  "wlcSubtitle": "首先告訴我們你的 Hermes 在哪裡運行。我們會逐步引導你完成設定。",
+  "wlcLocalTitle": "在此手機上使用 Hermes",
+  "wlcLocalBody": "在你自己的 Android 上安裝並執行 Hermes 代理程式，並從 Console 控制。無需外部伺服器。",
+  "wlcLocalCta": "設定本機代理程式",
+  "wlcRemoteTitle": "連線至 Hermes 伺服器",
+  "wlcRemoteBody": "將此手機連線至伺服器、電腦或 VPS。如果你尚未使用 Hermes，或不知道如何取得 QR，我們會提供協助。",
+  "wlcRemoteCta": "開始引導連線",
+  "wlcInstalledTitle": "本機代理程式已安裝",
+  "wlcInstalledBody": "你已在此裝置上擁有本機 Hermes。",
+  "wlcConnectLabel": "連線至代理程式",
+  "wlcUninstallLabel": "解除安裝本機代理程式",
+  "wlcSkipLater": "稍後設定",
+  "lasScreenTitle": "本機代理程式",
+  "lasRecheck": "重新檢查",
+  "lasManualPairing": "手動連線…",
+  "lasConnectionLabel": "Hermes 本機版",
+  "lasNoStoreTitle": "無法開啟商店",
+  "lasNoStoreBody": "從 F-Droid 安裝輔助元件，然後返回 Hermes 以繼續。",
+  "lasClose": "關閉",
+  "lasCardTitle": "本機代理程式",
+  "lasCardSubtitle": "完整 Hermes 代理程式，整合於 Hermes Console 並可由其控制。",
+  "lasRuntimeDetected": "已在此裝置偵測到本機執行環境。",
+  "lasRuntimeMissing": "尚未安裝本機執行環境。",
+  "lasAgentDetected": "已在 localhost 偵測到代理程式。",
+  "lasConnecting": "正在連線…",
+  "lasConnect": "連線並進入",
+  "lasNeedRuntimeBody": "如要執行可控制的代理程式，你需要執行環境主機。應用程式會自動安裝及管理本機執行環境。",
+  "lasInstallRuntime": "安裝本機執行環境",
+  "lasAfterInstall": "安裝後返回，然後按下重新檢查（↻）。",
+  "lasInstallAgentBody": "安裝具備即時追蹤功能的 Hermes 代理程式：應用程式會顯示每個步驟，完成後自動連線。",
+  "lasInstallAgent": "安裝代理程式",
+  "lasStartFirstBody": "已在 Termux 安裝 Hermes？啟動 Hermes 並直接連線。如為首次使用，請安裝代理程式。",
+  "lasStartInstalledBody": "此裝置已安裝 Hermes，但代理程式已停止。啟動代理程式並連線。",
+  "lasChecking": "正在檢查是否已安裝代理程式…",
+  "lasInstalling": "正在安裝。你可以返回查看進度。",
+  "lasViewProgress": "查看安裝進度",
+  "lasStartConnect": "開始並連線",
+  "lasStarting": "正在啟動代理程式…",
+  "lasStartingHint": "正在啟動代理程式；可能需要幾秒鐘…",
+  "lasStartFailed": "代理程式沒有回應。如果尚未安裝，請點按「安裝代理程式」。",
+  "lasUninstall": "解除安裝本機整合功能",
+  "lunScreenTitle": "解除安裝本機代理程式",
+  "lunConfirmTitle": "要解除安裝本機代理程式嗎？",
+  "lunConfirmSubtitle": "將移除以下項目：",
+  "lunItem1": "~/.hermes/ — 代理程式、venv 及資料",
+  "lunItem2": "~/.hermes-install/ — 暫存安裝程式檔案",
+  "lunItem3": "本機執行環境 PATH 中的 hermes（如有）",
+  "lunItem4": "正在執行的代理程式程序（gateway :8642、dashboard :9119）",
+  "lunItem5": "此應用程式中的「Hermes local」設定檔",
+  "lunWarning": "此操作無法復原。你可以隨時重新安裝。",
+  "lunDeleteModelsTitle": "同時刪除 Ollama 模型",
+  "lunDeleteModelsSubtitle": "釋放磁碟空間（數 GB）。關閉此選項即可保留模型，無需在重新安裝時重新下載。",
+  "lunDoUninstall": "立即解除安裝",
+  "lunCancel": "取消",
+  "lunCancelProcess": "取消解除安裝",
+  "lunStage1": "正在停止程序",
+  "lunStage2": "正在刪除檔案",
+  "lunStage3": "正在驗證",
+  "lunStage4": "完成",
+  "lunStageCount": "第 {current} 階段，共 {total} 個階段",
+  "@lunStageCount": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "lunDoneTitle": "本機代理程式已移除",
+  "lunDoneBody": "Hermes 已成功解除安裝。沒有遺留檔案。",
+  "lunGoHome": "返回首頁",
+  "lunPartialTitle": "部分項目無法移除",
+  "lunPartialBody": "你可以在背景重試自動清理。如果問題持續，請重新安裝本機整合，然後再次解除安裝。",
+  "lunRetry": "重試清理",
+  "lunBack": "返回",
+  "lunCanceledTitle": "已取消解除安裝",
+  "lunCanceledBody": "代理程式未被解除安裝。你可以隨時再試。",
+  "lunTerminalLabel": "指令碼輸出",
+  "lunTerminalWaiting": "· 正在等待指令碼輸出 ·",
+  "lunLaunchError": "無法啟動解除安裝程式。請確認已安裝 Termux，並已啟用「allow-external-apps」。",
+  "lunTimeoutWarning": "沒有收到本機執行環境的回應。應用程式將重試讀取進度。",
+  "lisStage0": "正在準備 Termux",
+  "lisStage1": "正在下載安裝程式",
+  "lisStage2": "正在安裝相依套件",
+  "lisStage3": "正在複製代理程式",
+  "lisStage4": "正在安裝 Python",
+  "lisStage5": "工具 (npm)",
+  "lisStage6": "正在設定",
+  "lisStage7": "完成！",
+  "lisIncompatCpu": "你的處理器為 32 位元（{abis}）。Hermes 代理程式需要 64 位元（arm64）才能運作。此裝置無法執行。",
+  "lisBlockDisk": "你需要約 3 GB 可用空間才能安裝代理程式；目前尚餘 {freeGb} GB。請釋放空間後重試。",
+  "lisBlockNet": "無法連線至安裝程式。請檢查網絡連線後重試。",
+  "lisWarningRam": "你的裝置有約 {ramGb} GB 記憶體；代理程式可能會面臨記憶體不足。",
+  "lisBootstrapSnack": "正在設定靜音模式（僅首次需要）…",
+  "lisErrTimeout": "安裝耗時過長。Termux 可能出現網絡問題：取消後從應用程式重試。",
+  "lisErrDisk": "裝置沒有足夠空間。釋放儲存空間後重試。",
+  "lisErrNoConn": "沒有連線。檢查你的互聯網連線後重試。",
+  "lisErrPackages": "Termux 套件版本不同步。從應用程式重試安裝，以更新環境。",
+  "lisErrRust": "Termux 缺少 Rust。從應用程式重試安裝，以安裝基本相依套件。",
+  "lisErrPermission": "Termux 權限被拒絕。檢查其儲存空間權限。",
+  "lisErrFailed": "安裝失敗（代碼 {code}）。檢查記錄後重試。",
+  "lisNetWarning": "Termux 無法驗證網絡。如果卡住，取消後從應用程式重試。",
+  "lisStallCompiling": "正在編譯原生相依套件（pip/Rust）。可能需數分鐘且期間沒有輸出。請保持應用程式開啟。",
+  "lisStallWaiting": "{secs} 秒內沒有輸出。安裝可能正在等待套件網絡回應。請稍候或重試。",
+  "lisFallbackTitle": "安裝需時較長",
+  "lisFallbackBody": "安裝沒有顯示進度。下載可能較慢，或環境正忙碌。你可以繼續等待，或重新開始。",
+  "lisFallbackWait": "繼續等待",
+  "lisFallbackRetry": "重試",
+  "lisSimTitle": "模擬安裝（偵錯）",
+  "lisSimSuccess": "完成並成功",
+  "lisSimInstalled": "已安裝，尚未啟動",
+  "lisSimNetwork": "網絡錯誤",
+  "lisSimPackages": "套件損壞",
+  "lisChecking": "正在檢查 CPU、空間及網絡…",
+  "lisBlockTitle": "暫時無法開始",
+  "lisRetry": "重試",
+  "lisBack": "返回",
+  "lisAppBarTitle": "正在安裝本機代理程式",
+  "lisRepairTitle": "正在修復本機代理程式",
+  "lisAutoRecovering": "Termux 已中斷；正在自動繼續安裝（{attempt}/{max}）…",
+  "@lisAutoRecovering": {
+    "placeholders": {
+      "attempt": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "lisCopyLogTooltip": "複製日誌",
+  "lisLogCopied": "日誌已複製到剪貼簿",
+  "lisStatusReady": "本機代理程式已就緒",
+  "lisStatusInstalled": "代理程式已安裝",
+  "lisStatusFailed": "安裝失敗",
+  "lisStatusCanceled": "安裝已取消",
+  "lisStatusReadyDesc": "Hermes 正在此裝置上執行（localhost:8642）。",
+  "lisStatusInstalledDesc": "已安裝到此裝置，但仍需啟動（localhost:8642）。",
+  "lisStatusFailedCode": "代碼 {code}。請查看日誌。",
+  "lisStatusCanceledDesc": "你已取消操作。你可以隨時重試。",
+  "lisStatusStage": "第 {current}/{total} 個階段",
+  "lisConnecting": "正在連線…",
+  "lisConnectEnter": "連線並輸入",
+  "lisStarting": "正在啟動…",
+  "lisStartingDesc": "正在啟動代理程式…正在等待其在 localhost 上回應。",
+  "lisLaunchEnter": "啟動代理程式並輸入",
+  "lisModelLaterHint": "然後在設定 → 模型中選擇模型（本機或網絡）。",
+  "lisCopyLog": "複製日誌",
+  "lisBootstrapping": "正在啟用背景模式…（僅限首次）",
+  "lisBackgroundOk": "你可以轉到背景；安裝會繼續。",
+  "lisPrepBackground": "正在準備背景執行…",
+  "lisCanceling": "正在取消…",
+  "lisCancelInstall": "取消安裝",
+  "lisTerminalWaiting": "· 正等待安裝程式輸出 ·",
+  "lisIncompatTitle": "不兼容的裝置",
+  "lisIncompatOk": "明白",
+  "lisSuccessBannerMsg": "智能代理已安裝。設定本機模型或直接啟動。",
+  "lisInstalledTitle": "智能代理已安裝",
+  "lisInstalledDesc": "啟動後前往設定 → 模型：下載本機模型（Ollama），或連接 API/OAuth。",
+  "apiKeyHelpLinkLabel": "這個金鑰從何而來？",
+  "actLinesCopied": "已複製 {count} 行",
+  "@actLinesCopied": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "localModelsSizeUnknown": "大小？",
+  "onbHeroTitle": "Hermes 主控台",
+  "onbHeroSubtitle": "你的自託管 Hermes 智能代理，隨身使用。",
+  "onbControlTitle": "控制你的智能代理",
+  "onbControlSubtitle": "即時聊天、工作階段、技能、模型、Cron 及設定檔。全部集中於簡潔的主控台。",
+  "onbProfilesTitle": "為你度身訂造的設定檔",
+  "onbProfilesSubtitle": "建立具備獨立模型、SOUL 及技能的隔離設定檔。一按即可切換個性。",
+  "onbPrivateTitle": "以私隱為本",
+  "onbPrivateSubtitle": "Tailscale 優先、PIN 或生物識別鎖定，且不受 XPeta Lab 追蹤。你的金鑰永不離開裝置。",
+  "setStatusRunning": "執行中",
+  "setStatusStopped": "已停止",
+  "setStatusUpToDate": "已是最新版本",
+  "setConfigOutdated": "v{current} · v{latest} 可用",
+  "@setConfigOutdated": {
+    "placeholders": {
+      "current": {
+        "type": "String"
+      },
+      "latest": {
+        "type": "String"
+      }
+    }
+  },
+  "setVersionBehind": "v{version} · 落後 {commits} 次提交{method}",
+  "@setVersionBehind": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "commits": {
+        "type": "int"
+      },
+      "method": {
+        "type": "String"
+      }
+    }
+  },
+  "setVersionCurrent": "v{version} · 已是最新版本",
+  "@setVersionCurrent": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "setUpdateCheckFailed": "v{version} · 無法驗證最新版本",
+  "@setUpdateCheckFailed": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "setUpdateExternal": "v{version} · 在應用程式外管理（{method}）",
+  "@setUpdateExternal": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "method": {
+        "type": "String"
+      }
+    }
+  },
+  "setUpdateExternalMethod": "外部安裝",
+  "setUpdateCommand": "在伺服器上執行：{command}",
+  "@setUpdateCommand": {
+    "placeholders": {
+      "command": {
+        "type": "String"
+      }
+    }
+  },
+  "sshAuthMethodLabel": "驗證：{method}",
+  "@sshAuthMethodLabel": {
+    "placeholders": {
+      "method": {
+        "type": "String"
+      }
+    }
+  },
+  "provNoServerCreds": "Provider 憑證（OpenRouter、OpenAI、Anthropic…）已在伺服器端的 Hermes Gateway 中設定。此應用程式只會在 Android Keystore 中，按實例儲存連線 API 金鑰。",
+  "ollamaNotActive": "Ollama 未在 :11434 上啟動 — 請從控制畫面啟動",
+  "ieDiagSection": "診斷",
+  "ieConnectionCheckTitle": "連線狀態",
+  "ieConnectionCheckAction": "檢查連線",
+  "ieConnectionCheckSubtitle": "檢查聊天、管理功能及流動連結是否有回應。",
+  "ieConnectionCheckSaved": "已有上次檢查結果。開啟以重新整理結果。",
+  "ieConnectionCheckRunning": "正在檢查 Gateway、Dashboard 及 Mobile Bridge…",
+  "ieConnectionCheckReadySummary": "三項服務均正常回應。",
+  "ieConnectionCheckOfflineSummary": "一項或多項服務未能從此網絡回應。",
+  "ieConnectionCheckIssuesSummary": "實例有回應，但部分存取權限或功能需要檢查。",
+  "ieConnectionCheckPartialSummary": "檢查未完成。開啟以檢查全部三項服務。",
+  "ieConnectionCheckNow": "檢查連線",
+  "ieConnectionCheckAgain": "再次檢查",
+  "ieConnectionServices": "服務",
+  "ieConnectionRecommendations": "需要檢查的項目",
+  "ieAdvancedSection": "進階",
+  "ieTechnicalDetails": "技術詳細資料",
+  "ieTechnicalDetailsSubtitle": "端點、功能及各項服務測試",
+  "ieConnectionCheckingTitle": "正在檢查實例",
+  "ieConnectionCheckingService": "正在檢查{service}…",
+  "@ieConnectionCheckingService": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "ieConnectionReadyTitle": "一切準備就緒",
+  "ieConnectionOfflineTitle": "連線未完成",
+  "ieConnectionIssuesTitle": "需要檢閱",
+  "ieConnectionPartialTitle": "檢查未完成",
+  "ieConnectionUncheckedTitle": "尚未檢查",
+  "ieConnectionSavedTitle": "先前結果",
+  "ieConnectionSavedSummary": "點按「檢查連線」以重新整理三項服務的狀態。",
+  "ieServiceReady": "可用",
+  "ieServiceAttention": "待檢閱",
+  "ieServiceOffline": "無回應",
+  "ieServiceUncheckedNote": "尚未測試",
+  "ieServiceChecks": "{passed} 項檢查通過（共 {total} 項）",
+  "@ieServiceChecks": {
+    "placeholders": {
+      "passed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "ieNewInstanceTitle": "新增實例",
+  "ieExternalLinkBanner": "資料已從外部連結預先填寫 — 儲存前請確認伺服器 URL 屬於你。",
+  "ieSectionGeneral": "一般",
+  "ieSectionGateway": "Gateway",
+  "ieSectionBridge": "流動 Bridge",
+  "ieBridgeQrHint": "設定 QR 會自動填入此權杖。如果你是手動設定 Bridge，也可以在此貼上。",
+  "ieBridgeTokenEmpty": "Bridge 權杖（留空 = 不變更）",
+  "ieBridgeUrlEmptyHint": "留空即可自動使用 9131 連接埠上的 Gateway 主機。",
+  "ieGatewayUrlHint": "https://your-server:8642 或 http://100.x.y.z:8642（私人網絡）",
+  "ieSectionDashboard": "Dashboard／管理員",
+  "ieDashboardUrlHint": "http://<gateway-host>:9119",
+  "ieSectionType": "類型（圖示）",
+  "ieLocalModeAuto": "建議",
+  "ieLocalModeSimple": "簡易對話",
+  "ieLocalModeAgent": "完整代理",
+  "ieDiagAll": "全部",
+  "ieDashboardConfiguredSave": "Dashboard 已設定。儲存實例以套用設定。",
+  "ieSaving": "儲存中…",
+  "ieSaveInstance": "儲存實例",
+  "ieProbeOnline": "線上",
+  "ieProbeAuth": "驗證",
+  "ieProbeSessions": "工作階段",
+  "ieProbeModels": "模型",
+  "ieProbeModelsProviders": "模型／供應商",
+  "ieProbeMemory": "記憶",
+  "ieCapSessionsRw": "工作階段讀寫",
+  "ieCapSkillsRead": "技能（讀取）",
+  "ieCapMemoryRead": "記憶（讀取）",
+  "ieCapMemoryWrite": "記憶（寫入）",
+  "ieCapModelsWrite": "模型（變更）",
+  "ieCapConfigRead": "設定（讀取）",
+  "diagStatusOk": "正常",
+  "diagStatusAuthInvalid": "驗證無效",
+  "diagStatusAuthRequired": "需要驗證",
+  "diagStatusNotFound": "找不到",
+  "diagStatusReadOnly": "唯讀",
+  "diagStatusRefused": "連線被拒絕",
+  "diagStatusTimeout": "沒有回應",
+  "diagStatusDns": "無法連線至主機",
+  "diagStatusTls": "TLS 無效",
+  "diagStatusHttp": "HTTP 錯誤",
+  "diagStatusError": "錯誤",
+  "diagStatusSkipped": "未檢查",
+  "diagDetailTimeout": "伺服器在逾時前沒有回應。",
+  "diagDetailTls": "TLS 憑證無效。",
+  "diagDetailDns": "無法解析主機名稱。",
+  "diagDetailRefused": "連線被拒絕。請檢查連接埠。",
+  "diagDetailAuth": "請檢查已設定的認證資料。",
+  "diagCopyTitle": "── Hermes 控制台診斷 ──",
+  "diagCopySuggestions": "建議",
+  "ieExternalPairingTitle": "自動設定此實例",
+  "ieExternalPairingBody": "外部連結要求檢查並自動設定 {host}。請確保你認識此伺服器；應用程式隨後會為你解析 Gateway、Dashboard 及橋接。",
+  "@ieExternalPairingBody": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "ieExternalPairingReview": "僅檢視",
+  "ieExternalPairingContinue": "自動繼續",
+  "ieDuplicateTitle": "此實例已設定",
+  "ieDuplicateBody": "你已將「{label}」連線至 {endpoint}。不會建立其他實例，亦不會變更其認證資料。",
+  "@ieDuplicateBody": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "endpoint": {
+        "type": "String"
+      }
+    }
+  },
+  "ieDuplicateOpen": "開啟現有項目",
+  "ieDuplicateUpdate": "更新詳情",
+  "ieDiagLastCheck": "上次檢查：{time}",
+  "@ieDiagLastCheck": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "ieDiagCopyBtn": "複製診斷資料",
+  "ieDiagSrvNote": "是／否 = 已檢查 · ? = 未檢查或需要驗證 · ·srv = 由伺服器宣告",
+  "ieDiagA11yChecking": "診斷狀態：檢查中",
+  "ieDiagA11ySuccess": "診斷狀態：正確",
+  "ieDiagA11yError": "診斷狀態：失敗",
+  "ieDiagA11yOffline": "診斷狀態：離線",
+  "ieDiagA11yUnchecked": "診斷狀態：未檢查",
+  "capYes": "是",
+  "capNo": "否",
+  "lisModelDescLight": "極輕量，回應快速",
+  "lisModelDescMeta1b": "Meta，品質良好",
+  "lisModelDescBalance": "平衡品質與速度",
+  "lisModelDescMeta3b": "Meta，卓越品質",
+  "lisModelDescPowerful": "適用於高效能裝置",
+  "lisModelDescHighQuality": "高品質，需要 8 GB 以上",
+  "lisModelDescCustom": "自訂 Ollama 模型",
+  "lisOllamaDownloadFailed": "無法下載 AI 引擎。請檢查網絡連線。",
+  "lisOllamaStartFailed": "AI 引擎已下載，但啟動失敗。裝置可能沒有足夠的可用 RAM。",
+  "lisOllamaModelFailed": "無法下載「{name}」。請檢查連線。",
+  "@lisOllamaModelFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lisInstallUnexpectedError": "安裝期間發生未預期錯誤。",
+  "lisOauthStarting": "正在開始驗證…",
+  "lisOauthSimulated": "模擬驗證。啟動代理程式並進入。",
+  "lisOauthOpenUrl": "點按以開啟驗證網址。",
+  "lisOauthDoneNoUrl": "驗證完成。啟動代理程式並進入。",
+  "lisOauthDoneWithUrl": "驗證已完成。啟動代理程式並進入。",
+  "lisOauthUrlTimeout": "無法取得驗證網址。請再試一次。",
+  "lisOauthBrowserNote": "此供應商使用瀏覽器驗證（無需 API 金鑰）。點按「驗證」，網址出現後開啟網址登入；然後點按「啟動代理程式並進入」。",
+  "runsRepeat": "再次執行",
+  "runComposerTitle": "新的執行",
+  "runComposerSubtitle": "選擇範本或輸入指示。▷ 會直接啟動。",
+  "runComposerHint": "代理的指示…",
+  "runComposerNote": "代理會在伺服器上執行。如某項操作需要批准，我會在詳情檢視中詢問你。",
+  "runComposerLaunch": "啟動",
+  "runTplNew": "新增範本",
+  "runTplEditTitle": "編輯範本",
+  "runTplNewTitle": "新增範本",
+  "runTplNameLabel": "名稱",
+  "runTplBodyLabel": "指示／骨架",
+  "runTplDelete": "刪除",
+  "runTplSave": "儲存",
+  "runTplSummarizeName": "摘要文字",
+  "runTplSummarizeDesc": "摘要你貼上的內容",
+  "runTplSummarizePrompt": "清晰而簡潔地摘要以下文字：",
+  "runTplFileName": "建立或編輯檔案",
+  "runTplFileDesc": "在伺服器上建立或修改檔案",
+  "runTplFilePrompt": "建立檔案，內容如下：",
+  "runTplSearchName": "搜尋專案",
+  "runTplSearchDesc": "在專案中搜尋文字或符號",
+  "runTplSearchPrompt": "在專案中搜尋你需要的內容，並告訴我它出現在哪些檔案中：",
+  "runTplCommandName": "執行指令",
+  "runTplCommandDesc": "在伺服器上執行 Shell 指令",
+  "runTplCommandPrompt": "執行此指令並顯示輸出：",
+  "runTplExplainName": "解釋程式碼",
+  "runTplExplainDesc": "解釋程式碼片段的作用",
+  "runTplExplainPrompt": "逐步解釋此程式碼的作用：",
+  "runTplStatusName": "項目狀態",
+  "runTplStatusDesc": "要求提供目前狀態摘要",
+  "runTplStatusPrompt": "提供項目目前狀態的摘要：近期變更、待辦工作，以及你發現的任何問題。",
+  "runTplFreeName": "自訂指示",
+  "runTplFreeDesc": "從頭開始",
+  "ollStageChecking": "正在檢查 Ollama…",
+  "ollStageStarting": "正在啟動 Ollama…",
+  "ollStageInstalling": "正在安裝 Ollama…（可能需時數分鐘）",
+  "ollNotInstalled": "此裝置尚未安裝 Ollama",
+  "ollStartError": "無法啟動 Ollama",
+  "ollNotInstalledHint": "你需要先安裝本機代理程式。點按即可在 Termux 下載 Ollama；首次安裝可能需時數分鐘。",
+  "ollInstallNow": "安裝 Ollama",
+  "ollRetry": "重試",
+  "ollInstallFailed": "無法安裝 Ollama。請開啟 Termux 並檢查。",
+  "ollCatalog": "目錄",
+  "ollModelNotLoaded": "模型「{tag}」尚未載入 Ollama。使用前請先下載。",
+  "@ollModelNotLoaded": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "runVarTitle": "填寫欄位",
+  "kanbanColTriage": "分流",
+  "kanbanColTodo": "待辦",
+  "kanbanColScheduled": "已排程",
+  "kanbanColReady": "就緒",
+  "kanbanColRunning": "執行中",
+  "kanbanColBlocked": "受阻",
+  "kanbanColReview": "審核",
+  "kanbanColumnEmpty": "此欄沒有卡片",
+  "kanbanMove": "移動",
+  "kanbanEdit": "編輯",
+  "kanbanSave": "儲存",
+  "kanbanTplBugName": "錯誤",
+  "kanbanTplBugBody": "重現步驟：",
+  "kanbanTplFeatureName": "功能",
+  "kanbanTplFeatureBody": "目標：",
+  "kanbanTplResearchName": "研究",
+  "inAppGo": "前往",
+  "inAppDismiss": "忽略",
+  "licStartTermuxRejected": "無法啟動 Termux。請先開啟一次 Termux，並授予 RUN_COMMAND 權限（allow-external-apps），讓應用程式可以安裝並啟動本機代理程式。",
+  "commonClose": "關閉",
+  "setOpenLocalPanel": "開啟代理程式面板",
+  "setBridgeLocalAutoFresh": "Mobile Bridge 會在此裝置上自動保持最新版本。",
+  "commonCopy": "複製",
+  "qrClipboardInvalid": "剪貼簿不包含有效的配對連結。",
+  "qrGenTitle": "在伺服器上產生 QR 碼",
+  "qrGenBody": "選擇執行 Hermes 的機器所使用的系統，而不是你的手機，然後複製其指令並在該終端機中執行。當出現「SCAN THIS QR WITH HERMES CONSOLE」時，保持 QR 碼顯示，然後返回相機。",
+  "qrCmdCopied": "指令已複製",
+  "qrScanTitle": "掃描連線 QR 碼",
+  "qrTorch": "電筒",
+  "qrAimHint": "將鏡頭對準 Hermes 伺服器終端機中顯示的 QR 碼。",
+  "qrPasteInstead": "改為貼上連結",
+  "qrHowTo": "暫時看不到 QR 碼",
+  "qrCameraError": "無法開啟相機（權限遭拒或無法使用）。",
+  "qrPasteLink": "貼上配對連結",
+  "commonUpdate": "更新",
+  "bridgeOutdated": "橋接版本過舊（v{running} → v{expected}）。更新以取得最新功能。",
+  "bridgeUpdateTitle": "更新橋接",
+  "bridgeUpdateCmdBody": "按照伺服器系統執行指令（此操作會更新並重新啟動橋接），然後點按「驗證」：",
+  "bridgeUpdated": "橋接已更新。",
+  "bridgeUpdateUseManual": "使用手動指令",
+  "bridgeVerifyStillOld": "仍然顯示先前的版本。執行指令後再試。",
+  "bridgeAlreadyRanVerify": "我已經執行 — 驗證",
+  "setUpdatingHermesAuto": "正在自動更新 Hermes…",
+  "bridgeUpdateAvailable": "Mobile 橋接可供更新（{from} → {to}）。",
+  "bridgeUpdating": "正在更新 Mobile 橋接…",
+  "bridgeInstallServerTitle": "在伺服器上安裝",
+  "bridgeInstallBody": "無法自動安裝。請在伺服器終端機執行相應的系統指令一次，然後點按「驗證」：",
+  "bridgeConnected": "Mobile 橋接已連線。",
+  "bridgeNotDetected": "仍未偵測到橋接。執行指令後再試。",
+  "commonResult": "結果",
+  "commonNoOutput": "（沒有輸出）",
+  "instConnLoaded": "連線詳細資料已載入。請檢查並儲存。",
+  "instQrFasterHint": "更快捷：掃描伺服器顯示的 QR，無需輸入 IP 和 token。",
+  "instChatSimpleAuto": "簡易聊天（不使用工具）。推薦用於 OlliteRT 及小型 Ollama 模型。",
+  "instChatSimpleNoTools": "不使用工具。適用於任何小型模型（OlliteRT/Ollama ≤3B）。",
+  "instDashPwBridge": "建立／變更 Dashboard 密碼（透過橋接）",
+  "instDashPwHint": "不知道使用者名稱／密碼？橋接會在伺服器上設定好帳戶資料，無需 SSH。",
+  "commonConnected": "已連線",
+  "commonToken": "權杖",
+  "commonDownloaded": "已下載",
+  "voiceBaseUrl": "基本 URL (/v1)",
+  "voiceFieldVoice": "語音",
+  "voiceFieldModel": "模型",
+  "voiceTokenHint": "Token（可選；本機 Kokoro 留空）",
+  "voiceServerUrl": "伺服器 URL",
+  "voiceTokenServerHint": "已從伺服器貼上",
+  "voiceConnNoResponse": "沒有回應 — 請檢查 URL、Token 或網絡",
+  "voiceDownloadModel": "下載模型",
+  "dashAccessTitle": "Dashboard 存取權",
+  "dashIntro": "設定 Dashboard 登入，無需輸入伺服器。橋接器會在你的 Hermes 上設定密碼，而應用程式會使用該密碼以啟用進階功能（每項功能的模型、每個設定檔的 SOUL、OAuth、設定檔）。",
+  "dashUserHelperDetected": "已在你的伺服器偵測到（無需知道）",
+  "dashUserHelperNew": "尚未有使用者：選擇一個（預設：admin）",
+  "dashPwNew": "新密碼",
+  "dashPwHelperExists": "已有密碼；這會取代原有密碼",
+  "dashPwHelperNew": "尚未設定密碼；建立密碼",
+  "dashPwRepeat": "重複輸入密碼",
+  "dashSetPwRestart": "設定密碼並重新啟動 Dashboard",
+  "dashRestartNote": "Dashboard 將重新啟動數秒，以套用變更。",
+  "dashPwTooShort": "密碼必須至少有 4 個字元。",
+  "dashPwMismatch": "兩次輸入的密碼不一致。",
+  "dashBridgeNeeded": "無法連線至橋接器。你需要安裝 Mobile Bridge，並確保其可連線，才能從這裡設定 Dashboard。",
+  "dashProvisionFailed": "橋接器沒有傳回已佈建的 Token。",
+  "dashSetFailed": "無法設定 Dashboard 登入資料。",
+  "petTapHint": "點擊主面板上的寵物向它打招呼；長按以更換或關閉它。",
+  "petImportHint": "從 Petdex 下載？在此匯入其 ZIP。所有內容均儲存在本機：應用程式不會自行下載或安裝任何內容。",
+  "petGallerySection": "圖庫",
+  "petBrowserHint": "你亦可在瀏覽器中開啟 Petdex，如有需要，手動下載 ZIP，然後返回此處匯入。",
+  "petdexLinkPending": "Petdex 連結待驗證。",
+  "petdexCantOpen": "無法開啟 Petdex。",
+  "petDeleteTitle": "刪除寵物",
+  "petDeleteConfirm": "刪除「{name}」？此操作無法復原。",
+  "petSizeSemantics": "大小 {label}",
+  "petReducedMotion": "動畫效果已關閉：預覽以靜態方式顯示。",
+  "petAnimationSemantics": "動畫 {label}",
+  "petViewPetdex": "檢視 Petdex",
+  "petViewPetdexSubVerified": "在瀏覽器中開啟外部圖庫",
+  "petViewPetdexSubPending": "待驗證",
+  "petExplorePetdex": "探索 Petdex 圖庫",
+  "petExploreSub": "從 Petdex 目錄搜尋並安裝寵物",
+  "petsUnavailable": "目前沒有可用的寵物。",
+  "petdexGalleryTitle": "Petdex 圖庫",
+  "petdexFilterFeatured": "精選",
+  "petdexFilterCharacters": "角色",
+  "petdexFilterCreatures": "生物",
+  "petdexFilterObjects": "物件",
+  "petdexSortAlpha": "排序：A–Z",
+  "petdexSortFeatured": "排序：精選",
+  "petdexSearchHint": "按名稱或作者搜尋…",
+  "petdexNoResults": "沒有結果。",
+  "petdexByAuthor": "作者：{author}",
+  "petdexLoadError": "無法載入 Petdex 目錄。",
+  "petdexInstalled": "已安裝寵物「{name}」。",
+  "petdexInstallFailed": "無法安裝：{msg}",
+  "petdexDownloadFailed": "無法下載：{msg}",
+  "petdexInstallFailedGeneric": "無法安裝寵物。",
+  "petdexInstalling": "安裝中…",
+  "petdexInstallPet": "安裝寵物",
+  "petdexDetailNote": "只會下載寵物的 ZIP 檔案，並在本機驗證（192×208 幾何規格）。作者：{author}。",
+  "commonTesting": "測試中…",
+  "commonLoading": "載入中…",
+  "extTestConnection": "測試連線",
+  "extActiveModel": "目前使用的模型：{model}",
+  "extUrlRequired": "輸入供應商 URL。",
+  "extNoModels": "伺服器已回應，但沒有返回任何模型。",
+  "extBridgeUnavailable": "Bridge 無法使用。",
+  "extApplyRejected": "伺服器拒絕了模型變更。",
+  "extVenvUnavailable": "本機代理程式環境無法使用。請從本機控制面板使用「修復代理程式」。",
+  "extApplyError": "無法套用：{error}",
+  "@extApplyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "extEditTitle": "編輯供應商",
+  "extTitle": "外部供應商",
+  "extReachabilityInfo": "應用程式會從你的手機測試此 URL。Hermes 亦必須透過相同的區域網絡、VPN 或 Tailscale 網絡，從其伺服器連線至供應商。",
+  "extProviderType": "供應商類型",
+  "extBaseUrlHelp": "結尾不要加上 /v1",
+  "extServerName": "伺服器名稱（可選）",
+  "extServerNameHint": "例如 Ollama 家庭區域網絡、LM Studio 本機……",
+  "extApiKeyOptional": "API 金鑰（可選）",
+  "extApiKeyHint": "sk-…（如不需要，請留空）",
+  "extAvailableModels": "可用模型 — 點按即可使用",
+  "extActive": "使用中",
+  "extUse": "使用",
+  "extErrRefused": "連線被拒絕 — 伺服器是否正在該網址執行？",
+  "extErrDns": "無法解析主機。請檢查網址，以及你是否身處同一個區域網絡或 Tailscale 網絡。",
+  "extErrTimeout": "要求逾時 — 伺服器沒有回應。",
+  "extErrTls": "TLS/SSL 錯誤。只可在可信任的私人網絡內使用 HTTP。",
+  "extErrUnauthorized": "HTTP 401 — 請在下方加入所需的 API 金鑰。",
+  "extErrForbidden": "HTTP 403 — 存取被拒。請檢查權限或 API 金鑰。",
+  "extErrServer": "伺服器錯誤（5xx）— 供應商內部發生錯誤。",
+  "voiceSaveTest": "儲存並測試",
+  "chatCopyTrace": "複製追蹤記錄",
+  "chatInstallBridgeModels": "安裝 Mobile Bridge，即可查看所有模型（點按一次，使用一個 Token）",
+  "connectTitle": "連線至你的 Hermes",
+  "connectSimpleQuestion": "你想如何連線？",
+  "connectSimpleIntro": "掃描現有 QR，或使用一個指令準備伺服器。你無需輸入連接埠、實例或模型。",
+  "connectScanQr": "掃描 QR",
+  "connectScanQrBody": "最快的方法：掃描伺服器顯示的 QR — 無需輸入 IP 或 Token。",
+  "connectPrepareServer": "準備伺服器",
+  "connectPrepareServerBody": "選擇其系統、複製一個指令，然後掃描 QR 完成設定。",
+  "connectInstallHelp": "尚未有 Hermes Agent？開啟指南",
+  "connectHaveHermesQuestion": "你已經有 Hermes Agent 嗎？",
+  "connectHaveHermesIntro": "Hermes Agent 必須安裝在伺服器、電腦或 VPS 上。應用程式會直接連線至該裝置。",
+  "connectHaveHermesYes": "是，連線此手機",
+  "connectHaveHermesYesBody": "我們會協助你取得連線代碼，不需要你處理連接埠或金鑰。",
+  "connectHaveHermesNo": "否，教我如何安裝",
+  "connectHaveHermesNoBody": "開啟安裝指南，待 Hermes 執行後返回此處。",
+  "connectReadyQuestion": "已準備好供流動裝置使用嗎？",
+  "connectReadyIntro": "你不需要知道它使用哪些連接埠。選擇「我不確定」，Hermes Console 會為你準備好。",
+  "connectReadyNo": "我不確定 · 準備",
+  "connectReadyNoBody": "複製一段給 Hermes 的訊息，或一項伺服器指令。完成後即可取得連線代碼。",
+  "connectReadyYes": "是 · 顯示我的 QR",
+  "connectReadyYesBody": "執行一項簡短指令，再次顯示 QR，無需重新安裝或變更金鑰。",
+  "connectManualAdvanced": "進階手動設定",
+  "connectGuideOpenFailed": "無法開啟安裝指南。",
+  "connectDiagramServer": "你的伺服器",
+  "connectDiagramCode": "安全代碼",
+  "connectDiagramPhone": "此手機",
+  "connectDiagramSemantics": "你的伺服器會產生安全代碼，然後由此手機掃描。",
+  "connectIntro": "選擇連線至 Hermes 伺服器的方式。",
+  "connectScanQrTitle": "掃描 QR",
+  "connectManualTitle": "手動輸入",
+  "connectManualBody": "輸入 Gateway 的位址及權杖。",
+  "connectAssistTitle": "替我設定",
+  "connectAssistBody": "還沒有 API 或 QR？取得程式碼片段，讓你的代理程式（或你）準備好伺服器，並提供連結。",
+  "setupAssistIntro": "你的 Hermes 尚未公開 API？將這段文字貼到你與它互動的位置（Telegram、TUI、Desktop、CLI），它就會準備好一切並提供連結。或者在伺服器的終端機中執行。",
+  "setupAssistAgentSection": "貼到你的代理程式",
+  "setupAssistAgentHint": "複製並貼到你的 Hermes。它會回覆連線連結。",
+  "setupAssistManualSection": "或者在伺服器上執行",
+  "setupAssistManualHint": "貼到伺服器的終端機中。它會顯示連結（及 QR）。",
+  "setupAssistPasteLabel": "將你取得的連結貼到這裡",
+  "connectDetectedTitle": "偵測到連線連結",
+  "connectDetectedBody": "我們在剪貼簿中找到配對連結。",
+  "connectDetectedUse": "使用此連結",
+  "diagGwRefused": "Gateway 拒絕連線。請檢查 URL 是否指向連接埠 8642，以及防火牆是否允許連線。",
+  "diagGwTimeout": "Gateway 沒有回應。如果你使用 VPN／Tailscale／WireGuard，請確保在測試前已於 Android 上啟用。",
+  "diagGwDns": "無法解析 Gateway 主機。請檢查名稱，或使用 IP（如使用 Tailscale，請檢查 MagicDNS）。",
+  "diagGwTls": "Gateway 的 TLS 憑證無效。如果你使用自簽憑證，可考慮在 VPN 內使用 HTTP。",
+  "diagCapsAuthInvalid": "/v1/capabilities 回傳 401：Gateway token 無效或遺失。在驗證有效前，系統會透過探測來推斷功能矩陣。",
+  "diagCapsNotFound": "此 hermes-agent 版本未公開 /v1/capabilities；系統會透過額外探測來推斷功能矩陣。",
+  "diagTokenMissing": "Gateway token 遺失 — 請在實例設定中加入 ~/.hermes/.env 內的 API_SERVER_KEY。",
+  "diagTokenInvalid": "Gateway token 無效 — 該金鑰與伺服器的 API_SERVER_KEY 不符。",
+  "diagDashDownGwOk": "Gateway 正常運作，但 Dashboard／Admin 無法使用。請檢查其 URL 是否指向連接埠 9119，以及防火牆是否允許連線。",
+  "diagDashDownBoth": "Dashboard／Admin 也沒有回應。請檢查網絡及連接埠（9119）。",
+  "diagDashNotFound": "該 URL 有回應，但看起來不像 Hermes Dashboard（不存在 /api/status）。請檢查 Dashboard／Admin URL。",
+  "diagDashAuthRequired": "Dashboard 要求登入（Basic Auth）。請在實例設定中設定使用者名稱及密碼。",
+  "diagDashAuthInvalid": "Dashboard 有回應，但使用者名稱或密碼錯誤。請在實例設定中檢查（或使用「via bridge」按鈕建立／更改密碼）。",
+  "dashboardAuthLoginRequired": "Dashboard 要求登入。請在此實例中設定其使用者名稱及密碼。",
+  "dashboardAuthInvalidCredentials": "Dashboard 的使用者名稱或密碼不正確。請檢查實例設定，然後再試。",
+  "dashboardAuthRateLimited": "嘗試次數過多後，Dashboard 登入暫時被封鎖。請等待一分鐘，然後再試。",
+  "dashboardAuthLoginFailed": "Dashboard 無法登入（HTTP {status}）。請再試一次。",
+  "@dashboardAuthLoginFailed": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardAuthSessionCookieMissing": "Dashboard 已接受登入，但未能建立工作階段。請檢查其驗證設定，然後再試一次。",
+  "diagSome404": "此實例上不存在部分端點，可能使用了不同版本的 hermes-agent。受影響的功能會標示為不支援。",
+  "diagHttpsProxy": "如使用反向代理伺服器，請確保其支援 SSE/WebSocket（不進行緩衝），以便串流聊天內容。",
+  "diagProbingBoth": "Gateway 和 Dashboard",
+  "chaRestartGateway": "重新啟動 Gateway",
+  "chaRestartGatewayConfirm": "代理程式似乎沒有回應。要重新啟動伺服器的 Gateway 嗎？聊天連線會中斷數秒。",
+  "chaRestartGatewayDone": "Gateway 已重新啟動。請再次傳送訊息。",
+  "chaRestartGatewayFail": "無法重新啟動 Gateway：{error}",
+  "chaTextFileTooBig": "文字檔案超出 {kb} KB 限制，未有傳送。",
+  "chaImageTooBig": "圖片超出 {mb} MB 限制。",
+  "chaFileTooBig": "檔案超出 {limit} 限制。",
+  "chaServerRejectedChange": "伺服器拒絕了變更",
+  "chaVoiceNeedsModelTitle": "下載語音模型",
+  "chaVoiceNeedsModelBody": "即時語音辨識需要下載裝置端模型。請前往「設定」›「語音」並選擇偏好的模型。",
+  "chaVoiceNeedsServerTitle": "設定語音伺服器",
+  "chaVoiceNeedsServerBody": "伺服器端語音辨識需要你的 Hermes-STT 伺服器 URL（及權杖），否則伺服器不會回應。請在「設定」›「語音」中檢查相關設定。",
+  "chaVoiceAllowMic": "允許使用咪高風",
+  "chaQueuedCount": "{count, plural, one{QUEUED · 1 MESSAGE} other{排隊中 · {count} 則訊息}}",
+  "chaQueuedNote": "回合結束時便會傳送",
+  "chaHintResponding": "Hermes 正在回應…",
+  "chaEmptyPrompt": "輸入內容開始使用",
+  "chaCopyMessage": "複製訊息",
+  "chaEditMessage": "編輯訊息",
+  "chaEditTitle": "編輯你的訊息",
+  "chaEditHint": "Hermes 應改為怎樣回答？",
+  "chaEditApply": "儲存並傳送",
+  "chaEditRewindWarning": "Hermes 會從這則訊息重新開始並再次回答。已執行的外部操作無法復原。",
+  "chaEditFailed": "無法編輯訊息。原有對話仍可使用。",
+  "chaRegenerate": "重新產生回覆",
+  "chaRegenerateWarning": "Hermes 會回到上一個回答，並再次回應同一則訊息。已執行的外部操作無法復原。",
+  "chaRegenerateFailed": "無法重新產生回覆。",
+  "chaLoadImageFrom": "從 {domain} 載入圖片",
+  "chaStopReading": "停止朗讀",
+  "chaPauseReading": "暫停朗讀",
+  "chaContinueReading": "繼續朗讀",
+  "chaReadAloud": "朗讀",
+  "chaScrollToBottom": "前往對話結尾",
+  "chaScrollToPreviousAnswer": "前往上一個回覆",
+  "setHermesUpdated": "Hermes 已更新。",
+  "setHermesUpdatedTo": "Hermes 已更新至 v{version}。",
+  "setGatewayRestarted": "Gateway 已重新啟動。",
+  "setWarningsCount": "{count, plural, one{1 warning} other{{count} 個警告}}",
+  "setVersionRow": "版本",
+  "setRestartingBanner": "更新後正在重新啟動 Gateway……恢復運作後，應用程式會自行重新連線。",
+  "setHermesAutoUpdateTitle": "自動更新元件",
+  "setHermesAutoUpdateSub": "使用實例期間，保持 Hermes 和 Mobile Bridge 為最新版本，並在重新啟動後確認兩者恢復運作。",
+  "setBridgeAutoUpdateTitle": "包括在自動更新內",
+  "setBridgeAutoUpdateSub": "使用系統政策。你可以在此查看其版本或手動更新。",
+  "setSecBridge": "Mobile Bridge",
+  "setBridgeChecking": "檢查已安裝版本…",
+  "setBridgeStatusUnavailable": "Bridge 未偵測到。可能處於離線狀態或尚未安裝。",
+  "setBridgeStatusCurrent": "已安裝 v{version} · 已是最新版本",
+  "@setBridgeStatusCurrent": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "setBridgeUpdateNow": "立即更新",
+  "setBridgeReadOnly": "此實例為唯讀；系統已封鎖自動變更 Bridge。",
+  "notifListenerStartFailed": "無法開始背景聆聽。請再試一次。",
+  "notifPermManualRoute": "權限仍未獲授予。如果 Android 不再顯示對話框（之前曾拒絕授權），請前往系統設定 › 應用程式 › Hermes Console › 通知，手動啟用。",
+  "voiceStreamSaved": "串流語音已儲存",
+  "voiceStreamNeedUrl": "請先設定語音伺服器 URL",
+  "voiceStreamInvalidUrl": "請輸入有效的 HTTP 或 HTTPS 語音伺服器 URL",
+  "voiceStreamUnsafeUrl": "公開伺服器請使用 HTTPS。HTTP 只允許用於本地網絡或 Tailscale。",
+  "voiceSherpaLiveLabel": "快速聽寫",
+  "voiceSherpaLiveSub": "你說話時即時處理 · 停止說話後顯示文字 · 支援離線使用 · 建議使用",
+  "voiceLiveModeSub": "你說話時即時處理 · 停止說話後顯示文字",
+  "voiceSttLocationTitle": "轉錄位置",
+  "voiceSttOnDeviceLabel": "在此手機上",
+  "voiceSttOnDeviceSub": "私密、離線，並建議使用",
+  "voiceOtherDictationMethods": "其他聽寫方法",
+  "voiceOtherReadingMethods": "其他朗讀方法",
+  "voiceServerLabel": "我的 STT 伺服器",
+  "voiceServerSub": "僅適用於已設定 faster-whisper 的情況 · 音訊會傳送至你的伺服器",
+  "voiceSystemLabel": "Android 辨識器",
+  "voiceSystemSub": "使用 Android 中已安裝的辨識服務 · GrapheneOS 可能無法使用",
+  "voiceStreamingLabel": "OpenAI 相容",
+  "voiceStreamingSub": "本機 Kokoro 或實作 /v1/audio/speech 的 API",
+  "voiceStreamingDisclaimer": "此引擎採用 OpenAI 協議：以 POST /v1/audio/speech 傳送二進制音訊。Kokoro 是指引設定檔；只有實作相同協議的其他 API 才能在此使用。",
+  "voiceKokoroDisclaimer": "輸入 Kokoro 執行所在的位置。應用程式會補全路徑、檢查伺服器，並為你載入可用語音。",
+  "voiceOpenAiDisclaimer": "適用於文件列明支援 OpenAI TTS 的服務。輸入其基本 URL、語音、模型，以及在需要時輸入 Token。",
+  "voiceKokoroProfile": "本機 Kokoro · 指引設定",
+  "voiceKokoroProfileSub": "輸入其位址及連接埠；我們會偵測語音並完成其餘設定。",
+  "voiceOpenAiProfile": "另一個與 OpenAI 相容的 API",
+  "voiceOpenAiProfileSub": "輸入其 /v1 基本 URL、語音、模型，以及在需要時輸入 Token。",
+  "voiceServerAddress": "伺服器位址",
+  "voiceServerPort": "連接埠",
+  "voiceKokoroTokenHint": "Token（可選；通常留空）",
+  "voiceOpenAiTokenHint": "API Token（可選）",
+  "voiceDetectKokoro": "偵測並設定 Kokoro",
+  "voiceDetectingKokoro": "正在檢查 Kokoro…",
+  "voiceDetectedBaseUrl": "偵測到的 URL",
+  "voiceKokoroDetected": "Kokoro 已就緒 · 偵測到 {count} 個語音",
+  "@voiceKokoroDetected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "voiceKokoroDetectionFailed": "無法設定 Kokoro：{error}",
+  "@voiceKokoroDetectionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceSaveConfiguration": "儲存設定",
+  "voiceGuideButton": "逐步指引",
+  "voiceConversationSectionTitle": "與 Hermes 對話",
+  "voiceConversationSectionSub": "從聊天中的波形按鈕開始逐輪語音對話。",
+  "voiceSettingsIntro": "每個部分控制不同項目。首先你會看到目前選取的項目及其是否就緒；只有在想要變更時才開啟相關部分。",
+  "voiceModeTitle": "語音模式",
+  "voiceModeSub": "麥克風和揚聲器始終留在這部手機上。選擇在哪裏辨識你的說話內容，以及在哪裏產生 Hermes 語音。",
+  "voiceModePhoneTitle": "在這部手機上",
+  "voiceModePhoneSub": "語音一律使用裝置上的 STT 和 TTS。獨立聽寫和朗讀各自保留原有設定。",
+  "voiceModeServerTitle": "Hermes 伺服器",
+  "voiceModeServerSub": "一律使用你的 Hermes 實例 STT 和 TTS。若失敗，語音功能會停止；不會切換至此手機。",
+  "voiceServerNoConnection": "連線 Hermes 實例以選取伺服器。",
+  "voiceServerCardTitle": "來自此實例的語音",
+  "voiceServerCardSub": "預設 Hermes 設定檔",
+  "voiceServerCardProfileSub": "設定檔 {profile}",
+  "@voiceServerCardProfileSub": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerSttLabel": "辨識",
+  "voiceServerTtsLabel": "語音",
+  "voiceServerDeliveryLabel": "串流",
+  "voiceServerStateLabel": "狀態",
+  "voiceServerDeliveryPcm": "使用中 · 已驗證即時 PCM",
+  "voiceServerDeliveryPhrases": "無法使用 · 以短語為基礎的音訊",
+  "voiceServerDeliveryCheck": "待處理 · 說話時檢查",
+  "voiceServerCheckAction": "檢查伺服器語音",
+  "voiceServerAuthAction": "設定 Dashboard 存取權限",
+  "voiceServerUpdateAction": "如何在 Hermes 啟用語音",
+  "voiceServerUpdateHelp": "語音端點由已更新的 Hermes Agent 提供。此操作不會更新或重新啟動伺服器；請從 Hermes 官方設定中啟用端點。",
+  "voiceServerCatalogTitle": "此伺服器可用",
+  "voiceServerCatalogSub": "此實例發佈的目錄",
+  "voiceServerCatalogUnavailable": "此 Hermes 版本不會發佈其提供者目錄。應用程式不會自行建立清單。",
+  "voiceServerCatalogHelpAction": "查看如何在 Hermes 中進行設定",
+  "voiceCurrentOnPhone": "此手機 · 本機 STT 和 TTS",
+  "voiceAppliedNow": "目前已套用",
+  "voiceAppliedVoiceMode": "語音模式",
+  "voiceAppliedChatDictation": "對話聽寫",
+  "voiceParakeetLocalTitle": "本機 Parakeet v3",
+  "voiceHermesDictationSub": "使用 Hermes 實例的官方 STT。失敗時不會切換至手機。",
+  "voiceAppliedOnDevice": "此手機上 · {engine}",
+  "@voiceAppliedOnDevice": {
+    "placeholders": {
+      "engine": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceCurrentServerChecking": "Hermes 伺服器 · 正在檢查設定",
+  "voiceCurrentLocalFallback": "Hermes 伺服器 · 無法使用 · 不會切換至本機",
+  "voiceCurrentServerUnknown": "Hermes 伺服器 · 設定無法使用",
+  "voiceCurrentServer": "Hermes 伺服器 · {provider} · {voice}",
+  "@voiceCurrentServer": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      },
+      "voice": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceStatusLocal": "已準備好，可在此手機上使用",
+  "voiceStatusChecking": "正在檢查可用性及設定…",
+  "voiceStatusUsingFallback": "伺服器無法使用；語音功能要待伺服器恢復，或你選擇此手機後才會啟動",
+  "voiceStatusServerReadyConfigUnknown": "伺服器可用；無法讀取其目前的供應商",
+  "voiceStatusServerReady": "偵測到端點及設定 · 說話時驗證",
+  "voiceCurrentLiveDictation": "即時聽寫 · {engine}",
+  "@voiceCurrentLiveDictation": {
+    "placeholders": {
+      "engine": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceCurrentFinishedDictation": "完成後轉錄 · {model}",
+  "@voiceCurrentFinishedDictation": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceStatusReady": "已準備好使用",
+  "voiceStatusDownloadNeeded": "所選模型仍需下載",
+  "voiceStatusDependsOnAndroid": "取決於 Android 中已安裝的語音服務",
+  "voiceStatusConfigurationNeeded": "設定未完成",
+  "voiceStatusServerVerified": "已確認伺服器可用",
+  "voiceStatusServerNoResponse": "已設定的伺服器沒有回應",
+  "voiceStatusServerNotTested": "伺服器已設定，尚未測試",
+  "voiceStatusExternalConfigured": "已設定外部服務",
+  "voiceServerEffectiveTitle": "實際伺服器設定",
+  "voiceServerProviderLabel": "供應商",
+  "voiceServerVoiceLabel": "語音",
+  "voiceServerConfigLoading": "正在讀取伺服器上設定的語音…",
+  "voiceServerConfigUnavailable": "目前無法讀取語音設定。",
+  "voiceServerRetry": "再試一次",
+  "voiceServerChangeEdgeVoice": "更改 Edge 語音",
+  "voiceServerTestAction": "測試",
+  "voiceServerStopTestAction": "停止測試",
+  "voiceServerDetailsAction": "查看詳細資料",
+  "voiceServerHideDetailsAction": "隱藏詳細資料",
+  "voiceServerReadOnly": "此實例為唯讀。你可以查看語音，但無法更改。",
+  "voiceServerEdgeBehavior": "Edge 在伺服器上產生語音。它可能會逐句開始，但不會提供連續 PCM。",
+  "voiceServerFallbackNote": "如果伺服器失敗，對話會保留在 Hermes 路由。它不會自動啟用 {stt} 或 {tts}：重試或選擇此手機。",
+  "@voiceServerFallbackNote": {
+    "placeholders": {
+      "stt": {
+        "type": "String"
+      },
+      "tts": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerVoiceSheetTitle": "伺服器 Edge 語音",
+  "voiceServerVoiceSheetHelp": "從清單中選擇語音。如已知其他 Edge ID，可從手動選項新增。",
+  "voiceServerVoiceManualTitle": "使用其他 Edge ID（進階）",
+  "voiceServerVoiceIdLabel": "Edge 語音 ID",
+  "voiceServerVoiceSave": "儲存至伺服器",
+  "voiceServerVoiceSaving": "正在儲存語音…",
+  "voiceServerVoiceSaved": "伺服器語音已更改為 {voice}",
+  "@voiceServerVoiceSaved": {
+    "placeholders": {
+      "voice": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerVoiceSaveFailed": "無法將語音儲存至伺服器。之前的設定仍然有效。",
+  "voiceServerManageAction": "設定",
+  "voiceServerManageTitle": "設定伺服器語音",
+  "voiceServerManageSub": "只有兩部分：Hermes 如何聆聽你，以及它用來回覆的語音。",
+  "voiceServerManageLoading": "正在載入伺服器供應商和功能…",
+  "voiceServerManageUnavailable": "此 Hermes 版本尚未提供遠端 TTS 供應商設定。",
+  "voiceServerRecognitionTitle": "聆聽你的語音的服務",
+  "voiceServerRecognitionSub": "傳送訊息前將你的語音轉換成文字。",
+  "voiceServerRecognitionAction": "設定語音辨識",
+  "voiceServerTtsProvidersTitle": "你聽到的聲音",
+  "voiceServerTtsProvidersSub": "以語音讀出 Hermes 回覆。",
+  "voiceServerProvidersAdvancedTitle": "更改提供者",
+  "voiceServerProvidersAdvancedSub": "檢視替代方案、要求及安裝方式，開啟時不作任何變更。",
+  "voiceServerProviderActive": "使用中",
+  "voiceServerProviderReady": "就緒",
+  "voiceServerProviderNeedsKeys": "需要金鑰",
+  "voiceServerProviderNeedsAuth": "需要登入",
+  "voiceServerProviderNeedsSetup": "需要安裝",
+  "voiceServerProviderUse": "使用此提供者",
+  "voiceServerProviderSwitching": "正在更改提供者…",
+  "voiceServerProviderChanged": "伺服器提供者已更改為 {provider}",
+  "@voiceServerProviderChanged": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerProviderChangeFailed": "無法更改提供者。之前的選擇仍然生效。",
+  "voiceServerProviderPcmCapable": "支援連續 PCM",
+  "voiceServerProviderPhraseOnly": "句子傳送",
+  "voiceServerCredentialConfigured": "已在伺服器上設定",
+  "voiceServerCredentialMissing": "未設定",
+  "voiceServerCredentialHint": "新增 {label}",
+  "@voiceServerCredentialHint": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerCredentialSave": "在伺服器上儲存金鑰",
+  "voiceServerCredentialSaved": "金鑰已儲存。其值不會保留，亦不會再次在手機上顯示。",
+  "voiceServerCredentialFailed": "無法在伺服器上儲存金鑰。",
+  "voiceServerSetupRun": "在伺服器上安裝",
+  "voiceServerSetupRerun": "重新安裝",
+  "voiceServerSetupRunning": "正在伺服器上安裝…",
+  "voiceServerSetupInstalled": "已安裝",
+  "voiceServerSetupComplete": "伺服器端設定已完成。",
+  "voiceServerSetupFailed": "提供者設定未能成功完成。",
+  "voiceServerParametersAction": "自訂",
+  "voiceServerParametersTitle": "自訂 {provider}",
+  "@voiceServerParametersTitle": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerParametersSub": "選擇有效的 Hermes 選項；你無需在此輸入伺服器路徑或技術名稱。",
+  "voiceServerParametersCurrentTitle": "目前設定",
+  "voiceServerParametersAdvancedTitle": "進階",
+  "voiceServerParametersAdvancedSub": "模型、語言、靜音偵測及其他伺服器參數。",
+  "voiceServerFineTuneTitle": "微調行為",
+  "voiceServerFineTuneSub": "提供語速、停頓及語音偵測的引導選項。",
+  "voiceServerNeuTtsReferenceHelp": "NeuTTS 支援透過參考音訊及文字自訂語音，但 Hermes 尚未提供這些檔案的安全遠端上載功能。應用程式會使用內置語音，不會要求你提供伺服器路徑。",
+  "voiceServerProviderRecognitionLabel": "語音識別提供者",
+  "voiceServerProviderSpeechLabel": "語音提供者",
+  "voiceServerChoiceAutomatic": "自動",
+  "voiceServerChooseOption": "選擇選項",
+  "voiceServerFieldEnabled": "使用此引擎",
+  "voiceServerFieldVad": "自動偵測你何時說完",
+  "voiceServerFieldVadHelp": "在自然停頓後停止聆聽，並傳送語句。",
+  "voiceServerFieldSilenceDuration": "完成前的靜音",
+  "voiceServerFieldSilenceDurationHelp": "需要連續靜音一段時間，才會將語句視為已完成。",
+  "voiceServerFieldNoSpeechThreshold": "捨棄沒有語音的音訊",
+  "voiceServerFieldNoSpeechThresholdHelp": "用於忽略噪音或靜音的 0 至 1 信心度。",
+  "voiceServerFieldConfidenceThreshold": "最低信心度",
+  "voiceServerFieldConfidenceThresholdHelp": "用於接受轉錄結果的模型閾值。",
+  "voiceServerFieldModelHelp": "此伺服器用於處理語音的模型。",
+  "voiceServerFieldVoiceHelp": "此伺服器用於朗讀回應的語音。",
+  "voiceServerFieldLanguageHelp": "此伺服器預期識別的語言。",
+  "voiceServerLanguageMismatch": "伺服器使用{serverLanguage}監聽；應用程式使用{appLanguage}。",
+  "@voiceServerLanguageMismatch": {
+    "placeholders": {
+      "serverLanguage": {
+        "type": "String"
+      },
+      "appLanguage": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceServerFieldSpeed": "說話速度",
+  "voiceServerFieldSpeedHelp": "伺服器語音的朗讀速度。",
+  "voiceServerFieldDevice": "執行位置",
+  "voiceServerFieldDeviceHelp": "CPU 可在任何伺服器上運作。CUDA 使用 NVIDIA GPU，而 MPS 適用於 Apple Silicon。",
+  "voiceServerFieldGenericHelp": "此伺服器提供的進階參數。",
+  "voiceServerParametersSave": "儲存至伺服器",
+  "voiceServerParametersSaved": "已儲存至伺服器的語音設定。",
+  "voiceServerParametersFailed": "無法儲存設定。之前的數值仍然生效。",
+  "voiceServerNoParameters": "Hermes 會自動管理此供應商，並不會提供其他可選取的選項。",
+  "voiceServerClose": "關閉",
+  "voiceServerReadOnlyManager": "此實例為唯讀；你可以檢視其設定，但無法更改。",
+  "voiceServerSecurityNote": "在此輸入的憑證會傳送至你的 Hermes 伺服器。Hermes Console 不會在此手機上保留憑證，也不會再次顯示；憑證的儲存方式由伺服器控制。",
+  "voiceServerSttCredentialsNote": "雲端 STT 憑證可在 Hermes Desktop 或 hermes tools 中管理；伺服器已有相關憑證後，你便可以在此選取這些供應商。",
+  "voiceListeningSectionTitle": "聊天聽寫",
+  "voiceListeningSectionSub": "選擇語音轉為文字的時機。這也適用於聊天中的聽寫。",
+  "voiceReadingSectionTitle": "聊天朗讀",
+  "voiceReadingSectionSub": "選擇個別回應及自動朗讀所使用的語音。",
+  "voiceAdvancedSettingsTitle": "進階監聽設定",
+  "voiceReadingAdvancedTitle": "更多語音及朗讀行為",
+  "voiceReadingAdvancedSub": "喇叭行為及可選的外部服務。",
+  "voiceSpeechToTextTab": "語音轉文字",
+  "voiceSpeechToTextHelp": "選擇在你說話時顯示文字，還是在你說完後才進行轉錄。",
+  "voiceTextToSpeechTab": "文字轉語音",
+  "voiceTextToSpeechHelp": "選擇朗讀回應的語音，並在此測試。",
+  "voiceAdvancedActive": "目前使用：{name} · 點按以設定",
+  "@voiceAdvancedActive": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceManageLiveDictationModel": "即時聽寫模型",
+  "voiceManageFinishedDictationModel": "完成後轉錄模型",
+  "voiceManageOfflineVoices": "更改或下載語音",
+  "voiceSelectedAssetReady": "{name} · 可供使用",
+  "@voiceSelectedAssetReady": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceSelectedAssetDownloadNeeded": "{name} · 需要下載",
+  "@voiceSelectedAssetDownloadNeeded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceElevenVoiceIdLabel": "ElevenLabs 語音識別碼",
+  "voiceSetupSpeakStep": "1. 說話",
+  "voiceSetupSpeakHelp": "選擇應用程式將你的語音轉換成文字的方式。",
+  "voiceSetupListenStep": "2. 聆聽",
+  "voiceSetupListenHelp": "選擇朗讀回應的語音。",
+  "voiceSetupTestStep": "3. 測試",
+  "voiceSetupTestHelp": "聆聽測試內容，並選擇是否朗讀每個回應。",
+  "voiceSetupPrevious": "上一頁",
+  "voiceGuideOpenFailed": "無法開啟語音指南",
+  "voiceOtherVoicesTitle": "外部服務（進階）",
+  "voiceOtherVoicesSub": "僅適用於你已有帳戶、語音伺服器或自己的 API",
+  "voiceCustomLabel": "自訂 TTS API",
+  "voiceCustomSub": "使用你自己的 URL 和金鑰連線至語音 REST API",
+  "voiceCustomDisclaimer": "開始使用只需提供 URL，以及在你的服務使用金鑰時提供該金鑰。只有在 API 文件要求使用不同格式時，才開啟進階選項。",
+  "voiceCustomEndpoint": "產生語音的 URL",
+  "voiceCustomAuthentication": "你的服務是否需要金鑰？",
+  "voiceAuthNone": "不需要金鑰",
+  "voiceAuthBearer": "Bearer 權杖（最常用）",
+  "voiceAuthApiKey": "x-api-key",
+  "voiceAuthCustom": "其他金鑰類型",
+  "voiceAuthHeader": "標頭名稱",
+  "voiceAuthPrefix": "前綴",
+  "voiceAuthSecret": "在此貼上金鑰或權杖",
+  "voiceOptional": "可選",
+  "voiceCustomVoice": "語音（如你的服務需要）",
+  "voiceCustomModel": "模型（如你的服務需要）",
+  "voiceCustomAdvancedTitle": "我的服務供應商使用特殊格式",
+  "voiceCustomAdvancedSub": "僅當其文件要求使用不同的請求或不常見的音訊路徑時",
+  "voiceCustomJsonTemplate": "請求範本（僅限文件中的內容）",
+  "voiceCustomTemplateHelp": "除非服務供應商提供確切的 JSON 請求，否則不要更改。應用程式會自動插入文字、語音及模型。",
+  "voiceResponseAuto": "自動偵測回應",
+  "voiceResponseAutoSub": "系統會自動偵測回應：直接音訊或服務供應商常用的格式。",
+  "voiceResponseBinary": "返回音訊檔案",
+  "voiceResponseBinarySub": "服務會直接回應 MP3、WAV、OGG 或其他音訊。",
+  "voiceResponseBase64": "返回 JSON 資料",
+  "voiceResponseBase64Sub": "音訊會以 base64 文字形式包含在回應中。",
+  "voiceBase64Path": "JSON 中的音訊路徑（可選）",
+  "voiceAudioMime": "音訊格式（可選）",
+  "voiceCustomInvalidConfiguration": "儲存前請檢查 URL 及進階格式。請求必須是有效的 JSON，而標頭名稱必須有效。",
+  "voiceErrorInvalidKokoroAddress": "請輸入 Kokoro 的有效 HTTP 或 HTTPS 位址。",
+  "voiceErrorInvalidKokoroPort": "Kokoro 連接埠必須介乎 1 至 65535 之間。",
+  "voiceErrorKokoroUnavailable": "Kokoro 沒有在已設定的地址回應。",
+  "voiceErrorKokoroNoVoices": "伺服器已回應，但沒有提供任何相容的 Kokoro 語音。",
+  "voiceErrorInvalidAudio": "語音服務傳回無效或空白的音訊檔案。",
+  "voiceErrorCustomResponseMissingAudio": "自訂 API 回應不包含可用的音訊。",
+  "voiceErrorCustomHttpFailure": "自訂 TTS API 傳回 HTTP {status}。",
+  "@voiceErrorCustomHttpFailure": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceErrorDashboardLogin": "Hermes Dashboard 需要登入。請為此實例設定登入資料。",
+  "voiceErrorUnavailable": "所選的語音服務無法用於目前的實例。",
+  "voiceErrorPreviewTimeout": "語音未能及時產生音訊。請確認其模型已下載，然後再試。",
+  "voiceErrorUnexpected": "語音操作未能完成。請檢查設定，然後再試。",
+  "voiceCustomSaved": "自訂 TTS 設定已儲存",
+  "voiceServerPrivacyNote": "麥克風音訊會傳送至你的伺服器進行轉錄。只應在私人網絡（Tailscale/LAN）上使用。",
+  "voiceHeavyRamWarning": "會使用大量記憶體；在一般手機上可能無法運作。",
+  "voiceExtracting": "提取中…",
+  "setupIntro": "只需三步即可準備好你的伺服器：複製、執行，再貼上它傳回的連結。無需輸入技術指令。",
+  "setupPrepareTitle": "準備 Hermes",
+  "setupShowQrTitle": "顯示我的 QR 碼",
+  "setupPrepareIntro": "選擇伺服器作業系統，複製一條指令，然後掃描由它產生的 QR 碼。應用程式會在儲存前驗證結果。",
+  "setupShowQrIntro": "此指令只會檢查你的連線並再次顯示 QR 碼。它不會重新安裝 Hermes 或變更你的金鑰。",
+  "setupChooseAccess": "你如何存取 Hermes？",
+  "setupChooseServerPlatform": "Hermes Agent 在哪個系統上運行？",
+  "setupPlatformLinux": "Linux / Termux",
+  "setupPlatformMacos": "macOS",
+  "setupPlatformWindows": "Windows / WSL2",
+  "setupWslPowerShellHint": "Windows / WSL2：在 Windows PowerShell 中執行指令，不要在 WSL 內執行。如需私人規則，請批准管理員提示；其他內容會保留在你的帳戶中。",
+  "setupPathAgentSimpleTitle": "我與 Hermes 對話",
+  "setupPathAgentSimpleBody": "Telegram、TUI、桌面應用程式，或其他可與你的代理程式對話的聊天工具。",
+  "setupPathSshSimpleTitle": "我有伺服器終端機",
+  "setupPathSshSimpleBody": "在執行 Hermes 的裝置上使用 Shell、SSH 或 PowerShell。",
+  "setupCopy": "複製指示",
+  "setupCopyPairCommand": "複製此指令",
+  "setupCopyRunCommand": "複製並執行",
+  "setupRunCommandHint": "將其貼到執行 Hermes 的裝置上，然後等待最後的 QR。現有正常運作的元件會保留；只會修復遺失或損壞的部分。",
+  "setupUseHermesInstead": "沒有終端機？將指示傳送給 Hermes",
+  "setupProgressTitle": "伺服器上的自動流程",
+  "setupProgressCheck": "檢查 Hermes 並保留正常運作的元件",
+  "setupProgressServices": "安裝或修復 Gateway、Dashboard 及 Bridge",
+  "setupProgressNetwork": "驗證認證資料及手機端存取權限",
+  "setupProgressQr": "產生 QR 及最終摘要",
+  "setupProgressVerificationNote": "配對前，這裏只會顯示複製指令。掃描 QR 後，應用程式會執行實際連線檢查。",
+  "setupSendToHermes": "將其傳送給 Hermes",
+  "setupRunOnServer": "貼到伺服器上",
+  "setupSeeQr": "尋找 QR",
+  "setupPasteReturnedLink": "貼上返回的連結",
+  "setupAgentStepBody": "將訊息貼到你平時與 Hermes 對話的位置，如要求確認，請批准操作。",
+  "setupSshStepBody": "將指令貼到終端機，然後等待其準備手機連線。",
+  "setupAgentResultBody": "Hermes 會回覆一條以 hermes://pair 開頭的連結。複製連結後返回此處。",
+  "setupSshResultBody": "當終端機顯示「SCAN THIS QR WITH HERMES CONSOLE」時，請讓 QR 保持顯示。",
+  "setupRunPairBody": "將指令貼到執行 Hermes 的伺服器終端機。這不會重新安裝任何內容。",
+  "setupSeeQrBody": "等待「SCAN THIS QR WITH HERMES CONSOLE」，並在另一個畫面上保持顯示該 QR。",
+  "setupISeeQr": "我看得到 QR 碼 · 開啟相機",
+  "setupQrSecurity": "QR 碼包含你伺服器的存取資料。請勿分享或發佈螢幕截圖。",
+  "setupNoHermesTitle": "你的伺服器尚未安裝 Hermes？",
+  "setupNoHermesBody": "Hermes Agent 是此應用程式控制的伺服器端程式。你可以在 Windows、Linux、WSL2 或 macOS 上安裝。",
+  "setupNoHermesAfter": "按照「hermes setup」精靈操作，待 Agent 執行後，返回此處並繼續步驟 1。",
+  "setupNoHermesCopied": "安裝指令已複製",
+  "setupStep1": "步驟 1 · 複製",
+  "setupStep2": "步驟 2 · 你的伺服器回覆",
+  "setupStep3": "步驟 3 · 掃描或貼上連結",
+  "setupScanOrPaste": "掃描 QR 碼或貼上連結",
+  "setupStepSemantics": "步驟 {step}／{total}：{label}",
+  "setupPathAgentTitle": "我的伺服器上已有 AI Agent",
+  "setupPathAgentSub": "將此提示貼到你的 Agent（Telegram、TUI、CLI……），它會自行完成所有設定。",
+  "setupPathSshTitle": "我會在終端機執行",
+  "setupPathSshSub": "將相應指令貼到 Shell、SSH 或 PowerShell。",
+  "setupCopyTooltip": "複製到剪貼簿",
+  "setupCopyPrompt": "複製提示",
+  "setupCopyCommand": "複製指令",
+  "setupPromptCopied": "提示已複製",
+  "setupAgentCurlNote": "此提示會要求你的 Agent 執行公開的 Hermes Console 安裝程式（github.com/xP3ta/hermes-setup），並回覆配對連結。你的 Agent 可以在執行前讀取指令碼。",
+  "setupSshCurlNote": "此指令會下載並執行公開的 Hermes Console 安裝程式（github.com/xP3ta/hermes-setup）；你可以在執行前讀取指令碼。它會啟動 Gateway、Dashboard 及 Bridge，並傳回配對連結。",
+  "setupWhatItDoes": "具體操作",
+  "setupBulletInstall": "使用你系統的原生服務管理程式安裝 hermes_bridge.py。",
+  "setupBulletToken": "重新使用或產生唯一的伺服器權杖，並將其儲存於 Hermes 資料目錄。",
+  "setupBulletPort": "讓 Bridge 透過連接埠 {port} 在你的私人網絡（Tailscale 或 LAN）上提供服務。",
+  "setupBulletLink": "列印可在第 3 步貼上的 hermes://pair 連結。",
+  "setupStep2Body": "完成後，安裝程式會列印配對連結（如果你已將連結交給代理程式，代理程式會在對話中回覆）。連結會以以下格式開頭：",
+  "commonCleartextPublic": "未加密連線：token 和你的對話會以明文傳送。請使用 https:// 或私人網絡（Tailscale）。",
+  "commonCleartextPrivate": "私人網絡（LAN 或 Tailscale）內的未加密連線。",
+  "connectPasteLink": "貼上已複製的配對連結",
+  "connectNoLinkInClipboard": "剪貼簿中沒有配對連結（hermes://pair…）。",
+  "ieDashSetupTitle": "現在設定 Dashboard？",
+  "ieDashSetupBody": "系統會為此實例的 Dashboard 產生新密碼。儲存於其他裝置或瀏覽器的密碼將停止運作。你可以稍後使用「自動設定 Dashboard」，或手動輸入目前的密碼。",
+  "ieNotNow": "暫時不要",
+  "ieGeneratePassword": "產生密碼",
+  "ieBridgeNoToken": "Bridge 沒有回應 token 配發要求。",
+  "ieDashPassFailed": "無法設定 Dashboard 密碼。",
+  "ieDashConfigured": "Dashboard 已自動設定 · 使用者「{user}」，新密碼已顯示在欄位中。儲存以套用。",
+  "ieDashConfigError": "自動設定 Dashboard 時發生錯誤：{error}",
+  "ieErrTimeout": "伺服器回應時間過長。請檢查實例是否正在執行，以及此網絡是否可以連線至伺服器。",
+  "ieErrRefused": "伺服器拒絕連線。請檢查 Gateway 是否正在執行，以及連接埠是否正確。",
+  "ieErrUnreachable": "沒有通往伺服器的網絡路徑。請檢查你的連線（Wi-Fi／流動數據或私人 VPN）。",
+  "ieErrHostNotFound": "找不到伺服器。請檢查 Gateway URL 中的主機，以及你的網絡連線。",
+  "ieErrTls": "連線時 TLS 加密失敗。如果伺服器不使用 https，請將 URL 改為 http（僅限私人網絡）。",
+  "ieErrBadUrl": "Gateway URL 無效。請檢查格式（例如 https://your-server:8642）。",
+  "ieLocalChatMode": "本地對話模式",
+  "ieNeedGatewayFirst": "請先設定 Gateway URL 和 token。",
+  "ieAutoconfigDash": "自動設定 Dashboard（透過 Bridge）",
+  "petScreenTitle": "寵物",
+  "petDefaultName": "預設（Spark）",
+  "petDefaultSubtitle": "Hermes 預設寵物",
+  "petShowPet": "顯示寵物",
+  "petVisibleInHome": "在主頁面板顯示",
+  "petHiddenInHome": "在主頁面板隱藏",
+  "petSectionSize": "大小",
+  "petSectionPresence": "顯示狀態",
+  "petPresenceOff": "關閉",
+  "petPresenceMinimal": "精簡",
+  "petPresenceFull": "完整",
+  "petPresenceOffDescription": "在應用程式各處隱藏寵物。",
+  "petPresenceMinimalDescription": "在主頁及語音模式顯示，不佔用聊天空間。",
+  "petPresenceFullDescription": "亦會在聊天及任務狀態中顯示。",
+  "petSizeSmall": "小",
+  "petSizeLarge": "大",
+  "petSizeSliderSemantics": "寵物大小",
+  "petAdvancedTitle": "進階選項",
+  "petAdvancedSubtitle": "測試移動、速度及手勢",
+  "petAnimationSpeed": "動畫速度",
+  "petSpeedSlow": "慢",
+  "petSpeedFast": "快",
+  "petAnimationSpeedSemantics": "動畫速度",
+  "petRoamingTitle": "移動中的寵物",
+  "petRoamingSubtitle": "在主頁四處走動，並在你輸入文字時走開。",
+  "petShowOnHomeTitle": "在主頁顯示",
+  "petShowOnHomeSubtitle": "控制其在主頁輸入欄上方的顯示狀態。",
+  "petSectionTryAnimation": "試玩動畫",
+  "petSectionChoose": "選擇寵物",
+  "petSectionImport": "匯入",
+  "petFullscreen": "全螢幕檢視",
+  "petImportedSnack": "已匯入寵物「{name}」。",
+  "petImportFailed": "無法匯入：{error}",
+  "petImportFailedGeneric": "無法匯入寵物。",
+  "petPresenceSemantics": "狀態 {level}",
+  "petExtraAnim": "額外 {n}",
+  "petAnimIdle": "閒置",
+  "petAnimRun": "跑動",
+  "petAnimWait": "等待",
+  "petAnimGreet": "打招呼",
+  "petAnimFail": "失敗",
+  "petAnimJump": "跳躍",
+  "petAnimCheck": "檢查",
+  "petTryHint": "選擇寵物以試玩其動畫。",
+  "petLoop": "循環",
+  "petStop": "停止",
+  "petImportTitle": "匯入寵物",
+  "petImportSubtitle": "從本機 .zip（Phase A 格式或 Petdex 下載檔案）",
+  "petdexClearFilters": "清除篩選條件",
+  "petdexResultCount": "{count, plural, one{1 pet} other{{count} 隻寵物}}",
+  "mdlModelHiddenSnack": "{model} 已從清單隱藏",
+  "mdlUndo": "復原",
+  "mdlShowHiddenTip": "顯示隱藏項目",
+  "mdlHideHiddenTip": "隱藏項目",
+  "mdlHiddenCount": "{count, plural, one{1 hidden} other{{count} 項已隱藏}}",
+  "mdlCatalogLoadFailed": "無法載入供應商目錄",
+  "mdlCatalogFromCache": "正在顯示上次儲存的目錄——無法連線至 Dashboard",
+  "mdlCatalogNoDashboard": "Dashboard 沒有回應；尚未完成設定的供應商不會顯示",
+  "mdlCatalogOfflineSuffix": "Dashboard 目錄離線",
+  "mdlRestore": "還原",
+  "mdlShowInList": "在清單中顯示",
+  "mdlHideFromList": "從清單中隱藏",
+  "mdlLongPressToHide": "長按模型即可將其隱藏",
+  "mdlProviderVisibleAgain": "{name} 再次顯示",
+  "mdlProviderHidden": "{name} 已從清單中隱藏",
+  "lisWaitingTermuxConfirm": "正在等待 Termux 確認…",
+  "lisOllamaDownloadEngine": "正在下載 Ollama 引擎（約 85 MB）…",
+  "lisOllamaStartingServer": "正在 :11434 啟動伺服器…",
+  "lisOllamaWaitingServer": "正在等待伺服器回應…",
+  "lisOllamaPullingModel": "正在下載 {name}（{gb} GB）…",
+  "lisOllamaPullInProgress": "下載進行中，可能需時數分鐘…",
+  "lisOllamaSavingConfig": "正在儲存設定…",
+  "lisOllamaConnectingAgent": "正在連線至代理程式…",
+  "lisOllamaStepInstall": "正在安裝 AI 引擎（Ollama）…",
+  "lisOllamaStepModel": "正在下載模型…",
+  "lisOllamaStepConfigure": "正在設定 Hermes…",
+  "lisOllamaStepOf": "步驟 {n}（共 {total} 步",
+  "lisOllamaDownloadingName": "正在下載 {name}…",
+  "lisInstallAndConfigure": "安裝及設定",
+  "lisSelectModelFirst": "選取模型",
+  "lisExternalProviderCta": "設定外部供應商（Ollama、vLLM…）",
+  "lisOllamaTagHint": "Ollama 標籤（例如 llama3.2:1b）",
+  "lisOllamaAnyTag": "Ollama 程式庫中的任何標籤",
+  "lunStartFailedTitle": "無法開始解除安裝",
+  "lunStartFailedBody": "Termux 不接受此指令。最常見原因是「allow-external-apps」屬性已停用：使用下方按鈕開啟（或在 ~/.termux/termux.properties 檔案中啟用），然後重試。",
+  "homeOpenStatusHint": "開啟實例狀態",
+  "homePetShortcut": "寵物 — 開啟寵物",
+  "homeOfflineChip": "離線",
+  "homeInstanceDownBody": "無法連線至「{label}」。請檢查實例是否正在執行，以及此網絡是否可連線。",
+  "homeEditInstance": "編輯實例",
+  "drawerNoActiveInstance": "沒有使用中的實例",
+  "ieGatewayCredentialsRequired": "請先設定 Gateway URL 及權杖。",
+  "ieNoteHint": "例如：測試 VPS，請勿編輯 Cron",
+  "chaInstallingMobileBridge": "正在安裝 Mobile Bridge",
+  "chaLinkSchemeBlocked": "連結已封鎖：不支援的通訊協定",
+  "apiKeyHelpCopy": "複製指令",
+  "chaUploadingAttachment": "正在上載附件…",
+  "chaAttachmentUploadInProgress": "正在上載 {name}。請稍候。",
+  "@chaAttachmentUploadInProgress": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaAttachmentPending": "待處理",
+  "chaAttachmentUploading": "正在上載",
+  "chaAttachmentFailed": "上載失敗",
+  "chaAttachmentAttached": "已附加",
+  "chaAttachmentRemoved": "已移除",
+  "chaRetryAttachment": "重試附件",
+  "chaCancelQueuedMessage": "移除排隊中的訊息",
+  "chaRemoveAttachment": "移除附件",
+  "chaAttachmentBatchTooBig": "所選附件超出 {limit} 的總上限。",
+  "@chaAttachmentBatchTooBig": {
+    "placeholders": {
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "chaAttachmentPreparationFailed": "其中一個附件無法準備。請重新選取。",
+  "chaAttachmentValidationFailed": "一個或多個附件已不再可用或無效。請先檢查，再重試。",
+  "chaAttachmentImageLimitReached": "每則訊息最多可附加 {count} 張圖片。",
+  "@chaAttachmentImageLimitReached": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chaPreviewAttachment": "預覽 {name}",
+  "@chaPreviewAttachment": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaAttachmentPreviewLoading": "正在開啟私人副本…",
+  "chaAttachmentPreviewUnavailable": "此私人副本已不再可用，或完整性檢查失敗。",
+  "chaAttachmentPreviewPage": "第 {page} 頁，共 {count} 頁",
+  "@chaAttachmentPreviewPage": {
+    "placeholders": {
+      "page": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chaAttachmentPreviewPreviousPage": "上一頁",
+  "chaAttachmentPreviewNextPage": "下一頁",
+  "chaAttachmentPreviewBinaryTitle": "安全位元組預覽",
+  "chaAttachmentPreviewBinaryBody": "Hermes 不會執行此檔案。以下十六進制檢視來自其真實的私人位元組。",
+  "commonShare": "分享",
+  "diagBundleTitle": "產生本機診斷資料",
+  "diagBundleSubtitle": "已清理的預覽；不會自動傳送任何內容",
+  "diagBundlePreviewTitle": "檢查診斷資料",
+  "diagBundlePrivacy": "只包含狀態及計數器，不包含伺服器、認證資料、對話、路徑或識別碼。",
+  "diagBundleError": "無法準備本機診斷資料",
+  "dependencyDashboardTitle": "Dashboard 需要設定",
+  "dependencyDashboardBody": "此功能使用 Hermes Dashboard。請設定存取權限，讓應用程式載入及儲存此資料。",
+  "dependencyConfigure": "設定",
+  "dependencyRetry": "重試",
+  "dependencyLoadFailedTitle": "無法載入資料",
+  "dependencyLoadFailedBody": "這不是認證資料問題。請檢查連線並重試。詳情：{error}",
+  "@dependencyLoadFailedBody": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceGuideLocalTitle": "兩項設定，沒有隱藏步驟",
+  "voiceGuideDictationTitle": "語音轉文字",
+  "voiceGuideDictationBody": "使用「即時聽寫」在說話時查看文字，或在完成後使用「轉錄」處理內容。使用即時聽寫時，請選擇這部手機、你的伺服器或 Android。",
+  "voiceGuideReadingTitle": "文字轉語音",
+  "voiceGuideReadingBody": "選擇 Android 語音或已下載的離線語音，並在同一區域使用「測試語音」。Kokoro、ElevenLabs 及自訂 API 位於「外部服務」內，本機語音不需要使用這些服務。",
+  "voiceGuidePrivacyNote": "金鑰會安全地儲存在裝置上。音訊只會傳送至你選擇的語音引擎。",
+  "bridgeErrorCronDeleteUnconfirmed": "Mobile 橋接未確認排程工作已刪除。",
+  "bridgeErrorAttachmentTooLarge": "附件為空白或過大。",
+  "bridgeErrorAttachmentInvalidPath": "Mobile 橋接傳回無效的附件路徑。",
+  "bridgeErrorImageInvalidType": "伺服器沒有傳回圖片。",
+  "bridgeErrorImageTooLarge": "圖片過大。",
+  "bridgeErrorNetwork": "無法連線至 Mobile 橋接。請檢查連線並重試。",
+  "bridgeErrorTimeout": "Mobile 橋接未能及時回應。",
+  "bridgeErrorBadRequest": "Mobile 橋接拒絕了要求。",
+  "bridgeErrorAuth": "Mobile 橋接拒絕了其 token 或權限。",
+  "bridgeErrorNotFound": "已安裝的 Mobile 橋接版本不支援此操作。",
+  "bridgeErrorServer": "Mobile 橋接未能在伺服器上完成此操作。",
+  "bridgeErrorUnknown": "Mobile 橋接未能完成要求。",
+  "cronJobIdInvalid": "排程工作識別碼無效。",
+  "cronProfileInvalid": "排程工作設定檔無效。",
+  "interactiveClarifyTitle": "Hermes 需要澄清",
+  "interactiveSudoTitle": "Hermes 需要 sudo 授權",
+  "interactiveSecretTitle": "Hermes 需要密鑰",
+  "interactiveTerminalTitle": "終端機要求",
+  "interactiveAnswerHint": "輸入答案",
+  "interactivePasswordHint": "Sudo 密碼",
+  "interactiveSecretHint": "密鑰值",
+  "interactiveTerminalBody": "此應用程式並未擁有受管理的終端機。它不會讀取你手機上的檔案或程序，並會傳回空白文字。",
+  "interactiveSend": "傳送",
+  "interactiveCancel": "停止工作",
+  "interactiveRetry": "重試安全回應",
+  "interactiveRespondFailed": "無法回應：{error}",
+  "@interactiveRespondFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "subagentActivityTitle": "子代理",
+  "subagentActivitySummary": "{active} 使用中 · {completed} 已完成",
+  "@subagentActivitySummary": {
+    "placeholders": {
+      "active": {
+        "type": "int"
+      },
+      "completed": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityRequested": "待處理",
+  "subagentActivityRunning": "工作中",
+  "subagentActivityThinking": "思考中",
+  "subagentActivityTool": "使用工具",
+  "subagentActivityCompleted": "已完成",
+  "subagentActivityFailed": "失敗",
+  "subagentActivityCancelled": "已取消",
+  "subagentActivityUnknown": "未知狀態",
+  "subagentActivityItem": "子代理 {index}",
+  "@subagentActivityItem": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityProgress": "工作 {current}（共 {total} 項）",
+  "@subagentActivityProgress": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityOpenConversation": "開啟對話",
+  "subagentActivityOpening": "正在開啟…",
+  "subagentActivityStop": "停止",
+  "subagentActivityStopping": "正在停止…",
+  "subagentInterruptTitle": "停止此子代理？",
+  "subagentInterruptBody": "Hermes 只會中斷此子代理。父對話會繼續。",
+  "subagentInterruptConfirm": "停止子代理",
+  "subagentInterruptRequested": "已要求停止。正在等待 Hermes 確認其狀態。",
+  "subagentInterruptNotFound": "Hermes 已找不到此活躍子代理。其狀態將從伺服器事件重新整理。",
+  "subagentInterruptFailed": "無法停止此子代理。",
+  "subagentOpenFailed": "無法開啟此子代理對話。",
+  "chaArtifactsAction": "成果",
+  "artifactTitle": "工作階段成果",
+  "artifactCount": "{count, plural, =1{1 item} other{{count} 個項目}}",
+  "@artifactCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "artifactEmptyTitle": "尚無成果",
+  "artifactEmptyBody": "此工作階段中的圖片、文件及生成結果將顯示於此。",
+  "artifactImages": "圖片",
+  "artifactFiles": "檔案",
+  "artifactDocuments": "文件",
+  "artifactGenerated": "生成內容",
+  "artifactToolResults": "工具結果",
+  "artifactOther": "其他",
+  "artifactAvailable": "可用",
+  "artifactMissing": "不可用",
+  "artifactExpired": "已過期",
+  "artifactUnknown": "未知狀態",
+  "artifactJumpSource": "前往來源訊息",
+  "artifactSourceUnavailable": "在已載入的記錄中找不到來源訊息。",
+  "artifactJumpSemantics": "{name}。前往來源訊息",
+  "@artifactJumpSemantics": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "artifactSourceOne": "來源：訊息 {number}",
+  "@artifactSourceOne": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "artifactSourceMany": "來源：訊息 {number} · {count} 個參照",
+  "@artifactSourceMany": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "generatedArtifactSection": "已生成的檔案",
+  "generatedArtifactKindCode": "程式碼",
+  "generatedArtifactKindHtml": "HTML 原始碼",
+  "generatedArtifactKindSvg": "SVG 原始碼",
+  "generatedArtifactVersionCount": "{count, plural, =1{1 version} other{{count} 個版本}}",
+  "@generatedArtifactVersionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "generatedArtifactOpenSemantics": "{name}。開啟已生成的檔案",
+  "@generatedArtifactOpenSemantics": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "generatedArtifactSourceOnly": "為保障安全，Hermes Console 只會將 HTML 和 SVG 顯示為原始碼。絕不會執行或在 WebView 中開啟。",
+  "generatedArtifactSourceSemantics": "{title} 的原始碼",
+  "@generatedArtifactSourceSemantics": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "generatedArtifactCharacterCount": "{count} 個字元",
+  "@generatedArtifactCharacterCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "generatedArtifactPreviewTruncated": "預覽上限為 {limit} 個字元。複製、分享及儲存仍會使用完整版本。",
+  "@generatedArtifactPreviewTruncated": {
+    "placeholders": {
+      "limit": {
+        "type": "int"
+      }
+    }
+  },
+  "generatedArtifactCopied": "檔案內容已複製。",
+  "generatedArtifactSaved": "已儲存為 {name}。",
+  "@generatedArtifactSaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "generatedArtifactExportTooLarge": "此檔案大小超出 {mb} MB 匯出上限。",
+  "@generatedArtifactExportTooLarge": {
+    "placeholders": {
+      "mb": {
+        "type": "int"
+      }
+    }
+  },
+  "generatedArtifactExportFailed": "無法匯出此檔案。",
+  "generatedArtifactVersionOf": "{total} 的第 {current} 個版本",
+  "@generatedArtifactVersionOf": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "generatedArtifactPreviousVersion": "上一個版本",
+  "generatedArtifactNextVersion": "下一個版本",
+  "generatedArtifactLatest": "最新",
+  "generatedArtifactMissing": "此已生成的檔案已不再於目前工作階段登記庫中提供。",
+  "artifactDownloadSaved": "檔案已儲存。",
+  "artifactDownloadUnavailable": "此檔案已不再於伺服器上提供。",
+  "artifactDownloadExpired": "此檔案已過期。其來源訊息仍可使用。",
+  "artifactDownloadUnsupported": "此伺服器沒有為此成品提供安全的受管理下載路徑。",
+  "artifactDownloadAccessDenied": "Hermes 拒絕存取此成品。請檢查 Dashboard 工作階段。",
+  "artifactDownloadTooLarge": "此成品超出流動裝置 25 MB 的下載上限。",
+  "artifactDownloadFailed": "無法下載此成品。",
+  "desktopCenterServerPathRedacted": "[伺服器路徑]",
+  "desktopCenterSecretRedacted": "[機密內容已省略]",
+  "recoveryCenterTitle": "復原",
+  "recoveryCenterRefreshTooltip": "重新整理檢查點",
+  "recoveryCenterRestored": "檢查點已還原。",
+  "recoveryCenterNoActiveTitle": "沒有使用中的對話",
+  "recoveryCenterNoActiveBody": "開啟對話以查看其檢查點。",
+  "recoveryCenterIntro": "Hermes 為此對話發佈的檔案檢查點。還原檢查點不會倒回對話記錄。",
+  "recoveryCenterReadOnlyNotice": "此對話為唯讀。你可以檢視變更，但無法還原。",
+  "recoveryCenterTimelineSection": "時間軸",
+  "recoveryCenterDisabledTitle": "復原功能已停用",
+  "recoveryCenterDisabledBody": "實例回報此工作階段不會儲存檢查點。",
+  "recoveryCenterEmptyTitle": "沒有檢查點",
+  "recoveryCenterEmptyBody": "Hermes 尚未為此對話儲存任何可復原的變更。",
+  "recoveryCenterSavedFallback": "已儲存的檢查點",
+  "recoveryCenterStaleView": "{error} 仍然顯示上次檢視的內容。",
+  "@recoveryCenterStaleView": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "recoveryCenterDetailFallback": "檢查點詳細資料",
+  "recoveryCenterReadOnlyRestore": "唯讀模式：已停用還原功能。",
+  "recoveryCenterNoDiff": "Hermes 沒有為此檢查點發佈檔案差異。",
+  "recoveryCenterRestoring": "還原中…",
+  "recoveryCenterRestoreAction": "還原檢查點",
+  "recoveryCenterConfirmTitle": "確認還原",
+  "recoveryCenterConfirmBody": "Hermes 將從此檢查點還原檔案。對話不會倒退。",
+  "recoveryCenterHashLabel": "輸入完整雜湊值",
+  "recoveryCenterHashHint": "完整檢查點雜湊值",
+  "recoveryCenterRestoreNow": "立即還原",
+  "recoveryCenterFailureUnsupported": "此 Hermes 版本不提供復原功能。",
+  "recoveryCenterFailureForbidden": "此實例不允許在此工作階段檢視復原內容。",
+  "recoveryCenterFailureInvalidResponse": "Hermes 傳回的檢查點不適合顯示。",
+  "recoveryCenterFailureUnavailable": "無法連線至實例。",
+  "recoveryCenterFailureRejected": "Hermes 拒絕了復原要求。",
+  "recoveryCenterFailureUnknown": "無法載入檢查點。",
+  "recoveryCenterDetailFailureUnsupported": "此 Hermes 版本無法檢查或還原檢查點。",
+  "recoveryCenterDetailFailureForbidden": "此實例不允許在目前工作階段執行此動作。",
+  "recoveryCenterDetailFailureInvalidResponse": "Hermes 傳回的詳細資料不適合顯示。",
+  "recoveryCenterDetailFailureUnavailable": "在動作完成前連線已中斷。",
+  "recoveryCenterDetailFailureRejected": "Hermes 拒絕還原。工作階段可能正忙碌，或檢查點已不存在。",
+  "recoveryCenterDetailFailureUnknown": "Hermes 無法完成復原動作。",
+  "extensionsCenterTitle": "擴充功能",
+  "extensionsCenterRefreshTooltip": "重新整理擴充功能",
+  "extensionsCenterEnablePluginTitle": "啟用外掛程式",
+  "extensionsCenterDisablePluginTitle": "停用外掛程式",
+  "extensionsCenterEnableToolsetTitle": "啟用工具群組",
+  "extensionsCenterDisableToolsetTitle": "停用工具群組",
+  "extensionsCenterWillEnable": "Hermes 將啟用",
+  "extensionsCenterWillDisable": "Hermes 將停用",
+  "extensionsCenterOnInstance": "在此實例中",
+  "extensionsCenterForInstance": "適用於此實例",
+  "extensionsCenterForConversation": "適用於此對話",
+  "extensionsCenterChangeBody": "{action}「{name}」{scope}。",
+  "@extensionsCenterChangeBody": {
+    "placeholders": {
+      "action": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      },
+      "scope": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterConfirmChange": "確認變更",
+  "extensionsCenterReloadTitle": "重新載入 MCP",
+  "extensionsCenterReloadBody": "Hermes 將重新載入其 MCP 伺服器。工具可能會暫時無法使用。",
+  "extensionsCenterReloadNow": "立即重新載入",
+  "extensionsCenterReloaded": "MCP 已重新載入。",
+  "extensionsCenterIntro": "由實例發佈的清單。變更會套用至 Hermes，而不只是此裝置。",
+  "extensionsCenterReadOnlyNotice": "唯讀模式：你可以檢視清單，但無法變更清單或重新載入 MCP。",
+  "extensionsCenterPluginsSection": "外掛程式",
+  "extensionsCenterPluginsEmpty": "未安裝任何外掛程式。",
+  "extensionsCenterPluginsHelp": "這些外掛程式可在此實例中擴充 Hermes。只啟用你實際使用的外掛程式。",
+  "extensionsCenterToolsSection": "工具",
+  "extensionsCenterToolsEmpty": "未發佈任何工具群組。",
+  "extensionsCenterToolsHelp": "這些工具群組整理 Hermes 可用於此對話或實例的工具。",
+  "extensionsCenterMcpSection": "MCP",
+  "extensionsCenterMcpHelp": "MCP 將 Hermes 連接至工具伺服器。重新載入會再次讀取其設定。",
+  "extensionsCenterSearchHint": "搜尋此部分",
+  "extensionsCenterActiveOnly": "僅顯示啟用項目",
+  "extensionsCenterNoMatches": "沒有結果符合這些篩選條件。",
+  "extensionsCenterResultCount": "{visible}／{total}",
+  "@extensionsCenterResultCount": {
+    "placeholders": {
+      "visible": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsCenterReloadControlled": "受控重新載入",
+  "extensionsCenterReloadDescription": "再次探索 Hermes 中設定的 MCP 伺服器及工具。",
+  "extensionsCenterReloading": "重新載入中…",
+  "extensionsCenterStaleInventory": "{error} 上一次的工具清單仍在顯示。",
+  "@extensionsCenterStaleInventory": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterPluginVersion": "v{version}",
+  "@extensionsCenterPluginVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterActive": "啟用中",
+  "extensionsCenterInactive": "未啟用",
+  "extensionsCenterToolCount": "{count, plural, one{1 tool} other{{count} 個工具}}",
+  "@extensionsCenterToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsCenterToolCountWithDescription": "{count, plural, one{1 個工具 · {description}} other{{count} 個工具 · {description}}}",
+  "@extensionsCenterToolCountWithDescription": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "description": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterFailureUnsupported": "此 Hermes 版本不會發佈外掛程式或工具。",
+  "extensionsCenterFailureForbidden": "此實例不允許檢視外掛程式和工具。",
+  "extensionsCenterFailureInvalidResponse": "Hermes 傳回的工具清單不宜顯示。",
+  "extensionsCenterFailureUnavailable": "無法連線至實例。",
+  "extensionsCenterFailureRejected": "Hermes 拒絕了擴充功能要求。",
+  "extensionsCenterFailureUnknown": "無法載入擴充功能。",
+  "extensionsCenterMutationFailureUnsupported": "此 Hermes 版本不支援此操作。",
+  "extensionsCenterMutationFailureForbidden": "此實例不允許變更此擴充功能。",
+  "extensionsCenterMutationFailureInvalidResponse": "Hermes 未以有效回應確認變更。",
+  "extensionsCenterMutationFailureUnavailable": "變更完成前連線已中斷。",
+  "extensionsCenterMutationFailureRejected": "Hermes 拒絕了變更。",
+  "extensionsCenterMutationFailureUnknown": "Hermes 無法完成變更。",
+  "agentCenterTitle": "代理程式",
+  "agentCenterRefreshTooltip": "重新整理活動",
+  "agentCenterFailureUnsupported": "此 Hermes 版本不會發佈代理程式中心。",
+  "agentCenterFailureForbidden": "此實例不允許在此工作階段中檢視代理程式。",
+  "agentCenterFailureInvalidResponse": "Hermes 傳回的活動資料不宜顯示。",
+  "agentCenterFailureUnavailable": "無法連線至實例。",
+  "agentCenterFailureRejected": "Hermes 拒絕了代理的要求。",
+  "agentCenterFailureUnknown": "無法載入代理活動。",
+  "agentCenterHistoryOpenFailed": "無法開啟此歷史記錄。",
+  "agentCenterWorkFallback": "代理工作",
+  "agentCenterHistoryEmpty": "Hermes 沒有在此歷史記錄中儲存任何節點。",
+  "agentCenterStopProcessTitle": "停止程序",
+  "agentCenterStopProcessBody": "只會停止「{process}」。",
+  "@agentCenterStopProcessBody": {
+    "placeholders": {
+      "process": {
+        "type": "String"
+      }
+    }
+  },
+  "agentCenterStop": "停止",
+  "agentCenterStopFailed": "Hermes 無法停止該程序。",
+  "agentCenterStopAll": "全部停止",
+  "agentCenterStopAllTitle": "停止所有作用中的程序？",
+  "agentCenterStopAllBody": "這會停止此對話的 {count} 背景程序。已儲存的委派歷史記錄仍然可用。",
+  "@agentCenterStopAllBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agentCenterStopAllFailed": "部分程序無法停止。",
+  "agentCenterNewTaskTitle": "新增背景工作",
+  "agentCenterNewTaskHint": "描述此對話的特定工作",
+  "agentCenterStart": "開始",
+  "agentCenterTaskAccepted": "Hermes 已接受工作。",
+  "agentCenterTaskStartFailed": "Hermes 無法開始該工作。",
+  "agentCenterNewTask": "新增工作",
+  "agentCenterIntroRuntime": "此對話的程序及已儲存的委派。子代理是 Hermes 委派的工作，而非設定檔。",
+  "agentCenterIntroInstance": "Hermes 在較早對話中使用的委派及子代理。它們不是可設定的設定檔。開啟對話即可查看其作用中的程序。",
+  "agentCenterRunningSection": "執行中",
+  "agentCenterNoProcesses": "此對話沒有作用中的程序。",
+  "agentCenterProcessFallback": "程序 {id}",
+  "@agentCenterProcessFallback": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "agentCenterActive": "作用中",
+  "agentCenterProcessStatus": "{status} · {seconds} 秒",
+  "@agentCenterProcessStatus": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      },
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "agentCenterStopTooltip": "停止此程序",
+  "agentCenterHistorySection": "已儲存的委派",
+  "agentCenterNoHistory": "Hermes 尚未儲存任何子代理委派。",
+  "agentCenterSubagentCount": "{count, plural, one{1 subagent} other{{count} 個子代理}}",
+  "@agentCenterSubagentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agentCenterSubagentCountWithDate": "{count, plural, one{1 個子代理 · {date}} other{{count} 個子代理 · {date}}}",
+  "@agentCenterSubagentCountWithDate": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "agentCenterStaleView": "{error} 上次檢視畫面仍在顯示。",
+  "@agentCenterStaleView": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "projectsCenterTitle": "專案",
+  "projectsCenterRefreshTooltip": "重新整理專案",
+  "projectsCenterFailureUnsupported": "此 Hermes 版本不會發佈專案。",
+  "projectsCenterFailureForbidden": "此實例不允許在此工作階段檢視專案。",
+  "projectsCenterFailureInvalidResponse": "Hermes 傳回的專案清單不適合顯示。",
+  "projectsCenterFailureUnavailable": "無法連線至實例。",
+  "projectsCenterFailureRejected": "Hermes 拒絕了專案要求。",
+  "projectsCenterFailureUnknown": "無法載入專案。",
+  "projectsCenterLoading": "Hermes 正在檢查對話及其伺服器路徑…",
+  "projectsCenterHowItWorksTitle": "專案的組成方式",
+  "projectsCenterIntro": "專案並非手機上的資料夾：Hermes 會按對話的工作目錄（cwd），以及在可用時按伺服器 Git 儲存庫根目錄將對話分組。",
+  "projectsCenterWorkspacesSection": "工作區",
+  "projectsCenterEmptyTitle": "尚未有專案",
+  "projectsCenterEmptyBody": "在伺服器上開啟一個包含工作目錄（cwd）的對話。Hermes 能按資料夾或 Git 儲存庫將其分組後，便會顯示在此處。",
+  "projectsCenterStaleView": "{error} 上次檢視畫面仍在顯示。",
+  "@projectsCenterStaleView": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "projectsCenterUnnamedProject": "未命名專案",
+  "projectsCenterProjectSemantics": "{label}，{count, plural, one{1 conversation} other{{count} 個對話}}",
+  "@projectsCenterProjectSemantics": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "projectsCenterConversationCount": "{count, plural, one{1 conversation} other{{count} 個對話}}",
+  "@projectsCenterConversationCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "projectsCenterRepositoryCount": "{count, plural, one{1 repository} other{{count} 儲存庫}}",
+  "@projectsCenterRepositoryCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "projectsCenterServerPathReadOnly": "伺服器路徑，唯讀",
+  "projectsCenterDetailStale": "無法重新整理詳細資料；現時顯示可用的摘要。",
+  "projectsCenterReposSection": "儲存庫及分支",
+  "projectsCenterNoBranchesTitle": "沒有包含對話的分支",
+  "projectsCenterNoBranchesBody": "此專案目前沒有任何已分組的工作階段。",
+  "projectsCenterBranchFallback": "分支",
+  "projectsCenterLaneEmpty": "此分支沒有已載入的工作階段。",
+  "projectsCenterConversationFallback": "對話",
+  "commonMoreOptions": "更多選項",
+  "extensionsCenterAddPlugin": "新增外掛程式",
+  "extensionsCenterAddPluginSubtitle": "從 Git 儲存庫安裝 Hermes Agent 外掛程式。",
+  "extensionsCenterAddToolsTitle": "如何新增工具",
+  "extensionsCenterAddToolsViaPlugin": "從外掛程式",
+  "extensionsCenterAddToolsViaPluginBody": "外掛程式可為代理程式新增工具及功能。",
+  "extensionsCenterAddToolsViaMcp": "從 MCP 目錄",
+  "extensionsCenterAddToolsViaMcpBody": "連線至你的 Hermes 實例所發佈的 MCP 伺服器。",
+  "extensionsCenterAvailableToolsets": "可用工具集",
+  "extensionsCenterClearSearch": "清除搜尋",
+  "extensionsCenterInstalledSection": "已安裝",
+  "extensionsCenterFailureTitle": "無法載入擴充功能",
+  "extensionsCenterManagementForbidden": "目前工作階段不允許管理擴充功能。",
+  "extensionsCenterManagementUnavailable": "管理功能目前無法使用。清單及支援的控制項仍可使用。",
+  "extensionsCenterManagementUnsupported": "此實例可以顯示擴充功能，但無法從應用程式安裝擴充功能。",
+  "extensionsCenterMcpBootstrapLabel": "設定",
+  "extensionsCenterMcpCatalogAction": "瀏覽 MCP 目錄",
+  "extensionsCenterMcpCatalogSearchHint": "搜尋目錄…",
+  "extensionsCenterMcpCatalogSubtitle": "{count, plural, =0{No entries available} one{1 server available} other{{count} 個可用伺服器}}",
+  "@extensionsCenterMcpCatalogSubtitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsCenterMcpCatalogTitle": "MCP 目錄",
+  "extensionsCenterMcpConfiguredSection": "已設定",
+  "extensionsCenterMcpCredentialsBody": "這些資料只會傳送到你的實例一次，不會儲存在手機上。",
+  "extensionsCenterMcpCredentialsTitle": "必填值",
+  "extensionsCenterMcpDisableTitle": "停用 MCP 伺服器",
+  "extensionsCenterMcpEnableTitle": "啟用 MCP 伺服器",
+  "extensionsCenterMcpEndpointLabel": "端點",
+  "extensionsCenterMcpInstallAction": "安裝伺服器",
+  "extensionsCenterMcpInstallRisk": "檢視來源及權限。MCP 伺服器可在你的實例上執行工具。",
+  "extensionsCenterMcpInstallStarted": "Hermes 已在背景開始安裝。",
+  "extensionsCenterMcpInstallTitle": "檢視 MCP 伺服器",
+  "extensionsCenterMcpInstalled": "MCP 伺服器已安裝。",
+  "extensionsCenterMcpInstalledBadge": "已安裝",
+  "extensionsCenterMcpNoServers": "未設定 MCP 伺服器",
+  "extensionsCenterMcpNoServersBody": "瀏覽由你的實例發佈的目錄以新增伺服器。",
+  "extensionsCenterMcpRemoveAction": "移除伺服器",
+  "extensionsCenterMcpRemoveBody": "「{name}」將會從此實例的設定中移除。",
+  "@extensionsCenterMcpRemoveBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterMcpRemoveTitle": "移除 MCP 伺服器",
+  "extensionsCenterMcpRemoved": "MCP 伺服器已移除。",
+  "extensionsCenterMcpRequiredValue": "此值為必填。",
+  "extensionsCenterMcpRuntimeSection": "MCP 執行環境",
+  "extensionsCenterMcpSourceLabel": "來源",
+  "extensionsCenterMcpTestAction": "測試連線",
+  "extensionsCenterMcpTestFailed": "MCP 伺服器未正確回應。",
+  "extensionsCenterMcpTestNeedsAuth": "MCP 伺服器需要授權。",
+  "extensionsCenterMcpTestSuccess": "{count, plural, =0{Connection successful} one{Connection successful · 1 tool} other{連線成功 · {count} 個工具}}",
+  "@extensionsCenterMcpTestSuccess": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsCenterMcpToggleBody": "「{name}」的狀態將變更，MCP 將重新載入。",
+  "@extensionsCenterMcpToggleBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterMcpToolCount": "{count, plural, one{1 tool} other{{count} 個工具}}",
+  "@extensionsCenterMcpToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsCenterMcpTransportLabel": "傳輸方式",
+  "extensionsCenterNoMatchesBody": "嘗試其他字詞，或關閉「僅限啟用中」篩選條件。",
+  "extensionsCenterPluginAuthRequired": "需要驗證",
+  "extensionsCenterPluginEnableAfterInstall": "安裝後啟用",
+  "extensionsCenterPluginIdentifierHint": "owner/repo 或 https://github.com/owner/repo.git",
+  "extensionsCenterPluginIdentifierInvalid": "使用 owner/repo 或不含憑證或參數的 HTTPS Git URL。",
+  "extensionsCenterPluginIdentifierLabel": "Git 儲存庫",
+  "extensionsCenterPluginInstallAction": "安裝",
+  "extensionsCenterPluginInstallConfirmBody": "Hermes 將從「{source}」下載並執行第三方程式碼。繼續前請檢閱來源。",
+  "@extensionsCenterPluginInstallConfirmBody": {
+    "placeholders": {
+      "source": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterPluginInstallConfirmTitle": "確認安裝",
+  "extensionsCenterPluginInstallRisk": "外掛會在伺服器上執行程式碼。只安裝信任的儲存庫。",
+  "extensionsCenterPluginInstallTitle": "新增外掛",
+  "extensionsCenterPluginInstalled": "外掛已安裝。",
+  "extensionsCenterPluginInstalledWithNotice": "外掛已安裝，但收到 Hermes 的提示。使用前請檢查其狀態。",
+  "extensionsCenterPluginRemoveAction": "移除外掛",
+  "extensionsCenterPluginRemoveBody": "「{name}」將從此實例中移除。外部資料可能仍會保留在伺服器上。",
+  "@extensionsCenterPluginRemoveBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterPluginRemoveTitle": "移除外掛",
+  "extensionsCenterPluginRemoved": "外掛已移除。",
+  "extensionsCenterPluginReviewAction": "檢查並安裝",
+  "extensionsCenterPluginUpdateAction": "更新外掛程式",
+  "extensionsCenterPluginUpdateBody": "Hermes 將從其 Git 來源更新「{name}」。",
+  "@extensionsCenterPluginUpdateBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionsCenterPluginUpdateTitle": "更新外掛程式",
+  "extensionsCenterPluginUpdated": "外掛程式已更新。",
+  "extensionsCenterPluginsEmptyBody": "此實例目前尚未有啟用中的外掛程式。",
+  "extensionsCenterToolsEmptyBody": "此實例沒有發佈可設定的工具集。",
+  "modelSearchHint": "搜尋模型",
+  "modelSearchEmpty": "沒有符合搜尋條件的模型。",
+  "drawerSwitchInstance": "切換實例",
+  "drawerActiveInstance": "目前使用中的實例",
+  "sesMetricCachedTokens": "已快取 token",
+  "sesMetricCachePercent": "快取百分比",
+  "languageTraditionalChinese": "繁體中文",
+  "litertStoreTitle": "GPU 模型商店",
+  "litertStoreIntro": "OlliteRT 會在手機的 GPU/NPU 上執行 .litertlm 模型。下載會在 OlliteRT 商店內進行；你可在此查看哪些模型適合手機、開啟下載，並將已提供的模型設為 Hermes 使用中的模型。",
+  "mdlNoActiveModelTitle": "尚未設定模型",
+  "mdlNoActiveModelBody": "此伺服器尚未有已設定憑證的 AI 供應商。請在下方設定後使用。",
+  "mdlConfigNeedsDashboard": "需要 Dashboard 才能設定",
+  "mdlDashboardOfflineSuffix": "無法連線至 Dashboard",
+  "litertNoteRecommended": "建議使用",
+  "@litertNoteRecommended": {
+    "description": "LiteRT catalog note"
+  },
+  "litertNoteHighEnd": "效能較強，適合高階手機（12 GB 以上）",
+  "@litertNoteHighEnd": {
+    "description": "LiteRT catalog note"
+  },
+  "litertNoteLightweight": "極輕量，大部份手機都能啟動",
+  "@litertNoteLightweight": {
+    "description": "LiteRT catalog note"
+  },
+  "mdlBridgeUnavailable": "Mobile Bridge 無法使用",
+  "mdlEditProvider": "編輯供應商",
+  "statusBridgeContacting": "Contacting bridge…",
+  "statusBridgeReprovisioning": "Re-provisioning token…",
+  "statusBridgeInstalling": "Installing and restarting…",
+  "statusBridgeVerifying": "Verifying health, capabilities, and authentication…",
+  "statusBridgeRepairSuccess": "Bridge repaired and verified.",
+  "statusBridgeRetry": "Retry",
+  "statusBridgeManualSetup": "Open safe setup",
+  "statusBridgeLocalControl": "Open local controls",
+  "statusBridgeErrorTimeout": "The bridge did not respond within the safe time limit.",
+  "statusBridgeErrorUnreachable": "The bridge is unreachable. Check network and TLS access.",
+  "statusBridgeErrorTls": "The secure connection to the bridge failed.",
+  "statusBridgeErrorAuth": "The Gateway API key was rejected.",
+  "statusBridgeErrorProvisionDisabled": "Token provisioning is disabled on this bridge.",
+  "statusBridgeErrorHttp": "The bridge returned an unexpected HTTP response.",
+  "statusBridgeErrorInvalidResponse": "The bridge returned an invalid response.",
+  "statusBridgeErrorStorage": "The new token could not be saved securely.",
+  "statusBridgeErrorUnsupported": "Remote repair is not supported by this Gateway.",
+  "statusBridgeErrorFailed": "Remote bridge repair failed. Use the safe manual setup route.",
+  "statusBridgeErrorVerification": "Repair ran, but the bridge did not pass authenticated verification.",
+  "statusBridgeErrorReadOnly": "This instance is read-only; remote repair is disabled.",
+  "statusBridgeErrorMissingKey": "A valid Gateway API key is required for remote repair.",
+  "chaRemoteActivity": "Activity on another surface",
+  "chaLocalTranscriptTruncated": "Older local history is incomplete. Only recent messages saved on this device are shown.",
+  "chaCompressionConfigThresholdSemantics": "Start threshold",
+  "chaCompressionConfigTargetSemantics": "Reduction target",
+  "chaCompressionConfigProtectSemantics": "Protected messages",
+  "chaRuntimeOwnershipTitle": "Open on another surface",
+  "chaRuntimeOwnershipMessage": "This conversation is read-only here while another surface owns its runtime. Your history, attachments, and draft are preserved. Checking never sends your draft.",
+  "chaRuntimeOwnershipCheck": "Check again",
+  "chaRuntimeOwnershipChecking": "Checking…",
+  "chaControlReleaseDesktop": "Release for Desktop",
+  "chaRuntimeReleaseProgress": "Releasing for Desktop…",
+  "chaRuntimeReleaseUnavailable": "Finish pending local work before releasing this runtime.",
+  "chaRuntimeReleaseConfirmTitle": "Close live runtime",
+  "chaRuntimeReleaseConfirmBody": "This closes the live session for all of its viewers. Console keeps the transcript and draft.",
+  "chaRuntimeReleaseConfirm": "Close and release",
+  "chaRuntimeReleaseFailed": "The runtime could not be closed safely. The session remains bound to Console.",
+  "chaRuntimeReleased": "Runtime closed and released. The transcript, outbox, and draft were kept. Desktop acquisition has not been confirmed.",
+  "chaDesktopAuthRequiredBanner": "Sign in to the Dashboard to reconnect live chat. Your transcript remains available.",
+  "genMediaLoading": "Loading generated media…",
+  "genMediaError": "The generated media could not be loaded",
+  "genMediaLoad": "Load generated media",
+  "genMediaLoadFrom": "Load generated media from {domain}",
+  "genVideoSemanticLabel": "Video generated by the agent",
+  "genVideoPlay": "Play video",
+  "genVideoPause": "Pause video",
+  "litertStoreRecommended": "Recommended",
+  "litertStoreInUseLower": "in use",
+  "litertStoreDownloaded": "downloaded",
+  "litertStoreDownload": "Download",
+  "litertStoreInUse": "In use",
+  "litertStoreUse": "Use",
+  "litertStoreStartHint": "Download and start it in OlliteRT before using it.",
+  "litertStoreFits": "fits",
+  "litertStoreTight": "tight",
+  "litertStoreTooBig": "doesn’t fit",
+  "litertStoreOpenError": "Could not open {url}",
+  "@litertStoreOpenError": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "litertNoteDistilledReasoner": "Distilled reasoning model",
+  "runsLocalRunning": "Running on the local agent…",
+  "runsLocalBridgeUnavailable": "Could not connect to the local agent (Mobile Bridge). Start the agent and try again.",
+  "notifKanbanResultsTitle": "Kanban results",
+  "notifKanbanResultsSub": "Board tasks completed, blocked or needing attention",
+  "notifBgActiveUntil": "Active until you turn it off · listening to agent events",
+  "@notifBgActiveUntil": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "notifBgPaused": "Paused · enable listening to receive background events",
+  "notifBgFiniteNotice": "Listening stays active until you turn it off and displays a persistent Android notification.",
+  "notifFgsChannelLabel": "Persistent service channel",
+  "notifBgActivating": "Starting persistent listening…",
+  "notifBgError": "Start failed · tap to retry",
+  "notifBgRestartNotice": "Removing Hermes from Recents does not stop listening. Force stop interrupts it until you open the app again.",
+  "mdlApplyModelError": "Could not apply the model",
+  "mdlExternalProvider": "External provider",
+  "mdlExternalProviderSubtitle": "Remote Ollama · LM Studio · OpenAI-compatible",
+  "slActivityPreparing": "starting",
+  "slActivityGenerating": "working",
+  "slActivityUsingTools": "using tools",
+  "slActivityDelegated": "delegated",
+  "slActivityBackground": "background work",
+  "slActivityCompacting": "compacting",
+  "slActivityWaiting": "needs you",
+  "slActivityCompleting": "completing",
+  "slActivityUnknown": "working",
+  "slActivityStale": "last known",
+  "chaCompressionCompleted": "Context compression completed.",
+  "chaCompressionAborted": "Compression was aborted. Hermes kept the authoritative conversation state.",
+  "chaCompressionPending": "Compression is still running. Hermes will refresh this conversation when it confirms the result.",
+  "chaCompressionLockHeld": "Another compression is already in progress for this conversation. Try again shortly.",
+  "chaCompressionReconciling": "Compression status is being reconciled. Do not retry yet.",
+  "chaQueuedPausedCount": "{count, plural, one{PAUSED · 1 MESSAGE} other{PAUSED · {count} MESSAGES}}",
+  "chaQueueParkedNote": "paused after Stop",
+  "chaQueueResume": "Resume queue",
+  "chaQueueEdit": "Edit",
+  "chaQueueSteer": "Steer now",
+  "chaQueueSend": "Send now",
+  "chaQueueSendNext": "Send next",
+  "chaQueueDelete": "Delete",
+  "chaQueueEditFailed": "The queued message could not be updated.",
+  "chaStopStopping": "Stopping…",
+  "chaStopRetrying": "Retrying Stop…",
+  "chaStopConfirmed": "Stopped",
+  "chaStopFailed": "Stop wasn't confirmed",
+  "chaStopRetry": "Retry Stop",
+  "chaStopPersistenceFailed": "Stop could not be saved or confirmed safely. Try again.",
+  "chaLoadEarlierMessages": "Load earlier messages",
+  "chaEarlierMessagesError": "Earlier messages could not be loaded. Try again.",
+  "setupPairingSecretAtEntry": "Pairing output is a reusable credential. Keep it in your trusted terminal, then scan it or paste it only into Hermes Console.",
+  "interactiveBatchProgress": "Question {answered} of {total}",
+  "@interactiveBatchProgress": {
+    "placeholders": {
+      "answered": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "interactiveBatchOtherHint": "Other",
+  "interactiveBatchConfirm": "Confirm and continue",
+  "interactiveRecommended": "Recommended",
+  "subagentActivityModel": "Model: {model}",
+  "@subagentActivityModel": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "subagentActivityToolCount": "{count, plural, =1{1 tool} other{{count} tools}}",
+  "@subagentActivityToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityCallCount": "{count, plural, =1{1 call} other{{count} calls}}",
+  "@subagentActivityCallCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityFilesRead": "{count} read",
+  "@subagentActivityFilesRead": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityFilesWritten": "{count} written",
+  "@subagentActivityFilesWritten": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityResultSummary": "Result summary",
+  "subagentActivityMetadataUnavailable": "Individual goals and models were not retained.",
+  "subagentActivityAggregateCompleted": "{count, plural, =1{1 completed} other{{count} completed}}",
+  "@subagentActivityAggregateCompleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentActivityAggregateFailed": "{count, plural, =1{1 failed} other{{count} failed}}",
+  "@subagentActivityAggregateFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentTailUnavailable": "Recent output is unavailable.",
+  "subagentTailTruncated": "Output truncated.",
+  "subagentSteerLabel": "Guide",
+  "subagentSteerSending": "Sending…",
+  "subagentSteerQueued": "Guidance queued.",
+  "subagentSteerDelivered": "Guidance delivered.",
+  "subagentSteerUnconfirmed": "Guidance was not confirmed.",
+  "missionTitle": "Bots",
+  "missionBotsLabel": "Bots",
+  "missionWorkLabel": "工作",
+  "missionCreateLabel": "建立",
+  "missionCreateBotLabel": "新 bot",
+  "missionCreateRoomLabel": "新房間",
+  "missionSharedRooms": "共享房間",
+  "missionCreateSharedRoom": "建立共享房間",
+  "missionNoSharedRooms": "沒有官方共享房間可用。",
+  "missionSharedRoomsUnavailable": "官方共享房間不可用。",
+  "missionSendSharedMessage": "傳送訊息",
+  "missionRenameSharedRoom": "重新命名共享房間",
+  "missionStopSharedRoom": "停止共享房間？",
+  "missionDisbandSharedRoom": "解散共享房間？",
+  "missionConfirm": "確認",
+  "missionHostedActionFailed": "Hermes 無法更新共享房間。",
+  "missionHostedRetryAvailable": "房間任務可以重試。",
+  "missionHostedRetryAction": "重試任務",
+  "missionHostedRetryConfirm": "重試此房間任務？",
+  "missionHostedSave": "儲存",
+  "missionHostedCancel": "取消",
+  "missionHostedMemberCount": "{count, plural, one{1 位成員} other{{count} 位成員}}",
+  "@missionHostedMemberCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "missionHostedRoomCount": "{count, plural, one{1 個房間} other{{count} 個房間}}",
+  "@missionHostedRoomCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "missionSharedRoomSemantics": "共享房間 {name}，{count, plural, one{1 位成員} other{{count} 位成員}}",
+  "@missionSharedRoomSemantics": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "missionRoomAvatarMembers": "{count, plural, one{1 位成員，不完整團隊} other{{count} 位成員，不完整團隊}}",
+  "@missionRoomAvatarMembers": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "missionApprovalNoLongerAvailable": "批准已不再可用。請重新整理工作。",
+  "missionApprovalNoVerifiedTarget": "沒有此批准的已驗證目標。",
+  "missionApprovalPending": "批准待定",
+  "missionApprovalDecisionHint": "決定是否繼續",
+  "missionBotChatMetadataUnavailable": "Bot Chat 元數據無法驗證。請重新整理 Bots 並重試。",
+  "missionRoomRosterUnavailable": "權威設定檔名冊不可用，或此協調器已不存在。請先重新整理或管理設定檔。",
+  "missionOffline": "Hermes 不可用。現有團隊數據仍可見。",
+  "missionStaleData": "部分團隊數據可能已過時。",
+  "missionKanbanUnavailable": "此 Hermes 安裝上任務板不可用。"
+}

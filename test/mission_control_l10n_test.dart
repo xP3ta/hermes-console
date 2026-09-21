@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/screens/mission_control_copy.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
@@ -118,4 +119,94 @@ void main() {
       },
     );
   }
+
+  testWidgets('Mission Control copy uses zh-Hant at runtime', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale.fromSubtags(
+          languageCode: 'zh',
+          scriptCode: 'Hant',
+        ),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: const Scaffold(body: SizedBox()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final copy = MissionControlCopy.of(tester.element(find.byType(SizedBox)));
+    expect(copy.allAgents, '所有 Bot');
+    expect(copy.chooseWorkspace, '選擇工作區');
+    expect(copy.workspaces, '工作區');
+    expect(copy.createRoom, '建立房間');
+    expect(copy.openChat, '開啟聊天');
+    expect(copy.roomMembers, '房間成員');
+    expect(copy.sendSharedMessage, '傳送訊息');
+  });
+
+  testWidgets('zh-Hant Mission Control copy covers Bots, Rooms and Work', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale.fromSubtags(
+          languageCode: 'zh',
+          scriptCode: 'Hant',
+        ),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: const Scaffold(body: SizedBox()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final copy = MissionControlCopy.of(tester.element(find.byType(SizedBox)));
+
+    // Bots: empty state, actions, search and error copy.
+    expect(copy.noBots, 'Bot 是具名隊友，擁有自己的記憶、技能和聊天。建立第一個 Bot 開始使用。');
+    expect(copy.searchAgents, '搜尋 Bot');
+    expect(copy.clearSearch, '清除搜尋');
+    expect(copy.botRosterUpdateFailed, 'Hermes 未能更新此 Bot。');
+    expect(copy.hideBot, '從 Bots 隱藏');
+
+    // Rooms: empty state, status, form labels and accessibility text.
+    expect(copy.noRooms, '建立房間，開始與團隊交流。');
+    expect(copy.roomActivity, '房間活動');
+    expect(copy.roomNoActivity, '此房間尚未發佈任何活動。');
+    expect(copy.roomName, '房間名稱');
+    expect(copy.roomPurposeHint, '例如：保持生產環境穩定');
+    expect(copy.sharedRoomSemantics('平台', 2), '共享房間 平台，2 位成員');
+
+    // Work: empty state, actions and error/status copy.
+    expect(copy.noTasks, '這裡目前沒有任務。');
+    expect(copy.noActivity, 'Hermes 尚未為此範圍發佈最近活動。');
+    expect(copy.noApprovals, '沒有需要處理的已觀察批准。');
+    expect(copy.openKanban, '完整任務板');
+    expect(copy.status('approvalRequired'), '需要批准');
+    expect(copy.taskStatus('running'), '進行中');
+  });
+
+  testWidgets('zh-Hant room avatar labels preserve incomplete-team semantics', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale.fromSubtags(
+          languageCode: 'zh',
+          scriptCode: 'Hant',
+        ),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: const Scaffold(body: SizedBox()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final strings = Strings.of(tester.element(find.byType(SizedBox)));
+    expect(strings.missionRoomAvatarMembers(1), '1 位成員，不完整團隊');
+    expect(strings.missionRoomAvatarMembers(2), '2 位成員，不完整團隊');
+  });
 }

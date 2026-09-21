@@ -302,6 +302,7 @@ class _AttachmentDesktopGateway
   int imageAttachCalls = 0;
   int submitCalls = 0;
   bool failNextSubmit = false;
+  Object? submitError;
   Completer<void>? attachGate;
   int? gateOnImageAttachCall;
   final List<(String, String)> detachedImages = [];
@@ -369,6 +370,8 @@ class _AttachmentDesktopGateway
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     submitCalls++;
     eventLog?.add('rpc:prompt.submit');
+    final error = submitError;
+    if (error != null) throw error;
     if (failNextSubmit) {
       failNextSubmit = false;
       throw const TuiGatewayRpcError(
@@ -617,14 +620,22 @@ PreparedTurn _attachmentTurn(AttachmentDraft attachment) {
   );
 }
 
-ActiveChat _attachmentChat(_AttachmentDesktopGateway gateway) => ActiveChat(
+ActiveChat _attachmentChat(
+  _AttachmentDesktopGateway gateway, {
+  bool botSurface = false,
+}) => ActiveChat(
   compressionFenceStore: testCompressionFenceStore(),
   connection: _conn(id: 'conn-attachment'),
   sessionId: 'sess-attachment',
   sessionTitle: 'Adjuntos',
+  notificationSurface: botSurface
+      ? NotificationChatSurface.bot
+      : NotificationChatSurface.normal,
   notifications: null,
   onTerminal: () {},
   desktopGateway: gateway,
+  sessionProfile: botSurface ? 'attachment-bot' : null,
+  initialStoredSessionId: botSurface ? 'sess-attachment' : null,
 );
 
 Future<AttachmentDraft> _privateTestAttachment(
@@ -663,6 +674,82 @@ Session _widgetSession() => const Session(
 );
 
 void main() {
+  test('writable Bot Chat sends an ordinary prompt exactly once', () async {
+    final gateway = _AttachmentDesktopGateway();
+    final chat = _attachmentChat(gateway, botSurface: true);
+    addTearDown(chat.dispose);
+
+    expect(chat.notificationSurface, NotificationChatSurface.bot);
+    expect(chat.sessionProfile, 'attachment-bot');
+    expect(
+      await chat.send(
+        fullText: 'ordinary bot message',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    expect(gateway.submitCalls, 1);
+  });
+
+  test(
+    'server-denied Bot Chat send does not retry or mutate transport',
+    () async {
+      final gateway = _AttachmentDesktopGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'prompt.submit',
+          'server denied',
+          code: 403,
+        );
+      final chat = _attachmentChat(gateway, botSurface: true);
+      addTearDown(chat.dispose);
+
+      expect(
+        await chat.send(
+          fullText: 'denied bot message',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isFalse,
+      );
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
+  test(
+    'ownership conflict fails closed before a second Bot Chat send',
+    () async {
+      final gateway = _AttachmentDesktopGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'prompt.submit',
+          'owned by another surface',
+          code: 4090,
+          data: {'reason': 'SESSION_NOT_OWNED'},
+        );
+      final chat = _attachmentChat(gateway, botSurface: true);
+      addTearDown(chat.dispose);
+
+      expect(
+        await chat.send(
+          fullText: 'ownership conflict',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isFalse,
+      );
+      expect(chat.conflictReadOnly, isTrue);
+      expect(
+        await chat.send(
+          fullText: 'must not dispatch',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isFalse,
+      );
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
   test(
     'compacted terminal groups skip identities removed in the same pass',
     () {

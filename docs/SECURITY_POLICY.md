@@ -284,7 +284,7 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
 - Los adjuntos también permanecen locales hasta ese siguiente turno normal.
 - Si el Dashboard no expone `/api/ws`, el fallback `/v1/runs` no intenta
   steering por un endpoint añadido ni interrumpe el run silenciosamente.
-- Bot Chat tampoco ofrece write/redirect/steer en `1.2.10` (issue #11).
+- Bot Chat puede ofrecer el composer y el envío de turnos ordinarios cuando la conexión es escribible y las capacidades, propiedad y autorización del servidor lo permiten. Nunca ofrece ni despacha steering/redirect (incluido el steering de subagentes y de la cola) en `1.2.10` (issue #11).
 
 ### Borrado de tareas programadas
 

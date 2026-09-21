@@ -9,6 +9,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/services/notifications/notification_service.dart';
 
 import 'support/in_memory_compression_fence_storage.dart';
 
@@ -20,11 +21,16 @@ SavedConnection _connection(String id) => SavedConnection(
   apiKey: 'test-key',
 );
 
-ActiveChat _chat(String id, {HermesDesktopGateway? gateway}) => ActiveChat(
+ActiveChat _chat(
+  String id, {
+  HermesDesktopGateway? gateway,
+  NotificationChatSurface notificationSurface = NotificationChatSurface.normal,
+}) => ActiveChat(
   compressionFenceStore: testCompressionFenceStore(),
   connection: _connection(id),
   sessionId: 'session-$id',
   sessionTitle: 'Queue actions',
+  notificationSurface: notificationSurface,
   notifications: null,
   onTerminal: () {},
   desktopGateway: gateway,
@@ -388,6 +394,35 @@ void main() {
     expect(gateway.steers, ['corrige el rumbo']);
     expect(chat.queuedMessages, ['corrige el rumbo']);
   });
+
+  test(
+    'Bot Chat rejects queued steering without dispatching redirect',
+    () async {
+      final gateway = _QueueGateway();
+      final chat = _chat(
+        'queue-bot-chat-steer',
+        gateway: gateway,
+        notificationSurface: NotificationChatSurface.bot,
+      )..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      expect(
+        await chat.send(
+          fullText: 'turno vivo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      chat.enqueue('no redirecciones');
+      final dynamic subject = chat;
+      final String id = subject.queuedEntries.single.id as String;
+
+      expect(await subject.steerQueuedTurn(id) as bool, isFalse);
+      expect(gateway.steers, isEmpty);
+      expect(chat.queuedMessages, ['no redirecciones']);
+    },
+  );
 
   test('sendQueuedNow promueve, interrumpe y conserva el resto', () async {
     final gateway = _QueueGateway()..settleOnInterrupt = true;

@@ -184,6 +184,7 @@ Future<ActiveChat> _start(
   _SubagentGateway gateway, {
   NotificationService? notifications,
   Future<void> Function()? beforeTerminalNotification,
+  NotificationChatSurface notificationSurface = NotificationChatSurface.normal,
 }) async {
   final chat = ActiveChat(
     compressionFenceStore: testCompressionFenceStore(),
@@ -198,6 +199,7 @@ Future<ActiveChat> _start(
     ),
     sessionId: 'stored-subagent',
     sessionTitle: 'Subagent',
+    notificationSurface: notificationSurface,
     notifications: notifications,
     onTerminal: () {},
     beforeTerminalNotification: beforeTerminalNotification,
@@ -314,6 +316,31 @@ class _MountedSubagentProbeState extends State<_MountedSubagentProbe> {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('Bot Chat cannot steer an owned live subagent', () async {
+    final gateway = _SubagentGateway();
+    final chat = await _start(
+      gateway,
+      notificationSurface: NotificationChatSurface.bot,
+    );
+    addTearDown(chat.dispose);
+    addTearDown(gateway.close);
+
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'bot-chat-child',
+      'status': 'running',
+      'accepting_steer': true,
+    });
+    await _settle();
+
+    final activity = chat.subagentActivities.single;
+    expect(chat.canSteerSubagent(activity), isFalse);
+    await expectLater(
+      chat.steerSubagent(activity, 'no redirection'),
+      throwsStateError,
+    );
+    expect(gateway.steerCalls, isEmpty);
+  });
 
   test(
     'presentation owner tokens isolate sibling release and scrub only on 1 to 0',
