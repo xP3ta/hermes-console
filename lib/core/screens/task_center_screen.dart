@@ -24,6 +24,7 @@ import '../utils/relative_time.dart';
 import '../utils/run_event_normalizer.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
@@ -393,9 +394,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       _openDetail(record);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsLaunchError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.runsLaunchError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
@@ -405,7 +407,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     final conn = widget.connection;
     final s = Strings.of(context);
     if (mounted) {
-      ScaffoldMessenger.of(
+      HermesNotice.of(
         context,
       ).showSnackBar(SnackBar(content: Text(s.runsLocalRunning)));
     }
@@ -493,9 +495,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     await _registry?.remove(record.runId, profile: record.profile);
     if (!mounted) return;
     setState(() {});
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(Strings.of(context).runsDeleted)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).runsDeleted)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   /// Vacía toda la lista local de ejecuciones (con confirmación).
@@ -529,9 +532,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     await registry.clear();
     if (!mounted) return;
     setState(() {});
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(s.runsCleared)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(s.runsCleared)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   // ─── Build ───────────────────────────────────────────────────────────────────

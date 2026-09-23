@@ -10,7 +10,7 @@ import 'bot_profile_client.dart';
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' show min;
+import 'dart:math' show Random, min;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -142,6 +142,31 @@ final class _SanitizedRpcFailure extends TuiGatewayRpcError {
   });
 }
 
+class GatewayReconnectBackoff {
+  static const stableInterval = Duration(seconds: 30);
+  static const _baseDelay = Duration(seconds: 1);
+  static const _maximumDelay = Duration(seconds: 15);
+
+  final double Function() _random;
+  int _attempt = 0;
+
+  GatewayReconnectBackoff({double Function()? random})
+    : _random = random ?? Random().nextDouble;
+
+  Duration nextDelay() {
+    final exponent = _attempt.clamp(0, 6);
+    _attempt += 1;
+    final ceilingMs = min(
+      _baseDelay.inMilliseconds * (1 << exponent),
+      _maximumDelay.inMilliseconds,
+    );
+    final jitter = (_random().clamp(0.0, 1.0) * ceilingMs).floor();
+    return Duration(milliseconds: jitter);
+  }
+
+  void markHealthy() => _attempt = 0;
+}
+
 class TuiGatewayEvent {
   final String type;
   final String sessionId;
@@ -188,6 +213,7 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.queued,
     super.pendingClarify,
     super.pendingClarifyProvided,
+    super.todoState,
     super.running,
     super.status,
     super.startedAt,
@@ -214,6 +240,7 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       queued: snapshot.queued,
       pendingClarify: snapshot.pendingClarify,
       pendingClarifyProvided: snapshot.pendingClarifyProvided,
+      todoState: snapshot.todoState,
       running: snapshot.running,
       status: snapshot.status,
       startedAt: snapshot.startedAt,
@@ -306,7 +333,7 @@ abstract class HermesDesktopRedirectGateway {
   );
 }
 
-enum DesktopRedirectDisposition { redirected, queued }
+enum DesktopRedirectDisposition { redirected, queued, rejected }
 
 /// Envío que sigue a una interrupción de la reproducción de voz.
 ///
@@ -692,6 +719,13 @@ abstract class HermesDesktopCommandGateway {
   });
 }
 
+/// Read-only replay ring of one runtime (`session.events.since`,
+/// `last_seen: 0`). Lets a relaunched client learn whether a compression that
+/// runtime ran is still pinned, without resuming or stealing it.
+abstract class HermesDesktopCompressionStatusGateway {
+  Future<Map<String, dynamic>> compressionEventReplay(String runtimeSessionId);
+}
+
 /// Compresión manual y explícita de una sesión inactiva.
 ///
 /// Es opcional para mantener compatibles servidores y dobles anteriores a 0.19.
@@ -1071,6 +1105,16 @@ abstract class HermesDesktopIdempotentGateway {
   );
 }
 
+abstract class HermesDesktopQueuedPromptGateway {
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text);
+
+  Future<DesktopTurnAck> submitQueuedPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  );
+}
+
 /// Identidad durable posterior a un `prompt.submit` que recorta.
 ///
 /// Los gateways nuevos devuelven un mapa `old → new` por fila física
@@ -1194,6 +1238,7 @@ final class _SessionRosterSocketLease {
 class TuiGatewayClient
     implements
         HermesDesktopGateway,
+        HermesDesktopCompressionStatusGateway,
         BotMentionRosterGateway,
         BotRoomLinkGateway,
         BotProfileGateway,
@@ -1209,6 +1254,7 @@ class TuiGatewayClient
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopLifecycleGateway,
         HermesDesktopIdempotentGateway,
+        HermesDesktopQueuedPromptGateway,
         HermesDesktopRewindResolverGateway,
         HermesDesktopRewindGateway,
         HermesDesktopDurableRewindGateway,
@@ -1225,7 +1271,9 @@ class TuiGatewayClient
         HermesDesktopCompressionGateway,
         HermesDesktopApprovalResultGateway,
         HermesDesktopSubagentGateway,
+        HermesDesktopProcessStopGateway,
         HermesDesktopControlGateway,
+        HermesDesktopSessionControlGateway,
         HermesExtensionManagementGateway,
         HermesMcpProvisioningGateway,
         HermesWebhookManagementGateway,
@@ -1301,6 +1349,12 @@ class TuiGatewayClient
   /// Current replay authority domain; rotates with every socket generation.
   String get currentReplayEpoch => _replayEpoch ?? 'legacy:$_socketGeneration';
   bool _connectionReplayCapable = false;
+  bool _connectionChangeEvents = false;
+
+  /// `gateway.ready.change_events` of the current connection: the backend
+  /// broadcasts sessions/cron/process changes, so polls can be demoted to slow
+  /// safety backstops (Hermes Desktop does the same).
+  bool get changeEventsAvailable => _connectionChangeEvents;
   Completer<void>? _gatewayReadyCompleter;
   String? _legacyEventRuntimeId;
   bool _legacyEventRuntimeAmbiguous = false;
@@ -1392,6 +1446,7 @@ class TuiGatewayClient
       throw StateError('Hermes Desktop connection was cancelled');
     }
     _connectionReplayCapable = false;
+    _connectionChangeEvents = false;
     final gatewayReady = Completer<void>();
     // Socket callbacks may fail readiness before channel.ready settles. Attach a
     // handler immediately so the original upgrade error remains the connect
@@ -1418,6 +1473,7 @@ class TuiGatewayClient
       }
       _capabilityCache.resetForReconnect();
       _connected = true;
+      _advertiseServerRequestCapability(generation, channel);
       // A recovery caller resumes its stored session only after connect() ends.
       // Drain the server's sequence gap first so replayed deltas/tools cannot
       // race the new snapshot or be delivered out of order with live frames.
@@ -1446,6 +1502,28 @@ class TuiGatewayClient
       // ActiveChat pueda degradar a `/v1/runs` sin quedar en "Conectando".
       await _teardownTransport(channel, subscription);
       rethrow;
+    }
+  }
+
+  void _advertiseServerRequestCapability(
+    int generation,
+    WebSocketChannel channel,
+  ) {
+    if (generation != _socketGeneration || !identical(_channel, channel)) return;
+    try {
+      final advertisement = _requestConnected(
+        'client.capabilities',
+        const <String, dynamic>{'server_requests': true},
+        timeout: const Duration(seconds: 10),
+      );
+      unawaited(
+        advertisement.then<void>(
+          (_) {},
+          onError: (Object _, StackTrace _) {},
+        ),
+      );
+    } catch (_) {
+      // Capability discovery is optional and must not own transport readiness.
     }
   }
 
@@ -1554,6 +1632,7 @@ class TuiGatewayClient
           }
           _replayEpoch = null;
         }
+        _connectionChangeEvents = payload['change_events'] == true;
         if (payload['heartbeat'] == true) _startHeartbeat(generation, channel);
         final ready = _gatewayReadyCompleter;
         if (ready != null && !ready.isCompleted) ready.complete();
@@ -2641,9 +2720,9 @@ class TuiGatewayClient
     // count counts source history rows; projection can expand/filter them.
     // Keep text, row_id and display_metadata intact: the shared display
     // normalizer accepts both REST content and Desktop text.
-    // No requested REST limit/offset: this RPC returns the entire transcript,
-    // including ancestors. Absent pagination is the one-shot completeness
-    // evidence consumed by ActiveChat (even on a loadEarlier request).
+    // This RPC returns active model history, including active ancestors. It can
+    // omit display generations retained as compacted rows, so ActiveChat keeps
+    // compacted REST recovery available.
     return SessionMessagesPage.fromRaw(
       rawMessages: messages,
       pagination: null,
@@ -5270,6 +5349,14 @@ class TuiGatewayClient
   }
 
   @override
+  Future<void> stopBackgroundProcesses(String runtimeSessionId) async {
+    _requireWritableControlConnection();
+    await _controlRequest('process.stop', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+    });
+  }
+
+  @override
   Future<ProjectTreeSnapshot> projectTree() async {
     final result = await _controlRequest('projects.tree', const {
       'preview_limit': 3,
@@ -5317,27 +5404,44 @@ class TuiGatewayClient
     }
   }
 
-  static const Set<String> _validGoalActions = {
+  static const Set<String> _validSessionControlActions = {
     'goal.pause',
     'goal.resume',
     'goal.clear',
     'goal.unwait',
+    'loop.pause',
+    'loop.resume',
+    'loop.stop',
+    'heartbeat.pause',
+    'heartbeat.resume',
+    'heartbeat.clear',
   };
 
   @override
-  Future<SessionGoalSnapshot?> readSessionGoal(String runtimeSessionId) async {
+  Future<SessionControlSnapshot> readSessionControl(
+    String runtimeSessionId,
+  ) async {
     final result = await _controlRequest('session.control.read', {
       'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
     }, capability: DesktopGatewayCapability.sessionControl);
-    final control = result['control'];
-    if (control is! Map) return null;
-    return SessionGoalSnapshot.tryParse(control['goal']);
+    return SessionControlSnapshot.fromJson(result['control']);
   }
 
   @override
-  Future<void> sendGoalAction(String runtimeSessionId, String action) async {
-    if (!_validGoalActions.contains(action)) {
-      throw ArgumentError.value(action, 'action', 'not a supported goal action');
+  Future<SessionGoalSnapshot?> readSessionGoal(String runtimeSessionId) async =>
+      (await readSessionControl(runtimeSessionId)).goal;
+
+  @override
+  Future<void> sendSessionControlAction(
+    String runtimeSessionId,
+    String action,
+  ) async {
+    if (!_validSessionControlActions.contains(action)) {
+      throw ArgumentError.value(
+        action,
+        'action',
+        'not a supported session control action',
+      );
     }
     _requireWritableControlConnection();
     await _controlRequest('session.control', {
@@ -5347,8 +5451,26 @@ class TuiGatewayClient
   }
 
   @override
+  Future<void> sendGoalAction(String runtimeSessionId, String action) async {
+    if (!action.startsWith('goal.')) {
+      throw ArgumentError.value(action, 'action', 'not a supported goal action');
+    }
+    await sendSessionControlAction(runtimeSessionId, action);
+  }
+
+  @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     await _requestPromptSubmit({'session_id': runtimeSessionId, 'text': text});
+    _markWatchdogRuntimeBusy(runtimeSessionId);
+  }
+
+  @override
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
+    await _requestPromptSubmit({
+      'session_id': runtimeSessionId,
+      'text': text,
+      'queued': true,
+    });
     _markWatchdogRuntimeBusy(runtimeSessionId);
   }
 
@@ -5396,6 +5518,26 @@ class TuiGatewayClient
   }
 
   @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  ) async {
+    final result = await _requestPromptSubmit({
+      'session_id': runtimeSessionId,
+      'text': text,
+      'client_turn_id': clientTurnId,
+      'queued': true,
+    });
+    final ack = DesktopTurnAck.fromJson(
+      result,
+      expectedClientTurnId: clientTurnId,
+    );
+    _markWatchdogRuntimeBusy(runtimeSessionId);
+    return ack;
+  }
+
+  @override
   Future<DesktopTurnStatus> getTurnStatus(
     String sessionId,
     String clientTurnId,
@@ -5416,10 +5558,34 @@ class TuiGatewayClient
     required String sourceText,
     required int expectedOrdinal,
   }) async {
-    // session.history is active-only after compaction and therefore cannot prove
-    // the row identity for a destructive rewind. ActiveChat uses row IDs from
-    // its durable REST/resume projection; absence remains a fail-closed null.
-    return null;
+    try {
+      final page = await sessionHistory(sessionId: runtimeSessionId);
+      final durableUsers = page.messages.where((message) {
+        final displayKind = message['display_kind']?.toString().trim() ?? '';
+        final rowId = message['row_id'];
+        return message['role'] == 'user' &&
+            displayKind.isEmpty &&
+            rowId is int &&
+            rowId > 0;
+      }).toList(growable: false);
+      final wanted = sourceText.trim();
+      if (wanted.isEmpty) return null;
+      final matches = durableUsers.where((message) {
+        final durableText = (message['text'] ?? message['content'] ?? '')
+            .toString()
+            .trim();
+        return durableText == wanted;
+      }).toList(growable: false);
+      if (matches.length == 1) return matches.single['row_id'] as int;
+      if (matches.length > 1 &&
+          expectedOrdinal >= durableUsers.length - 1 &&
+          identical(matches.last, durableUsers.last)) {
+        return matches.last['row_id'] as int;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -5547,10 +5713,7 @@ class TuiGatewayClient
     return switch (result['status']) {
       'redirected' => DesktopRedirectDisposition.redirected,
       'queued' => DesktopRedirectDisposition.queued,
-      _ => throw const TuiGatewayRpcError(
-        method,
-        'Hermes rejected the live correction',
-      ),
+      _ => DesktopRedirectDisposition.rejected,
     };
   }
 
@@ -5588,6 +5751,16 @@ class TuiGatewayClient
         origin: CompressionFailureOrigin.malformed,
       );
     }
+  }
+
+  @override
+  Future<Map<String, dynamic>> compressionEventReplay(String runtimeSessionId) {
+    const method = 'session.events.since';
+    final runtime = _validatedRuntimeId(method, runtimeSessionId);
+    return _requestConnected(method, <String, dynamic>{
+      'session_id': runtime,
+      'last_seen': 0,
+    }, timeout: const Duration(seconds: 10));
   }
 
   String _validatedRuntimeId(String method, String runtimeSessionId) {

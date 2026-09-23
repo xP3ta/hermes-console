@@ -9,7 +9,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _InteractiveGateway
     implements
@@ -192,7 +192,7 @@ ActiveChat _chat(
   _InteractiveGateway gateway, {
   void Function(ActiveChatEvent)? onEvent,
 }) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: SavedConnection(
     id: 'conn-interactive',
     label: 'Interactive',
@@ -589,12 +589,12 @@ void main() {
   });
 
   test(
-    'el vigilante de primer token no se rearma mientras hay una tarjeta pendiente',
+    'el vigilante de actividad se suspende mientras hay una tarjeta pendiente',
     () async {
       final gateway = _InteractiveGateway();
       final chat = await _start(gateway);
       addTearDown(chat.dispose);
-      expect(chat.firstTokenWatchdogArmed, isTrue);
+      expect(chat.activityWatchdogArmed, isTrue);
 
       gateway.emit('clarify.request', const {
         'request_id': 'clarify-wait',
@@ -602,10 +602,10 @@ void main() {
         'choices': ['rojo', 'azul'],
       });
       await _waitUntil(() => chat.pendingInteractivePrompt != null);
-      expect(chat.firstTokenWatchdogArmed, isFalse);
+      expect(chat.activityWatchdogArmed, isFalse);
 
       // Liveness events keep arriving while the human thinks; none of them may
-      // restart the inactivity budget under the pending card.
+      // restart the presentation timer under the pending card.
       gateway.emit('status.update', const {
         'kind': 'status',
         'text': 'waiting for clarification',
@@ -615,13 +615,13 @@ void main() {
         'info': {'session_id': 'runtime-interactive', 'running': true},
       });
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(chat.firstTokenWatchdogArmed, isFalse);
+      expect(chat.activityWatchdogArmed, isFalse);
       expect(chat.state, isNot(ChatPipelineState.failed));
 
       await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'rojo');
       expect(chat.needsInput, isFalse);
       // Answered: the server is on the clock again.
-      expect(chat.firstTokenWatchdogArmed, isTrue);
+      expect(chat.activityWatchdogArmed, isTrue);
     },
   );
 

@@ -8,6 +8,7 @@ import '../models/admin_integrations.dart';
 import '../models/desktop_control_center.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/mcp_provisioning_surface.dart';
@@ -289,9 +290,10 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       await action();
       await _load();
       if (!mounted || success == null) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(success)));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(success)),
+        kind: HermesNoticeKind.success,
+      );
     } catch (error) {
       if (!mounted) return;
       _showMutationFailure(error);
@@ -334,7 +336,7 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       final notice = result.notices.isEmpty
           ? strings.extensionsCenterPluginInstalled
           : strings.extensionsCenterPluginInstalledWithNotice;
-      ScaffoldMessenger.of(
+      HermesNotice.of(
         context,
       ).showSnackBar(SnackBar(content: Text(notice)));
     } catch (error) {
@@ -423,7 +425,7 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       );
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             result.background
@@ -501,7 +503,7 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
           : result.authorizationRequired
           ? strings.extensionsCenterMcpTestNeedsAuth
           : strings.extensionsCenterMcpTestFailed;
-      ScaffoldMessenger.of(
+      HermesNotice.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
@@ -550,8 +552,9 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
 
   void _showMutationFailure(Object error) {
     final strings = Strings.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(_extensionsMutationFailureText(error, strings))),
+      kind: HermesNoticeKind.error,
     );
   }
 

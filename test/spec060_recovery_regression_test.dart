@@ -60,14 +60,30 @@ void main() {
 
     coordinator.rotateEpoch();
     final newChannel = Object();
+    const resumedEvent = SessionGatewayEvent(
+      'message.delta',
+      'runtime-a',
+      2,
+      {'text': 'once'},
+    );
     expect(
       coordinator.acceptLive(
-        const SessionGatewayEvent('message.delta', 'runtime-a', 2, {}),
+        resumedEvent,
         socketGeneration: 2,
         channel: newChannel,
         replayEpoch: 'epoch-b',
       ),
       ReplayLiveDisposition.held,
+    );
+    expect(
+      coordinator.acceptLive(
+        resumedEvent,
+        socketGeneration: 2,
+        channel: newChannel,
+        replayEpoch: 'epoch-b',
+      ),
+      ReplayLiveDisposition.ignored,
+      reason: 'live/replay overlap must not apply the same event twice',
     );
   });
 

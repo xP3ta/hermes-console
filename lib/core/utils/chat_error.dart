@@ -36,8 +36,8 @@ ChatErrorKind classifyChatError(String raw) {
   final e = raw.toLowerCase();
   bool has(List<String> needles) => needles.any(e.contains);
 
-  // 1a. Primer token no llegó en tiempo (remoto): emitido por el timer de
-  //     active_chat_service.dart. Prefijo "firstTokenTimeout:" garantiza detección.
+  // 1a. Error explícito o persistido por runtimes antiguos. El watchdog local
+  //     de inactividad no emite este prefijo.
   if (e.startsWith('firsttokentimeout:') || has(['firsttokentimeout'])) {
     return ChatErrorKind.firstTokenTimeout;
   }

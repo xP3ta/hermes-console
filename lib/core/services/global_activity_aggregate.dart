@@ -143,7 +143,17 @@ final class GlobalActivityAggregate extends ChangeNotifier {
   final Map<String, GlobalActivity> _byDurable = {};
   final Map<String, int> _terminalRosterGeneration = {};
   final Map<String, int> _rosterGeneration = {};
+  final Map<String, int> _nonBusyRosterStreak = {};
   static const staleLivenessCeiling = Duration(minutes: 1);
+  // Only `markTransportStale` (a transport-level disconnect) or a terminal
+  // event ever set `stale`. A session whose backend went quiet without
+  // either — its sandbox cleaned up after inactivity, no more roster/process
+  // updates, but the socket itself never dropped — would otherwise claim
+  // liveness forever from its last observation. This is the same fallback
+  // idea as the durable compression fence: no signal ever arriving is not
+  // proof of "still running", so an activity nobody has updated in this long
+  // stops claiming it, same as an explicit stale mark past its own ceiling.
+  static const silentLivenessCeiling = Duration(minutes: 15);
   bool _disposed = false;
 
   Future<void> initialize({String? connectionId, String? profile}) async {
@@ -188,8 +198,9 @@ final class GlobalActivityAggregate extends ChangeNotifier {
   bool isActive(String connectionId, String profile, String durableSessionId) {
     final activity = activityFor(connectionId, profile, durableSessionId);
     if (activity == null || !activity.active) return false;
-    return !activity.stale ||
-        _now().toUtc().difference(activity.observedAt) <= staleLivenessCeiling;
+    final age = _now().toUtc().difference(activity.observedAt);
+    if (activity.stale) return age <= staleLivenessCeiling;
+    return age <= silentLivenessCeiling;
   }
 
   void applyRoster({
@@ -206,22 +217,33 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       return;
     }
     final now = _now().toUtc();
-    final advertised = <String>{};
+    final rowsByDurable = <String, DesktopActiveSession>{};
     for (final row in roster.sessions) {
       final durable = row.storedSessionId;
-      if (durable == null) continue; // no proven durable identity
+      if (durable == null) continue;
+      final prior = rowsByDurable[durable];
+      if (prior == null ||
+          (!rosterStatusIsBusy(prior.status) &&
+              rosterStatusIsBusy(row.status))) {
+        rowsByDurable[durable] = row;
+      }
+    }
+    final observed = <String>{};
+    for (final entry in rowsByDurable.entries) {
+      final row = entry.value;
       final scope = GlobalActivityScope(
         connectionId: connectionId,
         profile: profile,
-        durableSessionId: durable,
+        durableSessionId: entry.key,
         runtimeSessionId: row.runtimeSessionId,
         replayEpoch: replayEpoch,
       );
-      advertised.add(scope.durableKey);
+      observed.add(scope.durableKey);
       final terminalGeneration = _terminalRosterGeneration[scope.exactKey];
       if (terminalGeneration != null &&
           requestGeneration <= terminalGeneration) {
         _byDurable.remove(scope.durableKey);
+        _nonBusyRosterStreak.remove(scope.durableKey);
         continue;
       }
       if (terminalGeneration != null) {
@@ -229,11 +251,11 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       }
       final prior = _byDurable[scope.durableKey];
       final sameIncarnation = prior?.scope.exactKey == scope.exactKey;
-      final busy = _rosterStatusIsBusy(row.status);
-      if (!busy) {
-        _byDurable.remove(scope.durableKey);
+      if (!rosterStatusIsBusy(row.status)) {
+        _recordNonBusyRoster(scope.durableKey);
         continue;
       }
+      _nonBusyRosterStreak.remove(scope.durableKey);
       // A roster proves liveness, but never downgrades newer exact-incarnation
       // event detail. A recycled runtime starts from the general public phase.
       if (sameIncarnation &&
@@ -258,14 +280,29 @@ final class GlobalActivityAggregate extends ChangeNotifier {
         );
       }
     }
-    // Complete, well-formed active_list is terminal liveness authority.
-    _byDurable.removeWhere(
-      (key, value) =>
-          value.scope.connectionId == connectionId &&
-          value.scope.profile == profile &&
-          !advertised.contains(key),
-    );
+    for (final entry in _byDurable.entries.toList()) {
+      final activity = entry.value;
+      if (activity.scope.connectionId == connectionId &&
+          activity.scope.profile == profile &&
+          !observed.contains(entry.key)) {
+        _recordNonBusyRoster(entry.key);
+      }
+    }
     _changed();
+  }
+
+  void _recordNonBusyRoster(String durableKey) {
+    if (!_byDurable.containsKey(durableKey) &&
+        !_nonBusyRosterStreak.containsKey(durableKey)) {
+      return;
+    }
+    final streak = (_nonBusyRosterStreak[durableKey] ?? 0) + 1;
+    if (streak < 2) {
+      _nonBusyRosterStreak[durableKey] = streak;
+      return;
+    }
+    _nonBusyRosterStreak.remove(durableKey);
+    _byDurable.remove(durableKey);
   }
 
   void observeEvent({
@@ -283,6 +320,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     }
     final reduction = _reduceEvent(event.type, event.payload, current);
     if (reduction == null) return;
+    _nonBusyRosterStreak.remove(scope.durableKey);
     if (reduction.terminal) {
       // Terminal evidence is absorbing for this incarnation and must not be
       // persisted or revived by an older roster/journal.
@@ -351,6 +389,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       clearSession(scope.connectionId, scope.profile, scope.durableSessionId);
       return;
     }
+    _nonBusyRosterStreak.remove(scope.durableKey);
     _byDurable[scope.durableKey] = GlobalActivity(
       scope: scope,
       phase: replayTruncated
@@ -410,15 +449,15 @@ final class GlobalActivityAggregate extends ChangeNotifier {
   }
 
   void clearSession(String connectionId, String profile, String durableId) {
-    final removed = _byDurable.remove(
-      GlobalActivityScope(
-        connectionId: connectionId,
-        profile: profile,
-        durableSessionId: durableId,
-        runtimeSessionId: '',
-        replayEpoch: '',
-      ).durableKey,
-    );
+    final durableKey = GlobalActivityScope(
+      connectionId: connectionId,
+      profile: profile,
+      durableSessionId: durableId,
+      runtimeSessionId: '',
+      replayEpoch: '',
+    ).durableKey;
+    final removed = _byDurable.remove(durableKey);
+    _nonBusyRosterStreak.remove(durableKey);
     _terminalRosterGeneration.removeWhere(
       (key, _) =>
           key.startsWith('$connectionId\u0000$profile\u0000$durableId\u0000'),
@@ -434,6 +473,9 @@ final class GlobalActivityAggregate extends ChangeNotifier {
           value.scope.profile == profile,
     );
     _terminalRosterGeneration.removeWhere(
+      (key, _) => key.startsWith('$connectionId\u0000$profile\u0000'),
+    );
+    _nonBusyRosterStreak.removeWhere(
       (key, _) => key.startsWith('$connectionId\u0000$profile\u0000'),
     );
     if (before != _byDurable.length) _changed();
@@ -626,7 +668,7 @@ GlobalActivityPhase? _phaseFromToken(Object? raw) => switch (raw) {
   _ => null,
 };
 
-bool _rosterStatusIsBusy(String? raw) => switch (raw?.trim().toLowerCase()) {
+bool rosterStatusIsBusy(String? raw) => switch (raw?.trim().toLowerCase()) {
   'working' ||
   'running' ||
   'active' ||
@@ -714,10 +756,15 @@ _EventReduction? _reduceEvent(
       GlobalActivityPhase.delegated,
       subagentCount: type == 'subagent.start' ? subagents + 1 : subagents,
     ),
+    // `subagent.start` raised this count, so its completion has to lower it
+    // again or the aggregate keeps reporting delegated children that already
+    // finished. Clamped at zero: a duplicate or unmatched completion (replay,
+    // reconnect) must not drive it negative.
     'subagent.complete' => live(
       processes > 0
           ? GlobalActivityPhase.backgroundWork
           : GlobalActivityPhase.generating,
+      subagentCount: subagents > 0 ? subagents - 1 : 0,
     ),
     'status.update' => switch ((payload['kind'] ?? payload['status'])) {
       'compacting' => live(GlobalActivityPhase.compacting),

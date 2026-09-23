@@ -12,7 +12,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'session_identity_peer_test.dart' as peer;
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 ActiveChat productionChat(peer.PeerGateway gateway) => ActiveChat(
   connection: SavedConnection(
@@ -33,7 +33,7 @@ ActiveChat productionChat(peer.PeerGateway gateway) => ActiveChat(
     httpClient: MockClient((_) async => http.Response('not found', 404)),
   ),
   desktopGateway: gateway,
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
 );
 
 void main() {

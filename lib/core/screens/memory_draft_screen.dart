@@ -14,6 +14,7 @@ import '../services/command_risk.dart';
 import '../services/memory_draft_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
 import 'bridge_config_screen.dart';
@@ -176,7 +177,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
       if (!silent) {
         final exists = res['exists'] == true;
         final s = Strings.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               exists
@@ -188,18 +189,20 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
       }
     } on BridgeException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).memBridgeError(e.message)),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).memLoadFailed(e.toString())),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -234,7 +237,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
     await _probeBridge();
     if (mounted) {
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             _bridge.connected
@@ -298,7 +301,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
       if (!mounted) return;
       final backup = res['backup_id'];
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             backup != null
@@ -309,18 +312,20 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
       );
     } on BridgeException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).memBridgeError(e.message)),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).memApplyFailed(e.toString())),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -411,9 +416,10 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: _ctrl.text));
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(Strings.of(context).memCopied)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).memCopied)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   Future<void> _export() async {
@@ -427,7 +433,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
       final file = File('${dir.path}/memory_draft_${widget.fileName}_$ts.md');
       await file.writeAsString(_ctrl.text);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             Strings.of(context).memExported(file.path),
@@ -435,13 +441,15 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
           ),
           duration: const Duration(seconds: 4),
         ),
+        kind: HermesNoticeKind.success,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).memExportFailed(e.toString())),
         ),
+        kind: HermesNoticeKind.error,
       );
     }
   }

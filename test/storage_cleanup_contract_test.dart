@@ -19,7 +19,7 @@ import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _LocalBridge extends BridgeClient {
   _LocalBridge() : super(baseUrl: 'http://127.0.0.1:1', token: 'fixture');
@@ -77,7 +77,7 @@ void main() {
       await http.runWithClient(
         () async {
           final service = ActiveChatService(
-            compressionFenceStore: testCompressionFenceStore(),
+            compressionRestoreStore: testCompressionRestoreStore(),
           );
           addTearDown(service.dispose);
           final connection = SavedConnection(
@@ -419,7 +419,7 @@ void main() {
           localConversationLifecycle: lifecycle,
           notifications: null,
           onTerminal: () {},
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           bridgeProvisioner: (_, _) async => 'fixture',
           bridgeClientFactory: ({required baseUrl, required token}) =>
               _LocalBridge(),
@@ -472,7 +472,7 @@ void main() {
           localConversationLifecycle: lifecycle,
           notifications: null,
           onTerminal: () {},
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           bridgeProvisioner: (_, _) async => 'fixture',
           bridgeClientFactory: ({required baseUrl, required token}) =>
               _LocalBridge(),

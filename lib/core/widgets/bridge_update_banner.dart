@@ -8,6 +8,7 @@ import '../services/bridge_update_service.dart';
 import '../services/bridge_version.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
+import 'hermes_notice.dart';
 import 'platform_setup_commands.dart';
 
 /// Aviso de compatibilidad mínima: si el bridge remoto es más viejo que el asset
@@ -133,8 +134,9 @@ class BridgeUpdateBanner extends StatelessWidget {
 
     if (res.ok) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).bridgeUpdated)),
+        kind: HermesNoticeKind.success,
       );
       await onUpdated();
       return;
@@ -168,7 +170,7 @@ class BridgeUpdateBanner extends StatelessWidget {
               onPressed: busy
                   ? null
                   : () async {
-                      final messenger = ScaffoldMessenger.of(dctx);
+                      final messenger = HermesNotice.of(dctx);
                       final nav = Navigator.of(dctx);
                       final strUpdated = Strings.of(dctx).bridgeUpdated;
                       final strStillOld = Strings.of(dctx).bridgeVerifyStillOld;
@@ -180,6 +182,7 @@ class BridgeUpdateBanner extends StatelessWidget {
                         await onUpdated();
                         messenger.showSnackBar(
                           SnackBar(content: Text(strUpdated)),
+                          kind: HermesNoticeKind.success,
                         );
                       } else {
                         messenger.showSnackBar(

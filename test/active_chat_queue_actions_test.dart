@@ -10,7 +10,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 SavedConnection _connection(String id) => SavedConnection(
   id: id,
@@ -21,7 +21,7 @@ SavedConnection _connection(String id) => SavedConnection(
 );
 
 ActiveChat _chat(String id, {HermesDesktopGateway? gateway}) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(id),
   sessionId: 'session-$id',
   sessionTitle: 'Queue actions',
@@ -93,6 +93,93 @@ class _QueueGateway implements HermesDesktopGateway {
   }) async {}
   @override
   Future<void> close() => controller.close();
+}
+
+class _RedirectQueueGateway extends _QueueGateway
+    implements HermesDesktopRedirectGateway {
+  final List<String> redirects = [];
+  DesktopRedirectDisposition disposition =
+      DesktopRedirectDisposition.redirected;
+  Object? redirectError;
+
+  @override
+  Future<DesktopRedirectDisposition> redirect(
+    String runtimeSessionId,
+    String text,
+  ) async {
+    redirects.add(text);
+    final error = redirectError;
+    if (error != null) throw error;
+    return disposition;
+  }
+}
+
+class _QueuedDrainGateway extends _QueueGateway
+    implements
+        HermesDesktopQueuedPromptGateway,
+        HermesDesktopSessionLifecycleGateway,
+        HermesDesktopIdempotentGateway {
+  final List<String> queuedSubmissions = [];
+
+  @override
+  Future<DesktopSessionBinding> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) => resumeSession(storedSessionId, profile: profile);
+
+  @override
+  Future<DesktopSessionBinding> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) => resumeSession('session-queue-drain', profile: profile);
+
+  @override
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
+    queuedSubmissions.add(text);
+  }
+
+  @override
+  Future<DesktopTurnAck> submitPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  ) async => DesktopTurnAck(
+    accepted: true,
+    clientTurnId: clientTurnId,
+    serverTurnId: 'server-$clientTurnId',
+    state: DesktopTurnState.accepted,
+    duplicate: false,
+  );
+
+  @override
+  Future<DesktopTurnStatus> getTurnStatus(
+    String runtimeSessionId,
+    String clientTurnId,
+  ) async => DesktopTurnStatus(
+    known: true,
+    clientTurnId: clientTurnId,
+    serverTurnId: 'server-$clientTurnId',
+    state: DesktopTurnState.running,
+  );
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  ) async {
+    queuedSubmissions.add(text);
+    return DesktopTurnAck(
+      accepted: true,
+      clientTurnId: clientTurnId,
+      serverTurnId: 'server-$clientTurnId',
+      state: DesktopTurnState.accepted,
+      duplicate: false,
+    );
+  }
 }
 
 class _MentionLifecycleGateway extends _QueueGateway implements HermesDesktopSessionLifecycleGateway {
@@ -387,6 +474,114 @@ void main() {
 
     expect(gateway.steers, ['corrige el rumbo']);
     expect(chat.queuedMessages, ['corrige el rumbo']);
+  });
+
+  test('redirect rejected stays queued with a rejected outcome', () async {
+    final gateway = _RedirectQueueGateway()
+      ..disposition = DesktopRedirectDisposition.rejected;
+    final chat = _chat('queue-redirect-rejected', gateway: gateway)
+      ..state = ChatPipelineState.idle;
+    addTearDown(chat.dispose);
+    addTearDown(gateway.close);
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    chat.enqueue('corrige el rumbo');
+    final id = chat.queuedEntries.single.id;
+
+    expect(
+      await chat.steerQueuedTurnWithOutcome(id),
+      QueuedSteerOutcome.rejected,
+    );
+    expect(gateway.redirects, ['corrige el rumbo']);
+    expect(chat.queuedMessages, ['corrige el rumbo']);
+  });
+
+  test('redirect 4010 stays queued with a rejected outcome', () async {
+    final gateway = _RedirectQueueGateway()
+      ..redirectError = const TuiGatewayRpcError(
+        'session.redirect',
+        'active-turn redirect is unavailable',
+        code: 4010,
+      );
+    final chat = _chat('queue-redirect-4010', gateway: gateway)
+      ..state = ChatPipelineState.idle;
+    addTearDown(chat.dispose);
+    addTearDown(gateway.close);
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    chat.enqueue('corrige el rumbo');
+    final id = chat.queuedEntries.single.id;
+
+    expect(
+      await chat.steerQueuedTurnWithOutcome(id),
+      QueuedSteerOutcome.rejected,
+    );
+    expect(chat.queuedMessages, ['corrige el rumbo']);
+  });
+
+  test('queue drain submits with queued transport intent', () async {
+    final gateway = _QueuedDrainGateway();
+    final chat = _chat('queue-drain-wire', gateway: gateway)
+      ..state = ChatPipelineState.idle;
+    addTearDown(chat.dispose);
+    addTearDown(gateway.close);
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    chat.state = ChatPipelineState.completed;
+    expect(chat.enqueue('seguimiento drenado'), isTrue);
+    for (var i = 0; i < 50 && gateway.queuedSubmissions.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(gateway.queuedSubmissions, ['seguimiento drenado']);
+    expect(gateway.submissions, ['turno vivo']);
+  });
+
+  test('prepared queue drain submits with queued transport intent', () async {
+    final gateway = _QueuedDrainGateway();
+    final chat = _chat('queue-prepared', gateway: gateway)
+      ..state = ChatPipelineState.idle;
+    addTearDown(chat.dispose);
+    addTearDown(gateway.close);
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    chat.state = ChatPipelineState.completed;
+    final store = _MemoryOutbox();
+    final delivery = ActiveTurnDelivery(
+      prepared: _prepared('prepared-drain', 'seguimiento preparado'),
+      store: store,
+    );
+    expect(await chat.enqueuePreparedTurn(delivery), isTrue);
+    for (var i = 0; i < 50 && gateway.queuedSubmissions.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(gateway.queuedSubmissions, ['seguimiento preparado']);
+    expect(gateway.submissions, ['turno vivo']);
   });
 
   test('sendQueuedNow promueve, interrumpe y conserva el resto', () async {

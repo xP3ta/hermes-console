@@ -20,6 +20,7 @@ import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
 import 'memory_draft_screen.dart';
@@ -164,7 +165,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             Strings.of(context).memoryBackupSaved(file.path),
@@ -172,16 +173,18 @@ class _MemoryScreenState extends State<MemoryScreen> {
           ),
           duration: const Duration(seconds: 4),
         ),
+        kind: HermesNoticeKind.success,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             Strings.of(context).memBackupSaveError(e.toString()),
             style: const TextStyle(fontSize: 11),
           ),
         ),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) setState(() => _backingUp = false);

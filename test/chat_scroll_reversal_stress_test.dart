@@ -367,7 +367,7 @@ void main() {
     final delegate = list.childrenDelegate as SliverChildBuilderDelegate;
     expect(delegate.addAutomaticKeepAlives, isFalse);
     expect(delegate.estimatedChildCount, greaterThan(history.length));
-    expect(find.textContaining('>_ '), findsNothing);
+    expect(find.byKey(const ValueKey('assistant-header-name')), findsNothing);
     expect(find.byIcon(Icons.keyboard_arrow_up), findsNothing);
     final scrollableCandidates = find.descendant(
       of: guardedList,
@@ -379,14 +379,18 @@ void main() {
     );
     for (
       var frame = 0;
-      frame < 120 && find.textContaining('>_ ').evaluate().isEmpty;
+      frame < 120 &&
+          find
+              .byKey(const ValueKey('assistant-header-name'))
+              .evaluate()
+              .isEmpty;
       frame++
     ) {
       position.jumpTo(position.maxScrollExtent);
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(
-      find.textContaining('>_ '),
+      find.byKey(const ValueKey('assistant-header-name')),
       findsOneWidget,
       reason: 'el scroll nativo no alcanzó la cabecera virtualizada',
     );

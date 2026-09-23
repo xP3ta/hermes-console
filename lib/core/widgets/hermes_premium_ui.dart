@@ -1801,6 +1801,7 @@ class HermesTactileAction extends StatefulWidget {
     required this.icon,
     required this.semanticLabel,
     required this.onPressed,
+    this.onLongPress,
     this.backgroundColor,
     this.foregroundColor,
     this.size = 44,
@@ -1813,6 +1814,7 @@ class HermesTactileAction extends StatefulWidget {
   final IconData icon;
   final String semanticLabel;
   final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
   final Color? backgroundColor;
   final Color? foregroundColor;
   final double size;
@@ -1866,6 +1868,7 @@ class _HermesTactileActionState extends State<HermesTactileAction> {
               focusColor: foreground.withValues(alpha: 0.18),
               onHighlightChanged: enabled ? _setPressed : null,
               onTap: enabled ? widget.onPressed : null,
+              onLongPress: enabled ? widget.onLongPress : null,
               child: Center(
                 child: AnimatedScale(
                   scale: _pressed && enabled ? 0.94 : 1,

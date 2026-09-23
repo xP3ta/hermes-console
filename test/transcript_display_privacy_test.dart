@@ -9,6 +9,34 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  group('normalizeTranscriptMessageForDisplay compaction projection', () {
+    test('REGRESSION_COMPACTION_DISPLAY_CONTENT renders the server display '
+        'projection, never the model-facing carrier text', () {
+      // Real row after an in-place compaction (GET .../messages keeps the
+      // physical text in `content` and adds `display_content`, which Hermes
+      // Desktop renders; hydration.ts prefers it whenever present).
+      final normalized = normalizeTranscriptMessageForDisplay(const {
+        'id': 409786,
+        'role': 'assistant',
+        'content':
+            '[PRIOR CONTEXT — for reference only; not a new message]\n'
+            'El ajedrez nació en la India.',
+        'display_content': 'El ajedrez nació en la India.',
+      });
+      expect(normalized?['content'], 'El ajedrez nació en la India.');
+      expect(normalized?['id'], 409786);
+
+      // No projection: the stored content is still what is shown.
+      expect(
+        normalizeTranscriptMessageForDisplay(const {
+          'role': 'assistant',
+          'content': 'Respuesta normal',
+        })?['content'],
+        'Respuesta normal',
+      );
+    });
+  });
+
   group('normalizeTranscriptMessageForDisplay privacy boundary', () {
     test(
       'drops missing invalid and explicitly private roles or classifiers',
@@ -53,7 +81,7 @@ void main() {
       },
     );
 
-    test('keeps only public identity content and timestamp fields', () {
+    test('keeps durable reasoning only in its canonical field', () {
       final normalized = normalizeTranscriptMessageForDisplay(const {
         'id': 7,
         'message_id': 'msg-7',
@@ -61,8 +89,8 @@ void main() {
         'role': 'assistant',
         'content': '<think>PRIVATE_INLINE</think>Respuesta pública.',
         'timestamp': 123.5,
-        'reasoning': 'PRIVATE_REASONING',
-        'reasoning_content': 'PRIVATE_REASONING_CONTENT',
+        'reasoning': 'DURABLE_REASONING',
+        'reasoning_content': 'IGNORED_REASONING_CONTENT',
         'reasoning_details': [
           {'text': 'PRIVATE_TRACE'},
         ],
@@ -80,8 +108,134 @@ void main() {
         'row_id': 7,
         'role': 'assistant',
         'content': 'Respuesta pública.',
+        'reasoning': 'DURABLE_REASONING',
         'timestamp': 123.5,
       });
+    });
+
+    test('accepts only plain-string reasoning_details fallback', () {
+      expect(
+        normalizeTranscriptMessageForDisplay(const {
+          'role': 'assistant',
+          'content': 'Respuesta.',
+          'reasoning_details': 'DURABLE_DETAILS_STRING',
+        }),
+        {
+          'role': 'assistant',
+          'content': 'Respuesta.',
+          'reasoning': 'DURABLE_DETAILS_STRING',
+        },
+      );
+
+      final structured = normalizeTranscriptMessageForDisplay(const {
+        'role': 'assistant',
+        'content': 'Respuesta.',
+        'reasoning_details': [
+          {'text': 'PRIVATE_STRUCTURED_DETAILS'},
+        ],
+      });
+      expect(structured, {'role': 'assistant', 'content': 'Respuesta.'});
+      expect(
+        structured.toString(),
+        isNot(contains('PRIVATE_STRUCTURED_DETAILS')),
+      );
+    });
+
+    test('routes Codex commentary and analysis only to reasoning', () {
+      const privateMarker = 'PRIVATE_INLINE_CODEX_TEXT';
+      const commentary = 'COMMENTARY_REASONING_TEXT';
+      const analysis = 'ANALYSIS_REASONING_TEXT';
+      const sidecar = [
+        {
+          'type': 'message',
+          'role': 'user',
+          'content': [
+            {'type': 'output_text', 'text': privateMarker},
+          ],
+        },
+        {
+          'type': 'reasoning',
+          'role': 'assistant',
+          'content': [
+            {'type': 'output_text', 'text': privateMarker},
+          ],
+        },
+        {
+          'type': 'message',
+          'role': 'assistant',
+          'phase': 'commentary',
+          'content': [
+            {'type': 'output_text', 'text': commentary},
+          ],
+        },
+        {
+          'type': 'message',
+          'role': 'assistant',
+          'phase': 'analysis',
+          'content': [
+            {'type': 'output_text', 'text': analysis},
+          ],
+        },
+        {
+          'type': 'message',
+          'role': 'assistant',
+          'phase': 'final_answer',
+          'content': [
+            {
+              'type': 'output_text',
+              'text': '<think>$privateMarker</think>Respuesta recuperada.',
+            },
+          ],
+        },
+      ];
+
+      for (final encoded in <Object>[sidecar, jsonEncode(sidecar)]) {
+        final normalized = normalizeTranscriptMessageForDisplay({
+          'role': 'assistant',
+          'content': '',
+          'codex_message_items': encoded,
+        });
+
+        expect(normalized?['content'], 'Respuesta recuperada.');
+        expect(normalized?['content'], isNot(contains(commentary)));
+        expect(normalized?['content'], isNot(contains(analysis)));
+        expect(normalized?['reasoning'], '$commentary\n\n$analysis');
+        expect(normalized.toString(), isNot(contains(privateMarker)));
+        expect(normalized, isNot(contains('codex_message_items')));
+      }
+    });
+
+    test('malformed Codex sidecars are safe and canonical content wins', () {
+      for (final malformed in <Object>[
+        '{',
+        const {'not': 'a list'},
+        7,
+      ]) {
+        expect(
+          normalizeTranscriptMessageForDisplay({
+            'role': 'assistant',
+            'content': '',
+            'codex_message_items': malformed,
+          }),
+          isNull,
+        );
+      }
+
+      final normalized = normalizeTranscriptMessageForDisplay(const {
+        'role': 'assistant',
+        'content': 'Respuesta canónica.',
+        'codex_message_items': [
+          {
+            'type': 'message',
+            'role': 'assistant',
+            'content': [
+              {'type': 'output_text', 'text': 'Respuesta lateral.'},
+            ],
+          },
+        ],
+      });
+
+      expect(normalized?['content'], 'Respuesta canónica.');
     });
 
     test('keeps only sanitized metadata for a known editorial marker', () {
@@ -112,6 +266,36 @@ void main() {
           'completed_count': 1,
           'failed_count': 0,
           'subagent_ids': ['sa-safe'],
+        },
+      });
+    });
+
+    test('keeps the durable background-process marker and its title', () {
+      const carrier =
+          '[IMPORTANT: Background process proc_0123456789ab exited (exit code 0).\n'
+          'Command: node verify.mjs\n'
+          'Output:\n'
+          'verificacion completada\n'
+          ']';
+      final normalized = normalizeTranscriptMessageForDisplay(const {
+        'row_id': 9200,
+        'role': 'user',
+        'content': carrier,
+        'display_kind': 'process_complete',
+        'display_metadata': {
+          'display_text': 'Background Process Finished: node verify.mjs',
+          'goal': 'PRIVATE_GOAL',
+          'path': '/home/private',
+        },
+      });
+
+      expect(normalized, {
+        'row_id': 9200,
+        'role': 'user',
+        'content': carrier,
+        'display_kind': 'process_complete',
+        'display_metadata': {
+          'display_text': 'Background Process Finished: node verify.mjs',
         },
       });
     });

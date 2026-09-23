@@ -15,6 +15,7 @@ import 'package:hermes_android/core/services/voice/tts_model_manager.dart';
 import 'package:hermes_android/core/services/voice/voice_service.dart';
 import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
@@ -1629,6 +1630,12 @@ void main() {
       'http://192.168.1.20:8880/v1',
     );
     expect(find.text('ef_dora'), findsWidgets);
+    // El aviso de Kokoro flota arriba y puede quedar sobre el destino del
+    // siguiente toque: se retira antes (un toque o deslizar en el dispositivo).
+    HermesNotice.of(
+      tester.element(find.byType(Scaffold).last),
+    ).clearSnackBars();
+    await tester.pumpAndSettle();
 
     final openAi = await scrollToText(tester, 'Otra API compatible con OpenAI');
     await tester.tap(openAi);
@@ -1732,7 +1739,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Voz por streaming guardada'), findsNothing);
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       tester.element(find.byType(Scaffold).last),
     ).hideCurrentSnackBar();
     await tester.pumpAndSettle();
@@ -1751,7 +1758,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Voz por streaming guardada'), findsNothing);
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       tester.element(find.byType(Scaffold).last),
     ).hideCurrentSnackBar();
     await tester.pumpAndSettle();
@@ -1771,7 +1778,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Voz por streaming guardada'), findsNothing);
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       tester.element(find.byType(Scaffold).last),
     ).hideCurrentSnackBar();
     await tester.pumpAndSettle();

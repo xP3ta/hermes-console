@@ -93,7 +93,17 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.11 (9009)`
+## Novedades — `1.2.12 (9010)`
+
+### Español (máximo 500 caracteres)
+
+Como Hermes Desktop: Stop llega siempre al servidor y está disponible mientras haya trabajo (también desde Inicio y la lista); editar, cola y «forzar» sin fallos falsos; el chat se recupera solo tras perder la red; una burbuja por turno con sprite que reacciona al estado; lista de tareas del agente; archivos con visor propio; aprobaciones y voz arreglados.
+
+### English (maximum 500 characters)
+
+Like Hermes Desktop: Stop always reaches the server and is available whenever there is work (also from Home and the list); edit, queue and force without false failures; the chat recovers on its own after losing the network; one bubble per turn with a state-aware sprite; the agent's task list; built-in file viewers; approvals and voice fixed.
+
+## Novedades anteriores — `1.2.11 (9009)`
 
 ### Español (máximo 500 caracteres)
 

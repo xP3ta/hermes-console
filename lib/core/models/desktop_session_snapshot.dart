@@ -1,4 +1,5 @@
 import '../utils/assistant_content.dart';
+import 'agent_task_list.dart';
 import 'transcript_privacy_state.dart';
 
 /// Typed, defensive projection of the Hermes Agent 0.19 Desktop session
@@ -37,6 +38,11 @@ class DesktopSessionSnapshot {
   final Map<String, dynamic>? pendingApproval;
   final bool pendingApprovalProvided;
 
+  /// `todo_state` del gateway: la lista de tareas del agente para esta sesión
+  /// (también la reconstruye desde el historial durable cuando no hay agente
+  /// vivo). `null` si no la trae o no es utilizable.
+  final AgentTaskList? todoState;
+
   const DesktopSessionSnapshot({
     required this.runtimeSessionId,
     required this.storedSessionId,
@@ -63,6 +69,7 @@ class DesktopSessionSnapshot {
     this.pendingClarifyProvided = false,
     this.pendingApproval,
     this.pendingApprovalProvided = false,
+    this.todoState,
   });
 
   DesktopSessionSnapshot withoutPersistedMessages() => DesktopSessionSnapshot(
@@ -88,6 +95,7 @@ class DesktopSessionSnapshot {
     pendingClarifyProvided: pendingClarifyProvided,
     pendingApproval: pendingApproval,
     pendingApprovalProvided: pendingApprovalProvided,
+    todoState: todoState,
     raw: raw,
   );
 
@@ -237,6 +245,7 @@ class DesktopSessionSnapshot {
       pendingClarifyProvided: json.containsKey('pending_clarify'),
       pendingApproval: _stringKeyedMap(json['pending_approval']),
       pendingApprovalProvided: json.containsKey('pending_approval'),
+      todoState: AgentTaskList.tryParse(json['todo_state']),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
       // contain the whole transcript and a many-KiB system prompt; duplicating
       // those in `raw` increases memory pressure and makes accidental logging
@@ -306,6 +315,7 @@ class DesktopSessionMessage {
   final String? reasoningContent;
   final Object? reasoningDetails;
   final Object? codexReasoningItems;
+  final Object? codexMessageItems;
   final Object? context;
   final DateTime? timestamp;
   final String? toolCallId;
@@ -331,6 +341,7 @@ class DesktopSessionMessage {
     this.reasoningContent,
     this.reasoningDetails,
     this.codexReasoningItems,
+    this.codexMessageItems,
     this.context,
     this.timestamp,
     this.toolCallId,
@@ -380,6 +391,7 @@ class DesktopSessionMessage {
       reasoningContent: _stringValue(json['reasoning_content']),
       reasoningDetails: _freezeJson(json['reasoning_details']),
       codexReasoningItems: _freezeJson(json['codex_reasoning_items']),
+      codexMessageItems: _freezeJson(json['codex_message_items']),
       context: _freezeJson(json['context']),
       timestamp: _epochSeconds(json['timestamp']),
       toolCallId: _nonEmptyString(json['tool_call_id']),
@@ -1022,6 +1034,7 @@ const _snapshotParsedKeys = <String>{
   'info',
   'pending_clarify',
   'pending_approval',
+  'todo_state',
 };
 
 const _messageParsedKeys = <String>{
@@ -1039,6 +1052,7 @@ const _messageParsedKeys = <String>{
   'reasoning_content',
   'reasoning_details',
   'codex_reasoning_items',
+  'codex_message_items',
   'context',
   'timestamp',
   'tool_call_id',

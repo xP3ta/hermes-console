@@ -1,6 +1,7 @@
 import 'dart:async';
 import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
+import '../widgets/hermes_notice.dart';
 import 'bot_profile_settings_screen.dart';
 import 'dart:typed_data';
 
@@ -329,7 +330,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   Future<void> _pickImage() async {
     if (_pickingImage || _saving) return;
     setState(() => _pickingImage = true);
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     try {
       final file =
           await (widget.imagePicker?.call() ??
@@ -373,7 +374,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   Future<void> _save() async {
     if (_saving || !_dirty) return;
     final copy = MissionControlCopy.of(context);
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     setState(() {
       _saving = true;
       _uncertain = false;
@@ -432,7 +433,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         await _gateway.saveProfileBotMeta(profile: _profileName, title: title);
       }
       if (!mounted) return;
-      messenger.showSnackBar(SnackBar(content: Text(copy.botEditorSaved)));
+      messenger.showSnackBar(
+        SnackBar(content: Text(copy.botEditorSaved)),
+        kind: HermesNoticeKind.success,
+      );
       _allowPop = true;
       Navigator.of(context).pop(true);
     } catch (error) {
@@ -445,7 +449,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
           _ => true,
         };
       });
-      messenger.showSnackBar(SnackBar(content: Text(copy.botEditorSaveFailed)));
+      messenger.showSnackBar(
+        SnackBar(content: Text(copy.botEditorSaveFailed)),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 

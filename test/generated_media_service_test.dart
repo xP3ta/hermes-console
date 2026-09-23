@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -15,7 +17,7 @@ void main() {
         'video_generate',
         const {
           'success': true,
-          'video': 'https://cdn.example/generated.webm?token=secret#fragment',
+          'video': 'https://cdn.example/generated.webm?download=1#fragment',
         },
       );
       final image = GeneratedMediaService.referencesFromToolResult(
@@ -151,6 +153,167 @@ void main() {
       );
       expect(segments.whereType<GeneratedMediaFileSegment>(), hasLength(2));
     });
+
+    test('preserves document, audio, and unknown safe files', () {
+      final document = GeneratedMediaService.parseSegments(
+        'MEDIA:/workspace/report.txt',
+      );
+      final audio = GeneratedMediaService.parseSegments(
+        'MEDIA:/workspace/voice.flac',
+      );
+      final unknown = GeneratedMediaService.parseSegments(
+        'MEDIA:/workspace/result.custom',
+      );
+
+      expect(document.whereType<GeneratedMediaFileSegment>(), hasLength(1));
+      expect(
+        document.whereType<GeneratedMediaFileSegment>().single.reference.kind.name,
+        'file',
+      );
+      expect(audio.whereType<GeneratedMediaFileSegment>(), hasLength(1));
+      expect(
+        audio.whereType<GeneratedMediaFileSegment>().single.reference.kind.name,
+        'audio',
+      );
+      expect(unknown.whereType<GeneratedMediaFileSegment>(), hasLength(1));
+      expect(
+        unknown.whereType<GeneratedMediaFileSegment>().single.reference.kind.name,
+        'file',
+      );
+    });
+
+    test('keeps prose around a document directive', () {
+      final segments = GeneratedMediaService.parseSegments(
+        'Your report is ready.\nMEDIA:/workspace/report.pdf\nOpen it below.',
+      );
+
+      expect(segments.whereType<GeneratedMediaFileSegment>(), hasLength(1));
+      final text = segments
+          .whereType<GeneratedMediaTextSegment>()
+          .map((segment) => segment.text)
+          .join();
+      expect(text, contains('Your report is ready.'));
+      expect(text, contains('Open it below.'));
+      expect(text, isNot(contains('/workspace/report.pdf')));
+    });
+
+    test('unsafe directives stay non-fetching and never reveal their source', () {
+      const unsafe = <String>[
+        'MEDIA:https://user:password@example.test/report.pdf',
+        'MEDIA:file:///workspace/report.pdf',
+        'MEDIA:/workspace/../private/report.pdf',
+        'MEDIA:/workspace/key.properties',
+        'MEDIA:/workspace/.env',
+        'MEDIA:/workspace/%2Eenv',
+      ];
+
+      for (final directive in unsafe) {
+        final segments = GeneratedMediaService.parseSegments(directive);
+        expect(
+          segments.whereType<GeneratedMediaFileSegment>(),
+          isEmpty,
+          reason: directive,
+        );
+        expect(
+          GeneratedMediaService.stripDirectives(directive),
+          isNot(contains(directive.substring('MEDIA:'.length))),
+          reason: directive,
+        );
+      }
+    });
+
+    test('rejects credential, key, history, and sensitive-directory paths', () {
+      const blocked = <String>[
+        '/home/user/.netrc',
+        '/home/user/.NPMRC',
+        '/home/user/.pgpass',
+        '/home/user/.git-credentials',
+        '/home/user/.ssh/id_rsa',
+        '/home/user/.ssh/id_dsa',
+        '/home/user/.ssh/id_ecdsa',
+        '/home/user/.ssh/id_ed25519',
+        '/home/user/.ssh/id_custom',
+        '/home/user/.ssh/authorized_keys',
+        '/home/user/.ssh/config',
+        '/home/user/.ssh/.private-note',
+        '/home/user/.ssh/.public.pub',
+        '/home/user/.gnupg/private-keys-v1.d/key',
+        '/home/user/.aws/credentials',
+        '/home/user/.aws/config',
+        '/home/user/.docker/config.json',
+        '/home/user/.kube/config',
+        '/home/user/.azure/accessTokens.json',
+        '/home/user/.gcloud/credentials.db',
+        '/home/user/.config/gcloud/credentials.db',
+        '/home/user/.bash_history',
+        '/home/user/.zsh_history',
+        '/home/user/.python_history',
+        '/home/user/.psql_history',
+        '/workspace/client.pem',
+        '/workspace/client.key',
+        '/workspace/client.p12',
+        '/workspace/client.pfx',
+        '/workspace/client.jks',
+        '/workspace/client.keystore',
+        '/workspace/tunnel.ovpn',
+        '/proc/self/environ',
+        '/sys/kernel/security/lsm',
+        '/dev/mapper/control',
+      ];
+
+      for (final source in blocked) {
+        expect(
+          GeneratedMediaService.referenceFromSource(source),
+          isNull,
+          reason: source,
+        );
+      }
+    });
+
+    test('allows public SSH metadata and ordinary generated media', () {
+      const allowed = <String>[
+        '/home/user/.ssh/known_hosts',
+        '/home/user/.ssh/id_ed25519.pub',
+        '/workspace/proc/report.txt',
+        '/workspace/render.png',
+        '/workspace/photo.jpg',
+        '/workspace/audio.wav',
+        '/workspace/video.mp4',
+        '/workspace/report.pdf',
+        '/workspace/notes.txt',
+        '/workspace/data.json',
+      ];
+
+      for (final source in allowed) {
+        final reference = GeneratedMediaService.referenceFromSource(source);
+        expect(reference, isNotNull, reason: source);
+        expect(
+          GeneratedMediaService.allowsAutoLoad(reference!),
+          isTrue,
+          reason: source,
+        );
+      }
+    });
+
+    test('executable and installer files require explicit download', () {
+      for (final extension in const ['.apk', '.exe', '.msi', '.dmg', '.sh']) {
+        final reference = GeneratedMediaService.referenceFromSource(
+          '/workspace/payload$extension',
+        );
+        expect(reference, isNotNull, reason: extension);
+        final safeReference = reference!;
+        expect(
+          GeneratedMediaService.allowsAutoLoad(safeReference),
+          isFalse,
+          reason: extension,
+        );
+        expect(
+          GeneratedMediaService.isTextLike(safeReference),
+          isFalse,
+          reason: extension,
+        );
+      }
+    });
   });
 
   group('GeneratedMediaService.validateBytes', () {
@@ -285,5 +448,341 @@ void main() {
         expect(cached, isEmpty);
       },
     );
+
+    test('generic file bytes are promoted atomically and retain safe suffix', () async {
+      const reference = GeneratedMediaReference(
+        source: '/workspace/private/report.txt',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'report.txt',
+        mimeType: 'text/plain',
+      );
+
+      final file = await GeneratedMediaService.ensureDownloaded(
+        'connection-file',
+        reference,
+        fetchServerPath: (_) async => Uint8List.fromList(utf8.encode('report')),
+        baseDir: temporary,
+      );
+
+      expect(file.path, endsWith('.txt'));
+      expect(await file.readAsString(), 'report');
+      expect(file.path, isNot(contains('/workspace/private')));
+      expect(
+        temporary
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((entry) => entry.path.contains('.tmp-')),
+        isEmpty,
+      );
+    });
+
+    test('generic file download can retry after a cleaned failure', () async {
+      const reference = GeneratedMediaReference(
+        source: '/workspace/private/retry.pdf',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'retry.pdf',
+        mimeType: 'application/pdf',
+      );
+      var calls = 0;
+
+      Future<void> fetch(String _, File destination) async {
+        calls++;
+        await destination.writeAsString('partial');
+        if (calls == 1) throw const FileSystemException('cancelled');
+        await destination.writeAsBytes(<int>[0x25, 0x50, 0x44, 0x46, 0x2d]);
+      }
+
+      await expectLater(
+        GeneratedMediaService.ensureDownloaded(
+          'connection-retry',
+          reference,
+          fetchServerPathToFile: fetch,
+          baseDir: temporary,
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(
+        temporary.listSync(recursive: true).whereType<File>(),
+        isEmpty,
+      );
+
+      final file = await GeneratedMediaService.ensureDownloaded(
+        'connection-retry',
+        reference,
+        fetchServerPathToFile: fetch,
+        baseDir: temporary,
+      );
+      expect(calls, 2);
+      expect(await file.readAsBytes(), <int>[0x25, 0x50, 0x44, 0x46, 0x2d]);
+    });
+
+    test('streaming file fetch reports progress through the service', () async {
+      const reference = GeneratedMediaReference(
+        source: '/workspace/private/progress.txt',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'progress.txt',
+        mimeType: 'text/plain',
+      );
+      final progress = <(int, int?)>[];
+
+      await GeneratedMediaService.ensureDownloaded(
+        'connection-progress',
+        reference,
+        fetchServerPathToFileWithProgress:
+            (
+              String _,
+              File destination,
+              void Function(int, int?) onProgress,
+              bool Function() isCancelled,
+            ) async {
+              expect(isCancelled(), isFalse);
+              await destination.writeAsString('report');
+              onProgress(6, 6);
+            },
+        onProgress: (int received, int? total) {
+          progress.add((received, total));
+        },
+        isCancelled: () => false,
+        baseDir: temporary,
+      );
+
+      expect(progress, <(int, int?)>[(6, 6)]);
+    });
+
+    test('cancelled streaming file fetch leaves no temporary file', () async {
+      const reference = GeneratedMediaReference(
+        source: '/workspace/private/cancel.txt',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'cancel.txt',
+        mimeType: 'text/plain',
+      );
+      var cancelled = false;
+
+      await expectLater(
+        GeneratedMediaService.ensureDownloaded(
+          'connection-cancel',
+          reference,
+          fetchServerPathToFileWithProgress:
+              (
+                String _,
+                File destination,
+                void Function(int, int?) onProgress,
+                bool Function() isCancelled,
+              ) async {
+                await destination.writeAsString('partial');
+                onProgress(7, 14);
+                cancelled = true;
+                if (isCancelled()) {
+                  throw StateError('cancelled');
+                }
+              },
+          onProgress: (int _, int? _) {},
+          isCancelled: () => cancelled,
+          baseDir: temporary,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(temporary.listSync(recursive: true).whereType<File>(), isEmpty);
+    });
+
+    test(
+      'parallel identical-content files keep distinct cache entries',
+      () async {
+        const bytes = <int>[
+          0x52,
+          0x49,
+          0x46,
+          0x46,
+          0,
+          0,
+          0,
+          0,
+          0x57,
+          0x41,
+          0x56,
+          0x45,
+        ];
+        var fetches = 0;
+        final bothStarted = Completer<void>();
+
+        Future<Uint8List> fetch(String _) async {
+          fetches++;
+          if (fetches == 2) bothStarted.complete();
+          await bothStarted.future;
+          return Uint8List.fromList(bytes);
+        }
+
+        const references = [
+          GeneratedMediaReference(
+            source: '/workspace/qa_tono2.wav',
+            kind: GeneratedMediaKind.audio,
+            sourceKind: GeneratedMediaSourceKind.serverPath,
+            displayName: 'qa_tono2.wav',
+            mimeType: 'audio/wav',
+            sizeBytes: 12,
+          ),
+          GeneratedMediaReference(
+            source: '/workspace/qa_tono3.wav',
+            kind: GeneratedMediaKind.audio,
+            sourceKind: GeneratedMediaSourceKind.serverPath,
+            displayName: 'qa_tono3.wav',
+            mimeType: 'audio/wav',
+            sizeBytes: 12,
+          ),
+        ];
+        final files = await Future.wait([
+          for (final reference in references)
+            GeneratedMediaService.ensureDownloaded(
+              'connection-identical-content',
+              reference,
+              fetchServerPath: fetch,
+              baseDir: temporary,
+            ),
+        ]);
+
+        expect(fetches, 2);
+        expect(files[0].path, isNot(files[1].path));
+        expect(await files[0].readAsBytes(), bytes);
+        expect(await files[1].readAsBytes(), bytes);
+      },
+    );
+
+    test('cache identity includes known size and modification time', () async {
+      const source = '/workspace/report.txt';
+      var fetches = 0;
+
+      Future<Uint8List> fetch(String _) async {
+        fetches++;
+        return Uint8List.fromList(utf8.encode('version $fetches'));
+      }
+
+      final first = await GeneratedMediaService.ensureDownloaded(
+        'connection-cache-identity',
+        GeneratedMediaReference(
+          source: source,
+          kind: GeneratedMediaKind.file,
+          sourceKind: GeneratedMediaSourceKind.serverPath,
+          displayName: 'report.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 9,
+          modifiedAt: DateTime.utc(2026, 9, 20),
+        ),
+        fetchServerPath: fetch,
+        baseDir: temporary,
+      );
+      final second = await GeneratedMediaService.ensureDownloaded(
+        'connection-cache-identity',
+        GeneratedMediaReference(
+          source: source,
+          kind: GeneratedMediaKind.file,
+          sourceKind: GeneratedMediaSourceKind.serverPath,
+          displayName: 'report.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 9,
+          modifiedAt: DateTime.utc(2026, 9, 21),
+        ),
+        fetchServerPath: fetch,
+        baseDir: temporary,
+      );
+
+      expect(fetches, 2);
+      expect(first.path, isNot(second.path));
+    });
+  });
+
+  test('auto-load coordinator allows at most two concurrent loads', () async {
+    var active = 0;
+    var maximum = 0;
+    final started = <Completer<void>>[
+      Completer<void>(),
+      Completer<void>(),
+      Completer<void>(),
+    ];
+    final releases = <Completer<void>>[
+      Completer<void>(),
+      Completer<void>(),
+      Completer<void>(),
+    ];
+
+    Future<void> load(int index) async {
+      active++;
+      maximum = active > maximum ? active : maximum;
+      started[index].complete();
+      await releases[index].future;
+      active--;
+    }
+
+    final futures = <Future<void>>[
+      for (var index = 0; index < 3; index++)
+        GeneratedMediaService.runAutoLoad(() => load(index)),
+    ];
+    await Future.wait([started[0].future, started[1].future]);
+    expect(started[2].isCompleted, isFalse);
+    expect(maximum, 2);
+
+    releases[0].complete();
+    await started[2].future;
+    expect(maximum, 2);
+    releases[1].complete();
+    releases[2].complete();
+    await Future.wait(futures);
+  });
+
+  test('cancelled queued auto-load does not starve the next waiter', () async {
+    final firstStarted = Completer<void>();
+    final secondStarted = Completer<void>();
+    final firstRelease = Completer<void>();
+    final secondRelease = Completer<void>();
+    final visibleStarted = Completer<void>();
+    final visibleRelease = Completer<void>();
+    final cancellation = GeneratedMediaAutoLoadCancellation();
+
+    final first = GeneratedMediaService.runAutoLoad(() async {
+      firstStarted.complete();
+      await firstRelease.future;
+    });
+    final second = GeneratedMediaService.runAutoLoad(() async {
+      secondStarted.complete();
+      await secondRelease.future;
+    });
+    await Future.wait([firstStarted.future, secondStarted.future]);
+
+    final Future<void> cancelledFuture =
+        GeneratedMediaService.runAutoLoad<void>(
+          () async => fail('cancelled queued load must never start'),
+          cancellation: cancellation,
+        );
+    final cancelledExpectation = expectLater(
+      cancelledFuture,
+      throwsA(isA<GeneratedMediaDownloadCancelled>()),
+    );
+    final visible = GeneratedMediaService.runAutoLoad(() async {
+      visibleStarted.complete();
+      await visibleRelease.future;
+    });
+
+    addTearDown(() async {
+      if (!firstRelease.isCompleted) firstRelease.complete();
+      if (!secondRelease.isCompleted) secondRelease.complete();
+      if (!visibleRelease.isCompleted) visibleRelease.complete();
+      await first.catchError((_) {});
+      await second.catchError((_) {});
+      await cancelledFuture.catchError((_) {});
+      await visible.catchError((_) {});
+    });
+
+    cancellation.cancel();
+    await cancelledExpectation;
+    firstRelease.complete();
+    await visibleStarted.future.timeout(const Duration(milliseconds: 200));
+
+    secondRelease.complete();
+    visibleRelease.complete();
+    await Future.wait([first, second, visible]);
   });
 }

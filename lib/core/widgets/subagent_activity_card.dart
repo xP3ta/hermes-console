@@ -39,6 +39,15 @@ typedef SubagentStopRequester =
 typedef SubagentTailScheduler =
     VoidCallback Function(Duration delay, VoidCallback callback);
 
+/// Lets the unified activity panel open this card's detail/control surface
+/// (tail, steer, stop, open conversation) without showing the card's own pill.
+class SubagentActivityController {
+  void Function(SubagentActivity? selected)? _opener;
+
+  /// Opens the detail surface, preselecting [activity] when given.
+  void open([SubagentActivity? activity]) => _opener?.call(activity);
+}
+
 /// Compact, bounded mobile control surface for delegated work.
 class SubagentActivityCard extends StatefulWidget {
   final List<SubagentActivity> activities;
@@ -62,6 +71,12 @@ class SubagentActivityCard extends StatefulWidget {
   // when there's nothing still live to hide.
   final VoidCallback? onDismiss;
 
+  /// The unified activity pill owns the presentation: this card only keeps its
+  /// state machinery (tail polling, steering, stop) alive and exposes it through
+  /// [controller]. Renders nothing.
+  final bool hidden;
+  final SubagentActivityController? controller;
+
   const SubagentActivityCard({
     required this.activities,
     this.canInterrupt,
@@ -79,6 +94,8 @@ class SubagentActivityCard extends StatefulWidget {
     this.appForeground = true,
     this.safeChildCount = 0,
     this.onDismiss,
+    this.hidden = false,
+    this.controller,
     super.key,
   });
 
@@ -113,8 +130,34 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    widget.controller?._opener = _openFromController;
+  }
+
+  void _openFromController(SubagentActivity? activity) {
+    if (!mounted || _expanded || _sheetMounted) return;
+    if (activity != null &&
+        widget.activities.any((candidate) => candidate.key == activity.key) &&
+        _selectedKey != activity.key) {
+      _stopTail();
+      _selectedKey = activity.key;
+      _tail = null;
+      _steerNotice = null;
+      _steerController.clear();
+    }
+    unawaited(_openDetailSheet(context));
+  }
+
+  @override
   void didUpdateWidget(covariant SubagentActivityCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      if (oldWidget.controller?._opener == _openFromController) {
+        oldWidget.controller?._opener = null;
+      }
+      widget.controller?._opener = _openFromController;
+    }
     _stopAwaitingTerminal.removeWhere(
       (key) => widget.activities.any((a) => a.key == key && a.isTerminal),
     );
@@ -146,6 +189,9 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
 
   @override
   void dispose() {
+    if (widget.controller?._opener == _openFromController) {
+      widget.controller?._opener = null;
+    }
     _stopTail();
     _sheetRefresh = null;
     final route = _detailRoute;
@@ -261,6 +307,9 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.hidden) {
+      return const SizedBox.shrink(key: ValueKey('subagent-card-hidden'));
+    }
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final activities = widget.activities;

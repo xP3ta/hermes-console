@@ -27,6 +27,10 @@ final class DesktopControlFailure implements Exception {
 /// Keeping this separate from the chat gateway lets legacy fakes and legacy
 /// Hermes servers continue to work. Screens must treat method-not-found as an
 /// unsupported capability, never as an empty successful inventory.
+abstract class HermesDesktopProcessStopGateway {
+  Future<void> stopBackgroundProcesses(String runtimeSessionId);
+}
+
 abstract class HermesDesktopControlGateway {
   Future<RecoveryTimeline> listRecovery(String runtimeSessionId);
 
@@ -81,6 +85,15 @@ abstract class HermesDesktopControlGateway {
   /// `goal.unwait` or `goal.clear`). `goal.gate*` and subgoal editing are
   /// intentionally not exposed here — use the `/goal` text command for those.
   Future<void> sendGoalAction(String runtimeSessionId, String action);
+}
+
+abstract class HermesDesktopSessionControlGateway {
+  Future<SessionControlSnapshot> readSessionControl(String runtimeSessionId);
+
+  Future<void> sendSessionControlAction(
+    String runtimeSessionId,
+    String action,
+  );
 }
 
 /// Optional authenticated Dashboard seam for installing and administering

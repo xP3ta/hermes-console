@@ -7,17 +7,19 @@ import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
+import 'package:hermes_android/core/screens/chat_render_projection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
+import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Fake del canal Desktop que graba los flags de `session.resume` y permite
 /// emitir eventos `session.resume_progress` como haría Hermes Agent 0.20.
@@ -33,6 +35,7 @@ class _DeferrableGateway
   Completer<DesktopSessionSnapshot>? resumeGate;
   Object? resumeError;
   int resumeExistingCalls = 0;
+  int interruptCalls = 0;
   bool? lastDeferHistory;
   bool? lastOmitMessages;
   final List<({String runtimeId, String subagentId})> subagentTailCalls = [];
@@ -87,7 +90,9 @@ class _DeferrableGateway
   Future<void> steer(String runtimeSessionId, String text) async {}
 
   @override
-  Future<void> interrupt(String runtimeSessionId) async {}
+  Future<void> interrupt(String runtimeSessionId) async {
+    interruptCalls++;
+  }
 
   @override
   DesktopGatewayCapabilityState capabilityState(
@@ -432,6 +437,41 @@ List<Map<String, dynamic>> _rowOnlyRows(int count, {int from = 1}) => [
     },
 ];
 
+List<Map<String, dynamic>> _shortToolTranscript({required bool edited}) => [
+  {
+    'id': edited ? 'edited-user' : 'short-user',
+    'message_id': edited ? 'edited-user' : 'short-user',
+    'role': 'user',
+    'content': edited ? 'Pregunta editada' : 'Pregunta corta',
+  },
+  {
+    'id': edited ? 'edited-call' : 'short-call',
+    'message_id': edited ? 'edited-call' : 'short-call',
+    'role': 'assistant',
+    'content': '',
+    'tool_calls': [
+      {
+        'id': edited ? 'edited-tool-call' : 'short-tool-call',
+        'type': 'function',
+        'function': {'name': 'execute_code', 'arguments': '{}'},
+      },
+    ],
+  },
+  {
+    'id': edited ? 'edited-tool' : 'short-tool',
+    'message_id': edited ? 'edited-tool' : 'short-tool',
+    'role': 'tool',
+    'tool_call_id': edited ? 'edited-tool-call' : 'short-tool-call',
+    'content': 'resultado interno',
+  },
+  {
+    'id': edited ? 'edited-answer' : 'short-answer',
+    'message_id': edited ? 'edited-answer' : 'short-answer',
+    'role': 'assistant',
+    'content': edited ? 'Respuesta a la edición' : 'Respuesta corta',
+  },
+];
+
 ActiveChat _chat(
   String id,
   http.Client client, {
@@ -442,10 +482,10 @@ ActiveChat _chat(
   List<CancelledTurnTombstone> initialCancelledTurnTombstones = const [],
   Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
   void Function()? onTerminal,
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
   int transcriptPageSizeForTesting = 120,
 }) => ActiveChat(
-  compressionFenceStore: compressionFenceStore ?? testCompressionFenceStore(),
+  compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
   transcriptPageSizeForTesting: transcriptPageSizeForTesting,
   connection: _connection(id),
   sessionId: sessionId,
@@ -478,7 +518,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'native history waits for resume and loads a profile whose REST is 401',
+    'native history keeps a REST-401 profile visible with recovery open',
     () async {
       final rows = _rows(300);
       final gateway = _HistoryGateway()
@@ -526,10 +566,224 @@ void main() {
         chat.messages.map((row) => row['content']),
         rows.reversed.map((row) => row['content']),
       );
-      expect(chat.transcriptExtentForTesting, 'complete');
-      expect(chat.hasEarlierMessages, isFalse);
+      expect(chat.transcriptExtentForTesting, 'partial');
+      expect(chat.hasEarlierMessages, isTrue);
       expect(await chat.loadEarlierMessages(), isFalse);
+      expect(restCalls, 1);
       expect(gateway.historyRequests, hasLength(1));
+    },
+  );
+
+  for (final edited in <bool>[false, true]) {
+    test(
+      'complete native ${edited ? 'edited' : 'short'} transcript does not invent earlier history',
+      () async {
+        final rows = _shortToolTranscript(edited: edited);
+        final gateway = _HistoryGateway()
+          ..snapshot = const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-short-complete',
+            storedSessionId: 'stored-chat',
+            created: false,
+            messagesProvided: false,
+            messageCount: 4,
+          )
+          ..loader = () async => SessionMessagesPage.fromRaw(
+            rawMessages: rows,
+            pagination: null,
+            paginationProvided: false,
+          );
+        final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+        final chat = _chat(
+          'native-short-complete-$edited',
+          server.client(),
+          gateway: gateway,
+        );
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages(expectedMessageCount: 4);
+
+        expect(gateway.historyRequests, hasLength(1));
+        expect(server.requests, hasLength(1));
+        expect(
+          ChatRenderProjection.build(chat.internalMessagesForTesting).units,
+          hasLength(2),
+        );
+        expect(chat.hasEarlierMessages, isFalse);
+      },
+    );
+  }
+
+  test(
+    'complete native transcript can end on an exactly full page',
+    () async {
+      final rows = _rows(120);
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-exact-page',
+          storedSessionId: 'stored-chat',
+          created: false,
+          messagesProvided: false,
+          messageCount: 120,
+        )
+        ..loader = () async => SessionMessagesPage.fromRaw(
+          rawMessages: rows,
+          pagination: null,
+          paginationProvided: false,
+        );
+      final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+      final chat = _chat(
+        'native-exact-page',
+        server.client(),
+        gateway: gateway,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 120);
+
+      expect(chat.messages, hasLength(120));
+      expect(chat.hasEarlierMessages, isFalse);
+      expect(
+        server.requests.map((request) => request.queryParameters['offset']),
+        ['0', '120'],
+      );
+    },
+  );
+
+  test('exact-page lookahead retries a transient transport failure', () async {
+    final rows = _rows(120);
+    final gateway = _HistoryGateway()
+      ..snapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-exact-page-retry',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: 120,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: rows,
+        pagination: null,
+        paginationProvided: false,
+      );
+    final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+    var failedLookahead = false;
+    final delegate = server.client();
+    final chat = _chat(
+      'native-exact-page-retry',
+      MockClient((request) {
+        if (request.url.queryParameters['offset'] == '120' &&
+            !failedLookahead) {
+          failedLookahead = true;
+          throw http.ClientException('transient lookahead failure');
+        }
+        return delegate.get(request.url, headers: request.headers);
+      }),
+      gateway: gateway,
+    );
+    addTearDown(chat.dispose);
+    addTearDown(delegate.close);
+
+    await chat.loadMessages(expectedMessageCount: 120);
+
+    expect(failedLookahead, isTrue);
+    expect(chat.messages, hasLength(120));
+    expect(chat.hasEarlierMessages, isFalse);
+    expect(
+      server.requests.map((request) => request.queryParameters['offset']),
+      ['0', '120'],
+    );
+  });
+
+  test(
+    'short native history cannot replace a longer durable transcript on resumed reload',
+    () async {
+      final server = _TranscriptServer(paginate: false)
+        ..rows.addAll(_rows(300));
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-short-refresh',
+          storedSessionId: 'stored-chat',
+          created: false,
+        )
+        ..loader = () async => throw StateError('native history unavailable');
+      final chat = _chat(
+        'native-short-refresh',
+        server.client(),
+        gateway: gateway,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.messages, hasLength(300));
+
+      gateway.loader = () async =>
+          SessionMessagesPage(messages: _rows(40, from: 261), pagination: null);
+      await chat.loadMessages();
+
+      expect(chat.messages, hasLength(300));
+      expect(chat.messages.first['content'], 'msg 300');
+      expect(chat.messages.last['content'], 'msg 1');
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test(
+    'native active history keeps compacted REST generations reachable',
+    () async {
+      final compacted = [
+        for (final row in _rows(260))
+          <String, dynamic>{...row, 'active': 0, 'compacted': 1},
+      ];
+      final active = _rows(40, from: 261);
+      final server = _CompactedTranscriptServer(
+        activeRows: active,
+        compactedRows: compacted,
+      );
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-compacted-native',
+          storedSessionId: 'stored-chat',
+          created: false,
+        )
+        ..loader = () async =>
+            SessionMessagesPage(messages: active, pagination: null);
+      final chat = _chat(
+        'native-compacted-recovery',
+        server.client(),
+        gateway: gateway,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 40);
+      expect(chat.messages, hasLength(40));
+      expect(chat.hasEarlierMessages, isTrue);
+
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(120));
+      expect(chat.messages.first['content'], 'msg 300');
+      expect(chat.messages.last['content'], 'msg 181');
+
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(240));
+      expect(chat.messages.last['content'], 'msg 61');
+
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(300));
+      expect(chat.messages.last['content'], 'msg 1');
+      expect(chat.hasEarlierMessages, isFalse);
+
+      expect(
+        server.requests.map((request) => request.queryParameters['offset']),
+        ['0', '0', '120', '240'],
+      );
+      expect(
+        server.requests.map(
+          (request) => request.queryParameters['include_compacted'],
+        ),
+        everyElement('true'),
+      );
+      expect(chat.messages, hasLength(300));
+      expect(chat.messages.first['content'], 'msg 300');
+      expect(chat.messages.last['content'], 'msg 1');
     },
   );
 
@@ -604,7 +858,7 @@ void main() {
   );
 
   test(
-    'native full history replaces a REST tail during earlier-page load',
+    'earlier-page load keeps using compacted REST after native failure',
     () async {
       final server = _TranscriptServer(paginate: true)..rows.addAll(_rows(300));
       final gateway = _HistoryGateway()
@@ -620,15 +874,23 @@ void main() {
       expect(chat.hasEarlierMessages, isTrue);
       gateway.loader = () async =>
           SessionMessagesPage(messages: _rows(300), pagination: null);
-      await chat.loadEarlierMessages();
-      expect(chat.messages, hasLength(300));
+
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(120));
+      expect(server.requests, hasLength(2));
+      expect(server.requests.last.queryParameters['offset'], '0');
+
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(240));
       expect(
         chat.messages.map((row) => row['content']).toSet(),
-        hasLength(300),
+        hasLength(240),
       );
-      expect(chat.transcriptExtentForTesting, 'complete');
-      expect(chat.hasEarlierMessages, isFalse);
-      expect(server.requests, hasLength(1));
+      expect(chat.transcriptExtentForTesting, 'partial');
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(server.requests, hasLength(3));
+      expect(server.requests.last.queryParameters['offset'], '120');
+      expect(gateway.historyRequests, hasLength(1));
     },
   );
 
@@ -1183,6 +1445,26 @@ void main() {
     );
   });
 
+  test(
+    'refresh durable completo retira cursor aunque la proyeccion no cambie',
+    () async {
+      final server = _TranscriptServer(paginate: true)..rows.addAll(_rows(120));
+      final chat = _chat('unchanged-complete-refresh', server.client());
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 120);
+      expect(chat.hasEarlierMessages, isTrue);
+
+      server.paginate = false;
+      expect(await chat.reconcileAfterResume(), isFalse);
+
+      expect(chat.messages, hasLength(120));
+      expect(chat.hasEarlierMessages, isFalse);
+      expect(await chat.loadEarlierMessages(), isFalse);
+      expect(server.requests, hasLength(2));
+    },
+  );
+
   test('un gesto atraviesa paginas anteriores editorialmente vacias', () async {
     final server = _TranscriptServer(paginate: true)
       ..rows.addAll([
@@ -1256,9 +1538,9 @@ void main() {
   });
 
   test(
-    'un gesto atraviesa delegacion privada y editorial con cursor raw',
+    'un gesto se detiene en razonamiento visible y conserva cursor raw',
     () async {
-      final omitted = <Map<String, dynamic>>[
+      final mixedRows = <Map<String, dynamic>>[
         for (var index = 0; index < 40; index++)
           {
             'id': 'hidden-$index',
@@ -1269,11 +1551,11 @@ void main() {
           },
         for (var index = 0; index < 40; index++)
           {
-            'id': 'private-$index',
-            'message_id': 'private-$index',
+            'id': 'reasoning-$index',
+            'message_id': 'reasoning-$index',
             'role': 'assistant',
             'content': '',
-            'reasoning': 'razonamiento privado $index',
+            'reasoning': 'razonamiento visible $index',
           },
         for (var index = 0; index < 40; index++)
           {
@@ -1290,8 +1572,8 @@ void main() {
           },
       ];
       final server = _TranscriptServer(paginate: true)
-        ..rows.addAll([..._rows(2), ...omitted, ..._rows(120, from: 1000)]);
-      final chat = _chat('mixed-omitted-page', server.client());
+        ..rows.addAll([..._rows(2), ...mixedRows, ..._rows(120, from: 1000)]);
+      final chat = _chat('mixed-reasoning-page', server.client());
       addTearDown(chat.dispose);
 
       await chat.loadMessages(expectedMessageCount: 242);
@@ -1303,9 +1585,39 @@ void main() {
       expect(server.requests.map((uri) => uri.queryParameters['offset']), [
         '0',
         '120',
+      ]);
+      final reasoningMessages = chat.messages
+          .where((row) => row['reasoning'] != null)
+          .toList(growable: false);
+      expect(reasoningMessages, hasLength(1));
+      expect(
+        reasoningMessages.single[assistantActivityTraceKey],
+        hasLength(40),
+      );
+      expect(
+        chat.messages.any((row) => row['display_kind'] == 'hidden'),
+        isFalse,
+      );
+      expect(
+        ChatRenderProjection.build(chat.internalMessagesForTesting).units,
+        hasLength(121),
+      );
+      expect(chat.hasEarlierMessages, isTrue);
+
+      expect(
+        await chat.loadEarlierMessages(continuePastInvisible: true),
+        isTrue,
+      );
+      expect(server.requests.map((uri) => uri.queryParameters['offset']), [
+        '0',
+        '120',
         '240',
       ]);
       expect(chat.messages.any((row) => row['content'] == 'msg 1'), isTrue);
+      expect(
+        chat.messages.map((row) => row['message_id']).toSet(),
+        hasLength(chat.messages.length),
+      );
       expect(chat.hasEarlierMessages, isFalse);
     },
   );
@@ -2908,9 +3220,10 @@ void main() {
       }
 
       expect(chat.hasEarlierMessages, isTrue);
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
+      expect(gateway.interruptCalls, 1);
       expect(recorded.where((tombstone) => tombstone.firstUser), isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
     },
   );
 
@@ -6725,10 +7038,11 @@ void main() {
 
     expect(chat.hasEarlierMessages, isFalse);
     expect(chat.isStreaming, isTrue);
-    await expectLater(chat.cancel(), throwsStateError);
+    await chat.cancel();
 
+    expect(gateway.interruptCalls, 1);
     expect(recorded, isEmpty);
-    expect(chat.isStreaming, isTrue);
+    expect(chat.isStreaming, isFalse);
   });
 
   test(
@@ -6776,10 +7090,11 @@ void main() {
         hasLength(2),
       );
 
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
 
+      expect(gateway.interruptCalls, 1);
       expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
     },
   );
 
@@ -6858,10 +7173,11 @@ void main() {
             'pero el inflight ya representado no añade una tercera burbuja',
       );
 
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
 
+      expect(gateway.interruptCalls, 1);
       expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
     },
   );
 
@@ -6933,16 +7249,17 @@ void main() {
       );
 
       final requestsBeforeStop = server.requests.length;
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
 
+      expect(gateway.interruptCalls, 1);
       expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
       expect(
         server.requests,
-        hasLength(requestsBeforeStop + 1),
+        hasLength(requestsBeforeStop),
         reason:
-            'la página se consulta, pero su fila anterior a inflight.started_at '
-            'no acredita el turno vivo',
+            'Stop llega al wire sin esperar una página incapaz de acreditar '
+            'el turno vivo',
       );
     },
   );
@@ -6999,9 +7316,8 @@ void main() {
 
       await chat.cancel();
 
-      expect(recorded, hasLength(1));
-      expect(recorded.single.anchorRowId, 301);
-      expect(recorded.single.cancelledRowId, isNull);
+      expect(gateway.interruptCalls, 1);
+      expect(recorded, isEmpty);
       expect(chat.state, ChatPipelineState.cancelled);
     },
   );
@@ -7054,10 +7370,11 @@ void main() {
       ),
     );
 
-    await expectLater(chat.cancel(), throwsStateError);
+    await chat.cancel();
 
+    expect(gateway.interruptCalls, 1);
     expect(recorded, isEmpty);
-    expect(chat.isStreaming, isTrue);
+    expect(chat.isStreaming, isFalse);
   });
 
   test(
@@ -7126,10 +7443,11 @@ void main() {
         ),
       );
 
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
 
+      expect(gateway.interruptCalls, 1);
       expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'respuesta local B legítima',
@@ -7202,8 +7520,8 @@ void main() {
 
       await chat.cancel();
 
-      expect(recorded, hasLength(1));
-      expect(recorded.single.cancelledRowId, 301);
+      expect(gateway.interruptCalls, 1);
+      expect(recorded, isEmpty);
       expect(chat.state, ChatPipelineState.cancelled);
     },
   );
@@ -7277,8 +7595,8 @@ void main() {
 
       await chat.cancel();
 
-      expect(recorded, hasLength(1));
-      expect(recorded.single.cancelledRowId, 301);
+      expect(gateway.interruptCalls, 1);
+      expect(recorded, isEmpty);
       expect(chat.state, ChatPipelineState.cancelled);
     },
   );
@@ -7352,19 +7670,16 @@ void main() {
         ),
       );
 
-      final cancellation = chat.cancel();
-      await server.waitForRequests(2);
+      await chat.cancel();
+      expect(gateway.interruptCalls, 1);
+      expect(recorded, isEmpty);
+      expect(chat.isStreaming, isFalse);
+
       final refresh = chat.loadMessages(
         expectedMessageCount: currentRows.length,
       );
-      await server.waitForRequests(3);
-
+      await server.waitForRequests(2);
       server.complete(1, currentRows, paginated: true);
-      await expectLater(cancellation, throwsStateError);
-      expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
-
-      server.complete(2, currentRows, paginated: true);
       await refresh;
     },
   );
@@ -7459,9 +7774,10 @@ void main() {
         ),
       );
 
-      await expectLater(chat.cancel(), throwsStateError, reason: invalid);
+      await chat.cancel();
+      expect(gateway.interruptCalls, 1, reason: invalid);
       expect(recorded, isEmpty, reason: invalid);
-      expect(chat.isStreaming, isTrue, reason: invalid);
+      expect(chat.isStreaming, isFalse, reason: invalid);
       chat.dispose();
       client.close();
     }
@@ -9096,54 +9412,6 @@ void main() {
       expect(chat.hasEarlierMessages, isFalse);
     });
 
-    test('RED all-discarded is consumed by compression-fenced load', () async {
-      final server = _ControlledTranscriptServer();
-      final storage = InMemoryDesktopCompressionFenceStorage();
-      final store = DesktopCompressionFenceStore(
-        storage: storage,
-        attemptId: () => 'obj-a-compression-attempt',
-      );
-      final chat = _chat(
-        'obj-a-compression-consumer',
-        server.client(),
-        compressionFenceStore: store,
-      );
-      addTearDown(chat.dispose);
-
-      final initialLoad = chat.loadMessages();
-      await server.waitForRequests(1);
-      server.completePage(0, const [durableRow]);
-      await initialLoad;
-      expect(chat.coreReadLineageComplete, isTrue);
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-      expect(
-        (await store.arm(
-          DesktopCompressionFenceScope(
-            connectionId: 'obj-a-compression-consumer',
-            profile: 'default',
-            logicalSessionId: 'stored-chat',
-          ),
-          tipAtStart: 'stored-chat',
-          compressionsAtStart: 0,
-          createdAtMs: now,
-          reconcileUntilMs: now + 120000,
-        )).claimed,
-        isTrue,
-      );
-
-      final fencedLoad = chat.loadMessages(expectedMessageCount: 0);
-      await server.waitForRequests(2);
-      server.completePage(1, const <Object?>['discarded']);
-      await fencedLoad;
-
-      expect(chat.messages.map(canonicalTranscriptMessageId), [
-        'obj-a-durable',
-      ]);
-      expect(chat.coreReadLineageComplete, isFalse);
-      expect(chat.hasEarlierMessages, isTrue);
-    });
-
     test('RED all-discarded is consumed by lifecycle prefetch', () async {
       final server = _ControlledTranscriptServer();
       final gateway = _DeferrableGateway()
@@ -9414,11 +9682,13 @@ void main() {
       );
       expect(requests.where((uri) => uri.path.endsWith('/messages')).length, 2);
 
-      // La ambigüedad que esto protegía sigue cerrada donde toca: el tombstone
-      // del turno nuevo no se puede anclar cruzando la fila detenida sin
-      // identidad, así que Stop falla de forma visible y reintentable.
-      await expectLater(chat.cancel(), throwsA(isA<StateError>()));
-      expect(chat.stopConfirmationState, StopConfirmationState.failed);
+      // La ambigüedad que esto protegía sigue cerrada: el turno nuevo no crea
+      // un tombstone cruzando la fila detenida sin identidad.
+      final tombstonesBeforeSecondStop = recorded.length;
+      await chat.cancel();
+      expect(gateway.interruptCalls, 2);
+      expect(recorded, hasLength(tombstonesBeforeSecondStop));
+      expect(chat.stopConfirmationState, StopConfirmationState.confirmed);
     });
   });
 }

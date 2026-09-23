@@ -965,12 +965,13 @@ void main() {
   });
 
   testWidgets(
-    'event stream error reconnects with bounded backoff and refreshes',
+    'unstable reconnect keeps backing off until an RPC proves health',
     (tester) async {
       final events = StreamController<TuiGatewayEvent>.broadcast();
       addTearDown(events.close);
       var reconnects = 0;
       var rosterReads = 0;
+      var rosterFails = false;
       final aggregate = GlobalActivityAggregate.inMemory();
       addTearDown(aggregate.dispose);
       final gateway = _gateway(
@@ -999,8 +1000,10 @@ void main() {
             eventReconnectOverride: () async {
               reconnects += 1;
             },
+            eventReconnectRandomOverride: () => 0.75,
             activeSessionListLoader: () async {
               rosterReads += 1;
+              if (rosterFails) throw StateError('RPC unavailable');
               return const DesktopActiveSessionList(
                 sessions: [
                   DesktopActiveSession(
@@ -1015,22 +1018,60 @@ void main() {
         ),
       );
       await _pumpUntil(tester, find.text('Conversation 0'));
-      final before = rosterReads;
+      rosterFails = true;
+
       events.addError(StateError('offline'));
       await tester.pump();
-      for (var attempt = 0; attempt < 20 && reconnects == 0; attempt++) {
-        await tester.pump(const Duration(milliseconds: 25));
-      }
+      await tester.pump(const Duration(milliseconds: 749));
+      expect(reconnects, 0);
+      await tester.pump(const Duration(milliseconds: 1));
       expect(reconnects, 1);
       await tester.pump();
-      expect(rosterReads, greaterThan(before));
+
+      events.addError(StateError('flapped'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1499));
       expect(
-        aggregate.activityFor(_connectionId, 'default', 'session-0')?.phase,
-        GlobalActivityPhase.unknown,
+        reconnects,
+        1,
+        reason: 'socket-open alone must not reset the reconnect attempt',
+      );
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(reconnects, 2);
+      expect(rosterReads, greaterThanOrEqualTo(3));
+
+      await tester.pump(GatewayReconnectBackoff.stableInterval);
+      rosterFails = false;
+      events.addError(StateError('lost after a stable interval'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 749));
+      expect(reconnects, 2);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(
+        reconnects,
+        3,
+        reason: '30 healthy seconds reset the reconnect backoff',
+      );
+      await tester.pump();
+
+      events.addError(StateError('lost after a successful RPC'));
+      await tester.pump();
+      expect(
+        aggregate.activityFor(_connectionId, 'default', 'session-0')?.stale,
+        isTrue,
+        reason: 'transport recovery preserves known work as stale',
+      );
+      await tester.pump(const Duration(milliseconds: 749));
+      expect(reconnects, 3);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(
+        reconnects,
+        4,
+        reason: 'a successful RPC resets the reconnect backoff',
       );
       await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(seconds: 10));
-      expect(reconnects, 1, reason: 'dispose cancels reconnect timers');
+      await tester.pump(const Duration(seconds: 60));
+      expect(reconnects, 4, reason: 'dispose cancels reconnect timers');
     },
   );
 
@@ -1168,6 +1209,69 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'session library stays idle until its visible safety poll or an event',
+    (tester) async {
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      var pageRequests = 0;
+      final dashboard = _dashboard(
+        MockClient((request) async {
+          if (request.url.path != '/api/sessions') {
+            return http.Response('{}', 404);
+          }
+          pageRequests += 1;
+          return _pageResponse(
+            [_sessionRow(0)],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          );
+        }),
+      );
+      final gateway = _gateway(_healthyGatewayHttp());
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
+
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: gateway,
+            repositoryOverride: repository,
+            eventStreamOverride: events.stream,
+          ),
+        ),
+      );
+      await _pumpUntil(tester, find.text('Conversation 0'));
+      final initialRequests = pageRequests;
+
+      await tester.pump(const Duration(seconds: 59));
+      expect(pageRequests, initialRequests);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(
+        pageRequests,
+        initialRequests + 1,
+        reason: 'a visible 60-second safety poll must repair missed events',
+      );
+
+      events.add(
+        const TuiGatewayEvent(
+          type: 'sessions.changed',
+          sessionId: '',
+          payload: {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(pageRequests, initialRequests + 2);
+    },
+  );
 
   testWidgets(
     'sessions.changed follows REST without cross-process liveness retention',

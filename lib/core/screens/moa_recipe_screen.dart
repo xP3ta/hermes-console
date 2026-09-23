@@ -9,6 +9,7 @@ import '../models/moa_config.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
@@ -155,20 +156,22 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
       // disponible desde la lista de Modelos (el radio junto al preset).
       final alreadyActive = await _moaIsActive();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(s.moaSaved),
           action: alreadyActive
               ? null
               : SnackBarAction(label: s.moaActivate, onPressed: _activate),
         ),
+        kind: HermesNoticeKind.success,
       );
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.moaSaveError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.moaSaveError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
       // Revierte a lo persistido: sin estado fantasma.
       await _load();
     } finally {
@@ -201,14 +204,16 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
         scope: 'main',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.moaActivated)));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.moaActivated)),
+        kind: HermesNoticeKind.success,
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.moaSaveError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.moaSaveError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 

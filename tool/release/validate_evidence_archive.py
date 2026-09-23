@@ -26,8 +26,6 @@ LEAVES = (
     "public-apk-facts.json",
 )
 REQUIRED_FILES = {
-    "source-binding.json",
-    "double-build-manifest.json",
     "rebuild-comparison.json",
     *{f"artifacts/full/{apk}/{leaf}" for apk in APKS for leaf in LEAVES},
 }

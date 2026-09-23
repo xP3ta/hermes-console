@@ -6,6 +6,7 @@ import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 
 String _withInitialUppercase(String value) {
   if (value.isEmpty) return value;
@@ -87,7 +88,7 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
 
   void _open(HermesToolDestination destination) {
     if (!destination.enabled) {
-      ScaffoldMessenger.of(context)
+      HermesNotice.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
@@ -97,6 +98,7 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
             ),
             duration: const Duration(seconds: 3),
           ),
+          kind: HermesNoticeKind.warning,
         );
       return;
     }

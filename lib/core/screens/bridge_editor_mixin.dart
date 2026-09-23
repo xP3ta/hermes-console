@@ -4,6 +4,7 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/bridge_client.dart';
 import '../services/bridge_manager.dart';
+import '../widgets/hermes_notice.dart';
 import 'bridge_config_screen.dart';
 import 'lock_screen.dart';
 
@@ -119,7 +120,7 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
       bridgeController.text = content;
       if (!silent) {
         final exists = res['exists'] == true;
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(exists
                 ? s.bfeLoadedBytes(res['size'])
@@ -279,7 +280,7 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
 
   void _snack(String msg) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 }

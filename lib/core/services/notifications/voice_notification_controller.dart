@@ -121,13 +121,15 @@ class _PluginVoiceNotifier implements VoicePlatformNotifier {
 
   @override
   Future<void> ensureChannel() async {
-    await _android?.createNotificationChannel(const AndroidNotificationChannel(
+    final t = NotifL10n.of(await SharedPreferences.getInstance());
+    await _android?.createNotificationChannel(AndroidNotificationChannel(
       VoiceNotificationController.channelId,
-      VoiceNotificationController.channelName,
-      description: VoiceNotificationController.channelDesc,
+      t.chVoice,
+      description: t.chVoiceDesc,
       importance: Importance.low, // visible sin ruido: no suena ni vibra
       enableVibration: false,
       playSound: false,
+      showBadge: false,
     ));
   }
 
@@ -138,10 +140,11 @@ class _PluginVoiceNotifier implements VoicePlatformNotifier {
     required String body,
   }) async {
     if (!await _ready()) return false;
+    final t = NotifL10n.of(await SharedPreferences.getInstance());
     final details = AndroidNotificationDetails(
       VoiceNotificationController.channelId,
-      VoiceNotificationController.channelName,
-      channelDescription: VoiceNotificationController.channelDesc,
+      t.chVoice,
+      channelDescription: t.chVoiceDesc,
       importance: Importance.low,
       priority: Priority.low,
       icon: 'ic_stat_hermes',

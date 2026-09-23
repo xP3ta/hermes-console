@@ -8,9 +8,9 @@ import 'package:http/testing.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _Dashboard extends DashboardClient {
   _Dashboard() : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -100,8 +100,8 @@ void main() {
           notifications: null,
           onTerminal: () {},
           desktopGateway: client,
-          compressionFenceStore: DesktopCompressionFenceStore(
-            storage: InMemoryDesktopCompressionFenceStorage(),
+          compressionRestoreStore: CompressionRestoreStore(
+            storage: InMemoryCompressionRestoreStorage(),
             mutationNamespaceForTesting: 'review-wire-$foreign',
           ),
           api: ApiClient(
@@ -233,8 +233,8 @@ Future<List<Object?>> _runTipAcquisitionWire({
     notifications: null,
     onTerminal: () {},
     desktopGateway: client,
-    compressionFenceStore: DesktopCompressionFenceStore(
-      storage: InMemoryDesktopCompressionFenceStorage(),
+    compressionRestoreStore: CompressionRestoreStore(
+      storage: InMemoryCompressionRestoreStorage(),
       mutationNamespaceForTesting: 'fix4-tip-${storedTip ?? 'missing'}',
     ),
     api: ApiClient(
@@ -329,8 +329,8 @@ _runConcurrentAcquisitionWire() async {
     notifications: null,
     onTerminal: () {},
     desktopGateway: client,
-    compressionFenceStore: DesktopCompressionFenceStore(
-      storage: InMemoryDesktopCompressionFenceStorage(),
+    compressionRestoreStore: CompressionRestoreStore(
+      storage: InMemoryCompressionRestoreStorage(),
       mutationNamespaceForTesting: 'fix4-concurrent-wire',
     ),
     api: ApiClient(

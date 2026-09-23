@@ -7,6 +7,7 @@ import '../../main.dart';
 import '../models/desktop_control_center.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
@@ -239,8 +240,9 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
       await _load();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).agentCenterStopFailed)),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) setState(() => _stopping.remove(process.opaqueId));
@@ -280,13 +282,15 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
     try {
       await widget.gateway.startBackgroundTask(widget.runtimeSessionId, text);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).agentCenterTaskAccepted)),
+        kind: HermesNoticeKind.success,
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).agentCenterTaskStartFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
   }

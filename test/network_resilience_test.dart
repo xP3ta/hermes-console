@@ -18,8 +18,10 @@ import 'package:http/testing.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/main.dart'
+    show NetworkAvailabilityRecoveryListener;
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 SavedConnection _conn() => SavedConnection(
   id: 'conn-1',
@@ -53,7 +55,7 @@ void main() {
           httpClient: client,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -118,7 +120,7 @@ void main() {
           httpClient: client,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -188,7 +190,7 @@ void main() {
         httpClient: client,
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -237,6 +239,25 @@ void main() {
         api.close();
       },
     );
+  });
+
+  test('online events wake recovery and stop after listener disposal', () async {
+    final events = StreamController<void>.broadcast();
+    addTearDown(events.close);
+    var wakeCalls = 0;
+    final listener = NetworkAvailabilityRecoveryListener(
+      events: events.stream,
+      onAvailable: () => wakeCalls += 1,
+    );
+
+    events.add(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(wakeCalls, 1);
+
+    await listener.dispose();
+    events.add(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(wakeCalls, 1);
   });
 
   group('Bridge — resiliencia de red', () {

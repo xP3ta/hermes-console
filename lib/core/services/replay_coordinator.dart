@@ -244,6 +244,14 @@ final class ReplayCoordinator {
         _poisonRecovery(held);
         return ReplayLiveDisposition.quarantined;
       }
+      for (final prior in held.held) {
+        if (prior.sequence != event.sequence) continue;
+        if (ReplayBatchProof.sameEvent(prior, event)) {
+          return ReplayLiveDisposition.ignored;
+        }
+        _poisonRecovery(held);
+        return ReplayLiveDisposition.quarantined;
+      }
       if (held.held.length >= maxHeldEvents ||
           _totalHeldEvents >= maxTotalHeldEvents) {
         _poisonRecovery(held);
@@ -259,6 +267,14 @@ final class ReplayCoordinator {
               transaction.generation != socketGeneration) ||
           (channel != null && !identical(transaction.channel, channel)) ||
           (replayEpoch != null && transaction.epoch != replayEpoch)) {
+        abandonTransaction(runtime);
+        return ReplayLiveDisposition.quarantined;
+      }
+      for (final prior in transaction.held) {
+        if (prior.sequence != event.sequence) continue;
+        if (ReplayBatchProof.sameEvent(prior, event)) {
+          return ReplayLiveDisposition.ignored;
+        }
         abandonTransaction(runtime);
         return ReplayLiveDisposition.quarantined;
       }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import '../../l10n/app_localizations.dart';
+import 'hermes_notice.dart';
 
 /// Pill discreta que marca una instancia en modo solo lectura.
 class ReadOnlyBadge extends StatelessWidget {
@@ -50,7 +51,7 @@ class ReadOnlyBadge extends StatelessWidget {
 /// Aviso estándar al intentar una acción de escritura en una instancia
 /// de solo lectura.
 void showReadOnlyNotice(BuildContext context) {
-  ScaffoldMessenger.of(context).showSnackBar(
+  HermesNotice.of(context).showSnackBar(
     SnackBar(
       content: Text(
         Strings.of(context).readOnlyNotice,

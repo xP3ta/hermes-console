@@ -10,6 +10,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Rect
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -47,6 +49,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val fullDuplexCaptureEventsName = "hermes/full_duplex_capture_events"
     private val documentPreviewChannelName = "hermes/document_preview"
     private val memoryChannelName = "hermes/memory"
+    private val networkAvailabilityEventsName = "hermes/network_availability"
     private val platformInfoChannelName = "hermes/platform_info"
     private val foregroundRestartContractChannelName =
         "hermes/foreground_restart_contract"
@@ -63,6 +66,17 @@ class MainActivity : FlutterFragmentActivity() {
     private var pendingNewSessionLaunch: Map<String, Any?>? = null
     private var pendingExternalDataSyncStop = false
     private var externalDataSyncStopReceiverRegistered = false
+    private var networkAvailabilitySink: EventChannel.EventSink? = null
+    private var networkCallbackRegistered = false
+    private val networkCallback =
+        object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val sink = networkAvailabilitySink ?: return
+                runOnUiThread {
+                    if (networkAvailabilitySink === sink) sink.success(null)
+                }
+            }
+        }
     private val externalDataSyncStopReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -158,6 +172,21 @@ class MainActivity : FlutterFragmentActivity() {
         memoryChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             memoryChannelName,
+        )
+        stopNetworkAvailabilityEvents()
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            networkAvailabilityEventsName,
+        ).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    startNetworkAvailabilityEvents(events)
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    stopNetworkAvailabilityEvents()
+                }
+            },
         )
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -391,6 +420,7 @@ class MainActivity : FlutterFragmentActivity() {
         externalDataSyncChannel = null
         newSessionLaunchChannel = null
         memoryChannel = null
+        stopNetworkAvailabilityEvents()
         documentPreviewHandler?.close()
         documentPreviewHandler = null
         fullDuplexCaptureHandler?.close()
@@ -398,6 +428,33 @@ class MainActivity : FlutterFragmentActivity() {
         pcmStreamHandler?.close()
         pcmStreamHandler = null
         super.onDestroy()
+    }
+
+    private fun startNetworkAvailabilityEvents(events: EventChannel.EventSink) {
+        stopNetworkAvailabilityEvents()
+        networkAvailabilitySink = events
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback)
+            networkCallbackRegistered = true
+        } catch (_: SecurityException) {
+            networkAvailabilitySink = null
+            events.error("network_state_unavailable", null, null)
+        }
+    }
+
+    private fun stopNetworkAvailabilityEvents() {
+        networkAvailabilitySink = null
+        if (!networkCallbackRegistered) return
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        } catch (_: IllegalArgumentException) {
+            // The platform already removed the callback with the Activity.
+        }
+        networkCallbackRegistered = false
     }
 
     private fun deliverExternalDataSyncStop() {
@@ -481,21 +538,35 @@ class MainActivity : FlutterFragmentActivity() {
             ?.take(65536)
             .orEmpty()
         val text = when {
+            // Compartir un enlace pega solo el enlace: el título de la página
+            // (EXTRA_SUBJECT) no es lo que la persona quiso enviar.
+            SHARED_LINK_ONLY.matches(body) -> body
             subject.isEmpty() -> body
             body.isEmpty() -> subject
             body.startsWith(subject) -> body
             else -> "$subject\n\n$body"
         }
 
+        // En un compartido de texto (enlace, selección) los URI de EXTRA_STREAM
+        // y del ClipData son la vista previa que añade la app emisora (la
+        // miniatura de la página), no un archivo elegido por la persona. Un
+        // archivo de texto compartido sin cuerpo sí sigue adjuntándose.
+        val isTextShare = source.type?.startsWith("text/") == true
+        val streamsArePreview = source.action == Intent.ACTION_SEND &&
+            isTextShare &&
+            body.isNotEmpty()
+
         val uris = linkedSetOf<Uri>()
-        if (source.action == Intent.ACTION_SEND_MULTIPLE) {
-            uris.addAll(parcelableUriList(source))
-        } else {
-            parcelableUri(source)?.let(uris::add)
-        }
-        source.clipData?.let { clip ->
-            for (index in 0 until clip.itemCount.coerceAtMost(10)) {
-                clip.getItemAt(index).uri?.let(uris::add)
+        if (!streamsArePreview) {
+            if (source.action == Intent.ACTION_SEND_MULTIPLE) {
+                uris.addAll(parcelableUriList(source))
+            } else {
+                parcelableUri(source)?.let(uris::add)
+            }
+            source.clipData?.let { clip ->
+                for (index in 0 until clip.itemCount.coerceAtMost(10)) {
+                    clip.getItemAt(index).uri?.let(uris::add)
+                }
             }
         }
 
@@ -548,7 +619,7 @@ class MainActivity : FlutterFragmentActivity() {
         fallbackMime: String?,
         remainingBatchBytes: Long,
     ): Map<String, Any>? {
-        if (remainingBatchBytes <= 0L) return null
+        if (uri.scheme != "content" || remainingBatchBytes <= 0L) return null
         val mime = contentResolver.getType(uri)
             ?.takeIf { it.length <= 160 }
             ?: fallbackMime?.takeIf { it.length <= 160 }
@@ -653,6 +724,9 @@ class MainActivity : FlutterFragmentActivity() {
     companion object {
         private const val MAX_SHARE_ITEM_BYTES = 8L * 1024L * 1024L
         private const val MAX_SHARE_BATCH_BYTES = 24L * 1024L * 1024L
+
+        /** Un único enlace http(s) sin espacios ni saltos de línea. */
+        private val SHARED_LINK_ONLY = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
     }
 
     private fun openAppSettings(): Boolean {

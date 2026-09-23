@@ -6,6 +6,7 @@ import '../../companion/data/petdex_remote_service.dart';
 import '../../companion/state/companion_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/hermes_app_bar.dart';
+import '../../widgets/hermes_notice.dart';
 import '../../widgets/hermes_premium_ui.dart';
 import '../../widgets/hermes_ui.dart';
 
@@ -118,7 +119,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
     // Guarda de reentrada: taps repetidos no lanzan descargas+importaciones
     // concurrentes del mismo ZIP (spec 028 A-030).
     if (_installing.contains(pet.slug)) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
+    final messenger = HermesNotice.maybeOf(context);
     final str = Strings.of(context);
     _installError.remove(pet.slug);
     setState(() => _installing.add(pet.slug));
@@ -132,6 +133,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
       if (!mounted) return;
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petdexInstalled(imported.name))),
+        kind: HermesNoticeKind.success,
       );
       // Cerrar SOLO el sheet, y solo si sigue abierto y es la ruta superior:
       // un pop a ciegas tras el await podía sacar al usuario de la galería
@@ -144,11 +146,13 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
       _installError[pet.slug] = str.petdexInstallFailed(e.message);
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petdexInstallFailed(e.message))),
+        kind: HermesNoticeKind.error,
       );
     } on PetdexRemoteException catch (e) {
       _installError[pet.slug] = str.petdexDownloadFailed(e.message);
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petdexDownloadFailed(e.message))),
+        kind: HermesNoticeKind.error,
       );
     } catch (e) {
       debugPrint(
@@ -157,6 +161,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
       _installError[pet.slug] = str.petdexInstallFailedGeneric;
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petdexInstallFailedGeneric)),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) {

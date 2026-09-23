@@ -9,6 +9,7 @@ import '../../services/connection_manager.dart';
 import '../../services/pairing_link.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/hermes_app_bar.dart';
+import '../../widgets/hermes_notice.dart';
 import '../../widgets/hermes_ui.dart';
 import '../instance_edit_screen.dart';
 import '../qr_scan_screen.dart';
@@ -47,8 +48,9 @@ class _ConnectChooserScreenState extends State<ConnectChooserScreen> {
         // antes de abrir el alta precargada.
         setState(() => _detected = link);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).connectNoLinkInClipboard)),
+          kind: HermesNoticeKind.warning,
         );
       }
     } catch (_) {
@@ -119,8 +121,9 @@ class _ConnectChooserScreenState extends State<ConnectChooserScreen> {
       opened = false;
     }
     if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).connectGuideOpenFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
   }

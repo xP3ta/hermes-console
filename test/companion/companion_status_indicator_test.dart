@@ -28,14 +28,20 @@ Future<CompanionController> _build() async {
   return companion;
 }
 
-Future<void> _pump(WidgetTester tester, CompanionController? companion) async {
+Future<void> _pump(
+  WidgetTester tester,
+  CompanionController? companion, {
+  HermesSparkMood mood = HermesSparkMood.thinking,
+  bool? animate,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: Center(
           child: CompanionStatusIndicator(
             companion: companion,
-            mood: HermesSparkMood.thinking,
+            mood: mood,
+            animate: animate,
           ),
         ),
       ),
@@ -87,6 +93,23 @@ void main() {
     await _pump(tester, companion);
     expect(find.byType(CompanionView), findsOneWidget);
     expect(find.byType(HermesStatusPulse), findsNothing);
+  });
+
+  testWidgets('resultado histórico conserva mood en un fotograma estático', (
+    tester,
+  ) async {
+    final companion = await _build();
+    await companion.setPresenceLevel(CompanionPresenceLevel.full);
+    await _pump(
+      tester,
+      companion,
+      mood: HermesSparkMood.success,
+      animate: false,
+    );
+
+    final view = tester.widget<CompanionView>(find.byType(CompanionView));
+    expect(view.mood, HermesSparkMood.success);
+    expect(view.animate, isFalse);
   });
 
   testWidgets('mood de resultado → conserva el indicador clásico', (

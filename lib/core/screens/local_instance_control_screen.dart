@@ -20,6 +20,7 @@ import '../services/platform/android_apps.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import '../../l10n/app_localizations.dart';
@@ -239,8 +240,9 @@ class _LocalInstanceControlScreenState
         // de fingir que está en marcha y dejar el panel en "Not detected".
         if (mounted) {
           setState(() => _bridgeBusy = false);
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(Strings.of(context).licStartTermuxRejected)),
+            kind: HermesNoticeKind.warning,
           );
         }
         return;
@@ -336,8 +338,9 @@ class _LocalInstanceControlScreenState
       // tiene sentido esperar 20 s a que suba el gateway. Avisamos al instante.
       if (mounted) {
         setState(() => _acting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).licStartTermuxRejected)),
+          kind: HermesNoticeKind.warning,
         );
       }
       return;
@@ -395,12 +398,13 @@ class _LocalInstanceControlScreenState
             TextButton(
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: log));
-                ScaffoldMessenger.of(context).showSnackBar(
+                HermesNotice.of(context).showSnackBar(
                   SnackBar(
                     content: Text(str.licLogCopied,
                         style: const TextStyle(fontSize: 12)),
                     duration: const Duration(seconds: 2),
                   ),
+                  kind: HermesNoticeKind.success,
                 );
               },
               child: Text(str.licCopy),
@@ -1106,7 +1110,7 @@ class _LocalInstanceControlScreenState
             child: GestureDetector(
               onLongPress: () {
                 Clipboard.setData(ClipboardData(text: value));
-                ScaffoldMessenger.of(context).showSnackBar(
+                HermesNotice.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
                       Strings.of(context).licCopied(value),
@@ -1114,6 +1118,7 @@ class _LocalInstanceControlScreenState
                     ),
                     duration: const Duration(seconds: 2),
                   ),
+                  kind: HermesNoticeKind.success,
                 );
               },
               child: Text(

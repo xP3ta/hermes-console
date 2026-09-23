@@ -29,6 +29,7 @@ import '../utils/transport_privacy.dart';
 import '../services/bridge_update_service.dart';
 import '../../main.dart';
 import '../widgets/general_dock_shell.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
@@ -1352,7 +1353,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
   /// no pasaba nada y no había explicación posible en pantalla.
   void _showCleanupNotice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 5)),
     );
   }
@@ -1604,7 +1605,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       }
       final allSucceeded =
           (result?.allSucceeded ?? true) && remote.allSucceeded;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(_summaryMessage(Strings.of(context), result, remote)),
           duration: Duration(seconds: allSucceeded ? 3 : 5),
@@ -1615,8 +1616,9 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       // cubre el listado/borrado remoto y los fallos al preparar la operación.
       if (!mounted) return;
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(s.setClearError(localizedApiError(s, e)))),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) {
@@ -1892,7 +1894,7 @@ class _OrphanDataTileState extends State<_OrphanDataTile> {
       final removed = await widget.connManager.pruneOrphanData();
       if (!mounted) return;
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             removed == 0 ? s.secNoOrphans : s.secOrphansRemoved(removed),
@@ -1901,10 +1903,11 @@ class _OrphanDataTileState extends State<_OrphanDataTile> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).secCleanFailed(e.toString())),
         ),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) setState(() => _cleaning = false);
@@ -2414,7 +2417,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
     if (lock != null && lock.enabled) return;
     _hermesAutoTriggered = true;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).setUpdatingHermesAuto)),
     );
     await _applyUpdate(auto: true);
@@ -2688,7 +2691,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   }
 
   void _snack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    HermesNotice.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   // ── Diagnóstico derivado de /api/status ──────────────────────────────

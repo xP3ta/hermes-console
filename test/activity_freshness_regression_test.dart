@@ -7,7 +7,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 import 'package:hermes_android/core/utils/assistant_content.dart';
 import 'package:http/http.dart' as http;
@@ -243,7 +243,7 @@ void main() {
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: gateway,
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         // Production default: allowUnownedDesktopSnapshotForTesting=false.
       );
       addTearDown(chat.dispose);

@@ -30,9 +30,10 @@ class CompanionMessagePresence extends StatelessWidget {
   final double size;
 
   /// Mantiene el reposo animado en superficies vivas como el estado vacío.
-  /// Los mensajes históricos siguen estáticos por defecto para proteger scroll
-  /// y batería.
   final bool animateIdle;
+
+  /// Fuerza animación viva o fotograma estático para cualquier mood.
+  final bool? animate;
 
   const CompanionMessagePresence({
     super.key,
@@ -40,6 +41,7 @@ class CompanionMessagePresence extends StatelessWidget {
     required this.mood,
     this.size = 22,
     this.animateIdle = false,
+    this.animate,
   });
 
   @override
@@ -56,9 +58,7 @@ class CompanionMessagePresence extends StatelessWidget {
           mood: mood,
           size: size,
           controller: companion,
-          // Las respuestas históricas en reposo son estáticas. Solo el estado
-          // vivo del turno (pensando/conectando/etc.) necesita animación.
-          animate: animateIdle || mood != HermesSparkMood.idle,
+          animate: animate ?? (animateIdle || mood != HermesSparkMood.idle),
         );
       },
     );

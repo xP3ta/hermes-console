@@ -6,6 +6,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/models/bot_visual_identity.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _Auth extends DashboardClient {
   _Auth() : super(host: 'hermes.local', manualToken: 'test');
   @override
@@ -31,7 +33,11 @@ class _Socket implements WebSocketChannel {
   Stream<dynamic> get stream => incoming.stream;
   @override
   late final WebSocketSink sink = _Sink((data) {
-    final frame = jsonDecode(data as String) as Map;
+    final frame = Map<String, dynamic>.from(jsonDecode(data as String) as Map);
+    if (isClientCapabilitiesFrame(frame)) {
+      incoming.add(jsonEncode(clientCapabilitiesResponse(frame)));
+      return;
+    }
     incoming.add(
       jsonEncode({
         'jsonrpc': '2.0',

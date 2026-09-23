@@ -355,18 +355,14 @@ class NotificationService
 
   // Canal de baja importancia (sin sonido) para el progreso de transferencias
   // SFTP en segundo plano: barra de progreso silenciosa que no molesta.
+  // Nombre y descripción localizados (NotifL10n.chTransfers/chTransfersDesc).
   static const String _transferChannelId = 'hermes_transfers';
-  static const String _transferChannelName = 'SFTP Transfers';
-  static const String _transferChannelDesc =
-      'Upload and download progress via SFTP';
 
   // Operaciones locales largas iniciadas por el usuario (por ejemplo, instalar
   // un modelo en Termux). Es una notificación local ongoing independiente del
   // foreground service: nunca adquiere, reconfigura ni detiene sus owners.
+  // Nombre y descripción localizados (NotifL10n.chOperations/chOperationsDesc).
   static const String _operationChannelId = 'hermes_background_operations';
-  static const String _operationChannelName = 'Background operations';
-  static const String _operationChannelDesc =
-      'Progress for user-started local operations';
 
   /// Llamado cuando el usuario pulsa una notificación con sesión asociada. Lo
   /// cablea HermesAppState para navegar al chat correcto. Si es null al pulsar
@@ -683,14 +679,29 @@ class NotificationService
         ),
       );
       _log('canales por tipo creados (approvals/replies/runs)');
+      // Canales silenciosos (sin sonido, vibración ni globo en el icono de la
+      // app): progreso de fondo que informa sin molestar. Crear un canal ya
+      // existente solo actualiza su nombre/descripción localizados.
       await android?.createNotificationChannel(
-        const AndroidNotificationChannel(
+        AndroidNotificationChannel(
           _transferChannelId,
-          _transferChannelName,
-          description: _transferChannelDesc,
+          t.chTransfers,
+          description: t.chTransfersDesc,
           importance: Importance.low,
           enableVibration: false,
           playSound: false,
+          showBadge: false,
+        ),
+      );
+      await android?.createNotificationChannel(
+        AndroidNotificationChannel(
+          _operationChannelId,
+          t.chOperations,
+          description: t.chOperationsDesc,
+          importance: Importance.low,
+          enableVibration: false,
+          playSound: false,
+          showBadge: false,
         ),
       );
       // Si la app se ABRIÓ pulsando una notificación estando muerta, recupera el
@@ -1695,10 +1706,11 @@ class NotificationService
   }) async {
     await init();
     if (!_available || !await permissionGranted()) return;
+    final t = NotifL10n.of(_prefs);
     final details = AndroidNotificationDetails(
       _transferChannelId,
-      _transferChannelName,
-      channelDescription: _transferChannelDesc,
+      t.chTransfers,
+      channelDescription: t.chTransfersDesc,
       importance: Importance.low,
       priority: Priority.low,
       icon: 'ic_stat_hermes',
@@ -1730,8 +1742,8 @@ class NotificationService
     final alert = ok && !foreground; // suena solo al terminar OK en 2º plano
     final details = AndroidNotificationDetails(
       alert ? _chRuns : _transferChannelId,
-      alert ? t.chRuns : _transferChannelName,
-      channelDescription: alert ? t.chRunsDesc : _transferChannelDesc,
+      alert ? t.chRuns : t.chTransfers,
+      channelDescription: alert ? t.chRunsDesc : t.chTransfersDesc,
       importance: foreground ? Importance.low : Importance.high,
       priority: foreground ? Priority.low : Priority.high,
       icon: 'ic_stat_hermes',
@@ -1753,10 +1765,11 @@ class NotificationService
   }) async {
     await init();
     if (!_available || !await permissionGranted()) return;
-    const details = AndroidNotificationDetails(
+    final t = NotifL10n.of(_prefs);
+    final details = AndroidNotificationDetails(
       _operationChannelId,
-      _operationChannelName,
-      channelDescription: _operationChannelDesc,
+      t.chOperations,
+      channelDescription: t.chOperationsDesc,
       importance: Importance.low,
       priority: Priority.low,
       icon: 'ic_stat_hermes',
@@ -1774,7 +1787,7 @@ class NotificationService
       id,
       title,
       body,
-      const NotificationDetails(android: details),
+      NotificationDetails(android: details),
     );
   }
 
@@ -2108,7 +2121,7 @@ class NotificationService
     await _plugin.show(
       _groupSummaryId,
       t.brand,
-      t.groupSummaryBody,
+      t.groupSummaryCount(children),
       NotificationDetails(android: details),
     );
   }

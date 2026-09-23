@@ -28,6 +28,7 @@ import '../navigation/instance_route_guard.dart';
 import '../theme/app_theme.dart';
 import '../utils/session_timestamp.dart';
 import '../../l10n/app_localizations.dart';
+import 'hermes_notice.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -358,7 +359,7 @@ class HermesDrawer extends StatelessWidget {
 
   void _showNeedsGateway(BuildContext context) {
     Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           Strings.of(context).drawerNeedInstance,
@@ -366,12 +367,13 @@ class HermesDrawer extends StatelessWidget {
         ),
         duration: const Duration(seconds: 2),
       ),
+      kind: HermesNoticeKind.warning,
     );
   }
 
   void _showUnsupported(BuildContext context) {
     Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           Strings.of(context).drawerUnsupported,
@@ -379,6 +381,7 @@ class HermesDrawer extends StatelessWidget {
         ),
         duration: const Duration(seconds: 3),
       ),
+      kind: HermesNoticeKind.warning,
     );
   }
 

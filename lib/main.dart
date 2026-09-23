@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show MethodChannel;
+import 'package:flutter/services.dart' show EventChannel, MethodChannel;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,7 +33,7 @@ import 'core/screens/splash_screen.dart';
 import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
-import 'core/services/desktop_compression_fence_store.dart';
+import 'core/services/compression_restore_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
@@ -65,7 +65,7 @@ import 'core/theme/component_profile.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
-import 'core/widgets/hermes_floating_notice.dart';
+import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
 import 'l10n/app_localizations.dart';
 
@@ -195,7 +195,12 @@ MissionControlOpenTarget? missionControlTargetForNotification(
 
 MissionControlOpenTarget? missionControlTargetForSession(Session session) {
   final source = session.source.trim().toLowerCase();
-  if (!const {'mobile-bot', 'bot-mode', 'bot-mode-local'}.contains(source)) {
+  if (!const {
+    'mobile-bot',
+    'bot-mode',
+    'bot-mode-local',
+    'bot-mode-canonical',
+  }.contains(source)) {
     return null;
   }
   return MissionControlOpenTarget.bot(
@@ -220,7 +225,7 @@ void main() async {
   final initialThemeProfiles = await themeProfileStore.load();
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   await cancelledTurnStore.initialize();
-  final compressionFenceStore = DesktopCompressionFenceStore();
+  final compressionRestoreStore = CompressionRestoreStore();
   final connManager = await ConnectionManager.create(
     prefs,
     clearCancelledTurns: (connectionId) async {
@@ -233,7 +238,7 @@ void main() async {
         firstError = error;
         firstStack = stackTrace;
       }
-      removed += await compressionFenceStore.clearConnection(connectionId);
+      await compressionRestoreStore.clearConnection(connectionId);
       if (firstError != null) {
         Error.throwWithStackTrace(firstError, firstStack!);
       }
@@ -258,7 +263,7 @@ void main() async {
     policy: approvalPolicy,
     prefs: prefs,
     cancelledTurnStore: cancelledTurnStore,
-    compressionFenceStore: compressionFenceStore,
+    compressionRestoreStore: compressionRestoreStore,
   );
   await activeChats.globalActivity.initialize();
   runApp(
@@ -392,6 +397,20 @@ class AppLocales {
       all.firstWhere((o) => o.id == id, orElse: () => all.first);
 }
 
+@visibleForTesting
+final class NetworkAvailabilityRecoveryListener {
+  NetworkAvailabilityRecoveryListener({
+    required Stream<dynamic> events,
+    required VoidCallback onAvailable,
+  }) {
+    _subscription = events.listen((_) => onAvailable(), onError: (_) {});
+  }
+
+  late final StreamSubscription<dynamic> _subscription;
+
+  Future<void> dispose() => _subscription.cancel();
+}
+
 class HermesApp extends StatefulWidget {
   final ConnectionManager connManager;
   final AppLockService appLock;
@@ -483,6 +502,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   static const MethodChannel _externalDataSyncControl = MethodChannel(
     'hermes/foreground_external_data_sync',
   );
+  static const EventChannel _networkAvailabilityEvents = EventChannel(
+    'hermes/network_availability',
+  );
+  NetworkAvailabilityRecoveryListener? _networkAvailabilityListener;
 
   Timer? _deferredNotificationInitTimer;
 
@@ -543,9 +566,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   /// Un único aviso flotante a la vez. Sustituye al MaterialBanner pegado al
   /// borde superior y deja la pantalla actual visible y operable.
-  OverlayEntry? _inAppNoticeOverlay;
-  Timer? _inAppNoticeTimer;
+  HermesNoticeHandle? _inAppNotice;
   NotificationKind? _inAppNoticeKind;
+  int _inAppNoticeSerial = 0;
 
   /// Estado previo de "hay chats activos" (para detectar transiciones de ánimo).
   bool _presenceRunning = false;
@@ -1097,6 +1120,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _scheduleHomeInitialLoad();
     }
     WidgetsBinding.instance.addObserver(this);
+    if (Platform.isAndroid) {
+      _networkAvailabilityListener = NetworkAvailabilityRecoveryListener(
+        events: _networkAvailabilityEvents.receiveBroadcastStream(),
+        onAvailable: widget.activeChats.requestImmediateTransportRecovery,
+      );
+    }
     // `didHaveMemoryPressure` no lleva nivel y también se dispara al pasar a
     // background: MainActivity reenvía onTrimMemory con su nivel para que la
     // voz solo evacúe modelos pesados ante presión real del sistema.
@@ -1364,8 +1393,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       return;
     }
     final ctx = _messengerKey.currentContext ?? _navigatorKey.currentContext;
-    final overlay = _navigatorKey.currentState?.overlay;
-    if (ctx == null || overlay == null) return;
+    final notices = HermesNotice.ofNavigator(_navigatorKey.currentState);
+    if (ctx == null || notices == null) return;
     final s = Strings.of(ctx);
     final colors = Theme.of(ctx).hermes;
     final (IconData icon, Color tint) = switch (notice.kind) {
@@ -1379,63 +1408,57 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       NotificationKind.goal => (Icons.flag_outlined, colors.warning),
       _ => (Icons.notifications_none, colors.accent),
     };
-    // Un solo aviso a la vez: el evento más reciente manda.
-    _dismissInAppNotice();
-    final entry = OverlayEntry(
-      builder: (overlayContext) => Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: SafeArea(
-          minimum: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: HermesFloatingNotice(
-                noticeKey: ValueKey(
-                  'in-app-notice-${notice.kind.name}-${notice.open.sessionId}',
-                ),
-                icon: icon,
-                tint: tint,
-                title: notice.title,
-                body: notice.body,
-                actionLabel: s.inAppGo,
-                dismissLabel: s.inAppDismiss,
-                onOpen: () {
-                  unawaited(() async {
-                    final outcome = await _openSessionFromNotification(
-                      notice.open,
-                    );
-                    if (outcome == NavigationDeliveryOutcome.delivered) {
-                      _dismissInAppNotice();
-                    }
-                  }());
-                },
-                onDismissed: _dismissInAppNotice,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    _inAppNoticeOverlay = entry;
-    _inAppNoticeKind = notice.kind;
-    overlay.insert(entry);
-    // Una aprobacion requiere una decision explicita. Deslizar solo la oculta;
-    // nunca desaparece sola mientras siga pendiente.
-    final dismissDelay = inAppNoticeAutoDismissDelay(notice.kind);
-    if (dismissDelay != null) {
-      _inAppNoticeTimer = Timer(dismissDelay, _dismissInAppNotice);
+    void open() {
+      unawaited(() async {
+        final outcome = await _openSessionFromNotification(notice.open);
+        if (outcome == NavigationDeliveryOutcome.delivered) {
+          _dismissInAppNotice();
+        }
+      }());
     }
+
+    // Un solo aviso a la vez: el evento más reciente manda. Comparte el carril
+    // superior con el resto de avisos transitorios (`HermesNotice`), de modo
+    // que nunca se solapan entre sí.
+    _dismissInAppNotice();
+    final dismissDelay = inAppNoticeAutoDismissDelay(notice.kind);
+    _inAppNoticeKind = notice.kind;
+    final serial = ++_inAppNoticeSerial;
+    _inAppNotice = notices.show(
+      noticeKey: ValueKey(
+        'in-app-notice-${notice.kind.name}-${notice.open.sessionId}',
+      ),
+      id: 'in-app-notice-${notice.kind.name}-${notice.open.sessionId}',
+      icon: icon,
+      tint: tint,
+      title: notice.title,
+      message: notice.body,
+      // El propietario cierra el aviso solo si la navegacion se entrego.
+      action: HermesNoticeAction(
+        label: s.inAppGo,
+        onPressed: open,
+        closesNotice: false,
+      ),
+      onTap: open,
+      showDismiss: true,
+      dismissLabel: s.inAppDismiss,
+      priority: HermesNoticePriority.high,
+      // Una aprobacion requiere una decision explicita. Deslizar solo la oculta;
+      // nunca desaparece sola mientras siga pendiente.
+      sticky: dismissDelay == null,
+      duration: dismissDelay,
+      onClosed: () {
+        // Solo si sigue siendo el aviso vigente (uno nuevo ya pudo sustituirlo).
+        if (serial == _inAppNoticeSerial) _inAppNoticeKind = null;
+      },
+    );
   }
 
   void _dismissInAppNotice() {
-    _inAppNoticeTimer?.cancel();
-    _inAppNoticeTimer = null;
-    _inAppNoticeOverlay?.remove();
-    _inAppNoticeOverlay = null;
+    final handle = _inAppNotice;
+    _inAppNotice = null;
     _inAppNoticeKind = null;
+    handle?.dismiss();
   }
 
   void _onAppLockNoticeGateChanged() {
@@ -2107,8 +2130,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (connections.isEmpty) {
       if (!_shareWaitingNoticeShown) {
         _shareWaitingNoticeShown = true;
-        _messengerKey.currentState?.showSnackBar(
-          SnackBar(content: Text(Strings.of(nav.context).shareNeedsInstance)),
+        HermesNotice.ofNavigator(nav)?.show(
+          message: Strings.of(nav.context).shareNeedsInstance,
         );
       }
       return;
@@ -2128,8 +2151,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       if (content.text.trim().isEmpty && content.attachments.isEmpty) {
         await _shareInbox.acknowledge(content.id);
         if (mounted) {
-          _messengerKey.currentState?.showSnackBar(
-            SnackBar(content: Text(Strings.of(nav.context).shareFilesRejected)),
+          HermesNotice.ofNavigator(nav)?.show(
+            message: Strings.of(nav.context).shareFilesRejected,
+            kind: HermesNoticeKind.warning,
           );
         }
         return;
@@ -2167,10 +2191,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       );
       _shareWaitingNoticeShown = false;
       if (content.rejectedAttachments > 0) {
-        _messengerKey.currentState?.showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(nav.context).shareSomeFilesRejected),
-          ),
+        HermesNotice.ofNavigator(nav)?.show(
+          message: Strings.of(nav.context).shareSomeFilesRejected,
+          kind: HermesNoticeKind.warning,
         );
       }
       unawaited(
@@ -2181,8 +2204,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       );
     } catch (_) {
       if (mounted) {
-        _messengerKey.currentState?.showSnackBar(
-          SnackBar(content: Text(Strings.of(nav.context).shareOpenFailed)),
+        HermesNotice.ofNavigator(nav)?.show(
+          message: Strings.of(nav.context).shareOpenFailed,
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -2193,6 +2217,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_networkAvailabilityListener?.dispose());
     _homeInitialLoadTimer?.cancel();
     _homeReadyTimer?.cancel();
     _startupProgress.dispose();

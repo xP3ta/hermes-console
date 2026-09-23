@@ -14,6 +14,7 @@ import '../models/agent_profile.dart';
 import '../models/bot_mode_v13.dart';
 import '../models/bot_sections.dart';
 import '../models/room_mirror.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/room_mirror_avatar.dart';
 import '../models/hosted_groups.dart';
 import '../models/room_member_status.dart';
@@ -89,6 +90,32 @@ ChatScreen buildBotChatDestination({
   missionAvatarCache: avatarCache,
 );
 
+@visibleForTesting
+({String? sessionId, String source, bool valid}) resolveBotChatTarget(
+  AgentProfile profile, {
+  String? localCompatibilityPin,
+}) {
+  final canonical = profile.canonicalBotChatSessionId;
+  if (canonical != null) {
+    return (sessionId: canonical, source: 'bot-mode-canonical', valid: true);
+  }
+  if (profile.hasInvalidBotChatPin) {
+    return (sessionId: null, source: 'mobile-bot', valid: false);
+  }
+  final official = profile.botChatSessionId;
+  if (official != null) {
+    return (sessionId: official, source: 'bot-mode', valid: true);
+  }
+  if (localCompatibilityPin != null) {
+    return (
+      sessionId: localCompatibilityPin,
+      source: 'bot-mode-local',
+      valid: true,
+    );
+  }
+  return (sessionId: null, source: 'mobile-bot', valid: true);
+}
+
 final class MissionControlOpenTarget {
   final MissionControlOwnedSurface surface;
   final String sessionId;
@@ -126,6 +153,8 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   final ValueChanged<Session>? botChatOpenObserver;
   @visibleForTesting
+  final RemoteBotLoader? remoteBotLoader;
+  @visibleForTesting
   final HermesDesktopBotCreationGateway? botCreateGateway;
   @visibleForTesting
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
@@ -144,6 +173,7 @@ class MissionControlScreen extends StatefulWidget {
     this.activeChats,
     this.initialOpenTarget,
     this.botChatOpenObserver,
+    this.remoteBotLoader,
     this.botCreateGateway,
     this.profileAssetsGateway,
     this.botProfileGateway,
@@ -1017,9 +1047,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         '${agent.profile.name}: $error',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(copy.botRosterUpdateFailed)));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(copy.botRosterUpdateFailed)),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
@@ -1040,17 +1071,30 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (!mounted) return;
     final strings = Strings.of(context);
     if (result.failed.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(strings.botSectionPartial(result.failed.keys.join(', '))),
-        action: SnackBarAction(label: strings.botRetry,
-          onPressed: () => _applySections(result.failed, deletion: deletion, undo: undo)),
-      ));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            strings.botSectionPartial(result.failed.keys.join(', ')),
+          ),
+          action: SnackBarAction(
+            label: strings.botRetry,
+            onPressed: () =>
+                _applySections(result.failed, deletion: deletion, undo: undo),
+          ),
+        ),
+        kind: HermesNoticeKind.warning,
+      );
     } else if (deletion && undo != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(strings.botSectionDeleted),
-        action: SnackBarAction(label: strings.botUndo,
-          onPressed: () => _applySections(undo)),
-      ));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(strings.botSectionDeleted),
+          action: SnackBarAction(
+            label: strings.botUndo,
+            onPressed: () => _applySections(undo),
+          ),
+        ),
+        kind: HermesNoticeKind.success,
+      );
     }
   }
 
@@ -1092,23 +1136,65 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
-  Future<void> _openRemoteBot(SavedConnection connection, AgentProfile profile) async {
-    final client = TuiGatewayClient(connection);
+  Future<void> _openRemoteBot(
+    SavedConnection connection,
+    AgentProfile profile,
+  ) async {
+    TuiGatewayClient? client;
     try {
-      profile = (await client.listProfiles(includeSessions: true)).singleWhere((p) => p.name == profile.name);
+      final loader = widget.remoteBotLoader;
+      if (loader != null) {
+        profile = (await loader(connection))
+            .singleWhere((candidate) => candidate.name == profile.name);
+      } else {
+        client = TuiGatewayClient(connection);
+        profile = (await client.listProfiles(includeSessions: true))
+            .singleWhere((candidate) => candidate.name == profile.name);
+      }
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(Strings.of(context).botProfileFailed)));
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).botProfileFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      }
       return;
-    } finally { await client.close(); }
+    } finally {
+      await client?.close();
+    }
     if (!mounted) return;
-    final pin = profile.botChatSessionId ?? profile.canonicalBotChatSessionId;
-    if (profile.hasInvalidBotChatPin) { _showBotChatPinUnavailable(); return; }
-    final session = Session(id: 'mob-bot-${profile.name}', lineageRootId: pin, title: 'Bot Chat',
-      model: profile.model, source: pin == null ? 'mobile-bot' : profile.botChatSessionId == null ? 'bot-mode-local' : 'bot-mode',
-      messageCount: pin == null ? 0 : 1, isActive: true, preview: '', startedAt: 0,
-      profile: profile.name, isDefaultProfile: profile.isDefault);
-    await openChatFromSection<void>(context, builder: (_) => buildBotChatDestination(
-      connection: connection, session: session, initialStoredSessionId: pin, profile: profile));
+    final target = resolveBotChatTarget(profile);
+    if (!target.valid) {
+      _showBotChatPinUnavailable();
+      return;
+    }
+    final session = Session(
+      id: 'mob-bot-${profile.name}',
+      lineageRootId: target.sessionId,
+      title: 'Bot Chat',
+      model: profile.model,
+      source: target.source,
+      messageCount: target.sessionId == null ? 0 : 1,
+      isActive: true,
+      preview: '',
+      startedAt: 0,
+      profile: profile.name,
+      isDefaultProfile: profile.isDefault,
+    );
+    final observer = widget.botChatOpenObserver;
+    if (observer != null) {
+      observer(session);
+      return;
+    }
+    await openChatFromSection<void>(
+      context,
+      builder: (_) => buildBotChatDestination(
+        connection: connection,
+        session: session,
+        initialStoredSessionId: target.sessionId,
+        profile: profile,
+      ),
+    );
   }
 
   void _remoteBotDetails(SavedConnection connection, AgentProfile profile) {
@@ -1137,19 +1223,30 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     try {
       final name = await gateway.duplicateBotProfile(agent.profile.name);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(Strings.of(context).botDuplicated(name))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).botDuplicated(name))),
+        kind: HermesNoticeKind.success,
+      );
     } on BotDuplicateIncomplete catch (error) {
       if (mounted) {
         final strings = Strings.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(strings.botDuplicateIncomplete(error.name)),
-          action: SnackBarAction(label: strings.botRetry, onPressed: () => _duplicateBot(agent))));
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.botDuplicateIncomplete(error.name)),
+            action: SnackBarAction(
+              label: strings.botRetry,
+              onPressed: () => _duplicateBot(agent),
+            ),
+          ),
+          kind: HermesNoticeKind.warning,
+        );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(Strings.of(context).botProfileFailed)));
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).botProfileFailed)),
+          kind: HermesNoticeKind.error,
+        );
       }
     } finally {
       if (mounted) { setState(() => _sectionBusy = false); await _load(refresh: true); }
@@ -1233,12 +1330,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   /// Opens the agent's canonical Bot Chat, writable like any other chat.
   Future<void> _openChat(MissionAgent agent) async {
-    final officialPin = agent.profile.botChatSessionId;
+    final canonicalPin = agent.profile.canonicalBotChatSessionId;
     final officialMetadata = agent.profile.botModeUiMeta.containsKey('chat');
-    if (agent.profile.hasInvalidBotChatPin) {
+    if (canonicalPin == null && agent.profile.hasInvalidBotChatPin) {
       debugPrint(
         'Mission Control: Bot Chat unavailable for ${agent.profile.name} '
-        '(malformed canonical pin: '
+        '(malformed compatibility pin: '
         'chat=${agent.profile.botModeUiMeta['chat']}, '
         'invalidMetadata=${agent.profile.hasInvalidBotModeMetadata})',
       );
@@ -1246,12 +1343,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       return;
     }
     String? localPin;
-    if (officialMetadata) {
+    var localPinClearFailed = false;
+    final retireLocalPin = officialMetadata || canonicalPin != null;
+    if (retireLocalPin) {
       if (!widget.connection.readOnly) {
         try {
-          // A published pin or explicit `chat: null` reset is authoritative.
-          // Appearance-only metadata does not reset a known conversation.
-          // Read-only mode must not mutate local state.
           await _botChatStore.clear(
             connectionId: widget.connection.id,
             profile: agent.profile.name,
@@ -1261,8 +1357,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             'Mission Control: could not retire the stale local Bot Chat pin '
             'for ${agent.profile.name}: $error',
           );
-          _showBotChatPinUnavailable();
-          return;
+          localPinClearFailed = true;
         }
       }
     } else {
@@ -1282,28 +1377,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
       localPin = lookup.sessionId;
     }
+    if (localPinClearFailed && canonicalPin == null) {
+      _showBotChatPinUnavailable();
+      return;
+    }
     if (!mounted) return;
-    // Appearance-only `hermes-bots` metadata (title/shape/colour, no `chat`
-    // key) is common on stock Agent installs and is not a Desktop reset —
-    // only an explicit `chat: null` is. In that case, before minting a new
-    // conversation, fall back to the gateway's own server-resolved registry
-    // row (`canonical_session`) so the existing hidden "Bot Chat" history is
-    // reused instead of orphaned.
-    final canonicalPin =
-        officialPin == null && !agent.profile.botChatPinExplicitlyReset
-        ? agent.profile.canonicalBotChatSessionId
-        : null;
-    final pinnedId = officialPin ?? canonicalPin ?? localPin;
-    // A discovered `canonicalPin` is not yet an official `ui_meta` pin — it
-    // must go through the same 'bot-mode-local' send path as a local pin so
-    // `_persistBotChatPinBeforePrompt` promotes it to an official pin before
-    // the first prompt, instead of the stricter 'bot-mode' path that asserts
-    // the (still absent) official pin still matches and would fail closed.
-    final source = pinnedId == null
-        ? 'mobile-bot'
-        : officialPin != null
-        ? 'bot-mode'
-        : 'bot-mode-local';
+    final target = resolveBotChatTarget(
+      agent.profile,
+      localCompatibilityPin: localPin,
+    );
+    if (!target.valid) {
+      _showBotChatPinUnavailable();
+      return;
+    }
+    final pinnedId = target.sessionId;
+    final source = target.source;
     final session = Session(
       id: 'mob-bot-${agent.profile.name}',
       lineageRootId: pinnedId,
@@ -1342,10 +1430,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _showBotChatPinUnavailable() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(Strings.of(context).missionBotChatMetadataUnavailable),
       ),
+      kind: HermesNoticeKind.warning,
     );
   }
 
@@ -1542,7 +1631,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         if (matches.isEmpty) throw StateError('No reachable room peers');
         await _attachRoomPeers(room, matches);
       } catch (_) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(Strings.of(context).botRoomLinkUnavailable)));
+        if (mounted) {
+          HermesNotice.of(context).showSnackBar(
+            SnackBar(content: Text(Strings.of(context).botRoomLinkUnavailable)),
+            kind: HermesNoticeKind.warning,
+          );
+        }
       }
     }
     else if (_snapshot case final current?) {
@@ -1681,8 +1775,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
       await _load(refresh: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(MissionControlCopy.of(context).agentCreated(created))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(MissionControlCopy.of(context).agentCreated(created)),
+        ),
+        kind: HermesNoticeKind.success,
+      );
       final freshSnapshot = _snapshot;
       if (freshSnapshot == null) return;
       for (final agent in _projection(freshSnapshot).agents) {
@@ -1690,8 +1788,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(Strings.of(context).botProfileFailed)));
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).botProfileFailed)),
+          kind: HermesNoticeKind.error,
+        );
       }
     } finally { await remote?.close(); }
   }
@@ -1797,10 +1897,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
     if (mounted && failed.isNotEmpty) {
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(s.botRoomLinkFailed(failed.map((p) => '${p.profile.name} · ${p.connection.label}').join(', '))),
-        action: SnackBarAction(label: s.botRetry, onPressed: () => _attachRoomPeers(room, failed)),
-      ));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s.botRoomLinkFailed(
+              failed
+                  .map((p) => '${p.profile.name} · ${p.connection.label}')
+                  .join(', '),
+            ),
+          ),
+          action: SnackBarAction(
+            label: s.botRetry,
+            onPressed: () => _attachRoomPeers(room, failed),
+          ),
+        ),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
@@ -1856,10 +1968,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         'Mission Control: hosted-room action failed (${error.runtimeType})',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(MissionControlCopy.of(context).hostedActionFailed),
         ),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -1948,10 +2061,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         'Mission Control: hosted-room action failed (${error.runtimeType})',
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(MissionControlCopy.of(context).hostedActionFailed),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       rethrow;
@@ -2253,6 +2367,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 onOpenDetail: _openAgent,
                 onQuickActions: _openBotQuickActions,
                 otherConnections: widget.connManager.getConnections().where((c) => c.id != widget.connection.id).toList(),
+                remoteBotLoader: widget.remoteBotLoader,
                 onRemoteOpen: _openRemoteBot,
                 onRemoteDetails: _remoteBotDetails,
                 onManageRooms: () => _manageBotRooms(),
@@ -3026,6 +3141,7 @@ class _BotsTab extends StatefulWidget {
   final ValueChanged<MissionAgent> onOpenDetail;
   final ValueChanged<MissionAgent> onQuickActions;
   final List<SavedConnection> otherConnections;
+  final RemoteBotLoader? remoteBotLoader;
   final void Function(SavedConnection, AgentProfile) onRemoteOpen;
   final void Function(SavedConnection, AgentProfile) onRemoteDetails;
   final VoidCallback? onManageRooms;
@@ -3063,6 +3179,7 @@ class _BotsTab extends StatefulWidget {
     required this.onOpenDetail,
     required this.onQuickActions,
     required this.otherConnections,
+    this.remoteBotLoader,
     required this.onRemoteOpen,
     required this.onRemoteDetails,
     this.onManageRooms,
@@ -3601,7 +3718,8 @@ class _BotsTabState extends State<_BotsTab> {
         if (widget.otherConnections.isNotEmpty)
           RemoteBotRoster(connections: widget.otherConnections, prefs: widget.prefs, query: _query,
             showHidden: _showHidden, refreshedAt: widget.snapshot.loadedAt,
-            onOpen: widget.onRemoteOpen, onDetails: widget.onRemoteDetails),
+            onOpen: widget.onRemoteOpen, onDetails: widget.onRemoteDetails,
+            loader: widget.remoteBotLoader),
       ],
     );
   }

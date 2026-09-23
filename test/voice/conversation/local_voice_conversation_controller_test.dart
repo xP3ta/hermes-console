@@ -20,7 +20,7 @@ import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../support/in_memory_compression_fence_storage.dart';
+import '../../support/in_memory_compression_restore_storage.dart';
 
 class _FakeVoice extends VoiceService {
   _FakeVoice(SharedPreferences prefs, {bool bargeInEnabled = true})
@@ -685,7 +685,7 @@ Future<_Harness> _harness({
   }
   final gateway = _FakeGateway(rejectRuns: rejectRuns);
   final service = ActiveChatService(
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
   );
   final chat = service.attach(
     connection: _connection(),
@@ -734,7 +734,7 @@ void main() {
       final rest = _FakeGateway();
       final desktop = _NoLiveMutationVoiceGateway();
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final chat = service.attach(
         connection: _connection(),
@@ -811,7 +811,7 @@ void main() {
       final httpGateway = _FakeGateway();
       final desktop = _FailingVoiceDesktopGateway();
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final chat = service.attach(
         connection: _connection(),
@@ -857,7 +857,7 @@ void main() {
       final httpGateway = _FakeGateway();
       final desktop = _FailingVoiceDesktopGateway();
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final chat = service.attach(
         connection: _localOnDeviceConnection(),

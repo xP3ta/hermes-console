@@ -14,6 +14,7 @@ import '../services/ssh_manager.dart';
 import '../screens/lock_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import '../widgets/ssh_transfer_bar.dart';
 
@@ -155,7 +156,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
 
   void _snack(String m) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(m)));
     }
   }
 

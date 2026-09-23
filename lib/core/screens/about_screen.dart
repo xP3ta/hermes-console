@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_app_bar.dart';
 
@@ -67,8 +68,9 @@ SOFTWARE.
     } catch (e) {
       debugPrint('[about] no se pudo abrir $url: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).aboutLinkError)),
+        kind: HermesNoticeKind.error,
       );
     }
   }

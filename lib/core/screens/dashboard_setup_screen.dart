@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/bridge_client.dart';
 import '../utils/api_error.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 
 /// Resultado del alta de credenciales del Dashboard vía bridge.
@@ -169,7 +170,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
 
   void _snack(String m) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(m)));
     }
   }
 

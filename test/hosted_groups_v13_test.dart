@@ -6,6 +6,8 @@ import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _TicketDashboardClient extends DashboardClient {
   _TicketDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -733,6 +735,10 @@ final class _HostedRpcHarness {
         final rpc = Map<String, dynamic>.from(jsonDecode(raw as String) as Map);
         final method = rpc['method'] as String;
         if (method == 'gateway.ping') return;
+        if (isClientCapabilitiesFrame(rpc)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(rpc)));
+          return;
+        }
         methods.add(method);
         final params = Map<String, dynamic>.from(rpc['params'] as Map);
         final result = method == 'groups.capabilities'

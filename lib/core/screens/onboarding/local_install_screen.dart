@@ -22,6 +22,7 @@ import '../../services/notifications/notification_service.dart';
 import '../../services/platform/android_apps.dart';
 import '../../services/secure_storage.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/hermes_notice.dart';
 import '../../widgets/hermes_spark_mascot.dart';
 import '../../widgets/hermes_status_indicator.dart';
 import '../../widgets/hermes_ui.dart';
@@ -504,7 +505,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
     _bootstrapTried = true;
     setState(() => _bootstrapping = true);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).lisBootstrapSnack),
           duration: const Duration(seconds: 4),
@@ -1476,11 +1477,12 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
     if (_errorMsg != null) b.writeln('\n## Error\n$_errorMsg');
     await Clipboard.setData(ClipboardData(text: b.toString()));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(Strings.of(context).lisLogCopied),
         duration: const Duration(seconds: 2),
       ),
+      kind: HermesNoticeKind.success,
     );
   }
 

@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -1035,7 +1036,7 @@ void main() {
     );
 
     Future<String> snackBarText(WidgetTester tester) async {
-      final snack = find.byType(SnackBar);
+      final snack = find.byType(HermesNoticeCard);
       expect(snack, findsOneWidget);
       return tester
           .widget<Text>(

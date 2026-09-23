@@ -13,6 +13,7 @@ import '../services/bridge_manager.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/read_only.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/bridge_update_banner.dart';
@@ -178,7 +179,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   /// aquí solo se limpia la vista.
   void _hideModel(ModelProvider provider, String modelId) {
     _setModelHidden(provider.slug, modelId, true);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 4),
         content: Text(Strings.of(context).mdlModelHiddenSnack(modelId)),
@@ -441,7 +442,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     await prefs.setString('selected_model', modelId);
     if (!mounted) return;
     setState(() => _fallbackSelected = modelId);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(Strings.of(context).mdlActiveModelSet(modelId)),
         duration: const Duration(seconds: 2),
@@ -730,7 +731,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         if (!done) throw Exception('El Dashboard rechazó el cambio');
         await _load();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 successLabel ??
@@ -738,6 +739,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
               ),
               duration: const Duration(seconds: 2),
             ),
+            kind: HermesNoticeKind.success,
           );
         }
         if (mounted) setState(() => _setting = false);
@@ -782,19 +784,21 @@ class _ModelsScreenState extends State<ModelsScreen> {
       await _load();
       if (!mounted) return;
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(successLabel ?? s.mdlActiveModelSet(modelId)),
           duration: const Duration(seconds: 2),
         ),
+        kind: HermesNoticeKind.success,
       );
     } catch (e) {
       if (!mounted) return;
       final s = Strings.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(s.mdlErrorChangingModel(localizedApiError(s, e))),
         ),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) setState(() => _setting = false);
@@ -811,15 +815,17 @@ class _ModelsScreenState extends State<ModelsScreen> {
       await _client.resetAuxiliaryModels(profile: _profile);
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).mdlAuxResetToAuto)),
+          kind: HermesNoticeKind.success,
         );
       }
     } catch (e) {
       if (mounted) {
         final s = Strings.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(s.commonError(localizedApiError(s, e)))),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -1021,19 +1027,21 @@ class _ModelsScreenState extends State<ModelsScreen> {
       await _client.setEnvVar(provider.keyEnv, key);
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).mdlProviderKeySaved(provider.name),
             ),
           ),
+          kind: HermesNoticeKind.success,
         );
       }
     } catch (e) {
       if (mounted) {
         final s = Strings.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(s.commonError(localizedApiError(s, e)))),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -1088,19 +1096,21 @@ class _ModelsScreenState extends State<ModelsScreen> {
       }
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).mdlProviderDisconnected(provider.name),
             ),
           ),
+          kind: HermesNoticeKind.success,
         );
       }
     } catch (e) {
       if (mounted) {
         final s = Strings.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(s.commonError(localizedApiError(s, e)))),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -1209,10 +1219,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
       if (mounted) {
         final s = Strings.of(context);
         setState(() => _setting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(s.mdlOAuthStartError(localizedApiError(s, e))),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       return;
@@ -1239,12 +1250,13 @@ class _ModelsScreenState extends State<ModelsScreen> {
     final code = _firstOAuthString(start, const ['user_code', 'code']);
     if (sessionId.isEmpty || url.isEmpty || !mounted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).mdlOAuthNotAvailable(provider.name),
             ),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       return;
@@ -1265,12 +1277,13 @@ class _ModelsScreenState extends State<ModelsScreen> {
     if (ok == true && mounted) {
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).mdlProviderConnected(provider.name),
             ),
           ),
+          kind: HermesNoticeKind.success,
         );
       }
     }
@@ -1337,7 +1350,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       await client.setFallback(providers);
       await _loadFallback();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               providers.isEmpty
@@ -1352,8 +1365,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
     } catch (e) {
       if (mounted) {
         final s = Strings.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(s.commonError(localizedApiError(s, e)))),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -2524,7 +2538,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         onLongPress: () {
           final hidden = _hidden.contains(provider.slug);
           _setHidden(provider.slug, !hidden);
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               duration: const Duration(milliseconds: 1400),
               content: Text(
@@ -2750,9 +2764,10 @@ class _OAuthLoginScreenState extends State<_OAuthLoginScreen> {
             InkWell(
               onTap: () {
                 Clipboard.setData(ClipboardData(text: widget.code));
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(s.mdlCodeCopied)));
+                HermesNotice.of(context).showSnackBar(
+                  SnackBar(content: Text(s.mdlCodeCopied)),
+                  kind: HermesNoticeKind.success,
+                );
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(

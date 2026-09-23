@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import 'hermes_notice.dart';
 
 /// Tappable helper shown under gateway API key fields so the user never has
 /// to guess which key the app is asking for or where to find it.
@@ -86,7 +87,7 @@ class _ApiKeyHelpDialog extends StatelessWidget {
                   tooltip: Strings.of(context).apiKeyHelpCopy,
                   onPressed: () {
                     Clipboard.setData(const ClipboardData(text: _command));
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    HermesNotice.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
                           Strings.of(context).apiKeyHelpCopied,
@@ -95,6 +96,7 @@ class _ApiKeyHelpDialog extends StatelessWidget {
                           ),
                         ),
                       ),
+                      kind: HermesNoticeKind.success,
                     );
                   },
                   icon: Icon(

@@ -18,12 +18,18 @@ readonly CHECKSUMMED_ASSETS=(
   hermes-console-release-evidence.tar.gz
   provenance.intoto.jsonl
 )
+readonly PRIVATE_METADATA_PATTERN='(/home/[A-Za-z0-9_.-]+|/Users/[A-Za-z0-9_.-]+|[A-Za-z]:\\Users\\[A-Za-z0-9_.-]+|/root/|(^|[^0-9])192\.168\.[0-9]{1,3}\.[0-9]{1,3}([^0-9]|$)|(^|[^0-9])10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}([^0-9]|$)|(^|[^0-9])172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]{1,3}\.[0-9]{1,3}([^0-9]|$))'
 
 VALIDATION_DIRECTORY=""
+SCAN_DIRECTORY=""
 cleanup() {
   if [[ -n "$VALIDATION_DIRECTORY" ]]; then
     rm -rf -- "$VALIDATION_DIRECTORY"
     VALIDATION_DIRECTORY=""
+  fi
+  if [[ -n "$SCAN_DIRECTORY" ]]; then
+    rm -rf -- "$SCAN_DIRECTORY"
+    SCAN_DIRECTORY=""
   fi
 }
 fail() {
@@ -33,6 +39,35 @@ fail() {
   exit 1
 }
 trap fail ERR
+
+scan_private_metadata() {
+  local label="$1"
+  local matches
+  if matches="$(LC_ALL=C grep -aEn "$PRIVATE_METADATA_PATTERN")"; then
+    while IFS= read -r match; do
+      printf 'ERROR: private path or IP in %s:%s\n' "$label" "$match" >&2
+    done <<< "$matches"
+    return 1
+  fi
+}
+
+scan_public_metadata() {
+  local archive="hermes-console-release-evidence.tar.gz"
+  local path
+  local relative
+  scan_private_metadata "SHA256SUMS" < SHA256SUMS
+  scan_private_metadata "provenance.intoto.jsonl" < provenance.intoto.jsonl
+  tar -tzf "$archive" | scan_private_metadata "$archive member list"
+  SCAN_DIRECTORY="$(mktemp -d /tmp/hermes-public-metadata.XXXXXXXX)"
+  chmod 0700 "$SCAN_DIRECTORY"
+  tar -xzf "$archive" -C "$SCAN_DIRECTORY" --no-same-owner --no-same-permissions
+  while IFS= read -r -d '' path; do
+    relative="${path#"$SCAN_DIRECTORY"/}"
+    scan_private_metadata "$archive:$relative" < "$path"
+  done < <(find "$SCAN_DIRECTORY" -type f -print0)
+  rm -rf -- "$SCAN_DIRECTORY"
+  SCAN_DIRECTORY=""
+}
 
 validate_asset_directory() {
   local directory="$1"
@@ -55,6 +90,7 @@ validate_asset_directory() {
     sha256sum --strict --status -c SHA256SUMS
     python3 "$ROOT/tool/release/validate_evidence_archive.py" \
       hermes-console-release-evidence.tar.gz
+    scan_public_metadata
   )
 }
 

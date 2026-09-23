@@ -832,14 +832,14 @@ class ServerSttEngine implements SttEngine {
     } catch (_) {}
     if (!stillExpected()) return;
     _recorder = null;
-    await _wsSub?.cancel();
-    if (!stillExpected()) return;
-    _wsSub = null;
     try {
       await _session?.close();
     } catch (_) {}
     if (!stillExpected()) return;
     _session = null;
+    await _wsSub?.cancel();
+    if (!stillExpected()) return;
+    _wsSub = null;
     final c = _controller;
     _controller = null;
     if (c != null && !c.isClosed) await c.close();

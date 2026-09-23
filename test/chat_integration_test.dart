@@ -1228,7 +1228,7 @@ void main() {
           conn.id,
           'sess-truncated',
           [
-            for (var index = 150; index >= 1; index--)
+            for (var index = 1001; index >= 1; index--)
               {
                 'role': index.isOdd ? 'user' : 'assistant',
                 'content': 'mensaje $index',
@@ -1246,9 +1246,9 @@ void main() {
         await reopened.loadMessages();
 
         expect(reopened.localTranscriptOlderHistoryTruncated, isTrue);
-        expect(reopened.messages, hasLength(120));
-        expect(reopened.messages.first['content'], 'mensaje 150');
-        expect(reopened.messages.last['content'], 'mensaje 31');
+        expect(reopened.messages, hasLength(1000));
+        expect(reopened.messages.first['content'], 'mensaje 1001');
+        expect(reopened.messages.last['content'], 'mensaje 2');
         reopened.dispose();
       },
     );

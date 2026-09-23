@@ -20,14 +20,18 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:hermes_android/core/models/home_widget_snapshot.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
+import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
+import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/attachment_uploader.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/desktop_control_gateway.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/home_widget_publisher.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -35,7 +39,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 const _kWatchKey = 'bg_watch_runs'; // BackgroundWatch._key (privado)
 const _kObservedTtftKey = 'active_chat_observed_ttft_v1';
@@ -47,6 +51,38 @@ SavedConnection _conn({String id = 'conn-1'}) => SavedConnection(
   port: 8642,
   apiKey: 'test-key',
 );
+
+class _CapturingRunApi extends ApiClient {
+  _CapturingRunApi()
+    : super(
+        baseUrl: 'http://hermes.local:8642',
+        apiKey: 'test-key',
+        httpClient: MockClient((_) async => http.Response('', 500)),
+      );
+
+  Duration? streamIdleTimeout;
+
+  @override
+  Future<String> startRun({
+    required String input,
+    String? sessionId,
+    String? model,
+    List<Map<String, dynamic>>? history,
+    String? profile,
+  }) async => 'run-watchdog';
+
+  @override
+  Future<void> streamRunEvents(
+    String runId, {
+    String? profile,
+    required void Function(Map<String, dynamic> event) onEvent,
+    required void Function() onDone,
+    required void Function(String error) onError,
+    Duration? idleTimeout = const Duration(seconds: 90),
+  }) async {
+    streamIdleTimeout = idleTimeout;
+  }
+}
 
 class _StaticWebSocketAuthDashboardClient extends DashboardClient {
   _StaticWebSocketAuthDashboardClient()
@@ -403,6 +439,23 @@ class _AttachmentDesktopGateway
   Future<void> close() => _events.close();
 }
 
+class _DelayedProcessGateway extends _AttachmentDesktopGateway
+    implements HermesDesktopControlGateway {
+  Completer<AgentCenterSnapshot> processSnapshot = Completer();
+  bool connected = true;
+
+  @override
+  bool get isConnected => connected;
+
+  @override
+  Future<AgentCenterSnapshot> agentCenterSnapshot({
+    String runtimeSessionId = '',
+  }) => processSnapshot.future;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _NativeSessionSplitGateway
     implements
         HermesDesktopGateway,
@@ -618,7 +671,7 @@ PreparedTurn _attachmentTurn(AttachmentDraft attachment) {
 }
 
 ActiveChat _attachmentChat(_AttachmentDesktopGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _conn(id: 'conn-attachment'),
   sessionId: 'sess-attachment',
   sessionTitle: 'Adjuntos',
@@ -626,6 +679,30 @@ ActiveChat _attachmentChat(_AttachmentDesktopGateway gateway) => ActiveChat(
   onTerminal: () {},
   desktopGateway: gateway,
 );
+
+bool _noActivityHint(ActiveChat chat) => chat.noActivityHint;
+
+bool _hasAssistantError(ActiveChat chat) =>
+    chat.messages.any((message) => message['role'] == 'assistant_error');
+
+Future<ActiveChat> _startWatchdogTurn(
+  WidgetTester tester,
+  _AttachmentDesktopGateway gateway,
+) async {
+  final chat = _attachmentChat(gateway)..smoothStreaming = false;
+  addTearDown(chat.dispose);
+  expect(
+    await chat.send(
+      fullText: 'trabaja en silencio',
+      model: 'hermes-agent',
+      history: const [],
+    ),
+    isTrue,
+  );
+  await tester.pump();
+  expect(chat.isStreaming, isTrue);
+  return chat;
+}
 
 Future<AttachmentDraft> _privateTestAttachment(
   Directory directory, {
@@ -663,11 +740,148 @@ Session _widgetSession() => const Session(
 );
 
 void main() {
+  group('desktop activity watchdog', () {
+    testWidgets('B1 a 120 second foreground tool does not fail the turn', (
+      tester,
+    ) async {
+      final gateway = _AttachmentDesktopGateway();
+      final chat = await _startWatchdogTurn(tester, gateway);
+
+      gateway.emit('tool.start', const {'name': 'execute_code'});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 120));
+
+      expect(chat.isStreaming, isTrue);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(_hasAssistantError(chat), isFalse);
+      chat.dispose();
+    });
+
+    testWidgets('B2 five minutes of silence shows a non-terminal hint', (
+      tester,
+    ) async {
+      final gateway = _AttachmentDesktopGateway();
+      final chat = await _startWatchdogTurn(tester, gateway);
+
+      await tester.pump(const Duration(minutes: 5) - Duration(milliseconds: 1));
+      expect(_noActivityHint(chat), isFalse);
+      await tester.pump(const Duration(milliseconds: 1));
+
+      expect(_noActivityHint(chat), isTrue);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(_hasAssistantError(chat), isFalse);
+    });
+
+    testWidgets(
+      'B3 runtime activity clears the hint and completion stays normal',
+      (tester) async {
+        final gateway = _AttachmentDesktopGateway();
+        final chat = await _startWatchdogTurn(tester, gateway);
+
+        await tester.pump(const Duration(minutes: 5));
+        expect(_noActivityHint(chat), isTrue);
+
+        gateway.emit('status.update', const {'text': 'working'});
+        await tester.pump();
+        expect(_noActivityHint(chat), isFalse);
+
+        gateway.emit('message.complete', const {'text': 'terminado'});
+        await tester.pump();
+        expect(chat.state, ChatPipelineState.completed);
+        expect(_hasAssistantError(chat), isFalse);
+        chat.dispose();
+        await tester.pump(const Duration(milliseconds: 100));
+      },
+    );
+
+    testWidgets('B4 a post-first-token stall is still watched', (tester) async {
+      final gateway = _AttachmentDesktopGateway();
+      final chat = await _startWatchdogTurn(tester, gateway);
+
+      gateway.emit('message.delta', const {'text': 'inicio'});
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(chat.state, ChatPipelineState.streaming);
+
+      await tester.pump(const Duration(minutes: 5));
+
+      expect(_noActivityHint(chat), isTrue);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+    });
+
+    testWidgets('B5 a ten minute tool remains a live turn with a hint', (
+      tester,
+    ) async {
+      final gateway = _AttachmentDesktopGateway();
+      final chat = await _startWatchdogTurn(tester, gateway);
+
+      gateway.emit('tool.start', const {'name': 'execute_code'});
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 10));
+
+      expect(_noActivityHint(chat), isTrue);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(_hasAssistantError(chat), isFalse);
+    });
+
+    testWidgets('B6 silence without tool events only shows the hint', (
+      tester,
+    ) async {
+      final gateway = _AttachmentDesktopGateway();
+      final chat = await _startWatchdogTurn(tester, gateway);
+
+      await tester.pump(const Duration(minutes: 10));
+
+      expect(_noActivityHint(chat), isTrue);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(_hasAssistantError(chat), isFalse);
+    });
+
+    testWidgets('transport pong does not clear model inactivity', (
+      tester,
+    ) async {
+      final gateway = _AttachmentDesktopGateway();
+      final chat = await _startWatchdogTurn(tester, gateway);
+
+      await tester.pump(const Duration(minutes: 5));
+      expect(_noActivityHint(chat), isTrue);
+
+      gateway.emit('gateway.pong');
+      await tester.pump();
+
+      expect(_noActivityHint(chat), isTrue);
+      expect(chat.isStreaming, isTrue);
+    });
+
+    for (final terminal in const [
+      ('B7 message.complete error remains terminal', 'message.complete'),
+      ('B7 standalone error remains terminal', 'error'),
+    ]) {
+      testWidgets(terminal.$1, (tester) async {
+        final gateway = _AttachmentDesktopGateway();
+        final chat = await _startWatchdogTurn(tester, gateway);
+
+        gateway.emit(terminal.$2, const {
+          'status': 'error',
+          'message': 'server rejected the turn',
+        });
+        await tester.pump();
+
+        expect(chat.state, ChatPipelineState.failed);
+        expect(chat.isStreaming, isFalse);
+        expect(_hasAssistantError(chat), isTrue);
+      });
+    }
+  });
+
   test(
     'compacted terminal groups skip identities removed in the same pass',
     () {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-multi-compaction'),
         sessionId: 'sess-multi-compaction',
         sessionTitle: 'Multi compaction',
@@ -767,7 +981,7 @@ void main() {
     'passive REST replaces anchored inflight user with durable identity',
     () async {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-passive-inflight-user'),
         sessionId: 'sess-passive-inflight-user',
         sessionTitle: 'Passive inflight replacement',
@@ -818,7 +1032,7 @@ void main() {
     'terminal REST replaces live user when its first durable anchor is that user',
     () async {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-inflight-user'),
         sessionId: 'sess-terminal-inflight-user',
         sessionTitle: 'Terminal inflight replacement',
@@ -885,7 +1099,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-live-user'),
         sessionId: 'sess-terminal-live-user',
         sessionTitle: 'Terminal live user',
@@ -945,7 +1159,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-physical-pair'),
         sessionId: 'sess-terminal-physical-pair',
         sessionTitle: 'Terminal physical pair',
@@ -1036,7 +1250,7 @@ void main() {
           ],
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-observer-pair'),
         sessionId: 'stored-observer',
         initialStoredSessionId: 'stored-observer',
@@ -1135,7 +1349,7 @@ void main() {
         },
       ];
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-rest-boundary'),
         sessionId: 'sess-rest-boundary',
         initialStoredSessionId: 'stored-rest-boundary',
@@ -1200,7 +1414,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-equal-resend'),
         sessionId: 'sess-terminal-equal-resend',
         sessionTitle: 'Terminal equal resend',
@@ -1278,7 +1492,7 @@ void main() {
 
   test('known-missing flag cannot cross a disallowed boundary capture', () {
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-known-missing-boundary'),
       sessionId: 'draft-known-missing-boundary',
       sessionTitle: 'Known missing boundary',
@@ -1325,7 +1539,7 @@ void main() {
           ],
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-stale-passive'),
         sessionId: 'stored-stale-passive',
         initialStoredSessionId: 'stored-stale-passive',
@@ -1414,7 +1628,7 @@ void main() {
         ],
       );
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-ambiguous-boundary'),
       sessionId: 'stored-ambiguous-boundary',
       initialStoredSessionId: 'stored-ambiguous-boundary',
@@ -1468,7 +1682,7 @@ void main() {
     'passive REST never deduplicates equal text without exact durable anchor',
     () async {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-passive-unproven-user'),
         sessionId: 'sess-passive-unproven-user',
         sessionTitle: 'Passive fail closed',
@@ -1521,7 +1735,7 @@ void main() {
           DashboardAuthFailureCode.loginRequired,
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-dashboard-auth-warm'),
         sessionId: 'sess-dashboard-auth-warm',
         sessionTitle: 'Auth warm-up',
@@ -1572,7 +1786,7 @@ void main() {
           DashboardAuthFailureCode.loginRequired,
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-dashboard-auth-race'),
         sessionId: 'sess-dashboard-auth-race',
         sessionTitle: 'Auth recovery race',
@@ -1721,6 +1935,36 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test('REST silence has no client-side terminal timeout', () async {
+    final api = _CapturingRunApi();
+    final service = ActiveChatService(
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(service.dispose);
+    final chat = service.attach(
+      connection: _conn(id: 'conn-rest-watchdog'),
+      sessionId: 'session-rest-watchdog',
+      sessionTitle: 'REST watchdog',
+      api: api,
+    );
+
+    expect(
+      await chat
+          .send(
+            fullText: 'trabaja en silencio',
+            model: 'hermes-agent',
+            history: const [],
+          )
+          .timeout(const Duration(seconds: 2)),
+      isTrue,
+    );
+
+    expect(api.streamIdleTimeout, isNull);
+    expect(chat.isStreaming, isTrue);
+    expect(chat.state, isNot(ChatPipelineState.failed));
+    expect(_hasAssistantError(chat), isFalse);
+  });
 
   group('ActiveTurnDelivery — FSM de adjuntos', () {
     const pending = AttachmentDraft(
@@ -2192,7 +2436,7 @@ void main() {
           store: _AttachmentMemoryOutbox(eventLog: events),
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: connection,
           sessionId: 'sess-attachment',
           sessionTitle: 'Adjuntos REST',
@@ -2271,7 +2515,7 @@ void main() {
         store: _AttachmentMemoryOutbox(),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-attachment'),
         sessionId: 'sess-attachment',
         sessionTitle: 'Adjuntos REST',
@@ -2336,7 +2580,7 @@ void main() {
           onDeviceLoopback: true,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: connection,
           sessionId: 'sess-attachment',
           sessionTitle: 'Adjuntos Bridge',
@@ -2412,7 +2656,7 @@ void main() {
         localChatMode: LocalChatMode.agent,
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'sess-attachment',
         sessionTitle: 'Adjuntos Bridge legacy',
@@ -2450,7 +2694,7 @@ void main() {
         localChatMode: LocalChatMode.agent,
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'mob-room-default',
         sessionTitle: '#homelab',
@@ -2481,7 +2725,7 @@ void main() {
       final gateway = _NativeSessionSplitGateway();
       final connection = _conn(id: 'conn-native-session-split');
       final durable = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'stored-a',
         initialStoredSessionId: 'stored-a',
@@ -2491,7 +2735,7 @@ void main() {
         desktopGateway: gateway,
       );
       final draft = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'mob-b',
         sessionTitle: 'B',
@@ -2537,7 +2781,7 @@ void main() {
   test('durable first submit resumes the exact id and never creates', () async {
     final gateway = _NativeSessionSplitGateway();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-native-existing-only'),
       sessionId: 'mob-route',
       initialStoredSessionId: 'stored-exact',
@@ -2566,7 +2810,7 @@ void main() {
 
   test('known stored binding is stable and rejects retargeting', () {
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-known-binding'),
       sessionId: 'mob-bot-manager',
       sessionTitle: 'Bot Chat',
@@ -2596,7 +2840,7 @@ void main() {
 
   test('authoritative repin creates a fresh ActiveChat binding', () {
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     addTearDown(service.dispose);
     final connection = _conn(id: 'conn-repin');
@@ -2671,7 +2915,7 @@ void main() {
       );
 
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         cancelledTurnStore: store,
       );
       addTearDown(service.dispose);
@@ -2740,7 +2984,7 @@ void main() {
       );
 
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       );
       expect(
@@ -2799,7 +3043,7 @@ void main() {
     'activeIds notifica al terminar solo uno de dos perfiles colisionados',
     () {
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final connection = _conn(id: 'conn-profile-activity');
       final first = service.attach(
@@ -2853,9 +3097,150 @@ void main() {
     },
   );
 
+  test(
+    'control y tareas pendientes mantienen visible el trabajo de fondo',
+    () async {
+      final gateway = _AttachmentDesktopGateway();
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      addTearDown(gateway.close);
+      final connection = _conn(id: 'conn-control-activity');
+      final chat = service.attach(
+        connection: connection,
+        sessionId: 'sess-control-activity',
+        sessionTitle: 'Control activo',
+        desktopGateway: gateway,
+        disableForegroundKeepAlive: true,
+      )..smoothStreaming = false;
+      expect(
+        await chat.send(
+          fullText: 'programa el seguimiento',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit('message.complete', const {'text': 'seguimiento programado'});
+      await done.timeout(const Duration(seconds: 1));
+      expect(chat.sessionActivity.active, isFalse);
+
+      gateway.emit('session.control.update', const {
+        'control': {
+          'loop': {
+            'status': 'active',
+            'interval_seconds': 300,
+            'last_fired_at': 1720000000,
+            'next_due_at': 1720000300,
+            'ticks_fired': 2,
+          },
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.sessionActivity.active, isTrue);
+
+      gateway.emit('session.control.update', const {
+        'control': {'loop': null, 'heartbeat': null, 'goal': null},
+      });
+      gateway.emit('todo.updated', const {
+        'revision': 4,
+        'todos': [
+          {'id': 'task-1', 'content': 'Esperar el despliegue', 'status': 'pending'},
+        ],
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.sessionActivity.active, isTrue);
+    },
+  );
+
+  test(
+    'terminal espera process.list pendiente y conserva trabajo de fondo',
+    () async {
+      final gateway = _DelayedProcessGateway();
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      addTearDown(gateway.close);
+      final connection = _conn(id: 'conn-terminal-process');
+      final chat = service.attach(
+        connection: connection,
+        sessionId: 'sess-terminal-process',
+        sessionTitle: 'Proceso terminal',
+        desktopGateway: gateway,
+        disableForegroundKeepAlive: true,
+      )..smoothStreaming = false;
+      expect(
+        await chat.send(
+          fullText: 'lanza el proceso',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      final processRefresh = chat.refreshBackgroundProcessesForTesting();
+      service.release(connection.id, chat.sessionId);
+      gateway.connected = false;
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+
+      gateway.emit('message.complete', const {'text': 'proceso iniciado'});
+      await done.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+
+      expect(
+        service.of(connection.id, chat.sessionId),
+        same(chat),
+        reason: 'la lista pendiente todavía puede probar trabajo de fondo',
+      );
+
+      gateway.processSnapshot.complete(
+        const AgentCenterSnapshot(
+          snapshots: [],
+          processes: [
+            BackgroundProcessEntry(
+              opaqueId: 'process-1',
+              status: AgentCenterStatus.running,
+              uptimeSeconds: 2,
+            ),
+          ],
+        ),
+      );
+      await processRefresh;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.isActive(connection.id, chat.sessionId), isTrue);
+      expect(service.of(connection.id, chat.sessionId), same(chat));
+
+      gateway.processSnapshot = Completer<AgentCenterSnapshot>();
+      final terminalRefresh = chat.refreshBackgroundProcessesForTesting();
+      gateway.processSnapshot.complete(
+        const AgentCenterSnapshot(
+          snapshots: [],
+          processes: [
+            BackgroundProcessEntry(
+              opaqueId: 'process-1',
+              status: AgentCenterStatus.completed,
+              uptimeSeconds: 3,
+            ),
+          ],
+        ),
+      );
+      await terminalRefresh;
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+
+      expect(service.of(connection.id, chat.sessionId), isNull);
+    },
+  );
+
   test('expone actividad real y la conserva durante una reconexión', () {
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     final chat = service.attach(
       connection: _conn(id: 'conn-activity'),
@@ -2899,7 +3284,7 @@ void main() {
         ),
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
 
       service.attach(
@@ -2949,7 +3334,7 @@ void main() {
         );
         final publishedBeforeDraft = store.snapshots.length;
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
 
         service.attach(
@@ -2987,7 +3372,7 @@ void main() {
         ),
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
       final chat = service.attach(
@@ -3050,7 +3435,7 @@ void main() {
       service.dispose();
 
       final restored = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       );
       expect(
@@ -3069,7 +3454,7 @@ void main() {
           nowMs: () => 2000000000000,
         );
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
         final chat = service.attach(
           connection: _conn(),
@@ -3104,7 +3489,7 @@ void main() {
         nowMs: () => 2000000000000,
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
       final chat = service.attach(
         connection: _conn(),
@@ -3141,11 +3526,98 @@ void main() {
 
   group('ActiveChat — ciclo run con streaming', () {
     test(
+      'reasoning, tools y respuesta final comparten un solo mensaje assistant',
+      () async {
+        final gateway = _AttachmentDesktopGateway();
+        final chat = ActiveChat(
+          compressionRestoreStore: testCompressionRestoreStore(),
+          connection: _conn(id: 'conn-desktop-one-bubble'),
+          sessionId: 'sess-desktop-one-bubble',
+          sessionTitle: 'Un solo turno',
+          notifications: null,
+          onTerminal: () {},
+          desktopGateway: gateway,
+          terminalReconcileBudget: Duration.zero,
+        )..smoothStreaming = false;
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+
+        expect(
+          await chat.send(
+            fullText: 'Resuelve el problema',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        final done = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+
+        gateway.emit('reasoning.delta', const {'text': 'Primero '});
+        gateway.emit('thinking.delta', const {'text': 'inspecciono. '});
+        gateway.emit('reasoning.available', const {
+          'text': 'Primero inspecciono. ',
+        });
+        gateway.emit('reasoning.delta', const {'text': 'Luego verifico.'});
+        gateway.emit('tool.start', const {
+          'tool_id': 'call-1',
+          'name': 'read_file',
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'call-1',
+          'name': 'read_file',
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'call-2',
+          'name': 'review_changes',
+          'type': 'skill',
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'call-2',
+          'name': 'review_changes',
+          'type': 'skill',
+        });
+        gateway.emit('message.delta', const {'text': 'Respuesta final.'});
+        gateway.emit('message.complete', const {
+          'text': 'Respuesta final.',
+          'response_previewed': true,
+        });
+        await done.timeout(const Duration(seconds: 1));
+
+        final assistants = chat.messages
+            .where((message) => message['role'] == 'assistant')
+            .toList(growable: false);
+        expect(assistants, hasLength(1));
+        expect(
+          assistants.single['reasoning'],
+          'Primero inspecciono. Luego verifico.',
+        );
+        expect(assistants.single['content'], 'Respuesta final.');
+        final activity =
+            assistants.single[assistantActivityTraceKey] as List<dynamic>;
+        expect(activity.map((step) => step['kind']), [
+          'reasoning',
+          'tool',
+          'skill',
+        ]);
+        expect(
+          activity.map((step) => step['status']),
+          everyElement('completed'),
+        );
+        expect(
+          activity.where((step) => step['kind'] == 'reasoning').single['text'],
+          'Primero inspecciono. Luego verifico.',
+        );
+      },
+    );
+
+    test(
       'colecciona intermedios y final una vez sin narrar tools ni logs',
       () async {
         final gateway = _AttachmentDesktopGateway();
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-desktop-narration-order'),
           sessionId: 'sess-desktop-narration-order',
           sessionTitle: 'Narración Desktop',
@@ -3275,7 +3747,7 @@ void main() {
         );
         var terminalCalls = 0;
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-warning-terminal'),
           sessionId: 'sess-warning-terminal',
           sessionTitle: 'Warning terminal',
@@ -3337,7 +3809,7 @@ void main() {
       () async {
         final gateway = _AttachmentDesktopGateway();
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-desktop-transcript-order'),
           sessionId: 'sess-desktop-transcript-order',
           sessionTitle: 'Orden Desktop',
@@ -3392,7 +3864,6 @@ void main() {
             .toList(growable: false);
         expect(transcript, const [
           (role: 'assistant', content: 'Resumen final del proyecto.'),
-          (role: 'assistant', content: 'Voy a revisar los archivos.'),
           (role: 'user', content: 'Revisa el proyecto'),
         ]);
       },
@@ -3455,7 +3926,7 @@ void main() {
           },
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: connection,
           sessionId: 'sess-legacy',
           sessionTitle: 'Legacy',
@@ -3523,7 +3994,7 @@ void main() {
         ),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'TTFT',
@@ -3567,7 +4038,7 @@ void main() {
         ),
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final chat = service.attach(
         connection: _conn(id: 'conn-smooth'),
@@ -3621,7 +4092,7 @@ void main() {
           ),
         );
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         );
         final chat = service.attach(
           connection: _conn(id: 'conn-reduce-motion'),
@@ -3673,7 +4144,7 @@ void main() {
         );
 
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         );
         final chat = service.attach(
           connection: _conn(),
@@ -3768,7 +4239,7 @@ void main() {
           return http.Response('not found', 404);
         });
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         );
         final chat = service.attach(
           connection: _conn(id: 'conn-terminal-race'),
@@ -3828,7 +4299,7 @@ void main() {
         ),
       );
       return ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -3889,7 +4360,7 @@ void main() {
           httpClient: race,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -3959,7 +4430,7 @@ void main() {
         }),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4040,7 +4511,7 @@ void main() {
           ),
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'mob-provisional',
           sessionTitle: 'Noticias',
@@ -4114,7 +4585,7 @@ void main() {
         httpClient: _gateway(events: '', finalMessages: serverMessages),
       );
       return ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4131,7 +4602,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       return ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4398,9 +4869,14 @@ void main() {
 
       final changed = await chat.reconcileAfterResume();
 
-      expect(changed, isFalse);
-      expect(chat.internalMessagesForTesting, same(before));
-      expect(chat.internalMessagesForTesting.first['role'], 'tool');
+      expect(changed, isTrue);
+      expect(chat.internalMessagesForTesting, isNot(same(before)));
+      expect(chat.internalMessagesForTesting.first['role'], 'assistant');
+      final activity =
+          chat.internalMessagesForTesting.first[assistantActivityTraceKey]
+              as List<dynamic>;
+      expect(activity, hasLength(1));
+      expect(activity.single['status'], 'completed');
       chat.dispose();
     });
 
@@ -4429,8 +4905,12 @@ void main() {
         final changed = await chat.reconcileAfterResume();
 
         expect(changed, isTrue);
-        expect(chat.messages.first['role'], 'user');
-        expect(chat.messages.first['content'], 'consulta el estado');
+        expect(chat.messages.first['role'], 'assistant');
+        expect(chat.messages.first['content'], isEmpty);
+        final activity =
+            chat.messages.first[assistantActivityTraceKey] as List<dynamic>;
+        expect(activity, hasLength(1));
+        expect(activity.single['status'], 'completed');
         expect(chat.messages.toString(), isNot(contains('ok')));
         expect(
           chat.messages.any((message) => message['_pipeline'] == true),
@@ -4499,7 +4979,7 @@ void main() {
         }),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'resume-race',
         sessionTitle: 'Resume race',
@@ -4814,6 +5294,67 @@ void main() {
         expect(replacement.messages.toString(), isNot(contains('Stale')));
       },
     );
+
+    test(
+      'an unreadable compression restore store fails open and never keeps a '
+      'released chat alive',
+      () async {
+        // A keystore that cannot be read (the default in the test VM, or a
+        // device whose keystore read fails) used to fail closed into a
+        // permanent "compactando". Fail-open: nothing is shown, and
+        // release() disposes the chat so the next attach() gets a fresh one
+        // (`SessionActivity.compacting` never counts toward `active`).
+        final service = ActiveChatService(
+          compressionRestoreStore: CompressionRestoreStore(
+            storage: _UnreadableFenceStorage(),
+          ),
+        );
+        addTearDown(service.dispose);
+        final connection = _conn(id: 'compacting-release-conn');
+        ActiveChat attach() => service.attach(
+          connection: connection,
+          sessionId: 'compacting-release-session',
+          logicalSessionId: 'compacting-release-root',
+          sessionTitle: 'Compacting',
+          sessionProfile: 'default',
+          api: ApiClient(
+            baseUrl: 'http://hermes.local:8642',
+            apiKey: 'k',
+            httpClient: MockClient(
+              (_) async => http.Response('not found', 404),
+            ),
+          ),
+          storedMessageLoader: (_, _) async => <Map<String, dynamic>>[],
+          disableForegroundKeepAlive: true,
+        );
+        final first = attach();
+        await Future<void>.delayed(Duration.zero);
+
+        expect(first.desktopCompressionInFlight, isFalse);
+        expect(first.sessionActivity.compacting, isFalse);
+        expect(first.sessionActivity.active, isFalse);
+        expect(
+          service.isActive(
+            connection.id,
+            'compacting-release-session',
+            profile: 'default',
+          ),
+          isFalse,
+        );
+
+        service.release(
+          connection.id,
+          'compacting-release-session',
+          profile: 'default',
+        );
+        expect(
+          service.of(connection.id, 'compacting-release-session'),
+          isNull,
+        );
+        final second = attach();
+        expect(second, isNot(same(first)));
+      },
+    );
   });
 
   test('redacta errores de socket persistidos antes de proyectarlos en chat', () {
@@ -4913,4 +5454,13 @@ void main() {
       expect(history, original);
     });
   });
+}
+
+final class _UnreadableFenceStorage implements CompressionRestoreStorage {
+  @override
+  Future<String?> read() async => throw StateError('keystore unavailable');
+
+  @override
+  Future<void> write(String value) async =>
+      throw StateError('keystore unavailable');
 }

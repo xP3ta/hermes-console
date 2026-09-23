@@ -15,6 +15,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 
 import 'support/projected_compression_reply.dart';
+import 'support/rpc_frame_helpers.dart';
 
 class _TicketDashboardClient extends DashboardClient {
   _TicketDashboardClient()
@@ -29,6 +30,29 @@ class _TicketDashboardClient extends DashboardClient {
 }
 
 void main() {
+  test('reconnect backoff uses full jitter and caps at fifteen seconds', () {
+    final samples = <double>[0, 0.5, 1, 1, 1, 1].iterator;
+    final backoff = GatewayReconnectBackoff(
+      random: () {
+        samples.moveNext();
+        return samples.current;
+      },
+    );
+
+    expect(backoff.nextDelay(), Duration.zero);
+    expect(backoff.nextDelay(), const Duration(seconds: 1));
+    expect(backoff.nextDelay(), const Duration(seconds: 4));
+    expect(backoff.nextDelay(), const Duration(seconds: 8));
+    expect(backoff.nextDelay(), const Duration(seconds: 15));
+    expect(backoff.nextDelay(), const Duration(seconds: 15));
+
+    final reset = GatewayReconnectBackoff(random: () => 1);
+    reset.nextDelay();
+    reset.nextDelay();
+    reset.markHealthy();
+    expect(reset.nextDelay(), const Duration(seconds: 1));
+  });
+
   test(
     'failed real WebSocket upgrade preserves package typed wrapper',
     () async {
@@ -809,6 +833,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         methods.add(frame['method'] as String);
         // Deliberately leave gateway.capabilities unanswered so the real
         // JSON-RPC timer produces the transport classification.
@@ -866,6 +894,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           methods.add(frame['method'] as String);
           await socket.close();
         }
@@ -921,6 +953,10 @@ void main() {
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'] as String;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           methods.add(method);
           if (method == 'gateway.capabilities') {
             socket.add(
@@ -992,6 +1028,10 @@ void main() {
         try {
           await for (final raw in socket) {
             final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (isClientCapabilitiesFrame(frame)) {
+              socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+              continue;
+            }
             requests.add(frame);
             final method = frame['method'] as String;
             final params = Map<String, dynamic>.from(frame['params'] as Map);
@@ -1011,7 +1051,11 @@ void main() {
               'session.resume' => {'session_id': 'runtime-qa'},
               'gateway.capabilities' => {'per_session_exclusive_submit': true},
               'session.steer' => {'status': 'queued'},
-              'session.redirect' => {'status': 'redirected'},
+              'session.redirect' => {
+                'status': params['text'] == 'rechaza'
+                    ? 'rejected'
+                    : 'redirected',
+              },
               _ => <String, dynamic>{'status': 'ok'},
             };
             socket.add(
@@ -1081,6 +1125,10 @@ void main() {
         binding.runtimeSessionId,
         'corrige el cierre',
       );
+      final rejectedRedirect = await client.redirect(
+        binding.runtimeSessionId,
+        'rechaza',
+      );
       final event = await eventFuture.timeout(const Duration(seconds: 2));
       final subagent = await subagentFuture.timeout(const Duration(seconds: 2));
 
@@ -1089,6 +1137,7 @@ void main() {
       expect(binding.storedSessionId, 'stored-qa');
       expect(binding.created, isFalse);
       expect(redirect, DesktopRedirectDisposition.redirected);
+      expect(rejectedRedirect, DesktopRedirectDisposition.rejected);
       expect(requests.map((request) => request['method']), [
         'gateway.capabilities',
         'session.resume',
@@ -1096,6 +1145,7 @@ void main() {
         'prompt.submit',
         'prompt.submit',
         'session.steer',
+        'session.redirect',
         'session.redirect',
       ]);
       expect(requests[0]['params'], isEmpty);
@@ -1154,6 +1204,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           final method = frame['method'] as String;
           final result = switch (method) {
@@ -1161,7 +1215,8 @@ void main() {
             'gateway.capabilities' => {'per_session_exclusive_submit': true},
             'prompt.submit' => {
               'accepted': true,
-              'client_turn_id': 'client-opaque',
+              'client_turn_id':
+                  (frame['params'] as Map<String, dynamic>)['client_turn_id'],
               'server_turn_id': 'server-opaque',
               'state': 'accepted',
               'duplicate': false,
@@ -1199,6 +1254,11 @@ void main() {
         'pregunta moderna',
         'client-opaque',
       );
+      final queuedAck = await client.submitQueuedPromptIdempotent(
+        binding.runtimeSessionId,
+        'seguimiento moderno',
+        'client-queued',
+      );
       final status = await client.getTurnStatus(
         binding.runtimeSessionId,
         'client-opaque',
@@ -1207,6 +1267,7 @@ void main() {
       expect(requests.map((request) => request['method']), [
         'gateway.capabilities',
         'session.resume',
+        'prompt.submit',
         'prompt.submit',
         'turn.status',
       ]);
@@ -1217,10 +1278,17 @@ void main() {
       });
       expect(requests[3]['params'], {
         'session_id': 'runtime-modern',
+        'text': 'seguimiento moderno',
+        'client_turn_id': 'client-queued',
+        'queued': true,
+      });
+      expect(requests[4]['params'], {
+        'session_id': 'runtime-modern',
         'client_turn_id': 'client-opaque',
       });
       expect(ack.serverTurnId, 'server-opaque');
       expect(ack.duplicate, isFalse);
+      expect(queuedAck.clientTurnId, 'client-queued');
       expect(status.known, isTrue);
       expect(status.state, DesktopTurnState.running);
     },
@@ -1392,6 +1460,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           socket.add(
             jsonEncode({
@@ -1505,6 +1577,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           socket.add(
             jsonEncode({
@@ -1650,6 +1726,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         socket.add(
           jsonEncode({
@@ -1726,6 +1806,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         final method = frame['method'] as String;
         socket.add(
@@ -2022,7 +2106,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 80));
 
       expect(client.isConnected, isTrue);
-      expect(received, isEmpty);
+      expect(framesWithoutClientCapabilities(received), isEmpty);
     },
   );
 
@@ -2091,6 +2175,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         final method = frame['method'] as String;
         final result = switch (method) {
@@ -2148,11 +2236,16 @@ void main() {
       'corregido',
       2,
       truncateBeforeRowId: 73,
+      rebindSurvivorRowIds: const [11, 22],
     );
     await client.submitRewindPrompt(
       binding.runtimeSessionId,
       'primer turno',
       0,
+    );
+    await client.submitQueuedPrompt(
+      binding.runtimeSessionId,
+      'seguimiento en cola',
     );
 
     expect(requests.map((request) => request['method']), [
@@ -2161,6 +2254,7 @@ void main() {
       'image.attach_bytes',
       'file.attach',
       'image.detach',
+      'prompt.submit',
       'prompt.submit',
       'prompt.submit',
     ]);
@@ -2181,6 +2275,7 @@ void main() {
       'truncate_before_row_id': 73,
       'confirm_truncate': true,
       'confirm_empty_truncate': true,
+      'rebind_survivor_row_ids': [11, 22],
     });
     expect(requests[6]['params'], {
       'session_id': 'runtime-native',
@@ -2189,10 +2284,15 @@ void main() {
       'confirm_truncate': true,
       'confirm_empty_truncate': true,
     });
+    expect(requests[7]['params'], {
+      'session_id': 'runtime-native',
+      'text': 'seguimiento en cola',
+      'queued': true,
+    });
   });
 
   test(
-    'durable row resolver never consults active-only session.history',
+    'durable row resolver matches content across shifted ordinals and rejects ambiguity',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(server.close);
@@ -2211,26 +2311,31 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           socket.add(
             jsonEncode({
               'jsonrpc': '2.0',
               'id': frame['id'],
               'result': {
+                'count': 8,
                 'messages': [
                   {'role': 'user', 'row_id': 0, 'text': 'cero'},
                   {
                     'role': 'user',
                     'row_id': 72,
-                    'text': 'pregunta original',
-                    'display_kind': '   ',
+                    'text': 'duplicada',
+                    'display_kind': 'notice',
                   },
-                  {'role': 'user', 'row_id': 73, 'text': ' pregunta original '},
-                  {'role': 'user', 'row_id': 75, 'text': 'duplicada'},
-                  {'role': 'user', 'row_id': 76, 'text': ' duplicada '},
-                  {'role': 'user', 'row_id': 77, 'text': 'última única'},
-                  {'role': 'user', 'row_id': 78, 'text': 'duplicada'},
+                  {'role': 'user', 'row_id': 73, 'text': 'duplicada'},
                   {'role': 'assistant', 'row_id': 74, 'text': 'respuesta'},
+                  {'role': 'user', 'row_id': 75, 'text': 'duplicada'},
+                  {'role': 'user', 'text': 'optimista sin id'},
+                  {'role': 'user', 'row_id': 76, 'text': 'última'},
+                  {'role': 'assistant', 'row_id': 77, 'text': 'respuesta'},
                 ],
               },
             }),
@@ -2250,16 +2355,28 @@ void main() {
         dashboard: _TicketDashboardClient(),
       );
       addTearDown(client.close);
+      await client.connect();
 
       expect(
         await client.resolveDurableUserRowId(
           'runtime-history',
-          sourceText: 'última única',
+          sourceText: 'última',
           expectedOrdinal: 0,
+        ),
+        76,
+      );
+      expect(
+        await client.resolveDurableUserRowId(
+          'runtime-history',
+          sourceText: 'duplicada',
+          expectedOrdinal: 1,
         ),
         isNull,
       );
-      expect(requests, isEmpty);
+      expect(requests.map((request) => request['method']), [
+        'session.history',
+        'session.history',
+      ]);
     },
   );
 
@@ -2283,6 +2400,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           socket.add(
             jsonEncode({
@@ -2429,6 +2550,10 @@ void main() {
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'] as String;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           methods.add(method);
           void reply() => socket.add(
             jsonEncode({

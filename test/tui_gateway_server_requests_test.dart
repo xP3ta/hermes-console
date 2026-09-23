@@ -4,8 +4,13 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
+import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Fake Hermes gateway speaking the v7 contract: it answers client RPCs and
 /// can push server→client request frames (`tui_gateway/server_requests.py`).
@@ -14,6 +19,9 @@ class _Gateway {
   final sockets = <WebSocket>[];
   final frames = <Map<String, dynamic>>[];
   final _frames = StreamController<Map<String, dynamic>>.broadcast();
+  bool sendReadyImmediately = true;
+  bool answerClientCapabilities = true;
+  bool rejectClientCapabilities = false;
   Map<String, dynamic> Function(Map<String, dynamic> frame) resumeResult =
       (_) => {'session_id': 'runtime-1', 'stored_session_id': 'stored-1'};
 
@@ -21,20 +29,30 @@ class _Gateway {
     server.listen((request) async {
       final socket = await WebSocketTransformer.upgrade(request);
       sockets.add(socket);
-      socket.add(
-        jsonEncode({
-          'jsonrpc': '2.0',
-          'method': 'event',
-          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
-        }),
-      );
+      if (sendReadyImmediately) sendReady(socket);
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         frames.add(frame);
         _frames.add(frame);
         final method = frame['method'];
         if (method is! String) continue; // a server-request response
+        if (method == 'client.capabilities' && !answerClientCapabilities) {
+          continue;
+        }
+        if (method == 'client.capabilities' && rejectClientCapabilities) {
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'id': frame['id'],
+              'error': {'code': -32601, 'message': 'Method not found'},
+            }),
+          );
+          continue;
+        }
         final result = switch (method) {
+          'client.capabilities' => {
+            'server_requests': ['approval', 'clarify', 'sudo', 'secret'],
+          },
           'gateway.capabilities' => {'per_session_exclusive_submit': true},
           'session.resume' => resumeResult(frame),
           'clarify.lock' => {'status': 'ok', 'remaining': <String>[]},
@@ -46,6 +64,16 @@ class _Gateway {
       }
     });
   }
+
+  Map<String, dynamic> readyPayload = <String, dynamic>{};
+
+  void sendReady([WebSocket? socket]) => (socket ?? sockets.last).add(
+    jsonEncode({
+      'jsonrpc': '2.0',
+      'method': 'event',
+      'params': {'type': 'gateway.ready', 'payload': readyPayload},
+    }),
+  );
 
   static Future<_Gateway> start() async =>
       _Gateway._(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
@@ -99,21 +127,28 @@ class _TicketDashboardClient extends DashboardClient {
       );
 }
 
-Future<(TuiGatewayClient, List<TuiGatewayEvent>)> _connect(
-  _Gateway gateway,
-) async {
+SavedConnection _connectionFor(_Gateway gateway) => SavedConnection(
+  id: 'conn-server-requests',
+  label: 'Server requests',
+  host: '127.0.0.1',
+  port: 8642,
+  apiKey: 'gateway-key',
+  dashboardUrl: 'http://127.0.0.1:${gateway.server.port}',
+);
+
+TuiGatewayClient _clientFor(_Gateway gateway) {
   final client = TuiGatewayClient(
-    SavedConnection(
-      id: 'conn-server-requests',
-      label: 'Server requests',
-      host: '127.0.0.1',
-      port: 8642,
-      apiKey: 'gateway-key',
-      dashboardUrl: 'http://127.0.0.1:${gateway.server.port}',
-    ),
+    _connectionFor(gateway),
     dashboard: _TicketDashboardClient(),
   );
   addTearDown(client.close);
+  return client;
+}
+
+Future<(TuiGatewayClient, List<TuiGatewayEvent>)> _connect(
+  _Gateway gateway,
+) async {
+  final client = _clientFor(gateway);
   final events = <TuiGatewayEvent>[];
   client.events.listen(events.add);
   await client.resumeExisting('stored-1');
@@ -134,11 +169,137 @@ Future<TuiGatewayEvent> _eventOfType(
   fail('no $type event; got ${events.map((e) => e.type).toList()}');
 }
 
+Future<void> _waitUntil(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (!condition() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  expect(condition(), isTrue);
+}
+
 void main() {
   late _Gateway gateway;
 
   setUp(() async => gateway = await _Gateway.start());
   tearDown(() => gateway.close());
+
+  test('advertises server requests only after ready without blocking RPCs', () async {
+    gateway.sendReadyImmediately = false;
+    gateway.answerClientCapabilities = false;
+    final client = _clientFor(gateway);
+
+    final connecting = client.connect();
+    await _waitUntil(() => gateway.sockets.isNotEmpty);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(gateway.frames, isEmpty);
+
+    gateway.sendReady();
+    await connecting.timeout(const Duration(seconds: 1));
+    await _waitUntil(
+      () => gateway.rpcCalls('client.capabilities').isNotEmpty,
+    );
+    expect(gateway.rpcCalls('client.capabilities').single['params'], {
+      'server_requests': true,
+    });
+
+    final resumed = await client
+        .resumeExisting('stored-1')
+        .timeout(const Duration(seconds: 1));
+    expect(resumed.runtimeSessionId, 'runtime-1');
+  });
+
+  test('change_events stays off when gateway.ready does not advertise it', () async {
+    final client = _clientFor(gateway);
+    await client.connect();
+    expect(client.changeEventsAvailable, isFalse);
+    await _waitUntil(
+      () => gateway.rpcCalls('client.capabilities').isNotEmpty,
+    );
+  });
+
+  test('records gateway.ready change_events for the connection', () async {
+    gateway.readyPayload = {'change_events': true};
+    final client = _clientFor(gateway);
+    await client.connect();
+    expect(client.changeEventsAvailable, isTrue);
+    await _waitUntil(
+      () => gateway.rpcCalls('client.capabilities').isNotEmpty,
+    );
+  });
+
+  test('advertises again after reconnect', () async {
+    final client = _clientFor(gateway);
+    await client.connect();
+    await _waitUntil(
+      () => gateway.rpcCalls('client.capabilities').length == 1,
+    );
+
+    await gateway.sockets.single.close();
+    await _waitUntil(() => !client.isConnected);
+    await client.connect();
+    await _waitUntil(
+      () => gateway.rpcCalls('client.capabilities').length == 2,
+    );
+
+    expect(gateway.sockets, hasLength(2));
+  });
+
+  test('older backend rejection does not break the connection', () async {
+    gateway.rejectClientCapabilities = true;
+    final client = _clientFor(gateway);
+
+    await client.connect();
+    await _waitUntil(
+      () => gateway.rpcCalls('client.capabilities').isNotEmpty,
+    );
+    final resumed = await client.resumeExisting('stored-1');
+
+    expect(resumed.runtimeSessionId, 'runtime-1');
+    expect(client.isConnected, isTrue);
+    expect(gateway.sockets, hasLength(1));
+  });
+
+  test('fake gateway prompt reaches ActiveChat and answers on its request id', () async {
+    final connection = _connectionFor(gateway);
+    final client = _clientFor(gateway);
+    final chat = ActiveChat(
+      compressionRestoreStore: testCompressionRestoreStore(),
+      connection: connection,
+      sessionId: 'stored-1',
+      sessionTitle: 'Server request integration',
+      notifications: null,
+      onTerminal: () {},
+      api: ApiClient(
+        baseUrl: connection.baseUrl,
+        apiKey: connection.apiKey,
+        httpClient: MockClient((_) async => http.Response('unused', 500)),
+      ),
+      desktopGateway: client,
+      allowUnownedDesktopSnapshotForTesting: true,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    gateway.pushServerRequest('srq-chat-clarify', 'clarify', {
+      'question': 'Continue?',
+      'choices': ['yes', 'no'],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+
+    final prompt = chat.pendingInteractivePrompt!;
+    expect(prompt.request, isA<ClarifyPromptRequest>());
+    expect(prompt.key.requestId, 'srq-chat-clarify');
+    await chat.respondToClarify(prompt.key, 'yes');
+    final answer = await gateway.nextFrame(
+      (frame) => frame['id'] == 'srq-chat-clarify',
+    );
+    expect(answer['result'], {'answer': 'yes'});
+    expect(chat.pendingInteractivePrompt, isNull);
+
+    await client.resumeExisting('stored-1');
+    expect(client.isConnected, isTrue);
+    expect(gateway.sockets, hasLength(1));
+  });
 
   test(
     'clarify request surfaces as clarify.request and is answered on the frame',
@@ -226,27 +387,43 @@ void main() {
     expect(gateway.rpcCalls('approval.respond'), isEmpty);
   });
 
-  test('sudo and terminal.read answer under value', () async {
+  test('sudo, secret, and terminal.read answer under value', () async {
     final (client, events) = await _connect(gateway);
     gateway.pushServerRequest('srq-sudo00000001', 'sudo', {});
+    gateway.pushServerRequest('srq-secret000001', 'secret', {
+      'env_var': 'TEST_TOKEN',
+      'prompt': 'Token',
+    });
     gateway.pushServerRequest('srq-term00000001', 'terminal.read', {
       'start': 0,
       'count': 20,
     });
     await _eventOfType(events, 'sudo.request');
+    await _eventOfType(events, 'secret.request');
     final read = await _eventOfType(events, 'terminal.read.request');
     expect(read.payload['request_id'], 'srq-term00000001');
 
     final sudo = await client.respondToSudo(
       'srq-sudo00000001',
-      EphemeralSensitiveValue('hunter2'),
+      EphemeralSensitiveValue('sudo-test-value'),
     );
     expect(sudo.status, DesktopPromptResponseStatus.ok);
     final sudoAnswer = await gateway.nextFrame(
       (frame) => frame['id'] == 'srq-sudo00000001',
     );
-    expect(sudoAnswer['result'], {'value': 'hunter2'});
+    expect(sudoAnswer['result'], {'value': 'sudo-test-value'});
     expect(gateway.rpcCalls('sudo.respond'), isEmpty);
+
+    final secret = await client.respondToSecret(
+      'srq-secret000001',
+      EphemeralSensitiveValue('secret-test-value'),
+    );
+    expect(secret.status, DesktopPromptResponseStatus.ok);
+    final secretAnswer = await gateway.nextFrame(
+      (frame) => frame['id'] == 'srq-secret000001',
+    );
+    expect(secretAnswer['result'], {'value': 'secret-test-value'});
+    expect(gateway.rpcCalls('secret.respond'), isEmpty);
 
     await client.respondToTerminalRead('srq-term00000001');
     final readAnswer = await gateway.nextFrame(

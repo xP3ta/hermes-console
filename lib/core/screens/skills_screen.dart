@@ -21,6 +21,7 @@ import '../services/skill_store_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/action_approval.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/read_only.dart';
@@ -251,7 +252,7 @@ class _SkillsScreenState extends State<SkillsScreen>
 
   void _snack(String m) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(m)));
     }
   }
 
@@ -263,7 +264,7 @@ class _SkillsScreenState extends State<SkillsScreen>
     if (!skillsProfileMutationsBlocked(_profile)) return false;
     if (mounted) {
       final str = Strings.of(context);
-      ScaffoldMessenger.of(
+      HermesNotice.of(
         context,
       ).showSnackBar(SnackBar(content: Text(str.sklProfileBlockMsg(_profile))));
     }
@@ -678,21 +679,10 @@ class _SkillsScreenState extends State<SkillsScreen>
   void _copyToClipboard(String text, String label) {
     Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(
-              Icons.check,
-              size: 14,
-              color: Theme.of(context).hermes.success,
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
-          ],
-        ),
-        duration: const Duration(seconds: 2),
-      ),
+    HermesNotice.of(context).show(
+      message: label,
+      kind: HermesNoticeKind.success,
+      duration: const Duration(seconds: 2),
     );
   }
 
@@ -2149,8 +2139,9 @@ class _SkillsCliCatalogPanelState extends State<_SkillsCliCatalogPanel> {
                     ? null
                     : () {
                         Clipboard.setData(ClipboardData(text: _command));
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        HermesNotice.of(context).showSnackBar(
                           SnackBar(content: Text(str.sklCommandCopied)),
+                          kind: HermesNoticeKind.success,
                         );
                       },
               ),
