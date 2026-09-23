@@ -13,7 +13,7 @@ void main() {
   );
 
   test(
-    'authoritative roster exposes unopened remote work and closes absence',
+    'authoritative roster exposes unopened work and clears after two absences',
     () {
       final aggregate = GlobalActivityAggregate.inMemory(
         now: () => DateTime.utc(2026),
@@ -56,11 +56,111 @@ void main() {
         roster: const DesktopActiveSessionList(),
       );
       expect(
+        aggregate.activityFor('connection-a', 'default', 'durable-a')?.active,
+        isTrue,
+      );
+
+      aggregate.applyRoster(
+        connectionId: 'connection-a',
+        profile: 'default',
+        replayEpoch: 'epoch-a',
+        requestGeneration: aggregate.beginRosterRequest(
+          'connection-a',
+          'default',
+        ),
+        roster: const DesktopActiveSessionList(),
+      );
+      expect(
         aggregate.activityFor('connection-a', 'default', 'durable-a'),
         isNull,
       );
     },
   );
+
+  test('two explicit non-busy roster rows clear activity', () {
+    final aggregate = GlobalActivityAggregate.inMemory();
+
+    void apply(String status) {
+      aggregate.applyRoster(
+        connectionId: 'connection-a',
+        profile: 'default',
+        replayEpoch: 'epoch-a',
+        requestGeneration: aggregate.beginRosterRequest(
+          'connection-a',
+          'default',
+        ),
+        roster: DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-a',
+              storedSessionId: 'durable-a',
+              status: status,
+            ),
+          ],
+        ),
+      );
+    }
+
+    apply('working');
+    apply('idle');
+    expect(aggregate.isActive('connection-a', 'default', 'durable-a'), isTrue);
+    apply('idle');
+    expect(
+      aggregate.activityFor('connection-a', 'default', 'durable-a'),
+      isNull,
+    );
+  });
+
+  test('malformed roster only marks known activity stale', () {
+    final aggregate = GlobalActivityAggregate.inMemory();
+    aggregate.applyRoster(
+      connectionId: 'connection-a',
+      profile: 'default',
+      replayEpoch: 'epoch-a',
+      requestGeneration: aggregate.beginRosterRequest(
+        'connection-a',
+        'default',
+      ),
+      roster: const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-a',
+            storedSessionId: 'durable-a',
+            status: 'working',
+          ),
+        ],
+      ),
+    );
+
+    aggregate.applyRoster(
+      connectionId: 'connection-a',
+      profile: 'default',
+      replayEpoch: 'epoch-a',
+      requestGeneration: aggregate.beginRosterRequest(
+        'connection-a',
+        'default',
+      ),
+      roster: const DesktopActiveSessionList(
+        hasMalformedRows: true,
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-other',
+            storedSessionId: 'durable-other',
+            status: 'working',
+          ),
+        ],
+      ),
+    );
+
+    expect(
+      aggregate.activityFor('connection-a', 'default', 'durable-a')?.stale,
+      isTrue,
+    );
+    expect(
+      aggregate.activityFor('connection-a', 'default', 'durable-other'),
+      isNull,
+    );
+  });
 
   test('event detail wins over an older roster response', () {
     final aggregate = GlobalActivityAggregate.inMemory(
@@ -478,6 +578,33 @@ void main() {
     );
   });
 
+  test('subagent.complete retires its child from the delegated count', () {
+    final aggregate = GlobalActivityAggregate.inMemory();
+    GlobalActivity? activity() =>
+        aggregate.activityFor('connection-a', 'default', 'durable-a');
+    void observe(String type) => aggregate.observeEvent(
+      scope: scope,
+      event: TuiGatewayEvent(
+        type: type,
+        sessionId: 'runtime-a',
+        payload: const {},
+      ),
+    );
+
+    observe('message.start');
+    observe('subagent.start');
+    observe('subagent.start');
+    expect(activity()?.subagentCount, 2);
+
+    observe('subagent.complete');
+    expect(activity()?.subagentCount, 1);
+    observe('subagent.complete');
+    expect(activity()?.subagentCount, 0);
+    // A duplicate or unmatched completion cannot drive the count negative.
+    observe('subagent.complete');
+    expect(activity()?.subagentCount, 0);
+  });
+
   test('stale public projection stops claiming liveness after its ceiling', () {
     var now = DateTime.utc(2026);
     final aggregate = GlobalActivityAggregate.inMemory(now: () => now);
@@ -494,6 +621,48 @@ void main() {
     now = now.add(const Duration(minutes: 2));
     expect(aggregate.isActive('connection-a', 'default', 'durable-a'), isFalse);
   });
+
+  test(
+    'REGRESSION_ACTIVITY_STUCK_FOREVER a session whose backend went quiet '
+    'without ever disconnecting or reporting terminal stops claiming '
+    'liveness past the silent ceiling',
+    () {
+      // Real case: last turn completed cleanly, the sandbox was cleaned up
+      // after inactivity, and nothing else ever arrived — no transport
+      // disconnect (so `markTransportStale` is never called) and no terminal
+      // event either. Without an independent age check, `stale` stays false
+      // forever and the session claims to still be working indefinitely.
+      var now = DateTime.utc(2026);
+      final aggregate = GlobalActivityAggregate.inMemory(now: () => now);
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'subagent.start',
+          sessionId: 'runtime-a',
+          payload: {},
+        ),
+      );
+      expect(
+        aggregate.isActive('connection-a', 'default', 'durable-a'),
+        isTrue,
+      );
+      // Well within a normal long-running subagent's silence window: still
+      // counts as active.
+      now = now.add(const Duration(minutes: 10));
+      expect(
+        aggregate.isActive('connection-a', 'default', 'durable-a'),
+        isTrue,
+      );
+      // Past the silent-liveness ceiling with no update of any kind: no
+      // longer claims to be working, even though nothing ever marked it
+      // stale explicitly.
+      now = now.add(const Duration(minutes: 10));
+      expect(
+        aggregate.isActive('connection-a', 'default', 'durable-a'),
+        isFalse,
+      );
+    },
+  );
 
   test(
     'terminal exact incarnation is absorbing but a proven successor may work',

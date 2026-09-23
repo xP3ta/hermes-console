@@ -32,6 +32,7 @@ import '../services/run_registry.dart';
 import '../services/run_template_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/enum_labels.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_spark_mascot.dart';
 import '../utils/relative_time.dart';
 import '../widgets/accent_card.dart';
@@ -189,9 +190,10 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
       await _launch(prompt);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsLaunchError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.runsLaunchError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
@@ -206,9 +208,10 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
       await _launch(record.prompt, profile: record.profile);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsLaunchError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.runsLaunchError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
@@ -244,7 +247,7 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
     final conn = widget.connection;
     final s = Strings.of(context);
     if (mounted) {
-      ScaffoldMessenger.of(
+      HermesNotice.of(
         context,
       ).showSnackBar(SnackBar(content: Text(s.runsLocalRunning)));
     }
@@ -956,13 +959,15 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         command: command,
         sessionId: widget.record.sessionId,
       );
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsAutoApproved(reason))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.runsAutoApproved(reason))),
+        kind: HermesNoticeKind.success,
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(s.runsAutoApproveError(e.toString()))),
+        kind: HermesNoticeKind.error,
       );
       _pollStatus();
     } finally {
@@ -1081,12 +1086,13 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         _ => s.runsApprovalSent,
       };
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsResolveError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.runsResolveError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
       _pollStatus();
     } finally {
       if (mounted) setState(() => _resolvingApproval = false);
@@ -1175,18 +1181,20 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
       _persist();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsStopError(e.toString()))));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.runsStopError(e.toString()))),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
   void _copyOutput() {
     final s = Strings.of(context);
     Clipboard.setData(ClipboardData(text: _output));
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(s.runsReplyCopied)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(s.runsReplyCopied)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   bool get _isLive => const {
@@ -1271,9 +1279,10 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                 InkWell(
                   onLongPress: () {
                     Clipboard.setData(ClipboardData(text: widget.record.runId));
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text(s.runsRunIdCopied)));
+                    HermesNotice.of(context).showSnackBar(
+                      SnackBar(content: Text(s.runsRunIdCopied)),
+                      kind: HermesNoticeKind.success,
+                    );
                   },
                   child: Text(
                     '${widget.record.runId} · '
@@ -1482,8 +1491,9 @@ class _RunApprovalDecisionBlockState extends State<RunApprovalDecisionBlock> {
 
   void _copyCommand(BuildContext context, String command) {
     Clipboard.setData(ClipboardData(text: command));
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).runsCommandCopied)),
+      kind: HermesNoticeKind.success,
     );
   }
 

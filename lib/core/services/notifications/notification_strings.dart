@@ -38,6 +38,11 @@ class NotifL10n {
   String get groupSummaryBody =>
       _('Tienes varios avisos recientes.', 'You have several recent alerts.');
 
+  /// Resumen del grupo con el número real de avisos activos (más concreto que
+  /// "varios" y estable a la vista en la bandeja).
+  String groupSummaryCount(int n) =>
+      _('$n avisos recientes', '$n recent alerts');
+
   // ── Canales (nombre + descripción) ────────────────────────────────────────
   String get chApprovals => _('Aprobaciones', 'Approvals');
   String get chApprovalsDesc => _(
@@ -60,6 +65,11 @@ class NotifL10n {
   String get chVoice => _('Modo voz', 'Voice mode');
   String get chVoiceDesc =>
       _('Estado del modo voz activo', 'Active voice mode status');
+  String get chOperations => _('Operaciones locales', 'Local operations');
+  String get chOperationsDesc => _(
+    'Progreso de operaciones locales que has iniciado',
+    'Progress of local operations you started',
+  );
 
   // ── Aprobaciones ──────────────────────────────────────────────────────────
   String get approvalTitle =>

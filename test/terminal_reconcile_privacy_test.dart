@@ -6,9 +6,9 @@ import 'package:http/testing.dart';
 
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 
-class _MemoryCompressionFenceStorage implements DesktopCompressionFenceStorage {
+class _MemoryCompressionFenceStorage implements CompressionRestoreStorage {
   String? value;
 
   @override
@@ -79,7 +79,7 @@ void main() {
     });
 
     final service = ActiveChatService(
-      compressionFenceStore: DesktopCompressionFenceStore(
+      compressionRestoreStore: CompressionRestoreStore(
         storage: _MemoryCompressionFenceStorage(),
       ),
     );
@@ -154,7 +154,7 @@ void main() {
       });
 
       final service = ActiveChatService(
-        compressionFenceStore: DesktopCompressionFenceStore(
+        compressionRestoreStore: CompressionRestoreStore(
           storage: _MemoryCompressionFenceStorage(),
         ),
       );

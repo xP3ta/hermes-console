@@ -27,6 +27,7 @@ import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/action_approval.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
@@ -451,24 +452,10 @@ class _SoulScreenState extends State<SoulScreen>
   void _copyAll() {
     Clipboard.setData(ClipboardData(text: _controller.text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(
-              Icons.check,
-              size: 14,
-              color: Theme.of(context).hermes.success,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              Strings.of(context).soulCopied,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-        duration: const Duration(seconds: 2),
-      ),
+    HermesNotice.of(context).show(
+      message: Strings.of(context).soulCopied,
+      kind: HermesNoticeKind.success,
+      duration: const Duration(seconds: 2),
     );
   }
 
@@ -596,7 +583,7 @@ class _SoulScreenState extends State<SoulScreen>
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(msg, style: const TextStyle(fontSize: 12)),
         duration: const Duration(seconds: 2),

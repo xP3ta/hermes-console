@@ -8,6 +8,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_dispatcher.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 final class _CommandTicketDashboard extends DashboardClient {
   _CommandTicketDashboard()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -48,6 +50,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         final result = switch (frame['method']) {
           'gateway.capabilities' => {'per_session_exclusive_submit': true},

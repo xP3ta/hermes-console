@@ -25,6 +25,7 @@ import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 
 // ── Provider type ────────────────────────────────────────────────────────────
@@ -415,7 +416,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       if (!mounted) return;
       // No cerramos la pantalla: el usuario puede cambiar de modelo sin salir.
       setState(() => _activeModel = modelId);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).extActiveModel(modelId)),
           duration: const Duration(seconds: 3),
@@ -429,7 +430,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
           msg.contains('ModuleNotFoundError') ||
           msg.contains('No module named') ||
           msg.contains('ruamel_unavailable');
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             isVenvBroken ? s.extVenvUnavailable : s.extApplyError(msg),

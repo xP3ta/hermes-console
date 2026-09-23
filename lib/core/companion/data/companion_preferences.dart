@@ -191,21 +191,21 @@ class CompanionPreferences {
   }
 
   /// Slug seleccionado en el scope (con fallback legado a la key global).
-  String? selectedSlugFor(String connId, String profileId) =>
-      _prefs.getString(scopedSlugKey(connId, profileId)) ??
-      _prefs.getString(slugKey);
+  String? selectedSlugFor(String connId, String profileId) {
+    final key = scopedSlugKey(connId, profileId);
+    if (_prefs.containsKey(key)) {
+      final scoped = _prefs.getString(key);
+      return scoped == null || scoped.isEmpty ? null : scoped;
+    }
+    return _prefs.getString(slugKey);
+  }
 
   Future<void> setSelectedSlugFor(
     String connId,
     String profileId,
     String? slug,
   ) async {
-    final key = scopedSlugKey(connId, profileId);
-    if (slug == null) {
-      await _prefs.remove(key);
-    } else {
-      await _prefs.setString(key, slug);
-    }
+    await _prefs.setString(scopedSlugKey(connId, profileId), slug ?? '');
   }
 
   bool enabledFor(String connId, String profileId) =>

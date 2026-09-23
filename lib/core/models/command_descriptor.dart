@@ -659,6 +659,13 @@ final class DesktopCommandRpcResult {
     };
     final status = json['status'];
     final accepted = switch ((json['accepted'], status, kind)) {
+      // `accepted: false` with `status: pending` is a real, distinct wire
+      // shape: the legacy gateway saw the command but hasn't settled it yet
+      // (queued, still working) — not a rejection. Collapsing it to
+      // `rejected` made it indistinguishable from a genuine "no", which
+      // matters for callers (like /compress) that treat those two
+      // differently.
+      (false, 'pending', _) => DesktopCommandAcceptance.unknown,
       (false, _, _) => DesktopCommandAcceptance.rejected,
       (_, 'rejected' || 'failed' || 'error', _) =>
         DesktopCommandAcceptance.rejected,

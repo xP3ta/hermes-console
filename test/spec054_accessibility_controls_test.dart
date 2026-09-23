@@ -144,7 +144,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Terminal'));
+    await tester.tap(find.text('Ejecutando herramienta'));
     await tester.pump(const Duration(milliseconds: 220));
 
     final copy = find.byKey(const ValueKey('thinking-trace-copy'));

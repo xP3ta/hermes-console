@@ -80,8 +80,10 @@ the comparison pass. Before promotion, the same build step writes the canonical
 expected signer input, resolved build-tool paths and pre-build hashes (required
 unchanged after both replicas), both replicas' artifact names/sizes/hashes, and
 the comparison-report hash. Public/Play binding helpers consume that manifest
-and reject artifacts not recorded as replica A. Any failure removes the
-temporary stage and leaves no output directory or signed residue.
+and reject artifacts not recorded as replica A. The manifest and generated
+source binding remain maintainer-only and are excluded from the public evidence
+archive. Any failure removes the temporary stage and leaves no output directory
+or signed residue.
 
 This manifest is a deterministic local causal record from the orchestrated
 build, not cryptographic provenance. A principal that can replace the build

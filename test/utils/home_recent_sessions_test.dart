@@ -2,7 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/utils/home_recent_sessions.dart';
 
-Session _session({String preview = '', double startedAt = 1}) => Session(
+Session _session({
+  String preview = '',
+  String? lastUserPreview,
+  String? lastAssistantPreview,
+  double startedAt = 1,
+}) => Session(
   id: 'session',
   title: 'title',
   model: 'model',
@@ -10,6 +15,8 @@ Session _session({String preview = '', double startedAt = 1}) => Session(
   messageCount: 2,
   isActive: false,
   preview: preview,
+  lastUserPreview: lastUserPreview,
+  lastAssistantPreview: lastAssistantPreview,
   startedAt: startedAt,
 );
 
@@ -96,6 +103,53 @@ void main() {
       latestUserPreview(chronological.reversed, newestFirst: true),
       'otra',
     );
+  });
+
+  test('descarta JSON de tool calls y conserva el último texto humano', () {
+    final session = _session(
+      preview: '[{"id":"call_latest","type":"function"}]',
+      lastUserPreview: 'Revisa el despliegue de producción',
+      lastAssistantPreview: '[{"id":"call_latest","type":"function"}]',
+    );
+
+    final summary = homeRecentSummary(title: 'Deploy', session: session);
+
+    expect(summary.user, 'Revisa el despliegue de producción');
+    expect(summary.assistant, isNull);
+    expect(
+      sessionListPreview(session),
+      'Revisa el despliegue de producción',
+    );
+  });
+
+  test('omite filas tool, internas y de razonamiento al buscar texto humano', () {
+    final messages = <Map<String, dynamic>>[
+      {'role': 'assistant', 'content': 'respuesta visible'},
+      {
+        'role': 'assistant',
+        'content': '',
+        'reasoning': 'razonamiento privado',
+      },
+      {
+        'role': 'user',
+        'content': '[System: compacting conversation]',
+        'display_kind': 'auto_continue',
+      },
+      {
+        'role': 'tool',
+        'content': '{"tool_call_id":"call_latest","result":"ok"}',
+      },
+      {
+        'role': 'assistant',
+        'content': '[{"id":"call_latest","type":"function"}]',
+        'tool_calls': const [
+          {'id': 'call_latest'},
+        ],
+      },
+    ];
+
+    expect(latestAssistantPreview(messages), 'respuesta visible');
+    expect(latestUserPreview(messages), isNull);
   });
 
   test('oculta referencias privadas de adjuntos en previews recientes', () {

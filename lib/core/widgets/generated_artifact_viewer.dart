@@ -6,6 +6,7 @@ import '../services/artifact_export_service.dart';
 import '../services/generated_artifact_registry.dart';
 import '../theme/app_theme.dart';
 import '../utils/generated_artifact_detector.dart';
+import 'hermes_notice.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_ui.dart';
 
@@ -426,7 +427,7 @@ class _GeneratedArtifactViewerState extends State<GeneratedArtifactViewer> {
   }
 
   void _message(String message) {
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }

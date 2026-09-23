@@ -16,6 +16,7 @@ import '../utils/transport_privacy.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/general_dock_shell.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/status_pill.dart';
 import 'instance_edit_screen.dart';
@@ -174,7 +175,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
     await widget.connManager.setActiveConnection(conn.id);
     if (!mounted) return;
     setState(() => _activeId = conn.id);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           Strings.of(context).gwActiveInstance(conn.label),
@@ -198,7 +199,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
       _defaultId = makeDefault ? conn.id : null;
       if (makeDefault) _activeId = conn.id;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           makeDefault
@@ -213,13 +214,14 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
 
   Future<void> _deleteConnection(SavedConnection conn) async {
     if (conn.id == _activeId) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             Strings.of(context).gwCantDeleteActive,
             style: const TextStyle(fontSize: 13),
           ),
         ),
+        kind: HermesNoticeKind.warning,
       );
       return;
     }

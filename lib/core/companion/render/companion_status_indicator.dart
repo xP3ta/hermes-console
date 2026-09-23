@@ -6,26 +6,25 @@ import '../models/companion_presence_level.dart';
 import '../state/companion_controller.dart';
 import 'companion_message_presence.dart';
 
-/// Indicador de estado de un turno (feature 006 FASE 2) que muestra la
-/// **mascota** del Companion (corriendo / reposo / fallo) en lugar del spinner
-/// genérico [HermesStatusIndicator] cuando la presencia está activa.
+/// Indicador de estado de un turno que muestra la mascota del Companion en
+/// encabezados y otras superficies de presencia cuando está activa.
 ///
-/// Así, durante el streaming, el usuario ve a su mascota "pensando/corriendo"
-/// en la tarjeta de actividad, no un círculo de carga. Si el Companion está
-/// apagado, deshabilitado o no hay controller, **cae al pulso cuadrado de
-/// Hermes Desktop** (StatusPulse) para los estados de trabajo; el indicador
+/// Si el Companion está apagado, deshabilitado o no hay controller, cae al
+/// pulso cuadrado de Hermes Desktop para los estados de trabajo; el indicador
 /// clásico queda reservado a resultados (ok/error/offline).
 class CompanionStatusIndicator extends StatelessWidget {
   /// Controller del Companion. Si es null, se usa el fallback sin mascota.
   final CompanionController? companion;
   final HermesSparkMood mood;
   final double size;
+  final bool? animate;
 
   const CompanionStatusIndicator({
     super.key,
     required this.companion,
     required this.mood,
     this.size = 24,
+    this.animate,
   });
 
   /// Señal de estado sin mascota. Los estados de trabajo (conectando,
@@ -52,7 +51,12 @@ class CompanionStatusIndicator extends StatelessWidget {
         if (c.isInitialized &&
             c.enabled &&
             c.presenceLevel.showsStatusPresence) {
-          return CompanionMessagePresence(companion: c, mood: mood, size: size);
+          return CompanionMessagePresence(
+            companion: c,
+            mood: mood,
+            size: size,
+            animate: animate,
+          );
         }
         return _fallback();
       },

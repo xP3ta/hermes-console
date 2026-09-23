@@ -412,5 +412,16 @@ void main() {
     test('sin eventos y terminado → completed', () {
       expect(traceOutcome(events: [], active: false), TraceOutcome.completed);
     });
+
+    test('Stop explícito prevalece sobre actividad y fallos', () {
+      expect(
+        traceOutcome(
+          events: [ev('failed'), ev('completed')],
+          active: false,
+          stopped: true,
+        ),
+        TraceOutcome.stopped,
+      );
+    });
   });
 }

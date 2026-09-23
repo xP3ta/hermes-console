@@ -9,6 +9,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _TicketDashboardClient extends DashboardClient {
   _TicketDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -822,7 +824,9 @@ void main() {
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'];
-          if (method == 'gateway.ping') {
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          } else if (method == 'gateway.ping') {
             pingCalls += 1;
             socket.add(
               jsonEncode({
@@ -887,7 +891,13 @@ void main() {
           dashboardUrl: 'http://127.0.0.1:${server.port}',
         ),
         dashboard: _TicketDashboardClient(),
-        heartbeatInterval: const Duration(milliseconds: 20),
+        // The test drives exactly one heartbeat with `debugHeartbeatTick` on
+        // the fake clock. A 20 ms REAL periodic timer also fired whenever
+        // connect + resume took longer than 20 ms of wall time, sending extra
+        // pings (pingCalls == 2): it failed when run alone and passed in
+        // warmed-up full-suite runs. Keep the real timer out of the window;
+        // the watchdog deadline stays on the fake clock.
+        heartbeatInterval: const Duration(hours: 1),
         heartbeatDeadline: const Duration(milliseconds: 200),
         fanoutInactivityDeadline: const Duration(milliseconds: 20),
         now: () => now,

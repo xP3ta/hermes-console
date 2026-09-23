@@ -15,7 +15,7 @@ import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _MemoryOutbox implements TurnOutboxPersistence {
   final Map<String, PreparedTurn> rows = {};
@@ -214,7 +214,7 @@ PreparedTurn _ordered(String id, PreparedTurnState state, int order) =>
     _queued(id, state: state).copyWith(queueOrder: order);
 ActiveChat _chat({HermesDesktopGateway? gateway, http.Client? httpClient}) =>
     ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn',
         label: 'test',

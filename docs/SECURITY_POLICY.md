@@ -140,6 +140,7 @@ Keystore; la caché en memoria no se persiste.
 | Permiso              | Justificación                                  |
 |----------------------|-----------------------------------------------|
 | INTERNET             | Conexión al Gateway (imprescindible)           |
+| ACCESS_NETWORK_STATE | Reintento inmediato al recuperar conectividad  |
 | POST_NOTIFICATIONS   | Solo si se implementan notificaciones locales  |
 | RECORD_AUDIO         | Dictado y conversación iniciados por el usuario |
 | FOREGROUND_SERVICE_MICROPHONE | Continuidad de Voz con opt-in y notificación |

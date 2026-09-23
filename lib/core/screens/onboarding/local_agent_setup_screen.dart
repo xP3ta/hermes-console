@@ -18,6 +18,7 @@ import '../../services/agent_runtime/local_termux_agent_provider.dart';
 import '../../services/connection_manager.dart';
 import '../../services/platform/android_apps.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/hermes_notice.dart';
 import '../../widgets/hermes_ui.dart';
 import '../instance_edit_screen.dart';
 import 'local_install_screen.dart';
@@ -163,11 +164,12 @@ class _LocalAgentSetupScreenState extends State<LocalAgentSetupScreen>
       // No respondió: probablemente no está instalado. Ofrecer la instalación.
       await _refresh();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).lasStartFailed),
           duration: const Duration(seconds: 5),
         ),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       if (mounted) {

@@ -9,6 +9,8 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/compression_dispatcher.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _CapabilityDashboardClient extends DashboardClient {
   _CapabilityDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -49,7 +51,9 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
-          methods.add(frame['method'] as String);
+          if (!isClientCapabilitiesFrame(frame)) {
+            methods.add(frame['method'] as String);
+          }
           if (frame['method'] == 'gateway.capabilities') {
             entered.complete();
             await release.future;
@@ -103,7 +107,7 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methods.add(method);
+        if (!isClientCapabilitiesFrame(frame)) methods.add(method);
         final result = switch (method) {
           'gateway.capabilities' => {'per_session_exclusive_submit': false},
           'prompt.submit' => {'status': 'ok'},
@@ -160,7 +164,9 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
-        methods.add(frame['method'] as String);
+        if (!isClientCapabilitiesFrame(frame)) {
+          methods.add(frame['method'] as String);
+        }
         socket.add(
           jsonEncode({
             'jsonrpc': '2.0',
@@ -218,7 +224,9 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
-          methods.add(frame['method'] as String);
+          if (!isClientCapabilitiesFrame(frame)) {
+            methods.add(frame['method'] as String);
+          }
           socket.add(
             jsonEncode({
               'jsonrpc': '2.0',
@@ -271,7 +279,7 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methods.add(method);
+        if (!isClientCapabilitiesFrame(frame)) methods.add(method);
         socket.add(
           jsonEncode({
             'jsonrpc': method == 'gateway.capabilities' ? '1.0' : '2.0',
@@ -322,7 +330,7 @@ void main() {
           await for (final raw in socket) {
             final frame = jsonDecode(raw as String) as Map<String, dynamic>;
             final method = frame['method'] as String;
-            methods.add(method);
+            if (!isClientCapabilitiesFrame(frame)) methods.add(method);
             final result = switch (method) {
               'gateway.capabilities' => capability,
               'session.steer' => {'status': 'queued'},
@@ -379,7 +387,7 @@ void main() {
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'] as String;
-          methods.add(method);
+          if (!isClientCapabilitiesFrame(frame)) methods.add(method);
           final result = method == 'gateway.capabilities'
               ? <String, dynamic>{'per_session_exclusive_submit': false}
               : <String, dynamic>{
@@ -461,7 +469,7 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methods.add(method);
+        if (!isClientCapabilitiesFrame(frame)) methods.add(method);
         socket.add(
           jsonEncode({
             'jsonrpc': '2.0',
@@ -507,7 +515,7 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methods.add(method);
+        if (!isClientCapabilitiesFrame(frame)) methods.add(method);
         socket.add(
           jsonEncode({
             'jsonrpc': '2.0',
@@ -566,7 +574,9 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methodsByConnection[connectionIndex].add(method);
+        if (!isClientCapabilitiesFrame(frame)) {
+          methodsByConnection[connectionIndex].add(method);
+        }
         socket.add(
           jsonEncode({
             'jsonrpc': '2.0',
@@ -623,7 +633,7 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methods.add(method);
+        if (!isClientCapabilitiesFrame(frame)) methods.add(method);
         socket.add(
           jsonEncode({
             'jsonrpc': '2.0',
@@ -671,7 +681,7 @@ void main() {
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
         final method = frame['method'] as String;
-        methods.add(method);
+        if (!isClientCapabilitiesFrame(frame)) methods.add(method);
         if (method == 'gateway.capabilities') {
           if (!firstCapabilitySeen.isCompleted) firstCapabilitySeen.complete();
           unawaited(() async {
@@ -737,7 +747,7 @@ void main() {
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'] as String;
-          methods.add(method);
+          if (!isClientCapabilitiesFrame(frame)) methods.add(method);
           final result = switch (method) {
             'session.active_list' => {
               'sessions': [
@@ -804,7 +814,9 @@ void main() {
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'] as String;
+          if (!isClientCapabilitiesFrame(frame)) {
           methodsByConnection[connectionIndex].add(method);
+        }
           if (method == 'session.active_list') {
             socket.add(
               jsonEncode({

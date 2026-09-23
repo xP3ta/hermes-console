@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/models/room_summary.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/turn_activity_pill.dart';
+import 'package:hermes_android/core/models/activity_snapshot.dart';
+import 'package:hermes_android/core/widgets/activity_panel.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 import 'package:hermes_android/core/widgets/room_summary_pill.dart';
 import 'package:hermes_android/core/widgets/status_pill.dart';
@@ -102,11 +103,13 @@ void main() {
     now: statusNow,
   );
   final surfaces = <String, Widget Function(BuildContext)>{
-    'live turn': (_) => TurnActivityPill(
-      active: true,
-      startedAt: DateTime(2026),
+    'live turn': (_) => ActivityPillHost(
+      snapshot: ActivitySnapshot(
+        turnActive: true,
+        turnStartedAt: DateTime(2026),
+        noActivityHint: true,
+      ),
       clock: () => DateTime(2026).add(const Duration(hours: 1)),
-      statusLabel: null,
     ),
     'subagent aggregate': (_) =>
         SubagentActivityCard(activities: activity, canInterrupt: (_) => false),

@@ -8,6 +8,7 @@ import '../services/connection_manager.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/screen_security.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -103,9 +104,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
     if (pin == null) return;
     await lock.setPin(pin);
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(Strings.of(context).secPinUpdated)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).secPinUpdated)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   Future<void> _toggleBiometric(bool value) async {
@@ -157,9 +159,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
     if (confirm != true || !mounted) return;
     await widget.connManager.wipeAllApiKeys();
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(Strings.of(context).secKeysWiped)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).secKeysWiped)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   SavedConnection? _activeConnection() {

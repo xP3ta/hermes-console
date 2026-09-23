@@ -16,6 +16,50 @@ String _cleanText(Object? raw, {int max = _maxPreviewText}) {
   return value.length <= max ? value : value.substring(0, max);
 }
 
+String _safeProcessCommand(Object? raw) {
+  final command = _cleanText(raw, max: 240);
+  if (command.isEmpty) return '';
+  final parts = command.split(RegExp(r'\s+'));
+  String safePart(String value) {
+    if (value.isEmpty || value.startsWith('-') || value.contains('=')) return '';
+    return value.split(RegExp(r'[/\\]')).last;
+  }
+
+  final executable = safePart(parts.first);
+  if (executable.isEmpty) return '';
+  final lower = executable.toLowerCase();
+  final display = <String>[executable];
+  if (lower == 'dart' && parts.length > 1 && parts[1] == 'run') {
+    display.add('run');
+    if (parts.length > 2) {
+      final script = safePart(parts[2]);
+      if (script.isNotEmpty) display.add(script);
+    }
+  } else if (const {'python', 'python3', 'node', 'bash', 'sh'}.contains(lower) &&
+      parts.length > 1) {
+    final script = safePart(parts[1]);
+    if (script.isNotEmpty) display.add(script);
+  } else if (const {
+    'npm',
+    'pnpm',
+    'yarn',
+    'flutter',
+    'cargo',
+    'gradle',
+  }.contains(lower)) {
+    for (final part in parts.skip(1).take(2)) {
+      final projection = safePart(part);
+      if (projection.isNotEmpty) display.add(projection);
+    }
+  }
+  return _cleanText(display.join(' '), max: 80);
+}
+
+/// Proyección de solo lectura de un comando para mostrarlo en pantalla: el
+/// ejecutable (y, en las herramientas conocidas, el guion o subcomando), nunca
+/// flags, argumentos, variables ni rutas completas.
+String safeCommandProjection(Object? raw) => _safeProcessCommand(raw);
+
 int _safeInt(Object? raw, {int fallback = 0}) {
   if (raw is int) return raw;
   if (raw is num) return raw.toInt();
@@ -495,11 +539,21 @@ final class BackgroundProcessEntry {
   final String opaqueId;
   final AgentCenterStatus status;
   final int uptimeSeconds;
+  final String command;
+  final bool notifyOnComplete;
+  final List<String> watchPatterns;
+  final bool watchHit;
+  final DateTime? startedAt;
 
   const BackgroundProcessEntry({
     required this.opaqueId,
     required this.status,
     required this.uptimeSeconds,
+    this.command = '',
+    this.notifyOnComplete = false,
+    this.watchPatterns = const [],
+    this.watchHit = false,
+    this.startedAt,
   });
 
   static BackgroundProcessEntry? tryParse(Map<String, dynamic> json) {
@@ -508,12 +562,29 @@ final class BackgroundProcessEntry {
       max: 512,
     );
     if (id.isEmpty) return null;
+    final startedAtSeconds = _safeDouble(json['started_at']);
     return BackgroundProcessEntry(
       opaqueId: id,
       status: _parseAgentCenterStatus(json['status'] ?? json['phase']),
       uptimeSeconds: _safeInt(
         json['uptime_seconds'] ?? json['uptime'],
       ).clamp(0, 315360000),
+      command: _safeProcessCommand(json['command']),
+      notifyOnComplete: json['notify_on_complete'] == true,
+      watchPatterns: json['watch_patterns'] is List
+          ? (json['watch_patterns'] as List)
+                .map((value) => _cleanText(value, max: 120))
+                .where((value) => value.isNotEmpty)
+                .take(8)
+                .toList(growable: false)
+          : const [],
+      watchHit: json['watch_hit'] == true,
+      startedAt: startedAtSeconds > 0
+          ? DateTime.fromMillisecondsSinceEpoch(
+              (startedAtSeconds * 1000).round(),
+              isUtc: true,
+            )
+          : null,
     );
   }
 }
@@ -822,6 +893,120 @@ final class SessionGoalWaitBarrier {
       untilAt: _cleanText(json['until_at'], max: 80),
       target: _cleanText(json['target'], max: 200),
       reason: _cleanText(json['reason']),
+    );
+  }
+}
+
+DateTime? _epochDateTime(Object? raw) {
+  final seconds = _safeDouble(raw);
+  if (seconds <= 0) return null;
+  return DateTime.fromMillisecondsSinceEpoch(
+    (seconds * 1000).round(),
+    isUtc: true,
+  );
+}
+
+final class SessionLoopSnapshot {
+  const SessionLoopSnapshot({
+    required this.status,
+    required this.interval,
+    required this.lastRunAt,
+    required this.nextDueAt,
+    required this.ticksFired,
+    required this.awaitingResponse,
+    this.deferredByGoal = false,
+  });
+
+  final String status;
+  final Duration interval;
+  final DateTime? lastRunAt;
+  final DateTime? nextDueAt;
+  final int ticksFired;
+  final bool awaitingResponse;
+  final bool deferredByGoal;
+
+  static SessionLoopSnapshot? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final json = Map<String, dynamic>.from(raw);
+    final status = _cleanText(json['status'], max: 40);
+    if (status.isEmpty || status == 'cleared') return null;
+    return SessionLoopSnapshot(
+      status: status,
+      interval: Duration(
+        milliseconds: (_safeDouble(json['interval_seconds']) * 1000)
+            .round()
+            .clamp(0, 315360000000),
+      ),
+      lastRunAt: _epochDateTime(json['last_fired_at']),
+      nextDueAt: _epochDateTime(json['next_due_at']),
+      ticksFired: _safeInt(json['ticks_fired']).clamp(0, 1000000000),
+      awaitingResponse: json['awaiting_response'] == true,
+      deferredByGoal: json['deferred_by_goal'] == true,
+    );
+  }
+}
+
+final class SessionHeartbeatSnapshot {
+  const SessionHeartbeatSnapshot({
+    required this.status,
+    required this.interval,
+    required this.lastRunAt,
+    required this.nextDueAt,
+    required this.fireCount,
+  });
+
+  final String status;
+  final Duration interval;
+  final DateTime? lastRunAt;
+  final DateTime? nextDueAt;
+  final int fireCount;
+
+  static SessionHeartbeatSnapshot? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final json = Map<String, dynamic>.from(raw);
+    final status = _cleanText(json['status'], max: 40);
+    if (status.isEmpty || status == 'cleared') return null;
+    final interval = Duration(
+      seconds: _safeInt(json['interval_seconds']).clamp(0, 315360000),
+    );
+    final lastRunAt = _epochDateTime(json['last_fired_at']);
+    return SessionHeartbeatSnapshot(
+      status: status,
+      interval: interval,
+      lastRunAt: lastRunAt,
+      nextDueAt: status == 'active' && lastRunAt != null
+          ? lastRunAt.add(interval)
+          : null,
+      fireCount: _safeInt(json['fire_count']).clamp(0, 1000000000),
+    );
+  }
+}
+
+final class SessionControlSnapshot {
+  const SessionControlSnapshot({
+    required this.goal,
+    required this.loop,
+    required this.heartbeat,
+    required this.revision,
+    required this.updatedAt,
+  });
+
+  final SessionGoalSnapshot? goal;
+  final SessionLoopSnapshot? loop;
+  final SessionHeartbeatSnapshot? heartbeat;
+  final String revision;
+  final DateTime? updatedAt;
+
+  factory SessionControlSnapshot.fromJson(Object? raw) {
+    final json = raw is Map
+        ? Map<String, dynamic>.from(raw)
+        : const <String, dynamic>{};
+    return SessionControlSnapshot(
+      goal: SessionGoalSnapshot.tryParse(json['goal']),
+      loop: SessionLoopSnapshot.tryParse(json['loop']),
+      heartbeat: SessionHeartbeatSnapshot.tryParse(json['heartbeat']),
+      revision: _cleanText(json['revision'], max: 128),
+      updatedAt: _epochDateTime(json['updated_at']),
     );
   }
 }

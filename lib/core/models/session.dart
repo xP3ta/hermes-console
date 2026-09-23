@@ -162,8 +162,14 @@ class Session implements SessionSortKey {
   /// las rutas actuales crean un id provisional `mob-*` con `source: mobile`.
   /// En ambos casos abrir el composer no debe pagar un `session.resume`/REST
   /// destinado a fallar: la sesión se crea de forma nativa en el primer envío.
+  ///
+  /// Compartir desde Android (`source: android-share`) sella el texto recibido
+  /// en `preview` antes de que exista ningún turno, así que ahí la única
+  /// evidencia durable posible es `messageCount`: exigir un preview vacío o un
+  /// id `mob-*` dejaría el caso común (compartir texto) pagando el 4007.
   bool get isUnpersistedMobileDraft =>
       isDraftOnly ||
+      (source == 'android-share' && messageCount == 0) ||
       ((source == 'mobile' ||
               source == 'mobile-room' ||
               source == 'mobile-bot') &&

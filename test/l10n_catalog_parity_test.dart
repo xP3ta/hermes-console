@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/l10n/app_localizations_en.dart';
+import 'package:hermes_android/l10n/app_localizations_es.dart';
 
 Map<String, Object?> _readCatalog(String path) =>
     jsonDecode(File(path).readAsStringSync()) as Map<String, Object?>;
@@ -44,6 +46,25 @@ void main() {
       expect(en['notifTitle'], 'Notifications');
     },
   );
+
+  test('las tareas restantes usan singular y plural', () {
+    expect(
+      StringsEn().chaBackgroundWorkRemaining(1),
+      'Could not stop everything: 1 background task remains',
+    );
+    expect(
+      StringsEn().chaBackgroundWorkRemaining(2),
+      'Could not stop everything: 2 background tasks remain',
+    );
+    expect(
+      StringsEs().chaBackgroundWorkRemaining(1),
+      'No se pudo detener todo: queda 1 tarea en segundo plano',
+    );
+    expect(
+      StringsEs().chaBackgroundWorkRemaining(2),
+      'No se pudo detener todo: quedan 2 tareas en segundo plano',
+    );
+  });
 
   test('el hint de voz explica barge-in sin pedir que Hermes termine', () {
     final es = _readCatalog('lib/l10n/app_es.arb');

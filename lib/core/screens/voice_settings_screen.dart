@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../config/flavor.dart';
+import '../widgets/hermes_notice.dart';
 import 'instance_edit_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/conversation/native_voice.dart';
@@ -1009,7 +1010,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
   }
 
   void _snack(String m) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> _disposePreviewEngine(TtsEngine? engine) async {
     if (engine == null) return;

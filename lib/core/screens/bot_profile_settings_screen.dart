@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 
 /// Only fields present in the server snapshot can become editable patches.
 class BotProfileSettingsScreen extends StatefulWidget {
@@ -113,9 +114,10 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
       Navigator.pop(context, true);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(s.botProfileFailed)));
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(s.botProfileFailed)),
+          kind: HermesNoticeKind.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
 
 void main() {
   test('refresh canonicaliza todos los aliases de ID de mensaje', () {
@@ -260,5 +261,37 @@ void main() {
           .isLiveRegion,
       isTrue,
     );
+  });
+  testWidgets('refresh error uses the neutral notice surface below its inset', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.fromId('dark'),
+        home: const Scaffold(
+          body: ChatRefreshStatusOverlay(
+            loading: false,
+            errorMessage: 'No se pudo actualizar',
+            errorTopInset: 64,
+            child: SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+    final notice = find.byKey(const ValueKey('chat-refresh-error'));
+    final colors = Theme.of(tester.element(notice)).hermes;
+    final overlay = tester.getRect(find.byType(ChatRefreshStatusOverlay));
+
+    // Deja libre la franja del botón «cargar anteriores» (8 + 48).
+    expect(tester.getRect(notice).top - overlay.top, 64);
+
+    final material = tester.widget<Material>(
+      find.descendant(of: notice, matching: find.byType(Material)).first,
+    );
+    expect(material.color, colors.surface);
+    final text = tester.widget<Text>(find.text('No se pudo actualizar'));
+    expect(text.style?.color, colors.textPrimary);
+    final glyph = tester.widget<Icon>(find.byIcon(Icons.error_outline_rounded));
+    expect(glyph.color, colors.error);
   });
 }

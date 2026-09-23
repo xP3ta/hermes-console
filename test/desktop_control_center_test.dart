@@ -140,6 +140,10 @@ void main() {
               'command': 'private command --token secret',
               'status': 'RUNNING',
               'uptime_seconds': 5,
+              'started_at': 1720000000,
+              'notify_on_complete': true,
+              'watch_patterns': ['ready', 'done'],
+              'watch_hit': true,
               'output_tail': 'private process output',
               'error': 'private process error',
               'metadata': {'model': 'private-model', 'cwd': '/private/path'},
@@ -175,6 +179,15 @@ void main() {
       expect(result.processes.first.opaqueId, 'proc-a');
       expect(result.processes.first.status, AgentCenterStatus.running);
       expect(result.processes.first.uptimeSeconds, 5);
+      expect(result.processes.first.command, 'private');
+      expect(result.processes.first.command, isNot(contains('secret')));
+      expect(result.processes.first.notifyOnComplete, isTrue);
+      expect(result.processes.first.watchPatterns, ['ready', 'done']);
+      expect(result.processes.first.watchHit, isTrue);
+      expect(
+        result.processes.first.startedAt,
+        DateTime.fromMillisecondsSinceEpoch(1720000000000, isUtc: true),
+      );
       expect(result.processes.last.status, AgentCenterStatus.unknown);
       expect(detail.startedAt, 1);
       expect(detail.finishedAt, 2);
@@ -231,6 +244,49 @@ void main() {
         project.repositories.single.lanes.single.sessions.single.id,
         'chat-1',
       );
+    });
+  });
+
+  group('SessionControlSnapshot', () {
+    test('parses loop and heartbeat timing without retaining prompts', () {
+      final control = SessionControlSnapshot.fromJson({
+        'revision': 'rev-4',
+        'updated_at': 1720000400,
+        'loop': {
+          'prompt': 'PRIVATE LOOP PROMPT',
+          'status': 'active',
+          'interval_seconds': 300,
+          'last_fired_at': 1720000000,
+          'next_due_at': 1720000300,
+          'ticks_fired': 2,
+          'awaiting_response': true,
+          'deferred_by_goal': true,
+        },
+        'heartbeat': {
+          'prompt': 'PRIVATE HEARTBEAT PROMPT',
+          'status': 'active',
+          'interval_seconds': 60,
+          'last_fired_at': 1720000100,
+          'fire_count': 7,
+        },
+      });
+
+      expect(control.revision, 'rev-4');
+      expect(control.loop?.interval, const Duration(minutes: 5));
+      expect(control.loop?.ticksFired, 2);
+      expect(control.loop?.awaitingResponse, isTrue);
+      expect(control.loop?.deferredByGoal, isTrue);
+      expect(
+        control.loop?.nextDueAt,
+        DateTime.fromMillisecondsSinceEpoch(1720000300000, isUtc: true),
+      );
+      expect(control.heartbeat?.interval, const Duration(minutes: 1));
+      expect(control.heartbeat?.fireCount, 7);
+      expect(
+        control.heartbeat?.nextDueAt,
+        DateTime.fromMillisecondsSinceEpoch(1720000160000, isUtc: true),
+      );
+      expect(control.toString(), isNot(contains('PRIVATE')));
     });
   });
 

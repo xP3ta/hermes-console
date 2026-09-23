@@ -8,9 +8,11 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
 import '../services/attachment_uploader.dart';
+import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
 import 'attachment_card.dart';
 import 'hermes_app_bar.dart';
+import 'hermes_notice.dart';
 
 @visibleForTesting
 const attachmentDocumentPreviewChannelName = 'hermes/document_preview';
@@ -65,10 +67,11 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     final file = await _resolve();
     if (!mounted) return;
     if (file == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).chaAttachmentPreviewUnavailable),
         ),
+        kind: HermesNoticeKind.warning,
       );
       return;
     }
@@ -128,12 +131,18 @@ class AttachmentBytesPreviewScreen extends StatefulWidget {
   final String sizeLabel;
   final AttachmentHistoryReference reference;
   final File file;
+  final VoidCallback? onOpenExternal;
+  final VoidCallback? onShare;
+  final VoidCallback? onSave;
 
   const AttachmentBytesPreviewScreen({
     required this.name,
     required this.sizeLabel,
     required this.reference,
     required this.file,
+    this.onOpenExternal,
+    this.onShare,
+    this.onSave,
     super.key,
   });
 
@@ -173,10 +182,33 @@ class _AttachmentBytesPreviewScreenState
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     return Scaffold(
-      appBar: HermesAppBar(title: Text(widget.name)),
-      body: FutureBuilder<Uint8List>(
-        future: _bytes,
-        builder: (context, snapshot) {
+      appBar: HermesAppBar(
+        title: Text(widget.name),
+        actions: [
+          if (widget.onOpenExternal != null)
+            IconButton(
+              onPressed: widget.onOpenExternal,
+              tooltip: strings.genMediaOpenWith,
+              icon: const Icon(Icons.open_in_new_rounded),
+            ),
+          if (widget.onShare != null)
+            IconButton(
+              onPressed: widget.onShare,
+              tooltip: strings.commonShare,
+              icon: const Icon(Icons.share_outlined),
+            ),
+          if (widget.onSave != null)
+            IconButton(
+              onPressed: widget.onSave,
+              tooltip: strings.commonSave,
+              icon: const Icon(Icons.save_alt_rounded),
+            ),
+        ],
+      ),
+      body: SafeArea(
+        child: FutureBuilder<Uint8List>(
+          future: _bytes,
+          builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return Center(
               child: Column(
@@ -208,13 +240,15 @@ class _AttachmentBytesPreviewScreenState
                     : _isPdf(bytes)
                     ? _PdfBytesPreview(
                         reference: widget.reference,
+                        file: widget.file,
                         fallbackBytes: bytes,
                       )
                     : _BinaryBytesPreview(bytes: bytes),
               ),
             ],
           );
-        },
+          },
+        ),
       ),
     );
   }
@@ -302,10 +336,12 @@ class _PdfPageResult {
 
 class _PdfBytesPreview extends StatefulWidget {
   final AttachmentHistoryReference reference;
+  final File file;
   final Uint8List fallbackBytes;
 
   const _PdfBytesPreview({
     required this.reference,
+    required this.file,
     required this.fallbackBytes,
   });
 
@@ -315,41 +351,39 @@ class _PdfBytesPreview extends StatefulWidget {
 
 class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
   static const _channel = MethodChannel(attachmentDocumentPreviewChannelName);
+  static const _maxRenderedPages = 40;
 
-  int _page = 0;
-  int? _pageCount;
-  late Future<_PdfPageResult> _renderedPage = _renderPage(0);
+  final Map<int, Future<_PdfPageResult>> _pages = {};
 
-  Future<_PdfPageResult> _renderPage(int page) async {
-    final response = await _channel
-        .invokeMapMethod<String, dynamic>('renderPdfPage', {
-          'storageKey': widget.reference.storageKey,
-          'page': page,
-          'expectedSize': widget.reference.sizeBytes,
-          'expectedSha256': widget.reference.sha256Hex,
-        });
-    final png = response?['pngBytes'];
-    final count = (response?['pageCount'] as num?)?.toInt();
-    if (png is! Uint8List || png.isEmpty || count == null || count <= 0) {
-      throw const FormatException('invalid native PDF preview response');
-    }
-    return _PdfPageResult(pngBytes: png, pageCount: count);
-  }
-
-  void _showPage(int page) {
-    final count = _pageCount;
-    if (page < 0 || (count != null && page >= count)) return;
-    setState(() {
-      _page = page;
-      _renderedPage = _renderPage(page);
-    });
-  }
+  Future<_PdfPageResult> _renderPage(int page) => _pages.putIfAbsent(
+    page,
+    () async {
+      final locator = GeneratedMediaService.cacheLocator(widget.file);
+      final response = await _channel
+          .invokeMapMethod<String, dynamic>('renderPdfPage', {
+            'storageKey': widget.reference.storageKey,
+            'page': page,
+            'expectedSize': widget.reference.sizeBytes,
+            'expectedSha256': widget.reference.sha256Hex,
+            if (locator != null) ...{
+              'generatedConnectionKey': locator.connectionKey,
+              'generatedFileKey': locator.fileKey,
+            },
+          });
+      final png = response?['pngBytes'];
+      final count = (response?['pageCount'] as num?)?.toInt();
+      if (png is! Uint8List || png.isEmpty || count == null || count <= 0) {
+        throw const FormatException('invalid native PDF preview response');
+      }
+      return _PdfPageResult(pngBytes: png, pageCount: count);
+    },
+  );
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     return FutureBuilder<_PdfPageResult>(
-      future: _renderedPage,
+      future: _renderPage(0),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -360,58 +394,84 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
             warning: strings.chaAttachmentPreviewUnavailable,
           );
         }
-        final rendered = snapshot.data!;
-        _pageCount = rendered.pageCount;
-        return Column(
-          children: [
-            Expanded(
-              child: InteractiveViewer(
-                minScale: 0.8,
-                maxScale: 5,
-                child: Center(
-                  child: Image.memory(
-                    rendered.pngBytes,
-                    key: ValueKey('attachment-pdf-page-$_page'),
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                  ),
-                ),
-              ),
-            ),
-            SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: strings.chaAttachmentPreviewPreviousPage,
-                      onPressed: _page > 0 ? () => _showPage(_page - 1) : null,
-                      icon: const Icon(Icons.chevron_left_rounded),
-                    ),
-                    Expanded(
-                      child: Text(
-                        strings.chaAttachmentPreviewPage(
-                          _page + 1,
-                          rendered.pageCount,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: strings.chaAttachmentPreviewNextPage,
-                      onPressed: _page + 1 < rendered.pageCount
-                          ? () => _showPage(_page + 1)
-                          : null,
-                      icon: const Icon(Icons.chevron_right_rounded),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+        final firstPage = snapshot.data!;
+        final pageCount = firstPage.pageCount
+            .clamp(1, _maxRenderedPages)
+            .toInt();
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+          itemCount: pageCount,
+          itemBuilder: (context, page) => _LazyPdfPage(
+            page: page,
+            pageCount: firstPage.pageCount,
+            rendered: page == 0
+                ? Future<_PdfPageResult>.value(firstPage)
+                : _renderPage(page),
+          ),
         );
       },
+    );
+  }
+}
+
+class _LazyPdfPage extends StatelessWidget {
+  final int page;
+  final int pageCount;
+  final Future<_PdfPageResult> rendered;
+
+  const _LazyPdfPage({
+    required this.page,
+    required this.pageCount,
+    required this.rendered,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 0.72,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: colors.divider),
+              ),
+              child: FutureBuilder<_PdfPageResult>(
+                future: rendered,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final result = snapshot.data;
+                  if (snapshot.hasError || result == null) {
+                    return _PreviewUnavailable(
+                      message: strings.chaAttachmentPreviewUnavailable,
+                    );
+                  }
+                  return InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 5,
+                    child: Center(
+                      child: Image.memory(
+                        result.pngBytes,
+                        key: ValueKey('attachment-pdf-page-$page'),
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(strings.chaAttachmentPreviewPage(page + 1, pageCount)),
+        ],
+      ),
     );
   }
 }

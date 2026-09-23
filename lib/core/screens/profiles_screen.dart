@@ -25,6 +25,7 @@ import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/mission_profile_avatar.dart';
@@ -130,21 +131,9 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
 
   void _snack(String msg, {bool ok = true}) {
     if (!mounted) return;
-    final colors = Theme.of(context).hermes;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(
-              ok ? Icons.check : Icons.error_outline,
-              size: 15,
-              color: ok ? colors.success : colors.error,
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Text(msg)),
-          ],
-        ),
-      ),
+    HermesNotice.of(context).show(
+      message: msg,
+      kind: ok ? HermesNoticeKind.success : HermesNoticeKind.error,
     );
   }
 
@@ -881,19 +870,20 @@ class _ProfileBuilderScreenState extends State<ProfileBuilderScreen> {
         _creating = false;
         _progressMsg = '';
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             Strings.of(context).prfCreateError(humanizeApiError(e)),
           ),
         ),
+        kind: HermesNoticeKind.error,
       );
     }
   }
 
   void _warn(String msg) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 

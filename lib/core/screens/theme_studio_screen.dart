@@ -9,6 +9,7 @@ import '../theme/theme_profile_derivation.dart';
 import '../theme/theme_profile_store.dart';
 import '../theme/theme_profile_validator.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/theme_color_picker.dart';
 
@@ -332,7 +333,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }

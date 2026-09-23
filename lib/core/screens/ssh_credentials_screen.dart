@@ -12,6 +12,7 @@ import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 
@@ -92,7 +93,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
 
   void _snack(String m) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(m)));
     }
   }
 

@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -173,10 +174,11 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
     // Copia en orden cronológico (el inverso del de pantalla).
     final text = visible.reversed.map((e) => e.raw.trimRight()).join('\n');
     Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(Strings.of(context).actLinesCopied(visible.length)),
       ),
+      kind: HermesNoticeKind.success,
     );
   }
 
@@ -417,8 +419,9 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
           color: _levelColor(visible[i].level, colors),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: visible[i].raw));
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(content: Text(Strings.of(context).actLineCopied)),
+              kind: HermesNoticeKind.success,
             );
           },
         ),

@@ -2,12 +2,11 @@
 
 ## Current status
 
-`1.2.11` is the source-current publication candidate. Its final signed
-distribution artifacts remain pending until the independent emulator and
-Desktop release gates close. Any QA profile build is for internal validation
-only. `1.2.10` is the latest release published through GitHub
-Releases/Obtainium; verify Google Play's displayed version in the listing before
-assuming channel parity.
+`1.2.12` is the source-current publication candidate. Its final signed
+distribution artifacts remain pending until the release gates close. Any QA
+profile build is for internal validation only. `1.2.11` is the latest release
+published through GitHub Releases/Obtainium; verify Google Play's displayed
+version in the listing before assuming channel parity.
 
 Do not install or share a `qa`, `debug`, or `profile` APK outside the internal
 validation flow. Those builds use different guarantees and, in the QA flavor,

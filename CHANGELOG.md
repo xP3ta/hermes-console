@@ -3,6 +3,216 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.12 (9320) — 2026-09-23
+
+Reliability and long-session release. Hermes kept working when Console was
+closed, stopped or lost its connection; what failed was what Console showed
+and what its controls did afterwards. This version follows Hermes Desktop's own
+behaviour for Stop, editing, queueing and reconnecting instead of a bespoke
+one, and it was checked on a real Android device and emulator against a live
+Hermes backend.
+
+### Stop, edit and queue (Desktop parity)
+- Stop always reaches the server, like Desktop: it is no longer blocked by a
+  local ownership check or by a failed disk write, it settles from the
+  gateway's real terminal signal, and it escalates within a bounded eight
+  seconds instead of hanging on "Stopping…".
+- Stop is available whenever Hermes is busy for any reason — a running turn, a
+  background process, a subagent, a loop or work started elsewhere — from the
+  chat composer and from the working rows on Home and in the list. It also
+  stops the background processes, refreshes their state right away, and a
+  stopped turn now says "Stopped" instead of "Completed". A session that was
+  left running from an earlier auto-continue shows a one-tap "Stop this
+  session" banner.
+- Sending right after Stop interrupts first (Desktop's three-second window).
+- Editing a message resolves the row by content like Desktop, sends the row
+  ids the gateway needs so consecutive edits work, restores the transcript
+  cleanly if an edit fails, and never leaves an orphan bubble.
+- Queue and "force": a redirect the backend declines because the turn had just
+  finished is no longer reported as a failure — the message simply stays
+  queued, like Desktop; drained messages are flagged as queued; "Steer now" is
+  hidden where the connection cannot steer.
+
+### Reconnecting and network loss
+- After losing the network mid-turn the chat now recovers on its own: retries
+  back off with full jitter up to fifteen seconds, wake up as soon as Android
+  reports the network is back or the app returns to the foreground, mint a
+  fresh gateway ticket on every attempt, treat only a confirmed sign-in
+  failure as final, and adopt the finished answer from the stored transcript
+  when the turn ended while the app was offline. While the connection is down
+  the chat says so calmly instead of claiming the model is thinking, and
+  announces "Reconnected" once.
+- The conversation lists refresh from gateway events with one slow safety
+  poll, and the chat's own background polls are event-driven with adaptive
+  backstops, like Desktop. Reconnect backoff only resets after a stable
+  connection and replayed events are not applied twice.
+- Approvals, clarifying questions, sudo and secret prompts work again: Console
+  now tells the gateway it can answer server requests (#42).
+
+### Chat
+- One assistant bubble per turn, with a single floating activity pill above
+  the composer for whatever is live (current action, task progress, a timer)
+  that expands in place into a compact, scrollable live panel: tasks with
+  animated checks (a finished task keeps its check on screen for a moment
+  instead of vanishing instantly), the current step, a "Done" list with
+  durations, and background work, subagents and loops each keeping their own
+  controls. The bubble itself keeps only a muted line under the assistant
+  name, worded and timed like Hermes Desktop's "Thought for 40s" / "Thought
+  briefly" / "Thought" ("Pensó durante 40s" / "Pensó un momento" / "Pensó" in
+  Spanish; the measured time while you watch it live, no time once reopened),
+  expandable to the same detail;
+  internal bridge-only steps (tool routing plumbing) are never shown, and a
+  reply that only reasoned or only ran bridge steps no longer leaves an empty
+  second bubble.
+- The assistant header shows the companion avatar plain, without a loading
+  ring, next to its name in the theme's accent colour; the line under the name
+  is that turn's collapsed status, not the model name (already shown at the
+  top of the chat).
+- Editing your own message happens in the bubble itself — tap the pencil and
+  the text becomes an editable field in place, no modal sheet — and the field
+  now opens with room for several lines from the start instead of a single
+  cramped line.
+- Compacting a conversation, automatic or manual, shows one small floating
+  pill above the composer (never overlapping the composer, the turn's own
+  activity pill or the last message): a ring, "Compactando", the real facts the
+  backend reports (message/token counts) and a real timer — never an invented
+  percentage, since the backend does not report compaction progress. When it
+  finishes the same pill turns into "Compactado · 38 → 34 mensajes" (or
+  "Nada que compactar · N mensajes" when the server had nothing to do) and
+  fades. Like Hermes Desktop it is driven by the server's own events while the
+  app is alive, and the composer is locked only during that live compaction.
+- If the app is closed or loses its connection while Hermes is compacting,
+  Console never guesses and never locks you out: when you reopen the chat it
+  reads what the gateway recorded while you were away and shows the pill again
+  (with the real elapsed time) only if the server is still compressing, then a
+  single "Compactado" result; if it cannot tell, it shows nothing and leaves the
+  composer free. Sending while the server is compacting keeps your text and
+  says Hermes is busy.
+- A conversation whose session no longer exists on the server opens as a
+  fresh chat with a small notice instead of a red error card, and a compacted
+  transcript shows the server's own display text instead of the internal
+  "prior context" marker. An edit whose target was compressed away is no longer
+  retried pointlessly. The slash-command palette closes when the drawer opens or
+  the composer loses focus instead of floating over the drawer.
+- In the conversation lists (Conversaciones and Inicio) the status line under
+  a chat's title now has its own colour and weight instead of the title's:
+  green for "working / using tools", a calm secondary tone for compacting,
+  amber when it needs you, red for a failure and muted when idle — all meeting
+  WCAG AA contrast on every theme.
+- Stop's confirmation is a small, discreet single line above the composer that
+  clears itself a few seconds after a clean stop and disappears the moment a
+  new turn starts; it only stays on screen while something still needs your
+  attention (a retry, background work that would not confirm as stopped).
+- Stop now also reaches active subagents, not only the foreground turn and
+  background processes, and it only reports success once the roster actually
+  confirms nothing is left running; if something could not be confirmed
+  stopped it says so instead of claiming otherwise. Stopping one session can
+  no longer affect another session's background processes on a shared
+  connection.
+- The "scroll up" arrow only appears when there is a real signal that more
+  history remains to load, never as a generic "scroll to the top of what's
+  already loaded" shortcut based on scroll position; the "scroll to bottom"
+  arrow only appears when the conversation actually overflows the screen,
+  live or after reopening a chat — a short conversation that fits no longer
+  shows a spurious arrow either way.
+- The text file viewer can actually be scrolled: a text-selection widget was
+  claiming every vertical drag before it reached the scroll view.
+- The compact context-usage chip never shows cumulative session tokens where
+  the occupancy percentage belongs; when the context window size isn't known
+  yet it shows a neutral placeholder, and the same rounding is used everywhere
+  a token count is shown so it can't disagree with itself near a
+  thousand/million boundary. Its accessible label is restored for screen
+  readers.
+- Files and media Hermes delivers (`MEDIA:`) load by themselves and open in
+  in-app viewers: images (zoom), video, PDF (first-page preview and page
+  viewer rendered natively on Android), text files (inline preview and a
+  selectable viewer), audio, plus Save and Share. Only paths Hermes announces
+  are fetched, the server stays the authority, large files ask for a tap and
+  previews are cached on disk.
+- Background work stays visible: running subagents and processes, watch
+  patterns and hits, loops, heartbeats and goals show as one compact pill in
+  the chat and as a "Background · N" chip on Home and in the list, and clear
+  only when the backend confirms they are gone. Home and the list keep showing
+  what Hermes is working on after the app was closed completely.
+- Reopening the app mid-turn no longer duplicates your message or sticks on
+  "Connecting"; a turn Hermes starts by itself appears as its own message and
+  no longer overwrites the previous one.
+- Transient messages float at the top in one calm style (no coloured side
+  bar) and never cover the composer; the floating activity pills reserve their
+  own space; the "scroll up" arrow appears only when it has something to
+  reach; internal rows (personality switch, auto-continue, process completion)
+  no longer appear as your messages; conversation previews show readable text
+  instead of raw tool-call JSON.
+- Silence no longer fails a turn: a long foreground tool no longer produces a
+  false "Modelo sin respuesta" (a hint appears after five minutes).
+
+### Security
+- The generated-file/`MEDIA:` denylist that keeps Console from ever fetching
+  or rendering a sensitive path is substantially wider (SSH keys and
+  `.ssh`/`.gnupg`/`.aws`/`.kube`/`.docker`/`.azure`/`.gcloud` directories,
+  `.netrc`, shell history files, more certificate/key extensions, `/proc`,
+  `/sys`, `/dev`), with a second check right before a text file is ever shown
+  inline. Installer/executable files (`.apk`, `.exe`, `.msi`, `.dmg`, `.sh`)
+  can no longer auto-load, preview, or be opened through the external-open
+  path. This is defense in depth on the client for gateway configurations that
+  do not confine file access to a workspace folder.
+- Downloading an attachment can no longer be redirected to another host with
+  Console's session credentials attached; an incoming share from another app
+  is only accepted from a `content://` source, never a raw file path.
+- A concurrent download of two attachments failing to authenticate could,
+  under a burst, retry without bound; a single failed authentication now
+  always resolves within one retry.
+- The public release-evidence package no longer includes the maintainer-only
+  build manifest, which carried this machine's local toolchain paths; the
+  packaging gate now also scans every shipped file for a personal path or
+  private IP before release.
+
+### Fixes from GitHub issues
+- #42 approval and prompt requests were withdrawn by the gateway (see above).
+- #39 voice transcription became unreliable from the second recording: the
+  speech socket is now closed cleanly before the next recording starts.
+- #37 the composer draft: covered by regression tests for normal, new, Bot
+  Chat and room conversations, restarts and quick exits; drafts are shown on
+  the list row.
+
+### Correctness and performance
+- An edit that got interrupted mid-flight by a Stop or by another turn
+  starting could truncate the visible transcript while quietly reporting the
+  edit as sent; it now rolls back and shows the failure like any other failed
+  edit.
+- A short local network failure while checking for older history no longer
+  permanently pins "more history available"; it now retries transparently.
+- The activity panel no longer recomputes on every keystroke, scroll frame or
+  unrelated screen update — the guard that was meant to skip that work now
+  actually does.
+- Four new interface strings that shipped in English by mistake are now in
+  Spanish; a few other small text and one-off state inconsistencies around
+  Stop and the compaction indicator are fixed.
+
+### Other
+- The GitHub-release (`full`) app icon now has the same cream launcher
+  background as the QA/Play builds; it previously inherited an unrelated dark
+  background because that flavor never had its own icon override.
+- Long history stays reachable after a compaction and the local transcript
+  cache keeps the newest 1,000 messages (2 MiB), telling you when it is
+  truncated.
+- Sharing a link to Console pastes only the link; an empty shared session no
+  longer fails. Bot Chat resumes its stored conversation and the "no companion"
+  choice persists.
+- The app now declares the normal `ACCESS_NETWORK_STATE` permission so it can
+  reconnect the moment Android reports the network is back.
+
+### Known limits
+- Notifications for work finishing on another device (for example a tablet)
+  are not included: Hermes routes those events only to the surface that owns
+  the session.
+- The gateway does not yet give exactly-once certainty when the connection
+  drops while a message is being submitted, and a turn that produces no
+  activity for ten minutes while detached can be interrupted by the server.
+- Console and Hermes Desktop still cannot continue the same live turn across
+  clients (cross-process lease on the server), and force-stopping the app from
+  Android settings stops all delivery until it is opened again.
+
 ## 1.2.11 (9009) — 2026-09-19
 
 - Bot Mode reaches parity with Hermes Desktop's bundled plugin, using only the

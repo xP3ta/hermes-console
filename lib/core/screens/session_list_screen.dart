@@ -9,6 +9,7 @@ import '../../main.dart';
 import '../models/session_category.dart';
 import '../models/desktop_active_session.dart';
 import '../models/desktop_control_center.dart';
+import '../models/session_activity.dart';
 import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
@@ -21,26 +22,29 @@ import '../services/session_archive.dart';
 import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../services/tui_gateway_client.dart';
+import '../utils/home_recent_sessions.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_title_editor_route.dart';
+import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
 import 'mission_control_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/session_status_tone.dart';
 
-@visibleForTesting
 const sessionLibraryRefreshGap = Duration(seconds: 10);
+const sessionLibrarySafetyRefreshInterval = Duration(seconds: 60);
 
-@visibleForTesting
 bool isSessionLibraryRefreshEvent(TuiGatewayEvent event) =>
     event.type == 'sessions.changed';
 
@@ -129,6 +133,7 @@ class SessionListScreen extends StatefulWidget {
   final GlobalActivityAggregate? globalActivityOverride;
   final Future<DesktopActiveSessionList> Function()? activeSessionListLoader;
   final Future<void> Function()? eventReconnectOverride;
+  final double Function()? eventReconnectRandomOverride;
   const SessionListScreen({
     required this.connection,
     required this.connManager,
@@ -139,6 +144,7 @@ class SessionListScreen extends StatefulWidget {
     @visibleForTesting this.globalActivityOverride,
     @visibleForTesting this.activeSessionListLoader,
     @visibleForTesting this.eventReconnectOverride,
+    @visibleForTesting this.eventReconnectRandomOverride,
     super.key,
   });
 
@@ -157,8 +163,10 @@ class _SessionListScreenState extends State<SessionListScreen>
   StreamSubscription<ChatDraftChange>? _draftSubscription;
   Timer? _eventRefreshTimer;
   Timer? _eventReconnectTimer;
+  Timer? _eventStableTimer;
+  Timer? _sessionSafetyTimer;
   Timer? _staleExpiryTimer;
-  int _eventReconnectAttempt = 0;
+  late final GatewayReconnectBackoff _eventReconnectBackoff;
   bool _recoveringTransport = false;
   DateTime? _lastEventRefreshAt;
   int _sessionChangeEpoch = 0;
@@ -238,6 +246,15 @@ class _SessionListScreenState extends State<SessionListScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _eventReconnectBackoff = GatewayReconnectBackoff(
+      random: widget.eventReconnectRandomOverride,
+    );
+    _sessionSafetyTimer = Timer.periodic(
+      sessionLibrarySafetyRefreshInterval,
+      (_) {
+        if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
+      },
+    );
     _activeChats = widget.activeChatsOverride;
     _globalActivity = widget.globalActivityOverride;
     _client =
@@ -307,6 +324,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (mounted) setState(() {});
   }
 
+  bool get _libraryRefreshAllowed =>
+      mounted && _foreground && _route?.isCurrent != false;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
@@ -316,6 +336,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     } else {
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
+      _eventStableTimer?.cancel();
+      _eventStableTimer = null;
       _staleExpiryTimer?.cancel();
       _staleExpiryTimer = null;
       if (state == AppLifecycleState.paused ||
@@ -393,6 +415,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     _searchTimer?.cancel();
     _eventRefreshTimer?.cancel();
     _eventReconnectTimer?.cancel();
+    _eventStableTimer?.cancel();
+    _sessionSafetyTimer?.cancel();
     _staleExpiryTimer?.cancel();
     unawaited(_eventSubscription?.cancel());
     unawaited(_historyCleanupSubscription?.cancel());
@@ -411,6 +435,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     _eventSubscription = stream?.listen(
       _onSessionLibraryEvent,
       onError: (_) {
+        _eventStableTimer?.cancel();
+        _eventStableTimer = null;
         // Preserve the last authoritative projection while reconnect/refresh
         // rebuilds the roster cut; never flash a false idle state.
         _globalActivity?.beginRecovery(
@@ -436,9 +462,17 @@ class _SessionListScreenState extends State<SessionListScreen>
       } else {
         await client!.connect();
       }
-      _eventReconnectAttempt = 0;
-      await _refreshRemoteActivity();
+      _eventStableTimer?.cancel();
+      _eventStableTimer = Timer(GatewayReconnectBackoff.stableInterval, () {
+        _eventStableTimer = null;
+        if (mounted && _foreground) _eventReconnectBackoff.markHealthy();
+      });
+      if (await _refreshRemoteActivity()) {
+        _eventReconnectBackoff.markHealthy();
+      }
     } catch (_) {
+      _eventStableTimer?.cancel();
+      _eventStableTimer = null;
       _globalActivity?.beginRecovery(
         widget.connection.id,
         Session.profileOwner(_libraryQuery.profile),
@@ -453,11 +487,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (_ownedActivityClient == null && widget.eventReconnectOverride == null) {
       return;
     }
-    final exponent = _eventReconnectAttempt.clamp(0, 5);
     final delay = immediate
         ? Duration.zero
-        : Duration(milliseconds: 250 * (1 << exponent));
-    _eventReconnectAttempt += 1;
+        : _eventReconnectBackoff.nextDelay();
     _eventReconnectTimer = Timer(delay, () {
       _eventReconnectTimer = null;
       if (mounted && _foreground) unawaited(_connectEventClient());
@@ -507,14 +539,14 @@ class _SessionListScreenState extends State<SessionListScreen>
     });
   }
 
-  Future<void> _refreshRemoteActivity() async {
+  Future<bool> _refreshRemoteActivity() async {
     final aggregate = _globalActivity;
     final loader =
         widget.activeSessionListLoader ??
         (_ownedActivityClient == null
             ? null
             : () => _ownedActivityClient!.listActiveSessions());
-    if (aggregate == null || loader == null) return;
+    if (aggregate == null || loader == null) return false;
     final profile = Session.profileOwner(_libraryQuery.profile);
     final generation = aggregate.beginRosterRequest(
       widget.connection.id,
@@ -522,7 +554,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     );
     try {
       final roster = await loader();
-      if (!mounted) return;
+      if (!mounted) return false;
       aggregate.applyRoster(
         connectionId: widget.connection.id,
         profile: profile,
@@ -570,9 +602,11 @@ class _SessionListScreenState extends State<SessionListScreen>
           );
         }
       }
+      return true;
     } catch (_) {
       aggregate.markTransportStale(widget.connection.id, profile);
       _scheduleStaleExpiry();
+      return false;
     }
   }
 
@@ -751,26 +785,26 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
   }
 
-  bool _isLocalActive(Session session) {
+  ActiveChat? _localChatForSession(Session session) {
     final activeChats = _activeChats;
-    if (activeChats == null) return false;
-    return activeChats.isActive(
-          widget.connection.id,
-          session.id,
-          profile: session.profile,
-        ) ||
-        activeChats.isActive(
-          widget.connection.id,
-          session.logicalId,
-          profile: session.profile,
-        ) ||
-        (session.parentSessionId != null &&
-            activeChats.isActive(
-              widget.connection.id,
-              session.parentSessionId!,
-              profile: session.profile,
-            ));
+    if (activeChats == null) return null;
+    for (final id in <String>{
+      session.id,
+      session.logicalId,
+      ?session.parentSessionId,
+    }) {
+      final chat = activeChats.of(
+        widget.connection.id,
+        id,
+        profile: session.profile,
+      );
+      if (chat != null) return chat;
+    }
+    return null;
   }
+
+  bool _isLocalActive(Session session) =>
+      _localChatForSession(session)?.sessionActivity.active == true;
 
   GlobalActivity? _globalForSession(Session session) {
     final aggregate = _globalActivity;
@@ -1007,7 +1041,7 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   void _showArchiveResult(bool archived, {required bool localOnly}) {
     final strings = Strings.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 3),
         content: Text(
@@ -1032,8 +1066,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (trimmed == null) return;
     if (trimmed.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).slRenameEmpty)),
+        kind: HermesNoticeKind.warning,
       );
       return;
     }
@@ -1041,9 +1076,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     await _archive!.setSessionTitle(session, trimmed);
     if (!mounted) return;
     setState(() {});
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(Strings.of(context).slRenamed)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).slRenamed)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   Future<void> _toggleArchive(Session session) async {
@@ -1108,8 +1144,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     });
     await _fetchSessions();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).slArchiveSyncFailed)),
+      kind: HermesNoticeKind.error,
     );
   }
 
@@ -1248,23 +1285,25 @@ class _SessionListScreenState extends State<SessionListScreen>
         return false;
       case LinkedSessionDeleteStatus.cronDeleteFailed:
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 sessionDeletionFailureMessage(Strings.of(context), result),
               ),
             ),
+            kind: HermesNoticeKind.error,
           );
         }
         return false;
       case LinkedSessionDeleteStatus.sessionDeleteFailed:
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 sessionDeletionFailureMessage(Strings.of(context), result),
               ),
             ),
+            kind: HermesNoticeKind.error,
           );
         }
         return false;
@@ -1274,7 +1313,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   /// El servidor respondió OK pero no borró la sesión (suele ser una sesión de
   /// un canal activo que se recrea). Ofrece ocultarla localmente — honesto.
   void _offerHideAfterFailedDelete(Session session, {String? message}) {
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     final s = Strings.of(context);
     messenger.showSnackBar(
       SnackBar(
@@ -1325,6 +1364,41 @@ class _SessionListScreenState extends State<SessionListScreen>
       startedAt: DateTime.now().millisecondsSinceEpoch.toDouble() / 1000,
     );
     _openChat(session);
+  }
+
+  Future<void> _stopSession(Session session) async {
+    final activeChats = _activeChats;
+    if (activeChats == null) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+        kind: HermesNoticeKind.error,
+      );
+      return;
+    }
+    try {
+      final result = await activeChats.stopSessionWork(
+        connection: widget.connection,
+        session: session,
+      );
+      if (!result.allBackgroundWorkStopped && mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Strings.of(
+                context,
+              ).chaBackgroundWorkRemaining(result.remainingBackgroundTasks),
+            ),
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+        kind: HermesNoticeKind.error,
+      );
+    }
   }
 
   Future<void> _openChat(Session session) async {
@@ -1488,8 +1562,9 @@ class _SessionListScreenState extends State<SessionListScreen>
               onTap: () {
                 Clipboard.setData(ClipboardData(text: session.id));
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
+                HermesNotice.of(context).showSnackBar(
                   SnackBar(content: Text(Strings.of(context).slIdCopied)),
+                  kind: HermesNoticeKind.success,
                 );
               },
             ),
@@ -1864,6 +1939,21 @@ class _SessionListScreenState extends State<SessionListScreen>
   Widget _sessionRow(Session session, Strings s, HermesThemeColors colors) {
     final archived = _isArchived(session);
     final pinned = _isPinned(session);
+    final localActivity = _localChatForSession(session)?.sessionActivity;
+    final streamActive =
+        localActivity?.active == true ||
+        (_globalActivity?.isActive(
+              widget.connection.id,
+              Session.profileOwner(session.profile),
+              session.id,
+            ) ??
+            false) ||
+        (_globalActivity?.isActive(
+              widget.connection.id,
+              Session.profileOwner(session.profile),
+              session.logicalId,
+            ) ??
+            false);
     return Dismissible(
       key: ValueKey('${session.id}-$archived'),
       direction: DismissDirection.horizontal,
@@ -1892,20 +1982,11 @@ class _SessionListScreenState extends State<SessionListScreen>
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
         activity: _globalForSession(session),
-        streamActive:
-            _isLocalActive(session) ||
-            (_globalActivity?.isActive(
-                  widget.connection.id,
-                  Session.profileOwner(session.profile),
-                  session.id,
-                ) ??
-                false) ||
-            (_globalActivity?.isActive(
-                  widget.connection.id,
-                  Session.profileOwner(session.profile),
-                  session.logicalId,
-                ) ??
-                false),
+        localActivity: localActivity,
+        // Una compactación enciende la fila (punto + "Compactando") pero no
+        // ofrece "Detener": no es un turno que se pueda parar.
+        streamActive: streamActive || localActivity?.compacting == true,
+        onStop: streamActive ? () => _stopSession(session) : null,
         onTap: () => _openChat(session),
         onLongPress: () => _showSessionContextMenu(session),
       ),
@@ -2203,7 +2284,7 @@ class _SwipeAffordance extends StatelessWidget {
 class _LiveDot extends StatefulWidget {
   final Color color;
 
-  const _LiveDot({required this.color});
+  const _LiveDot({required this.color, super.key});
 
   @override
   State<_LiveDot> createState() => _LiveDotState();
@@ -2524,6 +2605,8 @@ class _SessionTile extends StatelessWidget {
   /// respuesta/ejecución sigue aunque saliste. Cuenta como "viva".
   final bool streamActive;
   final GlobalActivity? activity;
+  final SessionActivity? localActivity;
+  final Future<void> Function()? onStop;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -2534,26 +2617,36 @@ class _SessionTile extends StatelessWidget {
     this.pinned = false,
     this.streamActive = false,
     this.activity,
+    this.localActivity,
+    this.onStop,
     required this.onTap,
     required this.onLongPress,
   });
 
-  /// Color del estado vivo: gris cuando el último estado conocido está
-  /// caducado, ámbar cuando la conversación te necesita, verde cuando corre.
-  Color _liveTone(HermesThemeColors colors) => activity?.stale == true
-      ? colors.textDisabled
-      : activity?.requiresAction == true
-      ? colors.warning
-      : colors.success;
+  /// Semantic state of the live row: the dot and the status line share its
+  /// colour (green working, calm tint compacting, amber waiting, error
+  /// failed, muted stale/idle), so the status never reads like the title.
+  SessionStatusTone get _statusTone {
+    final local = localActivity;
+    if (local != null && local.showsActivity) {
+      return sessionStatusToneFor(local.kind, stale: local.stale);
+    }
+    final global = activity;
+    if (global != null) return globalStatusToneFor(global);
+    return SessionStatusTone.working;
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    final preview = session.cleanPreview.trim();
-    final activityLabel = activity == null
-        ? strings.slRunningBadge
-        : _globalActivityLabel(strings, activity!);
+    final preview =
+        sessionListPreview(session) ?? strings.sessionPreviewUnavailable;
+    final activityLabel = localActivity?.showsActivity == true
+        ? _sessionActivityLabel(strings, localActivity!)
+        : activity != null
+        ? _globalActivityLabel(strings, activity!)
+        : strings.slRunningBadge;
     // El borrador se cuenta como texto descriptivo hilado en la línea de
     // vista previa ("Borrador · Resume los cambios…"), no como una píldora
     // de color aparte: es lo que pide el mockup y lo que evita las "cajitas".
@@ -2561,7 +2654,7 @@ class _SessionTile extends StatelessWidget {
     final previewText = session.hasLocalDraft
         ? <String>[draftLabel, if (preview.isNotEmpty) preview].join(' · ')
         : preview;
-    final liveTone = _liveTone(colors);
+    final liveTone = sessionStatusColor(colors, _statusTone);
 
     return InkWell(
       onTap: onTap,
@@ -2582,7 +2675,10 @@ class _SessionTile extends StatelessWidget {
                     Row(
                       children: [
                         if (streamActive) ...[
-                          _LiveDot(color: liveTone),
+                          _LiveDot(
+                            key: ValueKey('session-live-dot-${session.id}'),
+                            color: liveTone,
+                          ),
                           const SizedBox(width: 8),
                         ],
                         Flexible(
@@ -2651,16 +2747,18 @@ class _SessionTile extends StatelessWidget {
                           container: true,
                           excludeSemantics: true,
                           label: activityLabel,
+                          // Smaller and lighter than the title, in the state's
+                          // own colour (it used to be the title's white).
                           child: Text(
                             activityLabel,
                             key: ValueKey('session-running-${session.id}'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 12.5,
                               height: 1.25,
                               fontWeight: FontWeight.w500,
-                              color: colors.textPrimary,
+                              color: liveTone,
                             ),
                           ),
                         ),
@@ -2685,6 +2783,10 @@ class _SessionTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onStop != null) ...[
+                const SizedBox(width: 8),
+                SessionRowStopControl(onStop: onStop!),
+              ],
               const SizedBox(width: 12),
               Text(
                 formattedTime,
@@ -2706,6 +2808,21 @@ String _sentenceCase(String value) =>
     value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
 
 /// Separador "·" del pie del tile (modelo · tiempo).
+
+String _sessionActivityLabel(Strings strings, SessionActivity activity) =>
+    switch (activity.kind) {
+      SessionActivityKind.preparing => strings.slActivityPreparing,
+      SessionActivityKind.generating => strings.slActivityGenerating,
+      SessionActivityKind.usingTools => strings.slActivityUsingTools,
+      SessionActivityKind.responding => strings.chaPipelineStreaming,
+      SessionActivityKind.waitingForUser => strings.slActivityWaiting,
+      SessionActivityKind.compacting => strings.slActivityCompacting,
+      SessionActivityKind.delegated => strings.slActivityDelegated,
+      SessionActivityKind.backgroundProcess => activity.backgroundItemCount > 0
+          ? strings.chaBackgroundActivityCount(activity.backgroundItemCount)
+          : strings.slActivityBackground,
+      SessionActivityKind.idle => strings.slActivityUnknown,
+    };
 
 String _globalActivityLabel(Strings strings, GlobalActivity activity) {
   final phase = switch (activity.phase) {

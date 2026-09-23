@@ -20,6 +20,7 @@ Map<String, dynamic> row(
   bool steer = false,
   Object? toolCalls,
   String? callId,
+  String? toolName,
 }) => <String, dynamic>{
   'message_id': id,
   'role': role,
@@ -28,6 +29,7 @@ Map<String, dynamic> row(
   if (steer) '_steer': true,
   'tool_calls': ?toolCalls,
   'tool_call_id': ?callId,
+  'name': ?toolName,
 };
 
 DesktopSessionProjection project({
@@ -78,6 +80,16 @@ int userCount(DesktopSessionProjection projection, String text) => projection
 int roleCount(DesktopSessionProjection projection, String role) => projection
     .messagesNewestFirst
     .where((message) => message['role'] == role)
+    .length;
+
+int toolActivityCount(DesktopSessionProjection projection) => projection
+    .messagesNewestFirst
+    .expand(
+      (message) => normalizeAssistantActivityTrace(
+        message[assistantActivityTraceKey],
+      ),
+    )
+    .where((activity) => activity['kind'] == 'tool')
     .length;
 
 Iterable<Map<String, dynamic>> syntheticUsers(
@@ -148,7 +160,7 @@ void main() {
 
       expect(userCount(result, 'same prompt'), 1);
       expect(syntheticUsers(result), isEmpty);
-      expect(roleCount(result, 'tool'), 1);
+      expect(toolActivityCount(result), 1);
     });
 
     test('conflicting tool linkage cannot close the current durable turn', () {
@@ -168,7 +180,7 @@ void main() {
 
       expect(userCount(result, 'same prompt'), 1);
       expect(syntheticUsers(result), isEmpty);
-      expect(roleCount(result, 'tool'), 1);
+      expect(toolActivityCount(result), 1);
     });
 
     test('assistant error closes the historical turn', () {
@@ -422,16 +434,16 @@ void main() {
           row('old-answer', 'assistant', 'done', timestamp: 90),
           row('current-user', 'user', 'same prompt'),
           row('local-a', 'user', 'correction A', steer: true),
-          row('tool-a', 'tool', 'tool A'),
+          row('tool-a', 'tool', 'tool A', toolName: 'probe-a'),
           row('local-b', 'user', 'correction B', steer: true),
-          row('tool-b', 'tool', 'tool B'),
+          row('tool-b', 'tool', 'tool B', toolName: 'probe-b'),
         ],
       );
 
       expect(userCount(result, 'same prompt'), 1);
       expect(userCount(result, 'correction A'), 1);
       expect(userCount(result, 'correction B'), 1);
-      expect(roleCount(result, 'tool'), 2);
+      expect(toolActivityCount(result), 2);
     });
 
     test('partial local correction prefix emits only the missing suffix', () {
@@ -573,13 +585,13 @@ void main() {
           row('old-answer', 'assistant', 'done', timestamp: 90),
           row('current-user', 'user', 'same prompt'),
           row('local-correction', 'user', 'redirect now', steer: true),
-          row('tool-result', 'tool', 'result'),
+          row('tool-result', 'tool', 'result', toolName: 'probe'),
         ],
       );
 
       expect(userCount(result, 'same prompt'), 1);
       expect(userCount(result, 'redirect now'), 1);
-      expect(roleCount(result, 'tool'), 1);
+      expect(toolActivityCount(result), 1);
     });
 
     test('recoverable error keeps one live correction and one error', () {

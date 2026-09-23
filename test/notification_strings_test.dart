@@ -48,6 +48,45 @@ void main() {
       expect(en.voiceEndConversation, 'End conversation');
     });
 
+    test('todos los canales tienen nombre y descripción localizados', () {
+      const es = NotifL10n(true);
+      const en = NotifL10n(false);
+      // Transferencias y operaciones locales ya no son literales en inglés
+      // fijos: siguen el idioma de la app como el resto de canales.
+      expect(es.chTransfers, 'Transferencias');
+      expect(en.chTransfers, 'Transfers');
+      expect(es.chOperations, 'Operaciones locales');
+      expect(en.chOperations, 'Local operations');
+      for (final t in [es, en]) {
+        for (final text in [
+          t.chApprovals,
+          t.chApprovalsDesc,
+          t.chReplies,
+          t.chRepliesDesc,
+          t.chRuns,
+          t.chRunsDesc,
+          t.chTransfers,
+          t.chTransfersDesc,
+          t.chOperations,
+          t.chOperationsDesc,
+          t.chVoice,
+          t.chVoiceDesc,
+          t.bgChannel,
+          t.bgChannelDesc,
+        ]) {
+          expect(text.trim(), isNotEmpty);
+        }
+      }
+      expect(es.chOperationsDesc, isNot(en.chOperationsDesc));
+    });
+
+    test('el resumen del grupo cuenta los avisos activos', () {
+      const es = NotifL10n(true);
+      const en = NotifL10n(false);
+      expect(es.groupSummaryCount(3), '3 avisos recientes');
+      expect(en.groupSummaryCount(3), '3 recent alerts');
+    });
+
     test('replyTitle nombra la sesión cuando se conoce', () {
       const es = NotifL10n(true);
       const en = NotifL10n(false);

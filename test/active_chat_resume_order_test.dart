@@ -7,7 +7,7 @@ import 'package:hermes_android/core/screens/foreground_conversation_reader.dart'
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 SavedConnection connection(String id) => SavedConnection(
   id: id,
@@ -41,7 +41,7 @@ void main() {
     'resume reserva el chat visible antes de esperar a otro chat lento',
     () async {
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(service.dispose);
 

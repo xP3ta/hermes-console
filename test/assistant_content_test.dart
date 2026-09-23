@@ -346,16 +346,28 @@ void main() {
       );
     });
 
-    test('extrae reasoning y reasoning_details estilo OpenRouter', () {
+    test('usa precedencia Desktop y solo reasoning_details string', () {
       expect(
         structuredReasoningText(const {
           'reasoning': 'resumen',
+          'reasoning_content': 'fallback',
+          'reasoning_details': 'otro fallback',
+        }),
+        'resumen',
+      );
+      expect(
+        structuredReasoningText(const {
           'reasoning_details': [
-            {'type': 'reasoning.text', 'text': 'detalle'},
-            {'type': 'reasoning.summary', 'summary': 'sumario'},
+            {'type': 'reasoning.text', 'text': 'privado'},
           ],
         }),
-        'resumen\n\ndetalle\n\nsumario',
+        isEmpty,
+      );
+      expect(
+        structuredReasoningText(const {
+          'reasoning_details': 'detalle durable',
+        }),
+        'detalle durable',
       );
     });
 

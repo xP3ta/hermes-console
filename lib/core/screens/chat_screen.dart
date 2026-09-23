@@ -18,11 +18,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
     show
         BoxParentData,
+        ChildLayoutHelper,
+        ChildLayouter,
         MatrixUtils,
         RenderAbstractViewport,
         RenderBox,
         RenderObject,
         RenderProxyBox,
+        RenderShiftedBox,
         RenderSliverMultiBoxAdaptor,
         ScrollCacheExtent,
         ScrollDirection;
@@ -45,9 +48,11 @@ import '../companion/render/companion_message_presence.dart';
 import '../companion/render/companion_status_indicator.dart';
 import '../companion/models/companion_presence_level.dart';
 import '../config/flavor.dart';
+import '../models/activity_snapshot.dart';
 import '../models/attachment_draft.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_preferences.dart';
+import '../models/compaction_progress.dart';
 import '../models/command_descriptor.dart';
 import '../models/desktop_compression_result.dart';
 import '../models/desktop_context_breakdown.dart';
@@ -57,12 +62,15 @@ import '../models/desktop_session_snapshot.dart';
 import '../models/generated_artifact.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
+import '../models/session_activity.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
 import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
+import '../services/compaction_tracker.dart';
+import '../services/session_reconciler.dart';
 import '../services/artifact_export_service.dart';
 import '../services/attachment_uploader.dart';
 import '../services/command_risk.dart';
@@ -73,6 +81,7 @@ import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/notifications/notification_service.dart';
+import '../services/recent_interrupt_guard.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/generated_image_service.dart';
@@ -85,7 +94,11 @@ import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
-    show TuiGatewayClient, TuiGatewayRpcError;
+    show DesktopRedirectDisposition, TuiGatewayClient, TuiGatewayRpcError;
+import '../widgets/chat_connection_recovery_row.dart';
+import '../widgets/hermes_notice.dart';
+import '../widgets/inline_message_editor.dart';
+import '../widgets/stale_running_session_banner.dart';
 import 'foreground_conversation_reader.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/conversation/native_voice_session_configurator.dart';
@@ -127,6 +140,7 @@ import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import 'chat_render_projection.dart';
 import '../widgets/action_approval.dart';
+import '../widgets/agent_task_widgets.dart';
 import '../widgets/attachment_card.dart';
 import '../widgets/attachment_history_preview.dart';
 import '../widgets/attachment_source_sheet.dart';
@@ -141,6 +155,7 @@ import '../widgets/hermes_file_tree.dart';
 import '../widgets/hermes_bot_face.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_suggestions.dart';
+import '../widgets/message_avatar_header.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_spark_mascot.dart';
 import '../widgets/interactive_prompt_card.dart';
@@ -148,11 +163,12 @@ import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
-import '../widgets/turn_activity_pill.dart';
+import '../widgets/activity_panel.dart';
+import '../widgets/activity_task_linger.dart';
+import '../widgets/compaction_dock.dart';
 import '../widgets/platform_setup_commands.dart';
 import '../widgets/read_only.dart';
 import '../widgets/read_aloud_button.dart';
-import '../widgets/reasoning_block.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_artifacts_sheet.dart';
 import '../widgets/session_context_usage.dart';
@@ -1080,20 +1096,48 @@ class _ChatScreenState extends State<ChatScreen>
   late final LocalConversationLifecycle _localConversationLifecycle;
 
   bool _editingUserMessage = false;
+  Map<String, dynamic>? _editingUserMessageTarget;
+  double? _editingUserMessageWidth;
+  String? _editingUserMessageText;
+  int? _editingUserMessageOrdinal;
   String? _editingQueuedEntryId;
   bool _editingRewriteSubmitted = false;
   List<Map<String, dynamic>>? _editingMessagesSnapshot;
   ChatPipelineState? _editingPipelineSnapshot;
 
   /// Congela la proyección visual mientras el editor está abierto. El agente
-  /// puede avanzar en segundo plano, pero su respuesta no aparece detrás del
-  /// diálogo: Cancelar revela el progreso real y Guardar rebobina el turno.
+  /// puede avanzar en segundo plano, pero su respuesta no aparece mientras se
+  /// edita: Cancelar revela el progreso real y Guardar rebobina el turno.
   List<Map<String, dynamic>> get _messages =>
       _editingMessagesSnapshot ?? _chat.messages;
+  bool get _editingTranscriptChanged {
+    final before = _editingMessagesSnapshot;
+    if (before == null) return false;
+    final current = _chat.messages;
+    if (before.length != current.length) return true;
+    for (var index = 0; index < before.length; index++) {
+      if (before[index]['role'] != current[index]['role'] ||
+          before[index]['content'] != current[index]['content']) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _clearUserMessageEditingState() {
+    _editingUserMessage = false;
+    _editingUserMessageTarget = null;
+    _editingUserMessageWidth = null;
+    _editingUserMessageText = null;
+    _editingUserMessageOrdinal = null;
+    _editingRewriteSubmitted = false;
+    _editingMessagesSnapshot = null;
+    _editingPipelineSnapshot = null;
+  }
+
   ChatPipelineState get _pipelineState =>
       _editingPipelineSnapshot ?? _chat.state;
   set _pipelineState(ChatPipelineState v) => _chat.state = v;
-  List<ChatTraceEvent> get _trace => _chat.trace;
   String get _lastPrompt => _chat.lastPrompt;
 
   String? _error;
@@ -1120,8 +1164,27 @@ class _ChatScreenState extends State<ChatScreen>
   ForegroundConversationReader? _passiveConversationReader;
   bool _chatRouteVisible = false;
   late bool _appInForeground;
+  // Relative delays place the follow-up checks at +1.5s and +4s.
+  static const _postControlRepairDelays = [
+    Duration(milliseconds: 1500),
+    Duration(milliseconds: 2500),
+  ];
   Timer? _subagentPollTimer;
+  Timer? _subagentRepairDebounce;
+  Timer? _processControlRepairDebounce;
+  int _postControlRepairDelayIndex = -1;
   String? _subagentPollingRuntimeId;
+  bool _adaptiveSnapshotInFlight = false;
+  bool _adaptiveSnapshotQueued = false;
+  bool _queuedSubagentRefresh = false;
+  bool _queuedProcessRefresh = false;
+  bool _queuedControlRefresh = false;
+  int _adaptiveRefreshFailureIndex = 0;
+  int _seenAdaptiveEventRevision = 0;
+  int _seenAdaptiveFullRefreshRevision = 0;
+  int _seenAdaptiveSubagentRepairRevision = 0;
+  int _seenAdaptiveProcessRepairRevision = 0;
+  int _seenAdaptiveControlRepairRevision = 0;
   SubagentPresentationOwnerToken? _subagentPresentationOwner;
   int _viewerAttachGeneration = 0;
 
@@ -1152,6 +1215,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (live.isNotEmpty) {
       _lastNonEmptySubagentActivities = live;
       if (live.any((a) => !a.isTerminal)) _subagentPillDismissed = false;
+    } else if (_chat.subagentLiveRosterConfirmedEmpty) {
+      // Keeping the rows is the point of this cache; keeping them *running*
+      // is not. A turn that dies without a successor (`_failRun`'s "Modelo
+      // sin respuesta", a cancel, any end that never emits another
+      // `started`) left the cached non-terminal rows spinning a "trabajando"
+      // label until the next prompt. Settle them the moment the service has
+      // authority that nothing is live — a fenced `subagent.list` that no
+      // longer reports them — and only then: a background delegation keeps
+      // running after its parent turn ends, so the turn ending is not
+      // evidence, and neither is a list that failed to answer.
+      _lastNonEmptySubagentActivities = _settledSubagentActivities(
+        _lastNonEmptySubagentActivities,
+      );
     }
     // A momentarily empty `live` (a poll gap, a cover/pause/reconnect cycle)
     // is not proof of retirement — this getter runs on every build, so
@@ -1164,6 +1240,39 @@ class _ChatScreenState extends State<ChatScreen>
         : _lastNonEmptySubagentActivities;
   }
 
+  /// A row the pill still counts and paints as live work.
+  static bool _presentsAsRunning(SubagentActivity activity) =>
+      !activity.isTerminal && activity.phase != SubagentActivityPhase.unknown;
+
+  /// Copies of [activities] with every still-running row presented as stopped,
+  /// so the pill reads as finished/interrupted (no spinner, no "trabajando")
+  /// instead of pretending the work is still going. Terminal rows keep their
+  /// real phase (completed, failed), and an `unknown` row stays unknown:
+  /// absence is not evidence of what that one did.
+  static List<SubagentActivity> _settledSubagentActivities(
+    List<SubagentActivity> activities,
+  ) {
+    if (!activities.any(_presentsAsRunning)) return activities;
+    return List<SubagentActivity>.unmodifiable([
+      for (final activity in activities)
+        if (!_presentsAsRunning(activity))
+          activity
+        else
+          SubagentActivity(
+            key: activity.key,
+            source: activity.source,
+            phase: SubagentActivityPhase.cancelled,
+            subagentId: activity.subagentId,
+            delegationId: activity.delegationId,
+            childSessionId: activity.childSessionId,
+            legacyToolCallId: activity.legacyToolCallId,
+            eventRevision: activity.eventRevision,
+            seenEventIds: activity.seenEventIds,
+            details: activity.details,
+          ),
+    ]);
+  }
+
   void _dismissSubagentPill() {
     setState(() => _subagentPillDismissed = true);
   }
@@ -1173,7 +1282,7 @@ class _ChatScreenState extends State<ChatScreen>
   final _textFocusNode = FocusNode();
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
-  (bool, bool, bool)? _lastDesktopCompressionPresentation;
+  bool? _lastDesktopCompressionPresentation;
   bool _compressionDraftFocusRetained = false;
   bool get _compressingSession =>
       _compressionCommandInFlight ||
@@ -1184,6 +1293,9 @@ class _ChatScreenState extends State<ChatScreen>
   bool _composerEmpty = true;
   // Sugerencias de comandos slash mientras se escribe `/…` en el compositor.
   List<SlashCommand> _slashSuggestions = const [];
+  // The navigation drawer paints below overlay-hosted composer popovers
+  // (slash palette, floating notices): they must hide while it is open.
+  bool _navigationDrawerOpen = false;
   DesktopCommandCatalog? _desktopCommandCatalog;
   Timer? _slashCompletionDebounce;
   int _slashCompletionEpoch = 0;
@@ -1252,8 +1364,9 @@ class _ChatScreenState extends State<ChatScreen>
   // sustituye `_sending`: después del ACK el composer vuelve a aceptar texto y
   // Hermes puede tratarlo como steering durante el run actual.
   bool _composerSubmissionInFlight = false;
-  // Suelta acotada de la valla anterior durante un Stop. Ver `_cancelStream`.
-  Timer? _composerStopLockTimer;
+  Timer? _stopConfirmationDismissTimer;
+  bool _confirmedStopStatusDismissed = false;
+  final RecentInterruptGuard _recentInterrupt = RecentInterruptGuard();
   bool _imagePickerOpen = false;
   bool _documentPickerOpen = false;
   static const int _maxPendingImages = 10;
@@ -1287,8 +1400,47 @@ class _ChatScreenState extends State<ChatScreen>
   // reconstruye la pantalla (crítico cuando se pausa el seguimiento con el
   // dedo durante el streaming).
   final ValueNotifier<bool> _scrollToBottomVisibility = ValueNotifier(false);
-  set _showScrollToBottom(bool value) =>
-      _scrollToBottomVisibility.value = value;
+  set _showScrollToBottom(bool value) {
+    if (_scrollToBottomVisibility.value == value) return;
+    _recordTranscriptOverlayExtentChange(value ? 48 : -48);
+    _scrollToBottomVisibility.value = value;
+  }
+
+  // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
+  // la misma razón que la flecha: cambiar no reconstruye la pantalla.
+  final ValueNotifier<double> _activityPillExtent = ValueNotifier(0);
+
+  /// Compactación (automática o manual) de la sesión abierta: mide el tiempo,
+  /// aprende la duración típica y conserva el resultado unos segundos. La
+  /// pastilla de actividad la enseña como una actividad más.
+  final CompactionTracker _compaction = CompactionTracker();
+  final SubagentActivityController _subagentController =
+      SubagentActivityController();
+  Map<String, dynamic>? _consumedCompressionResult;
+  int _seenCompactedEdges = 0;
+
+  /// El fin de esta compactación ya se conoce (resultado o borde `compacted`)
+  /// aunque el servicio aún no haya soltado su bandera: no debe arrancar otra.
+  bool _compactionSettledEarly = false;
+
+  /// Texto de `/compress …` que sigue en el composer mientras la compactación
+  /// está en marcha; se consume al terminar bien y se conserva si falla.
+  String? _compressionInvocation;
+  void _setActivityPillExtent(double value) {
+    if (_disposed || _activityPillExtent.value == value) return;
+    _recordTranscriptOverlayExtentChange(
+      value - _activityPillExtent.value,
+    );
+    _activityPillExtent.value = value;
+  }
+
+  void _recordTranscriptOverlayExtentChange(double delta) {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.pixels <= position.minScrollExtent + 0.5) return;
+    _streamingViewportLock.recordOverlayExtentChange(delta);
+  }
+
   bool _autoFollowStreaming = true;
   int? _streamingScrollPointer;
   Offset? _streamingScrollOrigin;
@@ -1451,16 +1603,6 @@ class _ChatScreenState extends State<ChatScreen>
     return _messages.isNotEmpty && identical(message, _messages.first);
   }
 
-  /// Frontera de segmento dentro del MISMO turno (message.interim de Desktop):
-  /// el servicio sella la burbuja visible en el historial e inserta un
-  /// placeholder `_pipeline` como nueva cabeza. El host vivo debe soltar el
-  /// texto sellado —que a partir de ese momento ya se pinta en su propia fila
-  /// histórica— y pasar a "sigue trabajando"; el revelado gradual reinicia
-  /// para el segmento siguiente. Sin este relevo el frame obsoleto duplica el
-  /// texto sellado durante toda la pausa, y cuando el segmento nuevo arranca
-  /// la burbuja superior "se corta" (su contenido viejo se sustituye por el
-  /// nuevo) y aparece de golpe, sin typewriter, porque [_revealedChars] quedó
-  /// en la longitud del segmento anterior.
   void _syncStreamingSegmentBoundary() {
     if (!_chat.isStreaming || !_liveAssistantMaterialized) return;
     if (_messages.isEmpty) return;
@@ -1472,10 +1614,14 @@ class _ChatScreenState extends State<ChatScreen>
         identical(frame.metadata, head)) {
       return;
     }
-    _revealedChars = 0;
+    final hasActivity = normalizeAssistantActivityTrace(
+      head[assistantActivityTraceKey],
+    ).isNotEmpty;
+    final content = hasActivity ? '' : (head['content'] as String? ?? '');
+    _revealedChars = content.length;
     _liveAssistantFrame.value = _LiveAssistantFrame(
       turnSerial: _assistantEntranceSerial,
-      content: '',
+      content: content,
       metadata: head,
       isStreaming: true,
     );
@@ -1590,6 +1736,7 @@ class _ChatScreenState extends State<ChatScreen>
     _textController = _SlashAccentTextEditingController();
     _attachmentListener = _applyAttachmentProjection;
     _sessionUsageSnapshot = widget.session;
+    _compaction.addListener(_onCompactionChanged);
     WidgetsBinding.instance.addObserver(this);
     _loadPrefs();
     _loadActiveModel();
@@ -1727,6 +1874,7 @@ class _ChatScreenState extends State<ChatScreen>
     'mobile-bot',
     'bot-mode',
     'bot-mode-local',
+    'bot-mode-canonical',
   }.contains(widget.session.source.trim().toLowerCase());
 
   bool get _allowsDedicatedVoiceLaunch => !_isBotChatSurface;
@@ -1807,7 +1955,9 @@ class _ChatScreenState extends State<ChatScreen>
     // El borrador pinta primero: la reconciliación adicional de outbox no debe
     // retrasar el composer ni introducir una carrera visible al navegar rápido.
     _draftStore = store;
-    var draft = await _loadDraftWithRecoveryMigration(store);
+    var draft = widget.connection.readOnly
+        ? const ChatDraft(text: '', attachments: [])
+        : await _loadDraftWithRecoveryMigration(store);
     if (!mounted) return;
     _turnOutbox = outbox;
     final linkedDiscard = draft.preparedTurnClientTurnId;
@@ -1994,7 +2144,7 @@ class _ChatScreenState extends State<ChatScreen>
           prepared.state == PreparedTurnState.accepted ||
           prepared.state == PreparedTurnState.running;
       final english = Localizations.localeOf(context).languageCode == 'en';
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             ambiguous
@@ -2198,6 +2348,7 @@ class _ChatScreenState extends State<ChatScreen>
     bool preparedTurnAuthorityCaptured = false,
     bool finalDisposeSnapshot = false,
   }) async {
+    if (widget.connection.readOnly) return false;
     if (_disposed && !finalDisposeSnapshot) return false;
     // Leaving during secure restore must not replace unread content with empty UI.
     if (!_draftLoaded &&
@@ -2265,6 +2416,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<bool> _clearDraft() async {
     _draftTimer?.cancel();
+    if (widget.connection.readOnly) return true;
     if (!_isBotChatSurface) {
       return _saveDraftSnapshot('', const []);
     }
@@ -2451,8 +2603,9 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _showOutboxUnavailable() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).chaOutboxUnavailable)),
+      kind: HermesNoticeKind.warning,
     );
   }
 
@@ -2715,21 +2868,22 @@ class _ChatScreenState extends State<ChatScreen>
   DesktopSessionCreateConfig get _firstSubmitConfig {
     final source = widget.session.source.trim().toLowerCase();
     final createsBotChat = source == 'mobile-bot' || source == 'bot-mode-local';
-    final isOfficialBotPin = source == 'bot-mode';
+    final resumesStoredBotChat =
+        source == 'bot-mode' || source == 'bot-mode-canonical';
     return DesktopSessionCreateConfig(
       model: _selectedModelPair,
       reasoningEffort: _selectedReasoning,
       fastMode: _selectedFastMode,
       title: createsBotChat ? 'Bot Chat' : null,
       hidden: createsBotChat,
-      createIfMissing: !isOfficialBotPin,
+      createIfMissing: !resumesStoredBotChat,
       // Bot surfaces own a durable canonical pin. Their -32601 compatibility
       // fallback is handled by the pin hook itself; falling back to REST here
       // would submit without the verified pin after an RMW failure.
       allowTransportFallback:
           widget.connection.kind == InstanceKind.localhost &&
           widget.connection.onDeviceLoopback &&
-          !isOfficialBotPin &&
+          !resumesStoredBotChat &&
           !createsBotChat,
     );
   }
@@ -3292,28 +3446,41 @@ class _ChatScreenState extends State<ChatScreen>
   /// managed-files endpoint, then stores them only in app-private cache. This
   /// supports generated files outside Hermes' legacy image cache without
   /// publishing a bearer token or a server-local path to another Android app.
-  Future<File> downloadGeneratedMedia(GeneratedMediaReference reference) {
+  Future<File> downloadGeneratedMedia(
+    GeneratedMediaReference reference, {
+    GeneratedMediaProgress? onProgress,
+    bool Function()? isCancelled,
+  }) {
     final profile = _effectiveSessionProfile;
     final cacheScope = '${widget.connection.id}\u0000$profile';
+    final maxBytes = switch (reference.kind) {
+      GeneratedMediaKind.image => GeneratedMediaService.maxImageBytes,
+      GeneratedMediaKind.video => GeneratedMediaService.maxVideoBytes,
+      GeneratedMediaKind.audio ||
+      GeneratedMediaKind.file => GeneratedMediaService.maxFileBytes,
+    };
     return GeneratedMediaService.ensureDownloaded(
       cacheScope,
       reference,
-      fetchServerPathToFile: (path, destination) async {
-        final client = DashboardClient.lazy(widget.connection);
-        try {
-          await client.apiDownloadToFile(
-            'files/download?path=${Uri.encodeQueryComponent(path)}',
-            destination,
-            maxBytes: reference.kind == GeneratedMediaKind.image
-                ? GeneratedMediaService.maxImageBytes
-                : GeneratedMediaService.maxVideoBytes,
-            profile: profile,
-            timeout: const Duration(minutes: 3),
-          );
-        } finally {
-          client.close();
-        }
-      },
+      fetchServerPathToFileWithProgress:
+          (path, destination, reportProgress, downloadCancelled) async {
+            final client = DashboardClient.lazy(widget.connection);
+            try {
+              await client.apiDownloadToFile(
+                'files/download?path=${Uri.encodeQueryComponent(path)}',
+                destination,
+                maxBytes: maxBytes,
+                profile: profile,
+                timeout: const Duration(minutes: 3),
+                onProgress: reportProgress,
+                isCancelled: downloadCancelled,
+              );
+            } finally {
+              client.close();
+            }
+          },
+      onProgress: onProgress,
+      isCancelled: isCancelled,
     );
   }
 
@@ -3560,7 +3727,17 @@ class _ChatScreenState extends State<ChatScreen>
       );
       _passiveConversationReader = ForegroundConversationReader(
         successInterval: const Duration(seconds: 3),
-        failureIntervals: const [Duration(seconds: 5), Duration(seconds: 15)],
+        failureIntervals: const [
+          Duration(seconds: 5),
+          Duration(seconds: 15),
+          Duration(seconds: 30),
+          Duration(seconds: 60),
+        ],
+        changeEventsAvailable:
+            _chat.desktopChangeEventsAvailable,
+        durableChatId: () => _chat.serverSessionId,
+        externallyOwnedTurnActive: () => _chat.remoteSurfaceOwnsLiveTurn,
+        recoveryConverging: () => _chat.resumeReconciliationInFlight,
         canRead: () => _canProbePassiveRemoteActivity,
         read: _refreshPassiveTranscript,
       );
@@ -3571,10 +3748,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
+      _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
       // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
       // del agente, así que sin esto el cronómetro del turno nunca arrancaba.
       _syncTurnActivityClock();
+      _syncCompaction();
       unawaited(_persistBotChatPin());
       unawaited(_loadChatPreferences());
       app.voice.voiceConsent.addListener(_onVoicePreferenceChanged);
@@ -3804,53 +3983,273 @@ class _ChatScreenState extends State<ChatScreen>
     final runtimeId = _chatBound ? _chat.desktopRuntimeSessionId : null;
     final shouldPoll = shouldOwnPresentation && runtimeId != null;
     if (!shouldPoll) {
-      _subagentPollTimer?.cancel();
-      _subagentPollTimer = null;
+      _cancelAdaptiveSnapshotTimers();
       _subagentPollingRuntimeId = null;
       return;
     }
-    if (_subagentPollTimer != null && _subagentPollingRuntimeId == runtimeId) {
+    if (_subagentPollingRuntimeId != runtimeId) {
+      _cancelAdaptiveSnapshotTimers();
+      _subagentPollingRuntimeId = runtimeId;
+      _adaptiveRefreshFailureIndex = 0;
+      _captureAdaptiveRefreshRevisions();
+      unawaited(_runAdaptiveSnapshot());
+      return;
+    }
+
+    _consumeAdaptiveRefreshSignals();
+    if (_subagentPollTimer == null && !_adaptiveSnapshotInFlight) {
+      _scheduleAdaptiveSnapshot(_adaptiveBackstopDelay());
+    }
+  }
+
+  void _captureAdaptiveRefreshRevisions() {
+    _seenAdaptiveEventRevision = _chat.adaptiveRefreshEventRevision;
+    _seenAdaptiveFullRefreshRevision = _chat.adaptiveFullRefreshRevision;
+    _seenAdaptiveSubagentRepairRevision =
+        _chat.adaptiveSubagentRepairRevision;
+    _seenAdaptiveProcessRepairRevision = _chat.adaptiveProcessRepairRevision;
+    _seenAdaptiveControlRepairRevision = _chat.adaptiveControlRepairRevision;
+  }
+
+  void _cancelAdaptiveSnapshotTimers() {
+    _subagentPollTimer?.cancel();
+    _subagentPollTimer = null;
+    _subagentRepairDebounce?.cancel();
+    _subagentRepairDebounce = null;
+    _processControlRepairDebounce?.cancel();
+    _processControlRepairDebounce = null;
+    _postControlRepairDelayIndex = -1;
+    _adaptiveSnapshotQueued = false;
+    _queuedSubagentRefresh = false;
+    _queuedProcessRefresh = false;
+    _queuedControlRefresh = false;
+  }
+
+  Duration _adaptiveBackstopDelay() {
+    if (!_chat.desktopChangeEventsAvailable) {
+      return const Duration(seconds: 5);
+    }
+    final hasActiveItems =
+        _chat.safeActiveSubagentCount > 0 ||
+        _chat.sessionActivity.backgroundItemCount > 0;
+    return Duration(seconds: hasActiveItems ? 30 : 60);
+  }
+
+  void _scheduleAdaptiveSnapshot(
+    Duration delay, {
+    bool subagents = true,
+    bool processes = true,
+    bool control = true,
+  }) {
+    _subagentPollTimer?.cancel();
+    _subagentPollTimer = Timer(delay, () {
+      _subagentPollTimer = null;
+      unawaited(
+        _runAdaptiveSnapshot(
+          subagents: subagents,
+          processes: processes,
+          control: control,
+        ),
+      );
+    });
+  }
+
+  void _consumeAdaptiveRefreshSignals() {
+    final eventRevision = _chat.adaptiveRefreshEventRevision;
+    if (eventRevision != _seenAdaptiveEventRevision) {
+      _seenAdaptiveEventRevision = eventRevision;
+      _adaptiveRefreshFailureIndex = 0;
+      _scheduleAdaptiveSnapshot(_adaptiveBackstopDelay());
+    }
+
+    final fullRevision = _chat.adaptiveFullRefreshRevision;
+    if (fullRevision != _seenAdaptiveFullRefreshRevision) {
+      _captureAdaptiveRefreshRevisions();
+      _postControlRepairDelayIndex = 0;
+      _subagentRepairDebounce?.cancel();
+      _subagentRepairDebounce = null;
+      _processControlRepairDebounce?.cancel();
+      _processControlRepairDebounce = null;
+      unawaited(_runAdaptiveSnapshot());
+      return;
+    }
+
+    final subagentRevision = _chat.adaptiveSubagentRepairRevision;
+    if (subagentRevision != _seenAdaptiveSubagentRepairRevision) {
+      _seenAdaptiveSubagentRepairRevision = subagentRevision;
+      _subagentRepairDebounce?.cancel();
+      _subagentRepairDebounce = Timer(const Duration(milliseconds: 250), () {
+        _subagentRepairDebounce = null;
+        unawaited(
+          _runAdaptiveSnapshot(processes: false, control: false),
+        );
+      });
+    }
+
+    final processRevision = _chat.adaptiveProcessRepairRevision;
+    final controlRevision = _chat.adaptiveControlRepairRevision;
+    if (processRevision != _seenAdaptiveProcessRepairRevision ||
+        controlRevision != _seenAdaptiveControlRepairRevision) {
+      final refreshProcesses =
+          processRevision != _seenAdaptiveProcessRepairRevision;
+      final refreshControl = controlRevision != _seenAdaptiveControlRepairRevision;
+      _seenAdaptiveProcessRepairRevision = processRevision;
+      _seenAdaptiveControlRepairRevision = controlRevision;
+      _processControlRepairDebounce?.cancel();
+      _processControlRepairDebounce = Timer(
+        const Duration(milliseconds: 250),
+        () {
+          _processControlRepairDebounce = null;
+          unawaited(
+            _runAdaptiveSnapshot(
+              subagents: false,
+              processes: refreshProcesses,
+              control: refreshControl,
+            ),
+          );
+        },
+      );
+    }
+  }
+
+  Future<void> _runAdaptiveSnapshot({
+    bool subagents = true,
+    bool processes = true,
+    bool control = true,
+  }) async {
+    final runtimeId = _subagentPollingRuntimeId;
+    if (runtimeId == null ||
+        _disposed ||
+        !mounted ||
+        !_chatRouteVisible ||
+        !_appInForeground ||
+        _chat.desktopRuntimeSessionId != runtimeId) {
+      return;
+    }
+    if (_adaptiveSnapshotInFlight) {
+      _adaptiveSnapshotQueued = true;
+      _queuedSubagentRefresh |= subagents;
+      _queuedProcessRefresh |= processes;
+      _queuedControlRefresh |= control;
       return;
     }
 
     _subagentPollTimer?.cancel();
-    _subagentPollingRuntimeId = runtimeId;
-    unawaited(_chat.refreshSubagents());
-    _subagentPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (_disposed || !mounted) return;
-      if (_chat.desktopRuntimeSessionId != _subagentPollingRuntimeId) {
-        _syncSubagentPolling();
-        return;
-      }
-      unawaited(_chat.refreshSubagents());
-    });
+    _subagentPollTimer = null;
+    _adaptiveSnapshotInFlight = true;
+    final failureRevision = _chat.adaptiveSnapshotFailureRevision;
+    await Future.wait<void>([
+      if (subagents) _chat.refreshSubagents(),
+      if (processes) _chat.refreshBackgroundProcesses(),
+      if (control) _chat.refreshSessionControl(),
+    ]);
+    final failed =
+        _chat.adaptiveSnapshotFailureRevision != failureRevision;
+    _adaptiveSnapshotInFlight = false;
+    if (_disposed ||
+        !mounted ||
+        !_chatRouteVisible ||
+        !_appInForeground ||
+        _subagentPollingRuntimeId != runtimeId ||
+        _chat.desktopRuntimeSessionId != runtimeId) {
+      return;
+    }
+
+    if (_adaptiveSnapshotQueued) {
+      final queuedSubagents = _queuedSubagentRefresh;
+      final queuedProcesses = _queuedProcessRefresh;
+      final queuedControl = _queuedControlRefresh;
+      _adaptiveSnapshotQueued = false;
+      _queuedSubagentRefresh = false;
+      _queuedProcessRefresh = false;
+      _queuedControlRefresh = false;
+      unawaited(
+        _runAdaptiveSnapshot(
+          subagents: queuedSubagents,
+          processes: queuedProcesses,
+          control: queuedControl,
+        ),
+      );
+      return;
+    }
+
+    if (failed) {
+      _postControlRepairDelayIndex = -1;
+      const delays = [5, 15, 30, 60];
+      final index = _adaptiveRefreshFailureIndex.clamp(0, delays.length - 1);
+      _adaptiveRefreshFailureIndex = (index + 1).clamp(0, delays.length - 1);
+      _scheduleAdaptiveSnapshot(
+        Duration(seconds: delays[index]),
+        subagents: subagents,
+        processes: processes,
+        control: control,
+      );
+      return;
+    }
+
+    _adaptiveRefreshFailureIndex = 0;
+    if (_postControlRepairDelayIndex >= 0 &&
+        _postControlRepairDelayIndex < _postControlRepairDelays.length) {
+      final delay = _postControlRepairDelays[_postControlRepairDelayIndex];
+      _postControlRepairDelayIndex += 1;
+      _scheduleAdaptiveSnapshot(delay);
+      return;
+    }
+    _postControlRepairDelayIndex = -1;
+    _scheduleAdaptiveSnapshot(_adaptiveBackstopDelay());
   }
 
+  // El sondeo del roster no está condicionado por el turno vivo: una lista
+  // `session.active_list` completa es la única autoridad capaz de desmentir un
+  // `busy` colgado cuando el turno muere sin emitir su terminal. La lectura
+  // durable del transcript sí sigue vetada mientras el turno emite.
   bool get _canProbePassiveRemoteActivity =>
       !_disposed &&
       mounted &&
       _chatBound &&
       _chatRouteVisible &&
       _appInForeground &&
-      !_chat.isStreaming &&
       !_chat.resumeReconciliationInFlight;
 
   bool get _canPassivelyRefreshTranscript =>
       _canProbePassiveRemoteActivity &&
+      !_chat.isStreaming &&
       (!_chat.hasDesktopRuntime || _chat.remoteSurfaceOwnsLiveTurn) &&
       _messageRefreshInFlightEpoch == null;
 
-  void _syncPassiveTranscriptRefresh({bool refreshNow = false}) {
+  void _syncPassiveTranscriptRefresh({
+    bool refreshNow = false,
+    bool recoveryConverging = false,
+    bool terminal = false,
+    String? changedDurableChatId,
+  }) {
+    final reader = _passiveConversationReader;
+    reader?.setChangeEventsAvailable(
+      _chat.desktopChangeEventsAvailable,
+      immediate: false,
+    );
     final shouldRun = _canProbePassiveRemoteActivity;
     if (!shouldRun) {
       // Lifecycle, reconciliation, or local production is an authority
       // transition. Retire both the reader timer and any REST request that
       // captured the previous observation tuple before it can publish.
-      _passiveConversationReader?.setVisible(false);
+      reader?.setVisible(false);
       _invalidatePassiveMessageRefresh();
       return;
     }
-    _passiveConversationReader?.setVisible(true, immediate: refreshNow);
+    // Un turno vivo sigue siendo una transición de autoridad para la lectura
+    // durable: retira la petición REST en vuelo, pero conserva el sondeo.
+    if (_chat.isStreaming) _invalidatePassiveMessageRefresh();
+    reader?.setVisible(true);
+    if (!refreshNow) return;
+    if (changedDurableChatId != null) {
+      reader?.notifySessionsChanged(changedDurableChatId);
+      return;
+    }
+    reader?.notifyRelevantEvent(
+      recoveryConverging: recoveryConverging,
+      terminal: terminal,
+    );
   }
 
   Future<bool> _refreshPassiveTranscript() async {
@@ -3858,6 +4257,9 @@ class _ChatScreenState extends State<ChatScreen>
     final ownedLiveTurn = _chat.remoteSurfaceOwnsLiveTurn;
     await _chat.refreshPassiveRemoteActivity();
     if (!_canProbePassiveRemoteActivity) return true;
+    // El sondeo ya cumplió su parte; el transcript durable no se lee mientras
+    // el turno siga vivo (una lectura así reaparece como burbuja duplicada).
+    if (_chat.isStreaming) return true;
     // Another surface's assistant is not in REST until the turn ends. The
     // busy poll therefore never sees the reply; fetch once more on idle.
     final remoteTurnSettled = ownedLiveTurn && !_chat.remoteSurfaceOwnsLiveTurn;
@@ -3985,64 +4387,315 @@ class _ChatScreenState extends State<ChatScreen>
   /// Reacciona a un cambio del chat activo (token, herramienta, fin, error):
   /// re-renderiza desde el estado del servicio. La parte de voz la maneja el
   /// controlador de conversación, suscrito al mismo chat por su cuenta.
-  /// Origen del cronómetro de [TurnActivityPill]. El servicio solo publica
+  /// Origen del cronómetro de la pastilla de actividad. El servicio solo publica
   /// `desktopTurnStartedAt` para los turnos que nacen en el runtime remoto, así
   /// que el turno local se marca aquí, donde llegan todas las transiciones.
   DateTime? _turnActivityStartedAt;
 
-  /// Un turno está «trabajando sin contarlo» mientras hay run vivo y el
-  /// pipeline aún no emite tokens. Es exactamente la ventana de la que se
-  /// queja el mantenedor: `connecting` / `waiting` / `executing`. En cuanto
-  /// pasa a `streaming` el propio texto ya prueba que está vivo, y la pastilla
-  /// se aparta. Entre herramientas el pipeline vuelve a `executing`, así que
-  /// reaparece sin reiniciar el contador.
-  bool get _turnWorkingWithoutOutput =>
-      _chat.isStreaming &&
-      (_pipelineState == ChatPipelineState.connecting ||
-          _pipelineState == ChatPipelineState.waiting ||
-          _pipelineState == ChatPipelineState.executing);
+  /// Hay un turno propio vivo: lo que mantiene encendida la pastilla de
+  /// actividad. El texto del turno ya no vive en la burbuja.
+  bool get _turnLive => _chat.isStreaming;
 
-  /// La pastilla de subagentes ya narra su propia espera con su duración. Dos
-  /// pastillas contando lo mismo es la doble narración que Desktop evita con
-  /// `toolNarratesWait`; gana la más específica.
-  ///
-  /// Esta pastilla sigue viva pase lo que pase con el scroll: su razón de
-  /// ser —avisar que el turno «parado» (sin texto aún) sigue trabajando de
-  /// verdad, con un cronómetro que lo demuestra— no depende de si el lector
-  /// está mirando el fondo o el historial. Lo que sí depende del scroll es
-  /// si repite la palabra de estado: ver `_turnActivityPillLabel`.
-  bool get _showTurnActivityPill =>
-      _turnWorkingWithoutOutput &&
-      _turnActivityStartedAt != null &&
-      !_compressingSession &&
-      _displaySubagentActivities.isEmpty &&
-      !_chat.hasRecentPassiveRemoteActivity &&
-      _chat.safeActiveSubagentCount <= 0;
+  Future<void> _runBackgroundAction(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Strings.of(context).chaBackgroundActionFailed),
+        ),
+        kind: HermesNoticeKind.error,
+      );
+    }
+  }
 
-  /// Palabra de estado que muestra la pastilla, o `null` para omitirla y dejar
-  /// solo el spinner + cronómetro. Mientras el transcript sigue el fondo
-  /// (`_autoFollowStreaming`), la `ThinkingTraceCard` en vivo —mascota grande
-  /// + la misma palabra, animada— ya está a la vista en el sitio exacto donde
-  /// va a salir la respuesta; repetirla en la pastilla es la doble narración
-  /// reportada en dispositivo real. El cronómetro no es redundante en ningún
-  /// caso (la tarjeta no cuenta tiempo), así que la pastilla se queda —solo se
-  /// calla la palabra— hasta que el lector se aparta del fondo y la tarjeta
-  /// deja de ser la señal más específica.
-  String? get _turnActivityPillLabel =>
-      _autoFollowStreaming ? null : _traceHeadline();
+  /// Pasos (herramientas/skills) del turno vivo, del mensaje-placeholder que el
+  /// servicio va actualizando. Se memoiza por identidad de la lista para no
+  /// renormalizar 256 pasos en cada token.
+  Object? _activityStepsSource;
+  ({ActivityStep? current, List<ActivityStep> done}) _activitySteps = (
+    current: null,
+    done: const <ActivityStep>[],
+  );
 
-  /// Mismo principio que `_showTurnActivityPill` de arriba, aplicado a la
-  /// cabecera del Bot Chat: su subtítulo («@nombre · Pensando») y esta
-  /// pastilla narraban el mismo estado a la vez una vez el turno pasaba de
-  /// unos 3 s (reportado en dispositivo real: "la píldora y la burbuja
-  /// general... hacen lo mismo"). Antes de esos 3 s la pastilla de
-  /// `TurnActivityPill` (`revealAfter`) todavía no se ha revelado, así que la
-  /// cabecera sigue siendo la única señal de un turno recién empezado; solo
-  /// se calla la palabra de estado justo cuando la pastilla ya se ve.
+  ({ActivityStep? current, List<ActivityStep> done}) _liveActivitySteps() {
+    Map<String, dynamic>? live;
+    for (final message in _messages) {
+      if (message['role'] != 'assistant') continue;
+      if ((message['display_kind']?.toString().trim().isNotEmpty ?? false)) {
+        continue;
+      }
+      if (message['_pipeline'] == true) live = message;
+      break;
+    }
+    final source = live?[assistantActivityTraceKey];
+    if (live == null) {
+      _activityStepsSource = null;
+      return (current: null, done: const <ActivityStep>[]);
+    }
+    if (!identical(source, _activityStepsSource)) {
+      _activityStepsSource = source;
+      _activitySteps = ActivitySnapshot.splitSteps(
+        normalizeAssistantActivityTrace(source),
+      );
+    }
+    return _activitySteps;
+  }
+
+  /// Un solo valor con todo lo que está vivo: turno, tareas, compactación,
+  /// segundo plano y subagentes. La pastilla y el panel se pintan desde aquí.
+  ActivitySnapshot _buildActivitySnapshot() {
+    final turnActive = _turnLive;
+    final activity = _chat.sessionActivity;
+    final steps = turnActive
+        ? _liveActivitySteps()
+        : (current: null, done: const <ActivityStep>[]);
+    final passiveTotal = _chat.hasRecentPassiveRemoteActivity
+        ? _chat.passiveActivityAggregate.total
+        : 0;
+    final subagents = _displaySubagentActivities;
+    return ActivitySnapshot(
+      turnActive: turnActive,
+      tasksActive: turnActive || _chat.remoteSurfaceOwnsLiveTurn,
+      turnStartedAt: turnActive
+          ? (_turnActivityStartedAt ?? _chat.desktopTurnStartedAt)
+          : null,
+      headline: turnActive ? _traceHeadline() : null,
+      waitingForUser: turnActive && _turnWaitsForUser,
+      noActivityHint: turnActive && _chat.noActivityHint,
+      current: steps.current,
+      done: steps.done,
+      tasks: _chat.agentTasks,
+      processes: activity.processes,
+      schedules: activity.schedules,
+      goal: activity.goal,
+      processesStale: activity.stale,
+      backgroundStartedAt: activity.startedAt,
+      subagents: subagents,
+      subagentGenericCount: math.max(
+        _chat.safeActiveSubagentCount,
+        passiveTotal,
+      ),
+      passiveRemote:
+          _chat.hasRecentPassiveRemoteActivity ||
+          _chat.safeActiveSubagentCount > 0,
+    );
+  }
+
+  ActivityPanelActions? _activityActions;
+  (bool, bool, bool)? _activityActionCapabilities;
+
+  /// Las acciones por elemento del panel: los mismos controladores que tenían
+  /// las hojas de segundo plano y de subagentes.
+  ActivityPanelActions _buildActivityActions() {
+    final capabilities = (
+      _chat.canStopBackgroundProcesses,
+      _chat.canControlSessionActivity,
+      _chat.canControlGoal,
+    );
+    final cached = _activityActions;
+    if (cached != null && _activityActionCapabilities == capabilities) {
+      return cached;
+    }
+    // Mantén estables los callbacks: el panel abierto compara esta identidad.
+    final actions = ActivityPanelActions(
+      canStopProcesses: capabilities.$1,
+      stopProcess: (id) =>
+          _runBackgroundAction(() => _chat.stopBackgroundProcess(id)),
+      canControlSchedules: capabilities.$2,
+      scheduleAction: (schedule, action) {
+        final isLoop = schedule.kind == SessionActivityScheduleKind.loop;
+        final name = switch (action) {
+          ActivityScheduleAction.pause =>
+            isLoop ? 'loop.pause' : 'heartbeat.pause',
+          ActivityScheduleAction.resume =>
+            isLoop ? 'loop.resume' : 'heartbeat.resume',
+          ActivityScheduleAction.stop =>
+            isLoop ? 'loop.stop' : 'heartbeat.clear',
+        };
+        return _runBackgroundAction(() => _chat.sendSessionControlAction(name));
+      },
+      canControlGoal: capabilities.$3,
+      goalAction: (action) =>
+          _runBackgroundAction(() => _chat.sendGoalAction(action)),
+      goalDetails: () {
+        final snapshot = _chat.goal;
+        if (snapshot != null) unawaited(_showGoalSheet(snapshot));
+      },
+      openSubagent: _subagentController.open,
+      dismissSubagents: _dismissSubagentPill,
+    );
+    _activityActionCapabilities = capabilities;
+    return _activityActions = actions;
+  }
+
+  /// Sincroniza el seguimiento de compactación con el servicio. Barato e
+  /// idempotente: se llama en cada evento del chat.
+  void _onCompactionChanged() {
+    if (_disposed || !mounted) return;
+    setState(() {});
+  }
+
+  void _syncCompaction() {
+    if (!_chatBound) return;
+    // Live compaction of this process, or one the gateway positively reports
+    // as still running after a restart (display-only: never a lock).
+    final serviceActive =
+        _chat.desktopCompactionVisible || _compressionCommandInFlight;
+    if (!serviceActive) _compactionSettledEarly = false;
+    final active = serviceActive && !_compactionSettledEarly;
+    final manual =
+        _chat.desktopManualCompressionInFlight || _compressionCommandInFlight;
+    Map<String, dynamic>? head;
+    for (final message in _messages) {
+      if (message['display_kind'] == 'compression_result') {
+        head = message;
+        break;
+      }
+    }
+    if (!active &&
+        !_compaction.running &&
+        _compressionInvocation == null) {
+      _consumedCompressionResult = head;
+    }
+    // Solo hechos: lo que la línea de estado de Hermes dice y el tiempo local.
+    _compaction.sync(
+      active: active,
+      manual: manual,
+      startedAt: _chat.desktopCompactionStartedAt,
+      tokensBefore: _chat.desktopCompactionTokensBefore,
+      messagesBefore: _chat.desktopCompactionMessagesBefore,
+      chunkIndex: _chat.desktopCompactionChunkIndex,
+      chunkCount: _chat.desktopCompactionChunkCount,
+    );
+    var settled = false;
+    if (head != null && !identical(head, _consumedCompressionResult)) {
+      _consumedCompressionResult = head;
+      final meta = head['display_metadata'];
+      if (meta is Map) {
+        int? number(String key) =>
+            meta[key] is num ? (meta[key] as num).toInt() : null;
+        final noop = meta['noop'] == true;
+        final after = number('after_tokens');
+        _compaction.reportResult(
+          tokensBefore: number('before_tokens'),
+          tokensAfter: after,
+          messagesBefore: number('before_messages'),
+          messagesAfter: number('after_messages'),
+          noop: noop,
+        );
+        if (after != null && !noop) _applyPostCompactionContext(after);
+        _compactionSettledEarly = serviceActive;
+      }
+      settled = true;
+    }
+    // Una compactación manual cuyo resultado llegó tarde (`pending` y luego
+    // `status.update(compacted)`) termina por ese borde, sin cifras.
+    final edges = _chat.desktopCompactedEdgeCount;
+    if (edges != _seenCompactedEdges) {
+      _seenCompactedEdges = edges;
+      if (_compaction.running) {
+        _compaction.reportResult();
+        _compactionSettledEarly = serviceActive;
+      }
+      settled = true;
+    }
+    // The live reply's outcome, independent of the transcript projection
+    // (a refresh racing a fast no-op used to drop it): the pill morphs to
+    // it right away.
+    final live = _chat.takeLiveCompressionOutcome();
+    if (live != null) {
+      _compaction.reportResult(
+        tokensBefore: live.tokensBefore,
+        tokensAfter: live.noop ? null : live.tokensAfter,
+        messagesBefore: live.messagesBefore,
+        messagesAfter: live.noop ? null : live.messagesAfter,
+        noop: live.noop,
+      );
+      _compactionSettledEarly = serviceActive;
+      settled = true;
+    }
+    if (settled) _consumeCompressionInvocation();
+    _announceRestoredCompressionOutcome();
+  }
+
+  /// A restored compression the gateway now reports finished: the pill that
+  /// was showing it turns into "Compactado · <time>". Only THAT it finished
+  /// is known after a restart, so no facts and never "nothing to compact";
+  /// with no pill showing, nothing new appears.
+  void _announceRestoredCompressionOutcome() {
+    if (!_chat.takeRestoredCompressionFinished()) return;
+    if (_compaction.running) _compaction.reportResult();
+  }
+
+  /// El resultado del RPC `session.compress` cierra la barra al instante: con
+  /// éxito enseña lo que Hermes midió (solo los recuentos que trajo); sin nada
+  /// que compactar, abortada o bloqueada se retira (el aviso ya lo da el chat).
+  void _finishCompactionBar(DesktopCommandDispatch result) {
+    final compression = result.compressionResult;
+    switch (result.compressionStatus) {
+      case DesktopCompressionStatus.compressed:
+        _compaction.reportResult(
+          tokensBefore: compression?.beforeTokens,
+          tokensAfter: compression?.afterTokens,
+          messagesBefore: compression?.beforeMessages,
+          messagesAfter: compression?.afterMessages,
+        );
+        _compactionSettledEarly = _chat.desktopCompressionInFlight;
+      case DesktopCompressionStatus.noOp:
+        _compaction.reportResult(
+          tokensBefore: compression?.beforeTokens,
+          messagesBefore: compression?.beforeMessages,
+          noop: true,
+        );
+        _compactionSettledEarly = _chat.desktopCompressionInFlight;
+      case DesktopCompressionStatus.aborted ||
+          DesktopCompressionStatus.lockHeld:
+        _compaction.reset();
+        _compactionSettledEarly = _chat.desktopCompressionInFlight;
+      case DesktopCompressionStatus.pending || null:
+        break;
+    }
+  }
+
+  /// La compactación acabó bien: el `/compress` que sigue en el composer se
+  /// consume y la paleta de comandos se cierra.
+  void _consumeCompressionInvocation() {
+    final invocation = _compressionInvocation;
+    if (invocation == null) return;
+    _compressionInvocation = null;
+    _consumeSlashInvocation(invocation);
+  }
+
+  /// Tras compactar, el tamaño exacto que Hermes acaba de medir sustituye al
+  /// porcentaje anterior hasta que llegue el uso real del runtime.
+  void _applyPostCompactionContext(int after) {
+    final current = _sessionContextMetrics.value;
+    final max = current.contextMax;
+    if (max == null || max <= 0) return;
+    _commitSessionContextMetrics(
+      SessionContextMetrics(
+        contextUsed: after,
+        contextMax: max,
+        percent: (after * 100 / max).round().clamp(0, 100),
+        cumulativeTotal: current.cumulativeTotal,
+        inputTokens: current.inputTokens,
+        cacheReadTokens: current.cacheReadTokens,
+        cacheWriteTokens: current.cacheWriteTokens,
+        observedFirstTokenLatencyMs: current.observedFirstTokenLatencyMs,
+      ),
+    );
+  }
+
+  /// La cabecera del Bot Chat («@nombre · Pensando») y la pastilla de actividad
+  /// narraban el mismo estado a la vez (reportado en dispositivo real). Antes de
+  /// que la pastilla se revele —los 2 s del antiparpadeo— la cabecera sigue
+  /// siendo la única señal de un turno recién empezado; después se calla.
   bool get _turnActivityPillRevealed {
     final startedAt = _turnActivityStartedAt;
-    if (!_showTurnActivityPill || startedAt == null) return false;
-    return DateTime.now().difference(startedAt) >= const Duration(seconds: 3);
+    if (!_turnLive || startedAt == null) return false;
+    return DateTime.now().difference(startedAt) >= const Duration(seconds: 2);
   }
 
   void _syncTurnActivityClock() {
@@ -4061,34 +4714,68 @@ class _ChatScreenState extends State<ChatScreen>
     _turnActivityStartedAt = null;
   }
 
+  bool get _confirmedStopStatusVisible =>
+      _chat.stopConfirmationState == StopConfirmationState.confirmed &&
+      !_chat.backgroundStopVerificationInFlight &&
+      (_chat.backgroundStopRemainingTasks ?? 0) == 0;
+
+  void _syncStopConfirmationVisibility() {
+    if (!_confirmedStopStatusVisible) {
+      _stopConfirmationDismissTimer?.cancel();
+      _stopConfirmationDismissTimer = null;
+      _confirmedStopStatusDismissed = false;
+      return;
+    }
+    if (_confirmedStopStatusDismissed ||
+        _stopConfirmationDismissTimer != null) {
+      return;
+    }
+    _stopConfirmationDismissTimer = Timer(const Duration(seconds: 4), () {
+      _stopConfirmationDismissTimer = null;
+      if (_disposed || !mounted || !_confirmedStopStatusVisible) return;
+      setState(() => _confirmedStopStatusDismissed = true);
+    });
+  }
+
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    _syncStopConfirmationVisibility();
     if (event == ActiveChatEvent.started) {
       _lastNonEmptySubagentActivities = const <SubagentActivity>[];
       _subagentPillDismissed = false;
     }
     _syncTurnActivityClock();
+    _syncCompaction();
     _syncSubagentPolling();
-    if (_chat.hasDesktopRuntime) {
-      // The service publishes attachment on its event stream. Fence a passive
-      // null-runtime read at that same ownership boundary before any early
-      // return (including context-only updates) can bypass reader shutdown.
-      _syncPassiveTranscriptRefresh();
-    }
+    final passiveTerminalEvent =
+        event == ActiveChatEvent.done ||
+        event == ActiveChatEvent.error ||
+        event == ActiveChatEvent.cancelled;
+    final passiveRecoveryEvent =
+        event == ActiveChatEvent.connected ||
+        event == ActiveChatEvent.sessionInfo ||
+        (event == ActiveChatEvent.messagesHydrated &&
+            _messageRefreshInFlightEpoch == null);
+    final passiveRuntimeEvent =
+        event == ActiveChatEvent.started ||
+        event == ActiveChatEvent.waiting ||
+        event == ActiveChatEvent.approvalRequest ||
+        event == ActiveChatEvent.interactiveRequest;
+    _syncPassiveTranscriptRefresh(
+      refreshNow:
+          passiveTerminalEvent ||
+          passiveRecoveryEvent ||
+          passiveRuntimeEvent,
+      recoveryConverging: passiveRecoveryEvent,
+      terminal: passiveTerminalEvent,
+    );
     if (_editingRewriteSubmitted &&
-        ((event == ActiveChatEvent.started &&
-                (_editingPipelineSnapshot == ChatPipelineState.connecting ||
-                    _editingPipelineSnapshot == ChatPipelineState.waiting ||
-                    _editingPipelineSnapshot == ChatPipelineState.executing ||
-                    _editingPipelineSnapshot == ChatPipelineState.streaming)) ||
+        ((event == ActiveChatEvent.started && _editingTranscriptChanged) ||
             event == ActiveChatEvent.done ||
             event == ActiveChatEvent.error ||
             event == ActiveChatEvent.cancelled ||
             event == ActiveChatEvent.messagesHydrated)) {
-      _editingUserMessage = false;
-      _editingRewriteSubmitted = false;
-      _editingMessagesSnapshot = null;
-      _editingPipelineSnapshot = null;
+      _clearUserMessageEditingState();
     }
     final delivery = _attachmentDelivery;
     if (delivery != null) _preparedTurn = delivery.current;
@@ -4136,11 +4823,7 @@ class _ChatScreenState extends State<ChatScreen>
         _chat.desktopRuntimeInfo,
       );
       final compacting = _compressingSession;
-      final compressionPresentation = (
-        _chat.desktopCompressionAwaitingReconciliation,
-        _chat.desktopCompressionTransportUncertain,
-        _chat.desktopCompressionNeedsConfirmation,
-      );
+      final compressionPresentation = _chat.desktopRestoredCompressionRunning;
       final contextCompacting = _chat.desktopCompressionInFlight;
       final passiveAggregate = _chat.passiveActivityAggregate;
       final activityPresentation = (
@@ -4165,9 +4848,9 @@ class _ChatScreenState extends State<ChatScreen>
       _activityPresentationFingerprint = activityPresentation;
       _desktopRuntimePresentationFingerprint = presentationFingerprint;
       _lastDesktopCompacting = compacting;
-      _syncSessionContextMetrics(
-        preserveKnownWindow: !invalidateAfterCompaction,
-      );
+      // Tras compactar el uso real llega más tarde: hasta entonces se conserva
+      // el último porcentaje en vez de caer a los tokens acumulados.
+      _syncSessionContextMetrics(preserveKnownWindow: true);
       if (invalidateAfterCompaction) {
         _sessionContextAwaitingPostCompactionMetrics = false;
       }
@@ -4264,7 +4947,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _liveAssistantMaterialized = canRetainTerminalHost;
       if (canRetainTerminalHost) {
-        _showScrollToBottom = true;
+        _showScrollToBottom = !_isNearBottom;
       } else {
         _liveAssistantFrame.value = null;
       }
@@ -4321,7 +5004,7 @@ class _ChatScreenState extends State<ChatScreen>
         final rewindRestored = _chat.takeRewindRestoredOnError();
         final dashboardAuthRequired = _chat.takeRewindDashboardAuthRequired();
         if (rewindRestored) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 dashboardAuthRequired
@@ -4335,11 +5018,12 @@ class _ChatScreenState extends State<ChatScreen>
       case ActiveChatEvent.warning:
         final warning = _chat.takeTerminalWarning();
         if (warning != null && warning.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(warning),
               duration: const Duration(seconds: 8),
             ),
+            kind: HermesNoticeKind.warning,
           );
         }
         break;
@@ -4383,19 +5067,20 @@ class _ChatScreenState extends State<ChatScreen>
     if (fresh.isEmpty) return;
     _notifiedExhaustedQueueIds.addAll(fresh);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         key: const ValueKey('chat-queue-stuck-snackbar'),
         content: Text(Strings.of(context).chaQueueStuck),
         duration: const Duration(seconds: 8),
       ),
+      kind: HermesNoticeKind.warning,
     );
   }
 
   Future<void> _persistBotChatPin() async {
     if (widget.connection.readOnly) return;
     final source = widget.session.source.trim().toLowerCase();
-    if (source == 'bot-mode') {
+    if (source == 'bot-mode' || source == 'bot-mode-canonical') {
       try {
         await _botChatStore?.clear(
           connectionId: widget.connection.id,
@@ -4603,12 +5288,13 @@ class _ChatScreenState extends State<ChatScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).chaCantSendApproval(humanizeApiError(e)),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -4649,7 +5335,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (error) {
       submittedValue = '';
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(
@@ -4657,6 +5343,7 @@ class _ChatScreenState extends State<ChatScreen>
               ).interactiveRespondFailed(humanizeApiError(error)),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -4679,7 +5366,7 @@ class _ChatScreenState extends State<ChatScreen>
       await _chat.respondToClarifyBatch(entry.key, answers);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(
@@ -4687,6 +5374,7 @@ class _ChatScreenState extends State<ChatScreen>
               ).interactiveRespondFailed(humanizeApiError(error)),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       rethrow;
@@ -4697,16 +5385,27 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<void> _cancelInteractivePrompt() async {
     if (_resolvingInteractivePrompt) return;
+    _recentInterrupt.markInterrupted();
     try {
-      await _chat.cancel();
+      final result = await _chat.stopSessionWork();
+      _chat.clearStaleResumedSessionStopOffer();
+      if (!result.allBackgroundWorkStopped && mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Strings.of(
+                context,
+              ).chaBackgroundWorkRemaining(result.remainingBackgroundTasks),
+            ),
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+      }
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            Strings.of(context).chatStopSaveFailed,
-          ),
-        ),
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chatStopSaveFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -4755,9 +5454,8 @@ class _ChatScreenState extends State<ChatScreen>
     _voice?.voiceConsent.removeListener(_onVoicePreferenceChanged);
     _vcUnavailableSub?.cancel();
     _slashCompletionDebounce?.cancel();
-    _composerStopLockTimer?.cancel();
-    _composerStopLockTimer = null;
     _stopFallback?.cancel();
+    _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
     // modo voz: ese debe seguir si está hablando en segundo plano.
     if (_isRecording) {
@@ -4816,6 +5514,8 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.dispose();
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
+    _activityPillExtent.dispose();
+    _compaction.dispose();
     _sessionContextMetrics.dispose();
     super.dispose();
   }
@@ -4832,7 +5532,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (wasInForeground != _appInForeground && mounted && !_disposed) {
       setState(() {});
     }
-    _syncPassiveTranscriptRefresh();
+    _syncPassiveTranscriptRefresh(
+      refreshNow:
+          wasInForeground != _appInForeground &&
+          state == AppLifecycleState.resumed,
+      recoveryConverging: state == AppLifecycleState.resumed,
+    );
     _syncSubagentPolling();
     // El modo voz lo gobierna el controlador global (vía HermesAppState), que
     // ya recibe el ciclo de vida globalmente. Aquí solo paramos el dictado del
@@ -4891,9 +5596,7 @@ class _ChatScreenState extends State<ChatScreen>
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
     // (cerca de lo más viejo) → el botón "ir abajo" salía invertido en chats
     // largos y el auto-seguimiento del streaming no enganchaba.
-    final atBottom =
-        _scrollController.position.pixels <=
-        _scrollController.position.minScrollExtent + 100;
+    final atBottom = _isNearBottom;
     // El historial anterior es una acción explícita. Llegar al borde solo hace
     // visible el control flotante; nunca dispara red ni encadena páginas por un
     // rebote de física/semántica de "scroll to top".
@@ -5060,13 +5763,11 @@ class _ChatScreenState extends State<ChatScreen>
     // Un arrastre real expresa intención de lectura incluso si termina dentro
     // del margen de 100 px usado por la flecha. Reengancharlo aquí hacía que el
     // siguiente token devolviera la lista al fondo y peleara con el dedo.
-    if (gestureMoved) {
+    if (gestureMoved && _transcriptOverflows) {
       _onScroll();
       return;
     }
-    final pos = _scrollController.position;
-    final atBottom = pos.pixels <= pos.minScrollExtent + 100;
-    if (!atBottom) return;
+    if (!_isNearBottom) return;
     final target = _chat.assistantContent.length;
     _streamingViewportLock.disable();
     // Reenganche sin setState: la estructura de la lista no cambia; el host
@@ -5109,9 +5810,16 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  bool get _transcriptOverflows {
+    if (!_scrollController.hasClients) return false;
+    final pos = _scrollController.position;
+    return pos.hasContentDimensions &&
+        pos.maxScrollExtent > pos.minScrollExtent + 1;
+  }
+
   /// ¿El usuario está pegado al fondo (siguiendo el mensaje nuevo)?
   bool get _isNearBottom {
-    if (!_scrollController.hasClients) return true;
+    if (!_transcriptOverflows) return true;
     final pos = _scrollController.position;
     return pos.pixels <= pos.minScrollExtent + 100;
   }
@@ -5193,8 +5901,10 @@ class _ChatScreenState extends State<ChatScreen>
       // vivo en vez de dejar solo la petición del usuario.
       final liveAssistantWithoutRenderUnit =
           head['role'] == 'assistant' &&
-          head['_pipeline'] != true &&
-          projection.nearestRenderableMessageIndex(0) != 0;
+          projection.nearestRenderableMessageIndex(0) != 0 &&
+          (head['_pipeline'] != true ||
+              (_liveAssistantMaterialized &&
+                  _liveAssistantFrame.value != null));
       if (liveAssistantWithoutRenderUnit) {
         entries.add(_WholeChatListEntry(const ChatMessageUnitPlan(0)));
       }
@@ -5427,7 +6137,7 @@ class _ChatScreenState extends State<ChatScreen>
     // No recargues sobre un stream en curso: clobbearía el parcial que llega.
     if (_chat.isStreaming) {
       if (!passiveOnly && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).chaStatusExecuting)),
         );
       }
@@ -5512,6 +6222,25 @@ class _ChatScreenState extends State<ChatScreen>
             widget.session.source == 'mobile' &&
             widget.session.messageCount == 0 &&
             _messages.isEmpty;
+        // Hermes Desktop drops a verifiably gone id (its transcript AND its
+        // row 404) to a fresh draft instead of an error; a 404 on the
+        // transcript alone keeps the stable error with retry.
+        final storedSessionGone =
+            !isUnpersistedMobileChat &&
+            _messages.isEmpty &&
+            await _storedSessionIsGone();
+        if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
+          return false;
+        }
+        if (storedSessionGone) {
+          _chat.markStoredSessionGone();
+          setState(() => _error = null);
+          HermesNotice.of(context).showSnackBar(
+            SnackBar(content: Text(Strings.of(context).chaSessionGone)),
+            kind: HermesNoticeKind.warning,
+          );
+          return false;
+        }
         if (isUnpersistedMobileChat) {
           // Un chat recién creado solo existe en el móvil hasta el primer
           // envío. Que el servidor aún no tenga transcript es el estado
@@ -5525,8 +6254,9 @@ class _ChatScreenState extends State<ChatScreen>
           }
         });
         if (!isUnpersistedMobileChat) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(Strings.of(context).chaMessagesError)),
+            kind: HermesNoticeKind.error,
           );
         }
         return false;
@@ -5546,6 +6276,18 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// The session's own row answers 404 too: deleted (here or on another
+  /// surface), not a transient transcript read failure.
+  Future<bool> _storedSessionIsGone() async {
+    try {
+      await _chat.loadPersistedSessionSnapshot();
+      return false;
+    } catch (error) {
+      final text = error.toString();
+      return text.contains('404') || text.toLowerCase().contains('not found');
+    }
+  }
+
   /// Envía con teclado físico: Ctrl/Cmd+Enter envía; Enter suelto sigue siendo
   /// newline en campos multiline. Durante dictado, el mismo atajo envía la
   /// transcripción.
@@ -5561,11 +6303,31 @@ class _ChatScreenState extends State<ChatScreen>
   ///
   /// When [_pendingAttachments] are staged, text files are embedded and binary
   /// files are uploaded through the Dashboard file API before chat streaming.
-  Future<bool> _sendMessage({String? initialText}) async {
+  Future<bool> _sendMessage({
+    String? initialText,
+    bool queueOnly = false,
+  }) async {
     if (_composerSubmissionInFlight ||
         _attachmentSubmitting ||
         _attachmentMutationInFlight ||
         _compressingSession) {
+      return false;
+    }
+    // Claim the in-flight slot BEFORE any await: two same-tick sends (double
+    // tap) must never both pass the guard above and submit twice.
+    _composerSubmissionInFlight = true;
+    try {
+      await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _composerSubmissionInFlight = false);
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      } else {
+        _composerSubmissionInFlight = false;
+      }
       return false;
     }
     _passiveConversationReader?.setVisible(false);
@@ -5581,7 +6343,10 @@ class _ChatScreenState extends State<ChatScreen>
       setState(() => _attachmentSubmitting = true);
     }
     try {
-      return await _sendMessageOnce(textOverride: initialText);
+      return await _sendMessageOnce(
+        textOverride: initialText,
+        queueOnly: queueOnly,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -5600,6 +6365,7 @@ class _ChatScreenState extends State<ChatScreen>
     bool skipSlashRouting = false,
     String? textOverride,
     bool includeComposerAttachments = true,
+    bool queueOnly = false,
   }) async {
     await _profileReady;
     final outboxRecoveryAvailable = await _initialOutboxRead.future;
@@ -5628,14 +6394,16 @@ class _ChatScreenState extends State<ChatScreen>
       }
       if (invocation == null) {
         final unknownName = rawComposerText.substring(1);
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(str.chaCommandUnknown(unknownName))),
+          kind: HermesNoticeKind.warning,
         );
         return false;
       }
       if (_pendingAttachments.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(str.chaCommandAttachmentsUnsupported)),
+          kind: HermesNoticeKind.warning,
         );
         return false;
       }
@@ -5667,8 +6435,9 @@ class _ChatScreenState extends State<ChatScreen>
         }
       }
       final unknownName = invocation.name;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(str.chaCommandUnknown(unknownName))),
+        kind: HermesNoticeKind.warning,
       );
       return false;
     }
@@ -5731,8 +6500,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (attachments.isNotEmpty &&
         !await AttachmentUploader.validateBatch(attachments)) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(str.chaAttachmentValidationFailed)),
+          kind: HermesNoticeKind.error,
         );
       }
       return false;
@@ -5768,7 +6538,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (mounted) {
             final tooBig =
                 attachment.sizeBytes > AttachmentUploader.maxTextBytes;
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(
                 content: Text(
                   tooBig
@@ -5816,8 +6586,9 @@ class _ChatScreenState extends State<ChatScreen>
         );
         if (reference == null) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(content: Text(str.chaAttachmentPreparationFailed)),
+              kind: HermesNoticeKind.error,
             );
           }
           return false;
@@ -5856,13 +6627,44 @@ class _ChatScreenState extends State<ChatScreen>
     if (RegExp(r'(^|\s)@[a-z0-9]', caseSensitive: false).hasMatch(text)) {
       await _chat.loadMentionRoster();
     }
-    final mentions = List<BotMention>.unmodifiable(_chat.mentionResolver.resolve(text));
+    final mentions = List<BotMention>.unmodifiable(
+      _chat.mentionResolver.resolve(text),
+    );
     final mentionAnnotation = buildBotMentionAnnotation(mentions);
     final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
     // Every queued composer turn is written to the encrypted outbox before the
     // composer is cleared. This preserves FIFO across process death and keeps a
     // rejected head visible for explicit retry instead of dropping it.
     if (_sending || waitsForExternalOwner) {
+      if (_sending &&
+          !queueOnly &&
+          !skipSlashRouting &&
+          attachments.isEmpty &&
+          _chat.pendingApproval == null &&
+          text.isNotEmpty) {
+        var accepted = false;
+        try {
+          final disposition = await _chat.steer(text);
+          accepted = disposition != DesktopRedirectDisposition.rejected;
+        } catch (_) {}
+        if (accepted) {
+          if (usesComposerState &&
+              _textController.text == composerTextAtSubmit &&
+              _sameAttachmentDrafts(_pendingAttachments, attachments)) {
+            _draftTimer?.cancel();
+            _restoringDraft = true;
+            setState(() {
+              _textController.clear();
+              _pendingAttachments.clear();
+            });
+            _restoringDraft = false;
+            await _clearDraft();
+          } else {
+            _scheduleDraftSave();
+          }
+          return true;
+        }
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
       final prepared = PreparedTurn(
         connectionId: widget.connection.id,
@@ -5906,7 +6708,7 @@ class _ChatScreenState extends State<ChatScreen>
         _scheduleDraftSave();
       }
       if (mounted) {
-        ScaffoldMessenger.of(context)
+        HermesNotice.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
       }
@@ -5960,7 +6762,9 @@ class _ChatScreenState extends State<ChatScreen>
       fullText: sameRecoveredBatch ? existing!.fullText : fullText,
       desktopText: sameRecoveredBatch ? existing!.desktopText : desktopText,
       mentions: sameRecoveredBatch ? existing!.mentions : mentions,
-      mentionAnnotation: sameRecoveredBatch ? existing!.mentionAnnotation : mentionAnnotation,
+      mentionAnnotation: sameRecoveredBatch
+          ? existing!.mentionAnnotation
+          : mentionAnnotation,
       attachments: attachments,
       model: selectedModel,
       profile: profile,
@@ -6019,7 +6823,6 @@ class _ChatScreenState extends State<ChatScreen>
       model: selectedModel,
       history: history,
       profile: _effectiveSessionProfile,
-      slowModel: (_activeModel?.provider ?? '').toLowerCase().startsWith('moa'),
       nativeAttachments: attachments,
       desktopText: prepared.desktopText,
       delivery: delivery,
@@ -6159,74 +6962,42 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// Techo de la valla del composer durante un Stop.
-  ///
-  /// Desktop no tiene esta valla en absoluto: `cancelRun`
-  /// (`use-prompt-actions/index.ts`) baja `busy` de forma **síncrona** y solo
-  /// después espera `session.interrupt`, de modo que un stop lento o fallido
-  /// nunca congela el input; el fallo se cuenta con un toast (`copy.stopFailed`)
-  /// y el turno ya quedó cerrado en la UI.
-  ///
-  /// Aquí `_chat.cancel()` hace bastante más (tombstone durable +
-  /// `_recoverAndInterruptStop`, que en una red mala recorre la escalera de
-  /// backoff durante decenas de segundos). Mantener la valla durante TODO ese
-  /// tiempo dejaba el composer muerto sin ninguna salida. Se conserva solo lo
-  /// justo para serializar el doble tap del caso rápido (que se resuelve en
-  /// milisegundos) y luego se suelta, mientras la cancelación sigue en segundo
-  /// plano: `_buildStopStatusStrip` ya narra stopping/retrying y ofrece
-  /// «Reintentar Stop» al fallar, así que la señal no se pierde al soltar.
-  static const Duration _composerStopLockTimeout = Duration(seconds: 2);
-
   Future<void> _cancelStream() async {
-    if (_composerSubmissionInFlight) return;
-    if (mounted) {
-      setState(() => _composerSubmissionInFlight = true);
-    } else {
-      _composerSubmissionInFlight = true;
-    }
-    var lockReleased = false;
-    void releaseComposerLock() {
-      if (lockReleased) return;
-      lockReleased = true;
-      _composerStopLockTimer?.cancel();
-      _composerStopLockTimer = null;
-      if (mounted) {
-        setState(() => _composerSubmissionInFlight = false);
-      } else {
-        _composerSubmissionInFlight = false;
-      }
-    }
-
-    _composerStopLockTimer?.cancel();
-    _composerStopLockTimer = Timer(
-      _composerStopLockTimeout,
-      releaseComposerLock,
-    );
+    if (!_chat.gatewayConnected) return;
+    _recentInterrupt.markInterrupted();
     var cancelled = false;
-    // La cancelación no se confirma visualmente hasta que el tombstone cifrado
-    // queda durable; así un cierre inmediato no puede resucitar la respuesta.
-    // Un segundo tap tras la suelta acotada es inofensivo: `cancel()` devuelve
-    // el `_durableCancelFlight` en curso en lugar de abrir otro Stop.
     try {
       final override = widget.cancelStreamOverride;
+      SessionStopResult? result;
       if (override != null) {
         await override();
       } else {
-        await _chat.cancel();
+        result = await _chat.stopSessionWork();
+      }
+      _chat.clearStaleResumedSessionStopOffer();
+      if (result != null && !result.allBackgroundWorkStopped && mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Strings.of(
+                context,
+              ).chaBackgroundWorkRemaining(result.remainingBackgroundTasks),
+            ),
+          ),
+          kind: HermesNoticeKind.warning,
+        );
       }
       cancelled = true;
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).chaStopPersistenceFailed)),
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+          kind: HermesNoticeKind.error,
         );
       }
-    } finally {
-      releaseComposerLock();
     }
     if (!cancelled || !mounted) return;
     setState(() {});
-    // Reset to idle after a moment
     Future.delayed(const Duration(milliseconds: 1200), () {
       if (mounted && _pipelineState == ChatPipelineState.cancelled) {
         setState(() => _pipelineState = ChatPipelineState.idle);
@@ -6271,6 +7042,59 @@ class _ChatScreenState extends State<ChatScreen>
     return _currentRenderProjection.userOrdinalFor(target);
   }
 
+  bool _attachmentsCanBeReused(List<_ParsedAttachment> attachments) =>
+      attachments.every((attachment) => attachment.historyReference != null);
+
+  Future<List<AttachmentDraft>?> _resolveAttachmentsForEdit(
+    List<_ParsedAttachment> attachments,
+  ) async {
+    final drafts = <AttachmentDraft>[];
+    for (final attachment in attachments) {
+      final reference = attachment.historyReference;
+      if (reference == null) return null;
+      final file = await AttachmentUploader.resolveHistoryReference(reference);
+      if (file == null) return null;
+      drafts.add(
+        AttachmentDraft(
+          localId: 'edit-${reference.index}-${reference.storageKey}',
+          type: reference.type,
+          name: attachment.name,
+          mimeType: reference.mimeType,
+          sizeBytes: reference.sizeBytes,
+          localPath: file.path,
+        ),
+      );
+    }
+    return drafts;
+  }
+
+  String _editedAttachmentContent({
+    required String raw,
+    required List<_ParsedAttachment> attachments,
+    required String editedText,
+    required bool includePayload,
+  }) {
+    final result = <String>[
+      for (final attachment in attachments)
+        '[📎 ${attachment.name}${attachment.sizeLabel.isEmpty ? '' : ' · ${attachment.sizeLabel}'}]',
+      editedText,
+    ];
+    final lines = stripBotMentionNote(raw).split('\n');
+    final sentinel = lines.indexWhere((line) => line.trim() == '⟦adjunto⟧');
+    if (includePayload && sentinel >= 0) {
+      result.add('⟦adjunto⟧');
+      result.addAll(
+        lines.skip(sentinel + 1).where(
+          (line) => AttachmentHistoryReference.tryParseMarker(line) == null,
+        ),
+      );
+    }
+    result.addAll(
+      attachments.map((attachment) => attachment.historyReference!.toMarker()),
+    );
+    return result.join('\n').trimRight();
+  }
+
   bool _canEditUserMessage(Map<String, dynamic> message) {
     final parsed = _parseUserContent((message['content'] ?? '').toString());
     final ordinal = _userOrdinalFor(message);
@@ -6279,54 +7103,205 @@ class _ChatScreenState extends State<ChatScreen>
         _compressingSession ||
         ordinal == null ||
         parsed.text.trim().isEmpty ||
-        parsed.attachments.isNotEmpty) {
+        !_attachmentsCanBeReused(parsed.attachments)) {
       return false;
     }
     return true;
   }
+
+  /// ¿Es una fila del asistente cuyo único contenido es traza (razonamiento /
+  /// herramientas), sin texto visible, medios ni desenlace parado/cancelado?
+  bool _isTraceOnlyAssistantRow(Map<String, dynamic> row) {
+    if (row['role'] != 'assistant' ||
+        (row['display_kind']?.toString().trim().isNotEmpty ?? false) ||
+        row['_pipeline'] == true ||
+        row['_cancelled'] == true ||
+        row['_stopped'] == true ||
+        ((row['content'] as String?) ?? '').trim().isNotEmpty ||
+        _structuredGeneratedImages(row).isNotEmpty ||
+        _structuredGeneratedVideos(row).isNotEmpty) {
+      return false;
+    }
+    return normalizeAssistantActivityTrace(row[assistantActivityTraceKey])
+            .isNotEmpty ||
+        (row['reasoning'] is String &&
+            (row['reasoning'] as String).trim().isNotEmpty);
+  }
+
+  /// ¿Es una respuesta con texto visible, terminada y sin parar/cancelar?
+  bool _isMergeTargetAnswer(Map<String, dynamic> row) =>
+      row['role'] == 'assistant' &&
+      !(row['display_kind']?.toString().trim().isNotEmpty ?? false) &&
+      row['_pipeline'] != true &&
+      row['_cancelled'] != true &&
+      row['_stopped'] != true &&
+      ((row['content'] as String?) ?? '').trim().isNotEmpty;
+
+  /// Fusión de filas solo-traza con la respuesta que las sigue en el MISMO turno
+  /// (adyacentes, sin mensaje de usuario entre ellas):
+  ///  * en la fila solo-traza, `hidden` (no se pinta);
+  ///  * en la respuesta, `merged` con los pasos de todas (más antiguos primero).
+  /// El turno en vivo no se fusiona, ni se cruza un mensaje de usuario ni un
+  /// desenlace parado/cancelado.
+  ({bool hidden, Map<String, dynamic>? merged})? _traceMergeFor(
+    Map<String, dynamic> msg,
+  ) {
+    final projection = _currentRenderProjection;
+    final index = projection.messageIndexOf(msg);
+    if (index == null) return null;
+    if (_isTraceOnlyAssistantRow(msg)) {
+      final newerIndex = index - 1;
+      if (newerIndex < 0) return null;
+      final newer = _messages[newerIndex];
+      // Una fila solo-traza seguida de otra solo-traza se funde con la cadena
+      // completa: la oculta es cada una salvo que la cadena acabe en respuesta.
+      var probe = newerIndex;
+      var row = newer;
+      while (_isTraceOnlyAssistantRow(row) && probe > 0) {
+        probe -= 1;
+        row = _messages[probe];
+      }
+      final liveHead = _chat.isStreaming && probe == 0;
+      if (!liveHead && _isMergeTargetAnswer(row)) {
+        return (hidden: true, merged: null);
+      }
+      return null;
+    }
+    if (!_isMergeTargetAnswer(msg)) return null;
+    final older = <Map<String, dynamic>>[];
+    var probe = index + 1;
+    while (probe < _messages.length &&
+        _isTraceOnlyAssistantRow(_messages[probe])) {
+      older.add(_messages[probe]);
+      probe += 1;
+    }
+    if (older.isEmpty) return null;
+    // La copia fusionada se reutiliza mientras las filas de origen no cambien:
+    // su identidad alimenta la selección de texto y no debe variar por frame.
+    final cached = _traceMergeCache[msg];
+    if (cached != null &&
+        cached.sources.length == older.length &&
+        [
+          for (var i = 0; i < older.length; i++)
+            identical(cached.sources[i], older[i]),
+        ].every((same) => same)) {
+      return (hidden: false, merged: cached.merged);
+    }
+    // `older` va del más nuevo al más antiguo: se invierte para el orden real.
+    final chain = [...older.reversed, msg];
+    final steps = <Map<String, dynamic>>[
+      for (final row in chain)
+        ...normalizeAssistantActivityTrace(row[assistantActivityTraceKey]),
+    ];
+    final reasoning = [
+      for (final row in chain)
+        if (row['reasoning'] is String &&
+            (row['reasoning'] as String).trim().isNotEmpty)
+          (row['reasoning'] as String).trim(),
+    ].join('\n\n');
+    var seconds = 0.0;
+    var hasSeconds = false;
+    for (final row in chain) {
+      final value = row['_activity_duration_seconds'];
+      if (value is num && value.isFinite && value > 0) {
+        seconds += value;
+        hasSeconds = true;
+      }
+    }
+    final merged = <String, dynamic>{
+      ...msg,
+      if (steps.isNotEmpty) assistantActivityTraceKey: steps,
+      if (reasoning.isNotEmpty) 'reasoning': reasoning,
+      if (hasSeconds) '_activity_duration_seconds': seconds,
+    };
+    if (_traceMergeCache.length > 64) _traceMergeCache.clear();
+    _traceMergeCache[msg] = (sources: older, merged: merged);
+    return (hidden: false, merged: merged);
+  }
+
+  final Map<
+    Map<String, dynamic>,
+    ({List<Map<String, dynamic>> sources, Map<String, dynamic> merged})
+  >
+  _traceMergeCache = Map.identity();
 
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
     return indexes.isNotEmpty && identical(_messages[indexes.first], target);
   }
 
-  Future<void> _editUserMessage(Map<String, dynamic> message) async {
+  void _editUserMessage(Map<String, dynamic> message, double bubbleWidth) {
     final ordinal = _userOrdinalFor(message);
     if (ordinal == null) return;
-    final parsed = _parseUserContent((message['content'] ?? '').toString());
-    if (parsed.text.trim().isEmpty || parsed.attachments.isNotEmpty) return;
+    final rawContent = (message['content'] ?? '').toString();
+    final parsed = _parseUserContent(rawContent);
+    if (parsed.text.trim().isEmpty ||
+        !_attachmentsCanBeReused(parsed.attachments)) {
+      return;
+    }
+    Map<String, dynamic>? target;
+    final snapshot = _chat.messages.map((entry) {
+      final copy = Map<String, dynamic>.from(entry);
+      if (identical(entry, message)) target = copy;
+      return copy;
+    }).toList();
+    if (target == null) return;
     setState(() {
       _editingUserMessage = true;
+      _editingUserMessageTarget = target;
+      _editingUserMessageWidth = bubbleWidth;
+      _editingUserMessageText = parsed.text.trim();
+      _editingUserMessageOrdinal = ordinal;
       _editingRewriteSubmitted = false;
-      _editingMessagesSnapshot = _chat.messages
-          .map((entry) => Map<String, dynamic>.from(entry))
-          .toList();
+      _editingMessagesSnapshot = snapshot;
       _editingPipelineSnapshot = _chat.state;
     });
-    final edited = await showHermesFloatingSurface<String>(
-      context: context,
-      surfaceKey: const ValueKey('chat-edit-message-dialog'),
-      maxWidth: 560,
-      maxHeightFactor: 1,
-      builder: (dialogContext) =>
-          _EditUserMessageSheet(initialText: parsed.text.trim()),
-    );
-    if (!mounted) {
-      _editingUserMessage = false;
-      _editingRewriteSubmitted = false;
-      _editingMessagesSnapshot = null;
-      _editingPipelineSnapshot = null;
+  }
+
+  void _cancelUserMessageEdit() {
+    if (_editingRewriteSubmitted) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(_clearUserMessageEditingState);
+  }
+
+  Future<void> _saveUserMessageEdit(String edited) async {
+    final message = _editingUserMessageTarget;
+    if (message == null || _editingRewriteSubmitted) return;
+    final ordinal = _editingUserMessageOrdinal;
+    if (ordinal == null) return;
+    final rawContent = (message['content'] ?? '').toString();
+    final parsed = _parseUserContent(rawContent);
+    if (edited.isEmpty || edited == parsed.text.trim()) return;
+    setState(() => _editingRewriteSubmitted = true);
+
+    final nativeAttachments = parsed.attachments.isEmpty
+        ? const <AttachmentDraft>[]
+        : await _resolveAttachmentsForEdit(parsed.attachments);
+    if (!mounted) return;
+    if (nativeAttachments == null) {
+      setState(_clearUserMessageEditingState);
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaEditFailed)),
+        kind: HermesNoticeKind.error,
+      );
       return;
     }
-    if (edited == null || edited.isEmpty || edited == parsed.text.trim()) {
-      setState(() {
-        _editingUserMessage = false;
-        _editingRewriteSubmitted = false;
-        _editingMessagesSnapshot = null;
-        _editingPipelineSnapshot = null;
-      });
-      return;
-    }
+    final rewriteText = parsed.attachments.isEmpty
+        ? edited
+        : _editedAttachmentContent(
+            raw: rawContent,
+            attachments: parsed.attachments,
+            editedText: edited,
+            includePayload: true,
+          );
+    final desktopRewriteText = parsed.attachments.isEmpty
+        ? null
+        : _editedAttachmentContent(
+            raw: rawContent,
+            attachments: parsed.attachments,
+            editedText: edited,
+            includePayload: false,
+          );
 
     var failed = false;
     var authRequired = false;
@@ -6335,9 +7310,12 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       await _chat.rewrite(
         userOrdinal: ordinal,
-        text: edited,
+        text: rewriteText,
         model: _selectedModel,
         profile: _effectiveSessionProfile,
+        desktopText: desktopRewriteText,
+        mentionText: edited,
+        nativeAttachments: nativeAttachments,
       );
       // Un rechazo previo al arranque no lanza: `rewrite` rebobina y lo deja
       // marcado. Sin consultarlo, la edición fracasaba en silencio — el turno
@@ -6361,10 +7339,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted) return;
     setState(() {
       if (failed || _editingMessagesSnapshot == null) {
-        _editingUserMessage = false;
-        _editingRewriteSubmitted = false;
-        _editingMessagesSnapshot = null;
-        _editingPipelineSnapshot = null;
+        _clearUserMessageEditingState();
       }
     });
     if (failed) {
@@ -6372,7 +7347,7 @@ class _ChatScreenState extends State<ChatScreen>
       final message = failure is DashboardAuthException
           ? localizedApiError(str, failure)
           : (authRequired ? str.dashboardAuthLoginRequired : str.chaEditFailed);
-      ScaffoldMessenger.of(
+      HermesNotice.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
     }
@@ -6389,7 +7364,7 @@ class _ChatScreenState extends State<ChatScreen>
       surfaceKey: ValueKey('chat-queue-edit-dialog-${entry.id}'),
       maxWidth: 560,
       maxHeightFactor: 1,
-      builder: (_) => _EditUserMessageSheet(initialText: entry.text),
+      builder: (_) => _EditQueuedEntrySheet(initialText: entry.text),
     );
     if (!mounted) return;
     var saved = true;
@@ -6401,10 +7376,27 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted) return;
     setState(() => _editingQueuedEntryId = null);
     if (!saved) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaQueueEditFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
+  }
+
+  Future<void> _steerQueuedEntry(String id) async {
+    final outcome = await _chat.steerQueuedTurnWithOutcome(id);
+    if (!mounted) return;
+    final strings = Strings.of(context);
+    final message = switch (outcome) {
+      QueuedSteerOutcome.accepted || QueuedSteerOutcome.rejected => null,
+      QueuedSteerOutcome.unconfirmed => strings.chaQueueSteerUnconfirmed,
+      QueuedSteerOutcome.queueRemovalFailed =>
+        strings.chaQueueSteerCleanupFailed,
+    };
+    if (message == null) return;
+    HermesNotice.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _regenerateLastResponse() async {
@@ -6450,8 +7442,9 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) setState(() {});
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaRegenerateFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -6483,18 +7476,20 @@ class _ChatScreenState extends State<ChatScreen>
       ),
     );
     if (confirm != true || !mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     final client = DashboardClient.lazy(widget.connection);
     try {
       await client.restartGateway();
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(str.chaRestartGatewayDone)),
+        kind: HermesNoticeKind.success,
       );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(str.chaRestartGatewayFail(e.toString()))),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -6548,10 +7543,36 @@ class _ChatScreenState extends State<ChatScreen>
     _executeSlash(cmd, '');
   }
 
+  /// La paleta de comandos slash está a la vista sobre el compositor.
+  ///
+  /// Como el menú de Hermes Desktop (se cierra al perder el foco), solo vive
+  /// mientras el composer tiene el foco, y nunca sobre el drawer abierto: el
+  /// overlay que la aloja pinta por encima del Scaffold entero.
+  bool get _slashPaletteVisible =>
+      !(_isRecording ||
+          _transcribing ||
+          _compressingSession ||
+          _navigationDrawerOpen ||
+          !_textFocusNode.hasFocus ||
+          _slashSuggestions.isEmpty);
+
   void _consumeSlashInvocation(String invocation) {
     if (_textController.text != invocation) return;
     _textController.clear();
     setState(() => _slashSuggestions = const []);
+  }
+
+  /// Restaura un `/comando` en el composer tras un rechazo definitivo — el
+  /// mismo trato que un mensaje normal que el transporte no aceptó. Solo si
+  /// el usuario no empezó a escribir algo nuevo mientras tanto.
+  void _restoreSlashInvocation(String invocation) {
+    if (!mounted || _textController.text.isNotEmpty) return;
+    setState(
+      () => _textController.value = TextEditingValue(
+        text: invocation,
+        selection: TextSelection.collapsed(offset: invocation.length),
+      ),
+    );
   }
 
   /// Ejecuta un comando slash conocido sin decidir el foco globalmente. Las
@@ -6563,11 +7584,12 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (cmd.action == SlashAction.unavailable) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).chaCompactUnavailable),
           duration: const Duration(seconds: 7),
         ),
+        kind: HermesNoticeKind.warning,
       );
       return;
     }
@@ -6625,13 +7647,23 @@ class _ChatScreenState extends State<ChatScreen>
       showReadOnlyNotice(context);
       return;
     }
+    // Se limpia como un mensaje normal en cuanto se envía, sin esperar a que
+    // el RPC vuelva: el composer no debe quedarse enseñando "/comando" el
+    // tiempo que tarde el backend. Si el envío termina fallando de forma
+    // definitiva se restaura, igual que un mensaje normal rechazado.
     final invocation = _textController.text;
+    setState(() {
+      _textController.clear();
+      _slashSuggestions = const [];
+    });
     try {
       final result = await _chat.executeDesktopSlash(cmd.name, arg: arg);
       if (!mounted) return;
       if (result.accepted != DesktopCommandAcceptance.accepted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _restoreSlashInvocation(invocation);
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).chaCommandFailed)),
+          kind: HermesNoticeKind.error,
         );
         return;
       }
@@ -6641,7 +7673,6 @@ class _ChatScreenState extends State<ChatScreen>
           directedMessage.isNotEmpty &&
           (result.kind == DesktopCommandDispatchKind.send ||
               result.kind == DesktopCommandDispatchKind.skill);
-      _consumeSlashInvocation(invocation);
 
       final notice = result.notice?.trim();
       final output = result.output?.trim();
@@ -6650,7 +7681,7 @@ class _ChatScreenState extends State<ChatScreen>
           : notice?.isNotEmpty == true
           ? notice!
           : Strings.of(context).chaCommandAccepted('/${cmd.name}');
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(feedback), duration: const Duration(seconds: 7)),
       );
 
@@ -6663,16 +7694,19 @@ class _ChatScreenState extends State<ChatScreen>
       }
     } on TuiGatewayRpcError catch (error) {
       if (!mounted) return;
+      _restoreSlashInvocation(invocation);
       final message = error.code == -32601
           ? Strings.of(context).chaCompressionUnsupported
           : Strings.of(context).chaCommandFailed;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(message), duration: const Duration(seconds: 7)),
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _restoreSlashInvocation(invocation);
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaCommandFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -6680,8 +7714,9 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _compressDesktopSession(String focusTopic) async {
     if (_compressingSession) {
       _restoreComposerFocusAfterCompression();
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaCompressionBusy)),
+        kind: HermesNoticeKind.warning,
       );
       return false;
     }
@@ -6690,67 +7725,109 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
 
+    // Se limpia como un mensaje normal en cuanto se envía — la barra
+    // flotante ya es la señal de que sigue en marcha, así que el composer no
+    // debe volver a enseñar "/compress" el tiempo que dure. Solo se restaura
+    // ante un rechazo definitivo, igual que un mensaje normal rechazado; si
+    // queda pendiente de confirmar (resultado tardío), el composer se queda
+    // limpio y `_consumeCompressionInvocation` cierra el resto del estado
+    // cuando por fin se resuelva.
+    final invocation = _textController.text;
+    _compressionInvocation = invocation;
     setState(() {
       _compressionCommandInFlight = true;
       _compressionDraftFocusRetained = false;
+      _slashSuggestions = const [];
+      _textController.clear();
     });
+    _syncCompaction();
     try {
       final presentation = await _chat.compressDesktopSessionForPresentation(
         focusTopic: focusTopic.trim(),
       );
       if (!mounted) return false;
-      if (!presentation.projection.isCurrent) return false;
+      if (!presentation.projection.isCurrent) {
+        // Superseded before we ever reached the gateway (e.g. a concurrent
+        // refresh invalidated the read while still preparing): nothing was
+        // actually sent, so — unlike a dispatched attempt that later went
+        // stale, where the floating dock is already the live signal — the
+        // user's typed command comes back, same as any other locally
+        // abandoned send.
+        if (!presentation.projection.dispatchAttempted) {
+          _restoreComposerFocusAfterCompression();
+          _restoreSlashInvocation(invocation);
+        }
+        return false;
+      }
       if (presentation.failure case final failure?) throw failure;
       final result = presentation.command!;
       final strings = Strings.of(context);
-      final message = _compressionResultMessage(strings, result);
-      final compression = result.compressionResult;
-      final hasDurableTimelineOutcome =
-          (result.compressionStatus == DesktopCompressionStatus.compressed ||
-              result.compressionStatus == DesktopCompressionStatus.noOp) &&
-          compression?.removed != null &&
-          compression?.beforeMessages != null &&
-          compression?.afterMessages != null &&
-          compression?.beforeTokens != null &&
-          compression?.afterTokens != null;
-      if (!hasDurableTimelineOutcome) {
-        ScaffoldMessenger.of(context).showSnackBar(
+      // A finished compression (compacted or nothing to compact) has ONE
+      // feedback surface: the compaction pill turns into its outcome, the way
+      // Hermes Desktop's toast carries the headline. Only the other outcomes
+      // (aborted, lock held, pending, legacy route) need a notice.
+      final pillOutcome =
+          result.compressionStatus == DesktopCompressionStatus.compressed ||
+          result.compressionStatus == DesktopCompressionStatus.noOp;
+      if (!pillOutcome) {
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
-            content: Text(message),
+            content: Text(_compressionResultMessage(strings, result)),
             duration: const Duration(seconds: 7),
           ),
         );
       }
       final succeeded = _compressionSucceeded(result);
+      _finishCompactionBar(result);
       if (!succeeded) {
+        // Dos preguntas distintas, no una: si el composer se desbloquea
+        // (`retainWhileFenced`, sin cambios: solo la ruta legacy —
+        // `compressionStatus` null — se desbloquea; un `pending` nativo
+        // fiable se queda bloqueado, igual que antes de esta noche) y si el
+        // texto se restaura. Para esto último, `compressionStatus` es la
+        // señal fiable en la ruta nativa (`pending` es lo único genuinamente
+        // incierto; aborted/lock_held son un rechazo real). La ruta legacy
+        // nunca la toca — ahí `accepted` es la señal: unknown == genuinamente
+        // pendiente/incierto (pending, o un fallo de transporte donde no se
+        // sabe si el backend llegó a aceptarlo), rejected == rechazo
+        // definitivo, igual que un mensaje normal rechazado.
+        final fenced = result.compressionStatus != null
+            ? result.compressionStatus == DesktopCompressionStatus.pending
+            : result.accepted != DesktopCommandAcceptance.rejected;
         _restoreComposerFocusAfterCompression(
           retainWhileFenced: result.compressionStatus == null,
         );
+        if (!fenced) _restoreSlashInvocation(invocation);
       }
       return succeeded;
     } on TuiGatewayRpcError catch (error) {
       if (!mounted) return false;
       _restoreComposerFocusAfterCompression();
+      _restoreSlashInvocation(invocation);
       final strings = Strings.of(context);
-      final message = _chat.desktopCompressionTransportUncertain
-          ? strings.chaCompressionReconciling
-          : _compressionFailureMessage(strings, error.code);
-      ScaffoldMessenger.of(context).showSnackBar(
+      final message = _compressionFailureMessage(strings, error.code);
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
       );
       return false;
     } catch (_) {
       if (!mounted) return false;
       _restoreComposerFocusAfterCompression();
-      ScaffoldMessenger.of(context).showSnackBar(
+      _restoreSlashInvocation(invocation);
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).chaCompressionUnknown),
           duration: const Duration(seconds: 8),
         ),
+        kind: HermesNoticeKind.warning,
       );
       return false;
     } finally {
       _compressionCommandInFlight = false;
+      // Si el servicio ya soltó la compactación y no hubo éxito, la invocación
+      // se conserva tal cual; si sigue en marcha (resultado tardío), el final
+      // la consumirá.
+      if (!_chat.desktopCompressionInFlight) _compressionInvocation = null;
       if (mounted) setState(() {});
     }
   }
@@ -6784,9 +7861,7 @@ class _ChatScreenState extends State<ChatScreen>
     DesktopCompressionStatus.pending => strings.chaCompressionPending,
     DesktopCompressionStatus.lockHeld => strings.chaCompressionLockHeld,
     null =>
-      _chat.desktopCompressionTransportUncertain
-          ? strings.chaCompressionReconciling
-          : result.accepted == DesktopCommandAcceptance.accepted
+      result.accepted == DesktopCommandAcceptance.accepted
           ? (result.output?.trim().isNotEmpty == true
                 ? result.output!.trim()
                 : strings.chaCompressionAccepted)
@@ -6826,8 +7901,9 @@ class _ChatScreenState extends State<ChatScreen>
         return await _applyModelDirect(matches.first.$1, matches.first.$2);
       } else if (mounted) {
         if (matches.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(Strings.of(context).chaNoMatch(arg))),
+            kind: HermesNoticeKind.warning,
           );
         }
         _showModelSheet();
@@ -6859,10 +7935,11 @@ class _ChatScreenState extends State<ChatScreen>
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
             ),
+            kind: HermesNoticeKind.error,
           );
         }
         return false;
@@ -6872,18 +7949,19 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!_chat.hasDesktopRuntime) {
       if (widget.connection.kind == InstanceKind.localhost) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               str.chaModelChangeFailed(str.chaSessionConfigRequires019),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
         return false;
       }
       await _stageSessionModel(provider.slug, modelId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(str.chaModelActive(friendlyModelName(modelId))),
           ),
@@ -6893,12 +7971,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (!_chat.canConfigureDesktopSession || provider.slug == 'gateway') {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             str.chaModelChangeFailed(str.chaSessionModelUnsupported),
           ),
         ),
+        kind: HermesNoticeKind.error,
       );
       return false;
     }
@@ -6910,10 +7989,11 @@ class _ChatScreenState extends State<ChatScreen>
         providerSlug: provider.slug,
       );
     } on FormatException {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(str.chaModelChangeFailed(str.chaSessionInvalidModel)),
         ),
+        kind: HermesNoticeKind.error,
       );
       return false;
     }
@@ -6972,10 +8052,11 @@ class _ChatScreenState extends State<ChatScreen>
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       return false;
@@ -6987,8 +8068,9 @@ class _ChatScreenState extends State<ChatScreen>
         final reason = result.status == SessionConfigChangeStatus.timedOut
             ? str.chaSessionReconciling
             : result.failureKind?.name ?? result.status.name;
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(str.chaModelChangeFailed(reason))),
+          kind: HermesNoticeKind.error,
         );
       }
       return false;
@@ -7000,7 +8082,7 @@ class _ChatScreenState extends State<ChatScreen>
       updateEffectiveDisplay: false,
     );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(str.chaModelActive(friendlyModelName(modelId)))),
       );
     }
@@ -7014,10 +8096,11 @@ class _ChatScreenState extends State<ChatScreen>
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
             ),
+            kind: HermesNoticeKind.error,
           );
         }
         return;
@@ -7033,12 +8116,13 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (!_chat.canConfigureDesktopSession) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             str.chaModelChangeFailed(str.chaSessionReasoningUnsupported),
           ),
         ),
+        kind: HermesNoticeKind.error,
       );
       return;
     }
@@ -7046,7 +8130,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (result.status != SessionConfigChangeStatus.accepted &&
         result.status != SessionConfigChangeStatus.confirmed) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               str.chaModelChangeFailed(
@@ -7054,6 +8138,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       return;
@@ -7070,10 +8155,11 @@ class _ChatScreenState extends State<ChatScreen>
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
             ),
+            kind: HermesNoticeKind.error,
           );
         }
         return;
@@ -7089,12 +8175,13 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (!_chat.canConfigureDesktopSession) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             str.chaModelChangeFailed(str.chaSessionFastUnsupported),
           ),
         ),
+        kind: HermesNoticeKind.error,
       );
       return;
     }
@@ -7102,7 +8189,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (result.status != SessionConfigChangeStatus.accepted &&
         result.status != SessionConfigChangeStatus.confirmed) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               str.chaModelChangeFailed(
@@ -7110,6 +8197,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       return;
@@ -7336,7 +8424,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (confirm != true || !mounted) return;
     final released = await _chat.releaseRuntimeForDesktop();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           released
@@ -7465,13 +8553,14 @@ class _ChatScreenState extends State<ChatScreen>
         connection: widget.connection,
       ).downloadAndSave(artifact, _artifactExporter);
       if (mounted && result == ArtifactSaveResult.saved) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(strings.artifactDownloadSaved)));
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(strings.artifactDownloadSaved)),
+          kind: HermesNoticeKind.success,
+        );
       }
     } on SessionArtifactDownloadException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               sessionArtifactDownloadMessage(strings, error.failure),
@@ -7481,15 +8570,17 @@ class _ChatScreenState extends State<ChatScreen>
       }
     } on ArtifactExportTooLarge {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(strings.artifactDownloadTooLarge)),
+          kind: HermesNoticeKind.warning,
         );
       }
     } on Object {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(strings.artifactDownloadFailed)));
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(strings.artifactDownloadFailed)),
+          kind: HermesNoticeKind.error,
+        );
       }
     }
   }
@@ -7501,10 +8592,11 @@ class _ChatScreenState extends State<ChatScreen>
         : _currentRenderProjection.nearestRenderableMessageIndex(sourceIndex);
     if (messageIndex == null || !_scrollController.hasClients) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).artifactSourceUnavailable),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       return;
@@ -7544,8 +8636,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
+        kind: HermesNoticeKind.warning,
       );
     }
   }
@@ -7589,8 +8682,9 @@ class _ChatScreenState extends State<ChatScreen>
       );
     } catch (_) {
       if (!_disposed && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).subagentOpenFailed)),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -7645,7 +8739,7 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final found = await _chat.interruptSubagent(current);
       if (_disposed || !mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             found
@@ -7661,8 +8755,9 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     } catch (_) {
       if (!_disposed && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).subagentInterruptFailed)),
+          kind: HermesNoticeKind.error,
         );
       }
       return false;
@@ -7791,7 +8886,7 @@ class _ChatScreenState extends State<ChatScreen>
         case LinkedSessionDeleteStatus.cancelled:
           break;
         case LinkedSessionDeleteStatus.sessionRejected:
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 result.cronDeleted
@@ -7802,13 +8897,15 @@ class _ChatScreenState extends State<ChatScreen>
           );
           break;
         case LinkedSessionDeleteStatus.cronDeleteFailed:
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
+            kind: HermesNoticeKind.error,
           );
           break;
         case LinkedSessionDeleteStatus.sessionDeleteFailed:
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
+            kind: HermesNoticeKind.error,
           );
           break;
       }
@@ -7846,12 +8943,18 @@ class _ChatScreenState extends State<ChatScreen>
   /// Cabecera de la ThinkingTraceCard mientras aún no hay herramientas.
   String _traceHeadline() {
     final s = Strings.of(context);
-    return switch (_pipelineState) {
+    final activityHeadline = switch (_pipelineState) {
       ChatPipelineState.connecting => s.chaPipelineConnecting,
       ChatPipelineState.executing => s.chaPipelineExecuting,
       ChatPipelineState.streaming => s.chaPipelineStreaming,
       _ => s.chaPipelineThinking,
     };
+    return chatActivityHeadlineForTransport(
+      status: _chat.transportStatus,
+      authRequired: _chat.dashboardAuthRequired,
+      activityHeadline: activityHeadline,
+      reconnectingHeadline: s.chaConnectionLostReconnecting,
+    );
   }
 
   // ─── Attachment handling ──────────────────────────────────────────────────
@@ -7935,10 +9038,11 @@ class _ChatScreenState extends State<ChatScreen>
     final bytes = content.data;
     if (bytes == null || bytes.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).chaAttachmentPreparationFailed),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       return;
@@ -7958,10 +9062,11 @@ class _ChatScreenState extends State<ChatScreen>
             ) !=
             null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).chaAttachmentPreparationFailed),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
       return;
@@ -8001,10 +9106,11 @@ class _ChatScreenState extends State<ChatScreen>
       _scheduleDraftSave();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).chaAttachmentPreparationFailed),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } finally {
@@ -8030,7 +9136,7 @@ class _ChatScreenState extends State<ChatScreen>
       final remaining = _maxPendingImages - currentImages;
       if (remaining <= 0) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 Strings.of(
@@ -8038,6 +9144,7 @@ class _ChatScreenState extends State<ChatScreen>
                 ).chaAttachmentImageLimitReached(_maxPendingImages),
               ),
             ),
+            kind: HermesNoticeKind.warning,
           );
         }
         return;
@@ -8142,7 +9249,7 @@ class _ChatScreenState extends State<ChatScreen>
       // Si el lote mezclaba imágenes válidas y demasiado grandes, conserva las
       // válidas y avisa una sola vez por las rechazadas.
       if (rejectedForItemLimit) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(
@@ -8150,10 +9257,11 @@ class _ChatScreenState extends State<ChatScreen>
               ).chaImageTooBig(AttachmentUploader.maxBytes ~/ (1024 * 1024)),
             ),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       if (rejectedForBatchLimit && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).chaAttachmentBatchTooBig(
@@ -8161,20 +9269,23 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       if (rejectedForPersistence && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).chaAttachmentPreparationFailed),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } catch (_) {
       await _deleteUncommittedAttachmentCopies(drafts);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaGalleryError)),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       _imagePickerOpen = false;
@@ -8274,16 +9385,17 @@ class _ChatScreenState extends State<ChatScreen>
         drafts.clear();
       }
       if (rejectedItemLimitLabel != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).chaFileTooBig(rejectedItemLimitLabel),
             ),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       if (rejectedForBatchLimit && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(context).chaAttachmentBatchTooBig(
@@ -8291,21 +9403,24 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       if (rejectedForPersistence && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).chaAttachmentPreparationFailed),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     } catch (error) {
       await _deleteUncommittedAttachmentCopies(drafts);
       if (!mounted) return;
       debugPrint('[attachment] document picker failed (${error.runtimeType})');
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaFilesError)),
+        kind: HermesNoticeKind.error,
       );
     } finally {
       _documentPickerOpen = false;
@@ -8366,6 +9481,10 @@ class _ChatScreenState extends State<ChatScreen>
       child: Scaffold(
         drawerEnableOpenDragGesture: true,
         drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
+        onDrawerChanged: (open) {
+          if (_navigationDrawerOpen == open || !mounted) return;
+          setState(() => _navigationDrawerOpen = open);
+        },
         drawer: dedicatedChrome || connManager == null
             ? null
             : HermesDrawer(
@@ -8588,201 +9707,249 @@ class _ChatScreenState extends State<ChatScreen>
                             _DesktopAuthRequiredBanner(
                               message: str.chaDesktopAuthRequiredBanner,
                             ),
+                          ValueListenableBuilder<ChatTransportStatus>(
+                            valueListenable: _chat.transportStatusListenable,
+                            builder: (_, status, _) =>
+                                ChatConnectionRecoveryRow(
+                                  status: status,
+                                  activeTurn: _chat.isStreaming,
+                                  authRequired: _chat.dashboardAuthRequired,
+                                  appForeground: _appInForeground,
+                                  offlineLabel: str.chaConnectionOffline,
+                                  reconnectingLabel:
+                                      str.chaConnectionReconnecting,
+                                  recoveredLabel: str.chaConnectionRecovered,
+                                ),
+                          ),
                           if (_chat.localTranscriptOlderHistoryTruncated)
                             _LocalTranscriptTruncationNotice(
                               message: str.chaLocalTranscriptTruncated,
                             ),
+                          // En flujo bajo la cabecera, como los avisos de
+                          // arriba: ya no flota sobre el botón «cargar
+                          // anteriores» ni sobre los primeros mensajes.
+                          if (_chat.earlierMessagesLoadFailed &&
+                              !_coreReadCoverageNoticeDismissed)
+                            _CoreReadPartialCoverageNotice(
+                              message: str.chaEarlierMessagesError,
+                              onDismiss: () => setState(
+                                () => _coreReadCoverageNoticeDismissed = true,
+                              ),
+                            ),
                           Expanded(
                             child: Stack(
                               children: [
-                                _buildBody(),
-                                if (_chat.hasEarlierMessages)
-                                  Positioned(
-                                    top: 8,
-                                    left: 0,
-                                    right: 0,
-                                    height: 48,
-                                    child: Center(
-                                      child: _LoadEarlierMessagesButton(
-                                        key: const ValueKey(
-                                          'chat-load-earlier',
-                                        ),
-                                        loading: _loadingEarlierMessages,
-                                        onTap: _loadEarlierMessages,
-                                      ),
-                                    ),
+                                AgentTaskScope(
+                                  tasks: _chat.agentTasks,
+                                  ownerStepId: _chat.agentTasks.isEmpty
+                                      ? null
+                                      : latestAgentTaskStepId(_messages),
+                                  child: _buildBody(),
+                                ),
+                                Positioned(
+                                  top: 8,
+                                  left: 0,
+                                  right: 0,
+                                  height: 48,
+                                  child: _ChatTopButton(
+                                    controller: _scrollController,
+                                    hasEarlierMessages:
+                                        _chat.hasEarlierMessages,
+                                    loading: _loadingEarlierMessages,
+                                    contentChanges: _liveAssistantFrame,
+                                    transcriptOverlayExtent: () =>
+                                        _activityPillExtent.value +
+                                        (_scrollToBottomVisibility.value
+                                            ? 48
+                                            : 0),
+                                    onLoadEarlier: _loadEarlierMessages,
                                   ),
-                                if (_chat.earlierMessagesLoadFailed &&
-                                    !_coreReadCoverageNoticeDismissed)
-                                  Positioned(
-                                    top: 64,
-                                    left: 12,
-                                    right: 12,
-                                    child: _CoreReadPartialCoverageNotice(
-                                      message: str.chaEarlierMessagesError,
-                                      onDismiss: () => setState(
-                                        () => _coreReadCoverageNoticeDismissed =
-                                            true,
-                                      ),
-                                    ),
-                                  ),
+                                ),
+                                // Bottom overlay of the transcript. The
+                                // scroll-to-bottom arrow and the floating
+                                // activity pills share one bottom-centre
+                                // anchor, so they are STACKED in a single
+                                // bottom-anchored Column instead of two
+                                // Positioned children layered on top of each
+                                // other: the pills paint last, so the arrow
+                                // used to end up underneath them — invisible
+                                // and, once a pill owns the gesture, impossible
+                                // to tap. Stacking makes the arrow ride just
+                                // above whichever pill is showing and drop back
+                                // to its resting spot (8 dp) when none is, with
+                                // no measure-then-reposition frame in between.
+                                //
+                                // The pills stay glued near the composer like
+                                // the design mockup, but always INSIDE this
+                                // transcript Stack, never over the input.
+                                // Reply text keeps its clearance because the
+                                // measured stack extent pads the transcript by
+                                // the same amount.
                                 Positioned(
                                   left: 0,
                                   right: 0,
                                   bottom: 8,
-                                  height: 48,
-                                  child: ValueListenableBuilder<bool>(
-                                    valueListenable: _scrollToBottomVisibility,
-                                    builder: (context, showScrollToBottom, _) {
-                                      return ExcludeSemantics(
-                                        excluding: !showScrollToBottom,
-                                        child: IgnorePointer(
-                                          ignoring: !showScrollToBottom,
-                                          child: Center(
-                                            child: AnimatedOpacity(
-                                              key: ValueKey(
-                                                showScrollToBottom
-                                                    ? 'scroll-to-bottom-visible'
-                                                    : 'scroll-to-bottom-hidden',
-                                              ),
-                                              opacity: showScrollToBottom
-                                                  ? 1
-                                                  : 0,
-                                              duration: _reduceMotion
-                                                  ? Duration.zero
-                                                  : const Duration(
-                                                      milliseconds: 160,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 48,
+                                        child: ValueListenableBuilder<bool>(
+                                          valueListenable:
+                                              _scrollToBottomVisibility,
+                                          builder: (context, showScrollToBottom, _) {
+                                            return ExcludeSemantics(
+                                              excluding: !showScrollToBottom,
+                                              child: IgnorePointer(
+                                                ignoring: !showScrollToBottom,
+                                                child: Center(
+                                                  child: AnimatedOpacity(
+                                                    key: ValueKey(
+                                                      showScrollToBottom
+                                                          ? 'scroll-to-bottom-visible'
+                                                          : 'scroll-to-bottom-hidden',
                                                     ),
-                                              curve: Curves.easeOutCubic,
-                                              child: AnimatedScale(
-                                                scale: showScrollToBottom
-                                                    ? 1
-                                                    : 0.94,
-                                                duration: _reduceMotion
-                                                    ? Duration.zero
-                                                    : const Duration(
-                                                        milliseconds: 160,
+                                                    opacity: showScrollToBottom
+                                                        ? 1
+                                                        : 0,
+                                                    duration: _reduceMotion
+                                                        ? Duration.zero
+                                                        : const Duration(
+                                                            milliseconds: 160,
+                                                          ),
+                                                    curve: Curves.easeOutCubic,
+                                                    child: AnimatedScale(
+                                                      scale: showScrollToBottom
+                                                          ? 1
+                                                          : 0.94,
+                                                      duration: _reduceMotion
+                                                          ? Duration.zero
+                                                          : const Duration(
+                                                              milliseconds: 160,
+                                                            ),
+                                                      curve:
+                                                          Curves.easeOutCubic,
+                                                      child: _ScrollToBottomButton(
+                                                        key: const ValueKey(
+                                                          'chat-scroll-to-bottom',
+                                                        ),
+                                                        onTap: _scrollToBottom,
                                                       ),
-                                                curve: Curves.easeOutCubic,
-                                                child: _ScrollToBottomButton(
-                                                  key: const ValueKey(
-                                                    'chat-scroll-to-bottom',
+                                                    ),
                                                   ),
-                                                  onTap: _scrollToBottom,
                                                 ),
                                               ),
-                                            ),
-                                          ),
+                                            );
+                                          },
                                         ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                // Floating subagent-activity pill: anchored
-                                // near the BOTTOM of this transcript Stack,
-                                // right above the composer (matches the
-                                // design mockup — a small pill glued close to
-                                // the input, not floating in the middle of the
-                                // transcript). Reply text always stays above
-                                // it because `_subagentActivityPillReservedSpace`
-                                // pads the transcript's bottom by the same
-                                // amount whenever this pill is showing. This
-                                // sits close enough to the scroll-to-bottom
-                                // button (`bottom: 8, height: 48`) that the two
-                                // can visually overlap in the rare case both
-                                // show at once (mid-scroll while work is also
-                                // active) — accepted tradeoff for keeping the
-                                // pill glued to the composer like the mockup.
-                                Positioned(
-                                  bottom: 20,
-                                  left: 0,
-                                  right: 0,
-                                  child: Center(
-                                    // Se excluyen entre sí (ver
-                                    // `_showTurnActivityPill`), así que la que no
-                                    // toca colapsa a cero y la columna no crece.
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        TurnActivityPill(
-                                          key: const ValueKey(
-                                            'chat-turn-activity',
-                                          ),
-                                          active: _showTurnActivityPill,
-                                          startedAt: _turnActivityStartedAt,
-                                          statusLabel: _turnActivityPillLabel,
-                                        ),
-                                        KeyedSubtree(
-                                          key: const ValueKey(
-                                            'chat-session-activity',
-                                          ),
-                                          child: SubagentActivityCard(
-                                            key: const ValueKey(
-                                              'chat-subagent-status',
+                                      ),
+                                      // The pill area collapses to zero when
+                                      // nothing is running, and the gap below
+                                      // it collapses with it so the arrow lands
+                                      // back on its resting offset.
+                                      _BottomGapWhenVisible(
+                                        gap: 12,
+                                        onExtent: _setActivityPillExtent,
+                                        // Una sola pastilla para todo lo vivo
+                                        // (turno, tareas, segundo plano,
+                                        // subagentes, compactación): un único
+                                        // hueco medido, un único cronómetro. El
+                                        // panel sale de ella al tocarla.
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            ActivityTaskLingerHost(
+                                              key: const ValueKey(
+                                                'chat-activity-pill',
+                                              ),
+                                              snapshot:
+                                                  _buildActivitySnapshot(),
+                                              actions: _buildActivityActions(),
+                                              suspended: _slashPaletteVisible,
                                             ),
-                                            activities:
-                                                _displaySubagentActivities,
-                                            onDismiss: _dismissSubagentPill,
-                                            safeChildCount:
-                                                _chat.safeActiveSubagentCount >
-                                                    (_chat.hasRecentPassiveRemoteActivity
-                                                        ? _chat
-                                                              .passiveActivityAggregate
-                                                              .total
-                                                        : 0)
-                                                ? _chat.safeActiveSubagentCount
-                                                : (_chat.hasRecentPassiveRemoteActivity
-                                                      ? _chat
-                                                            .passiveActivityAggregate
-                                                            .total
-                                                      : 0),
-                                            background:
-                                                _chat
-                                                    .hasRecentPassiveRemoteActivity ||
-                                                _chat.safeActiveSubagentCount >
-                                                    0,
-                                            canInterrupt:
-                                                _chat.canInterruptSubagent,
-                                            canSteer: _chat.canSteerSubagent,
-                                            isInterruptPending: _chat
-                                                .isSubagentInterruptPending,
-                                            appForeground:
-                                                _appInForeground &&
-                                                _chatRouteVisible,
-                                            onTail: (activity) async {
-                                              final result = await _chat
-                                                  .tailSubagent(activity);
-                                              return SubagentTailView(
-                                                available: result.available,
-                                                content: result.content,
-                                                truncated: result.truncated,
-                                              );
-                                            },
-                                            onSteer: (activity, text) async {
-                                              final result = await _chat
-                                                  .steerSubagent(
-                                                    activity,
-                                                    text,
-                                                  );
-                                              return SubagentSteerView(
-                                                status: result.status,
-                                              );
-                                            },
-                                            isOpenPending:
-                                                _isSubagentOpenPending,
-                                            onOpenConversation: (activity) {
-                                              unawaited(
-                                                _openSubagentConversation(
-                                                  activity,
+                                            KeyedSubtree(
+                                              key: const ValueKey(
+                                                'chat-session-activity',
+                                              ),
+                                              child: SubagentActivityCard(
+                                                key: const ValueKey(
+                                                  'chat-subagent-status',
                                                 ),
-                                              );
-                                            },
-                                            onStopRequested:
-                                                _confirmInterruptSubagent,
-                                          ),
+                                                hidden: true,
+                                                controller: _subagentController,
+                                                activities:
+                                                    _displaySubagentActivities,
+                                                onDismiss: _dismissSubagentPill,
+                                                safeChildCount:
+                                                    _chat.safeActiveSubagentCount >
+                                                        (_chat.hasRecentPassiveRemoteActivity
+                                                            ? _chat
+                                                                  .passiveActivityAggregate
+                                                                  .total
+                                                            : 0)
+                                                    ? _chat
+                                                          .safeActiveSubagentCount
+                                                    : (_chat.hasRecentPassiveRemoteActivity
+                                                          ? _chat
+                                                                .passiveActivityAggregate
+                                                                .total
+                                                          : 0),
+                                                background:
+                                                    _chat
+                                                        .hasRecentPassiveRemoteActivity ||
+                                                    _chat.safeActiveSubagentCount >
+                                                        0,
+                                                canInterrupt:
+                                                    _chat.canInterruptSubagent,
+                                                canSteer:
+                                                    _chat.canSteerSubagent,
+                                                isInterruptPending: _chat
+                                                    .isSubagentInterruptPending,
+                                                appForeground:
+                                                    _appInForeground &&
+                                                    _chatRouteVisible,
+                                                onTail: (activity) async {
+                                                  final result = await _chat
+                                                      .tailSubagent(activity);
+                                                  return SubagentTailView(
+                                                    available: result.available,
+                                                    content: result.content,
+                                                    truncated: result.truncated,
+                                                  );
+                                                },
+                                                onSteer:
+                                                    (activity, text) async {
+                                                      final result = await _chat
+                                                          .steerSubagent(
+                                                            activity,
+                                                            text,
+                                                          );
+                                                      return SubagentSteerView(
+                                                        status: result.status,
+                                                      );
+                                                    },
+                                                isOpenPending:
+                                                    _isSubagentOpenPending,
+                                                onOpenConversation: (activity) {
+                                                  unawaited(
+                                                    _openSubagentConversation(
+                                                      activity,
+                                                    ),
+                                                  );
+                                                },
+                                                onStopRequested:
+                                                    _confirmInterruptSubagent,
+                                              ),
+                                            ),
+                                            // Nearest the composer: the
+                                            // compaction pill, padded into
+                                            // the same measured gap.
+                                            _buildCompactionPill(),
+                                          ],
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                                 if (_chat.pendingInteractivePrompt != null)
@@ -8842,59 +10009,87 @@ class _ChatScreenState extends State<ChatScreen>
                               ],
                             ),
                           ),
-                          // Ownership conflicts keep the transcript and composer
-                          // mounted while fencing every mutation.
-                          if (_chat.conflictReadOnly)
-                            _buildRuntimeOwnershipBanner(),
-                          // Aprobación inline: aparece justo encima del composer cuando el
-                          // agente pide permiso (motor /v1/runs).
-                          if (_chat.pendingApproval != null)
-                            ChatApprovalCard(
-                              approval: _chat.pendingApproval!,
-                              busy: _resolvingApproval,
-                              onChoice: _resolveChatApproval,
-                              companion: context
-                                  .findAncestorStateOfType<HermesAppState>()
-                                  ?.companion,
-                            ),
-                          if (_chat.desktopContinuationRequired)
-                            Semantics(
-                              container: true,
-                              label:
-                                  Strings.of(context).chatContinueOnDesktop,
-                              child: Card(
-                                key: const ValueKey('desktop-continuation-required'),
-                                child: Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.desktop_windows_outlined),
-                                      SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          Strings.of(context).chatContinueOnDesktop,
+                          // Lo que vive bajo el transcript (avisos en flujo,
+                          // tiras y composer) es un grupo en flujo: ningun
+                          // aviso transitorio flota sobre el, viven arriba.
+                          KeyedSubtree(
+                            key: const ValueKey('chat-bottom-bars'),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_chat.offerStaleResumedSessionStop)
+                                  StaleRunningSessionBanner(
+                                    enabled: _chat.gatewayConnected,
+                                    onStop: _cancelStream,
+                                  ),
+                                // Ownership conflicts keep the transcript and composer
+                                // mounted while fencing every mutation.
+                                if (_chat.conflictReadOnly)
+                                  _buildRuntimeOwnershipBanner(),
+                                // Aprobación inline: aparece justo encima del composer cuando el
+                                // agente pide permiso (motor /v1/runs).
+                                if (_chat.pendingApproval != null)
+                                  ChatApprovalCard(
+                                    approval: _chat.pendingApproval!,
+                                    busy: _resolvingApproval,
+                                    onChoice: _resolveChatApproval,
+                                    companion: context
+                                        .findAncestorStateOfType<
+                                          HermesAppState
+                                        >()
+                                        ?.companion,
+                                  ),
+                                if (_chat.desktopContinuationRequired)
+                                  Semantics(
+                                    container: true,
+                                    label: Strings.of(
+                                      context,
+                                    ).chatContinueOnDesktop,
+                                    child: Card(
+                                      key: const ValueKey(
+                                        'desktop-continuation-required',
+                                      ),
+                                      child: Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.desktop_windows_outlined,
+                                            ),
+                                            SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                Strings.of(
+                                                  context,
+                                                ).chatContinueOnDesktop,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              ),
+                                // The subagent activity indicator now floats as an
+                                // overlay anchored above the transcript (see the
+                                // inner Stack below) instead of living here, so its
+                                // live/completed count changes never resize this
+                                // Column or shift the composer.
+                                _buildStopStatusStrip(colors),
+                                _buildBackgroundTaskStrip(colors),
+                                _buildQueueStrip(colors),
+                                if ((_vc?.active ?? false) && !showVoiceSurface)
+                                  _buildVoiceReturnBar(
+                                    colors,
+                                    ownsCurrentChat: voiceSessionActive,
+                                  ),
+                                if (!showVoiceSurface)
+                                  Opacity(
+                                    opacity: _editingUserMessage ? 0.62 : 1,
+                                    child: _buildInputBar(),
+                                  ),
+                              ],
                             ),
-                          // The subagent activity indicator now floats as an
-                          // overlay anchored above the transcript (see the
-                          // inner Stack below) instead of living here, so its
-                          // live/completed count changes never resize this
-                          // Column or shift the composer.
-                          _buildStopStatusStrip(colors),
-                          _buildGoalStrip(colors),
-                          _buildBackgroundTaskStrip(colors),
-                          _buildQueueStrip(colors),
-                          if ((_vc?.active ?? false) && !showVoiceSurface)
-                            _buildVoiceReturnBar(
-                              colors,
-                              ownsCurrentChat: voiceSessionActive,
-                            ),
-                          if (!showVoiceSurface) _buildInputBar(),
+                          ),
                         ],
                       ),
                     ),
@@ -8940,7 +10135,7 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 8),
         content: Text(
@@ -8960,7 +10155,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// Actualiza el bridge a la mejor release validada. Con [silent] no muestra el
   /// aviso de inicio (auto-update en 2º plano); siempre informa del resultado.
   Future<void> _doBridgeUpdate({bool silent = false}) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     if (!silent) {
       messenger.showSnackBar(
         SnackBar(content: Text(Strings.of(context).bridgeUpdating)),
@@ -9058,7 +10253,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (catalog != null) {
         _modelSource = _ModelSource.bridge;
         _modelOptionsFuture = Future.value(catalog);
-        ScaffoldMessenger.of(
+        HermesNotice.of(
           context,
         ).showSnackBar(SnackBar(content: Text(res.detail)));
         _showModelSheet();
@@ -9101,7 +10296,7 @@ class _ChatScreenState extends State<ChatScreen>
               onPressed: busy
                   ? null
                   : () async {
-                      final messenger = ScaffoldMessenger.of(context);
+                      final messenger = HermesNotice.of(context);
                       final nav = Navigator.of(dctx);
                       final strConnected = Strings.of(context).bridgeConnected;
                       final strNotDetected = Strings.of(
@@ -9116,11 +10311,13 @@ class _ChatScreenState extends State<ChatScreen>
                         _modelOptionsFuture = null;
                         messenger.showSnackBar(
                           SnackBar(content: Text(strConnected)),
+                          kind: HermesNoticeKind.success,
                         );
                         _showModelSheet();
                       } else {
                         messenger.showSnackBar(
                           SnackBar(content: Text(strNotDetected)),
+                          kind: HermesNoticeKind.warning,
                         );
                       }
                     },
@@ -9839,13 +11036,14 @@ class _ChatScreenState extends State<ChatScreen>
     setState(() {});
     if (wasSending) {
       final label = policy.effectiveMode(widget.session.id).label;
-      ScaffoldMessenger.of(context)
+      HermesNotice.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).chaModeApplied(label)),
             duration: const Duration(seconds: 3),
           ),
+          kind: HermesNoticeKind.success,
         );
     }
   }
@@ -9975,12 +11173,13 @@ class _ChatScreenState extends State<ChatScreen>
               _commitPendingDictationPartial();
               _resetDictation();
               _materializeDictation();
-              ScaffoldMessenger.of(context).showSnackBar(
+              HermesNotice.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
                     Strings.of(context).chaDictationError(humanizeApiError(e)),
                   ),
                 ),
+                kind: HermesNoticeKind.error,
               );
             }
             if (!mounted) _resetDictation();
@@ -10052,8 +11251,9 @@ class _ChatScreenState extends State<ChatScreen>
         _commitPendingDictationPartial();
         _resetDictation();
         _materializeDictation();
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(content: Text(Strings.of(context).chaVoiceNotRecognized)),
+          kind: HermesNoticeKind.warning,
         );
       }
     });
@@ -10275,7 +11475,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               Strings.of(
@@ -10283,6 +11483,7 @@ class _ChatScreenState extends State<ChatScreen>
               ).chaVoiceError(localizedVoiceError(Strings.of(context), e)),
             ),
           ),
+          kind: HermesNoticeKind.error,
         );
       }
     }
@@ -10708,138 +11909,88 @@ class _ChatScreenState extends State<ChatScreen>
   /// Estado de Stop respaldado por el ACK exacto del runtime.
   Widget _buildStopStatusStrip(HermesThemeColors colors) {
     final stop = _chat.stopConfirmationState;
-    if (stop == StopConfirmationState.idle) return const SizedBox.shrink();
+    if (stop == StopConfirmationState.idle ||
+        (_confirmedStopStatusVisible && _confirmedStopStatusDismissed)) {
+      return const SizedBox.shrink();
+    }
     final strings = Strings.of(context);
-    final label = switch (stop) {
-      StopConfirmationState.stopping => strings.chaStopStopping,
-      StopConfirmationState.retrying => strings.chaStopRetrying,
-      StopConfirmationState.confirmed => strings.chaStopConfirmed,
-      StopConfirmationState.failed => strings.chaStopFailed,
-      StopConfirmationState.idle => '',
-    };
+    final remainingBackgroundTasks = _chat.backgroundStopRemainingTasks;
+    final backgroundStopWarning =
+        remainingBackgroundTasks != null && remainingBackgroundTasks > 0;
+    final label = _chat.backgroundStopVerificationInFlight
+        ? strings.chaStopStopping
+        : backgroundStopWarning
+        ? strings.chaBackgroundWorkRemaining(remainingBackgroundTasks)
+        : switch (stop) {
+            StopConfirmationState.stopping => strings.chaStopStopping,
+            StopConfirmationState.retrying => strings.chaStopRetrying,
+            StopConfirmationState.confirmed =>
+              _chat.stopConfirmationOnlyBackground
+                  ? strings.chaBackgroundWorkStopped
+                  : strings.chaStopConfirmed,
+            StopConfirmationState.failed => strings.chaStopFailed,
+            StopConfirmationState.idle => '',
+          };
+    final waiting =
+        _chat.backgroundStopVerificationInFlight ||
+        stop == StopConfirmationState.stopping ||
+        stop == StopConfirmationState.retrying;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
       child: Semantics(
         liveRegion: true,
         label: label,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Row(
-            children: [
-              if (stop == StopConfirmationState.stopping ||
-                  stop == StopConfirmationState.retrying)
-                const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                Icon(
-                  stop == StopConfirmationState.failed
-                      ? Icons.error_outline_rounded
-                      : Icons.stop_circle_outlined,
-                  size: 20,
-                  color: stop == StopConfirmationState.failed
-                      ? colors.error
-                      : colors.textSecondary,
-                ),
-              const SizedBox(width: 10),
-              Expanded(child: Text(label)),
-              if (stop == StopConfirmationState.failed)
-                TextButton(
-                  key: const ValueKey('chat-stop-retry'),
-                  onPressed: _cancelStream,
-                  child: Text(strings.chaStopRetry),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Live standing-goal status, one line above the composer — same slot
-  /// family as [_buildStopStatusStrip]. Tap opens the detail sheet with the
-  /// contract, criteria, gates and the pause/resume/clear actions. This is
-  /// deliberately not a card: goals are ambient state, not an interruption.
-  Widget _buildGoalStrip(HermesThemeColors colors) {
-    final goal = _chat.goal;
-    if (goal == null) return const SizedBox.shrink();
-    final s = Strings.of(context);
-    final blocked = goal.isBlocked;
-    final label = blocked
-        ? s.chaGoalBlocked
-        : switch (goal.status) {
-            'paused' => s.chaGoalPaused,
-            'waiting' => s.chaGoalWaiting,
-            'done' => s.chaGoalDoneTurns(goal.turnsUsed),
-            _ => s.chaGoalTurnLabel(goal.turnsUsed, goal.maxTurns),
-          };
-    final icon = blocked
-        ? Icons.flag_circle_outlined
-        : switch (goal.status) {
-            'paused' => Icons.pause_circle_outlined,
-            'waiting' => Icons.hourglass_empty_rounded,
-            'done' => Icons.flag_outlined,
-            _ => Icons.flag_circle_outlined,
-          };
-    final color = blocked
-        ? colors.error
-        : switch (goal.status) {
-            'paused' || 'waiting' => colors.warning,
-            'done' => colors.textSecondary,
-            _ => colors.accent,
-          };
-    final reason = goal.displayReason;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
-      child: Semantics(
-        liveRegion: true,
-        label: [
-          label,
-          goal.title,
-          reason,
-        ].where((part) => part.isNotEmpty).join('. '),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => unawaited(_showGoalSheet(goal)),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 44),
-            child: Row(
-              children: [
-                Icon(icon, size: 18, color: color),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        label,
-                        key: const ValueKey('chat-goal-primary-label'),
-                        maxLines: 1,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: color),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (reason.isNotEmpty)
-                        Text(
-                          reason,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(color: colors.textSecondary),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: colors.textDisabled,
-                ),
-              ],
+        child: Row(
+          key: const ValueKey('chat-stop-status-strip'),
+          children: [
+            if (waiting)
+              const SizedBox.square(
+                key: ValueKey('chat-stop-status-icon'),
+                dimension: 14,
+                child: CircularProgressIndicator(strokeWidth: 1.5),
+              )
+            else
+              Icon(
+                backgroundStopWarning
+                    ? Icons.warning_amber_rounded
+                    : stop == StopConfirmationState.failed
+                    ? Icons.error_outline_rounded
+                    : Icons.stop_circle_outlined,
+                key: const ValueKey('chat-stop-status-icon'),
+                size: 14,
+                color: backgroundStopWarning
+                    ? colors.warning
+                    : stop == StopConfirmationState.failed
+                    ? colors.error
+                    : colors.textSecondary,
+              ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              ),
             ),
-          ),
+            if (stop == StopConfirmationState.failed &&
+                !backgroundStopWarning)
+              TextButton(
+                key: const ValueKey('chat-stop-retry'),
+                onPressed: _cancelStream,
+                style: TextButton.styleFrom(
+                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
+                child: Text(strings.chaStopRetry),
+              ),
+          ],
         ),
       ),
     );
@@ -10850,8 +12001,9 @@ class _ChatScreenState extends State<ChatScreen>
       await _chat.sendGoalAction(action);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaGoalActionFailed)),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -11174,10 +12326,11 @@ class _ChatScreenState extends State<ChatScreen>
                     .map((item) => item.name)
                     .toList(growable: false),
                 busy: _chat.isStreaming,
+                transportCanSteer: _chat.canSteerLiveTurn,
                 editingId: _editingQueuedEntryId,
                 onEdit: () => unawaited(_editQueuedEntry(queuedEntries[i])),
                 onSteer: () =>
-                    unawaited(_chat.steerQueuedTurn(queuedEntries[i].id)),
+                    unawaited(_steerQueuedEntry(queuedEntries[i].id)),
                 onSendNow: () =>
                     unawaited(_chat.sendQueuedNow(queuedEntries[i].id)),
                 onDelete: () => unawaited(
@@ -11316,6 +12469,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Widget _buildComposerPrimaryAction(HermesThemeColors colors) {
+    final showStop = _chat.canStopSessionWork && _nothingToSend;
     return AnimatedSwitcher(
       key: const ValueKey('composer-primary-action-switcher'),
       duration: _reduceMotion
@@ -11337,7 +12491,7 @@ class _ChatScreenState extends State<ChatScreen>
           (kVoiceRuntimeEnabled &&
               _allowsDedicatedVoiceLaunch &&
               _nothingToSend &&
-              !_sending &&
+              !showStop &&
               !_composerSubmissionInFlight &&
               !_compressingSession &&
               !_isRecording)
@@ -11355,23 +12509,27 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             )
           : KeyedSubtree(
-              key: ValueKey(_sending && _nothingToSend ? 'stop' : 'send'),
+              key: ValueKey(showStop ? 'stop' : 'send'),
               child: _SendButton(
+                // Sin lanzadera mientras compacta: la barra de compactación
+                // sobre el compositor es la única señal viva.
                 busy:
-                    _composerSubmissionInFlight ||
-                    _attachmentSubmitting ||
-                    _compressingSession,
-                mode: _sending && _nothingToSend
-                    ? _SendMode.stop
-                    : _SendMode.send,
-                enabled:
-                    !_composerSubmissionInFlight &&
-                    !_attachmentSubmitting &&
+                    !showStop &&
                     !_compressingSession &&
-                    (!_attachmentMutationInFlight ||
-                        (_sending && _nothingToSend)) &&
-                    (_sending || !_nothingToSend),
+                    (_composerSubmissionInFlight || _attachmentSubmitting),
+                mode: showStop ? _SendMode.stop : _SendMode.send,
+                enabled: showStop
+                    ? _chat.gatewayConnected
+                    : !_composerSubmissionInFlight &&
+                          !_attachmentSubmitting &&
+                          !_compressingSession &&
+                          !_attachmentMutationInFlight &&
+                          !_nothingToSend,
                 onSend: _sendMessage,
+                onQueue:
+                    _sending || _chat.hasAuthoritativePassiveRemoteActivity
+                    ? () => _sendMessage(queueOnly: true)
+                    : null,
                 onStop: _cancelStream,
               ),
             ),
@@ -11432,14 +12590,6 @@ class _ChatScreenState extends State<ChatScreen>
   Widget _buildInputBar() {
     widget.performanceProbe?.composerBuilds++;
     final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    final compressionProgressLabel = _chat.desktopCompressionNeedsConfirmation
-        ? strings.chaCompressionUnknown
-        : _chat.desktopCompressionTransportUncertain
-        ? strings.chaCompressionReconciling
-        : _chat.desktopCompressionAwaitingReconciliation
-        ? strings.chaCompressionPending
-        : strings.chaCompressionProgress;
     if (widget.connection.readOnly) {
       // Mantiene la misma huella y superficie que el composer para no convertir
       // un estado persistente en una alerta separada del lugar al que afecta.
@@ -11501,17 +12651,26 @@ class _ChatScreenState extends State<ChatScreen>
         !_interactiveMessageRefreshPending &&
         !_attachmentSubmitting &&
         !_compressingSession;
-    final slashPalette =
-        _isRecording || _transcribing || _slashSuggestions.isEmpty
+    final slashPalette = !_slashPaletteVisible
         ? null
-        : _SlashPalette(commands: _slashSuggestions, onPick: _pickSlash);
-    final floatingPalette = slashPalette ?? (_isRecording || _transcribing
-        ? null : ChatMentionPalette(
-            controller: _textController,
-            focusNode: _textFocusNode,
-            connectionId: widget.connection.id,
-            profile: _effectiveSessionProfile,
-          ));
+        // Part of the composer's tap region: picking a command (even with a
+        // mouse) never blurs the field and hides the palette mid-tap.
+        : TextFieldTapRegion(
+            child: _SlashPalette(
+              commands: _slashSuggestions,
+              onPick: _pickSlash,
+            ),
+          );
+    final floatingPalette =
+        slashPalette ??
+        (_isRecording || _transcribing || _navigationDrawerOpen
+            ? null
+            : ChatMentionPalette(
+                controller: _textController,
+                focusNode: _textFocusNode,
+                connectionId: widget.connection.id,
+                profile: _effectiveSessionProfile,
+              ));
     // Composer premium (referencia live-chat): contenedor con borde sutil,
     // campo sin marco y fila inferior de acciones con send cuadrado ámbar.
     //
@@ -11556,47 +12715,6 @@ class _ChatScreenState extends State<ChatScreen>
                               unawaited(_removePendingAttachment(localId)),
                           onRetry: (localId) =>
                               unawaited(_retryPendingAttachment(localId)),
-                        ),
-                      if (_compressingSession)
-                        Semantics(
-                          key: const ValueKey(
-                            'desktop-session-compression-progress',
-                          ),
-                          liveRegion: true,
-                          label: compressionProgressLabel,
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child:
-                                      _chat.desktopCompressionNeedsConfirmation
-                                      ? Icon(
-                                          Icons.info_outline,
-                                          size: 16,
-                                          color: colors.accent,
-                                        )
-                                      : CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: colors.accent,
-                                        ),
-                                ),
-                                const SizedBox(width: 9),
-                                Expanded(
-                                  child: Text(
-                                    compressionProgressLabel,
-                                    style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
                         ),
                       Row(
                         key: const ValueKey('composer-input-row'),
@@ -11767,6 +12885,55 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Pastilla de compactación: vive en la pila flotante del transcript, justo
+  /// encima del composer, así que el transcript reserva su alto medido y
+  /// nunca tapa el último mensaje ni el composer. Entra y sale con un fundido.
+  Widget _buildCompactionPill() {
+    final compaction =
+        _compaction.current ??
+        (_compressingSession || _chat.desktopRestoredCompressionRunning
+            ? CompactionProgress(
+                startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
+                manual: true,
+                messagesBefore: _chat.desktopCompactionMessagesBefore,
+                tokensBefore: _chat.desktopCompactionTokensBefore,
+              )
+            : null);
+    return AnimatedSwitcher(
+      duration: _reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.96, end: 1).animate(animation),
+          child: child,
+        ),
+      ),
+      layoutBuilder: (current, previous) => Stack(
+        alignment: Alignment.bottomCenter,
+        children: [...previous, ?current],
+      ),
+      child: compaction == null
+          ? const SizedBox.shrink(key: ValueKey('compaction-pill-empty'))
+          // One key for live and done: the pill morphs in place (no
+          // cross-fade between two pills); only appearing/leaving animates.
+          : Padding(
+              key: const ValueKey('compaction-pill'),
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: AnimatedSize(
+                duration: _reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                child: CompactionDock(compaction: compaction),
+              ),
+            ),
+    );
+  }
+
   /// Píldora combinada contexto+modo flotando bajo el composer (ver mockup
   /// aprobado "v8 · estado debajo del input"): sustituye a los antiguos
   /// `_buildModeBadge` + `SessionContextPopoverButton` de la AppBar. Oculta
@@ -11792,6 +12959,9 @@ class _ChatScreenState extends State<ChatScreen>
           modeLabel: flag?.$1,
           modeColor: flag?.$2,
           modeSectionBuilder: _buildApprovalModeSection,
+          compressionCount: _chatBound
+              ? _chat.desktopSessionCompressionCount
+              : 0,
         ),
       ),
     );
@@ -11801,35 +12971,6 @@ class _ChatScreenState extends State<ChatScreen>
     key: const ValueKey('chat-stable-body'),
     child: _buildBodyContent(),
   );
-
-  /// Vertical space reserved at the BOTTOM of the transcript (just above
-  /// the composer) so the floating subagent-activity pill
-  /// (`chat-session-activity`, pinned via `Positioned(bottom: 64, ...)` in
-  /// the same Stack) never paints over the last real message. Zero when
-  /// there's nothing to show. Scales a little with the text-scale factor
-  /// since the pill's own content grows with it too — this is a fixed
-  /// estimate, not a measured value, so at very large accessibility scales
-  /// the reservation may run slightly short.
-  double get _subagentActivityPillReservedSpace {
-    // Must match the pill's own visibility, not just the live flags: once
-    // work retires, `_chat`'s live counts drop to zero but the pill itself
-    // keeps showing (see `_displaySubagentActivities`) until dismissed, so
-    // the reservation has to stay too or the persisted pill overlaps the
-    // reply text right under it.
-    final hasActivity =
-        _displaySubagentActivities.isNotEmpty ||
-        _chat.hasRecentPassiveRemoteActivity ||
-        _chat.safeActiveSubagentCount > 0 ||
-        // La pastilla del turno ocupa el mismo hueco y es excluyente con la de
-        // subagentes, así que necesita la misma reserva o taparía la respuesta.
-        // Se reserva desde que el turno empieza, sin esperar su `revealAfter`:
-        // el hueco llega antes que la pastilla y así aparecer no da un salto de
-        // layout (el propio widget se autorrevela con su ticker interno).
-        _showTurnActivityPill;
-    if (!hasActivity) return 0;
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-    return 56 * textScale.clamp(1.0, 2.0);
-  }
 
   Widget _buildBodyContent() {
     final colors = Theme.of(context).hermes;
@@ -11956,12 +13097,21 @@ class _ChatScreenState extends State<ChatScreen>
     final entries = _currentListEntries;
     pruneMessageAnchorCache(_messageAnchors, _messages);
 
-    final transcript = ChatScrollInteractionGuard(
-      onPointerDown: _pauseStreamingFollow,
-      onPointerMove: _trackStreamingScrollInteraction,
-      onPointerUp: _finishStreamingScrollInteraction,
-      onPointerCancel: _cancelStreamingScrollInteraction,
-      child: ListView.builder(
+    final transcript = ListenableBuilder(
+      listenable: Listenable.merge([
+        _activityPillExtent,
+        _scrollToBottomVisibility,
+      ]),
+      builder: (context, _) {
+        final overlayExtent =
+            _activityPillExtent.value +
+            (_scrollToBottomVisibility.value ? 48 : 0);
+        return ChatScrollInteractionGuard(
+          onPointerDown: _pauseStreamingFollow,
+          onPointerMove: _trackStreamingScrollInteraction,
+          onPointerUp: _finishStreamingScrollInteraction,
+          onPointerCancel: _cancelStreamingScrollInteraction,
+          child: ListView.builder(
         controller: _scrollController,
         // En `reverse:true` el asistente vivo crece por debajo del contenido
         // que el lector está mirando. Conservar el mismo offset numérico hace
@@ -11972,17 +13122,10 @@ class _ChatScreenState extends State<ChatScreen>
         physics: _ChatStreamingViewportPhysics(lock: _streamingViewportLock),
         // Deja aire real bajo la última respuesta. Con solo 4 dp el cierre del
         // texto quedaba pegado al compositor y parecía visualmente recortado.
-        // `bottom` también reserva sitio para el pill flotante de actividad de
-        // subagentes (anclado justo encima del composer, ver
-        // Positioned('chat-session-activity') más abajo): así el pill nunca
-        // tapa el último mensaje real, sin necesidad de redimensionar el
-        // Stack — solo empuja el contenido scrolleable, que sigue ocupando
-        // la misma caja. `EdgeInsets.bottom` es el borde físico inferior de
-        // la pantalla incluso con `reverse: true` (reverse solo cambia el
-        // orden de los hijos, no qué lado físico representa cada inset).
-        padding: EdgeInsets.only(
-          bottom: 12 + _subagentActivityPillReservedSpace,
-        ),
+        // `bottom` reserva la altura medida de toda la pila flotante y de la
+        // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
+        // aunque cambie de alto o convivan varias actividades.
+        padding: EdgeInsets.only(bottom: 12 + overlayExtent),
         reverse: true,
         // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
         // se materializan entradas frías en medio de un frame de scroll.
@@ -12102,11 +13245,15 @@ class _ChatScreenState extends State<ChatScreen>
         },
       ),
     );
+      },
+    );
     return ChatRefreshStatusOverlay(
       loading: _interactiveMessageRefreshPending,
       errorMessage: _error == null
           ? null
           : Strings.of(context).chaMessagesError,
+      // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
+      errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
       child: transcript,
     );
   }
@@ -12197,25 +13344,38 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  bool get _turnWaitsForUser =>
+      _chat.pendingApproval != null || _chat.pendingInteractivePrompt != null;
+
+  HermesSparkMood _liveCompanionMood() {
+    final transport = _chat.transportStatus.state;
+    if (transport == ChatTransportState.offline ||
+        transport == ChatTransportState.reconnecting) {
+      return HermesSparkMood.offline;
+    }
+    if (_turnWaitsForUser) return HermesSparkMood.waiting;
+    return switch (_pipelineState) {
+      ChatPipelineState.connecting => HermesSparkMood.connecting,
+      ChatPipelineState.waiting => HermesSparkMood.waiting,
+      _ => HermesSparkMood.thinking,
+    };
+  }
+
   Widget _buildActiveThinkingState() {
     // La compresión no es actividad del modelo. Mostrar a la vez esta tarjeta,
     // el estado del composer y el uso de contexto hacía que una operación
     // indeterminada pareciese bloqueada. El composer conserva el único estado
     // vivo hasta que Desktop reconcilia el transcript.
     if (_compressingSession) return const SizedBox.shrink();
-    return ThinkingTraceCard(
-      events: _trace,
-      active: true,
-      headline: _traceHeadline(),
-      // El indicador de estado del turno activo es la mascota del Companion
-      // (corriendo/fallo) en lugar del spinner, si la presencia está activa.
-      companion: context.findAncestorStateOfType<HermesAppState>()?.companion,
-      // Mood de la mascota según el estado real del pipeline: conectando /
-      // esperando / pensando (ejecutando o haciendo streaming).
-      activeMood: switch (_pipelineState) {
-        ChatPipelineState.connecting => HermesSparkMood.connecting,
-        ChatPipelineState.waiting => HermesSparkMood.waiting,
-        _ => HermesSparkMood.thinking,
+    return ValueListenableBuilder<ChatTransportStatus>(
+      valueListenable: _chat.transportStatusListenable,
+      builder: (context, _, _) {
+        final mood = _liveCompanionMood();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [_AssistantLiveHeader(agentName: _agentName, mood: mood)],
+        );
       },
     );
   }
@@ -12261,8 +13421,15 @@ class _ChatScreenState extends State<ChatScreen>
             content == rawContent &&
                 unit.supplements.isEmpty &&
                 _canEditUserMessage(unit.primary)
-            ? () => _editUserMessage(unit.primary)
+            ? (bubbleWidth) =>
+                  _editUserMessage(unit.primary, bubbleWidth)
             : null,
+        editing: identical(unit.primary, _editingUserMessageTarget),
+        editingText: _editingUserMessageText,
+        editingWidth: _editingUserMessageWidth,
+        editSaving: _editingRewriteSubmitted,
+        onCancelEdit: _cancelUserMessageEdit,
+        onSaveEdit: (text) => unawaited(_saveUserMessageEdit(text)),
       );
     }
 
@@ -12270,6 +13437,12 @@ class _ChatScreenState extends State<ChatScreen>
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
     final sourceContent = content;
+    // Un turno que primero piensa/llama herramientas y luego responde llega en
+    // varias filas del servidor: la fila solo-traza se funde en el desplegable
+    // de la respuesta que la sigue (una cabecera, un «Completado ⌄»).
+    final traceMerge = role == 'assistant' ? _traceMergeFor(msg) : null;
+    if (traceMerge?.hidden ?? false) return const SizedBox.shrink();
+    final metadataMsg = traceMerge?.merged ?? msg;
 
     final historicalSubagents = historicalSubagentCompletionOf(msg);
     if (historicalSubagents != null) {
@@ -12289,6 +13462,7 @@ class _ChatScreenState extends State<ChatScreen>
         detail: timelineEvent.detail,
         icon: timelineEvent.icon,
         raw: content,
+        titleMaxLines: msg['display_kind'] == 'process_complete' ? 2 : null,
       );
     }
 
@@ -12315,6 +13489,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     final isPipeline = msg['_pipeline'] == true;
+    final hasUnifiedActivity =
+        normalizeAssistantActivityTrace(
+          msg[assistantActivityTraceKey],
+        ).isNotEmpty ||
+        (msg['reasoning'] is String &&
+            (msg['reasoning'] as String).trim().isNotEmpty);
     final isCancelled = msg['_cancelled'] == true;
     // El mensaje en curso es el más nuevo (índice 0) mientras hay streaming.
     // Solo en él aplicamos el normalizador visual de Markdown incompleto.
@@ -12347,7 +13527,10 @@ class _ChatScreenState extends State<ChatScreen>
     // Placeholder del turno activo: la ThinkingTraceCard en vivo agrega el
     // progreso del turno en curso (los eventos reales se agruparán al
     // refrescar tras completar).
-    if (role == 'assistant' && isPipeline) {
+    if (role == 'assistant' &&
+        isPipeline &&
+        content.trim().isEmpty &&
+        !hasUnifiedActivity) {
       // Un placeholder interno puede sobrevivir a una reconciliación tardía.
       // Nunca lo proyectamos como actividad si ya no es la cabeza viva del
       // chat: _trace pertenece al turno actual, no al mensaje histórico.
@@ -12368,7 +13551,10 @@ class _ChatScreenState extends State<ChatScreen>
     final displayContent = role == 'assistant'
         ? operationalProjection.visibleMarkdown
         : content;
-    if (role == 'assistant' && isStreaming && displayContent.trim().isEmpty) {
+    if (role == 'assistant' &&
+        isStreaming &&
+        displayContent.trim().isEmpty &&
+        !hasUnifiedActivity) {
       return _buildActiveThinkingState();
     }
     // Los resúmenes de delegación son cortos y necesitan una proyección
@@ -12413,6 +13599,27 @@ class _ChatScreenState extends State<ChatScreen>
             suggestionsEnabled: suggestionsEnabled,
           )
         : null;
+    // Nunca una burbuja vacía: una respuesta terminada sin texto visible, sin
+    // medios y cuya traza no tiene nada que desplegar (solo herramientas puente
+    // de Hermes, sin razonamiento ni tareas) no pinta ni siquiera la cabecera.
+    if (role == 'assistant' &&
+        !isStreaming &&
+        !isCancelled &&
+        !isPipeline &&
+        msg['_stopped'] != true &&
+        displayContent.trim().isEmpty &&
+        operationalProjection.technicalDetails.isEmpty &&
+        _structuredGeneratedImages(msg).isEmpty &&
+        _structuredGeneratedVideos(msg).isEmpty &&
+        !_assistantActivityEvents(context, msg, '').any(
+          (event) =>
+              event.kind == ChatTraceEventKind.reasoning ||
+              !isInternalActivityLabel(event.label),
+        ) &&
+        !(msg['reasoning'] is String &&
+            (msg['reasoning'] as String).trim().isNotEmpty)) {
+      return const SizedBox.shrink();
+    }
     if (role == 'assistant' && isCancelled && content.isNotEmpty) {
       // El parcial cancelado largo llega ya troceado (displaySlice): cada
       // slice pinta su parte y solo el cierre lleva la marca 'cancelled'.
@@ -12438,7 +13645,7 @@ class _ChatScreenState extends State<ChatScreen>
       content: displayContent,
       isUser: role == 'user',
       verbose: _devDiagnostics,
-      metadata: msg,
+      metadata: metadataMsg,
       linkCache: _linkCache,
       fetchLinkPreview: _fetchLinkPreview,
       firstUrl: _firstUrl,
@@ -12455,12 +13662,20 @@ class _ChatScreenState extends State<ChatScreen>
           ReadAloudStopBehavior.pauseAndResume,
       agentName: _agentName,
       isStreaming: isStreaming,
+      companionMood: isStreaming || isPipeline ? _liveCompanionMood() : null,
+      waitingForUser: (isStreaming || isPipeline) && _turnWaitsForUser,
       assistantSlice: displaySlice,
       terminalProjection: terminalProjection,
       technicalDetails: operationalProjection.technicalDetails,
       onEdit: role == 'user' && _canEditUserMessage(msg)
-          ? () => _editUserMessage(msg)
+          ? (bubbleWidth) => _editUserMessage(msg, bubbleWidth)
           : null,
+      editing: role == 'user' && identical(msg, _editingUserMessageTarget),
+      editingText: _editingUserMessageText,
+      editingWidth: _editingUserMessageWidth,
+      editSaving: _editingRewriteSubmitted,
+      onCancelEdit: _cancelUserMessageEdit,
+      onSaveEdit: (text) => unawaited(_saveUserMessageEdit(text)),
       onRegenerate: role == 'assistant' && _isLatestAssistant(msg)
           ? _regenerateLastResponse
           : null,
@@ -12500,7 +13715,15 @@ class _ChatScreenState extends State<ChatScreen>
     required bool compact,
   }) {
     final projection = _projectOperationalArtifacts(context, frame.content);
-    if (frame.isStreaming && projection.visibleMarkdown.trim().isEmpty) {
+    final hasUnifiedActivity =
+        normalizeAssistantActivityTrace(
+          frame.metadata[assistantActivityTraceKey],
+        ).isNotEmpty ||
+        (frame.metadata['reasoning'] is String &&
+            (frame.metadata['reasoning'] as String).trim().isNotEmpty);
+    if (frame.isStreaming &&
+        projection.visibleMarkdown.trim().isEmpty &&
+        !hasUnifiedActivity) {
       return _buildActiveThinkingState();
     }
     if (!frame.isStreaming &&
@@ -12535,6 +13758,8 @@ class _ChatScreenState extends State<ChatScreen>
           ReadAloudStopBehavior.pauseAndResume,
       agentName: _agentName,
       isStreaming: frame.isStreaming,
+      companionMood: frame.isStreaming ? _liveCompanionMood() : null,
+      waitingForUser: frame.isStreaming && _turnWaitsForUser,
       compact: compact,
       performanceProbe: widget.performanceProbe,
     );
@@ -12695,6 +13920,7 @@ class _ChatScreenState extends State<ChatScreen>
 /// la animación del teclado en un build completo de la pantalla de chat.
 class _KeyboardInsetWatcher extends StatefulWidget {
   final ValueChanged<double> onBottomInset;
+
   final Widget child;
 
   const _KeyboardInsetWatcher({
@@ -12717,6 +13943,56 @@ class _KeyboardInsetWatcherState extends State<_KeyboardInsetWatcher> {
   Widget build(BuildContext context) => widget.child;
 }
 
+/// Superficie común de los avisos en flujo bajo la cabecera del chat: tarjeta
+/// neutra con filete (mismos tokens que el aviso flotante y las pastillas), el
+/// estado lo lleva solo el glifo. Sin relleno ni borde de color.
+class _ChatNoticeSurface extends StatelessWidget {
+  const _ChatNoticeSurface({
+    required this.icon,
+    required this.iconColor,
+    required this.message,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String message;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: EdgeInsets.fromLTRB(14, 9, trailing == null ? 14 : 4, 9),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.divider.withValues(alpha: 0.78)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: iconColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 12.5,
+                height: 1.3,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
+    );
+  }
+}
+
 class _DesktopAuthRequiredBanner extends StatelessWidget {
   const _DesktopAuthRequiredBanner({required this.message});
 
@@ -12731,32 +14007,10 @@ class _DesktopAuthRequiredBanner extends StatelessWidget {
       liveRegion: true,
       label: message,
       child: ExcludeSemantics(
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          decoration: BoxDecoration(
-            color: colors.warning.withValues(alpha: 0.1),
-            border: Border(
-              bottom: BorderSide(color: colors.warning.withValues(alpha: 0.28)),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.lock_outline_rounded, size: 18, color: colors.warning),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 12.5,
-                    height: 1.3,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        child: _ChatNoticeSurface(
+          icon: Icons.lock_outline_rounded,
+          iconColor: colors.warning,
+          message: message,
         ),
       ),
     );
@@ -12781,49 +14035,17 @@ class _CoreReadPartialCoverageNotice extends StatelessWidget {
       liveRegion: true,
       label: message,
       child: ExcludeSemantics(
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(14, 8, 4, 8),
-          decoration: BoxDecoration(
-            color: colors.warning.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colors.warning.withValues(alpha: 0.32)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.account_tree_outlined,
-                size: 18,
-                color: colors.warning,
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 12.5,
-                    height: 1.3,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              IconButton(
-                key: const ValueKey('core-read-partial-coverage-dismiss'),
-                tooltip: Strings.of(context).commonClose,
-                onPressed: onDismiss,
-                icon: const Icon(Icons.close),
-                iconSize: 18,
-                color: colors.textSecondary,
-              ),
-            ],
+        child: _ChatNoticeSurface(
+          icon: Icons.account_tree_outlined,
+          iconColor: colors.warning,
+          message: message,
+          trailing: IconButton(
+            key: const ValueKey('core-read-partial-coverage-dismiss'),
+            tooltip: Strings.of(context).commonClose,
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close),
+            iconSize: 18,
+            color: colors.textSecondary,
           ),
         ),
       ),
@@ -12845,52 +14067,26 @@ class _LocalTranscriptTruncationNotice extends StatelessWidget {
       liveRegion: true,
       label: message,
       child: ExcludeSemantics(
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          decoration: BoxDecoration(
-            color: colors.warning.withValues(alpha: 0.1),
-            border: Border(
-              bottom: BorderSide(color: colors.warning.withValues(alpha: 0.28)),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.history_toggle_off_rounded,
-                size: 18,
-                color: colors.warning,
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 12.5,
-                    height: 1.3,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        child: _ChatNoticeSurface(
+          icon: Icons.history_toggle_off_rounded,
+          iconColor: colors.warning,
+          message: message,
         ),
       ),
     );
   }
 }
 
-class _EditUserMessageSheet extends StatefulWidget {
+class _EditQueuedEntrySheet extends StatefulWidget {
   final String initialText;
 
-  const _EditUserMessageSheet({required this.initialText});
+  const _EditQueuedEntrySheet({required this.initialText});
 
   @override
-  State<_EditUserMessageSheet> createState() => _EditUserMessageSheetState();
+  State<_EditQueuedEntrySheet> createState() => _EditQueuedEntrySheetState();
 }
 
-class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
+class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
   late final TextEditingController _controller;
 
   @override
@@ -12942,7 +14138,7 @@ class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    strings.chaEditTitle,
+                    strings.chaQueueEdit,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       color: colors.textPrimary,
                       fontWeight: FontWeight.w700,
@@ -12961,7 +14157,7 @@ class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
                 ),
               ),
               child: TextField(
-                key: const ValueKey('edit-message-composer'),
+                key: const ValueKey('queued-message-editor-field'),
                 controller: _controller,
                 autofocus: true,
                 minLines: 2,
@@ -12976,15 +14172,6 @@ class _EditUserMessageSheetState extends State<_EditUserMessageSheet> {
                     vertical: 15,
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              strings.chaEditRewindWarning,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.4,
-                color: colors.textSecondary,
               ),
             ),
             const SizedBox(height: 74),
@@ -13750,22 +14937,9 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Presencia (006): el Companion muestra su estado de error
-                // cuando el turno falla y no se puede continuar. Decorativo,
-                // invisible si la presencia está apagada.
-                Builder(
-                  builder: (ctx) {
-                    final app = ctx.findAncestorStateOfType<HermesAppState>();
-                    if (app == null) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: CompanionMessagePresence(
-                        companion: app.companion,
-                        mood: HermesSparkMood.error,
-                        size: 32,
-                      ),
-                    );
-                  },
+                const _AssistantHeaderCompanion(
+                  mood: HermesSparkMood.error,
+                  animate: false,
                 ),
                 Text(
                   '▸ hermes',
@@ -13988,12 +15162,14 @@ class _SendButton extends StatefulWidget {
   final bool enabled;
   final bool busy;
   final VoidCallback onSend;
+  final VoidCallback? onQueue;
   final VoidCallback onStop;
 
   const _SendButton({
     required this.mode,
     required this.onSend,
     required this.onStop,
+    this.onQueue,
     this.enabled = true,
     this.busy = false,
   });
@@ -14047,11 +15223,18 @@ class _SendButtonState extends State<_SendButton> {
       );
     }
 
+    final onQueue = widget.onQueue;
     return HermesTactileAction(
       icon: icon,
       iconSize: isStop ? 21 : 19,
       semanticLabel: tooltip,
       onPressed: widget.enabled ? _handleTap : null,
+      onLongPress: isStop || !widget.enabled || onQueue == null
+          ? null
+          : () {
+              HapticFeedback.lightImpact();
+              onQueue();
+            },
       backgroundColor: bg,
       foregroundColor: fg,
       enabled: widget.enabled,
@@ -14159,10 +15342,18 @@ class _MessageBubble extends StatelessWidget {
   final ReadAloudStopBehavior readAloudStopBehavior;
   final String agentName;
   final bool isStreaming;
+  final HermesSparkMood? companionMood;
+  final bool waitingForUser;
   final _AssistantRenderSlice? assistantSlice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
-  final VoidCallback? onEdit;
+  final ValueChanged<double>? onEdit;
+  final bool editing;
+  final String? editingText;
+  final double? editingWidth;
+  final bool editSaving;
+  final VoidCallback? onCancelEdit;
+  final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
   final bool compact;
@@ -14182,10 +15373,18 @@ class _MessageBubble extends StatelessWidget {
     this.readAloudStopBehavior = ReadAloudStopBehavior.pauseAndResume,
     this.agentName = 'hermes',
     this.isStreaming = false,
+    this.companionMood,
+    this.waitingForUser = false,
     this.assistantSlice,
     this.terminalProjection,
     this.technicalDetails = const [],
     this.onEdit,
+    this.editing = false,
+    this.editingText,
+    this.editingWidth,
+    this.editSaving = false,
+    this.onCancelEdit,
+    this.onSaveEdit,
     this.onRegenerate,
     this.onSuggestionSelected,
     this.compact = false,
@@ -14200,6 +15399,12 @@ class _MessageBubble extends StatelessWidget {
             verbose: verbose,
             metadata: metadata,
             onEdit: onEdit,
+            editing: editing,
+            editingText: editingText,
+            editingWidth: editingWidth,
+            editSaving: editSaving,
+            onCancelEdit: onCancelEdit,
+            onSaveEdit: onSaveEdit,
             compact: compact,
           )
         : _AssistantMessage(
@@ -14215,6 +15420,8 @@ class _MessageBubble extends StatelessWidget {
             readAloudStopBehavior: readAloudStopBehavior,
             agentName: agentName,
             isStreaming: isStreaming,
+            companionMood: companionMood,
+            waitingForUser: waitingForUser,
             slice: assistantSlice,
             terminalProjection: terminalProjection,
             technicalDetails: technicalDetails,
@@ -14438,6 +15645,18 @@ _timelineSystemEventPresentation(
             : details.join(' · '),
         icon: Icons.hub_outlined,
       );
+    case 'process_complete':
+      // El runtime ya redactó el título compacto; el payload completo queda en
+      // `raw` (copiable), nunca impreso como burbuja.
+      final rawMetadata = message['display_metadata'];
+      final metadata = rawMetadata is Map ? rawMetadata : const {};
+      final displayText = metadata['display_text'];
+      final title = displayText is String ? displayText.trim() : '';
+      return (
+        title: title.isNotEmpty ? title : strings.chaTimelineProcessFinished,
+        detail: null,
+        icon: Icons.terminal_rounded,
+      );
     case 'model_switch':
       return (
         title: strings.chaTimelineModelChanged,
@@ -14617,11 +15836,12 @@ class _SystemBlobChip extends StatelessWidget {
         child: GestureDetector(
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: raw));
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(
                 content: Text(Strings.of(context).chaCopied),
                 duration: const Duration(seconds: 1),
               ),
+              kind: HermesNoticeKind.success,
             );
           },
           child: Container(
@@ -14662,12 +15882,14 @@ class _TimelineSystemEventRow extends StatelessWidget {
   final String? detail;
   final IconData icon;
   final String raw;
+  final int? titleMaxLines;
 
   const _TimelineSystemEventRow({
     required this.title,
     required this.detail,
     required this.icon,
     required this.raw,
+    this.titleMaxLines,
   });
 
   @override
@@ -14686,11 +15908,12 @@ class _TimelineSystemEventRow extends StatelessWidget {
           behavior: HitTestBehavior.translucent,
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: raw));
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(
                 content: Text(Strings.of(context).chaCopied),
                 duration: const Duration(seconds: 1),
               ),
+              kind: HermesNoticeKind.success,
             );
           },
           child: ConstrainedBox(
@@ -14712,6 +15935,10 @@ class _TimelineSystemEventRow extends StatelessWidget {
                     children: [
                       Text(
                         title,
+                        maxLines: titleMaxLines,
+                        overflow: titleMaxLines == null
+                            ? null
+                            : TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.textSecondary,
                           fontSize: 13.5,
@@ -14758,11 +15985,12 @@ Future<void> _openMarkdownLink(BuildContext context, String? href) async {
   if (!isAllowedMarkdownLinkScheme(href)) {
     debugPrint('Enlace de markdown bloqueado (esquema no permitido): $href');
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).chaLinkSchemeBlocked),
           duration: const Duration(seconds: 2),
         ),
+        kind: HermesNoticeKind.warning,
       );
     }
     return;
@@ -14779,7 +16007,13 @@ class _UserMessage extends StatelessWidget {
   final bool verbose;
   final Map<String, dynamic> metadata;
   final List<String> supplements;
-  final VoidCallback? onEdit;
+  final ValueChanged<double>? onEdit;
+  final bool editing;
+  final String? editingText;
+  final double? editingWidth;
+  final bool editSaving;
+  final VoidCallback? onCancelEdit;
+  final ValueChanged<String>? onSaveEdit;
   final bool compact;
 
   const _UserMessage({
@@ -14788,8 +16022,57 @@ class _UserMessage extends StatelessWidget {
     this.metadata = const {},
     this.supplements = const [],
     this.onEdit,
+    this.editing = false,
+    this.editingText,
+    this.editingWidth,
+    this.editSaving = false,
+    this.onCancelEdit,
+    this.onSaveEdit,
     this.compact = false,
   });
+
+  Widget _buildAttachmentCards(
+    BuildContext context,
+    List<_ParsedAttachment> attachments,
+  ) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final attachment in attachments)
+          Builder(
+            builder: (context) {
+              final historyReference = attachment.historyReference;
+              if (historyReference != null) {
+                return AttachmentHistoryCard(
+                  key: ValueKey(
+                    'history-attachment-${historyReference.index}-'
+                    '${historyReference.storageKey}',
+                  ),
+                  name: attachment.name,
+                  sizeLabel: attachment.sizeLabel,
+                  reference: historyReference,
+                );
+              }
+              final imgPath = attachment.imagePath;
+              final imgFile =
+                  (imgPath != null && File(imgPath).existsSync())
+                  ? File(imgPath)
+                  : null;
+              return AttachmentCard(
+                name: attachment.name,
+                mimeType: '',
+                sizeLabel: attachment.sizeLabel,
+                thumbnailFile: imgFile,
+                onTap: imgFile != null
+                    ? () => showImageViewer(context, imgFile)
+                    : null,
+              );
+            },
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14802,8 +16085,10 @@ class _UserMessage extends StatelessWidget {
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
     final parsed = _parseUserContent(content);
+    final bubbleMeasureKey = GlobalKey();
 
     return ChatMessageSelectionArea(
+      enabled: !editing,
       selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
       child: Padding(
         padding: EdgeInsets.only(
@@ -14815,193 +16100,186 @@ class _UserMessage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: compact ? 8 : 11,
-              ),
-              // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
-              // borde. El mensaje del agente va en texto plano; el del usuario
-              // en esta burbuja sutil.
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (metaLines.isNotEmpty)
-                    _MetaBlock(lines: metaLines, onDark: true),
-                  if (parsed.attachments.isNotEmpty)
-                    Padding(
-                      padding: EdgeInsets.only(
-                        bottom: parsed.text.isNotEmpty ? 8 : 0,
-                      ),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+            KeyedSubtree(
+              key: const ValueKey('user-message-bubble'),
+              child: Container(
+                key: bubbleMeasureKey,
+                // Mientras se edita la burbuja se ensancha al ancho máximo de
+                // una burbuja normal (alineada a la derecha) para que el texto
+                // tenga sitio, en vez de quedarse con el ancho del original.
+                width: editing ? double.infinity : null,
+                padding: EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: compact ? 8 : 11,
+                ),
+                // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
+                // borde. El mensaje del agente va en texto plano; el del usuario
+                // en esta burbuja sutil.
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: editing
+                    ? InlineMessageEditor(
+                        initialText: editingText ?? parsed.text.trim(),
+                        saving: editSaving,
+                        attachments: parsed.attachments.isEmpty
+                            ? null
+                            : _buildAttachmentCards(
+                                context,
+                                parsed.attachments,
+                              ),
+                        onCancel: onCancelEdit!,
+                        onSave: onSaveEdit!,
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          for (final attachment in parsed.attachments)
-                            Builder(
-                              builder: (context) {
-                                final historyReference =
-                                    attachment.historyReference;
-                                if (historyReference != null) {
-                                  return AttachmentHistoryCard(
-                                    key: ValueKey(
-                                      'history-attachment-'
-                                      '${historyReference.index}-'
-                                      '${historyReference.storageKey}',
-                                    ),
-                                    name: attachment.name,
-                                    sizeLabel: attachment.sizeLabel,
-                                    reference: historyReference,
-                                  );
-                                }
-                                final imgPath = attachment.imagePath;
-                                final imgFile =
-                                    (imgPath != null &&
-                                        File(imgPath).existsSync())
-                                    ? File(imgPath)
-                                    : null;
-                                return AttachmentCard(
-                                  name: attachment.name,
-                                  mimeType: '',
-                                  sizeLabel: attachment.sizeLabel,
-                                  thumbnailFile: imgFile,
-                                  onTap: imgFile != null
-                                      ? () => showImageViewer(context, imgFile)
-                                      : null,
-                                );
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (parsed.text.isNotEmpty)
-                    MarkdownBody(
-                      data: parsed.text,
-                      selectable: false,
-                      // Respeta los saltos de línea simples (CommonMark los
-                      // colapsaría en espacios → texto "todo junto").
-                      softLineBreak: true,
-                      onTapLink: (text, href, title) =>
-                          _openMarkdownLink(context, href),
-                      styleSheet: _userSheet(theme, colors),
-                    ),
-                  if (supplements.isNotEmpty) ...[
-                    const SizedBox(height: 11),
-                    Divider(
-                      height: 1,
-                      color: colors.divider.withValues(alpha: 0.45),
-                    ),
-                    const SizedBox(height: 9),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.add_comment_outlined,
-                          size: 14,
-                          color: colors.accent,
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            Strings.of(context).chaSteerSupplementsLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 7),
-                    for (var index = 0; index < supplements.length; index++)
-                      Padding(
-                        padding: EdgeInsets.only(
-                          bottom: index == supplements.length - 1 ? 0 : 7,
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 2,
-                              height: 18,
-                              margin: const EdgeInsets.only(top: 2, right: 8),
-                              decoration: BoxDecoration(
-                                color: colors.accent.withValues(alpha: 0.55),
-                                borderRadius: BorderRadius.circular(2),
+                          if (metaLines.isNotEmpty)
+                            _MetaBlock(lines: metaLines, onDark: true),
+                          if (parsed.attachments.isNotEmpty)
+                            Padding(
+                              padding: EdgeInsets.only(
+                                bottom: parsed.text.isNotEmpty ? 8 : 0,
+                              ),
+                              child: _buildAttachmentCards(
+                                context,
+                                parsed.attachments,
                               ),
                             ),
-                            Expanded(
-                              child: Text(
-                                supplements[index],
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  height: 1.35,
-                                  color: colors.textPrimary,
+                          if (parsed.text.isNotEmpty)
+                            MarkdownBody(
+                              data: parsed.text,
+                              selectable: false,
+                              // Respeta los saltos de línea simples (CommonMark los
+                              // colapsaría en espacios → texto "todo junto").
+                              softLineBreak: true,
+                              onTapLink: (text, href, title) =>
+                                  _openMarkdownLink(context, href),
+                              styleSheet: _userSheet(theme, colors),
+                            ),
+                          if (supplements.isNotEmpty) ...[
+                            const SizedBox(height: 11),
+                            Divider(
+                              height: 1,
+                              color: colors.divider.withValues(alpha: 0.45),
+                            ),
+                            const SizedBox(height: 9),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.add_comment_outlined,
+                                  size: 14,
+                                  color: colors.accent,
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    Strings.of(context).chaSteerSupplementsLabel,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: colors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 7),
+                            for (var index = 0; index < supplements.length; index++)
+                              Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: index == supplements.length - 1 ? 0 : 7,
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Container(
+                                      width: 2,
+                                      height: 18,
+                                      margin: const EdgeInsets.only(top: 2, right: 8),
+                                      decoration: BoxDecoration(
+                                        color: colors.accent.withValues(alpha: 0.55),
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        supplements[index],
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          height: 1.35,
+                                          color: colors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ),
                           ],
-                        ),
+                        ],
                       ),
-                  ],
-                ],
               ),
             ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (onEdit != null)
+            if (!editing)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onEdit != null)
+                    IconButton(
+                      onPressed: () {
+                        final box = bubbleMeasureKey.currentContext
+                            ?.findRenderObject() as RenderBox?;
+                        if (box != null && box.hasSize) {
+                          onEdit!(box.size.width);
+                        }
+                      },
+                      tooltip: Strings.of(context).chaEditMessage,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 48,
+                        minHeight: 48,
+                      ),
+                      icon: Icon(
+                        Icons.edit_outlined,
+                        size: 15,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  // A-104 (spec 028): acción con nombre para TalkBack y target
+                  // de 48dp (el icono visual sigue siendo discreto).
                   IconButton(
-                    onPressed: onEdit,
-                    tooltip: Strings.of(context).chaEditMessage,
+                    onPressed: () {
+                      Clipboard.setData(
+                        ClipboardData(
+                          text: userMessageClipboardText(parsed.text),
+                        ),
+                      );
+                      HermesNotice.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(Strings.of(context).chaCopied),
+                          duration: Duration(seconds: 1),
+                        ),
+                        kind: HermesNoticeKind.success,
+                      );
+                    },
+                    tooltip: Strings.of(context).chaCopyMessage,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(
                       minWidth: 48,
                       minHeight: 48,
                     ),
                     icon: Icon(
-                      Icons.edit_outlined,
-                      size: 15,
+                      Icons.copy_rounded,
+                      size: 13,
                       color: colors.textSecondary,
                     ),
                   ),
-                // A-104 (spec 028): acción con nombre para TalkBack y target
-                // de 48dp (el icono visual sigue siendo discreto).
-                IconButton(
-                  onPressed: () {
-                    Clipboard.setData(
-                      ClipboardData(
-                        text: userMessageClipboardText(parsed.text),
-                      ),
-                    );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(Strings.of(context).chaCopied),
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
-                  },
-                  tooltip: Strings.of(context).chaCopyMessage,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 48,
-                    minHeight: 48,
-                  ),
-                  icon: Icon(
-                    Icons.copy_rounded,
-                    size: 13,
-                    color: colors.textSecondary,
-                  ),
-                ),
-                if (timestamp != null) _MessageTimestamp(timestamp),
-              ],
-            ),
+                  if (timestamp != null) _MessageTimestamp(timestamp),
+                ],
+              ),
           ],
         ),
       ),
@@ -15377,6 +16655,188 @@ class _GatedChatImageState extends State<_GatedChatImage> {
   }
 }
 
+List<ChatTraceEvent> _assistantActivityEvents(
+  BuildContext context,
+  Map<String, dynamic> metadata,
+  String legacyReasoning,
+) {
+  final s = Strings.of(context);
+  final normalized = normalizeAssistantActivityTrace(
+    metadata[assistantActivityTraceKey],
+  );
+  final events = <ChatTraceEvent>[];
+  var hasReasoning = false;
+  for (var index = 0; index < normalized.length; index++) {
+    final step = normalized[index];
+    final kind = switch (step['kind']) {
+      'reasoning' => ChatTraceEventKind.reasoning,
+      'skill' => ChatTraceEventKind.skill,
+      _ => ChatTraceEventKind.tool,
+    };
+    hasReasoning |= kind == ChatTraceEventKind.reasoning;
+    final preview = kind == ChatTraceEventKind.reasoning
+        ? step['text']?.toString() ?? ''
+        : '';
+    final label = kind == ChatTraceEventKind.reasoning
+        ? s.chatActivityReasoning
+        : step['label']?.toString().trim() ?? '';
+    if (label.isEmpty) continue;
+    final measured = ActivityStep.fromTrace(step, index: index);
+    events.add(
+      ChatTraceEvent(
+        id: step['id']?.toString() ?? 'activity-$index',
+        label: label,
+        status: step['status']?.toString() ?? 'completed',
+        preview: preview,
+        kind: kind,
+        detail: measured?.detail,
+        startedAt: measured?.startedAt,
+        duration: measured?.duration,
+      ),
+    );
+  }
+  if (!hasReasoning && legacyReasoning.trim().isNotEmpty) {
+    events.insert(
+      0,
+      ChatTraceEvent(
+        id: 'reasoning',
+        label: s.chatActivityReasoning,
+        status: metadata['_pipeline'] == true ? 'running' : 'completed',
+        preview: legacyReasoning.trim(),
+        kind: ChatTraceEventKind.reasoning,
+      ),
+    );
+  }
+  return events;
+}
+
+Duration? _assistantActivityDuration(Map<String, dynamic> metadata) {
+  final raw = metadata['_activity_duration_seconds'];
+  if (raw is! num || !raw.isFinite || raw <= 0 || raw > 604800) return null;
+  return Duration(milliseconds: (raw * 1000).round());
+}
+
+const double _assistantHeaderCompanionSize = 44;
+
+class _AssistantHeaderCompanion extends StatelessWidget {
+  const _AssistantHeaderCompanion({required this.mood, required this.animate});
+
+  final HermesSparkMood mood;
+  final bool animate;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return const SizedBox.shrink();
+    final companion = app.companion;
+    return AnimatedBuilder(
+      animation: companion,
+      builder: (context, _) {
+        final visible =
+            companion.isInitialized &&
+            companion.enabled &&
+            companion.presenceLevel.showsStatusPresence;
+        if (!visible) return const SizedBox.shrink();
+        return SizedBox(
+          width: 50,
+          height: _assistantHeaderCompanionSize,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: CompanionStatusIndicator(
+              key: const ValueKey('assistant-header-companion'),
+              companion: companion,
+              mood: mood,
+              size: _assistantHeaderCompanionSize,
+              animate: animate,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Cabecera de un mensaje del asistente: la mascota (o la inicial, sin
+/// presencia) + título en acento + la segunda línea que pase el llamador.
+class _AssistantAvatarHeader extends StatelessWidget {
+  const _AssistantAvatarHeader({
+    required this.name,
+    required this.mood,
+    required this.animate,
+    this.subtitle,
+    this.actions = const [],
+  });
+
+  final String name;
+  final HermesSparkMood mood;
+  final bool animate;
+  final Widget? subtitle;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget header(Widget? mascot) => MessageAvatarHeader(
+      name: name,
+      mascot: mascot,
+      subtitle: subtitle,
+      actions: actions,
+    );
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return header(null);
+    final companion = app.companion;
+    return AnimatedBuilder(
+      animation: companion,
+      builder: (context, _) {
+        final visible =
+            companion.isInitialized &&
+            companion.enabled &&
+            companion.presenceLevel.showsStatusPresence;
+        return header(
+          visible
+              ? CompanionStatusIndicator(
+                  key: const ValueKey('assistant-header-companion'),
+                  companion: companion,
+                  mood: mood,
+                  size: kAvatarMascotSize,
+                  animate: animate,
+                )
+              : null,
+        );
+      },
+    );
+  }
+}
+
+/// Cabecera del turno en vivo antes de que haya texto: el estado lo cuenta la
+/// pastilla sobre el compositor; aquí, una sola palabra apagada.
+class _AssistantLiveHeader extends StatelessWidget {
+  const _AssistantLiveHeader({required this.agentName, required this.mood});
+
+  final String agentName;
+  final HermesSparkMood mood;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 7, 16, 0),
+      child: _AssistantAvatarHeader(
+        name: agentName,
+        mood: mood,
+        animate: true,
+        subtitle: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            Strings.of(context).liveHeaderWorking,
+            key: const ValueKey('assistant-header-working'),
+            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AssistantMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -15390,6 +16850,8 @@ class _AssistantMessage extends StatelessWidget {
   final ReadAloudStopBehavior readAloudStopBehavior;
   final String agentName;
   final bool isStreaming;
+  final HermesSparkMood? companionMood;
+  final bool waitingForUser;
   final _AssistantRenderSlice? slice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
@@ -15411,6 +16873,8 @@ class _AssistantMessage extends StatelessWidget {
     this.readAloudStopBehavior = ReadAloudStopBehavior.pauseAndResume,
     this.agentName = 'hermes',
     this.isStreaming = false,
+    this.companionMood,
+    this.waitingForUser = false,
     this.slice,
     this.terminalProjection,
     this.technicalDetails = const [],
@@ -15428,15 +16892,40 @@ class _AssistantMessage extends StatelessWidget {
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
 
-    // El parser retira `<think>`/Harmony del contenido público. El razonamiento
-    // inline o estructurado nunca se materializa en la UI móvil.
     final parsedSplit =
         terminalProjection?.split ??
         slice?.plan.split ??
         splitReasoning(content);
-    final split = ReasoningSplit(reasoning: '', answer: parsedSplit.answer);
+    final split = mergeStructuredReasoning(
+      ReasoningSplit(reasoning: '', answer: parsedSplit.answer),
+      {'reasoning': metadata['reasoning']},
+    );
     final showHeader = slice?.showHeader ?? true;
     final showFooter = slice?.showFooter ?? true;
+    final activityEvents = _assistantActivityEvents(
+      context,
+      metadata,
+      split.reasoning,
+    );
+    final activityActive =
+        activityEvents.isNotEmpty &&
+        (isStreaming || metadata['_pipeline'] == true);
+    final stopped = metadata['_stopped'] == true;
+    final activityOutcome = traceOutcome(
+      events: activityEvents,
+      active: activityActive,
+      stopped: stopped,
+    );
+    final headerMood = companionMood ??
+        switch (activityOutcome) {
+          TraceOutcome.working => HermesSparkMood.thinking,
+          TraceOutcome.stopped => HermesSparkMood.idle,
+          TraceOutcome.failed => HermesSparkMood.error,
+          TraceOutcome.completed || TraceOutcome.recovered =>
+            HermesSparkMood.success,
+        };
+    final headerAnimated = isStreaming || metadata['_pipeline'] == true;
+    final showTrace = showHeader && (activityEvents.isNotEmpty || stopped);
     final structuredImages = _structuredGeneratedImages(metadata);
     final structuredVideos = _structuredGeneratedVideos(metadata);
     final textualGeneratedBasenames = <String, int>{};
@@ -15688,39 +17177,26 @@ class _AssistantMessage extends StatelessWidget {
             if (showHeader)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
-                child: Row(
-                  children: [
-                    Builder(
-                      builder: (ctx) {
-                        final app = ctx
-                            .findAncestorStateOfType<HermesAppState>();
-                        if (app == null) return const SizedBox.shrink();
-                        final mood = isStreaming
-                            ? HermesSparkMood.thinking
-                            : HermesSparkMood.idle;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: CompanionMessagePresence(
-                            companion: app.companion,
-                            mood: mood,
-                            size: 32,
-                          ),
-                        );
-                      },
-                    ),
-                    Expanded(
-                      child: Text(
-                        '>_ ${agentName.toUpperCase()}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                          color: colors.accent,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
+                child: showTrace
+                    ? ThinkingTraceCard(
+                        key: const ValueKey('assistant-activity-trace'),
+                        events: activityEvents,
+                        active: isStreaming || metadata['_pipeline'] == true,
+                        liveInPill: true,
+                        headline: Strings.of(context).chatActivityThinking,
+                        activeMood: headerMood,
+                        waitingForUser: activityActive && waitingForUser,
+                        stopped: stopped,
+                        duration: _assistantActivityDuration(metadata),
+                        headerBuilder: (context, summary, details) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _AssistantAvatarHeader(
+                              name: agentName,
+                              mood: headerMood,
+                              animate: headerAnimated,
+                              subtitle: summary,
+                              actions: [
                     if (onSpeak != null && readAloudMessageKey != null) ...[
                       const SizedBox(width: 6),
                       ReadAloudButton(
@@ -15738,22 +17214,19 @@ class _AssistantMessage extends StatelessWidget {
                         message: Strings.of(context).chaCopyMessage,
                         child: InkWell(
                           onTap: () {
-                            // Copia la respuesta final (sin el razonamiento `<think>`);
-                            // si solo hubo razonamiento, copia el contenido íntegro.
                             Clipboard.setData(
                               ClipboardData(
                                 text: markdownToClipboardText(
-                                  GeneratedMediaService.stripDirectives(
-                                    answer.isNotEmpty ? answer : content,
-                                  ),
+                                  GeneratedMediaService.stripDirectives(answer),
                                 ),
                               ),
                             );
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            HermesNotice.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(Strings.of(context).chaCopied),
                                 duration: Duration(seconds: 1),
                               ),
+                              kind: HermesNoticeKind.success,
                             );
                           },
                           borderRadius: BorderRadius.circular(24),
@@ -15796,17 +17269,97 @@ class _AssistantMessage extends StatelessWidget {
                         ),
                       ),
                   ],
-                ),
+                            ),
+                            details,
+                          ],
+                        ),
+                      )
+                    : _AssistantAvatarHeader(
+                        name: agentName,
+                        mood: headerMood,
+                        animate: headerAnimated,
+                        actions: [
+                          if (onSpeak != null &&
+                              readAloudMessageKey != null) ...[
+                            const SizedBox(width: 6),
+                            ReadAloudButton(
+                              messageKey: readAloudMessageKey!,
+                              state: readAloud,
+                              stopBehavior: readAloudStopBehavior,
+                              onPressed: onSpeak,
+                            ),
+                          ],
+                          Semantics(
+                            button: true,
+                            label: Strings.of(context).chaCopyMessage,
+                            excludeSemantics: true,
+                            child: Tooltip(
+                              message: Strings.of(context).chaCopyMessage,
+                              child: InkWell(
+                                onTap: () {
+                                  Clipboard.setData(
+                                    ClipboardData(
+                                      text: markdownToClipboardText(
+                                        GeneratedMediaService.stripDirectives(
+                                          answer,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                  HermesNotice.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        Strings.of(context).chaCopied,
+                                      ),
+                                      duration: Duration(seconds: 1),
+                                    ),
+                                    kind: HermesNoticeKind.success,
+                                  );
+                                },
+                                borderRadius: BorderRadius.circular(24),
+                                child: SizedBox(
+                                  width: 48,
+                                  height: 48,
+                                  child: Center(
+                                    child: Icon(
+                                      Icons.copy_rounded,
+                                      size: 16,
+                                      color: colors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (onRegenerate != null)
+                            Semantics(
+                              button: true,
+                              label: Strings.of(context).chaRegenerate,
+                              excludeSemantics: true,
+                              child: Tooltip(
+                                message: Strings.of(context).chaRegenerate,
+                                child: InkWell(
+                                  onTap: onRegenerate,
+                                  borderRadius: BorderRadius.circular(24),
+                                  child: SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.refresh_rounded,
+                                        size: 18,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
               ),
             if (showHeader && metaLines.isNotEmpty)
               _MetaBlock(lines: metaLines, onDark: false),
-            // Razonamiento del modelo (`<think>…`) como bloque discreto y plegado,
-            // separado de la respuesta final. Solo aparece si lo hay.
-            if (showHeader && split.hasReasoning)
-              ReasoningBlock(
-                reasoning: split.reasoning,
-                inProgress: split.reasoningInProgress,
-              ),
             if (answer.isNotEmpty) ...answerWidgets(),
             if (showFooter && technicalDetails.isNotEmpty)
               _AssistantTechnicalDetails(details: technicalDetails),
@@ -15859,11 +17412,12 @@ class _AssistantTechnicalDetailsState
   void _copy(BuildContext context) {
     Clipboard.setData(ClipboardData(text: widget.details.join('\n')));
     HapticFeedback.selectionClick();
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(Strings.of(context).chaCopied),
         duration: const Duration(milliseconds: 900),
       ),
+      kind: HermesNoticeKind.success,
     );
   }
 
@@ -16066,100 +17620,170 @@ class _GeneratedMediaSlot extends StatefulWidget {
 }
 
 class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
-  late GeneratedImageStatus _status;
-  File? _file;
-
-  @override
-  void initState() {
-    super.initState();
-    // MEDIA text is model-controlled. Even authenticated server paths may
-    // point at an unrelated private image/video, so fetching always requires
-    // an explicit tap. Legacy structured generated images keep their existing
-    // trusted-tool auto-download path in [_GeneratedImageSlot].
-    _status = GeneratedImageStatus.unsupported;
+  String _downloadErrorLabel(BuildContext context, Object error) {
+    final strings = Strings.of(context);
+    if (error is DashboardAuthException &&
+        error.code == DashboardAuthFailureCode.rateLimited) {
+      return strings.dashboardAuthRateLimited;
+    }
+    if (error is DashboardHttpException) {
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        return strings.genMediaDenied;
+      }
+      if (error.statusCode == 404) return strings.genMediaUnavailable;
+    }
+    final message = error.toString().toLowerCase();
+    if (message.contains('exceeds') || message.contains('too large')) {
+      return strings.genMediaTooLarge;
+    }
+    if (message.contains('incomplete') ||
+        message.contains('before content-length')) {
+      return strings.genMediaIncomplete;
+    }
+    return strings.genMediaError;
   }
 
-  Future<void> _start() async {
-    final state = context.findAncestorStateOfType<_ChatScreenState>();
-    if (state == null) {
-      if (mounted) setState(() => _status = GeneratedImageStatus.error);
+  Future<void> _open(
+    BuildContext context,
+    File file,
+    int length,
+    VoidCallback onOpenExternal,
+    VoidCallback onShare,
+    VoidCallback onSave,
+  ) async {
+    final isPdf = widget.reference.mimeType == 'application/pdf' ||
+        widget.reference.displayName.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => GeneratedFileViewerScreen(
+            name: widget.reference.displayName,
+            mimeType: widget.reference.mimeType,
+            sizeBytes: length,
+            onOpenWith: onOpenExternal,
+            onShare: onShare,
+            onSave: onSave,
+          ),
+        ),
+      );
       return;
     }
-    if (mounted) {
-      setState(() {
-        _status = GeneratedImageStatus.downloading;
-        _file = null;
-      });
-    }
     try {
-      final file = await state.downloadGeneratedMedia(widget.reference);
-      if (!mounted) return;
-      setState(() {
-        _file = file;
-        _status = GeneratedImageStatus.ready;
-      });
+      final digest = (await sha256.bind(file.openRead()).first).toString();
+      var reference = AttachmentHistoryReference(
+        index: 0,
+        storageKey: digest,
+        type: AttachmentType.document,
+        mimeType: widget.reference.mimeType,
+        sizeBytes: length,
+        sha256Hex: digest,
+      );
+      var previewFile = file;
+      if (widget.reference.mimeType == 'application/pdf' ||
+          widget.reference.displayName.toLowerCase().endsWith('.pdf')) {
+        final persisted = await AttachmentUploader.persistForHistory(
+          AttachmentDraft(
+            type: AttachmentType.document,
+            name: widget.reference.displayName,
+            mimeType: widget.reference.mimeType,
+            sizeBytes: length,
+            localPath: file.path,
+          ),
+          index: 0,
+        );
+        if (persisted != null) {
+          final resolved = await AttachmentUploader.resolveHistoryReference(
+            persisted,
+          );
+          if (resolved != null) {
+            reference = persisted;
+            previewFile = resolved;
+          }
+        }
+      }
+      if (!context.mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => AttachmentBytesPreviewScreen(
+            name: widget.reference.displayName,
+            sizeLabel: _formatGeneratedFileBytes(length),
+            reference: reference,
+            file: previewFile,
+            onOpenExternal: onOpenExternal,
+            onShare: onShare,
+            onSave: onSave,
+          ),
+        ),
+      );
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _status = GeneratedImageStatus.error);
+      if (!context.mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).genMediaError)),
+        kind: HermesNoticeKind.error,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final file = _file;
-    if (_status == GeneratedImageStatus.ready && file != null) {
-      return widget.reference.kind == GeneratedMediaKind.image
-          ? GeneratedImageCard(status: GeneratedImageStatus.ready, file: file)
-          : GeneratedVideoCard(file: file);
-    }
-    final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final loading = _status == GeneratedImageStatus.downloading;
-    final awaitingConsent = _status == GeneratedImageStatus.unsupported;
-    final domain = widget.reference.sourceKind == GeneratedMediaSourceKind.https
-        ? Uri.parse(widget.reference.source).host
-        : '';
-    return Semantics(
-      container: true,
-      liveRegion: loading,
-      label: loading
-          ? strings.genMediaLoading
-          : awaitingConsent
-          ? domain.isEmpty
-                ? strings.genMediaLoad
-                : strings.genMediaLoadFrom(domain)
-          : strings.genMediaError,
-      child: Container(
-        key: const ValueKey<String>('generated-media-placeholder'),
-        width: double.infinity,
-        constraints: const BoxConstraints(minHeight: 128),
-        decoration: BoxDecoration(
-          color: colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: colors.divider),
-        ),
-        child: Center(
-          child: loading
-              ? const CircularProgressIndicator(strokeWidth: 2)
-              : TextButton.icon(
-                  onPressed: _start,
-                  icon: Icon(
-                    awaitingConsent
-                        ? Icons.cloud_download_outlined
-                        : Icons.refresh_rounded,
-                  ),
-                  label: Text(
-                    awaitingConsent
-                        ? domain.isEmpty
-                              ? strings.genMediaLoad
-                              : strings.genMediaLoadFrom(domain)
-                        : strings.commonRetry,
-                  ),
-                ),
-        ),
+    final state = context.findAncestorStateOfType<_ChatScreenState>();
+    if (state == null) return const SizedBox.shrink();
+    return GeneratedMediaAttachmentCard(
+      reference: widget.reference,
+      autoLoad:
+          widget.reference.sourceKind == GeneratedMediaSourceKind.serverPath,
+      load: (onProgress, isCancelled) => state.downloadGeneratedMedia(
+        widget.reference,
+        onProgress: onProgress,
+        isCancelled: isCancelled,
       ),
+      errorLabelBuilder: _downloadErrorLabel,
+      onOpen: _open,
+      readyBuilder: (
+        context,
+        file,
+        sizeBytes,
+        onOpenExternal,
+        onShare,
+        onSave,
+      ) {
+        if (widget.reference.mimeType == 'application/pdf' ||
+            widget.reference.displayName.toLowerCase().endsWith('.pdf')) {
+          return GeneratedPdfPreviewCard(
+            file: file,
+            name: widget.reference.displayName,
+            sizeBytes: sizeBytes,
+            onOpen: () => _open(
+              context,
+              file,
+              sizeBytes,
+              onOpenExternal,
+              onShare,
+              onSave,
+            ),
+            onShare: onShare,
+            onSave: onSave,
+          );
+        }
+        return switch (widget.reference.kind) {
+          GeneratedMediaKind.image => GeneratedImageCard(
+            status: GeneratedImageStatus.ready,
+            file: file,
+          ),
+          GeneratedMediaKind.video => GeneratedVideoCard(file: file),
+          GeneratedMediaKind.audio || GeneratedMediaKind.file => null,
+        };
+      },
     );
   }
+}
+
+String _formatGeneratedFileBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kib = bytes / 1024;
+  if (kib < 1024) return '${kib.toStringAsFixed(kib < 10 ? 1 : 0)} KB';
+  final mib = kib / 1024;
+  return '${mib.toStringAsFixed(mib < 10 ? 1 : 0)} MB';
 }
 
 /// Intercepts fenced code blocks so they render inside [_CodeBlockWrapper]
@@ -16800,6 +18424,7 @@ class _QueuedRow extends StatelessWidget {
   final QueuedEntryView entry;
   final List<String> attachmentNames;
   final bool busy;
+  final bool transportCanSteer;
   final String? editingId;
   final VoidCallback onEdit;
   final VoidCallback onSteer;
@@ -16810,6 +18435,7 @@ class _QueuedRow extends StatelessWidget {
     required this.entry,
     this.attachmentNames = const [],
     required this.busy,
+    required this.transportCanSteer,
     required this.editingId,
     required this.onEdit,
     required this.onSteer,
@@ -16827,7 +18453,12 @@ class _QueuedRow extends StatelessWidget {
     final isEditing = editingId == entry.id;
     final accepted = entry.kind == QueuedEntryKind.desktopAccepted;
     final editEnabled = !accepted && (editingId == null || isEditing);
-    final canSteer = busy && entry.isSteerable && !isEditing && !accepted;
+    final canSteer =
+        busy &&
+        transportCanSteer &&
+        entry.isSteerable &&
+        !isEditing &&
+        !accepted;
     final sendLabel = busy ? strings.chaQueueSendNext : strings.chaQueueSend;
     Widget action({
       required String keyName,
@@ -16933,6 +18564,103 @@ class _QueuedRow extends StatelessWidget {
   }
 }
 
+/// Reserves [gap] pixels BELOW its child, but only while the child actually
+/// occupies height.
+///
+/// The floating activity pill (`ActivityPillHost`, the one pill for everything
+/// live) collapses to `SizedBox.shrink` when there is nothing to report, so a
+/// plain `Padding` would keep its breathing room reserved forever and leave the
+/// scroll-to-bottom arrow stranded [gap] pixels above its resting offset.
+/// Resolving it during layout (instead of measuring in one frame and
+/// repositioning in the next) means the arrow never jumps and never spends a
+/// frame sitting under a pill.
+class _BottomGapWhenVisible extends SingleChildRenderObjectWidget {
+  const _BottomGapWhenVisible({
+    required this.gap,
+    required Widget super.child,
+    this.onExtent,
+  });
+
+  final double gap;
+
+  /// Recibe el alto total (pastilla + hueco) tras cada layout; 0 si colapsa.
+  final ValueChanged<double>? onExtent;
+
+  @override
+  _RenderBottomGapWhenVisible createRenderObject(BuildContext context) =>
+      _RenderBottomGapWhenVisible(gap, onExtent);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderBottomGapWhenVisible renderObject,
+  ) {
+    renderObject
+      ..gap = gap
+      ..onExtent = onExtent;
+  }
+}
+
+class _RenderBottomGapWhenVisible extends RenderShiftedBox {
+  _RenderBottomGapWhenVisible(this._gap, this.onExtent) : super(null);
+
+  double _gap;
+  ValueChanged<double>? onExtent;
+  double? _reportedExtent;
+
+  set gap(double value) {
+    if (_gap == value) return;
+    _gap = value;
+    markNeedsLayout();
+  }
+
+  Size _measure(BoxConstraints constraints, ChildLayouter layoutChild) {
+    final child = this.child;
+    if (child == null) return constraints.smallest;
+    final childSize = layoutChild(child, constraints);
+    if (childSize.height <= 0) return constraints.constrain(childSize);
+    return constraints.constrain(
+      Size(childSize.width, childSize.height + _gap),
+    );
+  }
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) =>
+      _measure(constraints, ChildLayoutHelper.dryLayoutChild);
+
+  @override
+  void performLayout() {
+    size = _measure(constraints, ChildLayoutHelper.layoutChild);
+    final child = this.child;
+    if (child != null) {
+      (child.parentData! as BoxParentData).offset = Offset.zero;
+    }
+    final height = size.height;
+    if (height != _reportedExtent) {
+      _reportedExtent = height;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => onExtent?.call(height),
+      );
+    }
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) {
+    final child = this.child;
+    if (child == null) return 0;
+    final height = child.getMinIntrinsicHeight(width);
+    return height <= 0 ? height : height + _gap;
+  }
+
+  @override
+  double computeMaxIntrinsicHeight(double width) {
+    final child = this.child;
+    if (child == null) return 0;
+    final height = child.getMaxIntrinsicHeight(width);
+    return height <= 0 ? height : height + _gap;
+  }
+}
+
 class _ScrollToBottomButton extends StatelessWidget {
   final VoidCallback onTap;
   const _ScrollToBottomButton({required this.onTap, super.key});
@@ -16946,23 +18674,76 @@ class _ScrollToBottomButton extends StatelessWidget {
   );
 }
 
-class _LoadEarlierMessagesButton extends StatelessWidget {
-  const _LoadEarlierMessagesButton({
+class _ChatTopButton extends StatefulWidget {
+  const _ChatTopButton({
+    required this.controller,
+    required this.hasEarlierMessages,
     required this.loading,
-    required this.onTap,
-    super.key,
+    required this.contentChanges,
+    required this.transcriptOverlayExtent,
+    required this.onLoadEarlier,
   });
 
+  final ScrollController controller;
+  final bool hasEarlierMessages;
   final bool loading;
-  final VoidCallback onTap;
+  final Listenable contentChanges;
+  final ValueGetter<double> transcriptOverlayExtent;
+  final VoidCallback onLoadEarlier;
 
   @override
-  Widget build(BuildContext context) => _ChatScrollButton(
-    onTap: loading ? null : onTap,
-    label: Strings.of(context).chaLoadEarlierMessages,
-    icon: Icons.keyboard_arrow_up_rounded,
-    iconSize: 20,
-    loading: loading,
+  State<_ChatTopButton> createState() => _ChatTopButtonState();
+}
+
+class _ChatTopButtonState extends State<_ChatTopButton> {
+  // La flecha de subir es solo para cargar historial real, no un atajo
+  // genérico de "ir arriba" dentro de lo ya cargado: su visibilidad refleja
+  // únicamente hasEarlierMessages (la señal real del backend de que hay más
+  // que pedir), nunca la posición del scroll dentro de lo ya visible — ni
+  // controller ni contentChanges intervienen en si se muestra o no.
+  bool get _visible => widget.hasEarlierMessages;
+
+  void _activate() {
+    if (!widget.hasEarlierMessages) return;
+    widget.onLoadEarlier();
+  }
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: AnimatedSwitcher(
+      duration: const Duration(milliseconds: 160),
+      reverseDuration: const Duration(milliseconds: 120),
+      transitionBuilder: (child, animation) => AnimatedBuilder(
+        animation: animation,
+        builder: (context, child) {
+          final exiting = animation.status == AnimationStatus.reverse;
+          return IgnorePointer(
+            ignoring: exiting,
+            child: ExcludeSemantics(
+              excluding: exiting,
+              child: FadeTransition(
+                opacity: animation,
+                alwaysIncludeSemantics: !exiting,
+                child: child,
+              ),
+            ),
+          );
+        },
+        child: child,
+      ),
+      child: _visible
+          ? _ChatScrollButton(
+              key: const ValueKey('chat-load-earlier'),
+              onTap: widget.loading ? null : _activate,
+              label: Strings.of(context).chaLoadEarlierMessages,
+              icon: Icons.keyboard_arrow_up_rounded,
+              iconSize: 20,
+              loading: widget.loading,
+            )
+          : const SizedBox.shrink(
+              key: ValueKey('chat-top-button-hidden'),
+            ),
+    ),
   );
 }
 
@@ -16974,6 +18755,7 @@ class _ChatScrollButton extends StatelessWidget {
   final bool loading;
 
   const _ChatScrollButton({
+    super.key,
     required this.onTap,
     required this.label,
     required this.icon,
@@ -17149,10 +18931,14 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
       isScrolling: isScrolling,
       velocity: velocity,
     );
+    final overlayDelta = lock.takeOverlayExtentChange();
     if (!lock.enabled) {
       lock.clear();
-      return inherited;
+      return (inherited + overlayDelta)
+          .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)
+          .toDouble();
     }
+    lock.record(overlayDelta);
     final anchorCorrection = lock.consumeAnchorVisualCorrection();
     if (anchorCorrection != null) {
       lock.clear();
@@ -17198,6 +18984,7 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
 
 class _ChatStreamingViewportLock {
   double _pendingExtentDelta = 0;
+  double _pendingOverlayExtentDelta = 0;
   bool _structuralChangePending = false;
   bool _reportedStructuralChangePending = false;
   double? _anchorVisualOffset;
@@ -17210,6 +18997,7 @@ class _ChatStreamingViewportLock {
     enabled = false;
     _structuralChangePending = false;
     _reportedStructuralChangePending = false;
+    _pendingOverlayExtentDelta = 0;
     _clearAnchorVisualChange();
     clear();
   }
@@ -17340,6 +19128,18 @@ class _ChatStreamingViewportLock {
     if (delta.isFinite) {
       _pendingExtentDelta += delta;
     }
+  }
+
+  void recordOverlayExtentChange(double delta) {
+    if (delta.isFinite) {
+      _pendingOverlayExtentDelta += delta;
+    }
+  }
+
+  double takeOverlayExtentChange() {
+    final delta = _pendingOverlayExtentDelta;
+    _pendingOverlayExtentDelta = 0;
+    return delta;
   }
 
   double take() {
@@ -17568,31 +19368,13 @@ class AssistantMarkdownView extends StatelessWidget {
             onLinkTap: (href) => _openMarkdownLink(context, href),
           );
 
-    // Sin razonamiento y un único bloque: render idéntico al anterior (preserva
-    // los goldens del caso markdown válido, donde la capa semántica es no-op).
-    if (!split.hasReasoning) {
-      if (blocks.isEmpty && !operationalProjection.hasTechnicalDetails) {
-        return const SizedBox.shrink();
-      }
-      if (blocks.length == 1 && !operationalProjection.hasTechnicalDetails) {
-        return ChatMessageSelectionArea(
-          enabled: !isStreaming,
-          child: blocks.first,
-        );
-      }
+    if (blocks.isEmpty && !operationalProjection.hasTechnicalDetails) {
+      return const SizedBox.shrink();
+    }
+    if (blocks.length == 1 && !operationalProjection.hasTechnicalDetails) {
       return ChatMessageSelectionArea(
         enabled: !isStreaming,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ...blocks,
-            if (operationalProjection.hasTechnicalDetails)
-              _AssistantTechnicalDetails(
-                details: operationalProjection.technicalDetails,
-              ),
-          ],
-        ),
+        child: blocks.first,
       );
     }
     return ChatMessageSelectionArea(
@@ -17601,10 +19383,6 @@ class AssistantMarkdownView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          ReasoningBlock(
-            reasoning: split.reasoning,
-            inProgress: split.reasoningInProgress,
-          ),
           ...blocks,
           if (operationalProjection.hasTechnicalDetails)
             _AssistantTechnicalDetails(
@@ -18024,12 +19802,17 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     required this.loading,
     required this.errorMessage,
     required this.child,
+    this.errorTopInset = 8,
     super.key,
   });
 
   final bool loading;
   final String? errorMessage;
   final Widget child;
+
+  /// Distancia del aviso de error al borde superior del transcript. El chat la
+  /// sube para dejar libre el botón «cargar anteriores» cuando está a la vista.
+  final double errorTopInset;
 
   @override
   Widget build(BuildContext context) {
@@ -18059,7 +19842,7 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
           ),
         if (errorMessage != null)
           Positioned(
-            top: 8,
+            top: errorTopInset,
             left: 12,
             right: 12,
             child: Center(
@@ -18068,17 +19851,43 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
                 liveRegion: true,
                 label: errorMessage,
                 child: ExcludeSemantics(
+                  // Misma superficie neutra que el resto de avisos: el error
+                  // lo lleva el glifo, no un relleno rojo con texto blanco.
                   child: Material(
-                    color: colors.error,
-                    borderRadius: BorderRadius.circular(10),
+                    color: colors.surface,
+                    elevation: 10,
+                    shadowColor: Colors.black.withValues(alpha: 0.45),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(
+                        color: colors.divider.withValues(alpha: 0.78),
+                      ),
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 8,
                       ),
-                      child: Text(
-                        errorMessage!,
-                        style: const TextStyle(color: Colors.white),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.error_outline_rounded,
+                            size: 16,
+                            color: colors.error,
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              errorMessage!,
+                              style: TextStyle(
+                                color: colors.textPrimary,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),

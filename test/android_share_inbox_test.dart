@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/services/android_share_inbox.dart';
 
 void main() {
@@ -108,6 +109,137 @@ void main() {
     expect(content, isNotNull);
     expect(content?.attachments, isEmpty);
     expect(content?.rejectedAttachments, 1);
+  });
+
+  test('android-share without durable evidence is an unpersisted draft', () {
+    // El caso real: la ruta de compartir sella el texto recibido en `preview`
+    // antes de que exista ningún turno durable, así que solo `message_count`
+    // puede demostrar persistencia.
+    final session = Session.fromJson(const {
+      'id': 'mob-share-draft',
+      'source': 'android-share',
+      'message_count': 0,
+      'preview': 'texto compartido desde otra app',
+    });
+    expect(session.isUnpersistedMobileDraft, isTrue);
+  });
+
+  test('android-share with zero durable messages and non-mob id is '
+      'unpersisted', () {
+    // La importación puede abrirse antes de que exista un id canónico; sin
+    // turnos durables sigue siendo un borrador, venga como venga el id.
+    final session = Session.fromJson(const {
+      'id': 'share-import-before-canonical-id',
+      'source': 'android-share',
+      'message_count': 0,
+      'preview': 'texto compartido desde otra app',
+    });
+    expect(session.isUnpersistedMobileDraft, isTrue);
+  });
+
+  test('source matrix preserves mobile, mobile-draft, mobile-room, and '
+      'mobile-bot while changing only android-share classification', () {
+    Session session({
+      required String id,
+      required String source,
+      int messageCount = 0,
+      String preview = '',
+    }) => Session.fromJson({
+      'id': id,
+      'source': source,
+      'message_count': messageCount,
+      'preview': preview,
+    });
+    final matrix = <({Session session, bool expected})>[
+      (
+        session: session(id: 'mob-share-provisional', source: 'android-share'),
+        expected: true,
+      ),
+      (
+        session: session(
+          id: 'mob-share-shared-text',
+          source: 'android-share',
+          preview: 'texto compartido',
+        ),
+        expected: true,
+      ),
+      (
+        session: session(
+          id: 'share-import-before-canonical-id',
+          source: 'android-share',
+          preview: 'texto compartido',
+        ),
+        expected: true,
+      ),
+      (
+        session: session(
+          id: 'mob-share-durable',
+          source: 'android-share',
+          messageCount: 1,
+          preview: 'texto compartido',
+        ),
+        expected: false,
+      ),
+      (session: session(id: 'mob-mobile', source: 'mobile'), expected: true),
+      (
+        session: session(id: 'mob-mobile', source: 'mobile', messageCount: 1),
+        expected: false,
+      ),
+      (
+        session: session(
+          id: 'mob-mobile-preview',
+          source: 'mobile',
+          preview: 'ya hay turno',
+        ),
+        expected: false,
+      ),
+      (session: session(id: 'sess-mobile', source: 'mobile'), expected: false),
+      (
+        session: session(id: 'legacy-mobile-draft', source: 'mobile-draft'),
+        expected: true,
+      ),
+      (
+        session: session(
+          id: 'sess-mobile-draft',
+          source: 'mobile-draft',
+          messageCount: 3,
+          preview: 'borrador heredado',
+        ),
+        expected: true,
+      ),
+      (
+        session: session(id: 'mob-room-room', source: 'mobile-room'),
+        expected: true,
+      ),
+      (
+        session: session(
+          id: 'mob-room-room',
+          source: 'mobile-room',
+          messageCount: 1,
+        ),
+        expected: false,
+      ),
+      (
+        session: session(id: 'mob-bot-profile', source: 'mobile-bot'),
+        expected: true,
+      ),
+      (
+        session: session(
+          id: 'mob-bot-profile',
+          source: 'mobile-bot',
+          messageCount: 1,
+        ),
+        expected: false,
+      ),
+      (
+        session: session(id: 'sess-desktop', source: 'desktop'),
+        expected: false,
+      ),
+    ];
+    expect(
+      matrix.map((row) => row.session.isUnpersistedMobileDraft).toList(),
+      matrix.map((row) => row.expected).toList(),
+    );
   });
 
   test(

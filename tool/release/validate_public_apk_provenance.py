@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import inspect_public_apk as inspector
+import play_build_binding as build_binding
 import public_build_binding
 import validate_evidence_archive
 import verify_license_reviews
@@ -356,28 +357,14 @@ def validate_provenance(
     tools = resolve_toolchain(trusted_toolchain, assets, tool_policy)
     expected = inspector.expected_facts(expected_file)
     artifacts = [regular_file(assets / name) for name in public_build_binding.PUBLIC_APKS]
+    try:
+        source, inputs = build_binding.source_and_inputs(source_root)
+    except build_binding.BindingError as error:
+        raise ProvenanceError from error
     with tarfile.open(archive_file, mode="r:gz") as archive:
-        archived_binding, _ = read_archive_json(
-            archive, "release-evidence/source-binding.json"
-        )
-        archived_manifest, manifest_bytes = read_archive_json(
-            archive, "release-evidence/double-build-manifest.json"
-        )
         rebuild, _ = read_archive_json(
             archive, "release-evidence/rebuild-comparison.json"
         )
-        try:
-            expected_binding = public_build_binding.create_embedded(
-                source_root,
-                artifacts,
-                archived_manifest,
-                manifest_bytes,
-                rebuild,
-            )
-        except public_build_binding.binding.BindingError as error:
-            raise ProvenanceError from error
-        if archived_binding != expected_binding:
-            raise ProvenanceError
         try:
             rebuild_artifacts = {
                 exact(item, {"name", "byteIdentical", "firstSha256", "secondSha256"})[
@@ -444,8 +431,8 @@ def validate_provenance(
                     sbom,
                     source_assets,
                     artifact_inventory,
-                    expected_fingerprint=archived_binding["inputs"]["buildInputsSha256"],
-                    expected_commit=archived_binding["source"]["commit"],
+                    expected_fingerprint=inputs["buildInputsSha256"],
+                    expected_commit=source["commit"],
                     artifact_name=name,
                     artifact_sha256=inspector.sha256_file(artifact),
                 )

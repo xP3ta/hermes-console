@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../companion/render/companion_status_indicator.dart';
 import '../companion/state/companion_controller.dart';
+import '../models/activity_snapshot.dart';
+import '../models/agent_task_list.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
+import 'activity_sections.dart';
+import 'agent_task_widgets.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_spark_mascot.dart';
 import 'hermes_pill.dart';
@@ -1359,12 +1362,15 @@ class _ApprovalButton extends StatelessWidget {
 // ThinkingTraceCard — UNA tarjeta por respuesta/run con el progreso agregado
 // ─────────────────────────────────────────────────────────────────────────────
 
+enum ChatTraceEventKind { reasoning, tool, skill }
+
 /// Un evento agregado del trace de pensamiento/herramientas.
 class ChatTraceEvent {
   final String id;
   final String label;
   String status; // running | completed | finished | failed | error
   final String emoji;
+  final ChatTraceEventKind kind;
 
   /// Vista previa REAL del argumento de la herramienta (query, ruta, comando…)
   /// tal como la mandó el agente en `tool.started`. Pertenece exclusivamente a
@@ -1372,12 +1378,23 @@ class ChatTraceEvent {
   /// porque puede contener rutas, comandos o secretos. Vacío si no viene.
   final String preview;
 
+  /// Detalle SEGURO del paso (ejecutable, nombre de archivo, host…) y sus
+  /// tiempos medidos, cuando el trace los trae. Alimentan las mismas filas
+  /// «✓ terminal · date  0.7 s» del panel en vivo.
+  final String? detail;
+  final DateTime? startedAt;
+  final Duration? duration;
+
   ChatTraceEvent({
     required this.id,
     required this.label,
     required this.status,
     this.emoji = '🔧',
     this.preview = '',
+    this.kind = ChatTraceEventKind.tool,
+    this.detail,
+    this.startedAt,
+    this.duration,
   });
 
   bool get isDone => status == 'completed' || status == 'finished';
@@ -1392,6 +1409,9 @@ class ChatTraceEvent {
 enum TraceOutcome {
   /// El run sigue trabajando.
   working,
+
+  /// El usuario detuvo el turno.
+  stopped,
 
   /// Terminó sin ningún fallo.
   completed,
@@ -1409,7 +1429,9 @@ enum TraceOutcome {
 TraceOutcome traceOutcome({
   required List<ChatTraceEvent> events,
   required bool active,
+  bool stopped = false,
 }) {
+  if (stopped) return TraceOutcome.stopped;
   if (active) return TraceOutcome.working;
   final anyFailed = events.any((e) => e.isFailed);
   if (!anyFailed) return TraceOutcome.completed;
@@ -1422,11 +1444,7 @@ TraceOutcome traceOutcome({
 /// respuesta/run activo. Sustituye al apilado de líneas `terminal — done`
 /// (PRIORIDAD 2): los eventos actualizan ESTA tarjeta, no crean mensajes.
 class ThinkingTraceCard extends StatefulWidget {
-  /// La mascota debe conservar protagonismo dentro de la burbuja del run.
-  /// Son tamaños base: la escala elegida por el usuario se aplica después en
-  /// [CompanionView].
-  static const double activeCompanionSize = 50;
-  static const double activeWithEventsCompanionSize = 42;
+  static const double statusIconSize = 17;
   static const double statusFontSize = 12;
   static const double statusLetterSpacing = 0.35;
 
@@ -1439,22 +1457,39 @@ class ThinkingTraceCard extends StatefulWidget {
   /// "Conectando…", "Pensando…", "Ejecutando…").
   final String headline;
 
-  /// Controller del Companion (006). Cuando la presencia está activa, el
-  /// indicador de estado del turno es la **mascota** (corriendo/fallo) en vez
-  /// del spinner clásico. Null o presencia apagada → indicador clásico.
-  final CompanionController? companion;
-
-  /// Estado de ánimo de la mascota mientras el turno está activo, derivado del
-  /// estado real del pipeline (conectando/esperando/pensando). Si es null se
-  /// usa `thinking`. Al terminar manda el desenlace de la traza.
+  /// Estado vivo del pipeline, usado para elegir el icono y su color.
   final HermesSparkMood? activeMood;
+
+  /// El runtime está bloqueado esperando una aclaración o aprobación.
+  final bool waitingForUser;
+
+  /// El usuario interrumpió este turno.
+  final bool stopped;
+
+  final Duration? duration;
+
+  /// El estado vivo del turno lo cuenta la pastilla de actividad sobre el
+  /// compositor: mientras [active] la tarjeta no pinta NADA (ni fila de estado
+  /// ni shimmer) y solo aparece, plegada, cuando el turno termina.
+  final bool liveInPill;
+
+  /// Coloca la línea de resumen (apagada, con un chevron minúsculo) y el bloque
+  /// desplegable donde el llamador quiera: la cabecera del mensaje pone el
+  /// resumen bajo el título y el detalle a todo ancho debajo. Con esto la tarjeta
+  /// no pinta nada por su cuenta, ni siquiera en vivo («Trabajando…»).
+  final Widget Function(BuildContext context, Widget summary, Widget details)?
+  headerBuilder;
 
   const ThinkingTraceCard({
     required this.events,
     required this.active,
     this.headline = 'Pensando…',
-    this.companion,
     this.activeMood,
+    this.waitingForUser = false,
+    this.stopped = false,
+    this.duration,
+    this.liveInPill = false,
+    this.headerBuilder,
     super.key,
   });
 
@@ -1551,6 +1586,82 @@ class _TraceStatusWord extends StatelessWidget {
   }
 }
 
+class _TraceStateIcon extends StatefulWidget {
+  const _TraceStateIcon({
+    required this.icon,
+    required this.color,
+    required this.animate,
+  });
+
+  final IconData icon;
+  final Color color;
+  final bool animate;
+
+  @override
+  State<_TraceStateIcon> createState() => _TraceStateIconState();
+}
+
+class _TraceStateIconState extends State<_TraceStateIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+    value: 0.5,
+  );
+  late final Animation<double> _scale = Tween<double>(begin: 0.94, end: 1.04)
+      .animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TraceStateIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (widget.animate && !reduceMotion) {
+      _controller.repeat(reverse: true);
+    } else {
+      _controller
+        ..stop()
+        ..value = 0.5;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(
+      widget.icon,
+      key: const ValueKey('thinking-trace-state-icon'),
+      color: widget.color,
+      size: ThinkingTraceCard.statusIconSize,
+    );
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!widget.animate || reduceMotion) return icon;
+    return ScaleTransition(scale: _scale, child: icon);
+  }
+}
+
+/// Hermes Desktop's `formatElapsed` (components/chat/activity-timer.ts):
+/// "12s" under a minute, "m:ss" from there.
+String formatThoughtDuration(Duration duration) {
+  final seconds = duration.inSeconds;
+  if (seconds < 60) return '${seconds}s';
+  return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+}
+
 class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
   /// null = expansión automática (expandido mientras hay una herramienta en
   /// curso, colapsado cuando todas terminan). Un toque del usuario fija un
@@ -1559,14 +1670,26 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
 
   /// Desenlace del trace: distingue "falló un paso pero el turno se recuperó"
   /// (ruido interno, no accionable) de "el turno terminó en error" (accionable).
-  TraceOutcome get _outcome =>
-      traceOutcome(events: widget.events, active: widget.active);
+  TraceOutcome get _outcome => traceOutcome(
+    events: widget.events,
+    active: widget.active,
+    stopped: widget.stopped,
+  );
 
   /// Estado de expansión efectivo: colapsada por defecto (la línea de resumen
   /// ya informa del progreso en vivo); solo el toque del usuario la expande.
   /// U-01 (spec 028): el auto-expand/colapso durante la ejecución mareaba y
   /// violaba la regla del ThinkingCard (colapsado salvo petición explícita).
   bool get _expanded => _userExpanded ?? false;
+
+  /// Pasos que el usuario debe ver: sin las herramientas puente de Hermes.
+  List<ChatTraceEvent> get _visibleEvents => widget.events
+      .where(
+        (event) =>
+            event.kind == ChatTraceEventKind.reasoning ||
+            !isInternalActivityLabel(event.label),
+      )
+      .toList(growable: false);
 
   String get _summary {
     final s = Strings.of(context);
@@ -1576,28 +1699,124 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         (event) => !event.isDone && !event.isFailed,
         orElse: () => widget.events.last,
       );
-      return current.label.trim().isEmpty ? widget.headline : current.label;
+      return switch (current.kind) {
+        ChatTraceEventKind.reasoning => s.chatActivityThinking,
+        ChatTraceEventKind.tool => s.chatActivityRunningTool,
+        ChatTraceEventKind.skill => s.chatActivityRunningSkill,
+      };
     }
+    // Hermes Desktop has one label for a finished block, with or without
+    // tools (components/assistant-ui/thread/message-parts.tsx): watched live
+    // it reports the measured time ("Thought for 1:12", `formatElapsed`),
+    // under a second "Thought briefly", and reopened from history — where no
+    // time was measured — plain "Thought". Failed/recovered/stopped keep
+    // their own outcome.
     switch (_outcome) {
+      case TraceOutcome.stopped:
+        return s.cevTraceStopped;
       case TraceOutcome.failed:
         return s.cevTraceFailed;
       case TraceOutcome.recovered:
         return s.cevTraceRecovered;
       case TraceOutcome.working:
       case TraceOutcome.completed:
-        return s.cevTraceCompleted;
+        final duration = widget.duration;
+        if (duration == null) return s.chatActivityThought;
+        if (duration < const Duration(seconds: 1)) {
+          return s.chatActivityThoughtBriefly;
+        }
+        return s.chatActivityThoughtForDuration(
+          formatThoughtDuration(duration),
+        );
     }
   }
 
-  /// Mood de la mascota: mientras trabaja, el del pipeline real (o `thinking`);
-  /// al terminar, el desenlace de la traza (éxito/error).
-  HermesSparkMood get _liveMood {
-    if (widget.active) return widget.activeMood ?? HermesSparkMood.thinking;
-    return switch (_outcome) {
-      TraceOutcome.failed => HermesSparkMood.error,
-      TraceOutcome.recovered ||
-      TraceOutcome.completed => HermesSparkMood.success,
-      TraceOutcome.working => HermesSparkMood.thinking,
+  ({IconData icon, Color color, bool animate}) _indicatorSpec(
+    HermesThemeColors colors,
+  ) {
+    if (!widget.active) {
+      return switch (_outcome) {
+        TraceOutcome.stopped => (
+          icon: Icons.stop_circle,
+          color: colors.textSecondary,
+          animate: false,
+        ),
+        TraceOutcome.recovered => (
+          icon: Icons.warning_amber_rounded,
+          color: colors.warning,
+          animate: false,
+        ),
+        TraceOutcome.failed => (
+          icon: Icons.error_outline,
+          color: colors.error,
+          animate: false,
+        ),
+        TraceOutcome.working || TraceOutcome.completed => (
+          icon: Icons.check_circle,
+          color: colors.success,
+          animate: false,
+        ),
+      };
+    }
+    if (widget.waitingForUser) {
+      return (
+        icon: Icons.help_outline_rounded,
+        color: colors.textSecondary,
+        animate: false,
+      );
+    }
+    final mood = widget.activeMood ?? HermesSparkMood.thinking;
+    if (mood == HermesSparkMood.offline) {
+      return (
+        icon: Icons.cloud_off_rounded,
+        color: colors.warning,
+        animate: false,
+      );
+    }
+    if (widget.events.isEmpty) {
+      return switch (mood) {
+        HermesSparkMood.connecting || HermesSparkMood.waiting => (
+          icon: Icons.cloud_queue_rounded,
+          color: colors.accent,
+          animate: false,
+        ),
+        HermesSparkMood.error => (
+          icon: Icons.error_outline,
+          color: colors.error,
+          animate: false,
+        ),
+        HermesSparkMood.success => (
+          icon: Icons.check_circle,
+          color: colors.success,
+          animate: false,
+        ),
+        _ => (
+          icon: Icons.psychology_alt_rounded,
+          color: colors.textSecondary,
+          animate: true,
+        ),
+      };
+    }
+    final current = widget.events.lastWhere(
+      (event) => !event.isDone && !event.isFailed,
+      orElse: () => widget.events.last,
+    );
+    return switch (current.kind) {
+      ChatTraceEventKind.reasoning => (
+        icon: Icons.psychology_alt_rounded,
+        color: colors.textSecondary,
+        animate: true,
+      ),
+      ChatTraceEventKind.tool => (
+        icon: Icons.terminal_rounded,
+        color: colors.textSecondary,
+        animate: false,
+      ),
+      ChatTraceEventKind.skill => (
+        icon: Icons.auto_awesome_rounded,
+        color: colors.textSecondary,
+        animate: false,
+      ),
     };
   }
 
@@ -1613,15 +1832,61 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     HapticFeedback.selectionClick();
   }
 
-  Widget _buildTraceDetails(HermesThemeColors colors) {
+  /// Lista de tareas del agente que pertenece a ESTE bloque de actividad (el
+  /// del turno que escribió la última `todo_list`), o null.
+  AgentTaskList? get _ownedTasks => AgentTaskScope.ownedBy(
+    context,
+    widget.events.map((event) => (id: event.id, label: event.label)),
+  );
+
+  Widget _buildTraceDetails(
+    HermesThemeColors colors,
+    AgentTaskList? tasks, {
+    bool muted = false,
+  }) {
     final s = Strings.of(context);
+    final now = DateTime.now();
+    final steps = _visibleEvents.reversed
+        .map(
+          (event) => ActivityStep(
+            id: event.id,
+            kind: switch (event.kind) {
+              ChatTraceEventKind.reasoning => ActivityStepKind.reasoning,
+              ChatTraceEventKind.skill => ActivityStepKind.skill,
+              ChatTraceEventKind.tool => ActivityStepKind.tool,
+            },
+            label: event.label,
+            status: event.isFailed
+                ? ActivityStepStatus.failed
+                : event.isDone
+                ? ActivityStepStatus.done
+                : ActivityStepStatus.running,
+            detail: event.detail,
+            startedAt: event.startedAt,
+            duration: event.duration,
+            text: event.preview.trim().isEmpty ? null : event.preview.trim(),
+          ),
+        )
+        .toList(growable: false);
     return Padding(
-      padding: const EdgeInsets.only(left: 40, top: 2),
+      padding: EdgeInsets.only(left: muted ? 50 : 40, top: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          ...widget.events.map((event) => _TraceEventLine(event: event)),
+          if (tasks != null)
+            ActivityTasksSection(
+              tasks: tasks,
+              dense: true,
+              incomplete: !widget.active && tasks.hasOpen,
+            ),
+          if (steps.isNotEmpty)
+            ActivityDoneSection(
+              steps: steps,
+              now: now,
+              dense: true,
+              muted: muted,
+            ),
           const SizedBox(height: 6),
           Semantics(
             button: true,
@@ -1652,35 +1917,128 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final hasEvents = widget.events.isNotEmpty;
+    // Una traza solo de herramientas puente no tiene nada que desplegar.
+    final hasEvents = widget.active
+        ? widget.events.isNotEmpty
+        : _visibleEvents.isNotEmpty;
+    final tasks = widget.events.isNotEmpty ? _ownedTasks : null;
+    final indicator = _indicatorSpec(colors);
 
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
-    // Antes de las herramientas, la mascota sigue siendo el rostro del agente.
-    // El texto cambia solo cuando cambia el estado real del pipeline; no hay
-    // puntos, porcentaje inventado ni una barra lateral decorativa.
-    if (widget.active && !hasEvents) {
-      return Padding(
-        padding: const EdgeInsets.only(left: 12, right: 16, top: 7, bottom: 3),
-        child: Align(
-          alignment: Alignment.centerLeft,
+    final headerBuilder = widget.headerBuilder;
+    if (headerBuilder != null) {
+      final s = Strings.of(context);
+      final muted = TextStyle(fontSize: 11.5, color: colors.textSecondary);
+      if (widget.active) {
+        // El estado vivo lo cuenta la pastilla de actividad; aquí, una palabra.
+        return headerBuilder(
+          context,
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              s.liveHeaderWorking,
+              key: const ValueKey('thinking-trace-live-in-pill'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: muted,
+            ),
+          ),
+          const SizedBox.shrink(),
+        );
+      }
+      final summary = Semantics(
+        button: hasEvents,
+        expanded: hasEvents ? _expanded : null,
+        label: _summary,
+        excludeSemantics: true,
+        child: InkWell(
+          key: const ValueKey('thinking-trace-summary'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: hasEvents
+              ? () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _userExpanded = !_expanded);
+                }
+              : null,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 380),
+            constraints: const BoxConstraints(minHeight: 30),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CompanionStatusIndicator(
-                  companion: widget.companion,
-                  size: ThinkingTraceCard.activeCompanionSize,
-                  mood: _liveMood,
+                Flexible(
+                  child: Text(
+                    _cleanTraceStatus(_summary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: muted,
+                  ),
                 ),
-                const SizedBox(width: 10),
+                if (hasEvents) ...[
+                  const SizedBox(width: 2),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 160),
+                    child: Icon(
+                      Icons.expand_more,
+                      size: 15,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+      final body = hasEvents && _expanded
+          ? _buildTraceDetails(colors, tasks, muted: true)
+          : const SizedBox.shrink();
+      return headerBuilder(
+        context,
+        summary,
+        reduceMotion
+            ? body
+            : AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                alignment: Alignment.topCenter,
+                child: body,
+              ),
+      );
+    }
+
+    // El estado vivo lo cuenta la pastilla de actividad, no la burbuja.
+    if (widget.active && widget.liveInPill) {
+      return const SizedBox.shrink(
+        key: ValueKey('thinking-trace-live-in-pill'),
+      );
+    }
+
+    if (widget.active && !hasEvents) {
+      return Padding(
+        padding: const EdgeInsets.only(left: 12, right: 16, top: 3, bottom: 1),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380, minHeight: 48),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _TraceStateIcon(
+                  icon: indicator.icon,
+                  color: indicator.color,
+                  animate: indicator.animate,
+                ),
+                const SizedBox(width: 8),
                 Flexible(
                   child: HermesShimmerText(
                     _cleanTraceStatus(widget.headline),
                     key: const ValueKey('thinking-shimmer'),
                     style: TextStyle(
-                      color: colors.textSecondary,
+                      color: indicator.color,
                       fontSize: ThinkingTraceCard.statusFontSize,
                       fontWeight: FontWeight.w700,
                       letterSpacing: ThinkingTraceCard.statusLetterSpacing,
@@ -1716,14 +2074,12 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                   constraints: const BoxConstraints(minHeight: 48),
                   child: Row(
                     children: [
-                      CompanionStatusIndicator(
-                        companion: widget.companion,
-                        size: widget.active
-                            ? ThinkingTraceCard.activeWithEventsCompanionSize
-                            : 30,
-                        mood: _liveMood,
+                      _TraceStateIcon(
+                        icon: indicator.icon,
+                        color: indicator.color,
+                        animate: indicator.animate,
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Flexible(
                         child: widget.active
                             ? HermesShimmerText(
@@ -1732,7 +2088,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                                   'trace-current-${_cleanTraceStatus(_summary)}',
                                 ),
                                 style: TextStyle(
-                                  color: colors.textSecondary,
+                                  color: indicator.color,
                                   fontSize: ThinkingTraceCard.statusFontSize,
                                   fontWeight: FontWeight.w700,
                                   letterSpacing:
@@ -1741,11 +2097,15 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                               )
                             : _TraceStatusWord(
                                 label: _summary,
-                                color: colors.textSecondary,
+                                color: indicator.color,
                                 reduceMotion: reduceMotion,
                               ),
                       ),
                       if (hasEvents) ...[
+                        if (tasks != null) ...[
+                          const SizedBox(width: 8),
+                          AgentTaskChip(tasks: tasks),
+                        ],
                         const SizedBox(width: 8),
                         AnimatedRotation(
                           turns: _expanded ? 0.5 : 0,
@@ -1766,78 +2126,19 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               if (hasEvents)
                 if (reduceMotion)
                   _expanded
-                      ? _buildTraceDetails(colors)
+                      ? _buildTraceDetails(colors, tasks)
                       : const SizedBox.shrink()
                 else
                   AnimatedSize(
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOut,
                     child: _expanded
-                        ? _buildTraceDetails(colors)
+                        ? _buildTraceDetails(colors, tasks)
                         : const SizedBox.shrink(),
                   ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TraceEventLine extends StatelessWidget {
-  final ChatTraceEvent event;
-  const _TraceEventLine({required this.event});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final color = event.isFailed
-        ? colors.error
-        : event.isDone
-        ? colors.success.withValues(alpha: 0.8)
-        : colors.accent;
-    final glyph = event.isFailed
-        ? '✕ '
-        : event.isDone
-        ? '✓ '
-        : '◐ ';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(glyph, style: TextStyle(fontSize: 11, color: color)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${event.label} · ${event.status}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: event.isDone
-                        ? colors.textDisabled
-                        : colors.textSecondary,
-                  ),
-                ),
-                if (event.preview.trim().isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    event.preview.trim(),
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 10.5,
-                      height: 1.3,
-                      color: colors.textDisabled,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

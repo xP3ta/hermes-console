@@ -169,8 +169,8 @@ class GatewayMutationFenceSourceTest(unittest.TestCase):
         end = self.gateway.index(next_signature, start)
         return self.gateway[start:end]
 
-    def test_chat_and_voice_cannot_reach_live_steering(self):
-        self.assertNotIn("_chat.steer(", self.chat)
+    def test_chat_uses_one_fenced_steer_path_and_voice_cannot_reach_it(self):
+        self.assertEqual(self.chat.count("_chat.steer("), 1)
         self.assertNotIn("chat.steer(", self.voice)
         self.assertNotIn("_chat.redirect(", self.chat)
         self.assertNotIn("chat.redirect(", self.voice)

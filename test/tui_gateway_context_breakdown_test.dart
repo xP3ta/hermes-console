@@ -6,6 +6,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _TicketDashboardClient extends DashboardClient {
   _TicketDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -46,6 +48,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         socket.add(
           jsonEncode({
@@ -100,6 +106,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests += 1;
         socket.add(
           jsonEncode({

@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../services/agent_runtime/agent_runtime.dart';
 import '../../services/agent_runtime/local_termux_agent_provider.dart';
+import '../../widgets/hermes_notice.dart';
 import 'local_install_screen.dart';
 import '../../services/connection_manager.dart';
 import '../../services/notifications/notification_service.dart';
@@ -155,11 +156,12 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
       await widget.connManager.prefs.remove(_prefKeyInProgress);
       if (!mounted) return;
       setState(() => _phase = _Phase.notStarted);
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).lunLaunchError),
           duration: const Duration(seconds: 7),
         ),
+        kind: HermesNoticeKind.error,
       );
       return;
     }
@@ -204,11 +206,12 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
       }
       if (_noProgressTicks >= 7 && !_warnShown && !_bootstrapping) {
         _warnShown = true;
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(Strings.of(context).lunTimeoutWarning),
             duration: const Duration(seconds: 5),
           ),
+          kind: HermesNoticeKind.warning,
         );
       }
       return;
@@ -236,7 +239,7 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
     }
     _bootstrapTried = true;
     setState(() => _bootstrapping = true);
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(Strings.of(context).lisBootstrapSnack),
         duration: const Duration(seconds: 4),

@@ -13,18 +13,19 @@ import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/replay_coordinator.dart';
+import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -401,6 +402,8 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   int createForFirstSubmitCalls = 0;
   final List<String> resumeExistingStoredIds = [];
   final List<String> committedRecoveryRuntimeIds = [];
+  int turnRecoveryCommits = 0;
+  int viewerAttachmentCommits = 0;
   bool recoveryCommitSucceeds = true;
   Object? createForFirstSubmitError;
   Completer<DesktopSessionSnapshot>? recoveryExistingGate;
@@ -518,17 +521,25 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
     return DesktopRosterBoundRecovery.forTesting(snapshot, this);
   }
 
-  @override
-  bool consumeRosterBoundRecovery(DesktopRosterBoundRecovery recovery) {
+  bool _consumeRosterBoundRecovery(DesktopRosterBoundRecovery recovery) {
     if (!recoveryCommitSucceeds) return false;
     committedRecoveryRuntimeIds.add(recovery.snapshot.runtimeSessionId);
     return true;
   }
 
   @override
+  bool consumeRosterBoundRecovery(DesktopRosterBoundRecovery recovery) {
+    turnRecoveryCommits += 1;
+    return _consumeRosterBoundRecovery(recovery);
+  }
+
+  @override
   bool consumeRosterBoundViewerAttachment(
     DesktopRosterBoundRecovery recovery,
-  ) => consumeRosterBoundRecovery(recovery);
+  ) {
+    viewerAttachmentCommits += 1;
+    return _consumeRosterBoundRecovery(recovery);
+  }
 
   @override
   void commitRecoveryRuntime(String runtimeSessionId) {}
@@ -555,6 +566,170 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   }
 }
 
+class _NonIdempotentLifecycleGateway extends _DroppingDesktopGateway
+    implements
+        HermesDesktopSessionLifecycleGateway,
+        HermesDesktopRecoverySessionLifecycleGateway,
+        HermesDesktopRosterBoundRecoveryGateway,
+        HermesDesktopTypedRecoveryGateway {
+  _NonIdempotentLifecycleGateway(String storedSessionId)
+    : super(canonicalStoredId: storedSessionId);
+
+  final ReplayCoordinator _recovery = ReplayCoordinator();
+  final Object _recoveryChannel = Object();
+  int createForFirstSubmitCalls = 0;
+  int resumeExistingCalls = 0;
+  int rosterResumeCalls = 0;
+  int recoveryCommits = 0;
+  int restoredFailuresRemaining = 0;
+  bool networkAvailable = true;
+  DesktopSessionSnapshot? recoverySnapshot;
+  final List<String> resumeExistingStoredIds = [];
+
+  @override
+  Future<void> connect() async {
+    await super.connect();
+    if (connectCalls <= 1) return;
+    if (!networkAvailable || restoredFailuresRemaining > 0) {
+      if (networkAvailable) restoredFailuresRemaining -= 1;
+      _connected = false;
+      throw const DashboardWebSocketAuthException(
+        DashboardWebSocketAuthFailureCode.unavailable,
+        cause: DashboardWebSocketAuthFailureCause.transport,
+      );
+    }
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async {
+    createForFirstSubmitCalls += 1;
+    return DesktopSessionBinding(
+      runtimeSessionId: 'runtime-initial-$canonicalStoredId',
+      storedSessionId: canonicalStoredId!,
+      created: true,
+    );
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) => resumeExistingForRecovery(storedSessionId, profile: profile);
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) async {
+    resumeExistingCalls += 1;
+    resumeExistingStoredIds.add(storedSessionId);
+    return recoverySnapshot ??
+        DesktopSessionBinding(
+          runtimeSessionId: 'runtime-recovered-$resumeExistingCalls',
+          storedSessionId: storedSessionId,
+          created: false,
+        );
+  }
+
+  @override
+  Future<DesktopRosterBoundRecovery> resumeAdvertisedExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) async {
+    rosterResumeCalls += 1;
+    final snapshot = recoverySnapshot;
+    if (snapshot == null || !snapshot.running) {
+      throw const TuiGatewayRpcError(
+        'session.active_list',
+        'test roster has no active owner',
+      );
+    }
+    resumeExistingCalls += 1;
+    resumeExistingStoredIds.add(storedSessionId);
+    return DesktopRosterBoundRecovery.forTesting(snapshot, this);
+  }
+
+  @override
+  bool consumeRosterBoundRecovery(DesktopRosterBoundRecovery recovery) {
+    recoveryCommits += 1;
+    return true;
+  }
+
+  @override
+  bool consumeRosterBoundViewerAttachment(
+    DesktopRosterBoundRecovery recovery,
+  ) => false;
+
+  @override
+  RecoveryProof recoveryProofForSnapshot(
+    DesktopSessionSnapshot snapshot, {
+    required String connectionId,
+    required String profile,
+    required int bindGeneration,
+    required int sessionGeneration,
+    required int turnGeneration,
+    required Set<RecoveryDomain> coverage,
+    int? postSnapshotSequence,
+  }) {
+    _recovery.quarantine(snapshot.runtimeSessionId);
+    return _recovery.mintRecoveryProof(
+      connectionId: connectionId,
+      durableSessionId: snapshot.storedSessionId,
+      runtimeSessionId: snapshot.runtimeSessionId,
+      profile: profile,
+      socketGeneration: 1,
+      channel: _recoveryChannel,
+      bindGeneration: bindGeneration,
+      sessionGeneration: sessionGeneration,
+      turnGeneration: turnGeneration,
+      replayEpoch: null,
+      created: snapshot.created,
+      durableIdentityExplicit: snapshot.storedSessionIdentityExplicit,
+      identityAliasesConsistent: snapshot.identityAliasesConsistent,
+      coverage: coverage,
+      postSnapshotSequence: 1,
+    );
+  }
+
+  @override
+  bool validateRecovery(RecoveryProof proof) => _recovery.canCommitRecovery(
+    proof,
+    socketGeneration: 1,
+    channel: _recoveryChannel,
+    replayEpoch: null,
+  );
+
+  @override
+  bool commitRecovery(RecoveryProof proof) {
+    final committed = _recovery.commitRecovery(
+      proof,
+      socketGeneration: 1,
+      channel: _recoveryChannel,
+      replayEpoch: null,
+    );
+    if (committed) recoveryCommits += 1;
+    return committed;
+  }
+
+  @override
+  bool recoveryAuthorityStillCurrent(RecoveryProof proof) =>
+      _recovery.isRecoveryAuthorityCurrent(
+        proof,
+        socketGeneration: 1,
+        channel: _recoveryChannel,
+        replayEpoch: null,
+      );
+
+  @override
+  void commitRecoveryRuntime(String runtimeSessionId) {}
+}
+
 class _ActivityLifecycleRecoverableGateway extends _LifecycleRecoverableGateway
     implements HermesDesktopSessionActivityGateway {
   int activateCalls = 0;
@@ -563,6 +738,8 @@ class _ActivityLifecycleRecoverableGateway extends _LifecycleRecoverableGateway
   String? initialAdvertisedRuntimeSessionId;
   String? recoveryAdvertisedStoredSessionId;
   String? recoveryAdvertisedRuntimeSessionId;
+  DesktopActiveSessionList? activeListOverride;
+  Object? activeListError;
 
   @override
   DesktopGatewayCapabilityState capabilityState(
@@ -619,6 +796,10 @@ class _ActivityLifecycleRecoverableGateway extends _LifecycleRecoverableGateway
     String currentRuntimeSessionId = '',
   }) async {
     listActiveSessionsCalls += 1;
+    final error = activeListError;
+    if (error != null) throw error;
+    final override = activeListOverride;
+    if (override != null) return override;
     final storedId = initialAdvertisedStoredSessionId;
     if (storedId == null) return const DesktopActiveSessionList();
     final runtimeId = initialAdvertisedRuntimeSessionId;
@@ -631,6 +812,266 @@ class _ActivityLifecycleRecoverableGateway extends _LifecycleRecoverableGateway
         ),
       ],
     );
+  }
+}
+
+class _TicketSocketOutageFixture {
+  late final HttpServer server;
+  final sockets = <WebSocket>{};
+  final issuedTickets = <String>[];
+  final upgradeTickets = <String>[];
+  int ticketRequests = 0;
+  int upgradeRequests = 0;
+  int ticketFailuresRemaining = 0;
+  int upgradeFailuresRemaining = 0;
+
+  Future<http.Response> dashboardRequest(http.Request request) async {
+    ticketRequests += 1;
+    if (ticketFailuresRemaining > 0) {
+      ticketFailuresRemaining -= 1;
+      throw const SocketException('ticket endpoint unavailable');
+    }
+    final ticket = 'ticket-$ticketRequests';
+    issuedTickets.add(ticket);
+    return http.Response(jsonEncode({'ticket': ticket}), 200);
+  }
+
+  Future<void> start() async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      upgradeRequests += 1;
+      upgradeTickets.add(request.uri.queryParameters['ticket'] ?? '');
+      if (upgradeFailuresRemaining > 0) {
+        upgradeFailuresRemaining -= 1;
+        request.response.statusCode = HttpStatus.serviceUnavailable;
+        await request.response.close();
+        return;
+      }
+      final socket = await WebSocketTransformer.upgrade(request);
+      sockets.add(socket);
+      socket.done.whenComplete(() => sockets.remove(socket));
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {
+            'type': 'gateway.ready',
+            'payload': {'replay_epoch': 'network-recovery-epoch'},
+          },
+        }),
+      );
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (socket.readyState != WebSocket.open) break;
+        try {
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'id': frame['id'],
+              'result': frame['method'] == 'gateway.capabilities'
+                  ? <String, dynamic>{'per_session_exclusive_submit': true}
+                  : <String, dynamic>{},
+            }),
+          );
+        } on StateError {
+          break;
+        }
+      }
+    });
+  }
+
+  Future<void> dropSockets() async {
+    for (final socket in sockets.toList(growable: false)) {
+      await socket.close(WebSocketStatus.goingAway, 'network unavailable');
+    }
+  }
+
+  Future<void> close() async {
+    await dropSockets();
+    await server.close(force: true);
+  }
+}
+
+class _MultiClientOutageFixture {
+  late final HttpServer server;
+  final sockets = <WebSocket>{};
+  final issuedTickets = <String>[];
+  final acceptedTickets = <String>[];
+  final resumeSessionIds = <String>[];
+  final rpcMethods = <String>[];
+  final firstResume = Completer<void>();
+  bool networkAvailable = true;
+  bool turnCompleted = false;
+  int restoredTicketFailuresRemaining = 0;
+  int loginRequests = 0;
+  int ticketRequests = 0;
+  int promptSubmissions = 0;
+
+  static const storedSessionId = 'durable-network-session';
+  static const initialRuntimeSessionId = 'runtime-before-outage';
+  static const recoveredRuntimeSessionId = 'runtime-after-outage';
+
+  Future<void> start() async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen(_handleRequest);
+  }
+
+  Future<http.Response> dashboardRequest(http.Request request) async {
+    if (request.url.path == '/auth/password-login') {
+      loginRequests += 1;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      return http.Response(
+        '{}',
+        HttpStatus.ok,
+        headers: {
+          HttpHeaders.setCookieHeader:
+              'hermes_session_at=fixture-session; Path=/',
+        },
+      );
+    }
+    if (request.url.path == '/api/auth/ws-ticket') {
+      ticketRequests += 1;
+      if (!networkAvailable || restoredTicketFailuresRemaining > 0) {
+        if (networkAvailable) restoredTicketFailuresRemaining -= 1;
+        return http.Response('', HttpStatus.serviceUnavailable);
+      }
+      final ticket = 'ticket-$ticketRequests';
+      issuedTickets.add(ticket);
+      return http.Response(jsonEncode({'ticket': ticket}), HttpStatus.ok);
+    }
+    return http.Response('', HttpStatus.notFound);
+  }
+
+  Future<void> _handleRequest(HttpRequest request) async {
+    if (request.uri.path == '/api/ws') {
+      final ticket = request.uri.queryParameters['ticket'] ?? '';
+      if (!issuedTickets.remove(ticket)) {
+        request.response.statusCode = HttpStatus.unauthorized;
+        await request.response.close();
+        return;
+      }
+      acceptedTickets.add(ticket);
+      final socket = await WebSocketTransformer.upgrade(request);
+      sockets.add(socket);
+      socket.done.whenComplete(() => sockets.remove(socket));
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {
+            'type': 'gateway.ready',
+            'payload': {'replay_epoch': 'multi-client-recovery'},
+          },
+        }),
+      );
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        final method = frame['method']?.toString() ?? '';
+        final params = frame['params'] is Map
+            ? Map<String, dynamic>.from(frame['params'] as Map)
+            : <String, dynamic>{};
+        rpcMethods.add(method);
+        final result = switch (method) {
+          'gateway.capabilities' => <String, dynamic>{
+            'per_session_exclusive_submit': true,
+          },
+          'session.create' => <String, dynamic>{
+            'session_id': initialRuntimeSessionId,
+            'stored_session_id': storedSessionId,
+            'messages': <dynamic>[],
+            'running': false,
+            'status': 'idle',
+          },
+          'prompt.submit' => _promptSubmitResult(params),
+          'session.resume' => _resumeResult(params),
+          'turn.status' => <String, dynamic>{
+            'known': true,
+            'client_turn_id': params['client_turn_id'],
+            'server_turn_id': 'server-turn-network',
+            'state': turnCompleted ? 'terminal' : 'running',
+          },
+          _ => <String, dynamic>{},
+        };
+        if (socket.readyState != WebSocket.open) break;
+        try {
+          socket.add(
+            jsonEncode({'jsonrpc': '2.0', 'id': frame['id'], 'result': result}),
+          );
+        } on StateError {
+          break;
+        }
+      }
+      return;
+    }
+    request.response.statusCode = HttpStatus.notFound;
+    await request.response.close();
+  }
+
+  Map<String, dynamic> _promptSubmitResult(Map<String, dynamic> params) {
+    promptSubmissions += 1;
+    return {
+      'accepted': true,
+      'client_turn_id': params['client_turn_id'],
+      'server_turn_id': 'server-turn-network',
+      'state': 'running',
+      'duplicate': false,
+    };
+  }
+
+  Map<String, dynamic> _resumeResult(Map<String, dynamic> params) {
+    resumeSessionIds.add(params['session_id']?.toString() ?? '');
+    if (!firstResume.isCompleted) firstResume.complete();
+    return {
+      'session_id': recoveredRuntimeSessionId,
+      'stored_session_id': storedSessionId,
+      'messages_omitted': true,
+      'running': !turnCompleted,
+      'status': turnCompleted ? 'completed' : 'running',
+    };
+  }
+
+  DashboardClient dashboardClient() => DashboardClient(
+    host: '127.0.0.1',
+    port: server.port,
+    basicUser: 'fixture-user',
+    basicPass: 'fixture-password',
+    httpClientOverride: MockClient(dashboardRequest),
+  );
+
+  Future<void> dropSockets() async {
+    for (final socket in sockets.toList(growable: false)) {
+      await socket.close(WebSocketStatus.goingAway, 'network unavailable');
+    }
+  }
+
+  Future<void> close() async {
+    await dropSockets();
+    await server.close(force: true);
+  }
+}
+
+class _RealTransportRecoverableGateway extends _RecoverableDesktopGateway {
+  _RealTransportRecoverableGateway(this.transport);
+
+  final TuiGatewayClient transport;
+
+  @override
+  Stream<TuiGatewayEvent> get events => transport.events;
+
+  @override
+  bool get isConnected => transport.isConnected;
+
+  @override
+  Future<void> connect() async {
+    connectCalls += 1;
+    await transport.connect();
+    _connected = true;
+  }
+
+  @override
+  Future<void> close() async {
+    await transport.close();
+    await super.close();
   }
 }
 
@@ -838,15 +1279,19 @@ class _CountingRealLifecycleGateway
 }
 
 class _TicketTransportOnceGateway extends _ActivityLifecycleRecoverableGateway {
-  _TicketTransportOnceGateway(this.dashboard);
+  _TicketTransportOnceGateway(
+    this.dashboard, {
+    this.ticketFailureAttempts = 1,
+  });
 
   final DashboardClient dashboard;
+  final int ticketFailureAttempts;
   int ticketConnectAttempts = 0;
 
   @override
   Future<void> connect() async {
     ticketConnectAttempts += 1;
-    if (ticketConnectAttempts == 1) {
+    if (ticketConnectAttempts <= ticketFailureAttempts) {
       await dashboard.mintWsTicket();
     }
     await super.connect();
@@ -890,7 +1335,7 @@ class _RestFallbackApiClient extends ApiClient {
     required void Function(Map<String, dynamic> event) onEvent,
     required void Function() onDone,
     required void Function(String error) onError,
-    Duration idleTimeout = const Duration(seconds: 90),
+    Duration? idleTimeout = const Duration(seconds: 90),
   }) => Completer<void>().future;
 }
 
@@ -1184,7 +1629,7 @@ Future<void> _expectRecoveryErrorClassification(
 
 ActiveChat _recoverableChat(
   String id,
-  _RecoverableDesktopGateway gateway, {
+  HermesDesktopGateway gateway, {
   ApiClient? api,
   Duration terminalReconcileBudget = const Duration(seconds: 4),
   Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
@@ -1200,8 +1645,9 @@ ActiveChat _recoverableChat(
   void Function(ActiveChatEvent)? onEvent,
   StoredSessionMessageLoader? storedMessageLoader,
   bool turnIdempotencySupported = true,
+  bool attachDesktopRuntimeOnLoad = false,
 }) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(id),
   sessionId: 'session-$id',
   sessionTitle: id,
@@ -1216,6 +1662,7 @@ ActiveChat _recoverableChat(
       ),
   desktopGateway: gateway,
   allowUnownedDesktopSnapshotForTesting: true,
+  attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
   turnIdempotencyCapability: () async => turnIdempotencySupported,
   terminalReconcileBudget: terminalReconcileBudget,
   desktopRecoveryAttemptTimeout: desktopRecoveryAttemptTimeout,
@@ -1234,7 +1681,7 @@ ActiveChat _productionAttachChat(
   StoredSessionMessageLoader? storedMessageLoader,
   List<Duration> desktopRecoveryBackoff = const [Duration.zero],
   double Function()? desktopRecoveryRandom,
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
 }) {
   if (gateway case final _ActivityLifecycleRecoverableGateway activity) {
     final initial = activity.initialSnapshot;
@@ -1249,7 +1696,7 @@ ActiveChat _productionAttachChat(
     }
   }
   return ActiveChat(
-    compressionFenceStore: compressionFenceStore ?? testCompressionFenceStore(),
+    compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
     connection: _connection(id),
     sessionId: 'session-$id',
     sessionTitle: id,
@@ -1520,7 +1967,7 @@ void main() {
         )
         ..recoveryExistingGate = recoveryGate;
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(service.dispose);
       final oldChat = service.attach(
@@ -1805,7 +2252,7 @@ void main() {
         await chat.loadMessages(profile: 'owner-profile');
         final transient = status == 429 || status >= 500;
         if (transient) {
-          await _waitUntil(() => upgradeRequests == 2);
+          await _waitUntil(() => gateway.resumeExistingCalls == 1);
           expect(gateway.connectCalls, 2, reason: 'HTTP $status');
           expect(upgradeRequests, 2, reason: 'HTTP $status');
           expect(gateway.resumeExistingCalls, 1, reason: 'HTTP $status');
@@ -2290,6 +2737,66 @@ void main() {
   );
 
   test(
+    'online signal wakes delayed viewer ticket recovery without takeover',
+    () async {
+      final dashboard = DashboardClient(
+        host: 'hermes.local',
+        manualToken: 'unused',
+        httpClientOverride: MockClient(
+          (_) async => throw TimeoutException('synthetic ticket timeout'),
+        ),
+      );
+      addTearDown(dashboard.close);
+      final api = _RestFallbackApiClient();
+      const id = 'ws-ticket-online-wake';
+      final gateway = _TicketTransportOnceGateway(
+        dashboard,
+        ticketFailureAttempts: 2,
+      )..recoveryAdvertisedRuntimeSessionId = 'runtime-ws-ticket-online-wake'
+        ..recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-ws-ticket-online-wake',
+          storedSessionId: 'session-ws-ticket-online-wake',
+          created: false,
+        );
+      final chat = _productionAttachChat(
+        id,
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'ws-ticket-online-wake-history',
+            'role': 'assistant',
+            'content': 'durable history',
+          },
+        ],
+        desktopRecoveryBackoff: const [Duration(hours: 1)],
+        desktopRecoveryRandom: () => 1.0,
+      );
+      addTearDown(chat.dispose);
+      final viewer = chat.changes.listen((_) {});
+      addTearDown(viewer.cancel);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await _waitUntil(() => gateway.ticketConnectAttempts == 2);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      chat.requestImmediateTransportRecovery();
+      await _waitUntil(
+        () =>
+            chat.desktopRuntimeSessionId == 'runtime-ws-ticket-online-wake',
+      );
+
+      expect(gateway.ticketConnectAttempts, 3);
+      expect(
+        chat.desktopRuntimeSessionId,
+        'runtime-ws-ticket-online-wake',
+      );
+      expect(gateway.resumeExistingStoredIds, ['session-ws-ticket-online-wake']);
+      expect(gateway.viewerAttachmentCommits, 1);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    },
+  );
+
+  test(
     'malformed status-less Dashboard ticket stops viewer attachment',
     () async {
       final dashboard = DashboardClient(
@@ -2756,68 +3263,6 @@ void main() {
     },
   );
 
-  test(
-    'compression-fenced visible load preserves terminal viewer recovery closure',
-    () async {
-      const id = 'fenced-terminal-reassessment';
-      final storage = InMemoryDesktopCompressionFenceStorage();
-      final fenceStore = DesktopCompressionFenceStore(
-        storage: storage,
-        mutationNamespaceForTesting: id,
-        attemptId: () => 'fenced-terminal-attempt',
-      );
-      final api = _RestFallbackApiClient();
-      final gateway = _ActivityLifecycleRecoverableGateway()
-        ..resumeExistingError = const TuiGatewayRpcError(
-          'session.resume',
-          'not found',
-          code: 4007,
-          origin: CompressionFailureOrigin.remoteRpc,
-        );
-      final chat = _productionAttachChat(
-        id,
-        gateway,
-        api: api,
-        storedMessageLoader: (_, _) async => const [
-          {
-            'message_id': 'fenced-terminal-history',
-            'role': 'assistant',
-            'content': 'durable history',
-          },
-        ],
-        desktopRecoveryBackoff: const [Duration.zero],
-        compressionFenceStore: fenceStore,
-      );
-      addTearDown(chat.dispose);
-
-      await chat.loadMessages(profile: 'owner-profile');
-      expect(chat.storedSessionKnownMissing, isTrue);
-      final armed = await fenceStore.arm(
-        DesktopCompressionFenceScope(
-          connectionId: id,
-          profile: 'owner-profile',
-          logicalSessionId: 'session-$id',
-        ),
-        tipAtStart: 'session-$id',
-        compressionsAtStart: 0,
-        createdAtMs: 1,
-        reconcileUntilMs: 4102444800000,
-      );
-      expect(armed.claimed, isTrue);
-      gateway.resumeExistingError = null;
-
-      await chat.loadMessages(profile: 'owner-profile');
-      gateway.drop();
-      await Future<void>.delayed(const Duration(milliseconds: 40));
-
-      expect(chat.storedSessionKnownMissing, isTrue);
-      expect(gateway.resumeExistingCalls, 1);
-      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
-      expect(chat.desktopRuntimeSessionId, isNull);
-      _expectNoViewerAttachmentMutations(gateway, api);
-    },
-  );
-
   test('snapshot fallback copy preserves identity evidence', () async {
     final api = _RestFallbackApiClient();
     final gateway = _ActivityLifecycleRecoverableGateway()
@@ -3099,89 +3544,353 @@ void main() {
     },
   );
 
-  test('turno reanudado sin outbox reconecta tras socket drop', () async {
-    final recoveryGate = Completer<DesktopSessionSnapshot>();
-    final gateway = _LifecycleRecoverableGateway()
+  test(
+    'V1 viewer stays unbound after loss and converges from durable state',
+    () async {
+      var durableFinalReady = false;
+      var transcriptCalls = 0;
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-desktop-1',
+          storedSessionId: 'session-desktop-owned',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'desktop-owned-user',
+              'role': 'user',
+              'content': 'turno iniciado en Desktop',
+            })!,
+          ],
+          inflight: DesktopInflightTurn(
+            user: 'turno iniciado en Desktop',
+            assistant: 'parcial Desktop visible',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-desktop-2',
+          storedSessionId: 'session-desktop-owned',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'desktop-owned-user',
+              'role': 'user',
+              'content': 'turno iniciado en Desktop',
+            })!,
+          ],
+          inflight: DesktopInflightTurn(
+            user: 'turno iniciado en Desktop',
+            assistant: 'snapshot de recovery no publicable',
+            streaming: true,
+          ),
+          running: true,
+        );
+      final chat = _productionAttachChat(
+        'desktop-owned',
+        gateway,
+        storedMessageLoader: (_, _) async {
+          transcriptCalls += 1;
+          if (!durableFinalReady) {
+            return const [
+              {
+                'message_id': 'desktop-owned-user',
+                'role': 'user',
+                'content': 'turno iniciado en Desktop',
+              },
+            ];
+          }
+          return const [
+            {
+              'message_id': 'desktop-owned-user',
+              'role': 'user',
+              'content': 'turno iniciado en Desktop',
+            },
+            {
+              'message_id': 'desktop-owned-answer',
+              'role': 'assistant',
+              'content': 'respuesta durable final',
+            },
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      expect(chat.isStreaming, isTrue);
+      expect(chat.desktopRuntimeSessionId, 'runtime-desktop-1');
+      final visibleBeforeCut = jsonEncode(chat.messages);
+
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls == 1);
+
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(jsonEncode(chat.messages), visibleBeforeCut);
+      expect(
+        jsonEncode(chat.messages),
+        isNot(contains('snapshot de recovery no publicable')),
+      );
+      expect(gateway.viewerAttachmentCommits, 0);
+      expect(gateway.turnRecoveryCommits, 0);
+
+      durableFinalReady = true;
+      gateway.activeListOverride = const DesktopActiveSessionList();
+      await chat.refreshPassiveRemoteActivity();
+      expect(chat.isStreaming, isTrue);
+      await chat.refreshPassiveRemoteActivity();
+
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(chat.assistantContent, 'respuesta durable final');
+      expect(transcriptCalls, 2);
+      expect(gateway.createForFirstSubmitCalls, 0);
+      expect(gateway.submitCalls, 0);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.resumeCalls, 0);
+      expect(
+        chat.messages.any((message) => message['role'] == 'assistant_error'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'V2 viewer loss converges after two terminal stored-session rosters',
+    () async {
+      var durableFinalReady = false;
+      var transcriptCalls = 0;
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-viewer-v2-1',
+          storedSessionId: 'session-viewer-v2',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'viewer-v2-user',
+              'role': 'user',
+              'content': 'viewer v2 prompt',
+            })!,
+          ],
+          inflight: DesktopInflightTurn(
+            user: 'viewer v2 prompt',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoveryExistingGate = Completer<DesktopSessionSnapshot>();
+      final chat = _productionAttachChat(
+        'viewer-v2',
+        gateway,
+        storedMessageLoader: (_, _) async {
+          transcriptCalls += 1;
+          if (!durableFinalReady) {
+            return const [
+              {
+                'message_id': 'viewer-v2-user',
+                'role': 'user',
+                'content': 'viewer v2 prompt',
+              },
+            ];
+          }
+          return const [
+            {
+              'message_id': 'viewer-v2-user',
+              'role': 'user',
+              'content': 'viewer v2 prompt',
+            },
+            {
+              'message_id': 'viewer-v2-answer',
+              'role': 'assistant',
+              'content': 'viewer v2 durable answer',
+            },
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      expect(transcriptCalls, 1);
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls == 1);
+      durableFinalReady = true;
+      gateway.activeListOverride = const DesktopActiveSessionList();
+
+      await chat.refreshPassiveRemoteActivity();
+      expect(chat.isStreaming, isTrue);
+      gateway.activeListOverride = const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-viewer-v2-idle',
+            storedSessionId: 'session-viewer-v2',
+            status: 'completed',
+          ),
+        ],
+      );
+      await chat.refreshPassiveRemoteActivity();
+
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.assistantContent, 'viewer v2 durable answer');
+      expect(transcriptCalls, 2);
+      expect(gateway.viewerAttachmentCommits, 0);
+      expect(gateway.turnRecoveryCommits, 0);
+      expect(
+        chat.messages.where(
+          (message) => message['content'] == 'viewer v2 durable answer',
+        ),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.any((message) => message['role'] == 'assistant_error'),
+        isFalse,
+      );
+    },
+  );
+
+  test('V3 busy roster keeps disconnected viewer working', () async {
+    var transcriptCalls = 0;
+    final gateway = _ActivityLifecycleRecoverableGateway()
       ..initialSnapshot = DesktopSessionSnapshot(
-        runtimeSessionId: 'runtime-desktop-1',
-        storedSessionId: 'session-desktop-owned',
+        runtimeSessionId: 'runtime-viewer-v3-1',
+        storedSessionId: 'session-viewer-v3',
         created: false,
         messagesProvided: true,
         messages: [
           DesktopSessionMessage.tryParse(const {
+            'message_id': 'viewer-v3-user',
             'role': 'user',
-            'content': 'turno iniciado en Desktop',
+            'content': 'viewer v3 prompt',
           })!,
         ],
         inflight: DesktopInflightTurn(
-          user: 'turno iniciado en Desktop',
+          user: 'viewer v3 prompt',
           streaming: true,
         ),
         running: true,
       )
-      ..recoveryExistingGate = recoveryGate;
-    final chat = _recoverableChat('desktop-owned', gateway);
+      ..recoveryExistingGate = Completer<DesktopSessionSnapshot>();
+    final chat = _productionAttachChat(
+      'viewer-v3',
+      gateway,
+      storedMessageLoader: (_, _) async {
+        transcriptCalls += 1;
+        return const [
+          {
+            'message_id': 'viewer-v3-user',
+            'role': 'user',
+            'content': 'viewer v3 prompt',
+          },
+        ];
+      },
+    );
     addTearDown(chat.dispose);
 
-    await chat.loadMessages();
-    expect(chat.isStreaming, isTrue);
-    expect(chat.desktopRuntimeSessionId, 'runtime-desktop-1');
-    gateway.emit(
-      'tool.start',
-      sessionId: 'runtime-desktop-1',
-      payload: const {'name': 'terminal'},
-    );
-    await _waitUntil(() => chat.trace.isNotEmpty);
-
+    await chat.loadMessages(profile: 'owner-profile');
     gateway.drop();
-    await _waitUntil(() => gateway.resumeExistingCalls == 2);
-    expect(chat.state, ChatPipelineState.connecting);
+    await _waitUntil(() => gateway.resumeExistingCalls == 1);
+    gateway.activeListOverride = const DesktopActiveSessionList(
+      sessions: [
+        DesktopActiveSession(
+          runtimeSessionId: 'runtime-viewer-v3-live',
+          storedSessionId: 'session-viewer-v3',
+          status: 'waiting',
+        ),
+      ],
+    );
+    await chat.refreshPassiveRemoteActivity();
+    await chat.refreshPassiveRemoteActivity();
 
-    final steer = chat.steer('ajuste durante recovery');
-    await Future<void>.delayed(Duration.zero);
-    expect(gateway.steers, isEmpty);
-    recoveryGate.complete(
-      DesktopSessionSnapshot(
-        runtimeSessionId: 'runtime-desktop-2',
-        storedSessionId: 'session-desktop-owned',
+    expect(chat.state, ChatPipelineState.connecting);
+    expect(chat.isStreaming, isTrue);
+    expect(transcriptCalls, 1);
+    expect(gateway.turnRecoveryCommits, 0);
+    expect(
+      chat.messages.any((message) => message['role'] == 'assistant_error'),
+      isFalse,
+    );
+  });
+
+  test('V4 failed or malformed roster does not advance convergence', () async {
+    var durableFinalReady = false;
+    var transcriptCalls = 0;
+    final gateway = _ActivityLifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-viewer-v4-1',
+        storedSessionId: 'session-viewer-v4',
         created: false,
         messagesProvided: true,
         messages: [
           DesktopSessionMessage.tryParse(const {
+            'message_id': 'viewer-v4-user',
             'role': 'user',
-            'content': 'turno iniciado en Desktop',
+            'content': 'viewer v4 prompt',
           })!,
         ],
         inflight: DesktopInflightTurn(
-          user: 'turno iniciado en Desktop',
+          user: 'viewer v4 prompt',
           streaming: true,
         ),
         running: true,
-      ),
+      )
+      ..recoveryExistingGate = Completer<DesktopSessionSnapshot>();
+    final chat = _productionAttachChat(
+      'viewer-v4',
+      gateway,
+      storedMessageLoader: (_, _) async {
+        transcriptCalls += 1;
+        if (!durableFinalReady) {
+          return const [
+            {
+              'message_id': 'viewer-v4-user',
+              'role': 'user',
+              'content': 'viewer v4 prompt',
+            },
+          ];
+        }
+        return const [
+          {
+            'message_id': 'viewer-v4-user',
+            'role': 'user',
+            'content': 'viewer v4 prompt',
+          },
+          {
+            'message_id': 'viewer-v4-answer',
+            'role': 'assistant',
+            'content': 'viewer v4 durable answer',
+          },
+        ];
+      },
     );
-    await steer.timeout(const Duration(seconds: 1));
-    expect(gateway.connectCalls, 2);
-    expect(gateway.committedRecoveryRuntimeIds, ['runtime-desktop-2']);
-    expect(gateway.steers, [
-      (runtimeId: 'runtime-desktop-2', text: 'ajuste durante recovery'),
-    ]);
+    addTearDown(chat.dispose);
 
-    gateway.emit(
-      'tool.complete',
-      sessionId: 'runtime-desktop-2',
-      payload: const {'name': 'terminal', 'preview': 'ok'},
-    );
-    gateway.emit(
-      'message.complete',
-      sessionId: 'runtime-desktop-2',
-      payload: const {'text': 'respuesta tras reconectar'},
-    );
-    await _waitUntil(() => chat.state == ChatPipelineState.completed);
-    expect(chat.assistantContent, 'respuesta tras reconectar');
+    await chat.loadMessages(profile: 'owner-profile');
+    gateway.drop();
+    await _waitUntil(() => gateway.resumeExistingCalls == 1);
+    gateway.activeListError = StateError('roster unavailable');
+    await chat.refreshPassiveRemoteActivity();
+    gateway
+      ..activeListError = null
+      ..activeListOverride = const DesktopActiveSessionList(
+        hasMalformedRows: true,
+      );
+    await chat.refreshPassiveRemoteActivity();
+    durableFinalReady = true;
+    gateway.activeListOverride = const DesktopActiveSessionList();
+
+    await chat.refreshPassiveRemoteActivity();
+    expect(chat.isStreaming, isTrue);
+    expect(transcriptCalls, 1);
+    await chat.refreshPassiveRemoteActivity();
+
+    expect(chat.state, ChatPipelineState.completed);
+    expect(chat.assistantContent, 'viewer v4 durable answer');
+    expect(transcriptCalls, 2);
+    expect(gateway.turnRecoveryCommits, 0);
     expect(
-      chat.messages.any(
-        (message) => message['content'].toString().contains('StateError'),
-      ),
+      chat.messages.any((message) => message['role'] == 'assistant_error'),
       isFalse,
     );
   });
@@ -3256,6 +3965,7 @@ void main() {
         hasLength(1),
       );
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains('runtime-anchor-2'),
@@ -3332,6 +4042,7 @@ void main() {
       );
       expect(chat.subagentActivities, isEmpty);
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(() => chat.state == ChatPipelineState.completed);
 
@@ -3348,8 +4059,181 @@ void main() {
     },
   );
 
+  for (final resumedStatus in const <String?>['completed', null]) {
+    test(
+      'non-idempotent long outage adopts durable final after '
+      '${resumedStatus ?? 'plain idle'} resume without takeover',
+      () async {
+        const storedId = 'session-nonidem-long-outage';
+        const prompt = 'sleep 70 then answer';
+        const finalAnswer = 'durable final after long outage';
+        final gateway = _NonIdempotentLifecycleGateway(storedId)
+          ..recoverySnapshot = DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-lightweight-viewer',
+            storedSessionId: storedId,
+            created: false,
+            running: false,
+            status: resumedStatus,
+          );
+        var durableReads = 0;
+        final chat = _recoverableChat(
+          'nonidem-long-outage-${resumedStatus ?? 'plain'}',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 1),
+            Duration(milliseconds: 2),
+            Duration(milliseconds: 4),
+            Duration(milliseconds: 8),
+            Duration(milliseconds: 15),
+          ],
+          desktopRecoveryRandom: () => 1.0,
+          storedMessageLoader: (_, _) async {
+            durableReads += 1;
+            if (!gateway.networkAvailable) {
+              throw const SocketException('durable transcript unavailable');
+            }
+            return const [
+              {
+                'message_id': 'nonidem-outage-user',
+                'role': 'user',
+                'content': prompt,
+              },
+              {
+                'message_id': 'nonidem-outage-final',
+                'role': 'assistant',
+                'content': finalAnswer,
+              },
+            ];
+          },
+        );
+        addTearDown(chat.dispose);
+
+        await chat.send(
+          fullText: prompt,
+          model: 'hermes-agent',
+          history: const [],
+        );
+        expect(gateway, isNot(isA<HermesDesktopIdempotentGateway>()));
+        expect(gateway.submitCalls, 1);
+        final createsBeforeOutage = gateway.createForFirstSubmitCalls;
+        final resumesBeforeOutage = gateway.resumeExistingCalls;
+        final resumeIdsBeforeOutage = gateway.resumeExistingStoredIds.length;
+
+        gateway.networkAvailable = false;
+        gateway.drop();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(gateway.connectCalls, greaterThanOrEqualTo(8));
+        expect(durableReads, 1);
+
+        gateway
+          ..networkAvailable = true
+          ..restoredFailuresRemaining = 1;
+        chat.requestImmediateTransportRecovery();
+        await _waitUntil(() => chat.state == ChatPipelineState.completed);
+
+        expect(gateway.rosterResumeCalls, 1);
+        expect(gateway.resumeExistingCalls, resumesBeforeOutage + 1);
+        expect(chat.state, ChatPipelineState.completed);
+        expect(chat.assistantContent, finalAnswer);
+        expect(
+          chat.messages.where((message) => message['content'] == finalAnswer),
+          hasLength(1),
+        );
+        expect(
+          chat.messages.where((message) => message['content'] == prompt),
+          hasLength(1),
+        );
+        expect(
+          gateway.resumeExistingStoredIds.skip(resumeIdsBeforeOutage),
+          [storedId],
+        );
+        expect(gateway.submitCalls, 1);
+        expect(gateway.createForFirstSubmitCalls, createsBeforeOutage);
+        expect(gateway.recoveryCommits, 0);
+        expect(chat.desktopRuntimeSessionId, isNull);
+
+        final connects = gateway.connectCalls;
+        final resumes = gateway.resumeExistingCalls;
+        chat.requestImmediateTransportRecovery();
+        await chat.reconcileAfterResume();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(gateway.connectCalls, connects);
+        expect(gateway.resumeExistingCalls, resumes);
+        expect(chat.state, ChatPipelineState.completed);
+        expect(
+          chat.messages.where((message) => message['content'] == finalAnswer),
+          hasLength(1),
+        );
+        expect(gateway.submitCalls, 1);
+      },
+    );
+  }
+
   test(
-    'sin turn_idempotency_v1 el corte reanuda la sesión viva en vez de fallar',
+    'non-idempotent running snapshot reattaches after capped outage',
+    () async {
+      const storedId = 'session-nonidem-running';
+      const prompt = 'keep working after reconnect';
+      final gateway = _NonIdempotentLifecycleGateway(storedId)
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-nonidem-running-recovered',
+          storedSessionId: storedId,
+          created: false,
+          inflight: DesktopInflightTurn(
+            user: prompt,
+            assistant: 'partial after reconnect',
+            streaming: true,
+          ),
+          running: true,
+          status: 'running',
+        );
+      final chat = _recoverableChat(
+        'nonidem-running',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+          Duration(milliseconds: 15),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async => const [],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final createsBeforeOutage = gateway.createForFirstSubmitCalls;
+      final resumeIdsBeforeOutage = gateway.resumeExistingStoredIds.length;
+      gateway.networkAvailable = false;
+      gateway.drop();
+      await _waitUntil(() => gateway.connectCalls >= 5);
+      gateway
+        ..networkAvailable = true
+        ..restoredFailuresRemaining = 1;
+      chat.requestImmediateTransportRecovery();
+
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == 'runtime-nonidem-running-recovered',
+      );
+      expect(chat.state, ChatPipelineState.streaming);
+      expect(chat.assistantContent, 'partial after reconnect');
+      expect(gateway.rosterResumeCalls, 1);
+      expect(gateway.recoveryCommits, 1);
+      expect(
+        gateway.resumeExistingStoredIds.skip(resumeIdsBeforeOutage),
+        [storedId],
+      );
+      expect(gateway.submitCalls, 1);
+      expect(gateway.createForFirstSubmitCalls, createsBeforeOutage);
+    },
+  );
+
+  test(
+    'V5 client-owned turn keeps submitted-turn recovery after stream loss',
     () async {
       // The official gateway never publishes `turn_idempotency_v1`. A socket
       // drop mid-turn must still resume the live session and adopt its
@@ -3598,7 +4482,7 @@ void main() {
   );
 
   test(
-    'snapshot terminal parcial sin cobertura degrada y conserva el parcial',
+    'viewer terminal parcial sin cobertura espera autoridad de roster',
     () async {
       var transcriptCalls = 0;
       final gateway = _LifecycleRecoverableGateway()
@@ -3660,11 +4544,18 @@ void main() {
       await chat.loadMessages(expectedMessageCount: 300);
       expect(chat.assistantContent, 'respuesta local incompleta');
 
+      final resumesBeforeDrop = gateway.resumeExistingCalls;
       gateway.drop();
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      await _waitUntil(
+        () => gateway.resumeExistingCalls == resumesBeforeDrop + 1,
+      );
 
-      expect(chat.awaitingDurableTurnRecovery, isTrue);
-      expect(transcriptCalls, 2);
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
+      expect(transcriptCalls, 1);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'respuesta local incompleta',
@@ -3677,12 +4568,15 @@ void main() {
         ),
         isFalse,
       );
-      expect(chat.hasEarlierMessages, isTrue);
+      expect(
+        chat.messages.any((message) => message['role'] == 'assistant_error'),
+        isFalse,
+      );
     },
   );
 
   test(
-    'snapshot terminal parcial sin user queda history-pending sin GET tardío',
+    'viewer terminal parcial sin user conserva el prompt y espera roster',
     () async {
       var transcriptCalls = 0;
       final gateway = _LifecycleRecoverableGateway()
@@ -3726,28 +4620,33 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages();
+      final resumesBeforeDrop = gateway.resumeExistingCalls;
       gateway.drop();
       await _waitUntil(
-        () => gateway.committedRecoveryRuntimeIds.contains(
-          'runtime-terminal-no-user-2',
-        ),
+        () => gateway.resumeExistingCalls == resumesBeforeDrop + 1,
       );
 
-      expect(chat.state, isNot(ChatPipelineState.completed));
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
+      expect(chat.isStreaming, isTrue);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'prompt que no puede desaparecer',
         ),
         isTrue,
       );
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
-      expect(chat.awaitingDurableTurnRecovery, isTrue);
-      expect(transcriptCalls, 2);
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
+      expect(transcriptCalls, 1);
+      expect(
+        chat.messages.any((message) => message['role'] == 'assistant_error'),
+        isFalse,
+      );
     },
   );
 
   test(
-    'snapshot terminal parcial con tool queda pending sin promover transcript',
+    'viewer terminal parcial con tool espera roster sin promover transcript',
     () async {
       var transcriptCalls = 0;
       final gateway = _LifecycleRecoverableGateway()
@@ -3807,21 +4706,26 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages();
+      final resumesBeforeDrop = gateway.resumeExistingCalls;
       gateway.drop();
       await _waitUntil(
-        () => gateway.committedRecoveryRuntimeIds.contains(
-          'runtime-terminal-tool-tail-2',
-        ),
+        () => gateway.resumeExistingCalls == resumesBeforeDrop + 1,
       );
 
-      expect(chat.state, isNot(ChatPipelineState.completed));
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
-      expect(chat.awaitingDurableTurnRecovery, isTrue);
-      expect(transcriptCalls, 2);
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
+      expect(transcriptCalls, 1);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'assistant final ya durable',
         ),
+        isFalse,
+      );
+      expect(
+        chat.messages.any((message) => message['role'] == 'assistant_error'),
         isFalse,
       );
     },
@@ -3863,6 +4767,7 @@ void main() {
     addTearDown(chat.dispose);
 
     await chat.loadMessages();
+    chat.markCurrentTurnClientSubmittedForTesting();
     gateway.drop();
     await _waitUntil(() => chat.state == ChatPipelineState.failed);
 
@@ -3947,6 +4852,7 @@ void main() {
         isTrue,
       );
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains('runtime-partial-2'),
@@ -4091,6 +4997,7 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages(expectedMessageCount: 300);
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () =>
@@ -4192,6 +5099,7 @@ void main() {
 
       await chat.loadMessages(expectedMessageCount: 2);
       expect(chat.hasEarlierMessages, isFalse);
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4273,6 +5181,7 @@ void main() {
         'content': 'prompt repetido tras compactación',
       };
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4364,6 +5273,7 @@ void main() {
         'content': 'prompt repetido tras recovery idless',
       };
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4459,6 +5369,7 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages(expectedMessageCount: 2);
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4554,6 +5465,7 @@ void main() {
         'content': 'prompt repetido antes del recovery vacío',
       };
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4651,6 +5563,7 @@ void main() {
       };
       durableRows[0] = {...durableRows[0], 'content': 'prompt repetido'};
 
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4750,6 +5663,7 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages(expectedMessageCount: 300);
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4835,6 +5749,7 @@ void main() {
     addTearDown(chat.dispose);
 
     await chat.loadMessages(expectedMessageCount: 300);
+    chat.markCurrentTurnClientSubmittedForTesting();
     gateway.drop();
     await _waitUntil(
       () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4908,6 +5823,7 @@ void main() {
 
       await chat.loadMessages(expectedMessageCount: 300);
       expect(chat.hasEarlierMessages, isTrue);
+      chat.markCurrentTurnClientSubmittedForTesting();
       gateway.drop();
       await _waitUntil(
         () => gateway.committedRecoveryRuntimeIds.contains(
@@ -4985,6 +5901,7 @@ void main() {
     await chat.loadMessages(expectedMessageCount: 300);
     expect(chat.hasEarlierMessages, isTrue);
 
+    chat.markCurrentTurnClientSubmittedForTesting();
     gateway.drop();
     await _waitUntil(
       () => gateway.committedRecoveryRuntimeIds.contains(
@@ -5032,9 +5949,11 @@ void main() {
     await chat.loadMessages(expectedMessageCount: 300);
     expect(chat.isStreaming, isTrue);
 
-    await expectLater(chat.cancel(), throwsStateError);
+    await chat.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(gateway.interruptCalls, 1);
     expect(recorded, isEmpty);
-    expect(chat.isStreaming, isTrue);
+    expect(chat.isStreaming, isFalse);
   });
 
   test(
@@ -5104,9 +6023,11 @@ void main() {
         isTrue,
       );
 
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.interruptCalls, 1);
       expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
       expect(
         chat.internalMessagesForTesting.singleWhere(
           (message) =>
@@ -5788,9 +6709,16 @@ void main() {
   test('Stop publica un tombstone durable anclado', () async {
     final recorded = <CancelledTurnTombstone>[];
     final gateway = _LifecycleRecoverableGateway();
+    // The fake gateway never streams a terminal after `session.interrupt`,
+    // so Stop finalizes when its settle window (min(recovery attempt
+    // timeout, 2 s)) runs out. With the default 15 s attempt timeout that
+    // window was exactly 2 s — the same as `_waitUntil`'s deadline — and the
+    // tombstone landed at ~2.02 s: a coin flip. Bound the window like the
+    // sibling Stop tests so the wait has real slack.
     final chat = _recoverableChat(
       'persist-cancel',
       gateway,
+      desktopRecoveryAttemptTimeout: const Duration(milliseconds: 200),
       onCancelledTurn: (tombstone) async => recorded.add(tombstone),
     );
     addTearDown(chat.dispose);
@@ -5833,12 +6761,14 @@ void main() {
         delivery: _delivery('two-durable-stops-1', _NoopOutbox()),
       );
       await chat.cancel();
+      await _waitUntil(() => recorded.isNotEmpty);
       durable.add(const {
         'message_id': 'first-cancelled-user',
         'role': 'user',
         'content': 'primer turno detenido',
         'timestamp': 50,
       });
+      await chat.loadMessages(expectedMessageCount: durable.length);
 
       final accepted = await chat.send(
         fullText: 'segundo turno detenido',
@@ -5904,12 +6834,14 @@ void main() {
           delivery: _delivery('two-durable-stops-1', _NoopOutbox()),
         );
         await chat.cancel();
+        await _waitUntil(() => recorded.isNotEmpty);
         durable.add(const {
           'message_id': 'first-cancelled-user',
           'role': 'user',
           'content': 'primer turno detenido',
           'timestamp': 50,
         });
+        await chat.loadMessages(expectedMessageCount: durable.length);
 
         final accepted = await chat.send(
           fullText: prompt,
@@ -5946,6 +6878,9 @@ void main() {
             startedAt: DateTime.fromMillisecondsSinceEpoch(100000, isUtc: true),
           ),
         );
+        if (!sameAnnotation) {
+          await chat.loadMessages(expectedMessageCount: durable.length);
+        }
         expect(
           chat.messages.where((m) => m['role'] == 'user').first['content'],
           'segundo turno @ops',
@@ -5954,11 +6889,28 @@ void main() {
           chat.internalMessagesForTesting
               .where((m) => m['role'] == 'user')
               .first['content'],
-          prompt,
+          sameAnnotation
+              ? prompt
+              : prompt.replaceFirst(
+                  'agent profile "ops"',
+                  'agent profile "other"',
+                ),
         );
         if (!sameAnnotation) {
-          await expectLater(chat.cancel(), throwsStateError);
-          expect(recorded, hasLength(1));
+          await chat.cancel();
+          await Future<void>.delayed(Duration.zero);
+          expect(gateway.interruptCalls, 2);
+          expect(
+            recorded.every(
+              (tombstone) => tombstone.content == 'primer turno detenido',
+            ),
+            isTrue,
+          );
+          expect(
+            recorded.where((tombstone) => tombstone.content == prompt),
+            isEmpty,
+          );
+          expect(chat.isStreaming, isFalse);
           return;
         }
         await chat.cancel();
@@ -6170,9 +7122,11 @@ void main() {
         ),
       );
 
-      await expectLater(chat.cancel(), throwsStateError);
+      await chat.cancel();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.interruptCalls, 1);
       expect(recorded, isEmpty);
-      expect(chat.isStreaming, isTrue);
+      expect(chat.isStreaming, isFalse);
       expect(
         chat.messages.any(
           (message) =>
@@ -6238,9 +7192,11 @@ void main() {
       delivery: _delivery('numeric-anchor-1', _NoopOutbox()),
     );
 
-    await expectLater(chat.cancel(), throwsStateError);
+    await chat.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(gateway.interruptCalls, 1);
     expect(recorded, isEmpty);
-    expect(chat.isStreaming, isTrue);
+    expect(chat.isStreaming, isFalse);
   });
 
   test('tombstone por row id cruza los aliases numéricos sin normalizar', () {
@@ -6351,7 +7307,7 @@ void main() {
     },
   );
 
-  test('Stop espera confirmación del almacenamiento durable', () async {
+  test('Stop no espera confirmación del almacenamiento durable', () async {
     final gate = Completer<void>();
     final events = <ActiveChatEvent>[];
     final gateway = _LifecycleRecoverableGateway();
@@ -6372,45 +7328,49 @@ void main() {
     );
     var completed = false;
     final cancel = chat.cancel().then((_) => completed = true);
-    await Future<void>.delayed(Duration.zero);
-    expect(completed, isFalse);
-    expect(chat.isStreaming, isTrue);
-    expect(chat.hasPendingDurableCancellation, isTrue);
-    expect(events, isNot(contains(ActiveChatEvent.cancelled)));
-    gate.complete();
     await cancel;
     expect(completed, isTrue);
+    expect(gate.isCompleted, isFalse);
+    expect(chat.isStreaming, isFalse);
+    expect(chat.hasPendingDurableCancellation, isTrue);
     expect(events, contains(ActiveChatEvent.cancelled));
+    gate.complete();
+    await _waitUntil(() => !chat.hasPendingDurableCancellation);
   });
 
-  test('Stop sin ancla durable falla cerrado y no confirma', () async {
-    var persisted = 0;
-    final events = <ActiveChatEvent>[];
-    final gateway = _LifecycleRecoverableGateway();
-    final chat = _recoverableChat(
-      'missing-anchor',
-      gateway,
-      onCancelledTurn: (_) async => persisted++,
-      onEvent: events.add,
-    );
-    addTearDown(chat.dispose);
-    chat.internalMessagesForTesting.add({
-      'role': 'user',
-      'content': 'turno histórico sin id',
-    });
+  test(
+    'Stop sin ancla durable omite tombstone pero confirma localmente',
+    () async {
+      var persisted = 0;
+      final events = <ActiveChatEvent>[];
+      final gateway = _LifecycleRecoverableGateway();
+      final chat = _recoverableChat(
+        'missing-anchor',
+        gateway,
+        onCancelledTurn: (_) async => persisted++,
+        onEvent: events.add,
+      );
+      addTearDown(chat.dispose);
+      chat.internalMessagesForTesting.add({
+        'role': 'user',
+        'content': 'turno histórico sin id',
+      });
 
-    await chat.send(
-      fullText: 'turno sin ancla',
-      model: 'hermes-agent',
-      history: const [],
-      delivery: _delivery('missing-anchor-1', _NoopOutbox()),
-    );
+      await chat.send(
+        fullText: 'turno sin ancla',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('missing-anchor-1', _NoopOutbox()),
+      );
 
-    await expectLater(chat.cancel(), throwsStateError);
-    expect(persisted, 0);
-    expect(chat.isStreaming, isTrue);
-    expect(events, isNot(contains(ActiveChatEvent.cancelled)));
-  });
+      await chat.cancel();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.interruptCalls, 1);
+      expect(persisted, 0);
+      expect(chat.isStreaming, isFalse);
+      expect(events, contains(ActiveChatEvent.cancelled));
+    },
+  );
 
   test('Stop no infiere firstUser si la sesión aún no se hidrató', () async {
     final recorded = <CancelledTurnTombstone>[];
@@ -6429,12 +7389,14 @@ void main() {
       delivery: _delivery('unknown-empty-session-1', _NoopOutbox()),
     );
 
-    await expectLater(chat.cancel(), throwsStateError);
+    await chat.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(gateway.interruptCalls, 1);
     expect(recorded, isEmpty);
-    expect(chat.isStreaming, isTrue);
+    expect(chat.isStreaming, isFalse);
   });
 
-  test('fallo durable bloquea envío pero permite reintentar Stop', () async {
+  test('fallo durable no bloquea Stop ni el envío siguiente', () async {
     var persistenceAttempts = 0;
     final gateway = _LifecycleRecoverableGateway();
     final chat = _recoverableChat(
@@ -6460,32 +7422,28 @@ void main() {
       history: const [],
       delivery: _delivery('persist-failure-1', _NoopOutbox()),
     );
-    Object? firstStopError;
-    try {
-      await chat.cancel();
-    } catch (error) {
-      firstStopError = error;
-    }
-    expect(firstStopError, isA<StateError>());
+    await chat.cancel();
+    await _waitUntil(() => persistenceAttempts == 1);
 
     expect(
       await chat.send(
-        fullText: 'turno posterior prohibido',
+        fullText: 'turno posterior permitido',
         model: 'hermes-agent',
         history: const [],
         delivery: _delivery('persist-failure-2', _NoopOutbox()),
       ),
-      isFalse,
+      isTrue,
     );
-    expect(gateway.submitCalls, 1);
+    expect(gateway.submitCalls, 2);
     expect(chat.isStreaming, isTrue);
     await chat.cancel();
-    expect(persistenceAttempts, 2);
+    expect(gateway.interruptCalls, 2);
+    expect(persistenceAttempts, 1);
     expect(chat.isStreaming, isFalse);
   });
 
   test(
-    'terminal durante write fallido mantiene Stop y permite retry',
+    'terminal durante write fallido no reabre Stop ni bloquea el turno siguiente',
     () async {
       final gate = Completer<void>();
       var attempts = 0;
@@ -6512,14 +7470,23 @@ void main() {
 
       final firstCancel = chat.cancel();
       gateway.emit('message.complete');
-      await Future<void>.delayed(Duration.zero);
-      expect(chat.isStreaming, isTrue);
+      await firstCancel;
+      expect(chat.isStreaming, isFalse);
       gate.completeError(StateError('keystore unavailable'));
-      await expectLater(firstCancel, throwsA(isA<StateError>()));
-      expect(chat.isStreaming, isTrue);
+      await Future<void>.delayed(Duration.zero);
 
+      expect(
+        await chat.send(
+          fullText: 'turno posterior',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      expect(chat.isStreaming, isTrue);
       await chat.cancel();
-      expect(attempts, 2);
+      expect(gateway.interruptCalls, 2);
+      expect(attempts, 1);
       expect(chat.isStreaming, isFalse);
     },
   );
@@ -7183,7 +8150,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-drop',
           label: 'Drop',
@@ -7234,7 +8201,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-recover',
           label: 'Recover',
@@ -7449,7 +8416,7 @@ void main() {
     },
   );
 
-  test('reconnect full jitter is injectable and capped at thirty seconds', () {
+  test('reconnect full jitter is injectable and capped at fifteen seconds', () {
     final samples = <double>[0.5, 1.0].iterator;
     final chat = _recoverableChat(
       'coverage-jitter-cap',
@@ -7470,7 +8437,332 @@ void main() {
       chat.desktopRecoveryDelayForTesting(1),
       const Duration(milliseconds: 50),
     );
-    expect(chat.desktopRecoveryDelayForTesting(2), const Duration(seconds: 30));
+    expect(chat.desktopRecoveryDelayForTesting(2), const Duration(seconds: 15));
+  });
+
+  test(
+    'foreground resume wakes active turn recovery and adopts durable terminal',
+    () async {
+      final gateway = _RecoverableDesktopGateway()
+        ..recoveryConnectFailuresRemaining = 1;
+      final chat = _recoverableChat(
+        'coverage-foreground-wake',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(hours: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'coverage-foreground-user',
+            'role': 'user',
+            'content': 'run sleep 70, answer LISTO-NET',
+          },
+          {
+            'message_id': 'coverage-foreground-final',
+            'role': 'assistant',
+            'content': 'LISTO-NET',
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'run sleep 70, answer LISTO-NET',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('coverage-foreground-wake', _NoopOutbox()),
+      );
+      gateway.drop();
+      await _waitUntil(() => gateway.connectCalls == 2);
+      gateway.recoveredState = DesktopTurnState.terminal;
+
+      await chat.reconcileAfterResume();
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
+
+      expect(gateway.connectCalls, 3);
+      expect(gateway.submitCalls, 1);
+      expect(
+        chat.messages.where((message) => message['content'] == 'LISTO-NET'),
+        hasLength(1),
+      );
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+    },
+  );
+
+  for (final chatReconnectsFirst in const [true, false]) {
+    test('three clients converge one durable turn when '
+        '${chatReconnectsFirst ? 'chat' : 'home'} reconnects first', () async {
+      final fixture = _MultiClientOutageFixture();
+      await fixture.start();
+      addTearDown(fixture.close);
+      final connection = SavedConnection(
+        id: 'multi-client-${chatReconnectsFirst ? 'chat' : 'home'}',
+        label: 'Multi-client recovery',
+        host: '127.0.0.1',
+        port: 8642,
+        apiKey: 'fixture-key',
+        kind: InstanceKind.vps,
+        dashboardUrl: 'http://127.0.0.1:${fixture.server.port}',
+      );
+      final dashboards = List.generate(
+        3,
+        (_) => fixture.dashboardClient(),
+        growable: false,
+      );
+      for (final dashboard in dashboards) {
+        addTearDown(dashboard.close);
+      }
+      TuiGatewayClient client(int index) => TuiGatewayClient(
+        connection,
+        dashboard: dashboards[index],
+        heartbeatInterval: const Duration(hours: 1),
+        heartbeatDeadline: const Duration(hours: 2),
+      );
+      final chatGateway = client(0);
+      final homeGateway = client(1);
+      final listGateway = client(2);
+      addTearDown(homeGateway.close);
+      addTearDown(listGateway.close);
+
+      await Future.wait([
+        chatGateway.connect(),
+        homeGateway.connect(),
+        listGateway.connect(),
+      ]);
+      expect(fixture.loginRequests, 1);
+      expect(fixture.acceptedTickets, hasLength(3));
+
+      final id = connection.id;
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: connection,
+        sessionId: 'mob-$id',
+        sessionTitle: id,
+        notifications: null,
+        onTerminal: () {},
+        api: ApiClient(
+          baseUrl: 'http://127.0.0.1:1',
+          apiKey: 'fixture-key',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
+        desktopGateway: chatGateway,
+        turnIdempotencyCapability: () async => true,
+        desktopRecoveryBackoff: const [Duration(hours: 1)],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'multi-client-user',
+            'role': 'user',
+            'content': 'finish while every client is offline',
+          },
+          {
+            'message_id': 'multi-client-final',
+            'role': 'assistant',
+            'content': 'durable final after outage',
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'finish while every client is offline',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery(id, _NoopOutbox()),
+      );
+      expect(fixture.promptSubmissions, 1);
+      expect(chat.storedSessionId, _MultiClientOutageFixture.storedSessionId);
+
+      fixture.networkAvailable = false;
+      fixture.turnCompleted = true;
+      await fixture.dropSockets();
+      await _waitUntil(() => fixture.ticketRequests >= 4);
+      expect(chat.storedSessionId, _MultiClientOutageFixture.storedSessionId);
+      await _waitUntil(
+        () => !homeGateway.isConnected && !listGateway.isConnected,
+      );
+
+      fixture.networkAvailable = true;
+      fixture.restoredTicketFailuresRemaining = 1;
+      if (chatReconnectsFirst) {
+        chat.requestImmediateTransportRecovery();
+        await _waitUntil(() => fixture.restoredTicketFailuresRemaining == 0);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        chat.requestImmediateTransportRecovery();
+        await fixture.firstResume.future.timeout(const Duration(seconds: 2));
+      } else {
+        await expectLater(homeGateway.connect(), throwsA(isA<Exception>()));
+        await homeGateway.connect();
+        await listGateway.connect();
+        chat.requestImmediateTransportRecovery();
+        await fixture.firstResume.future.timeout(const Duration(seconds: 2));
+      }
+
+      expect(
+        fixture.resumeSessionIds.single,
+        _MultiClientOutageFixture.storedSessionId,
+      );
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
+      if (chatReconnectsFirst) {
+        await homeGateway.connect();
+        await listGateway.connect();
+      }
+
+      expect(fixture.resumeSessionIds, [
+        _MultiClientOutageFixture.storedSessionId,
+      ]);
+      expect(fixture.promptSubmissions, 1);
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['content'] == 'finish while every client is offline',
+        ),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.where(
+          (message) => message['content'] == 'durable final after outage',
+        ),
+        hasLength(1),
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+
+      final ticketCount = fixture.ticketRequests;
+      final turnStatusCount = fixture.rpcMethods
+          .where((method) => method == 'turn.status')
+          .length;
+      await chat.reconcileAfterResume();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(fixture.ticketRequests, ticketCount);
+      expect(
+        fixture.rpcMethods.where((method) => method == 'turn.status'),
+        hasLength(turnStatusCount),
+      );
+      expect(fixture.resumeSessionIds, [
+        _MultiClientOutageFixture.storedSessionId,
+      ]);
+      expect(fixture.promptSubmissions, 1);
+    });
+  }
+
+  test(
+    'ticket and socket outage beyond capped retries adopts one durable final',
+    () async {
+      final fixture = _TicketSocketOutageFixture();
+      await fixture.start();
+      addTearDown(fixture.close);
+      final dashboard = DashboardClient(
+        host: '127.0.0.1',
+        port: fixture.server.port,
+        manualToken: 'fixture-session',
+        httpClientOverride: MockClient(fixture.dashboardRequest),
+      );
+      final transport = TuiGatewayClient(
+        SavedConnection(
+          id: 'network-outage-transport',
+          label: 'Network outage transport',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: 'fixture-key',
+          dashboardUrl: 'http://127.0.0.1:${fixture.server.port}',
+        ),
+        dashboard: dashboard,
+        heartbeatInterval: const Duration(hours: 1),
+        heartbeatDeadline: const Duration(hours: 2),
+      );
+      final gateway = _RealTransportRecoverableGateway(transport);
+      const id = 'network-outage-durable';
+      final chat = _recoverableChat(
+        id,
+        gateway,
+        desktopRecoveryBackoff: const [Duration(milliseconds: 15)],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'network-outage-user',
+            'role': 'user',
+            'content': 'run sleep 70 in the terminal, answer LISTO-NET',
+            'client_turn_id': 'turn-network-outage-durable',
+          },
+          {
+            'message_id': 'network-outage-final',
+            'role': 'assistant',
+            'content': 'LISTO-NET',
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'run sleep 70 in the terminal, answer LISTO-NET',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery(id, _NoopOutbox()),
+      );
+      expect(gateway.submitCalls, 1);
+      expect(fixture.ticketRequests, 1);
+      expect(fixture.upgradeRequests, 1);
+
+      fixture.ticketFailuresRemaining = 3;
+      fixture.upgradeFailuresRemaining = 2;
+      gateway.recoveredState = DesktopTurnState.terminal;
+      await fixture.dropSockets();
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
+
+      expect(gateway.connectCalls, 7);
+      expect(fixture.ticketRequests, 7);
+      expect(fixture.upgradeRequests, 4);
+      expect(fixture.upgradeTickets, fixture.issuedTickets);
+      expect(fixture.issuedTickets.toSet(), hasLength(4));
+      expect(gateway.resumedStoredIds, everyElement('session-$id'));
+      expect(gateway.submitCalls, 1);
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['content'] ==
+              'run sleep 70 in the terminal, answer LISTO-NET',
+        ),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.where((message) => message['content'] == 'LISTO-NET'),
+        hasLength(1),
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+    },
+  );
+
+  test('active turn ticket 401 and 403 stop with sign-in required', () async {
+    for (final status in const [401, 403]) {
+      final gateway = _RecoverableDesktopGateway()
+        ..recoveryConnectError = DashboardWebSocketAuthException(
+          DashboardWebSocketAuthFailureCode.unavailable,
+          statusCode: status,
+        );
+      final chat = _recoverableChat(
+        'coverage-ticket-auth-$status',
+        gateway,
+        desktopRecoveryBackoff: const [Duration.zero],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: 'do not retry authentication failures',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('coverage-ticket-auth-$status', _NoopOutbox()),
+      );
+      gateway.drop();
+      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+
+      expect(gateway.connectCalls, 2, reason: 'HTTP $status');
+      expect(chat.dashboardAuthRequired, isTrue, reason: 'HTTP $status');
+      expect(gateway.submitCalls, 1, reason: 'HTTP $status');
+    }
   });
 
   test('HTTP 404 de sesión es terminal para recovery', () async {
@@ -8125,7 +9417,7 @@ void main() {
       final tombstonePersistStarted = Completer<void>();
       final tombstonePersistGate = Completer<void>();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('legacy-get-tombstone-refresh'),
         sessionId: 'session-legacy-get-tombstone-refresh',
         sessionTitle: 'legacy-get-tombstone-refresh',
@@ -8319,7 +9611,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-refresh-epoch'),
         sessionId: 'session-terminal-refresh-epoch',
         sessionTitle: 'terminal-refresh-epoch',
@@ -8420,7 +9712,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-budget'),
       sessionId: 'session-terminal-budget',
       sessionTitle: 'terminal-budget',
@@ -8452,7 +9744,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-late-tool-only'),
         sessionId: 'session-terminal-late-tool-only',
         sessionTitle: 'terminal-late-tool-only',
@@ -8505,7 +9797,15 @@ void main() {
         events.where((event) => event == ActiveChatEvent.done),
         hasLength(1),
       );
-      expect(chat.internalMessagesForTesting.first['message_id'], 'late-tool');
+      final assistant = chat.internalMessagesForTesting.first;
+      expect(assistant['role'], 'assistant');
+      final activity = normalizeAssistantActivityTrace(
+        assistant[assistantActivityTraceKey],
+      );
+      expect(activity, hasLength(1));
+      expect(activity.single, containsPair('kind', 'tool'));
+      expect(activity.single, containsPair('label', 'search'));
+      expect(activity.single, containsPair('status', 'completed'));
       api.requests.first.complete(const []);
     },
   );
@@ -8516,7 +9816,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-open-call-unlinked-tool'),
         sessionId: 'session-terminal-open-call-unlinked-tool',
         sessionTitle: 'terminal-open-call-unlinked-tool',
@@ -8578,7 +9878,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-empty-after-partial-delta'),
       sessionId: 'session-terminal-empty-after-partial-delta',
       sessionTitle: 'terminal-empty-after-partial-delta',
@@ -8649,7 +9949,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-duplicate-exactly-once'),
         sessionId: 'session-terminal-duplicate-exactly-once',
         sessionTitle: 'terminal-duplicate-exactly-once',
@@ -8694,7 +9994,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-compacting-empty'),
       sessionId: 'session-terminal-compacting-empty',
       sessionTitle: 'terminal-compacting-empty',
@@ -8750,7 +10050,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-dispose-get'),
       sessionId: 'session-terminal-dispose-get',
       sessionTitle: 'terminal-dispose-get',
@@ -8780,7 +10080,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-dispose-delay'),
       sessionId: 'session-terminal-dispose-delay',
       sessionTitle: 'terminal-dispose-delay',
@@ -8808,7 +10108,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-tool-only'),
         sessionId: 'session-terminal-tool-only',
         sessionTitle: 'terminal-tool-only',
@@ -8845,7 +10145,15 @@ void main() {
       await done.timeout(const Duration(seconds: 1));
 
       expect(api.requests, hasLength(1));
-      expect(chat.internalMessagesForTesting.first['role'], 'tool');
+      final assistant = chat.internalMessagesForTesting.first;
+      expect(assistant['role'], 'assistant');
+      final activity = normalizeAssistantActivityTrace(
+        assistant[assistantActivityTraceKey],
+      );
+      expect(activity, hasLength(1));
+      expect(activity.single, containsPair('kind', 'tool'));
+      expect(activity.single, containsPair('label', 'search'));
+      expect(activity.single, containsPair('status', 'completed'));
       expect(chat.state, ChatPipelineState.completed);
     },
   );
@@ -8856,7 +10164,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-stale-assistant'),
         sessionId: 'session-terminal-stale-assistant',
         sessionTitle: 'terminal-stale-assistant',
@@ -8925,7 +10233,7 @@ void main() {
         }),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-delayed',
           label: 'Delayed',
@@ -8971,7 +10279,7 @@ void main() {
       httpClient: MockClient((_) async => http.Response('not found', 404)),
     );
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn-refresh',
         label: 'Refresh',
@@ -9225,7 +10533,7 @@ void main() {
     },
   );
 
-  test('error terminal al cancelar retira el runtime muerto', () async {
+  test('error terminal 4007 confirma Stop sin retirar el runtime', () async {
     final gateway = _LifecycleRecoverableGateway()
       ..interruptErrorsRemaining = 1
       ..interruptError = const TuiGatewayRpcError(
@@ -9248,15 +10556,16 @@ void main() {
     );
     expect(chat.desktopRuntimeSessionId, isNotNull);
 
-    chat.cancel();
-    await _waitUntil(() => gateway.interruptCalls == 1);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final runtimeId = chat.desktopRuntimeSessionId;
+    await chat.cancel();
 
-    expect(chat.desktopRuntimeSessionId, isNull);
+    expect(gateway.interruptCalls, 1);
+    expect(chat.stopConfirmationState, StopConfirmationState.confirmed);
+    expect(chat.desktopRuntimeSessionId, runtimeId);
   });
 
   test(
-    'terminal ausente retira el runtime antes del turno siguiente',
+    'terminal ausente conserva el runtime para el turno siguiente',
     () async {
       final gateway = _LifecycleRecoverableGateway();
       final chat = _recoverableChat(
@@ -9286,18 +10595,9 @@ void main() {
           .timeout(const Duration(milliseconds: 300));
 
       expect(gateway.submittedRuntimeIds, hasLength(2));
-      expect(gateway.submittedRuntimeIds.last, isNot(oldRuntimeId));
-      gateway.emit(
-        'message.complete',
-        sessionId: oldRuntimeId,
-        payload: const {'text': 'STALE_OLD_TURN'},
-      );
-      await Future<void>.delayed(Duration.zero);
+      expect(gateway.submittedRuntimeIds.last, oldRuntimeId);
+      expect(chat.desktopRuntimeSessionId, oldRuntimeId);
       expect(chat.isStreaming, isTrue);
-      expect(
-        chat.messages.any((message) => message['content'] == 'STALE_OLD_TURN'),
-        isFalse,
-      );
     },
   );
 
@@ -9345,7 +10645,7 @@ void main() {
         {'role': 'assistant', 'content': 'Aquí están las noticias.'},
       ]);
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('drop-reconcile'),
         sessionId: 'session-drop-reconcile',
         sessionTitle: 'drop-reconcile',
@@ -9394,7 +10694,7 @@ void main() {
     ]);
     final terminalEvents = <ActiveChatEvent>[];
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('legacy-authority-once'),
       sessionId: 'session-legacy-authority-once',
       sessionTitle: 'legacy-authority-once',
@@ -9443,7 +10743,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ToolThenFinalTranscriptApi();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('drop-tool-then-final'),
         sessionId: 'session-drop-tool-then-final',
         sessionTitle: 'drop-tool-then-final',

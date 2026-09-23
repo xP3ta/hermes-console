@@ -30,8 +30,6 @@ APKS = {
     "app-x86_64-full-release.apk": "x86_64",
 }
 EVIDENCE_FILES = {
-    "source-binding.json",
-    "double-build-manifest.json",
     "rebuild-comparison.json",
     *{
         f"artifacts/full/{Path(name).stem}/{leaf}"
@@ -792,8 +790,6 @@ class Slice4ArtifactReinspectionTest(unittest.TestCase):
         policy.write_bytes(canonical(policy_value))
         evidence = source / "build/release-evidence"
         evidence.mkdir()
-        shutil.copy2(binding, evidence / "source-binding.json")
-        shutil.copy2(manifest, evidence / "double-build-manifest.json")
         shutil.copy2(
             double_output / "rebuild-comparison.json",
             evidence / "rebuild-comparison.json",

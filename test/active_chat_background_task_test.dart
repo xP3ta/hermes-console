@@ -7,7 +7,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Minimal fake — only what `ActiveChat` needs to reach a live desktop
 /// runtime and let a `TuiGatewayEvent` through `_onDesktopEvent`.
@@ -68,7 +68,7 @@ class _FakeDesktopGateway implements HermesDesktopGateway {
 Future<void> _settle() => Future<void>.delayed(Duration.zero);
 
 ActiveChat _buildChat(_FakeDesktopGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: SavedConnection(
     id: 'conn-bg',
     label: 'Background',
@@ -92,6 +92,24 @@ ActiveChat _buildChat(_FakeDesktopGateway gateway) => ActiveChat(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'session controls report a missing runtime instead of succeeding',
+    () async {
+      final gateway = _FakeDesktopGateway();
+      final chat = _buildChat(gateway);
+      addTearDown(chat.dispose);
+
+      await expectLater(
+        chat.sendSessionControlAction('loop.stop'),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      await expectLater(
+        chat.stopBackgroundProcess('process-1'),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+    },
+  );
 
   test('background.complete records a successful outcome by task_id', () async {
     final gateway = _FakeDesktopGateway();

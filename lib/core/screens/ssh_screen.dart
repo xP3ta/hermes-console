@@ -8,6 +8,7 @@ import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import 'sftp_browser_screen.dart';
 import 'ssh_credentials_screen.dart';
 import 'ssh_terminal_screen.dart';
@@ -60,8 +61,10 @@ class _SshScreenState extends State<SshScreen> {
   Future<void> _forgetHostKey() async {
     await _mgr.forgetFingerprint(widget.connection.id);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(Strings.of(context).ssh2HostKeyForgotten)));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).ssh2HostKeyForgotten)),
+        kind: HermesNoticeKind.success,
+      );
     }
   }
 

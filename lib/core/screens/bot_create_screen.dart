@@ -33,6 +33,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_bot_face.dart';
 import '../widgets/bot_face_options.dart';
 import '../widgets/bot_avatar_generate_button.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'mission_control_copy.dart';
@@ -430,7 +431,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   Future<void> _pickImage() async {
     if (_pickingImage || _busy || _identityLocked) return;
     setState(() => _pickingImage = true);
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     try {
       final file =
           await (widget.imagePicker?.call() ??

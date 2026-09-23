@@ -149,8 +149,8 @@
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-hdpi/ic_launcher_background.png",
-      "sha256": "be7828d6ee61a78064d62157508064af542a1a2d0afff1276a8bc938c3ff5199",
-      "size": 453
+      "sha256": "87ed28d39b24a58e839298548fa842416bd388f403be926ae6947523365c48f7",
+      "size": 61264
     },
     {
       "kind": "asset",
@@ -165,8 +165,8 @@
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-mdpi/ic_launcher_background.png",
-      "sha256": "766690912edef641166182827df881e66aeb8270431108b4ddda480dd672b73e",
-      "size": 319
+      "sha256": "2b63cb36d91d788618955da458110c596027514aa56be60a83148f50b4f4820d",
+      "size": 31738
     },
     {
       "kind": "asset",
@@ -197,8 +197,8 @@
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-xhdpi/ic_launcher_background.png",
-      "sha256": "3e255fb70c435afc0f4be9fef9c2eb24c6165353e4d8a14819a4aeec2e28d164",
-      "size": 655
+      "sha256": "6c9d18cf6b391af220f5d26efe206c953da056a27418d291f73cc59ec79a0402",
+      "size": 92927
     },
     {
       "kind": "asset",
@@ -213,8 +213,8 @@
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-xxhdpi/ic_launcher_background.png",
-      "sha256": "c0c9112858647375d19f0850b2b81f145f04460b3bd1e009dd938edc945dfe44",
-      "size": 1021
+      "sha256": "802bdbb8055a31a180602903a6f3483fe7017bbc9e6232085e77614c2bd288f6",
+      "size": 164988
     },
     {
       "kind": "asset",
@@ -229,8 +229,8 @@
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_background.png",
-      "sha256": "0bc2c37221facb70b94643ed9c22c0492a19a6f3a524df8e01af7dfa608c72d7",
-      "size": 1333
+      "sha256": "4c013c513afc998ea2844cd0bda6c77d4152ca940bc4ab1e4f3ce963494a501a",
+      "size": 242367
     },
     {
       "kind": "asset",
@@ -245,80 +245,80 @@
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
-      "sha256": "bca8e0db65ee68ee01afa0fb7a35e8fbcc2483ff1b300659361137b27cfcff94",
-      "size": 5843
+      "sha256": "b114350b8ec11da929624cd5833176951b77eaf13f1bec5fb0f3a6d04bafca95",
+      "size": 7320
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
-      "sha256": "094eda9d4046784350c072b7d59948b91cf04da07c951239c577fd4fb1c9a861",
-      "size": 6376
+      "sha256": "96cc944607fab14eab56a781d3339a9da9b365907b8ffadd355ffeb1dc6b355a",
+      "size": 7527
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
-      "sha256": "4ec9d35cf1d181320448e5c81d31c0f27479cc332fd380c52d4d137e41c43cc5",
-      "size": 3091
+      "sha256": "7d27f8cb87b6a7f11c29acf5ca0191996b8ee258765e9dde93a012211fac49bf",
+      "size": 3839
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
-      "sha256": "4a67ba65e1e49e4fb08ddcb17e6a5dec8e48d3febce9153241a54b96eab3d275",
-      "size": 3448
+      "sha256": "5a3dea37c1cd915ba7e4b33a319df910e635c02e8fae1f11a4d035c0d8525177",
+      "size": 3910
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
-      "sha256": "29fbe674401f335fb72157af428a8828cb3e6bd10f145490cf0f68527eb792bc",
-      "size": 9118
+      "sha256": "75f81b832e908adea5117581a03013145ddcb910b4e10b8ba9a3409add1c00c0",
+      "size": 12110
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
-      "sha256": "a6fbad5af3e11d6636a3a55c004873a0306677d49fd85f7b0a9c49b4e8bff02b",
-      "size": 9923
+      "sha256": "0cc4d5e5f2da152af3cd58b6b31bf5416e4a806ceda59de6ed615e8a43a2e73b",
+      "size": 12265
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
-      "sha256": "360c67ad6a14439207390516b3c09c9400acdac0185ed2130b42a90ca18e39ed",
-      "size": 17006
+      "sha256": "acd10a9bf2bb7772995fbe8569c4fc17dccc78bdfd65918c76c32fb5b3445775",
+      "size": 23972
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
-      "sha256": "257759eba032cd75a66ec3177c21a205482a1dc1c8ad0280cf71634ee920ae46",
-      "size": 18357
+      "sha256": "f45c4f9ec6d737d0705b4feb75a7764c8e156191989fcad5213fe66c15391528",
+      "size": 24051
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
-      "sha256": "4f7516ba1c1c7b1199891100e9792d6ae4f8e5d9e8da0eafb819e3cb81f7f441",
-      "size": 26302
+      "sha256": "32f61a579b4b642c3076d2c1b2f4a0d35c7c4af08c5ed23d85f31f52ce082aeb",
+      "size": 37622
     },
     {
       "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
-      "sha256": "d6e85e9134d751ab7086037ddf79768222093ed3468198e80dd5d48207fb2b70",
-      "size": 28094
+      "sha256": "c0156ede78b029af233a661ee08babbba0986a30a43d57282f8cdf10a5fdfce3",
+      "size": 37537
     },
     {
       "kind": "asset",
@@ -641,5 +641,5 @@
       "size": 127920
     }
   ],
-  "inputFingerprint": "e1a32cdb20b93676b63f57771d0da036fa6c3fd28e5c4ad1e6188dfe62c1c9a9"
+  "inputFingerprint": "9d0a33961fe2dac409767b47d09d4b5fea7ba7c333e2bc5b60000f5fa1e3b595"
 }

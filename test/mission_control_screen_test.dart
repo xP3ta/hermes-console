@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/widgets/room_member_status.dart';
+import 'package:hermes_android/core/widgets/remote_bot_roster.dart';
 import 'package:hermes_android/core/models/bot_visual_identity.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
@@ -265,6 +266,7 @@ Widget _host({
   EdgeInsets viewPadding = EdgeInsets.zero,
   SavedConnection? connection,
   ValueChanged<Session>? botChatOpenObserver,
+  RemoteBotLoader? remoteBotLoader,
   MissionControlOpenTarget? initialOpenTarget,
   HermesDesktopBotCreationGateway? botCreateGateway,
   HermesDesktopProfileAssetsGateway? profileAssetsGateway,
@@ -294,6 +296,7 @@ Widget _host({
     activeChats: activeChats,
     initialOpenTarget: initialOpenTarget,
     botChatOpenObserver: botChatOpenObserver,
+    remoteBotLoader: remoteBotLoader,
     botCreateGateway: botCreateGateway,
     profileAssetsGateway: profileAssetsGateway,
     modelOptionsLoader: botCreateGateway == null ? null : (_) async => const [],
@@ -1247,9 +1250,153 @@ void main() {
       // Resumes the existing canonical row instead of minting a new,
       // zero-message hidden session on every attempt.
       expect(opened?.lineageRootId, 'canon-bot-chat-1');
-      // Not yet an official ui_meta pin: goes through the local-pin send
-      // path so the first prompt promotes it to one.
-      expect(opened?.source, 'bot-mode-local');
+      expect(opened?.source, 'bot-mode-canonical');
+    },
+  );
+
+  testWidgets(
+    'canonical Bot Chat tip supersedes a stale official metadata pin',
+    (tester) async {
+      final manager = await _manager();
+      final botStore = MissionBotChatStore(manager.prefs);
+      Session? opened;
+      final profile = AgentProfile.fromJson({
+        'name': 'infra',
+        'ui_meta': {
+          'hermes-bots': {'chat': 'stale-official'},
+        },
+        'canonical_session': {
+          'id': 'canonical-root',
+          'resolved_id': 'canonical-tip',
+        },
+      });
+
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatStore: botStore,
+          botChatOpenObserver: (session) => opened = session,
+          snapshot: _snapshot(profiles: [profile]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openBotChat(tester, 'infra');
+
+      expect(opened?.lineageRootId, 'canonical-tip');
+      expect(opened?.source, 'bot-mode-canonical');
+    },
+  );
+
+  testWidgets(
+    'canonical Bot Chat bypasses a corrupt stale local compatibility pin',
+    (tester) async {
+      final manager = await _manager();
+      final botStore = MissionBotChatStore(manager.prefs);
+      await botStore.save(
+        connectionId: _connection.id,
+        profile: 'infra',
+        sessionId: 'stale-local',
+      );
+      secureStore[secureStore.keys.single] = 'bad\nsession';
+      Session? opened;
+      final profile = AgentProfile.fromJson({
+        'name': 'infra',
+        'canonical_session': {'id': 'canonical-root'},
+      });
+
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatStore: botStore,
+          botChatOpenObserver: (session) => opened = session,
+          snapshot: _snapshot(profiles: [profile]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openBotChat(tester, 'infra');
+
+      expect(opened?.lineageRootId, 'canonical-root');
+      expect(opened?.source, 'bot-mode-canonical');
+      expect(
+        find.textContaining('No se pudo verificar el Bot Chat'),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'canonical Bot Chat remains usable when deprecated pin metadata is malformed',
+    (tester) async {
+      final manager = await _manager();
+      final botStore = MissionBotChatStore(manager.prefs);
+      Session? opened;
+      final profile = AgentProfile.fromJson({
+        'name': 'infra',
+        'ui_meta': {
+          'hermes-bots': {'chat': 42},
+        },
+        'canonical_session': {'id': 'canonical-root'},
+      });
+
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatStore: botStore,
+          botChatOpenObserver: (session) => opened = session,
+          snapshot: _snapshot(profiles: [profile]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openBotChat(tester, 'infra');
+
+      expect(opened?.lineageRootId, 'canonical-root');
+      expect(opened?.source, 'bot-mode-canonical');
+      expect(
+        find.textContaining('No se pudo verificar el Bot Chat'),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'remote Bot Chat also opens the server-resolved canonical lineage tip',
+    (tester) async {
+      final manager = await _manager();
+      final remote = SavedConnection(
+        id: 'remote-canonical',
+        label: 'Remote Lab',
+        host: 'remote.invalid',
+        port: 8642,
+        apiKey: 'test-only',
+      );
+      await manager.upsertConnection(remote);
+      Session? opened;
+      final remoteProfile = AgentProfile.fromJson({
+        'name': 'remote-infra',
+        'ui_meta': {
+          'hermes-bots': {
+            'title': 'Remote Canonical',
+            'chat': 'stale-remote-pin',
+          },
+        },
+        'canonical_session': {'id': 'remote-root', 'resolved_id': 'remote-tip'},
+      });
+
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          botChatOpenObserver: (session) => opened = session,
+          remoteBotLoader: (_) async => [remoteProfile],
+          snapshot: _snapshot(profiles: const [AgentProfile(name: 'local')]),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remote Canonical'));
+      await tester.pumpAndSettle();
+
+      expect(opened?.lineageRootId, 'remote-tip');
+      expect(opened?.source, 'bot-mode-canonical');
+      expect(opened?.profile, 'remote-infra');
     },
   );
 
@@ -1291,20 +1438,20 @@ void main() {
   );
 
   testWidgets(
-    'an explicit null official pin ignores a stale canonical_session too',
+    'explicit null legacy metadata cannot suppress the canonical Bot Chat',
     (tester) async {
       final manager = await _manager();
       final botStore = MissionBotChatStore(manager.prefs);
       Session? opened;
-      // Desktop is mid-recreation of the pin (`chat: null`): even if the
-      // registry still reports the about-to-be-replaced row, this is a real
-      // reset and must defer to create-on-first-submit, not resume the old row.
-      final resetMidFlight = AgentProfile.fromJson({
+      final profile = AgentProfile.fromJson({
         'name': 'codex-qa',
         'ui_meta': {
           'hermes-bots': {'chat': null, 'title': 'QA'},
         },
-        'canonical_session': {'id': 'stale-before-recreate'},
+        'canonical_session': {
+          'id': 'canonical-root',
+          'resolved_id': 'canonical-tip',
+        },
       });
 
       await tester.pumpWidget(
@@ -1312,15 +1459,14 @@ void main() {
           manager: manager,
           botChatStore: botStore,
           botChatOpenObserver: (session) => opened = session,
-          snapshot: _snapshot(profiles: [resetMidFlight]),
+          snapshot: _snapshot(profiles: [profile]),
         ),
       );
       await tester.pumpAndSettle();
       await _openBotChat(tester, 'codex-qa');
 
-      expect(opened, isNotNull);
-      expect(opened?.lineageRootId, isNull);
-      expect(opened?.source, 'mobile-bot');
+      expect(opened?.lineageRootId, 'canonical-tip');
+      expect(opened?.source, 'bot-mode-canonical');
     },
   );
 

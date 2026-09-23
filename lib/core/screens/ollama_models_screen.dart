@@ -25,6 +25,7 @@ import '../services/platform/android_apps.dart';
 import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/read_only.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
@@ -702,7 +703,7 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(msg, style: const TextStyle(fontSize: 12)),
         duration: const Duration(seconds: 3),

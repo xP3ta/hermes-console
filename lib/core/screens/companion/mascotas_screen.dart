@@ -14,6 +14,7 @@ import '../../companion/models/companion_animation_state.dart';
 import '../../companion/models/companion_display_settings.dart';
 import '../../companion/models/companion_presence_level.dart';
 import '../../companion/render/companion_preview.dart';
+import '../../widgets/hermes_notice.dart';
 import 'companion_playground_screen.dart';
 import 'petdex_gallery_screen.dart';
 import '../../companion/render/spritesheet_renderer.dart';
@@ -554,7 +555,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
   /// [CompanionImportService]). No hay red ni subida; ante datos inválidos
   /// muestra un aviso claro y no instala nada.
   Future<void> _importPet() async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
+    final messenger = HermesNotice.maybeOf(context);
     final str = Strings.of(context);
     Uint8List? bytes;
     try {
@@ -568,15 +569,18 @@ class _MascotasBodyState extends State<_MascotasBody> {
       final pet = await controller.importFromZipBytes(bytes);
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petImportedSnack(pet.name))),
+        kind: HermesNoticeKind.success,
       );
     } on CompanionImportException catch (e) {
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petImportFailed(e.message))),
+        kind: HermesNoticeKind.error,
       );
     } catch (e) {
       debugPrint('[mascotas] fallo inesperado al importar mascota: $e');
       messenger?.showSnackBar(
         SnackBar(content: Text(str.petImportFailedGeneric)),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -585,11 +589,12 @@ class _MascotasBodyState extends State<_MascotasBody> {
   /// ([kPetdexUrlVerified] == false), NO abre nada y avisa de que está
   /// pendiente. Nunca descarga ni hace peticiones propias.
   Future<void> _openPetdex() async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
+    final messenger = HermesNotice.maybeOf(context);
     final strCantOpen = Strings.of(context).petdexCantOpen;
     if (!widget.petdexVerified) {
       messenger?.showSnackBar(
         SnackBar(content: Text(Strings.of(context).petdexLinkPending)),
+        kind: HermesNoticeKind.warning,
       );
       return;
     }
@@ -601,7 +606,10 @@ class _MascotasBodyState extends State<_MascotasBody> {
       ok = false;
     }
     if (!ok) {
-      messenger?.showSnackBar(SnackBar(content: Text(strCantOpen)));
+      messenger?.showSnackBar(
+        SnackBar(content: Text(strCantOpen)),
+        kind: HermesNoticeKind.warning,
+      );
     }
   }
 

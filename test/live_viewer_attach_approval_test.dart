@@ -5,13 +5,13 @@ import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _ViewerGateway
     implements
@@ -157,22 +157,12 @@ class _ViewerGateway
   }
 }
 
-final class _DelayedFenceStorage implements DesktopCompressionFenceStorage {
-  final Completer<String?> readGate = Completer<String?>();
-
-  @override
-  Future<String?> read() => readGate.future;
-
-  @override
-  Future<void> write(String value) async {}
-}
-
 ActiveChat _chat(
   _ViewerGateway gateway, {
   required int Function() restCalls,
   bool attachDesktopRuntimeOnLoad = true,
   bool allowUnownedDesktopSnapshotForTesting = true,
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
   Future<http.Response> Function()? restResponse,
   Future<void> Function()? beforePrivacyCheckpointSave,
   Future<void> Function()? beforePrivacySnapshotLoad,
@@ -180,7 +170,7 @@ ActiveChat _chat(
   StoredSessionMessageLoader? storedMessageLoader,
 }) {
   return ActiveChat(
-    compressionFenceStore: compressionFenceStore ?? testCompressionFenceStore(),
+    compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
     connection: SavedConnection(
       id: 'live-viewer',
       label: 'Live viewer',
@@ -443,85 +433,6 @@ void main() {
     expect(gateway.submitCalls, 0);
     expect(reads, 0);
   });
-
-  test(
-    'automatic viewer attach waits for durable compression authority',
-    () async {
-      Future<
-        ({
-          ActiveChat chat,
-          _ViewerGateway gateway,
-          _DelayedFenceStorage storage,
-        })
-      >
-      fixture(String suffix) async {
-        final storage = _DelayedFenceStorage();
-        final gateway = _ViewerGateway(
-          DesktopSessionSnapshot.fromJson(
-            const {
-              'session_id': 'runtime-live',
-              'session_key': 'stored-live',
-              'messages': <Object>[],
-              'running': true,
-            },
-            requestedStoredSessionId: 'stored-live',
-            created: false,
-            method: 'session.resume',
-          ),
-        );
-        final chat = _chat(
-          gateway,
-          restCalls: () => 0,
-          compressionFenceStore: DesktopCompressionFenceStore(
-            storage: storage,
-            mutationNamespaceForTesting: 'viewer-fence-$suffix',
-          ),
-        );
-        chat.messagesLoaded = true;
-        return (chat: chat, gateway: gateway, storage: storage);
-      }
-
-      final unreadable = await fixture('unreadable');
-      final unreadableAttach = unreadable.chat.attachExistingRuntimeViewer();
-      await Future<void>.delayed(Duration.zero);
-      expect(unreadable.gateway.connectCalls, 0);
-      expect(unreadable.gateway.resumeCalls, 0);
-      unreadable.storage.readGate.complete('{malformed');
-      expect(await unreadableAttach, isFalse);
-      expect(unreadable.gateway.resumeCalls, 0);
-      unreadable.chat.dispose();
-      await unreadable.gateway.close();
-
-      final absent = await fixture('absent');
-      final absentAttach = absent.chat.attachExistingRuntimeViewer();
-      await Future<void>.delayed(Duration.zero);
-      expect(absent.gateway.resumeCalls, 0);
-      absent.storage.readGate.complete(null);
-      expect(await absentAttach, isTrue);
-      expect(absent.gateway.resumeCalls, 1);
-      absent.chat.dispose();
-      await absent.gateway.close();
-
-      final disposed = await fixture('disposed');
-      final disposedAttach = disposed.chat.attachExistingRuntimeViewer();
-      await Future<void>.delayed(Duration.zero);
-      disposed.chat.dispose();
-      disposed.storage.readGate.complete(null);
-      expect(await disposedAttach, isFalse);
-      expect(disposed.gateway.resumeCalls, 0);
-      await disposed.gateway.close();
-
-      final changed = await fixture('changed');
-      final changedAttach = changed.chat.attachExistingRuntimeViewer();
-      await Future<void>.delayed(Duration.zero);
-      changed.chat.bindSessionProfile('other-profile');
-      changed.storage.readGate.complete(null);
-      expect(await changedAttach, isFalse);
-      expect(changed.gateway.resumeCalls, 0);
-      changed.chat.dispose();
-      await changed.gateway.close();
-    },
-  );
 
   test(
     'viewer attach restores pending approval from resume snapshot',

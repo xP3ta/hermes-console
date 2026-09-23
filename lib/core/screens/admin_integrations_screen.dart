@@ -6,6 +6,7 @@ import '../../main.dart';
 import '../models/admin_integrations.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/mcp_provisioning_surface.dart';
 import '../widgets/webhook_admin_surfaces.dart';
@@ -138,7 +139,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
 
   void _showNotice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_pill.dart';
+import 'package:hermes_android/core/widgets/session_status_tone.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 /// Inicio › conversaciones recientes.
@@ -104,6 +105,44 @@ void main() {
       );
     });
 
+    testWidgets(
+      'actividad viva ofrece Stop compacto sin overflow',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 800);
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = 2;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        var stopCalls = 0;
+
+        for (final themeId in ['light', 'dark']) {
+          await tester.pumpWidget(
+            host(
+              HomeRecentSessionTileForTesting(
+                sessionId: 'chat-stop',
+                title: 'Sesión trabajando',
+                activityLabel: 'trabajando',
+                onStop: () async => stopCalls++,
+              ),
+              themeId: themeId,
+            ),
+          );
+          await tester.pump();
+          expect(
+            find.byKey(const ValueKey('session-row-stop')),
+            findsOneWidget,
+            reason: themeId,
+          );
+          expect(tester.takeException(), isNull, reason: themeId);
+        }
+
+        await tester.tap(find.byKey(const ValueKey('session-row-stop')));
+        await tester.pump();
+        expect(stopCalls, 1);
+      },
+    );
+
     testWidgets('sin borrador la vista previa queda intacta', (tester) async {
       await tester.pumpWidget(
         host(
@@ -118,6 +157,25 @@ void main() {
 
       expect(find.text('Desplegado, healthcheck en verde'), findsOneWidget);
       expect(find.byKey(const ValueKey('home-draft-chat-2')), findsNothing);
+    });
+
+    testWidgets('nunca muestra JSON de tools y usa una etiqueta localizada', (
+      tester,
+    ) async {
+      const rawToolCall = '[{"id":"call_latest","type":"function"}]';
+      await tester.pumpWidget(
+        host(
+          const HomeRecentSessionTileForTesting(
+            sessionId: 'chat-tool',
+            title: 'Deploy a staging',
+            assistantPreview: rawToolCall,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(rawToolCall), findsNothing);
+      expect(find.text('Sin mensajes visibles'), findsOneWidget);
     });
 
     testWidgets(
@@ -175,6 +233,65 @@ void main() {
         }
       },
     );
+
+    for (final themeId in ['dark', 'light']) {
+      testWidgets('each state has its own colour, never the title\'s '
+          '($themeId)', (tester) async {
+        for (final tone in SessionStatusTone.values) {
+          await tester.pumpWidget(
+            host(
+              HomeRecentSessionTileForTesting(
+                sessionId: 'chat-${tone.name}',
+                title: 'Explicar hermes-project-stew',
+                activityLabel: 'estado ${tone.name}',
+                activityTone: tone,
+              ),
+              themeId: themeId,
+            ),
+          );
+          await tester.pumpAndSettle();
+          final colors = Theme.of(
+            tester.element(find.text('estado ${tone.name}')),
+          ).hermes;
+          final title = tester.widget<Text>(
+            find.text('Explicar hermes-project-stew'),
+          );
+          final label = tester.widget<Text>(find.text('estado ${tone.name}'));
+          expect(label.style!.color, sessionStatusColor(colors, tone));
+          expect(label.style!.color, isNot(title.style!.color));
+          expect(label.style!.fontSize, lessThan(title.style!.fontSize!));
+        }
+      });
+    }
+
+    testWidgets('320 dp at 200% text: no overflow in any state', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final tone in SessionStatusTone.values) {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 640),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: host(
+              HomeRecentSessionTileForTesting(
+                sessionId: 'chat-scale-${tone.name}',
+                title: 'Explicar hermes-project-stew con un título muy largo',
+                activityLabel: 'usando herramientas durante mucho rato',
+                activityTone: tone,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: tone.name);
+      }
+    });
   });
 }
 

@@ -57,8 +57,8 @@ final class LocalTranscriptSnapshot {
 /// copia v3 previa en SharedPreferences solo se admite como fallback de lectura.
 class LocalTranscriptStore {
   static const _storage = FlutterSecureStorage();
-  static const _maxStoredMessages = 120;
-  static const _maxEncodedBytes = 512 * 1024;
+  static const _maxStoredMessages = 1000;
+  static const _maxEncodedBytes = 2 * 1024 * 1024;
 
   static const _v3Prefix = 'hermes.transcript.v3.';
   static final Map<String, Future<void>> _writeTails = {};
@@ -135,8 +135,8 @@ class LocalTranscriptStore {
 
   /// Guarda el transcript a partir de la lista viva del chat ([ActiveChat]
   /// usa index 0 = más nuevo). Filtra placeholders del pipeline, errores y
-  /// turnos vacíos: solo user/assistant con contenido. Si no queda nada, borra
-  /// la entrada en vez de dejar un `[]`.
+  /// turnos vacíos: solo user/assistant con contenido o reasoning durable. Si
+  /// no queda nada, borra la entrada en vez de dejar un `[]`.
   static Future<LocalTranscriptSnapshot> saveFromNewestFirst(
     String connId,
     String sessionId,
@@ -454,23 +454,41 @@ class LocalTranscriptStore {
       if (message.containsKey(key)) return null;
     }
     if (role == 'assistant' && message['reasoning'] == true) return null;
+    // Marcadores editoriales duraderos que la caché sí puede reconstruir sin
+    // releer el texto. El resto de clasificaciones sigue fallando cerrado.
+    const cacheableDisplayKinds = {
+      'async_delegation_complete',
+      'process_complete',
+    };
     final rawDisplayKind = message['display_kind']?.toString().trim() ?? '';
     if (rawDisplayKind == 'hidden' ||
         (rawDisplayKind.isNotEmpty &&
-            rawDisplayKind != 'async_delegation_complete')) {
+            (role != 'user' ||
+                !cacheableDisplayKinds.contains(rawDisplayKind)))) {
       return null;
     }
     final rawContent = message['content'];
-    if (rawContent is! String || rawContent.trim().isEmpty) return null;
-    final content = role == 'assistant'
-        ? finalizedPublicAssistantText(rawContent)
-        : rawContent;
-    if (content.trim().isEmpty) return null;
+    if (rawContent is! String) return null;
+    var content = rawContent;
+    if (role == 'assistant') {
+      if (rawContent.trim().isEmpty) {
+        content = codexMessageItemText(message['codex_message_items']);
+      }
+      content = finalizedPublicAssistantText(content);
+    }
+    final reasoning = role == 'assistant'
+        ? durableAssistantReasoningText(message)
+        : '';
+    if (content.trim().isEmpty && reasoning.isEmpty) return null;
 
-    final sanitized = <String, dynamic>{'role': role, 'content': content};
-    if (role == 'user' &&
-        effectiveUserDisplayKind(message) == 'async_delegation_complete') {
-      sanitized['display_kind'] = 'async_delegation_complete';
+    final sanitized = <String, dynamic>{
+      'role': role,
+      'content': content,
+      if (reasoning.isNotEmpty) 'reasoning': reasoning,
+    };
+    final displayKind = role == 'user' ? effectiveUserDisplayKind(message) : '';
+    if (cacheableDisplayKinds.contains(displayKind)) {
+      sanitized['display_kind'] = displayKind;
       final metadata = sanitizeDelegationDisplayMetadata(
         message['display_metadata'],
       );
@@ -495,25 +513,26 @@ class LocalTranscriptStore {
       }
       hadValidMessage = true;
       messages.add(sanitized);
-      if (messages.length > _maxStoredMessages) {
-        messages.removeAt(0);
-        truncated = true;
-        cappedOlderHistory = true;
-      }
     }
-    while (messages.isNotEmpty &&
-        utf8
-                .encode(
-                  _encodeSnapshot(
-                    LocalTranscriptSnapshot(
-                      messages: messages,
-                      olderHistoryTruncated: cappedOlderHistory,
-                    ),
-                  ),
-                )
-                .length >
+    if (messages.length > _maxStoredMessages) {
+      messages.removeRange(0, messages.length - _maxStoredMessages);
+      truncated = true;
+      cappedOlderHistory = true;
+    }
+    if (_encodedTranscriptBytes(messages, cappedOlderHistory) >
+        _maxEncodedBytes) {
+      var low = 0;
+      var high = messages.length;
+      while (low < high) {
+        final middle = low + ((high - low) ~/ 2);
+        if (_encodedTranscriptBytes(messages.sublist(middle), true) <=
             _maxEncodedBytes) {
-      messages.removeAt(0);
+          high = middle;
+        } else {
+          low = middle + 1;
+        }
+      }
+      messages.removeRange(0, low);
       truncated = true;
       cappedOlderHistory = true;
     }
@@ -524,6 +543,20 @@ class LocalTranscriptStore {
       hadValidMessage: hadValidMessage,
     );
   }
+
+  static int _encodedTranscriptBytes(
+    List<Map<String, dynamic>> messages,
+    bool olderHistoryTruncated,
+  ) => utf8
+      .encode(
+        _encodeSnapshot(
+          LocalTranscriptSnapshot(
+            messages: messages,
+            olderHistoryTruncated: olderHistoryTruncated,
+          ),
+        ),
+      )
+      .length;
 
   static Future<void> clear(
     String connId,

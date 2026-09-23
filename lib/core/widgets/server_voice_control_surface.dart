@@ -6,6 +6,7 @@ import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/tts_toolset_config.dart';
 import '../theme/app_theme.dart';
+import 'hermes_notice.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_ui.dart';
 
@@ -395,7 +396,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
   }
 
   void _snack(String message) {
-    ScaffoldMessenger.of(
+    HermesNotice.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
@@ -1265,15 +1266,17 @@ class _ServerVoiceParametersEditorState
         profile: widget.profile,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.voiceServerParametersSaved)));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.voiceServerParametersSaved)),
+        kind: HermesNoticeKind.success,
+      );
       Navigator.pop(context, true);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.voiceServerParametersFailed)));
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(s.voiceServerParametersFailed)),
+        kind: HermesNoticeKind.error,
+      );
       setState(() => _saving = false);
     }
   }

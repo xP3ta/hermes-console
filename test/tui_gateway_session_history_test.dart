@@ -6,6 +6,8 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _Dashboard extends DashboardClient {
   _Dashboard() : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
 
@@ -31,6 +33,10 @@ void main() {
         );
         await for (final raw in socket) {
           final rpc = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(rpc)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(rpc)));
+            continue;
+          }
           requests.add(rpc);
           socket.add(
             jsonEncode({

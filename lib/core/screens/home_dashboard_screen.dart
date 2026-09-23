@@ -1,3 +1,6 @@
+export '../widgets/session_status_tone.dart'
+    show readableActivityTone, resolveActivityTone;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -5,7 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_header_title.dart';
 import '../config/flavor.dart';
+import '../models/desktop_active_session.dart';
 import '../models/home_widget_snapshot.dart';
+import '../models/session_activity.dart';
 import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
 import '../services/agent_runtime/agent_runtime.dart';
@@ -15,12 +20,14 @@ import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
+import '../services/global_activity_aggregate.dart';
 import '../services/home_widget_publisher.dart';
 import '../services/platform/android_apps.dart';
 import '../services/local_transcript_store.dart';
 import '../services/session_archive.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
+import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/assistant_operational_artifacts.dart';
@@ -30,6 +37,7 @@ import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/hermes_drawer.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/home_prompt_composer.dart';
 import '../../main.dart';
@@ -43,6 +51,7 @@ import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_title_editor_route.dart';
+import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'local_instance_control_screen.dart';
@@ -54,6 +63,7 @@ import 'session_list_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
+import '../widgets/session_status_tone.dart';
 import '../../l10n/app_localizations.dart';
 
 /// App home: clean dashboard around the active gateway.
@@ -66,12 +76,20 @@ class HomeDashboardScreen extends StatefulWidget {
   final ApiClient Function(SavedConnection connection)? clientFactory;
   final ValueChanged<double>? onInitialLoadProgress;
   final VoidCallback? onInitialLoadComplete;
+  final ActiveChatService? activeChatsOverride;
+  final GlobalActivityAggregate? globalActivityOverride;
+  final Future<DesktopActiveSessionList> Function()? activeSessionListLoader;
+  final Stream<TuiGatewayEvent>? eventStreamOverride;
 
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
     this.onInitialLoadProgress,
     this.onInitialLoadComplete,
+    @visibleForTesting this.activeChatsOverride,
+    @visibleForTesting this.globalActivityOverride,
+    @visibleForTesting this.activeSessionListLoader,
+    @visibleForTesting this.eventStreamOverride,
     super.key,
   });
 
@@ -98,6 +116,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
   int _refreshStatusEpoch = 0;
+  ActiveChatService? _listenedActiveChats;
+  GlobalActivityAggregate? _listenedGlobalActivity;
+  TuiGatewayClient? _ownedActivityClient;
+  StreamSubscription<TuiGatewayEvent>? _activityEventSubscription;
+  Timer? _activityEventRefreshTimer;
+  Timer? _activityReconnectTimer;
+  Timer? _activityStableTimer;
+  Timer? _activityStaleExpiryTimer;
+  final GatewayReconnectBackoff _activityReconnectBackoff =
+      GatewayReconnectBackoff();
+  DateTime? _lastActivityEventRefreshAt;
+  String? _activityConnectionId;
+  bool _foreground = true;
+  bool _activityRebuildScheduled = false;
+
+  ActiveChatService? get _activeChats =>
+      widget.activeChatsOverride ??
+      context.findAncestorStateOfType<HermesAppState>()?.activeChats;
 
   // Banner de operación local en curso (visible si el usuario salió durante install/uninstall).
   bool _installInProgress = false;
@@ -114,9 +150,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
     _previewHydrationEpoch++;
+    _activityEventRefreshTimer?.cancel();
+    _activityReconnectTimer?.cancel();
+    _activityStableTimer?.cancel();
+    _activityStaleExpiryTimer?.cancel();
+    unawaited(_activityEventSubscription?.cancel());
+    unawaited(_ownedActivityClient?.close());
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
+    _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
+    _listenedGlobalActivity?.removeListener(_onActivityChanged);
     _localStartPoll?.cancel();
     super.dispose();
   }
@@ -124,6 +168,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final activeChats = _activeChats;
+    if (!identical(_listenedActiveChats, activeChats)) {
+      _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
+      _listenedActiveChats = activeChats;
+      activeChats?.activeIds.addListener(_onActivityChanged);
+    }
+    final aggregate =
+        widget.globalActivityOverride ?? activeChats?.globalActivity;
+    if (!identical(_listenedGlobalActivity, aggregate)) {
+      _listenedGlobalActivity?.removeListener(_onActivityChanged);
+      _listenedGlobalActivity = aggregate;
+      aggregate?.addListener(_onActivityChanged);
+    }
     final route = ModalRoute.of(context);
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
@@ -151,10 +208,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // gancho para esto — se dispara siempre que esta pantalla vuelve a ser
     // visible, sin depender de qué call site abrió la pantalla anterior.
     unawaited(_refreshStatus());
+    _scheduleActivityReconnect(immediate: true);
   }
 
   @override
-  void didPushNext() => unawaited(DrawerGestureExclusion.setEnabled(false));
+  void didPushNext() {
+    _activityEventRefreshTimer?.cancel();
+    _activityEventRefreshTimer = null;
+    _activityReconnectTimer?.cancel();
+    _activityReconnectTimer = null;
+    _activityStableTimer?.cancel();
+    _activityStableTimer = null;
+    unawaited(DrawerGestureExclusion.setEnabled(false));
+  }
 
   @override
   void didPop() => unawaited(DrawerGestureExclusion.setEnabled(false));
@@ -177,6 +243,198 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (mounted) _reload();
   }
 
+  void _onActivityChanged() {
+    if (!mounted || _activityRebuildScheduled) return;
+    _activityRebuildScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _activityRebuildScheduled = false;
+      if (mounted) setState(() {});
+    });
+  }
+
+  bool get _activityRefreshAllowed =>
+      mounted && _foreground && _route?.isCurrent != false;
+
+  void _configureActivitySource(SavedConnection? connection) {
+    if (_activityConnectionId == connection?.id) return;
+    _activityConnectionId = connection?.id;
+    _activityEventRefreshTimer?.cancel();
+    _activityEventRefreshTimer = null;
+    _activityReconnectTimer?.cancel();
+    _activityReconnectTimer = null;
+    _activityStableTimer?.cancel();
+    _activityStableTimer = null;
+    _activityReconnectBackoff.markHealthy();
+    _lastActivityEventRefreshAt = null;
+    unawaited(_activityEventSubscription?.cancel());
+    _activityEventSubscription = null;
+    unawaited(_ownedActivityClient?.close());
+    _ownedActivityClient = null;
+    if (connection == null) return;
+
+    if (widget.clientFactory == null &&
+        (widget.activeSessionListLoader == null ||
+            widget.eventStreamOverride == null)) {
+      _ownedActivityClient = TuiGatewayClient(connection);
+    }
+    final stream = widget.eventStreamOverride ?? _ownedActivityClient?.events;
+    _activityEventSubscription = stream?.listen(
+      _onActivityEvent,
+      onError: (_) => _markActivityTransportStale(connection.id),
+    );
+    final client = _ownedActivityClient;
+    if (client != null) unawaited(_connectActivityClient(client, connection.id));
+  }
+
+  Future<void> _connectActivityClient(
+    TuiGatewayClient client,
+    String connectionId,
+  ) async {
+    try {
+      await client.connect();
+      if (_activityConnectionId != connectionId || !_activityRefreshAllowed) {
+        return;
+      }
+      _activityStableTimer?.cancel();
+      _activityStableTimer = Timer(GatewayReconnectBackoff.stableInterval, () {
+        _activityStableTimer = null;
+        if (_activityConnectionId == connectionId && _activityRefreshAllowed) {
+          _activityReconnectBackoff.markHealthy();
+        }
+      });
+      final connection = _active;
+      if (connection != null &&
+          await _refreshRemoteActivity(
+            connection,
+            Session.profileOwner(
+              widget.connManager.activeProfileFor(connection.id),
+            ),
+          )) {
+        _activityReconnectBackoff.markHealthy();
+      }
+    } catch (_) {
+      _markActivityTransportStale(connectionId);
+    }
+  }
+
+  void _scheduleActivityReconnect({bool immediate = false}) {
+    final client = _ownedActivityClient;
+    final connectionId = _activityConnectionId;
+    if (!_activityRefreshAllowed ||
+        client == null ||
+        connectionId == null ||
+        client.isConnected ||
+        _activityReconnectTimer != null) {
+      return;
+    }
+    final delay = immediate
+        ? Duration.zero
+        : _activityReconnectBackoff.nextDelay();
+    _activityReconnectTimer = Timer(delay, () {
+      _activityReconnectTimer = null;
+      if (_activityRefreshAllowed && _activityConnectionId == connectionId) {
+        unawaited(_connectActivityClient(client, connectionId));
+      }
+    });
+  }
+
+  void _markActivityTransportStale(String connectionId) {
+    if (_activityConnectionId != connectionId) return;
+    _activityStableTimer?.cancel();
+    _activityStableTimer = null;
+    final profile = Session.profileOwner(
+      widget.connManager.activeProfileFor(connectionId),
+    );
+    _listenedGlobalActivity?.markTransportStale(connectionId, profile);
+    _activityStaleExpiryTimer?.cancel();
+    _activityStaleExpiryTimer = Timer(
+      GlobalActivityAggregate.staleLivenessCeiling,
+      () {
+        _activityStaleExpiryTimer = null;
+        if (mounted) setState(() {});
+      },
+    );
+    _scheduleActivityReconnect();
+  }
+
+  void _onActivityEvent(TuiGatewayEvent event) {
+    final connection = _active;
+    if (connection == null || !_activityRefreshAllowed) return;
+    final profile = Session.profileOwner(
+      widget.connManager.activeProfileFor(connection.id),
+    );
+    final routed =
+        _listenedGlobalActivity?.observeGatewayEvent(
+          connectionId: connection.id,
+          profile: profile,
+          event: event,
+        ) ??
+        true;
+    if (event.sessionId.isNotEmpty && !routed) {
+      unawaited(_refreshRemoteActivity(connection, profile));
+    }
+    if (!isSessionLibraryRefreshEvent(event)) return;
+    final now = DateTime.now();
+    final last = _lastActivityEventRefreshAt;
+    final elapsed = last == null
+        ? sessionLibraryRefreshGap
+        : now.difference(last);
+    if (last == null || elapsed >= sessionLibraryRefreshGap) {
+      _activityEventRefreshTimer?.cancel();
+      _activityEventRefreshTimer = null;
+      _lastActivityEventRefreshAt = now;
+      unawaited(_refreshStatus());
+      return;
+    }
+    _activityEventRefreshTimer ??= Timer(
+      sessionLibraryRefreshGap - elapsed,
+      () {
+        _activityEventRefreshTimer = null;
+        _lastActivityEventRefreshAt = DateTime.now();
+        if (_activityRefreshAllowed) unawaited(_refreshStatus());
+      },
+    );
+  }
+
+  Future<bool> _refreshRemoteActivity(
+    SavedConnection connection,
+    String profile,
+  ) async {
+    final aggregate = _listenedGlobalActivity;
+    final loader =
+        widget.activeSessionListLoader ??
+        (_ownedActivityClient == null
+            ? null
+            : () => _ownedActivityClient!.listActiveSessions());
+    if (!_activityRefreshAllowed || aggregate == null || loader == null) {
+      return false;
+    }
+    final generation = aggregate.beginRosterRequest(connection.id, profile);
+    try {
+      final roster = await loader();
+      if (!_activityRefreshAllowed || _activityConnectionId != connection.id) {
+        return false;
+      }
+      aggregate.applyRoster(
+        connectionId: connection.id,
+        profile: profile,
+        replayEpoch: _ownedActivityClient?.currentReplayEpoch ?? 'current',
+        requestGeneration: generation,
+        roster: roster,
+      );
+      if (roster.hasMalformedRows) {
+        _markActivityTransportStale(connection.id);
+      } else {
+        _activityStaleExpiryTimer?.cancel();
+        _activityStaleExpiryTimer = null;
+      }
+      return true;
+    } catch (_) {
+      _markActivityTransportStale(connection.id);
+      return false;
+    }
+  }
+
   void _onHistoryCleanupInvalidation(HistoryCleanupInvalidation event) {
     if (!mounted || event.connectionId != _active?.id) return;
     unawaited(_refreshStatus());
@@ -191,12 +449,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) {
+      _activityEventRefreshTimer?.cancel();
+      _activityEventRefreshTimer = null;
+      _activityReconnectTimer?.cancel();
+      _activityReconnectTimer = null;
+      _activityStableTimer?.cancel();
+      _activityStableTimer = null;
+      _activityStaleExpiryTimer?.cancel();
+      _activityStaleExpiryTimer = null;
+      return;
+    }
     // Al volver de segundo plano re-comprobamos la salud: una instancia que
     // sigue viva (p.ej. el agente local con wake-lock) vuelve a "online" sola,
     // sin obligar al usuario a reconectar a mano cada vez que reabre la app.
-    if (state == AppLifecycleState.resumed && _active != null && !_checking) {
-      _refreshStatus();
-    }
+    if (_active != null && !_checking) _refreshStatus();
+    _scheduleActivityReconnect(immediate: true);
   }
 
   /// Re-resolve connections + active gateway from storage, then refresh
@@ -268,6 +537,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _installInProgress = installInProgress;
         _uninstallInProgress = uninstallInProgress;
       });
+      _configureActivitySource(active);
       _reportInitialLoadProgress(0.64);
       await _refreshStatus();
     } finally {
@@ -383,15 +653,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           return;
         case LinkedSessionDeleteStatus.cronDeleteFailed:
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
+              kind: HermesNoticeKind.error,
             );
           }
           return;
         case LinkedSessionDeleteStatus.sessionDeleteFailed:
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            HermesNotice.of(context).showSnackBar(
               SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
+              kind: HermesNoticeKind.error,
             );
           }
           return;
@@ -399,10 +671,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!removed) return;
     }
     if (!mounted || !removed) return;
-    final aggregate = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.activeChats
-        .globalActivity;
+    final aggregate = _activeChats?.globalActivity;
     aggregate?.clearSession(conn.id, ownerProfile, session.id);
     await aggregate?.flushJournal();
     if (!mounted) return;
@@ -431,11 +700,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           )
           .toList();
     });
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(s.homeChatDeleted, style: const TextStyle(fontSize: 13)),
         duration: const Duration(seconds: 2),
       ),
+      kind: HermesNoticeKind.success,
     );
   }
 
@@ -450,17 +720,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (!mounted || newTitle == null) return;
     final trimmed = newTitle.trim();
     if (trimmed.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).slRenameEmpty)),
+        kind: HermesNoticeKind.warning,
       );
       return;
     }
     await archive.setSessionTitle(session, trimmed);
     if (!mounted) return;
     setState(() {});
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(Strings.of(context).slRenamed)));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).slRenamed)),
+      kind: HermesNoticeKind.success,
+    );
   }
 
   Future<void> _showRecentActions(Session session) async {
@@ -529,7 +801,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   void _offerHideRecent(Session session, {String? message}) {
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = HermesNotice.of(context);
     final s = Strings.of(context);
     messenger.showSnackBar(
       SnackBar(
@@ -744,6 +1016,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _archive = archive;
       _recentSessions = recentSessions;
     });
+    await _refreshRemoteActivity(conn, ownerProfile);
+    if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     unawaited(
       app?.updateHomeWidget(
         (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
@@ -792,9 +1066,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     List<Session> sessions,
   ) async {
     final epoch = ++_previewHydrationEpoch;
-    final activeChats = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.activeChats;
+    final activeChats = _activeChats;
     var changed = false;
 
     for (final session in sessions) {
@@ -838,13 +1110,45 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     HomeRecentDateGroup.earlier => Strings.of(context).homeRecentEarlier,
   };
 
+  GlobalActivity? _globalActivityFor(
+    SavedConnection connection,
+    Session session,
+  ) {
+    final aggregate = _listenedGlobalActivity;
+    if (aggregate == null) return null;
+    final profile = Session.profileOwner(session.profile);
+    for (final id in <String>{session.id, session.logicalId}) {
+      if (aggregate.isActive(connection.id, profile, id)) {
+        return aggregate.activityFor(connection.id, profile, id);
+      }
+    }
+    return null;
+  }
+
+  SessionActivityKind _globalActivityKind(GlobalActivity? activity) {
+    if (activity == null || !activity.active) return SessionActivityKind.idle;
+    return switch (activity.phase) {
+      GlobalActivityPhase.preparing => SessionActivityKind.preparing,
+      GlobalActivityPhase.usingTools => SessionActivityKind.usingTools,
+      GlobalActivityPhase.waitingForUser => SessionActivityKind.waitingForUser,
+      GlobalActivityPhase.compacting => SessionActivityKind.compacting,
+      GlobalActivityPhase.delegated => SessionActivityKind.delegated,
+      GlobalActivityPhase.backgroundWork =>
+        SessionActivityKind.backgroundProcess,
+      GlobalActivityPhase.generating ||
+      GlobalActivityPhase.completing ||
+      GlobalActivityPhase.unknown => SessionActivityKind.generating,
+      GlobalActivityPhase.completed ||
+      GlobalActivityPhase.interrupted ||
+      GlobalActivityPhase.failed => SessionActivityKind.idle,
+    };
+  }
+
   List<Widget> _buildRecentRows(SavedConnection connection, int limit) {
     final rows = <Widget>[];
     final now = DateTime.now();
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final activeChats = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.activeChats;
+    final activeChats = _activeChats;
     HomeRecentDateGroup? previousGroup;
     final visible = _recentSessions.take(limit).toList(growable: false);
 
@@ -879,19 +1183,35 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         session.id,
         profile: session.profile,
       );
-
-      Widget recentTile(ChatActivityKind? activity) => _RecentSessionTile(
-        session: session,
-        title: title,
-        summary: summary,
-        activityLabel: _activityLabel(activity),
-        relativeTime: relativeTime(
-          session.lastActivityAt,
-          languageCode: Localizations.localeOf(context).languageCode,
-        ),
-        onTap: () => _openChat(session),
-        onManage: () => _showRecentActions(session),
+      final rosterActivity = _globalActivityKind(
+        _globalActivityFor(connection, session),
       );
+
+      Widget recentTile(
+        SessionActivityKind activity, {
+        int backgroundCount = 0,
+      }) {
+        final activityLabel = _activityLabel(
+          activity,
+          backgroundCount: backgroundCount,
+        );
+        return _RecentSessionTile(
+          session: session,
+          title: title,
+          summary: summary,
+          activityLabel: activityLabel,
+          activityTone: sessionStatusToneFor(activity),
+          relativeTime: relativeTime(
+            session.lastActivityAt,
+            languageCode: Localizations.localeOf(context).languageCode,
+          ),
+          onTap: () => _openChat(session),
+          onStop: activityLabel == null
+              ? null
+              : () => _stopSession(connection, session),
+          onManage: () => _showRecentActions(session),
+        );
+      }
 
       rows.add(
         FadeSlideIn(
@@ -900,10 +1220,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               ? Duration.zero
               : const Duration(milliseconds: 220),
           child: activeChat == null
-              ? recentTile(null)
+              ? recentTile(rosterActivity)
               : StreamBuilder<ActiveChatEvent>(
                   stream: activeChat.changes,
-                  builder: (_, _) => recentTile(activeChat.activityKind),
+                  builder: (_, _) {
+                    final localActivity = activeChat.sessionActivity;
+                    return recentTile(
+                      localActivity.showsActivity
+                          ? localActivity.kind
+                          : rosterActivity,
+                      backgroundCount: localActivity.backgroundItemCount,
+                    );
+                  },
                 ),
         ),
       );
@@ -911,15 +1239,63 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     return rows;
   }
 
-  String? _activityLabel(ChatActivityKind? activity) => switch (activity) {
-    ChatActivityKind.thinking => Strings.of(context).chaPipelineThinking,
-    ChatActivityKind.usingTools => Strings.of(context).chaPipelineExecuting,
-    ChatActivityKind.responding => Strings.of(context).chaPipelineStreaming,
-    ChatActivityKind.awaitingApproval => Strings.of(
-      context,
-    ).homeActivityAwaitingApproval,
-    null => null,
+  String? _activityLabel(
+    SessionActivityKind activity, {
+    int backgroundCount = 0,
+  }) => switch (activity) {
+    SessionActivityKind.preparing || SessionActivityKind.generating =>
+      Strings.of(context).chaPipelineThinking,
+    SessionActivityKind.usingTools =>
+      Strings.of(context).chaPipelineExecuting,
+    SessionActivityKind.responding =>
+      Strings.of(context).chaPipelineStreaming,
+    SessionActivityKind.waitingForUser =>
+      Strings.of(context).homeActivityAwaitingApproval,
+    SessionActivityKind.compacting => Strings.of(context).slActivityCompacting,
+    SessionActivityKind.delegated => Strings.of(context).slActivityDelegated,
+    SessionActivityKind.backgroundProcess => backgroundCount > 0
+        ? Strings.of(context).chaBackgroundActivityCount(backgroundCount)
+        : Strings.of(context).slActivityBackground,
+    SessionActivityKind.idle => null,
   };
+
+  Future<void> _stopSession(
+    SavedConnection connection,
+    Session session,
+  ) async {
+    final activeChats = _activeChats;
+    if (activeChats == null) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+        kind: HermesNoticeKind.error,
+      );
+      return;
+    }
+    try {
+      final result = await activeChats.stopSessionWork(
+        connection: connection,
+        session: session,
+      );
+      if (!result.allBackgroundWorkStopped && mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Strings.of(
+                context,
+              ).chaBackgroundWorkRemaining(result.remainingBackgroundTasks),
+            ),
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+        kind: HermesNoticeKind.error,
+      );
+    }
+  }
 
   void _openChat(
     Session session, {
@@ -2032,79 +2408,6 @@ class _RecentGroupHeader extends StatelessWidget {
   }
 }
 
-/// Contraste mínimo WCAG AA para texto pequeño.
-const double _kMinActivityContrast = 4.5;
-
-double _contrastRatio(Color a, Color b) {
-  final la = a.computeLuminance();
-  final lb = b.computeLuminance();
-  final hi = la > lb ? la : lb;
-  final lo = la > lb ? lb : la;
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-/// Tono legible para la línea de "actividad en curso" sobre [background].
-///
-/// `colors.secondary` cambia radicalmente entre los ~8 temas del catálogo
-/// (de `#1540B1` en Nous claro a `#FFE600` en alto contraste, pasando por
-/// `#606060` en Mono): en varios queda por debajo de 4.5:1 sobre la
-/// superficie y el usuario lo veía "en blanco", indistinguible del título de
-/// la conversación. En vez de fijar un color que solo funciona en un tema, el
-/// tono del tema se aclara —u oscurece, en temas claros— hasta cruzar el
-/// umbral, conservando su identidad.
-@visibleForTesting
-Color readableActivityTone(Color tone, Color background) {
-  if (_contrastRatio(tone, background) >= _kMinActivityContrast) return tone;
-  final target = background.computeLuminance() < 0.5
-      ? Colors.white
-      : Colors.black;
-  var candidate = tone;
-  for (var step = 1; step <= 10; step++) {
-    candidate = Color.lerp(tone, target, step / 10)!;
-    if (_contrastRatio(candidate, background) >= _kMinActivityContrast) {
-      return candidate;
-    }
-  }
-  return candidate;
-}
-
-/// Contraste mínimo para que un tono se perciba como distinto del título.
-const double _kMinTitleSeparation = 1.3;
-
-/// Tono definitivo de la línea de actividad para un tema concreto.
-///
-/// Dos trampas reales del catálogo, las dos con el mismo síntoma (la
-/// actividad acaba con el color del título, que es literalmente la queja
-/// "no se aprecia la diferencia con el título"):
-///  - Mono: `secondary` ya es el gris claro del título (`#EAEAEA`), y
-///    aclararlo para cumplir AA lo deja idéntico. Su `accent` gris medio sí
-///    se separa.
-///  - Cyberpunk: ni `secondary` ni `accent` se separan del `textPrimary`
-///    neón. Ahí se atenúa el tono hacia el fondo hasta separarlo, sin bajar
-///    nunca del umbral AA.
-@visibleForTesting
-Color resolveActivityTone(HermesThemeColors colors) {
-  bool separated(Color tone) =>
-      _contrastRatio(tone, colors.textPrimary) >= _kMinTitleSeparation;
-
-  Color? fallback;
-  for (final candidate in <Color>[colors.secondary, colors.accent]) {
-    final tone = readableActivityTone(candidate, colors.background);
-    if (separated(tone)) return tone;
-    fallback ??= tone;
-  }
-  var tone = fallback!;
-  for (var step = 1; step <= 12; step++) {
-    final dimmed = Color.lerp(fallback, colors.background, step / 20)!;
-    if (_contrastRatio(dimmed, colors.background) < _kMinActivityContrast) {
-      break;
-    }
-    tone = dimmed;
-    if (separated(dimmed)) return dimmed;
-  }
-  return tone;
-}
-
 String _sentenceCase(String value) =>
     value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
 
@@ -2117,14 +2420,21 @@ String _sentenceCase(String value) =>
 /// haciendo la conversación. El tinte de fondo + el punto + el peso dan la
 /// diferencia sin depender de que el `secondary` del tema tenga contraste.
 class _ActivityLine extends StatelessWidget {
-  const _ActivityLine({required this.label, super.key});
+  const _ActivityLine({
+    required this.label,
+    this.tone = SessionStatusTone.working,
+    super.key,
+  });
 
   final String label;
+
+  /// Semantic state: the dot, tint and text share its colour.
+  final SessionStatusTone tone;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final tone = resolveActivityTone(colors);
+    final tone = sessionStatusColor(colors, this.tone);
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -2167,8 +2477,10 @@ class _RecentSessionTile extends StatelessWidget {
   final String title;
   final HomeRecentSummary summary;
   final String? activityLabel;
+  final SessionStatusTone activityTone;
   final String relativeTime;
   final VoidCallback onTap;
+  final Future<void> Function()? onStop;
   final VoidCallback? onManage;
 
   const _RecentSessionTile({
@@ -2176,8 +2488,10 @@ class _RecentSessionTile extends StatelessWidget {
     required this.title,
     required this.summary,
     required this.activityLabel,
+    this.activityTone = SessionStatusTone.working,
     required this.relativeTime,
     required this.onTap,
+    this.onStop,
     this.onManage,
   });
 
@@ -2186,8 +2500,8 @@ class _RecentSessionTile extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final userPreview = summary.user;
-    final assistantPreview = summary.assistant;
+    final userPreview = humanReadableSessionPreview(summary.user);
+    final assistantPreview = humanReadableSessionPreview(summary.assistant);
     final assistantText = assistantPreview == null
         ? null
         : projectAssistantOperationalArtifacts(
@@ -2207,25 +2521,28 @@ class _RecentSessionTile extends StatelessWidget {
             ?basePreview,
           ].join(' · ')
         : basePreview;
+    final visiblePreview = previewText ?? strings.sessionPreviewUnavailable;
 
     // Fila ligera: jerarquía por texto y divisor, sin cards pesadas.
     // Semantics compone una descripción legible para TalkBack (título, turno
     // reciente y estado); ExcludeSemantics evita repeticiones.
     final tile = Semantics(
       button: true,
+      explicitChildNodes: onStop != null,
       onLongPress: onManage,
       label: [
         strings.homeSemanticChat(title, session.messageCount),
         ?userPreview,
         ?assistantOrActivity,
+        if (userPreview == null && assistantOrActivity == null)
+          strings.sessionPreviewUnavailable,
         if (session.hasLocalDraft) strings.slDraftBadge,
       ].join(', '),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         onLongPress: onManage,
-        child: ExcludeSemantics(
-          child: Container(
+        child: Container(
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -2238,79 +2555,88 @@ class _RecentSessionTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: AnimatedSize(
-                    duration: reduceMotion
-                        ? Duration.zero
-                        : const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.topLeft,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 15,
-                            color: colors.textPrimary,
+                  child: ExcludeSemantics(
+                    child: AnimatedSize(
+                      duration: reduceMotion
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topLeft,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 15,
+                              color: colors.textPrimary,
+                            ),
                           ),
-                        ),
-                        AnimatedSwitcher(
-                          duration: reduceMotion
-                              ? Duration.zero
-                              : const Duration(milliseconds: 160),
-                          switchInCurve: Curves.easeOut,
-                          switchOutCurve: Curves.easeIn,
-                          child: activityLabel != null
-                              ? Padding(
-                                  key: ValueKey('activity-$activityLabel'),
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: _ActivityLine(
-                                    key: ValueKey(
-                                      'home-activity-${session.id}',
+                          AnimatedSwitcher(
+                            duration: reduceMotion
+                                ? Duration.zero
+                                : const Duration(milliseconds: 160),
+                            switchInCurve: Curves.easeOut,
+                            switchOutCurve: Curves.easeIn,
+                            child: activityLabel != null
+                                ? Padding(
+                                    key: ValueKey('activity-$activityLabel'),
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: _ActivityLine(
+                                      key: ValueKey(
+                                        'home-activity-${session.id}',
+                                      ),
+                                      label: activityLabel!,
+                                      tone: activityTone,
                                     ),
-                                    label: activityLabel!,
-                                  ),
-                                )
-                              : previewText == null
-                              ? const SizedBox.shrink()
-                              : Padding(
-                                  key: ValueKey('preview-$previewText'),
-                                  padding: const EdgeInsets.only(top: 3),
-                                  child: Text(
-                                    previewText,
-                                    key: session.hasLocalDraft
-                                        ? ValueKey('home-draft-${session.id}')
-                                        : null,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      height: 1.2,
-                                      color: colors.textSecondary,
+                                  )
+                                : Padding(
+                                    key: ValueKey('preview-$visiblePreview'),
+                                    padding: const EdgeInsets.only(top: 3),
+                                    child: Text(
+                                      visiblePreview,
+                                      key: session.hasLocalDraft
+                                          ? ValueKey('home-draft-${session.id}')
+                                          : null,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        height: 1.2,
+                                        color: colors.textSecondary,
+                                      ),
                                     ),
                                   ),
-                                ),
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
+                if (onStop != null) ...[
+                  const SizedBox(width: 8),
+                  SessionRowStopControl(onStop: onStop!),
+                ],
                 const SizedBox(width: 12),
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    relativeTime,
-                    // WCAG AA: el tiempo es información real → textSecondary (≥4.5:1).
-                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                ExcludeSemantics(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      relativeTime,
+                      // WCAG AA: el tiempo es información real → textSecondary (≥4.5:1).
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.textSecondary,
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-        ),
       ),
     );
     if (onManage == null) return tile;
@@ -2362,8 +2688,10 @@ class HomeRecentSessionTileForTesting extends StatelessWidget {
     this.userPreview,
     this.assistantPreview,
     this.activityLabel,
+    this.activityTone = SessionStatusTone.working,
     this.hasLocalDraft = false,
     this.relativeTime = '12:40',
+    this.onStop,
     super.key,
   });
 
@@ -2372,8 +2700,10 @@ class HomeRecentSessionTileForTesting extends StatelessWidget {
   final String? userPreview;
   final String? assistantPreview;
   final String? activityLabel;
+  final SessionStatusTone activityTone;
   final bool hasLocalDraft;
   final String relativeTime;
+  final Future<void> Function()? onStop;
 
   @override
   Widget build(BuildContext context) => _RecentSessionTile(
@@ -2391,8 +2721,10 @@ class HomeRecentSessionTileForTesting extends StatelessWidget {
     title: title,
     summary: HomeRecentSummary(user: userPreview, assistant: assistantPreview),
     activityLabel: activityLabel,
+    activityTone: activityTone,
     relativeTime: relativeTime,
     onTap: () {},
+    onStop: onStop,
   );
 }
 

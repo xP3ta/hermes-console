@@ -23,6 +23,7 @@ import '../services/session_repository.dart';
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
 import '../widgets/accent_card.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
@@ -182,7 +183,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         _archiveOptimistic = null;
         _archivePending = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             archived
@@ -206,7 +207,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           _archiveOptimistic = null;
           _archivePending = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
+        HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               archived
@@ -229,8 +230,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       _archiveOptimistic = null;
       _archivePending = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).slArchiveSyncFailed)),
+      kind: HermesNoticeKind.error,
     );
   }
 
@@ -266,8 +268,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         profile: _session.profile,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).sesDuplicated(fork.title))),
+        kind: HermesNoticeKind.success,
       );
       Navigator.pushReplacement(
         context,
@@ -278,10 +281,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      HermesNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(Strings.of(context).sesDuplicateFailed(e.toString())),
         ),
+        kind: HermesNoticeKind.error,
       );
     }
   }
@@ -363,7 +367,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         case LinkedSessionDeleteStatus.cancelled:
           break;
         case LinkedSessionDeleteStatus.sessionRejected:
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 result.cronDeleted
@@ -374,13 +378,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           );
           break;
         case LinkedSessionDeleteStatus.cronDeleteFailed:
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
+            kind: HermesNoticeKind.error,
           );
           break;
         case LinkedSessionDeleteStatus.sessionDeleteFailed:
-          ScaffoldMessenger.of(context).showSnackBar(
+          HermesNotice.of(context).showSnackBar(
             SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
+            kind: HermesNoticeKind.error,
           );
           break;
       }
@@ -408,8 +414,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       'ID: ${s.id}',
     ];
     Clipboard.setData(ClipboardData(text: lines.join('\n')));
-    ScaffoldMessenger.of(context).showSnackBar(
+    HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).sesCopiedSummary)),
+      kind: HermesNoticeKind.success,
     );
   }
 
@@ -829,12 +836,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   onLongPress: copyable
                       ? () {
                           Clipboard.setData(ClipboardData(text: value));
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          HermesNotice.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
                                 Strings.of(context).sesCopiedMessage,
                               ),
                             ),
+                            kind: HermesNoticeKind.success,
                           );
                         }
                       : null,

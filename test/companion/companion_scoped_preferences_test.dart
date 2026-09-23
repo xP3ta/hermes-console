@@ -112,7 +112,7 @@ void main() {
     );
 
     test(
-      'setSelectedSlugFor(null) solo borra el scope, no el legado',
+      'la selección explícita del Spark sobrevive a recrear el controller',
       () async {
         SharedPreferences.setMockInitialValues({
           CompanionPreferences.slugKey: 'boba',
@@ -122,8 +122,9 @@ void main() {
         await prefs.setSelectedSlugFor('conn-1', 'alpha', 'nimbus');
         await prefs.setSelectedSlugFor('conn-1', 'alpha', null);
 
-        expect(prefs.selectedSlugFor('conn-1', 'alpha'), 'boba'); // fallback
-        expect(prefs.selectedSlug, 'boba');
+        final reloaded = await CompanionPreferences.load();
+        expect(reloaded.selectedSlugFor('conn-1', 'alpha'), isNull);
+        expect(reloaded.selectedSlug, 'boba');
       },
     );
 

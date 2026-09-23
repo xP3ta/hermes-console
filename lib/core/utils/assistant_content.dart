@@ -10,6 +10,8 @@
 /// intacta, garantizando cero cambios de comportamiento en el caso normal.
 library;
 
+import 'dart:convert';
+
 /// True when transport metadata makes a transcript row non-public.
 ///
 /// Call this before projecting or copying a row: several parsers deliberately
@@ -505,6 +507,81 @@ String streamingPublicAssistantText(String raw) =>
 String finalizedPublicAssistantText(String raw) =>
     projectPublicAssistantText(raw, streaming: false).text;
 
+List? _decodedCodexMessageItems(Object? rawItems) {
+  Object? items = rawItems;
+  if (items is String) {
+    try {
+      items = jsonDecode(items);
+    } on FormatException {
+      return null;
+    }
+  }
+  return items is List ? items : null;
+}
+
+/// Recovers reply text persisted by Responses API outside `content`.
+String codexMessageItemText(Object? rawItems) {
+  final items = _decodedCodexMessageItems(rawItems);
+  if (items == null) return '';
+
+  final texts = <String>[];
+  for (final item in items) {
+    if (item is! Map ||
+        item['type'] != 'message' ||
+        item['role'] != 'assistant') {
+      continue;
+    }
+    final phase = item['phase'];
+    if (phase == 'commentary' || phase == 'analysis') continue;
+    final content = item['content'];
+    if (content is! List) continue;
+    for (final part in content) {
+      if (part is! Map) continue;
+      final type = part['type'];
+      final text = part['text'];
+      if ((type == 'output_text' || type == 'text') &&
+          text is String &&
+          text.isNotEmpty) {
+        texts.add(text);
+      }
+    }
+  }
+  return texts.join();
+}
+
+/// Recovers reasoning-channel narration from Responses API message sidecars.
+String codexMessageItemReasoningText(Object? rawItems) {
+  final items = _decodedCodexMessageItems(rawItems);
+  if (items == null) return '';
+
+  final messages = <String>[];
+  for (final item in items) {
+    if (item is! Map ||
+        item['type'] != 'message' ||
+        item['role'] != 'assistant') {
+      continue;
+    }
+    final phase = item['phase'];
+    if (phase != 'commentary' && phase != 'analysis') continue;
+    final content = item['content'];
+    if (content is! List) continue;
+    final parts = <String>[];
+    for (final part in content) {
+      if (part is! Map) continue;
+      final type = part['type'];
+      final text = part['text'];
+      if ((type == 'output_text' || type == 'text') &&
+          text is String &&
+          text.isNotEmpty) {
+        parts.add(text);
+      }
+    }
+    final text = parts.join().trim();
+    if (text.isNotEmpty) messages.add(text);
+  }
+  return messages.join('\n\n');
+}
+
 /// Separa el razonamiento (`<think>…</think>`, `<thinking>…`) de la respuesta.
 ReasoningSplit splitReasoning(String content) {
   if (!_thinkTagResidue.hasMatch(content) &&
@@ -538,25 +615,25 @@ ReasoningSplit splitReasoning(String content) {
   );
 }
 
-/// Extrae el razonamiento ESTRUCTURADO que el backend entrega fuera del
-/// `content` del mensaje (campos `reasoning_content`/`reasoning` al estilo
-/// DeepSeek-reasoner, o la lista `reasoning_details` de OpenRouter). Es la
-/// misma señal que el `<think>` inline, pero viajando por metadata: la UI lo
-/// muestra como el bloque de razonamiento plegado habitual.
+/// Extracts the canonical reasoning text using Hermes Desktop precedence.
 String structuredReasoningText(Map<String, dynamic> metadata) {
-  final parts = <String>[];
-  for (final key in const ['reasoning_content', 'reasoning']) {
+  for (final key in const ['reasoning', 'reasoning_content']) {
     final value = metadata[key];
-    if (value is String && value.trim().isNotEmpty) parts.add(value.trim());
+    if (value is String && value.trim().isNotEmpty) return value.trim();
   }
   final details = metadata['reasoning_details'];
-  if (details is List) {
-    for (final item in details) {
-      final text = item is Map ? (item['text'] ?? item['summary']) : item;
-      if (text is String && text.trim().isNotEmpty) parts.add(text.trim());
-    }
-  }
-  return parts.join('\n\n');
+  return details is String ? details.trim() : '';
+}
+
+/// Combines canonical reasoning with commentary/analysis message sidecars.
+String durableAssistantReasoningText(Map<String, dynamic> metadata) {
+  final structured = structuredReasoningText(metadata);
+  final sidecar = codexMessageItemReasoningText(
+    metadata['codex_message_items'],
+  );
+  if (structured.isEmpty) return sidecar;
+  if (sidecar.isEmpty || sidecar == structured) return structured;
+  return '$structured\n\n$sidecar';
 }
 
 /// Compone el razonamiento estructurado de la metadata del mensaje con el

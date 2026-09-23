@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../models/compaction_progress.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/session.dart';
@@ -58,7 +59,7 @@ Future<void> showSessionContextPopover({
       return FadeTransition(
         opacity: curved,
         child: ScaleTransition(
-          alignment: Alignment.topRight,
+          alignment: Alignment.topCenter,
           scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
           child: child,
         ),
@@ -91,7 +92,10 @@ class _SessionContextPopoverFrame extends StatelessWidget {
     const margin = 12.0;
     const gap = 6.0;
     final width = (media.size.width - margin * 2).clamp(288.0, 360.0);
-    final left = (anchorRect.right - width)
+    // Centrado sobre la píldora que lo abre, no anclado por su borde derecho
+    // (eso lo hacía abrir sesgado hacia la izquierda en vez de crecer desde
+    // el centro de la píldora).
+    final left = (anchorRect.center.dx - width / 2)
         .clamp(margin, math.max(margin, media.size.width - width - margin))
         .toDouble();
     final belowTop = anchorRect.bottom + gap;
@@ -321,6 +325,36 @@ int _boundedContextPercent({
   return raw.round().clamp(0, 100).toInt();
 }
 
+String? _cumulativeTokenLabel(SessionContextMetrics metrics) {
+  final cumulative = metrics.cumulativeTotal;
+  return cumulative == null
+      ? null
+      : '${compactSessionContextTokens(cumulative)} tok';
+}
+
+String _contextTriggerText(SessionContextMetrics metrics) {
+  final percent = metrics.percent;
+  if (percent != null) return '$percent%';
+  return _cumulativeTokenLabel(metrics) ?? '—';
+}
+
+String _contextTriggerSemanticValue(
+  Strings strings,
+  SessionContextMetrics metrics,
+) {
+  final percent = metrics.percent;
+  if (percent != null) return strings.chaContextUsagePercent(percent);
+  return _cumulativeTokenLabel(metrics) ?? strings.chaContextWindowUnavailable;
+}
+
+String _contextTriggerSemanticsLabel(
+  Strings strings,
+  SessionContextMetrics metrics,
+) {
+  final value = _contextTriggerSemanticValue(strings, metrics);
+  return '${strings.chaContextUsageOpen}, $value';
+}
+
 /// Anchored context+mode control. Was two separate app-bar widgets (a
 /// context-usage ring trigger plus a colored approval-mode pill); the
 /// 1.2.11 redesign merges both into one compact floating pill — ring,
@@ -339,6 +373,7 @@ class SessionContextPopoverButton extends StatefulWidget {
     this.modeLabel,
     this.modeColor,
     this.modeSectionBuilder,
+    this.compressionCount = 0,
     super.key,
   });
 
@@ -352,6 +387,12 @@ class SessionContextPopoverButton extends StatefulWidget {
   final String? modeLabel;
   final Color? modeColor;
   final SessionContextModeSectionBuilder? modeSectionBuilder;
+
+  /// How many times this session has ever been compacted (0 hides the
+  /// segment). A durable fact of the session, unlike the transient
+  /// in-progress/just-finished compaction dock — this is the only place that
+  /// says so once the dock itself is long gone.
+  final int compressionCount;
 
   @override
   State<SessionContextPopoverButton> createState() =>
@@ -395,24 +436,17 @@ class _SessionContextPopoverButtonState
         valueListenable: widget.metrics,
         builder: (context, value, _) {
           final percent = value.percent;
-          final cumulative = value.cumulativeTotal;
-          final cumulativeLabel = cumulative != null && cumulative > 0
-              ? '${compactSessionContextTokens(cumulative)} tok'
-              : null;
-          final semanticValue = percent == null
-              ? cumulativeLabel == null
-                    ? strings.chaContextWindowUnavailable
-                    : '${compactSessionContextTokens(cumulative!)} '
-                          '${strings.chaContextTotal}'
-              : strings.chaContextUsagePercent(percent);
+          final semanticsLabel = [
+            _contextTriggerSemanticsLabel(strings, value),
+            ?widget.modeLabel,
+            if (widget.compressionCount > 0)
+              strings.chaSessionCompactedTooltip(widget.compressionCount),
+          ].join(' · ');
           final modeLabel = widget.modeLabel;
           return Semantics(
             button: true,
             onTap: _open,
-            label: strings.chaContextUsageOpen,
-            value: modeLabel == null
-                ? semanticValue
-                : '$semanticValue · $modeLabel',
+            label: semanticsLabel,
             excludeSemantics: true,
             child: Tooltip(
               message: strings.chaContextUsageOpen,
@@ -449,9 +483,7 @@ class _SessionContextPopoverButtonState
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          percent == null
-                              ? (cumulativeLabel ?? '—')
-                              : '$percent%',
+                          _contextTriggerText(value),
                           style: TextStyle(
                             color: colors.textPrimary,
                             fontSize: 10.5,
@@ -482,6 +514,25 @@ class _SessionContextPopoverButtonState
                               color: widget.modeColor ?? colors.error,
                               fontSize: 9.5,
                               fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                        if (widget.compressionCount > 0) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            height: 12,
+                            width: 1,
+                            color: colors.divider,
+                          ),
+                          const SizedBox(width: 6),
+                          Tooltip(
+                            message: strings.chaSessionCompactedTooltip(
+                              widget.compressionCount,
+                            ),
+                            child: Icon(
+                              Icons.compress_rounded,
+                              size: 13,
+                              color: colors.textSecondary,
                             ),
                           ),
                         ],
@@ -517,21 +568,10 @@ class SessionContextTrigger extends StatelessWidget {
       builder: (context, value, _) {
         final strings = Strings.of(context);
         final percent = value.percent;
-        final cumulative = value.cumulativeTotal;
-        final cumulativeLabel = cumulative != null && cumulative > 0
-            ? '${compactSessionContextTokens(cumulative)} tok'
-            : null;
-        final semanticValue = percent == null
-            ? cumulativeLabel == null
-                  ? strings.chaContextWindowUnavailable
-                  : '${compactSessionContextTokens(cumulative!)} '
-                        '${strings.chaContextTotal}'
-            : strings.chaContextUsagePercent(percent);
         return Semantics(
           button: true,
           onTap: onPressed,
-          label: strings.chaContextUsageOpen,
-          value: semanticValue,
+          label: _contextTriggerSemanticsLabel(strings, value),
           excludeSemantics: true,
           child: Tooltip(
             message: strings.chaContextUsageOpen,
@@ -572,9 +612,7 @@ class SessionContextTrigger extends StatelessWidget {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            percent == null
-                                ? cumulativeLabel ?? '—'
-                                : '$percent%',
+                            _contextTriggerText(value),
                             style: TextStyle(
                               color: Theme.of(context).hermes.textPrimary,
                               fontSize: 11.5,
@@ -829,6 +867,7 @@ class SessionContextPerformance extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
+    final cumulative = metrics.cumulativeTotal;
     final read = metrics.cacheReadTokens;
     final write = metrics.cacheWriteTokens;
     final latency = metrics.observedFirstTokenLatencyMs;
@@ -838,6 +877,11 @@ class SessionContextPerformance extends StatelessWidget {
       child: Column(
         key: const ValueKey('session-context-performance'),
         children: [
+          if (cumulative != null)
+            _PerformanceRow(
+              label: strings.chaContextTotal,
+              value: compactSessionContextTokens(cumulative),
+            ),
           _PerformanceRow(
             label: strings.chaContextObservedTtft,
             value: latency == null
@@ -1207,13 +1251,4 @@ Color _categoryColor(BuildContext context, String id, int index) {
 
 /// Matches Hermes Desktop's shared compact-number formatter.
 @visibleForTesting
-String compactSessionContextTokens(int value) {
-  if (value <= 0) return '0';
-  if (value >= 999950) {
-    return '${(value / 1000000).toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '')}M';
-  }
-  if (value >= 999.5) {
-    return '${(value / 1000).toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '')}k';
-  }
-  return '$value';
-}
+String compactSessionContextTokens(int value) => formatCompactTokens(value);

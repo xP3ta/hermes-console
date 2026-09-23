@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/server_setup_generator.dart';
 import '../theme/app_theme.dart';
+import 'hermes_notice.dart';
 
 /// Dos comandos ejecutables por separado. Evita que una persona en Windows
 /// copie por accidente el `curl | sh`, o que alguien en Unix copie PowerShell.
@@ -75,8 +76,9 @@ class _PlatformCommand extends StatelessWidget {
             child: TextButton.icon(
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: command));
-                ScaffoldMessenger.of(context).showSnackBar(
+                HermesNotice.of(context).showSnackBar(
                   SnackBar(content: Text(Strings.of(context).qrCmdCopied)),
+                  kind: HermesNoticeKind.success,
                 );
               },
               icon: const Icon(Icons.copy_rounded, size: 16),

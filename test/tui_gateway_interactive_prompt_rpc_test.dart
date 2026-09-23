@@ -31,6 +31,23 @@ TuiGatewayClient _clientFor(HttpServer server) => TuiGatewayClient(
   dashboard: _TicketDashboardClient(),
 );
 
+bool _acknowledgeClientCapabilities(
+  WebSocket socket,
+  Map<String, dynamic> frame,
+) {
+  if (frame['method'] != 'client.capabilities') return false;
+  socket.add(
+    jsonEncode({
+      'jsonrpc': '2.0',
+      'id': frame['id'],
+      'result': {
+        'server_requests': ['approval', 'clarify', 'sudo', 'secret'],
+      },
+    }),
+  );
+  return true;
+}
+
 void main() {
   test('clarify expired atraviesa el transporte real como terminal', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -47,6 +64,7 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (_acknowledgeClientCapabilities(socket, frame)) continue;
         socket.add(
           jsonEncode({
             'jsonrpc': '2.0',
@@ -87,6 +105,7 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (_acknowledgeClientCapabilities(socket, frame)) continue;
         final method = frame['method'] as String;
         final params = Map<String, dynamic>.from(frame['params'] as Map);
         final keys = params.keys.toList()..sort();
@@ -198,6 +217,7 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (_acknowledgeClientCapabilities(socket, frame)) continue;
         if (!requestReceived.isCompleted) requestReceived.complete();
         await releaseResponse.future;
         socket.add(
@@ -242,6 +262,7 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (_acknowledgeClientCapabilities(socket, frame)) continue;
           final params = Map<String, dynamic>.from(frame['params'] as Map);
           socket.add(
             jsonEncode({
@@ -302,7 +323,8 @@ void main() {
           }),
         );
         await for (final raw in socket) {
-          jsonDecode(raw as String);
+          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (_acknowledgeClientCapabilities(socket, frame)) continue;
           if (!requestReceived.isCompleted) requestReceived.complete();
           await socket.close(1011, sensitiveValue);
         }

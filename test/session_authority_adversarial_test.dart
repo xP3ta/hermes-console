@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/utils/assistant_content.dart';
@@ -19,7 +19,7 @@ DesktopSessionSnapshot _snapshot(Map<String, dynamic> json) =>
       method: 'session.resume',
     );
 
-class _EmptyFenceStorage implements DesktopCompressionFenceStorage {
+class _EmptyFenceStorage implements CompressionRestoreStorage {
   @override
   Future<String?> read() async => null;
 
@@ -210,7 +210,7 @@ void main() {
           }),
         ),
         desktopGateway: _PrivacySnapshotGateway(snap),
-        compressionFenceStore: DesktopCompressionFenceStore(
+        compressionRestoreStore: CompressionRestoreStore(
           storage: _EmptyFenceStorage(),
         ),
         allowUnownedDesktopSnapshotForTesting: true,
@@ -265,7 +265,7 @@ void main() {
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: _PrivacySnapshotGateway(snap),
-        compressionFenceStore: DesktopCompressionFenceStore(
+        compressionRestoreStore: CompressionRestoreStore(
           storage: _EmptyFenceStorage(),
         ),
         allowUnownedDesktopSnapshotForTesting: true,

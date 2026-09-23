@@ -6,6 +6,8 @@ import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/rpc_frame_helpers.dart';
+
 class _TicketDashboardClient extends DashboardClient {
   _TicketDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -48,6 +50,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           socket.add(
             jsonEncode({
@@ -118,6 +124,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         socket.add(
           jsonEncode({
@@ -161,6 +171,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           socket.add(
             jsonEncode({
@@ -292,6 +306,10 @@ void main() {
         );
         await for (final raw in socket) {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
           requests.add(frame);
           final method = frame['method'] as String;
           final params = Map<String, dynamic>.from(frame['params'] as Map);
@@ -396,6 +414,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         socket.add(
           jsonEncode({
@@ -496,9 +518,12 @@ void main() {
               ),
             ),
           );
-          expect(requests.map((request) => request['method']), [
-            'profiles.list',
-          ]);
+          expect(
+            framesWithoutClientCapabilities(
+              requests,
+            ).map((request) => request['method']),
+            ['profiles.list'],
+          );
         } finally {
           await client.close();
           await server.close(force: true);
@@ -522,6 +547,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         socket.add(
           jsonEncode({
@@ -577,6 +606,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         final method = frame['method'] as String;
         if (method == 'session.set_hidden') {
@@ -651,6 +684,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         socket.add(
           jsonEncode({
@@ -699,6 +736,10 @@ void main() {
       );
       await for (final raw in socket) {
         final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
         requests.add(frame);
         final method = frame['method'] as String;
         if (method == 'session.set_hidden') {

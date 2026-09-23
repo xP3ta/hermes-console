@@ -77,6 +77,64 @@ void main() {
     expect(response.contentType, 'text/plain');
   });
 
+  test('descarga no sigue redirects con el token de sesión', () async {
+    final transport = _RedirectingClient();
+    final client = dashboard(transport);
+    addTearDown(client.close);
+
+    await expectLater(
+      client.apiDownload('files/download', maxBytes: 10),
+      throwsA(
+        isA<DashboardHttpException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          HttpStatus.found,
+        ),
+      ),
+    );
+
+    expect(transport.originRequests, hasLength(1));
+    expect(
+      transport.originRequests.single.headers['X-Hermes-Session-Token'],
+      'session-token',
+    );
+    expect(transport.attackerRequests, isEmpty);
+  });
+
+  test('descarga a archivo no sigue redirects con cookies de sesión', () async {
+    DashboardClient.resetSharedPasswordSessionsForTesting();
+    final temp = await Directory.systemTemp.createTemp('dashboard-redirect-');
+    addTearDown(() => temp.delete(recursive: true));
+    final target = File('${temp.path}/report.bin');
+    final transport = _RedirectingClient();
+    final client = DashboardClient(
+      host: 'hermes.local',
+      basicUser: 'admin',
+      basicPass: 'secret',
+      httpClientOverride: transport,
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.apiDownloadToFile('files/download', target, maxBytes: 10),
+      throwsA(
+        isA<DashboardHttpException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          HttpStatus.found,
+        ),
+      ),
+    );
+
+    expect(transport.originRequests, hasLength(1));
+    expect(
+      transport.originRequests.single.headers['Cookie'],
+      contains('hermes_session_at=session-access'),
+    );
+    expect(transport.attackerRequests, isEmpty);
+    expect(await target.exists(), isFalse);
+  });
+
   test('error HTTP conserva como máximo 2 KiB de cuerpo', () async {
     final tracked = _TrackedStream([List<int>.filled(4096, 'x'.codeUnitAt(0))]);
     final transport = _StreamingClient((_, _) async {
@@ -155,6 +213,101 @@ void main() {
     expect(tracked.cancelled, isTrue);
   });
 
+  test('descarga informa progreso determinista con Content-Length', () async {
+    final temp = await Directory.systemTemp.createTemp('dashboard-progress-');
+    addTearDown(() => temp.delete(recursive: true));
+    final target = File('${temp.path}/report.bin');
+    final transport = _StreamingClient((_, _) async {
+      return http.StreamedResponse(
+        Stream.fromIterable(const <List<int>>[
+          [1, 2, 3],
+          [4, 5, 6],
+        ]),
+        200,
+        contentLength: 6,
+      );
+    });
+    final client = dashboard(transport);
+    addTearDown(client.close);
+    final progress = <(int, int?)>[];
+    Object? failure;
+
+    try {
+      await client.apiDownloadToFile(
+        'files/download',
+        target,
+        maxBytes: 10,
+        onProgress: (int received, int? total) {
+          progress.add((received, total));
+        },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure, isNull);
+    expect(progress, <(int, int?)>[(3, 6), (6, 6)]);
+    expect(await target.length(), 6);
+  });
+
+  test('cancelación durante stream elimina el archivo parcial', () async {
+    final temp = await Directory.systemTemp.createTemp('dashboard-cancel-');
+    addTearDown(() => temp.delete(recursive: true));
+    final target = File('${temp.path}/report.bin');
+    final transport = _StreamingClient((_, _) async {
+      return http.StreamedResponse(
+        Stream.fromIterable(const <List<int>>[
+          [1, 2, 3],
+          [4, 5, 6],
+        ]),
+        200,
+        contentLength: 6,
+      );
+    });
+    final client = dashboard(transport);
+    addTearDown(client.close);
+    var cancelled = false;
+    Object? failure;
+
+    try {
+      await client.apiDownloadToFile(
+        'files/download',
+        target,
+        maxBytes: 10,
+        isCancelled: () => cancelled,
+        onProgress: (int received, int? _) {
+          if (received >= 3) cancelled = true;
+        },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure.toString(), contains('download_cancelled'));
+    expect(await target.exists(), isFalse);
+  });
+
+  test('stream truncado respecto a Content-Length elimina el parcial', () async {
+    final temp = await Directory.systemTemp.createTemp('dashboard-truncated-');
+    addTearDown(() => temp.delete(recursive: true));
+    final target = File('${temp.path}/report.bin');
+    final transport = _StreamingClient((_, _) async {
+      return http.StreamedResponse(
+        Stream.value(const <int>[1, 2, 3]),
+        200,
+        contentLength: 6,
+      );
+    });
+    final client = dashboard(transport);
+    addTearDown(client.close);
+
+    await expectLater(
+      client.apiDownloadToFile('files/download', target, maxBytes: 10),
+      throwsA(isA<StateError>()),
+    );
+    expect(await target.exists(), isFalse);
+  });
+
   test(
     'respuesta multipart queda acotada y cancela el stream excesivo',
     () async {
@@ -230,6 +383,49 @@ class _StreamingClient extends http.BaseClient {
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     calls++;
     return handler(request, calls);
+  }
+}
+
+class _RedirectingClient extends http.BaseClient {
+  static final _attackerUri = Uri.parse('https://attacker.invalid/capture');
+
+  final List<http.BaseRequest> originRequests = [];
+  final List<http.BaseRequest> attackerRequests = [];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.url.host == _attackerUri.host) {
+      attackerRequests.add(request);
+      return http.StreamedResponse(
+        Stream.value(utf8.encode('stolen')),
+        HttpStatus.ok,
+      );
+    }
+    if (request.url.path == '/auth/password-login') {
+      return http.StreamedResponse(
+        Stream.value(utf8.encode('{"ok":true}')),
+        HttpStatus.ok,
+        headers: const {
+          'set-cookie':
+              'hermes_session_at=session-access; Path=/; HttpOnly, '
+              'hermes_session_rt=session-refresh; Path=/; HttpOnly, '
+              'hermes_session_provider=basic; Path=/; HttpOnly',
+        },
+      );
+    }
+
+    originRequests.add(request);
+    if (!request.followRedirects) {
+      return http.StreamedResponse(
+        const Stream<List<int>>.empty(),
+        HttpStatus.found,
+        headers: {'location': _attackerUri.toString()},
+      );
+    }
+
+    final redirected = http.Request(request.method, _attackerUri)
+      ..headers.addAll(request.headers);
+    return send(redirected);
   }
 }
 

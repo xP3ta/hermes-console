@@ -1,10 +1,18 @@
 import 'dart:convert';
 
+import '../models/activity_snapshot.dart' show activityToolDetail;
 import '../models/desktop_session_snapshot.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
 import 'terminal_transcript_authority.dart';
+
+final _unsafeDisplayTextPattern = RegExp(
+  '[\\x00-\\x1f\\x7f'
+  '${String.fromCharCode(0x2028)}${String.fromCharCode(0x2029)}'
+  '${String.fromCharCode(0x202a)}-${String.fromCharCode(0x202e)}'
+  '${String.fromCharCode(0x2066)}-${String.fromCharCode(0x2069)}]',
+);
 
 /// Pure projection of a Hermes Desktop 0.19 resume/activate snapshot into the
 /// newest-first message shape consumed by [ActiveChat].
@@ -30,7 +38,476 @@ class DesktopSessionProjection {
   });
 }
 
-enum _LiveUserProjectionProof { none, exactAnchorPrefix }
+const assistantActivityTraceKey = '_activity_trace';
+const assistantToolResultEvidenceKey = '_activity_tool_results';
+
+Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
+  if (raw is! Map) return null;
+  final kind = raw['kind']?.toString().trim().toLowerCase();
+  if (kind == 'reasoning') {
+    final text = raw['text'];
+    if (text is! String || text.trim().isEmpty) return null;
+    return Map<String, dynamic>.unmodifiable({
+      'kind': 'reasoning',
+      'text': text,
+      'status': raw['status'] == 'running' ? 'running' : 'completed',
+      if (raw['timestamp'] is num) 'timestamp': raw['timestamp'],
+    });
+  }
+  if (kind != 'tool' && kind != 'skill') return null;
+  final label = raw['label']?.toString().trim() ?? '';
+  if (label.isEmpty ||
+      label.length > 180 ||
+      label.contains(_unsafeDisplayTextPattern)) {
+    return null;
+  }
+  final id = raw['id']?.toString().trim();
+  final status = switch (raw['status']?.toString().trim().toLowerCase()) {
+    'running' => 'running',
+    'failed' || 'error' => 'failed',
+    _ => 'completed',
+  };
+  final rawDetail = raw['detail'];
+  final detail = rawDetail is String ? rawDetail.trim() : '';
+  return Map<String, dynamic>.unmodifiable({
+    'kind': kind,
+    'label': label,
+    'status': status,
+    if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
+    if (raw['timestamp'] is num) 'timestamp': raw['timestamp'],
+    if (raw['completed_at'] is num) 'completed_at': raw['completed_at'],
+    if (detail.isNotEmpty &&
+        detail.length <= 96 &&
+        !detail.contains(_unsafeDisplayTextPattern))
+      'detail': detail,
+  });
+}
+
+List<Map<String, dynamic>> normalizeAssistantActivityTrace(Object? raw) {
+  if (raw is! List) return const [];
+  return List<Map<String, dynamic>>.unmodifiable(
+    raw.take(256).map(normalizeAssistantActivityStep).whereType(),
+  );
+}
+
+/// Una invocación de herramienta tal como debe verse en el historial.
+typedef ActivityCallEntry = ({String label, String? id, Object? arguments});
+
+Object? _decodedArguments(Object? raw) {
+  if (raw is! String) return raw;
+  try {
+    return jsonDecode(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Entradas visibles de una llamada. Hermes puede exponer solo tres
+/// herramientas puente (`tool_search`, `tool_describe`, `tool_call`) y llamar a
+/// la real dentro de `tool_call({calls:[{name, arguments}]})`: se desenvuelve
+/// para que el historial diga «terminal · sleep» y no «tool_call». Si no se
+/// puede desenvolver, queda la llamada original (que la vista oculta).
+List<ActivityCallEntry> activityCallEntries(
+  String label,
+  String? id,
+  Object? rawArguments,
+) {
+  final arguments = _decodedArguments(rawArguments);
+  if (label.trim().toLowerCase() != 'tool_call' || arguments is! Map) {
+    return [(label: label, id: id, arguments: arguments)];
+  }
+  final calls = arguments['calls'];
+  final candidates = calls is List ? calls : [arguments];
+  final entries = <ActivityCallEntry>[];
+  for (var i = 0; i < candidates.length && i < 32; i++) {
+    final candidate = candidates[i];
+    if (candidate is! Map) continue;
+    final name = candidate['name']?.toString().trim() ?? '';
+    if (name.isEmpty ||
+        name.length > 180 ||
+        name.contains(_unsafeDisplayTextPattern)) {
+      continue;
+    }
+    entries.add((
+      label: name,
+      id: id == null ? null : '$id:$i',
+      arguments: _decodedArguments(candidate['arguments']),
+    ));
+  }
+  return entries.isEmpty
+      ? [(label: label, id: id, arguments: arguments)]
+      : entries;
+}
+
+List<Map<String, dynamic>> assistantActivityFromToolCalls(
+  Object? raw, {
+  String status = 'running',
+  num? timestamp,
+}) {
+  if (raw is! List) return const [];
+  final steps = <Map<String, dynamic>>[];
+  for (final value in raw.take(256)) {
+    if (value is! Map) continue;
+    final function = value['function'];
+    final label = function is Map
+        ? function['name']?.toString().trim() ?? ''
+        : value['name']?.toString().trim() ?? '';
+    if (label.isEmpty ||
+        label.length > 180 ||
+        label.contains(_unsafeDisplayTextPattern)) {
+      continue;
+    }
+    final id = value['id']?.toString().trim();
+    final rawKind = value['kind']?.toString().trim().toLowerCase();
+    final kind =
+        rawKind == 'skill' ||
+            value['type']?.toString().trim().toLowerCase() == 'skill'
+        ? 'skill'
+        : 'tool';
+    final rawArguments = function is Map
+        ? function['arguments']
+        : value['arguments'];
+    for (final entry in activityCallEntries(
+      label,
+      id != null && id.isNotEmpty && id.length <= 180 ? id : null,
+      rawArguments,
+    )) {
+      final step = normalizeAssistantActivityStep({
+        'kind': kind,
+        'label': entry.label,
+        'status': status,
+        'id': ?entry.id,
+        'timestamp': ?timestamp,
+        'detail': ?activityToolDetail(entry.label, entry.arguments),
+      });
+      if (step != null) steps.add(step);
+    }
+  }
+  return List<Map<String, dynamic>>.unmodifiable(steps);
+}
+
+List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
+  Iterable<Map<String, dynamic>> messagesNewestFirst,
+) {
+  final chronological = messagesNewestFirst.toList(growable: false).reversed;
+  final result = <Map<String, dynamic>>[];
+  Map<String, dynamic>? assistant;
+  final textParts = <String>[];
+  final reasoningParts = <String>[];
+  final activity = <Map<String, dynamic>>[];
+  final toolCalls = <Map<String, dynamic>>[];
+  final toolResults = <Map<String, dynamic>>[];
+  final delegateTaskCallIds = <String>{};
+
+  num? timestampOf(Map<String, dynamic> message) {
+    final raw = message['timestamp'];
+    return raw is num ? raw : null;
+  }
+
+  void appendReasoning(String text, Map<String, dynamic> message) {
+    if (text.trim().isEmpty) return;
+    reasoningParts.add(text.trim());
+    activity.add({
+      'kind': 'reasoning',
+      'text': text,
+      'status': message['_pipeline'] == true ? 'running' : 'completed',
+      'timestamp': ?timestampOf(message),
+    });
+  }
+
+  void appendToolCallEvidence(Map raw) {
+    final function = raw['function'];
+    final label = function is Map
+        ? function['name']?.toString().trim() ?? ''
+        : raw['name']?.toString().trim() ?? '';
+    if (label.isEmpty ||
+        label.length > 180 ||
+        label.contains(_unsafeDisplayTextPattern)) {
+      return;
+    }
+    final id = raw['id']?.toString().trim();
+    if (id != null &&
+        id.isNotEmpty &&
+        toolCalls.any((call) => call['id']?.toString() == id)) {
+      return;
+    }
+    toolCalls.add({
+      if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
+      'type': 'function',
+      'function': {'name': label},
+    });
+  }
+
+  void appendToolCall(Map raw, Map<String, dynamic> message) {
+    final function = raw['function'];
+    final label = function is Map
+        ? function['name']?.toString().trim() ?? ''
+        : raw['name']?.toString().trim() ?? '';
+    if (label.isEmpty ||
+        label.length > 180 ||
+        label.contains(_unsafeDisplayTextPattern)) {
+      return;
+    }
+    final id = raw['id']?.toString().trim();
+    if (id != null &&
+        id.isNotEmpty &&
+        activity.any(
+          (step) =>
+              (step['kind'] == 'tool' || step['kind'] == 'skill') &&
+              step['id']?.toString() == id,
+        )) {
+      return;
+    }
+    final rawArguments = function is Map
+        ? function['arguments']
+        : raw['arguments'];
+    final safeId = id != null && id.isNotEmpty && id.length <= 180 ? id : null;
+    for (final entry in activityCallEntries(label, safeId, rawArguments)) {
+      final detail = activityToolDetail(entry.label, entry.arguments);
+      activity.add({
+        'kind': 'tool',
+        'label': entry.label,
+        'status': 'running',
+        'id': ?entry.id,
+        'timestamp': ?timestampOf(message),
+        'detail': ?detail,
+      });
+    }
+    appendToolCallEvidence(raw);
+  }
+
+  void completeTool(Map<String, dynamic> message) {
+    toolResults.add(message);
+    final id = message['tool_call_id']?.toString().trim();
+    var index = -1;
+    if (id != null && id.isNotEmpty) {
+      // También las entradas desenvueltas de una llamada puente (`id:0`, …).
+      final endedAt = timestampOf(message);
+      var matched = false;
+      for (var i = 0; i < activity.length; i++) {
+        final step = activity[i];
+        final stepId = step['id']?.toString();
+        if (step['kind'] != 'tool' ||
+            stepId == null ||
+            !(stepId == id || stepId.startsWith('$id:'))) {
+          continue;
+        }
+        matched = true;
+        activity[i] = {
+          ...step,
+          'status': 'completed',
+          if (endedAt != null && step['completed_at'] == null)
+            'completed_at': endedAt,
+        };
+      }
+      if (matched) return;
+    }
+    if (index < 0) {
+      if ((id == null || id.isEmpty) &&
+          activity.any(
+            (step) =>
+                (step['kind'] == 'tool' || step['kind'] == 'skill') &&
+                step['status'] == 'running',
+          )) {
+        return;
+      }
+      final label =
+          message['tool_name']?.toString().trim() ??
+          message['name']?.toString().trim() ??
+          '';
+      if (label.isEmpty ||
+          label.length > 180 ||
+          label.contains(_unsafeDisplayTextPattern)) {
+        return;
+      }
+      activity.add({
+        'kind': 'tool',
+        'label': label,
+        'status': 'completed',
+        if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
+        'timestamp': ?timestampOf(message),
+      });
+      return;
+    }
+    activity[index] = {...activity[index], 'status': 'completed'};
+  }
+
+  void absorbAssistant(Map<String, dynamic> message) {
+    assistant = {...?assistant, ...message};
+    final content = message['content'];
+    if (content is String && content.trim().isNotEmpty) {
+      if (textParts.isEmpty || textParts.last != content) {
+        textParts.add(content);
+      }
+    }
+    final existingToolResults = message[assistantToolResultEvidenceKey];
+    if (existingToolResults is List) {
+      toolResults.addAll(
+        existingToolResults.whereType<Map>().map(Map<String, dynamic>.from),
+      );
+    }
+
+    final existingActivity = normalizeAssistantActivityTrace(
+      message[assistantActivityTraceKey],
+    );
+    if (existingActivity.isNotEmpty) {
+      final hasReasoningStep = existingActivity.any(
+        (step) => step['kind'] == 'reasoning',
+      );
+      final reasoning = message['reasoning'];
+      if (!hasReasoningStep && reasoning is String) {
+        appendReasoning(reasoning, message);
+      }
+      activity.addAll(existingActivity.map(Map<String, dynamic>.from));
+      for (final step in existingActivity) {
+        if (step['kind'] == 'reasoning') {
+          final text = step['text']?.toString().trim() ?? '';
+          if (text.isNotEmpty) reasoningParts.add(text);
+        }
+      }
+      final calls = message['tool_calls'];
+      if (calls is List) {
+        for (final raw in calls) {
+          if (raw is Map) appendToolCallEvidence(raw);
+        }
+      }
+      return;
+    }
+
+    final reasoning = message['reasoning'];
+    if (reasoning is String) appendReasoning(reasoning, message);
+    final calls = message['tool_calls'];
+    if (calls is List) {
+      for (final raw in calls) {
+        if (raw is Map) appendToolCall(raw, message);
+      }
+    }
+  }
+
+  void flushAssistant() {
+    final current = assistant;
+    if (current == null) return;
+    final hasMedia =
+        current['_generatedImages'] is List &&
+        (current['_generatedImages'] as List).isNotEmpty;
+    final keep =
+        textParts.isNotEmpty ||
+        activity.isNotEmpty ||
+        current['_pipeline'] == true ||
+        hasMedia;
+    if (keep) {
+      final merged = <String, dynamic>{
+        ...current,
+        'content': textParts.join('\n\n'),
+      };
+      if (reasoningParts.isEmpty) {
+        merged.remove('reasoning');
+      } else {
+        merged['reasoning'] = reasoningParts.join('\n\n');
+      }
+      if (activity.isEmpty) {
+        merged.remove(assistantActivityTraceKey);
+      } else {
+        merged[assistantActivityTraceKey] =
+            List<Map<String, dynamic>>.unmodifiable(
+              activity.map((step) => Map<String, dynamic>.unmodifiable(step)),
+            );
+      }
+      if (toolCalls.isEmpty) {
+        merged.remove('tool_calls');
+      } else {
+        merged['tool_calls'] = List<Map<String, dynamic>>.unmodifiable(
+          toolCalls.map((call) => Map<String, dynamic>.unmodifiable(call)),
+        );
+      }
+      if (toolResults.isEmpty) {
+        merged.remove(assistantToolResultEvidenceKey);
+      } else {
+        merged[assistantToolResultEvidenceKey] =
+            List<Map<String, dynamic>>.unmodifiable(toolResults);
+      }
+      result.add(merged);
+    }
+    assistant = null;
+    textParts.clear();
+    reasoningParts.clear();
+    activity.clear();
+    toolCalls.clear();
+    toolResults.clear();
+  }
+
+  for (final message in chronological) {
+    final role = message['role']?.toString().trim().toLowerCase() ?? '';
+    final displayKind = message['display_kind']?.toString().trim() ?? '';
+    if (role == 'assistant' && displayKind.isEmpty) {
+      final calls = message['tool_calls'];
+      final isDelegateTask =
+          calls is List &&
+          calls.any((raw) {
+            if (raw is! Map) return false;
+            final function = raw['function'];
+            final name = function is Map ? function['name'] : raw['name'];
+            return name?.toString().trim().toLowerCase() == 'delegate_task';
+          });
+      if (isDelegateTask) {
+        for (final raw in calls) {
+          if (raw is! Map) continue;
+          final function = raw['function'];
+          final name = function is Map ? function['name'] : raw['name'];
+          if (name?.toString().trim().toLowerCase() != 'delegate_task') {
+            continue;
+          }
+          final id = raw['id']?.toString().trim();
+          if (id != null && id.isNotEmpty) delegateTaskCallIds.add(id);
+        }
+        flushAssistant();
+        result.add(Map<String, dynamic>.from(message));
+        continue;
+      }
+      final incomingContent = message['content'];
+      final incomingHasText =
+          incomingContent is String && incomingContent.trim().isNotEmpty;
+      if (assistant != null && textParts.isNotEmpty && incomingHasText) {
+        flushAssistant();
+      }
+      absorbAssistant(message);
+      continue;
+    }
+    if (role == 'tool') {
+      final toolName =
+          message['tool_name']?.toString().trim().toLowerCase() ??
+          message['name']?.toString().trim().toLowerCase() ??
+          '';
+      final callId = message['tool_call_id']?.toString().trim();
+      if (toolName == 'delegate_task' ||
+          (callId != null && delegateTaskCallIds.contains(callId))) {
+        flushAssistant();
+        result.add(Map<String, dynamic>.from(message));
+        continue;
+      }
+      assistant ??= {'role': 'assistant', 'content': ''};
+      completeTool(message);
+      continue;
+    }
+    final repeatsOpenTurnInput =
+        role == 'user' &&
+        message['_desktopSnapshotKind'] == 'inflight' &&
+        message['_steer'] != true &&
+        assistant != null &&
+        textParts.isEmpty &&
+        result.isNotEmpty &&
+        result.last['role'] == 'user' &&
+        result.last['content'] == message['content'];
+    if (repeatsOpenTurnInput) continue;
+    flushAssistant();
+    if (role != 'tool') result.add(Map<String, dynamic>.from(message));
+  }
+  flushAssistant();
+
+  return result.reversed.toList();
+}
+
+enum _LiveUserProjectionProof { none, exactAnchorPrefix, openTurn }
 
 class _LiveUserProjectionPlan {
   final int representedPrefixLength;
@@ -114,6 +591,28 @@ class DesktopSessionReconciler {
           message['_optimistic'] == true ||
           message['_steer'] == true);
 
+  /// Filas durables que el runtime envió como turno sintético (hoy solo el
+  /// aviso de proceso en segundo plano). Se limita a ese tipo a propósito: otros
+  /// `display_kind` (`model_switch`, `compression_result`…) no son la entrada
+  /// del turno en vuelo y, contados aquí, podrían suprimir un mensaje real.
+  static bool _isStructuredUserEvent(Map<String, dynamic> message) =>
+      message['role'] == 'user' &&
+      message['display_kind']?.toString().trim() == 'process_complete';
+
+  static bool _isDurableOpenInput(Map<String, dynamic> message) =>
+      isRealUserTurn(message) ||
+      (message['role'] == 'user' && message['_steer'] == true) ||
+      _isStructuredUserEvent(message);
+
+  static bool _matchesDurableStructuredInput(
+    Map<String, dynamic> message,
+    String content,
+  ) =>
+      _isStructuredUserEvent(message) &&
+      message['content']?.toString() == content &&
+      (message['_desktopSnapshotKind'] == 'persisted' ||
+          canonicalTranscriptIdentity(message) != null);
+
   static int? _exactPreviousAnchorIndex(
     List<Map<String, dynamic>> chronological,
     List<Map<String, dynamic>> previousNewestFirst,
@@ -162,6 +661,60 @@ class DesktopSessionReconciler {
     }
   }
 
+  static bool _isDurableOpenTurnActivity(Map<String, dynamic> message) {
+    final role = message['role']?.toString().trim().toLowerCase();
+    if (role != 'assistant' && role != 'tool') return false;
+    // Rows that come from the durable history do not always carry an id (the
+    // tool-call assistant row of `session.history` has neither `id` nor
+    // `message_id` on a real device), so identity cannot be required here.
+    // What must be excluded is anything this client synthesised itself.
+    if (message['_desktopSnapshotKind'] == 'inflight' ||
+        message['_pipeline'] == true ||
+        message['_optimistic'] == true ||
+        message['_interim'] == true) {
+      return false;
+    }
+    return role == 'tool' || !_isDurableTerminalAssistant(message);
+  }
+
+  /// Structural recognition of the open turn when no exact previous anchor can
+  /// be proven. It deliberately does NOT depend on the client's previous
+  /// projection being empty: reopening mid-turn hydrates several times, and from
+  /// the second pass the client already holds its own projection of the same
+  /// durable rows, which used to bring the inflight user twin back.
+  static _LiveUserProjectionPlan _firstOpenTurnPlan(
+    List<Map<String, dynamic>> chronological,
+  ) {
+    var terminalBoundary = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (_isDurableTerminalAssistant(chronological[index])) {
+        terminalBoundary = index;
+      }
+    }
+    final openInputs = <int>[];
+    for (
+      var index = terminalBoundary + 1;
+      index < chronological.length;
+      index++
+    ) {
+      final message = chronological[index];
+      if (_isDurableOpenInput(message) &&
+          canonicalTranscriptIdentity(message) != null) {
+        openInputs.add(index);
+      }
+    }
+    if (openInputs.length != 1) return _LiveUserProjectionPlan.none;
+    final inputIndex = openInputs.single;
+    final hasOpenActivity = chronological
+        .skip(inputIndex + 1)
+        .any(_isDurableOpenTurnActivity);
+    if (!hasOpenActivity) return _LiveUserProjectionPlan.none;
+    return const _LiveUserProjectionPlan(
+      representedPrefixLength: 1,
+      proof: _LiveUserProjectionProof.openTurn,
+    );
+  }
+
   static _LiveUserProjectionPlan _liveUserProjectionPlan(
     List<Map<String, dynamic>> chronological,
     List<Map<String, dynamic>> previousNewestFirst,
@@ -181,7 +734,9 @@ class DesktopSessionReconciler {
       previousNewestFirst,
       bridgeOwnedLiveUser,
     );
-    if (anchorIndex == null) return _LiveUserProjectionPlan.none;
+    if (anchorIndex == null) {
+      return _firstOpenTurnPlan(chronological);
+    }
 
     var terminalBoundary = anchorIndex;
     var terminalFoundAfterAnchor = false;
@@ -206,9 +761,7 @@ class DesktopSessionReconciler {
         anchoredAt != null &&
         anchoredAt.isAfter(turnStartedAt) &&
         canonicalTranscriptIdentity(anchoredMessage) != null &&
-        (isRealUserTurn(anchoredMessage) ||
-            (anchoredMessage['role'] == 'user' &&
-                anchoredMessage['_steer'] == true));
+        _isDurableOpenInput(anchoredMessage);
     if (anchorIsDurableOpenInput) {
       terminalBoundary = -1;
       for (var index = anchorIndex - 1; index >= 0; index--) {
@@ -226,10 +779,7 @@ class DesktopSessionReconciler {
       index++
     ) {
       final message = chronological[index];
-      final isLiveUserInput =
-          isRealUserTurn(message) ||
-          (message['role'] == 'user' && message['_steer'] == true);
-      if (isLiveUserInput) durableOpenInputs.add(message);
+      if (_isDurableOpenInput(message)) durableOpenInputs.add(message);
     }
     if (durableOpenInputs.isEmpty) return _LiveUserProjectionPlan.none;
 
@@ -437,12 +987,18 @@ class DesktopSessionReconciler {
       snapshot.resolvedTurnStartedAt,
     );
     final hasInflightUser = inflightUser?.trim().isNotEmpty == true;
-    // The Gateway does not link inflight users to durable row IDs. Suppress
-    // only a positionally matching suffix proven by one exact prior anchor;
-    // text/timestamps alone never authorize hiding a user bubble.
+    final durableStructuredInflight =
+        inflightUser != null &&
+        chronological.any(
+          (message) => _matchesDurableStructuredInput(message, inflightUser),
+        );
+    // The Gateway does not link inflight users to durable row IDs. Suppress an
+    // ordinary user only from an exact prior anchor or one unambiguous durable
+    // open turn; a classified durable row carries its own structural identity.
     if (inflightUser != null &&
         inflightUser.trim().isNotEmpty &&
-        liveUserPlan.emits(0)) {
+        liveUserPlan.emits(0) &&
+        !durableStructuredInflight) {
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'user',
@@ -597,11 +1153,11 @@ class DesktopSessionReconciler {
     }
 
     final queuedUser = snapshot.queued?.user;
-    final newestFirst = chronological.reversed
-        .map<Map<String, dynamic>>(_copyMessage)
-        .toList(growable: false);
+    final newestFirst = coalesceAssistantTurnsNewestFirst(
+      chronological.reversed.map<Map<String, dynamic>>(_copyMessage),
+    );
     return DesktopSessionProjection(
-      messagesNewestFirst: List<Map<String, dynamic>>.unmodifiable(newestFirst),
+      messagesNewestFirst: newestFirst,
       queuedUser: queuedUser,
       queuedSyntheticId: queuedUser == null
           ? null
@@ -630,7 +1186,7 @@ class DesktopSessionReconciler {
     final displayMetadata = sanitizeDelegationDisplayMetadata(
       message.displayMetadata,
     );
-    if (role != 'user' && role != 'assistant' && !retainMediaEvidence) {
+    if (role != 'user' && role != 'assistant' && role != 'tool') {
       return const [];
     }
 
@@ -694,6 +1250,28 @@ class DesktopSessionReconciler {
         desktopSessionDisplayText(displaySource) ??
         desktopSessionDisplayText(message.context) ??
         '';
+    if (role == 'assistant' && content.trim().isEmpty) {
+      content = codexMessageItemText(message.codexMessageItems);
+    }
+    final reasoning = role == 'assistant'
+        ? durableAssistantReasoningText({
+            'reasoning': message.reasoning,
+            'reasoning_content': message.reasoningContent,
+            'reasoning_details': message.reasoningDetails,
+            'codex_message_items': message.codexMessageItems,
+          })
+        : '';
+    final projectedToolCalls = message.toolCalls is List
+        ? message.toolCalls
+        : synthesizedToolCalls;
+    final toolActivity = role == 'assistant'
+        ? assistantActivityFromToolCalls(
+            projectedToolCalls,
+            timestamp: message.timestamp == null
+                ? null
+                : message.timestamp!.millisecondsSinceEpoch / 1000,
+          )
+        : const <Map<String, dynamic>>[];
     if (imageCount > 0) {
       // Aún no hay tarjeta para imágenes de bloques estructurados; el marcador
       // conserva al menos la señal de que el turno incluía una imagen.
@@ -701,27 +1279,23 @@ class DesktopSessionReconciler {
       content = content.isEmpty ? marker : '$content\n\n$marker';
     }
 
-    final toolResultMessages = !retainMediaEvidence
-        ? const <Map<String, dynamic>>[]
-        : <Map<String, dynamic>>[
-            for (var index = 0; index < toolResultBlocks.length; index++)
-              Map<String, dynamic>.unmodifiable({
-                'role': 'tool',
-                'content':
-                    desktopSessionDisplayText(
-                      toolResultBlocks[index]['content'],
-                    ) ??
-                    '',
-                if (toolResultBlocks[index]['name'] != null)
-                  'tool_name': toolResultBlocks[index]['name'].toString(),
-                if (toolResultBlocks[index]['tool_use_id'] != null)
-                  'tool_call_id': toolResultBlocks[index]['tool_use_id']
-                      .toString(),
-                '_desktopSnapshotKey':
-                    'message-$runtimeSessionId-$ordinal-toolresult-$index',
-                '_desktopSnapshotKind': 'persisted',
-              }),
-          ];
+    final toolResultMessages = <Map<String, dynamic>>[
+      for (var index = 0; index < toolResultBlocks.length; index++)
+        Map<String, dynamic>.unmodifiable({
+          'role': 'tool',
+          'content': retainMediaEvidence
+              ? desktopSessionDisplayText(toolResultBlocks[index]['content']) ??
+                    ''
+              : '',
+          if (toolResultBlocks[index]['name'] != null)
+            'tool_name': toolResultBlocks[index]['name'].toString(),
+          if (toolResultBlocks[index]['tool_use_id'] != null)
+            'tool_call_id': toolResultBlocks[index]['tool_use_id'].toString(),
+          '_desktopSnapshotKey':
+              'message-$runtimeSessionId-$ordinal-toolresult-$index',
+          '_desktopSnapshotKind': 'persisted',
+        }),
+    ];
 
     // Un mensaje user cuyo contenido eran SOLO bloques tool_result (formato
     // Anthropic) no es un prompt real: se proyecta como mensajes tool y no
@@ -729,11 +1303,15 @@ class DesktopSessionReconciler {
     if (role == 'assistant') content = finalizedPublicAssistantText(content);
     final dropMain =
         (role == 'user' && content.isEmpty && toolResultBlocks.isNotEmpty) ||
-        (!retainMediaEvidence && content.trim().isEmpty) ||
-        (role == 'tool' && !retainMediaEvidence);
+        (role == 'assistant' &&
+            content.trim().isEmpty &&
+            reasoning.isEmpty &&
+            toolActivity.isEmpty);
     final main = Map<String, dynamic>.unmodifiable({
       'role': role,
-      'content': content,
+      'content': role == 'tool' && !retainMediaEvidence ? '' : content,
+      if (reasoning.isNotEmpty) 'reasoning': reasoning,
+      if (toolActivity.isNotEmpty) assistantActivityTraceKey: toolActivity,
       '_desktopSnapshotKey': 'message-$runtimeSessionId-$ordinal',
       '_desktopSnapshotKind': 'persisted',
       '_desktopMessageOrdinal': ordinal,
@@ -779,6 +1357,18 @@ Map<String, dynamic>? sanitizeDelegationDisplayMetadata(Object? raw) {
     final value = decoded[key];
     if (value is int && value >= 0 && value <= 10000) {
       safe[key] = value;
+    }
+  }
+  // Título compacto que el runtime ya redactó para la UI (lo mismo que pinta
+  // Hermes Desktop). Se acepta como una sola línea acotada: nunca sustituye al
+  // contenido durable ni se reconstruye leyendo el texto del mensaje.
+  final displayText = decoded['display_text'];
+  if (displayText is String) {
+    final text = displayText.trim();
+    if (text.isNotEmpty &&
+        text.length <= 200 &&
+        !text.contains(_unsafeDisplayTextPattern)) {
+      safe['display_text'] = text;
     }
   }
   final duration = decoded['duration_seconds'];

@@ -117,7 +117,7 @@ abstract final class ReplayBatchProof {
       if (sequence <= lastSeen) continue;
       if (sequence <= latest) {
         final replayEvent = replay[sequence - lastSeen - 1];
-        if (!_sameEvent(replayEvent, event)) {
+        if (!sameEvent(replayEvent, event)) {
           return const ReplayBatchQuarantine('conflicting replay overlap');
         }
         continue;
@@ -135,7 +135,7 @@ abstract final class ReplayBatchProof {
     );
   }
 
-  static bool _sameEvent(SessionGatewayEvent left, SessionGatewayEvent right) =>
+  static bool sameEvent(SessionGatewayEvent left, SessionGatewayEvent right) =>
       left.type == right.type &&
       left.sessionId == right.sessionId &&
       left.sequence == right.sequence &&

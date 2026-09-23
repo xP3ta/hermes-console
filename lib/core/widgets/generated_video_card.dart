@@ -38,6 +38,9 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_initialize(autoplay: false));
+    });
   }
 
   @override
@@ -50,10 +53,13 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
       if (previous != null) unawaited(previous.dispose());
       _error = null;
       _initializing = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_initialize(autoplay: false));
+      });
     }
   }
 
-  Future<void> _initialize() async {
+  Future<void> _initialize({bool autoplay = true}) async {
     if (_initializing) return;
     final generation = ++_generation;
     final previous = _controller;
@@ -80,7 +86,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
         _controller = controller;
         _initializing = false;
       });
-      await controller.play();
+      if (autoplay) await controller.play();
     } catch (error) {
       await controller.dispose();
       if (!mounted || generation != _generation) return;
@@ -417,6 +423,7 @@ Future<void> showVideoViewer(
           backgroundColor: Colors.black,
           body: SafeArea(
             child: Stack(
+              key: const ValueKey<String>('generated-video-viewer-safe-area'),
               children: [
                 Positioned.fill(
                   child: GestureDetector(

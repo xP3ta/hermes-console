@@ -19,7 +19,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -73,7 +73,7 @@ void main() {
       final manager = await ConnectionManager.create(prefs);
       final secure = SecureStorage();
       final activeChats = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(activeChats.dispose);
       final connection = SavedConnection(

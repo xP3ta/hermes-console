@@ -187,7 +187,10 @@ final class BotLiveStatus {
             if (profileWorking) agent?.liveSessionTitle,
             // Pinned "Bot Chat" is navigation, not a description of current work.
             if (profileWorking &&
-                agent?.currentSession?.source != 'bot-mode' &&
+                !const {
+                  'bot-mode',
+                  'bot-mode-canonical',
+                }.contains(agent?.currentSession?.source) &&
                 agent?.currentSession != null &&
                 recent(agent!.currentSession!.lastActivityAt))
               agent.currentSession?.title,

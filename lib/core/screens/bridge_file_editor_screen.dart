@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import 'bridge_editor_mixin.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -188,8 +189,9 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
                                 ClipboardData(text: _ctrl.text),
                               );
                               if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                HermesNotice.of(context).showSnackBar(
                                   SnackBar(content: Text(Strings.of(context).bfeCopied)),
+                                  kind: HermesNoticeKind.success,
                                 );
                               }
                             },

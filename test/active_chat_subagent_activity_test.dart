@@ -16,7 +16,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _SubagentGateway
     implements HermesDesktopGateway, HermesDesktopSubagentGateway {
@@ -186,7 +186,7 @@ Future<ActiveChat> _start(
   Future<void> Function()? beforeTerminalNotification,
 }) async {
   final chat = ActiveChat(
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
     connection: SavedConnection(
       id: 'conn-subagent',
       label: 'Subagent',
@@ -320,7 +320,7 @@ void main() {
     () async {
       final gateway = _SubagentGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-subagent',
           label: 'Subagent',
@@ -380,7 +380,7 @@ void main() {
       final gateway = _SubagentGateway()
         ..listGate = Completer<List<DesktopSubagentSnapshot>>();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-private-ingestion',
           label: 'Private ingestion',

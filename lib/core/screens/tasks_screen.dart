@@ -28,6 +28,7 @@ import '../utils/relative_time.dart';
 import '../widgets/dock_anchored_popover.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/kanban_task_detail_surface.dart';
 import 'lock_screen.dart';
@@ -550,7 +551,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
+    HermesNotice.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(msg)));
   }
