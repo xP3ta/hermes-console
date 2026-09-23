@@ -21,7 +21,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/main.dart'
     show NetworkAvailabilityRecoveryListener;
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 SavedConnection _conn() => SavedConnection(
   id: 'conn-1',
@@ -55,7 +55,7 @@ void main() {
           httpClient: client,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -120,7 +120,7 @@ void main() {
           httpClient: client,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -190,7 +190,7 @@ void main() {
         httpClient: client,
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',

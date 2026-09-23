@@ -13,7 +13,7 @@ import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 
@@ -25,7 +25,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -1647,7 +1647,7 @@ ActiveChat _recoverableChat(
   bool turnIdempotencySupported = true,
   bool attachDesktopRuntimeOnLoad = false,
 }) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(id),
   sessionId: 'session-$id',
   sessionTitle: id,
@@ -1681,7 +1681,7 @@ ActiveChat _productionAttachChat(
   StoredSessionMessageLoader? storedMessageLoader,
   List<Duration> desktopRecoveryBackoff = const [Duration.zero],
   double Function()? desktopRecoveryRandom,
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
 }) {
   if (gateway case final _ActivityLifecycleRecoverableGateway activity) {
     final initial = activity.initialSnapshot;
@@ -1696,7 +1696,7 @@ ActiveChat _productionAttachChat(
     }
   }
   return ActiveChat(
-    compressionFenceStore: compressionFenceStore ?? testCompressionFenceStore(),
+    compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
     connection: _connection(id),
     sessionId: 'session-$id',
     sessionTitle: id,
@@ -1967,7 +1967,7 @@ void main() {
         )
         ..recoveryExistingGate = recoveryGate;
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(service.dispose);
       final oldChat = service.attach(
@@ -3260,68 +3260,6 @@ void main() {
           expectedActivateCalls: 1,
         );
       }
-    },
-  );
-
-  test(
-    'compression-fenced visible load preserves terminal viewer recovery closure',
-    () async {
-      const id = 'fenced-terminal-reassessment';
-      final storage = InMemoryDesktopCompressionFenceStorage();
-      final fenceStore = DesktopCompressionFenceStore(
-        storage: storage,
-        mutationNamespaceForTesting: id,
-        attemptId: () => 'fenced-terminal-attempt',
-      );
-      final api = _RestFallbackApiClient();
-      final gateway = _ActivityLifecycleRecoverableGateway()
-        ..resumeExistingError = const TuiGatewayRpcError(
-          'session.resume',
-          'not found',
-          code: 4007,
-          origin: CompressionFailureOrigin.remoteRpc,
-        );
-      final chat = _productionAttachChat(
-        id,
-        gateway,
-        api: api,
-        storedMessageLoader: (_, _) async => const [
-          {
-            'message_id': 'fenced-terminal-history',
-            'role': 'assistant',
-            'content': 'durable history',
-          },
-        ],
-        desktopRecoveryBackoff: const [Duration.zero],
-        compressionFenceStore: fenceStore,
-      );
-      addTearDown(chat.dispose);
-
-      await chat.loadMessages(profile: 'owner-profile');
-      expect(chat.storedSessionKnownMissing, isTrue);
-      final armed = await fenceStore.arm(
-        DesktopCompressionFenceScope(
-          connectionId: id,
-          profile: 'owner-profile',
-          logicalSessionId: 'session-$id',
-        ),
-        tipAtStart: 'session-$id',
-        compressionsAtStart: 0,
-        createdAtMs: 1,
-        reconcileUntilMs: 4102444800000,
-      );
-      expect(armed.claimed, isTrue);
-      gateway.resumeExistingError = null;
-
-      await chat.loadMessages(profile: 'owner-profile');
-      gateway.drop();
-      await Future<void>.delayed(const Duration(milliseconds: 40));
-
-      expect(chat.storedSessionKnownMissing, isTrue);
-      expect(gateway.resumeExistingCalls, 1);
-      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
-      expect(chat.desktopRuntimeSessionId, isNull);
-      _expectNoViewerAttachmentMutations(gateway, api);
     },
   );
 
@@ -8205,7 +8143,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-drop',
           label: 'Drop',
@@ -8256,7 +8194,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-recover',
           label: 'Recover',
@@ -8591,7 +8529,7 @@ void main() {
 
       final id = connection.id;
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'mob-$id',
         sessionTitle: id,
@@ -9472,7 +9410,7 @@ void main() {
       final tombstonePersistStarted = Completer<void>();
       final tombstonePersistGate = Completer<void>();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('legacy-get-tombstone-refresh'),
         sessionId: 'session-legacy-get-tombstone-refresh',
         sessionTitle: 'legacy-get-tombstone-refresh',
@@ -9666,7 +9604,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-refresh-epoch'),
         sessionId: 'session-terminal-refresh-epoch',
         sessionTitle: 'terminal-refresh-epoch',
@@ -9767,7 +9705,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-budget'),
       sessionId: 'session-terminal-budget',
       sessionTitle: 'terminal-budget',
@@ -9799,7 +9737,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-late-tool-only'),
         sessionId: 'session-terminal-late-tool-only',
         sessionTitle: 'terminal-late-tool-only',
@@ -9871,7 +9809,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-open-call-unlinked-tool'),
         sessionId: 'session-terminal-open-call-unlinked-tool',
         sessionTitle: 'terminal-open-call-unlinked-tool',
@@ -9933,7 +9871,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-empty-after-partial-delta'),
       sessionId: 'session-terminal-empty-after-partial-delta',
       sessionTitle: 'terminal-empty-after-partial-delta',
@@ -10004,7 +9942,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-duplicate-exactly-once'),
         sessionId: 'session-terminal-duplicate-exactly-once',
         sessionTitle: 'terminal-duplicate-exactly-once',
@@ -10049,7 +9987,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-compacting-empty'),
       sessionId: 'session-terminal-compacting-empty',
       sessionTitle: 'terminal-compacting-empty',
@@ -10105,7 +10043,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-dispose-get'),
       sessionId: 'session-terminal-dispose-get',
       sessionTitle: 'terminal-dispose-get',
@@ -10135,7 +10073,7 @@ void main() {
     final gateway = _DroppingDesktopGateway();
     final api = _ControlledApiClient();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('terminal-dispose-delay'),
       sessionId: 'session-terminal-dispose-delay',
       sessionTitle: 'terminal-dispose-delay',
@@ -10163,7 +10101,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-tool-only'),
         sessionId: 'session-terminal-tool-only',
         sessionTitle: 'terminal-tool-only',
@@ -10219,7 +10157,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ControlledApiClient();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('terminal-stale-assistant'),
         sessionId: 'session-terminal-stale-assistant',
         sessionTitle: 'terminal-stale-assistant',
@@ -10288,7 +10226,7 @@ void main() {
         }),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-delayed',
           label: 'Delayed',
@@ -10334,7 +10272,7 @@ void main() {
       httpClient: MockClient((_) async => http.Response('not found', 404)),
     );
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn-refresh',
         label: 'Refresh',
@@ -10700,7 +10638,7 @@ void main() {
         {'role': 'assistant', 'content': 'Aquí están las noticias.'},
       ]);
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('drop-reconcile'),
         sessionId: 'session-drop-reconcile',
         sessionTitle: 'drop-reconcile',
@@ -10749,7 +10687,7 @@ void main() {
     ]);
     final terminalEvents = <ActiveChatEvent>[];
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection('legacy-authority-once'),
       sessionId: 'session-legacy-authority-once',
       sessionTitle: 'legacy-authority-once',
@@ -10798,7 +10736,7 @@ void main() {
       final gateway = _DroppingDesktopGateway();
       final api = _ToolThenFinalTranscriptApi();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _connection('drop-tool-then-final'),
         sessionId: 'session-drop-tool-then-final',
         sessionTitle: 'drop-tool-then-final',

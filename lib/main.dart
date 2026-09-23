@@ -33,7 +33,7 @@ import 'core/screens/splash_screen.dart';
 import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
-import 'core/services/desktop_compression_fence_store.dart';
+import 'core/services/compression_restore_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
@@ -225,7 +225,7 @@ void main() async {
   final initialThemeProfiles = await themeProfileStore.load();
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   await cancelledTurnStore.initialize();
-  final compressionFenceStore = DesktopCompressionFenceStore();
+  final compressionRestoreStore = CompressionRestoreStore();
   final connManager = await ConnectionManager.create(
     prefs,
     clearCancelledTurns: (connectionId) async {
@@ -238,7 +238,7 @@ void main() async {
         firstError = error;
         firstStack = stackTrace;
       }
-      removed += await compressionFenceStore.clearConnection(connectionId);
+      await compressionRestoreStore.clearConnection(connectionId);
       if (firstError != null) {
         Error.throwWithStackTrace(firstError, firstStack!);
       }
@@ -263,7 +263,7 @@ void main() async {
     policy: approvalPolicy,
     prefs: prefs,
     cancelledTurnStore: cancelledTurnStore,
-    compressionFenceStore: compressionFenceStore,
+    compressionRestoreStore: compressionRestoreStore,
   );
   await activeChats.globalActivity.initialize();
   runApp(

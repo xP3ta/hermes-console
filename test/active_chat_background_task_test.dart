@@ -7,7 +7,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Minimal fake — only what `ActiveChat` needs to reach a live desktop
 /// runtime and let a `TuiGatewayEvent` through `_onDesktopEvent`.
@@ -68,7 +68,7 @@ class _FakeDesktopGateway implements HermesDesktopGateway {
 Future<void> _settle() => Future<void>.delayed(Duration.zero);
 
 ActiveChat _buildChat(_FakeDesktopGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: SavedConnection(
     id: 'conn-bg',
     label: 'Background',

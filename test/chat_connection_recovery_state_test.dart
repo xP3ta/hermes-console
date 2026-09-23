@@ -14,7 +14,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_connection_recovery_row.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _DroppingGateway
     implements
@@ -139,7 +139,7 @@ SavedConnection _connection() => SavedConnection(
 );
 
 ActiveChat _chat(_DroppingGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(),
   sessionId: 'session-recovery',
   sessionTitle: 'Recovery test',

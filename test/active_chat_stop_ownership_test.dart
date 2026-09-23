@@ -13,7 +13,7 @@ import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _OwnershipStopGateway
     implements
@@ -202,7 +202,7 @@ void main() {
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn-stop-ownership',
         label: 'Test',

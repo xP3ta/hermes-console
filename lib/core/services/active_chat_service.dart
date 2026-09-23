@@ -57,7 +57,7 @@ import 'capability_payload_sanitizer.dart';
 import 'command_risk.dart';
 import 'compression_dispatcher.dart';
 import 'connection_manager.dart';
-import 'desktop_compression_fence_store.dart';
+import 'compression_restore_store.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'home_widget_publisher.dart';
@@ -306,6 +306,19 @@ String activeChatPromptFailureUiMessage(
   String languageCode = 'es',
 }) {
   final english = languageCode.toLowerCase().startsWith('en');
+  // 4009 "session busy": the server is still busy with this conversation
+  // (typically a /compress started before a restart, which never locks the
+  // composer here). Like Hermes Desktop, an inline error; the text stays.
+  if (error is TuiGatewayRpcError &&
+      error.method == 'prompt.submit' &&
+      error.code == 4009 &&
+      error.reason == null) {
+    return english
+        ? 'Hermes is busy (for example, compacting this conversation). Your '
+              'message is still in the composer; try again in a moment.'
+        : 'Hermes está ocupado (por ejemplo, compactando la conversación). '
+              'Tu mensaje sigue en el composer: inténtalo en un momento.';
+  }
   if (error is TuiGatewayRpcError && error.method == 'prompt.submit') {
     return switch (error.reason) {
       _sessionNotOwnedReason =>
@@ -3170,7 +3183,6 @@ class _AssistantNarrationProjection {
 enum _TranscriptExtent { unknown, partial, complete }
 
 enum _SessionMessagesPageConsumer {
-  compressionFenced,
   lifecyclePrefetch,
   resumeProgressRetry,
   directLoad,
@@ -3368,7 +3380,6 @@ typedef _RefreshedTranscriptGraft = ({
   List<TranscriptMessageIdentity> unconfirmedRetainedIdentities,
 });
 
-enum _DesktopCompressionPendingCause { serverPending, ambiguousTransport }
 
 final class _SubagentReconnectAlias {
   const _SubagentReconnectAlias({
@@ -3473,28 +3484,6 @@ final class _SubagentRefreshAuthority {
       turnEpoch == other.turnEpoch &&
       presentationLeased == other.presentationLeased &&
       presentationGeneration == other.presentationGeneration;
-}
-
-/// A manually requested server-side compression that Console must not submit
-/// again while it waits for authoritative completion evidence.
-final class _PendingDesktopCompression {
-  const _PendingDesktopCompression({
-    required this.durableRecord,
-    required this.runtimeSessionId,
-    required this.rootDurableId,
-    required this.bindEpoch,
-    required this.sessionEpoch,
-    required this.deadline,
-    required this.cause,
-  });
-
-  final DesktopCompressionFenceRecord durableRecord;
-  final String runtimeSessionId;
-  final String rootDurableId;
-  final int bindEpoch;
-  final int sessionEpoch;
-  final DateTime deadline;
-  final _DesktopCompressionPendingCause cause;
 }
 
 enum _ViewerAttachmentDisposition {
@@ -3701,23 +3690,7 @@ class ActiveChat {
   static const Duration _voiceBargeHandoffRetention = Duration(seconds: 30);
   static const Duration _desktopRecoveryDelayCap = Duration(seconds: 15);
   static const Duration _desktopRecoveryFallbackDelay = Duration(seconds: 1);
-  static const Duration _desktopCompressionReconcileRpcBudget = Duration(
-    seconds: 10,
-  );
-  static const Duration _desktopCompressionReconciliationFallback = Duration(
-    minutes: 12,
-  );
-
-  static Duration _normalizedDesktopCompressionReconciliationDelay(
-    Duration configured,
-  ) => configured > Duration.zero ? configured : const Duration(seconds: 20);
-
-  static Duration _normalizedDesktopCompressionReconciliationWindow(
-    Duration configured,
-    Duration delay,
-  ) => configured > delay
-      ? configured
-      : _desktopCompressionReconciliationFallback;
+  static const Duration _compressionRestoreRpcBudget = Duration(seconds: 10);
 
   static List<Duration> _normalizeDesktopRecoveryBackoff(
     List<Duration> configured,
@@ -3795,6 +3768,11 @@ class ActiveChat {
   final Future<void> Function()? _beforeTerminalNotification;
   final Future<void> Function()? _beforePrivacyCheckpointSave;
   final Future<void> Function()? _beforePrivacySnapshotLoad;
+
+  /// Test seam: an await at send admission, before any transcript or
+  /// transport write (lifecycle-race tests interleave cleanup here).
+  @visibleForTesting
+  Future<void> Function()? beforeSendAdmissionForTesting;
   final Future<bool> Function()? _historyHydrationAwaiter;
 
   /// Se invoca cuando el run obtiene su id. La capa de servicio lo usa para
@@ -3852,7 +3830,7 @@ class ActiveChat {
   /// remoto preferido; en tests que inyectan [ApiClient] queda desactivado salvo
   /// que se inyecte explícitamente un fake.
   final HermesDesktopGateway? _desktopGateway;
-  final DesktopCompressionFenceStore _compressionFenceStore;
+  final CompressionRestoreStore _compressionRestoreStore;
   final int Function() _wallClockMs;
   final List<Duration> _backgroundStopRecheckDelays;
   final Future<AttachmentUploadResult> Function(
@@ -3915,18 +3893,19 @@ class ActiveChat {
   int _sessionInfoEpoch = 0;
   int _sessionConfigRequestsInFlight = 0;
   int _runtimeMutationsInFlight = 0;
+  // Live manual `/compress` of THIS process: the RPC is in flight, or it
+  // answered `pending` and the gateway's terminal status has not arrived.
+  // The only compression state that locks the composer.
   bool _desktopCompressionInFlight = false;
   bool _desktopCompressionRpcInFlight = false;
-  DesktopCompressionFenceRecord? _durableCompressionFence;
-  _PendingDesktopCompression? _pendingDesktopCompression;
-  Timer? _desktopCompressionReconciliationTimer;
-  // Set only by an actual abandoned reconciliation (a tracked pending
-  // attempt whose deadline ran out); cleared on a fresh dispatch or a clean
-  // settle. Deliberately NOT derived from `_pendingDesktopCompression == null`
-  // alone: that is also true for an attempt whose fence went stale before it
-  // was ever tracked as pending (e.g. superseded by a concurrent refresh),
-  // which must stay silent rather than surface a false "can't confirm".
-  bool _desktopCompressionUnconfirmable = false;
+  // A compression restored after a restart/reconnect, shown only while the
+  // gateway's replay ring positively says it is still pinned `compressing`.
+  // Display-only: never locks input (Hermes Desktop has no fence).
+  CompressionRestoreRecord? _restoredCompression;
+  bool _restoredCompressionRunning = false;
+  bool _restoredCompressionProbeInFlight = false;
+  bool _liveCompressionHandedOff = false;
+  Timer? _restoredCompressionProbeTimer;
   bool _desktopAutoCompacting = false;
 
   /// Hermes repite `compacting` cada ~60 s mientras dura; si dejan de llegar
@@ -4148,17 +4127,14 @@ class ActiveChat {
                 false) &&
             _pendingSubagentInterrupts.isEmpty,
         noCompression:
-            !desktopCompressionInFlight &&
-            !_desktopCompressionRpcInFlight &&
-            _durableCompressionFence == null,
+            !desktopCompressionInFlight && !_desktopCompressionRpcInFlight,
         noReconciliation:
             !resumeReconciliationInFlight &&
             _recoveringDesktopTurnEpoch == null &&
             _desktopTurnRecovery == null &&
             _desktopAutomaticReattach == null &&
             _terminalTranscriptRecovery == null &&
-            _pendingAuthoritativeTerminalEpoch == null &&
-            _desktopCompressionReconciliationTimer == null,
+            _pendingAuthoritativeTerminalEpoch == null,
         noStop:
             !_cancelling &&
             // Un Stop terminal ya no es trabajo en vuelo. Sólo un coordinador
@@ -4685,30 +4661,21 @@ class ActiveChat {
     );
   }
 
+  /// Live manual `/compress` of this process (locks the composer).
   bool get desktopManualCompressionInFlight => _desktopCompressionInFlight;
-  // A retained safety fence is not evidence that the server is still working.
-  // Once the reconciliation window runs out without proof the fence is
-  // released (Hermes Desktop never locks input on compression); what remains
-  // is this dismissible "could not confirm" notice.
-  bool get desktopCompressionNeedsConfirmation =>
-      !_desktopCompressionRpcInFlight &&
-      _pendingDesktopCompression == null &&
-      _desktopCompressionUnconfirmable;
 
-  /// The user acknowledged the "could not confirm" notice.
-  void dismissCompressionConfirmation() {
-    if (!_desktopCompressionUnconfirmable) return;
-    _desktopCompressionUnconfirmable = false;
-    if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
-  }
-
-  bool get desktopCompressionAwaitingReconciliation =>
-      _pendingDesktopCompression != null;
-  bool get desktopCompressionTransportUncertain =>
-      _pendingDesktopCompression?.cause ==
-      _DesktopCompressionPendingCause.ambiguousTransport;
+  /// Live compaction of this process: manual `/compress` or automatic.
   bool get desktopCompressionInFlight =>
       _desktopCompressionInFlight || _desktopAutoCompacting;
+
+  /// A compression restored after a restart/reconnect that the gateway still
+  /// reports as running. Display-only (dock, Home/Conversaciones); it never
+  /// locks input.
+  bool get desktopRestoredCompressionRunning => _restoredCompressionRunning;
+
+  /// Anything to show as "compactando" (live or positively restored).
+  bool get desktopCompactionVisible =>
+      desktopCompressionInFlight || _restoredCompressionRunning;
   bool get desktopAutoCompacting => _desktopAutoCompacting;
 
   /// Cuántas veces se ha compactado esta sesión en total, según el propio
@@ -4724,21 +4691,21 @@ class ActiveChat {
   /// `null` si no hay ninguna. Hermes no publica progreso: la pastilla mide el
   /// tiempo desde aquí y estima el resto del historial local.
   DateTime? get desktopCompactionStartedAt =>
-      desktopCompressionInFlight ? _desktopCompactionStartedAt : null;
+      desktopCompactionVisible ? _desktopCompactionStartedAt : null;
 
   /// Tamaño de partida que Hermes fija en la línea `compressing N messages
   /// (~T tok)` del `/compress` en curso.
   int? get desktopCompactionTokensBefore =>
-      desktopCompressionInFlight ? _desktopCompactionTokensBefore : null;
+      desktopCompactionVisible ? _desktopCompactionTokensBefore : null;
   int? get desktopCompactionMessagesBefore =>
-      desktopCompressionInFlight ? _desktopCompactionMessagesBefore : null;
+      desktopCompactionVisible ? _desktopCompactionMessagesBefore : null;
 
   /// Progreso determinado real (trozo / total) si el backend lo publica en el
   /// estado de compactación. El actual NO lo envía: casi siempre es `null`.
   int? get desktopCompactionChunkIndex =>
-      desktopCompressionInFlight ? _desktopCompactionChunkIndex : null;
+      desktopCompactionVisible ? _desktopCompactionChunkIndex : null;
   int? get desktopCompactionChunkCount =>
-      desktopCompressionInFlight ? _desktopCompactionChunkCount : null;
+      desktopCompactionVisible ? _desktopCompactionChunkCount : null;
 
   /// Cuántos `status.update(compacted)` ha visto esta sesión. Es la señal de
   /// fin de una compactación cuyo resultado llega tarde (compute host): el RPC
@@ -5348,7 +5315,7 @@ class ActiveChat {
       // `_desktopAutoCompacting` ni abren turno, así que solo por aquí llegan
       // a Home/Conversaciones. Es de presentación y no entra en `active`
       // (ver SessionActivity.compacting).
-      compacting: desktopCompressionInFlight,
+      compacting: desktopCompactionVisible,
       observedAt: _backgroundProcessesObservedAt ?? _desktopTurnStartedAt,
       stale: _backgroundProcessesStale || _sessionControlStale,
     );
@@ -6606,8 +6573,7 @@ class ActiveChat {
   final Duration _desktopRecoveryAttemptTimeout;
   final List<Duration> _desktopRecoveryBackoff;
   final double Function() _desktopRecoveryRandom;
-  final Duration _desktopCompressionReconciliationDelay;
-  final Duration _desktopCompressionReconciliationWindow;
+  final Duration _compressionRestoreProbeInterval;
   _StopTransitionCoordinator? _stopTransition;
 
   /// Epoch del último Stop que alcanzó estado terminal. Sobrevive al
@@ -6728,7 +6694,7 @@ class ActiveChat {
     int? initialObservedFirstTokenLatencyMs,
     ApiClient? api,
     HermesDesktopGateway? desktopGateway,
-    DesktopCompressionFenceStore? compressionFenceStore,
+    CompressionRestoreStore? compressionRestoreStore,
     int Function()? wallClockMs,
     Future<AttachmentUploadResult> Function(SavedConnection, AttachmentDraft)?
     attachmentUploader,
@@ -6746,11 +6712,7 @@ class ActiveChat {
     Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
     Duration terminalReconcileBudget = const Duration(seconds: 4),
     Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
-    Duration desktopCompressionReconciliationDelay = const Duration(
-      seconds: 20,
-    ),
-    Duration desktopCompressionReconciliationWindow =
-        _desktopCompressionReconciliationFallback,
+    Duration compressionRestoreProbeInterval = const Duration(seconds: 5),
     @visibleForTesting
     List<Duration> backgroundStopRecheckDelays = const [
       Duration.zero,
@@ -6799,17 +6761,10 @@ class ActiveChat {
            desktopRecoveryAttemptTimeout > Duration.zero
            ? desktopRecoveryAttemptTimeout
            : const Duration(seconds: 15),
-       _desktopCompressionReconciliationDelay =
-           _normalizedDesktopCompressionReconciliationDelay(
-             desktopCompressionReconciliationDelay,
-           ),
-       _desktopCompressionReconciliationWindow =
-           _normalizedDesktopCompressionReconciliationWindow(
-             desktopCompressionReconciliationWindow,
-             _normalizedDesktopCompressionReconciliationDelay(
-               desktopCompressionReconciliationDelay,
-             ),
-           ),
+       _compressionRestoreProbeInterval =
+           compressionRestoreProbeInterval > Duration.zero
+           ? compressionRestoreProbeInterval
+           : const Duration(seconds: 5),
        _desktopRecoveryBackoff = _normalizeDesktopRecoveryBackoff(
          desktopRecoveryBackoff,
        ),
@@ -6823,8 +6778,8 @@ class ActiveChat {
        _attachDesktopRuntimeOnLoad = attachDesktopRuntimeOnLoad,
        _allowUnownedDesktopSnapshotForTesting =
            allowUnownedDesktopSnapshotForTesting,
-       _compressionFenceStore =
-           compressionFenceStore ?? DesktopCompressionFenceStore(),
+       _compressionRestoreStore =
+           compressionRestoreStore ?? CompressionRestoreStore(),
        _wallClockMs =
            wallClockMs ?? (() => DateTime.now().millisecondsSinceEpoch),
        _backgroundStopRecheckDelays = List<Duration>.unmodifiable(
@@ -6856,7 +6811,7 @@ class ActiveChat {
     );
     if (sessionProfile != null) _bindSessionProfile(sessionProfile);
     bindKnownStoredSession(initialStoredSessionId);
-    unawaited(_restoreDurableCompressionFence());
+    unawaited(_restoreCompressionFromRecord());
   }
 
   /// Adopts a durable state.db identity without ever retargeting a live runtime.
@@ -7482,10 +7437,9 @@ class ActiveChat {
   }
 
   void _retireDesktopRuntime() {
-    // A process/runtime lifecycle transition cannot safely retain an in-memory
-    // pending RPC guard. The next explicitly opened runtime must reconcile
-    // authority; it must never inherit a stuck or presumed-success request.
-    _abandonPendingDesktopCompression();
+    // A retired runtime no longer streams the terminal status of a pending
+    // /compress: stop locking and fall back to the read-only restore probe.
+    _handOffLiveCompressionToRestore();
     _desktopBindEpoch += 1;
     _goal = null;
     _loop = null;
@@ -7724,86 +7678,6 @@ class ActiveChat {
     }
   }
 
-  Future<void> _loadMessagesWhileCompressionFenced(
-    int loadEpoch, {
-    int? expectedMessageCount,
-    VoidCallback? onMessagesPublished,
-    bool forceStoredDisplay = false,
-    required bool Function() stillAuthorized,
-  }) async {
-    try {
-      if (!stillAuthorized()) return;
-      final context = _captureSessionMessagesPageRead(
-        consumer: _SessionMessagesPageConsumer.compressionFenced,
-        loadEpoch: loadEpoch,
-        profile: _storedSessionProfile,
-        hardExpectedMessageCount: expectedMessageCount,
-      );
-      final page = await _fetchStoredMessagesPage(
-        context,
-        allowNativeHistory: !forceStoredDisplay,
-      );
-      if (!stillAuthorized()) return;
-      var projected = const <Map<String, dynamic>>[];
-      _RefreshedTranscriptGraft? graft;
-      final transition = _consumeSessionMessagesPageEvidence(
-        page,
-        context,
-        projector: (pageProvesComplete) {
-          final normalized = _normalizedNewestFirst(page.messages);
-          projected = _applyCancelledTurnTombstones(
-            _associateGeneratedImagesNewestFirst(normalized),
-            incomingTranscriptComplete: pageProvesComplete,
-          );
-          final candidate = _graftRefreshedTail(
-            projected,
-            _messages,
-            refreshedTranscriptComplete: pageProvesComplete,
-          );
-          graft = candidate;
-          return _SessionMessagesPageProjection.fromGraft(projected, candidate);
-        },
-      );
-      if (!stillAuthorized() ||
-          transition.action == _SessionMessagesPageAction.stale) {
-        return;
-      }
-      if (transition.action == _SessionMessagesPageAction.throwExpectedCount) {
-        throw StateError(
-          'Hermes returned an empty transcript for a non-empty session',
-        );
-      }
-      if (transition.action == _SessionMessagesPageAction.retryTail) return;
-      final acceptedGraft = graft;
-      if (transition.publishesProjection && acceptedGraft != null) {
-        if (!stillAuthorized()) return;
-        _captureArtifactMaps(page.messages, logicalSessionId: logicalSessionId);
-        _messages = _projectTranscriptForInternalState(
-          _preserveLocalAssistantErrors(acceptedGraft.messages, _messages),
-        );
-        _mergeSteerRecords();
-        _reconcileSubagentsFromTranscript();
-      }
-      if (!stillAuthorized()) return;
-      messagesLoaded = true;
-      if (transition.publishesProjection || transition.preservesAsSuccess) {
-        // Like the unfenced load: a caller-owned read is announced only to its
-        // caller. Echoing `messagesHydrated` too reached the chat screen after
-        // its refresh had ended and read as an external change, re-arming an
-        // immediate passive read forever while the fence was up.
-        if (onMessagesPublished != null) {
-          onMessagesPublished();
-        } else {
-          _emit(ActiveChatEvent.messagesHydrated);
-        }
-      }
-    } on StateError {
-      rethrow;
-    } catch (_) {
-      if (stillAuthorized()) messagesLoaded = true;
-    }
-  }
-
   /// Carga el historial (lectura). No toca el stream.
   ///
   /// Instancia LOCAL (bridge): el agente oneshot no conserva el historial
@@ -7888,20 +7762,9 @@ class ActiveChat {
     }
 
     if (!loadStillAuthorized()) return;
-    final hasCompressionFence = await _hasUnresolvedDurableCompressionFence();
-    if (!loadStillAuthorized()) return;
-    if (hasCompressionFence) {
-      final privacySnapshot = await privacySnapshotFuture;
-      if (!loadStillAuthorized()) return;
-      restorePrivacy(privacySnapshot?.privacyCheckpoint);
-      await _loadMessagesWhileCompressionFenced(
-        loadEpoch,
-        expectedMessageCount: expectedMessageCount,
-        onMessagesPublished: onMessagesPublished,
-        stillAuthorized: loadStillAuthorized,
-      );
-      return;
-    }
+    // Never awaited: a recorded /compress only ever adds a display-only
+    // progress pill; it must not delay or gate the load.
+    unawaited(_restoreCompressionFromRecord());
     if (!passiveOnly) {
       if (_desktopAutomaticReattach != null) {
         _desktopAutomaticReattachGeneration += 1;
@@ -11789,13 +11652,8 @@ class ActiveChat {
         capturedSessionConfig.allowTransportFallback;
     late final int turnEpoch;
     try {
-      if (await _hasUnresolvedDurableCompressionFence()) {
-        throw const TuiGatewayRpcError(
-          'prompt.submit',
-          'Session compression requires authoritative reconciliation',
-          code: 4009,
-        );
-      }
+      final beforeAdmission = beforeSendAdmissionForTesting;
+      if (beforeAdmission != null) await beforeAdmission();
       if (_disposed) return false;
       try {
         await _flushPendingCancelledTombstoneUpdates();
@@ -12663,25 +12521,17 @@ class ActiveChat {
       operationIdentity: Object(),
       initialState: initial,
       requestedDurableId: initial.storedSessionId ?? serverSessionId,
-      expectedRootId: _durableLogicalSessionId,
+      expectedRootId: logicalSessionId,
       scope: DesktopCompressionAuthorityScope(
         connectionId: connection.id,
         profile: Session.profileOwner(
           _sessionProfileOwner,
           fallback: _storedSessionProfile,
         ),
-        logicalSessionId: _durableLogicalSessionId,
+        logicalSessionId: logicalSessionId,
       ),
     );
   }
-
-  DesktopCompressionFenceScope _fenceScopeForAuthority(
-    DesktopCompressionAuthorityToken authority,
-  ) => DesktopCompressionFenceScope(
-    connectionId: authority.scope.connectionId,
-    profile: authority.scope.profile,
-    logicalSessionId: authority.scope.logicalSessionId,
-  );
 
   /// Ensures an existing durable chat has a live runtime without ever creating
   /// one. A 4007 means this is still a local draft and is reported as `false`.
@@ -12932,19 +12782,12 @@ class ActiveChat {
         !visible()) {
       return false;
     }
-    final scope = _desktopCompressionFenceScope;
     final authority = _desktopCompressionAuthorityState;
     bool stillAuthorized() =>
         !_disposed &&
         _attachDesktopRuntimeOnLoad &&
         authority.sameCoordinates(_desktopCompressionAuthorityState) &&
         visible();
-    if (await _hasUnresolvedDurableCompressionFence(
-      capturedScope: scope,
-      stillAuthorized: stillAuthorized,
-    )) {
-      return false;
-    }
     if (!stillAuthorized()) return false;
     final token = _captureDesktopCompressionAuthority();
     final transition = token.begin(_desktopCompressionAuthorityState);
@@ -13440,222 +13283,162 @@ class ActiveChat {
     );
   }
 
-  DesktopCompressionFenceScope get _desktopCompressionFenceScope =>
-      DesktopCompressionFenceScope(
-        connectionId: connection.id,
-        profile: Session.profileOwner(
-          _sessionProfileOwner,
-          fallback: _storedSessionProfile,
-        ),
-        logicalSessionId: _durableLogicalSessionId,
-      );
+  String get _compressionRestoreProfile => Session.profileOwner(
+    _sessionProfileOwner,
+    fallback: _storedSessionProfile,
+  );
 
-  /// The lineage root every later surface knows this chat by. A chat created
-  /// in this process was constructed with its provisional draft id (`mob-…`);
-  /// once Hermes created the durable session, that stored id is the root a
-  /// relaunched app reopens it by (Conversaciones, Home, notifications), so
-  /// durable state such as the compression fence must be keyed by it.
-  String get _durableLogicalSessionId =>
-      logicalSessionId == sessionId && _createdDraftSessionId != null
-      ? _createdDraftSessionId!
-      : logicalSessionId;
-
-  Future<void> _restoreDurableCompressionFence() async {
-    final lookup = await _compressionFenceStore.lookup(
-      _desktopCompressionFenceScope,
-    );
-    if (_disposed || !lookup.isFenced) return;
-    final record = lookup.record;
-    if (record == null) {
-      _desktopCompressionInFlight = true;
-      if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+  /// Looks for a manual `/compress` an earlier process started on this chat
+  /// and asks the gateway, read-only, whether it is still running. Only a
+  /// positive answer shows anything; it never locks input, and every other
+  /// answer (finished, ring gone, gateway restarted, error) leaves the chat
+  /// exactly as if nothing had been recorded — Hermes Desktop keeps no such
+  /// state at all.
+  Future<void> _restoreCompressionFromRecord() async {
+    if (_disposed ||
+        _desktopCompressionInFlight ||
+        _restoredCompression != null) {
       return;
     }
-    _durableCompressionFence = record;
-    _desktopCompressionInFlight = true;
-    _desktopCompactionStartedAt ??= DateTime.fromMillisecondsSinceEpoch(
-      record.createdAtMs,
+    final storedId = serverSessionId;
+    final record = await _compressionRestoreStore.lookup(
+      connectionId: connection.id,
+      profile: _compressionRestoreProfile,
+      storedSessionId: storedId,
     );
-    if (await _reconcileDurableCompressionFence(record)) return;
-    if (await _releaseExpiredDurableCompressionFence(record)) return;
-    _scheduleDurableCompressionReconciliation(
-      _durableCompressionFence ?? record,
-    );
-    if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+    if (_disposed ||
+        record == null ||
+        _desktopCompressionInFlight ||
+        _restoredCompression != null ||
+        serverSessionId != storedId) {
+      return;
+    }
+    _restoredCompression = record;
+    await _probeRestoredCompression(record);
   }
 
-  Future<bool> _hasUnresolvedDurableCompressionFence({
-    DesktopCompressionFenceScope? capturedScope,
-    bool Function()? stillAuthorized,
-  }) async {
-    final lookup = await _compressionFenceStore.lookup(
-      capturedScope ?? _desktopCompressionFenceScope,
-    );
-    if (stillAuthorized != null && !stillAuthorized()) return true;
-    if (lookup.status == DesktopCompressionFenceLookupStatus.absent) {
-      _durableCompressionFence = null;
-      if (_pendingDesktopCompression == null) {
-        _desktopCompressionInFlight = false;
-      }
-      return false;
-    }
-    final record = lookup.record;
-    _desktopCompressionInFlight = true;
-    if (record == null) return true;
-    _durableCompressionFence = record;
-    _desktopCompactionStartedAt ??= DateTime.fromMillisecondsSinceEpoch(
-      record.createdAtMs,
-    );
-    if (await _reconcileDurableCompressionFence(record)) return false;
-    if (await _releaseExpiredDurableCompressionFence(record)) return false;
-    _scheduleDurableCompressionReconciliation(
-      _durableCompressionFence ?? record,
-    );
-    return true;
-  }
-
-  /// An unproven fence past its deadline stops holding anything: the
-  /// composer, Home/Conversaciones and runtime attach behave like Hermes
-  /// Desktop (which has no fence at all) and a dismissible notice says the
-  /// result could not be confirmed. The server's own compression lock still
-  /// refuses a conflicting turn with 4009.
-  Future<bool> _releaseExpiredDurableCompressionFence(
-    DesktopCompressionFenceRecord record, {
-    bool deadlineReached = false,
-  }) async {
-    if (!deadlineReached && record.reconcileUntilMs > _wallClockMs()) {
-      return false;
-    }
-    if (_durableCompressionFence?.scope.key != record.scope.key ||
-        _durableCompressionFence?.attemptId != record.attemptId) {
-      return false;
-    }
-    _desktopCompressionReconciliationTimer?.cancel();
-    _desktopCompressionReconciliationTimer = null;
-    final released = await _deleteDurableCompressionFence(
-      record,
-      unconfirmed: true,
-    );
-    if (!released) {
-      // Storage refused the delete: keep failing closed, but say so.
-      _desktopCompressionUnconfirmable = true;
-      if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
-    }
-    return released;
-  }
-
-  Future<bool> _reconcileDurableCompressionFence(
-    DesktopCompressionFenceRecord record,
+  Future<void> _probeRestoredCompression(
+    CompressionRestoreRecord record,
   ) async {
+    if (_disposed ||
+        _restoredCompressionProbeInFlight ||
+        !identical(_restoredCompression, record)) {
+      return;
+    }
+    _restoredCompressionProbeInFlight = true;
+    Map<String, dynamic>? replay;
+    var failed = false;
     try {
-      Future<Map<String, dynamic>?> readRow(String id) async {
-        try {
-          return await _api
-              .apiGet(
-                ApiClient.profileEndpoint(
-                  'api/sessions/${Uri.encodeComponent(id)}',
-                  profile: record.scope.profile,
-                ),
-              )
-              .timeout(_desktopCompressionReconcileRpcBudget);
-        } catch (_) {
-          return null;
-        }
+      final gateway = _desktopGateway;
+      if (gateway is HermesDesktopCompressionStatusGateway) {
+        await gateway!.connect().timeout(_compressionRestoreRpcBudget);
+        replay = await (gateway as HermesDesktopCompressionStatusGateway)
+            .compressionEventReplay(record.runtimeId)
+            .timeout(_compressionRestoreRpcBudget);
       }
-
-      var evidence = const DesktopCompressionFenceEvidence.none();
-      int? messagesNow;
-      void observe(Map<String, dynamic>? response) {
-        if (response == null) return;
-        if (!evidence.provesSettlement) {
-          evidence = DesktopCompressionFenceEvidence.evaluate(record, response);
-        }
-        final wrapped = response['session'];
-        final row = wrapped is Map ? wrapped : response;
-        final count = row['message_count'];
-        if (row['id'] == record.tipAtStart && count is int && count >= 0) {
-          messagesNow = count;
-        }
-      }
-
-      observe(await readRow(record.scope.logicalSessionId));
-      if (_disposed) return false;
-      if (!evidence.provesSettlement &&
-          record.messagesAtStart != null &&
-          record.tipAtStart != record.scope.logicalSessionId) {
-        // In-place compaction shrinks the tip row, not the lineage root.
-        observe(await readRow(record.tipAtStart));
-        if (_disposed) return false;
-      }
-      var changed = evidence.provesSettlement;
-      if (!evidence.provesSettlement) {
-        // Nothing durable changed: the attempt may have been refused, found
-        // nothing to compress, or still be running. Ask the gateway whether
-        // the runtime that ran it is still pinned "compressing".
-        if (await _compressionReplayVerdict(record) !=
-            DesktopCompressionReplayVerdict.finished) {
-          return false;
-        }
-        if (_disposed) return false;
-        changed = false;
-      }
-      final tip = evidence.authoritativeTip;
-      final deleted = await _deleteDurableCompressionFence(record);
-      if (!deleted || _disposed) return deleted;
-      _restoredCompressionOutcome = (
-        changed: changed,
-        messagesBefore: record.messagesAtStart,
-        messagesAfter: messagesNow,
-      );
-      _emit(ActiveChatEvent.sessionInfo);
-      if (tip != null) _desktopStoredSessionId = tip;
-      final hydrationStoredId = serverSessionId;
-      final loadEpoch = ++_messageLoadEpoch;
-      final authority = _compressionProjectionAuthority;
-      await _loadMessagesWhileCompressionFenced(
-        loadEpoch,
-        forceStoredDisplay: true,
-        stillAuthorized: () =>
-            authority == _compressionProjectionAuthority &&
-            serverSessionId == hydrationStoredId,
-      );
-      return true;
     } catch (_) {
-      return false;
+      failed = true;
+    } finally {
+      _restoredCompressionProbeInFlight = false;
+    }
+    if (_disposed || !identical(_restoredCompression, record)) return;
+    final verdict = replay == null
+        ? CompressionReplayVerdict.unknown
+        : CompressionReplayVerdict.evaluate(replay);
+    if (verdict == CompressionReplayVerdict.running) {
+      final wasRunning = _restoredCompressionRunning;
+      _restoredCompressionRunning = true;
+      if (!wasRunning) {
+        _desktopCompactionStartedAt = DateTime.fromMillisecondsSinceEpoch(
+          record.startedAtMs,
+        );
+        _desktopCompactionTokensBefore = null;
+        _desktopCompactionMessagesBefore = null;
+        _noteDesktopCompressingText(
+          CompressionReplayVerdict.latestCompressingText(replay!),
+          emit: false,
+        );
+        // One change notification per transition, never per probe: repeated
+        // `sessionInfo` would re-arm the chat's passive reader every probe.
+        _emit(ActiveChatEvent.sessionInfo);
+      }
+      _scheduleRestoredCompressionProbe(record);
+      return;
+    }
+    if (failed && _restoredCompressionRunning) {
+      // A transient read failure while positively running keeps what was
+      // shown and asks again; it never invents a lock.
+      _scheduleRestoredCompressionProbe(record);
+      return;
+    }
+    final wasRunning = _restoredCompressionRunning;
+    _finishRestoredCompression(record, clearRecord: !failed);
+    if (wasRunning && verdict == CompressionReplayVerdict.finished) {
+      unawaited(_announceRestoredCompressionFinished(record));
     }
   }
 
-  /// Read-only `session.events.since` probe of the runtime that ran the
-  /// attempt (never `session.resume`: it cannot steal another client's
-  /// transport). See [DesktopCompressionReplayVerdict].
-  Future<DesktopCompressionReplayVerdict> _compressionReplayVerdict(
-    DesktopCompressionFenceRecord record,
-  ) async {
-    final runtime = record.runtimeAtStart;
-    final gateway = _desktopGateway;
-    if (runtime == null ||
-        gateway == null ||
-        gateway is! HermesDesktopCompressionStatusGateway ||
-        record.scope.connectionId != connection.id) {
-      return DesktopCompressionReplayVerdict.unknown;
+  void _scheduleRestoredCompressionProbe(CompressionRestoreRecord record) {
+    _restoredCompressionProbeTimer?.cancel();
+    _restoredCompressionProbeTimer = Timer(
+      _compressionRestoreProbeInterval,
+      () => unawaited(_probeRestoredCompression(record)),
+    );
+  }
+
+  void _finishRestoredCompression(
+    CompressionRestoreRecord record, {
+    required bool clearRecord,
+  }) {
+    _restoredCompressionProbeTimer?.cancel();
+    _restoredCompressionProbeTimer = null;
+    if (identical(_restoredCompression, record)) _restoredCompression = null;
+    final wasRunning = _restoredCompressionRunning;
+    _restoredCompressionRunning = false;
+    if (clearRecord) {
+      unawaited(
+        _compressionRestoreStore.clear(
+          connectionId: record.connectionId,
+          profile: record.profile,
+          storedSessionId: record.storedSessionId,
+          runtimeId: record.runtimeId,
+        ),
+      );
     }
+    if (wasRunning && !_disposed) _emit(ActiveChatEvent.sessionInfo);
+  }
+
+  /// A restored compression the gateway now reports finished: reload the
+  /// transcript and hand the chat its outcome once (the pill shows it).
+  Future<void> _announceRestoredCompressionFinished(
+    CompressionRestoreRecord record,
+  ) async {
+    final before = _desktopCompactionMessagesBefore;
+    int? after;
     try {
-      await gateway.connect().timeout(_desktopCompressionReconcileRpcBudget);
-      final result = await (gateway as HermesDesktopCompressionStatusGateway)
-          .compressionEventReplay(runtime)
-          .timeout(_desktopCompressionReconcileRpcBudget);
-      return DesktopCompressionReplayVerdict.evaluate(result);
-    } catch (_) {
-      return DesktopCompressionReplayVerdict.unknown;
+      final snapshot = await _api
+          .getSession(record.storedSessionId, profile: record.profile)
+          .timeout(_compressionRestoreRpcBudget);
+      after = snapshot.messageCount;
+    } catch (_) {}
+    if (_disposed) return;
+    _restoredCompressionOutcome = (
+      changed: before != null && after != null && after < before,
+      messagesBefore: before,
+      messagesAfter: after,
+    );
+    _emit(ActiveChatEvent.sessionInfo);
+    if (!isStreaming) {
+      try {
+        await loadMessages(profile: _storedSessionProfile, passiveOnly: true);
+      } catch (_) {}
     }
   }
 
   ({bool changed, int? messagesBefore, int? messagesAfter})?
   _restoredCompressionOutcome;
 
-  /// Outcome of a compression this process only learned about after the
-  /// fact (fence restored after a kill, settled by the server's state). The
-  /// chat shows it once, like the RPC outcome notice.
+  /// Outcome of a restored compression, handed to the chat once.
   ({bool changed, int? messagesBefore, int? messagesAfter})?
   takeRestoredCompressionOutcome() {
     final outcome = _restoredCompressionOutcome;
@@ -13663,82 +13446,40 @@ class ActiveChat {
     return outcome;
   }
 
-  Future<bool> _deleteDurableCompressionFence(
-    DesktopCompressionFenceRecord record, {
-    bool unconfirmed = false,
-  }) async {
-    final deleted = await _compressionFenceStore.deleteAttempt(
-      record.scope,
-      attemptId: record.attemptId,
-    );
-    if (!deleted) {
-      final authority = await _compressionFenceStore.lookup(record.scope);
-      if (authority.record case final current?) {
-        _durableCompressionFence = current;
-        if (_pendingDesktopCompression?.durableRecord.attemptId !=
-            current.attemptId) {
-          _pendingDesktopCompression = null;
-          _scheduleDurableCompressionReconciliation(current);
-        }
-      }
-      _desktopCompressionInFlight = true;
-      return false;
-    }
-    if (_durableCompressionFence?.scope.key == record.scope.key &&
-        _durableCompressionFence?.attemptId == record.attemptId) {
-      _durableCompressionFence = null;
-    }
-    if (_pendingDesktopCompression?.durableRecord.scope.key ==
-            record.scope.key &&
-        _pendingDesktopCompression?.durableRecord.attemptId ==
-            record.attemptId) {
-      _pendingDesktopCompression = null;
-    }
-    if (_durableCompressionFence == null &&
-        _pendingDesktopCompression == null) {
-      _desktopCompressionReconciliationTimer?.cancel();
-      _desktopCompressionReconciliationTimer = null;
-      // A clean delete with nothing else outstanding is a real settle: any
-      // earlier "couldn't confirm" from a previous attempt no longer applies.
-      // An expired, unproven release keeps (or raises) that notice instead.
-      _desktopCompressionUnconfirmable = unconfirmed;
-    }
-    _desktopCompressionInFlight =
-        _durableCompressionFence != null || _pendingDesktopCompression != null;
+  /// This process lost the live stream of its own `/compress` (reply lost,
+  /// runtime retired): stop locking and fall back to the read-only probe.
+  void _handOffLiveCompressionToRestore() {
+    if (!_desktopCompressionInFlight || _desktopCompressionRpcInFlight) return;
+    _desktopCompressionInFlight = false;
+    // Its terminal status may still arrive on this chat: then reload.
+    _liveCompressionHandedOff = true;
     if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
-    return true;
+    unawaited(_restoreCompressionFromRecord());
   }
 
-  void _scheduleDurableCompressionReconciliation(
-    DesktopCompressionFenceRecord record,
-  ) {
-    _desktopCompressionReconciliationTimer?.cancel();
-    final remainingMs = record.reconcileUntilMs - _wallClockMs();
-    if (remainingMs <= 0) {
-      _desktopCompressionReconciliationTimer = null;
-      // Giving up polling silently (the previous behavior here) left the UI
-      // saying "still working" forever once the deadline passed — including
-      // right after reopening the app on a session whose fence had already
-      // expired while it was closed. Say so instead.
-      unawaited(_releaseExpiredDurableCompressionFence(record));
-      return;
-    }
-    final delayMs = math.min(
-      remainingMs,
-      _desktopCompressionReconciliationDelay.inMilliseconds,
-    );
-    _desktopCompressionReconciliationTimer = Timer(
-      Duration(milliseconds: delayMs),
-      () async {
-        if (_disposed ||
-            _durableCompressionFence?.attemptId != record.attemptId) {
-          return;
-        }
-        if (await _reconcileDurableCompressionFence(record)) return;
-        _scheduleDurableCompressionReconciliation(record);
-      },
-    );
-  }
+  Future<void> _recordCompressionForRestore({
+    required String storedSessionId,
+    required String runtimeId,
+    required int startedAtMs,
+  }) => _compressionRestoreStore.save(
+    CompressionRestoreRecord(
+      connectionId: connection.id,
+      profile: _compressionRestoreProfile,
+      storedSessionId: storedSessionId,
+      runtimeId: runtimeId,
+      startedAtMs: startedAtMs,
+    ),
+  );
+
+  Future<void> _clearCompressionRestoreRecord({
+    required String storedSessionId,
+    required String runtimeId,
+  }) => _compressionRestoreStore.clear(
+    connectionId: connection.id,
+    profile: _compressionRestoreProfile,
+    storedSessionId: storedSessionId,
+    runtimeId: runtimeId,
+  );
 
   /// Comprime mediante `session.compress`, el contrato autoritativo actual de
   /// Hermes Desktop. Solo un Gateway antiguo que responda `method not found`
@@ -13831,17 +13572,10 @@ class ActiveChat {
     // reconstruct it from mutable ActiveChat state.
     final token = _captureDesktopCompressionAuthority();
     var authority = token.begin(_desktopCompressionAuthorityState);
-    bool preparationStillAuthorized() =>
-        authority?.matches(_desktopCompressionAuthorityState) == true;
-
-    if (authority == null ||
-        await _hasUnresolvedDurableCompressionFence(
-          capturedScope: _fenceScopeForAuthority(token),
-          stillAuthorized: preparationStillAuthorized,
-        )) {
+    if (authority == null) {
       throw const TuiGatewayRpcError(
         'session.compress',
-        'Session compression requires authoritative reconciliation',
+        'Session compression authority expired',
         code: 4009,
       );
     }
@@ -13917,10 +13651,13 @@ class ActiveChat {
         code: 403,
       );
     }
+    // A restored compression the gateway positively reports as running makes
+    // a second /compress pointless (the server would answer lock_held); it
+    // never blocks a normal send.
     if (isStreaming ||
         _messageQueue.isNotEmpty ||
         needsInput ||
-        desktopCompressionInFlight) {
+        desktopCompactionVisible) {
       throw const TuiGatewayRpcError(
         'session.compress',
         'Session is busy',
@@ -13963,12 +13700,7 @@ class ActiveChat {
     final sessionEpoch = receipt.destination.sessionEpoch;
     final compressionMessageLoadEpoch = receipt.destination.messageLoadEpoch;
     final compressionTombstoneRevision = receipt.destination.tombstoneRevision;
-    final fenceScope = DesktopCompressionFenceScope(
-      connectionId: receipt.scope.connectionId,
-      profile: receipt.scope.profile,
-      logicalSessionId: receipt.scope.logicalSessionId,
-    );
-    bool compressionFenceStillValid() =>
+    bool compressionStillValid() =>
         receipt.canAuthorize(token, _desktopCompressionAuthorityState);
     bool compressionResultMatchesAuthorityRoot(
       DesktopCompressionResult compression,
@@ -13977,74 +13709,60 @@ class ActiveChat {
       token.expectedRootId,
     );
 
-    final messagesAtStart = await _storedMessageCountForFence(
-      receipt.storedSessionId,
-      profile: receipt.scope.profile,
+    final startedAtMs = _wallClockMs();
+    // Best effort: only lets a relaunched app find this runtime's replay ring
+    // (see CompressionRestoreStore). A lost write hides restored progress,
+    // it never blocks anything.
+    await _recordCompressionForRestore(
+      storedSessionId: receipt.storedSessionId,
+      runtimeId: runtimeId,
+      startedAtMs: startedAtMs,
     );
-    final createdAtMs = _wallClockMs();
-    final arm = await _compressionFenceStore.arm(
-      fenceScope,
-      tipAtStart: receipt.storedSessionId,
-      compressionsAtStart: receipt.evidence.compressionsAtStart,
-      messagesAtStart: messagesAtStart,
-      runtimeAtStart: runtimeId,
-      createdAtMs: createdAtMs,
-      reconcileUntilMs:
-          createdAtMs + _desktopCompressionReconciliationWindow.inMilliseconds,
-    );
-    final durableRecord = arm.lookup.record;
-    if (!arm.claimed ||
-        durableRecord == null ||
-        !compressionFenceStillValid()) {
-      _desktopCompressionInFlight = arm.lookup.isFenced;
-      if (durableRecord != null) _durableCompressionFence = durableRecord;
-      if (arm.claimed && durableRecord != null) {
-        await _deleteDurableCompressionFence(durableRecord);
-      }
-      throw const TuiGatewayRpcError(
-        'session.compress',
-        'Compression fence could not be persisted',
-        code: 4009,
+    if (!compressionStillValid()) {
+      await _clearCompressionRestoreRecord(
+        storedSessionId: receipt.storedSessionId,
+        runtimeId: runtimeId,
       );
-    }
-    _durableCompressionFence = durableRecord;
-    if (!desktopCompressionInFlight) {
-      _desktopCompactionStartedAt = DateTime.now();
-      _desktopCompactionTokensBefore = null;
-      _desktopCompactionMessagesBefore = null;
-      _desktopCompactionChunkIndex = null;
-      _desktopCompactionChunkCount = null;
-      _desktopCompressionUnconfirmable = false;
-    }
-    _desktopCompressionInFlight = true;
-    _emit(ActiveChatEvent.sessionInfo);
-    if (!compressionFenceStillValid()) {
-      await _deleteDurableCompressionFence(durableRecord);
       throw const TuiGatewayRpcError(
         'session.compress',
         'Compression authority expired before dispatch',
         code: 4009,
       );
     }
+    _restoredCompressionProbeTimer?.cancel();
+    _restoredCompression = null;
+    _restoredCompressionRunning = false;
+    _desktopCompactionStartedAt = DateTime.fromMillisecondsSinceEpoch(
+      startedAtMs,
+    );
+    _desktopCompactionTokensBefore = null;
+    _desktopCompactionMessagesBefore = null;
+    _desktopCompactionChunkIndex = null;
+    _desktopCompactionChunkCount = null;
+    _desktopCompressionInFlight = true;
     _desktopCompressionRpcInFlight = true;
+    _emit(ActiveChatEvent.sessionInfo);
     presentationProjection?.dispatchAttempted = true;
+    var awaitingTerminalStatus = false;
     try {
       final dispatch = await CompressionDispatcher(gateway).dispatch(
         runtimeId,
         focusTopic: focusTopic,
         connectionEpoch: connectionEpoch,
         sessionEpoch: sessionEpoch,
-        stillValid: compressionFenceStillValid,
+        stillValid: compressionStillValid,
         matchesRoot: compressionResultMatchesAuthorityRoot,
       );
       final outcome = dispatch.evidence.outcome;
       final compression = dispatch.evidence.nativeResult;
       if (outcome.resolvesAttempt) {
-        final deleted = await _deleteDurableCompressionFence(durableRecord);
-        if (deleted &&
-            compression != null &&
+        await _clearCompressionRestoreRecord(
+          storedSessionId: receipt.storedSessionId,
+          runtimeId: runtimeId,
+        );
+        if (compression != null &&
             outcome == DesktopCompressionOutcome.settled &&
-            compressionFenceStillValid()) {
+            compressionStillValid()) {
           final storedId =
               compression.info?.storedSessionId ?? receipt.storedSessionId;
           presentationProjection?._beginOwnTransition(
@@ -14063,17 +13781,11 @@ class ActiveChat {
           );
           presentationProjection?._acceptOwn();
         }
-      } else if (compressionFenceStillValid() &&
-          outcome != DesktopCompressionOutcome.ownershipLost) {
-        await _beginPendingDesktopCompression(
-          durableRecord: durableRecord,
-          runtimeId: runtimeId,
-          connectionEpoch: connectionEpoch,
-          sessionEpoch: sessionEpoch,
-          cause: outcome == DesktopCompressionOutcome.acceptedPending
-              ? _DesktopCompressionPendingCause.serverPending
-              : _DesktopCompressionPendingCause.ambiguousTransport,
-        );
+      } else if (outcome == DesktopCompressionOutcome.acceptedPending &&
+          compressionStillValid()) {
+        // The compute host outlived the RPC wait: like Hermes Desktop, the
+        // gateway's `compacted`/`ready` status ends it.
+        awaitingTerminalStatus = true;
       }
       if (dispatch.error case final error?) throw error;
       return dispatch.command ??
@@ -14085,40 +13797,15 @@ class ActiveChat {
             sessionEpoch: sessionEpoch,
           );
     } finally {
-      // Only durable resolution can release the fence, never UI generation.
       _desktopCompressionRpcInFlight = false;
-      if (_durableCompressionFence == null && !_desktopCompressionInFlight) {
-        _clearDesktopCompactingIndicator();
+      if (!awaitingTerminalStatus && _desktopCompressionInFlight) {
+        _desktopCompressionInFlight = false;
+        // A lost reply (transport, ownership) says nothing about the server:
+        // show progress only if its replay ring positively says it still runs.
+        if (!_disposed) unawaited(_restoreCompressionFromRecord());
       }
+      if (!_desktopCompressionInFlight) _clearDesktopCompactingIndicator();
       if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
-    }
-  }
-
-  /// Stored `message_count` of the exact row about to be compressed: the
-  /// baseline that lets a later REST read prove an in-place compaction that
-  /// this process never heard back about (killed app, lost transport).
-  Future<int?> _storedMessageCountForFence(
-    String storedSessionId, {
-    required String profile,
-  }) async {
-    try {
-      final response = await _api
-          .apiGet(
-            ApiClient.profileEndpoint(
-              'api/sessions/${Uri.encodeComponent(storedSessionId)}',
-              profile: profile,
-            ),
-          )
-          .timeout(_desktopCompressionReconcileRpcBudget);
-      final wrapped = response['session'];
-      final row = wrapped is Map ? wrapped : response;
-      final count = row['message_count'];
-      return row['id'] == storedSessionId && count is int && count >= 0
-          ? count
-          : null;
-    } catch (_) {
-      // No baseline only means a lost reply falls back to the deadline.
-      return null;
     }
   }
 
@@ -14310,182 +13997,6 @@ class ActiveChat {
   int? _compressionCountFromInfo(DesktopSessionRuntimeInfo info) {
     final value = info.usage?.raw['compressions'];
     return value is int && value >= 0 ? value : null;
-  }
-
-  DesktopCompressionFenceEvidence _pendingCompressionEvidence(
-    _PendingDesktopCompression record,
-    Map<String, dynamic> payload,
-  ) => DesktopCompressionFenceEvidence.evaluate(record.durableRecord, payload);
-
-  Future<void> _beginPendingDesktopCompression({
-    required DesktopCompressionFenceRecord durableRecord,
-    required String runtimeId,
-    required int connectionEpoch,
-    required int sessionEpoch,
-    required _DesktopCompressionPendingCause cause,
-  }) async {
-    _desktopCompressionReconciliationTimer?.cancel();
-    final reconcileUntilMs =
-        _wallClockMs() + _desktopCompressionReconciliationWindow.inMilliseconds;
-    final transitioned = await _compressionFenceStore.transitionAttempt(
-      durableRecord.scope,
-      attemptId: durableRecord.attemptId,
-      phase: cause == _DesktopCompressionPendingCause.serverPending
-          ? DesktopCompressionFencePhase.serverPending
-          : DesktopCompressionFencePhase.transportUnknown,
-      reconcileUntilMs: reconcileUntilMs,
-    );
-    if (transitioned == null) {
-      final authority = await _compressionFenceStore.lookup(durableRecord.scope);
-      final current = authority.record;
-      _durableCompressionFence = current;
-      _pendingDesktopCompression = null;
-      _desktopCompressionInFlight = authority.isFenced;
-      if (current != null) _scheduleDurableCompressionReconciliation(current);
-      if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
-      return;
-    }
-    final record = _PendingDesktopCompression(
-      durableRecord: transitioned,
-      runtimeSessionId: runtimeId,
-      rootDurableId: transitioned.scope.logicalSessionId,
-      bindEpoch: connectionEpoch,
-      sessionEpoch: sessionEpoch,
-      deadline: DateTime.fromMillisecondsSinceEpoch(
-        transitioned.reconcileUntilMs,
-      ),
-      cause: cause,
-    );
-    _durableCompressionFence = transitioned;
-    _pendingDesktopCompression = record;
-    _desktopCompressionInFlight = true;
-    _desktopCompressionReconciliationTimer = Timer(
-      _desktopCompressionReconciliationDelay,
-      () => unawaited(_reconcilePendingDesktopCompression(record)),
-    );
-    _emit(ActiveChatEvent.sessionInfo);
-  }
-
-  bool _isPendingDesktopCompressionCurrent(_PendingDesktopCompression record) =>
-      !_disposed &&
-      identical(_pendingDesktopCompression, record) &&
-      _desktopRuntimeSessionId == record.runtimeSessionId &&
-      _desktopBindEpoch == record.bindEpoch &&
-      _desktopSessionEpoch == record.sessionEpoch;
-
-  Future<void> _settlePendingDesktopCompression(
-    _PendingDesktopCompression record,
-    DesktopCompressionFenceEvidence evidence,
-  ) async {
-    if (!identical(_pendingDesktopCompression, record)) return;
-    final tip = evidence.authoritativeTip;
-    final deleted = await _deleteDurableCompressionFence(record.durableRecord);
-    if (!deleted || _disposed) return;
-    if (tip != null) _desktopStoredSessionId = tip;
-    if (_desktopRuntimeSessionId != record.runtimeSessionId ||
-        _desktopBindEpoch != record.bindEpoch ||
-        _desktopSessionEpoch != record.sessionEpoch) {
-      return;
-    }
-    final hydrationStoredId = serverSessionId;
-    final loadEpoch = ++_messageLoadEpoch;
-    final authority = _compressionProjectionAuthority;
-    await _loadMessagesWhileCompressionFenced(
-      loadEpoch,
-      forceStoredDisplay: true,
-      stillAuthorized: () =>
-          authority == _compressionProjectionAuthority &&
-          serverSessionId == hydrationStoredId,
-    );
-  }
-
-  /// Releases an expired or retired suppression gate without treating the
-  /// compression as complete. Authoritative settlement is reserved for the
-  /// exact-root tip/counter evidence in [_settlePendingDesktopCompression].
-  void _abandonPendingDesktopCompression([
-    _PendingDesktopCompression? expected,
-    // Only a genuine deadline expiry while actively reconciling counts as
-    // "we tried and couldn't confirm". A runtime retirement/replacement
-    // (e.g. `_retireDesktopRuntime`) abandons the local guard too, but that
-    // is a bookkeeping reset, not a confirmed-unconfirmable result — it must
-    // not surface the warning UI.
-    bool unconfirmable = false,
-  ]) {
-    if (expected != null && !identical(_pendingDesktopCompression, expected)) {
-      return;
-    }
-    _desktopCompressionReconciliationTimer?.cancel();
-    _desktopCompressionReconciliationTimer = null;
-    if (_pendingDesktopCompression == null) return;
-    _pendingDesktopCompression = null;
-    _desktopCompressionInFlight = _durableCompressionFence != null;
-    if (unconfirmable) _desktopCompressionUnconfirmable = true;
-    if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
-    if (unconfirmable && expected != null) {
-      unawaited(
-        _releaseExpiredDurableCompressionFence(
-          expected.durableRecord,
-          deadlineReached: true,
-        ),
-      );
-    }
-  }
-
-  Future<void> _reconcilePendingDesktopCompression(
-    _PendingDesktopCompression record,
-  ) async {
-    if (!_isPendingDesktopCompressionCurrent(record)) return;
-    final remainingAtReadStart = record.deadline.difference(
-      DateTime.fromMillisecondsSinceEpoch(_wallClockMs()),
-    );
-    if (remainingAtReadStart <= Duration.zero) {
-      _abandonPendingDesktopCompression(record, true);
-      return;
-    }
-    final readBudget =
-        remainingAtReadStart < _desktopCompressionReconcileRpcBudget
-        ? remainingAtReadStart
-        : _desktopCompressionReconcileRpcBudget;
-    try {
-      // This is deliberately a bounded REST metadata read. It never calls
-      // `session.resume`, so observing a late compression cannot steal or
-      // rebind another client's live transport.
-      final response = await _api
-          .apiGet(
-            ApiClient.profileEndpoint(
-              'api/sessions/${Uri.encodeComponent(record.rootDurableId)}',
-              profile: _storedSessionProfile,
-            ),
-          )
-          .timeout(readBudget);
-      if (!_isPendingDesktopCompressionCurrent(record)) return;
-      final evidence = _pendingCompressionEvidence(record, response);
-      if (evidence.provesSettlement) {
-        await _settlePendingDesktopCompression(record, evidence);
-        if (!_disposed &&
-            _durableCompressionFence == null &&
-            _desktopRuntimeSessionId == record.runtimeSessionId) {
-          _adoptDesktopRuntime(record.runtimeSessionId);
-        }
-        return;
-      }
-    } catch (_) {
-      // A lost transport/read cannot prove success or failure. Expiry below is
-      // intentionally non-success and merely prevents a stale UI gate.
-    }
-    if (!_isPendingDesktopCompressionCurrent(record)) return;
-    final remaining = record.deadline.difference(
-      DateTime.fromMillisecondsSinceEpoch(_wallClockMs()),
-    );
-    if (remaining <= Duration.zero) {
-      _abandonPendingDesktopCompression(record, true);
-      return;
-    }
-    _desktopCompressionReconciliationTimer?.cancel();
-    _desktopCompressionReconciliationTimer = Timer(
-      remaining,
-      () => _abandonPendingDesktopCompression(record, true),
-    );
   }
 
   Future<PendingSessionConfigChange> setSessionModel(
@@ -17967,10 +17478,16 @@ class ActiveChat {
   }
 
   void _applyDesktopStatusUpdate(Map<String, dynamic> payload) {
-    final kind = (payload['kind'] ?? payload['status'] ?? '')
+    var kind = (payload['kind'] ?? payload['status'] ?? '')
         .toString()
         .trim()
         .toLowerCase();
+    // server.py `_status_update(sid, "ready")` (no text) goes out as
+    // `{kind: status, text: ready}`: the terminal of every manual /compress.
+    if (kind == 'status' &&
+        (payload['text'] ?? '').toString().trim().toLowerCase() == 'ready') {
+      kind = 'ready';
+    }
     if (kind == 'process') {
       unawaited(refreshBackgroundProcesses());
       return;
@@ -17981,21 +17498,14 @@ class ActiveChat {
     }
     if (kind == 'compacted') {
       _desktopCompactedEdgeCount += 1;
-      final pending = _pendingDesktopCompression;
-      final evidence = pending == null
-          ? const DesktopCompressionFenceEvidence.none()
-          : _pendingCompressionEvidence(pending, payload);
-      if (pending != null &&
-          _isPendingDesktopCompressionCurrent(pending) &&
-          evidence.provesSettlement) {
-        unawaited(_settlePendingDesktopCompression(pending, evidence));
-      }
+      _settleLiveCompressionFromStatus();
       _clearDesktopCompactingIndicator();
       _emit(ActiveChatEvent.sessionInfo);
       return;
     }
     if (kind == 'ready') {
       // `ready` es la señal de reposo del gateway: ninguna compactación sigue.
+      _settleLiveCompressionFromStatus();
       _clearDesktopCompactingIndicator();
       return;
     }
@@ -18040,7 +17550,37 @@ class ActiveChat {
 
   /// `status.update(compressing)` fija «compressing N messages (~T tok)»: es la
   /// única cifra viva de un `/compress`; el resto llega en el resultado.
-  void _noteDesktopCompressingText(Object? text) {
+  /// A `/compress` whose RPC answered `pending` ends with the gateway's
+  /// terminal status, exactly as Hermes Desktop clears its compacting flag
+  /// and, with no live turn, re-hydrates the stored transcript
+  /// (`gateway-event/status.ts`).
+  void _settleLiveCompressionFromStatus() {
+    final handedOff = _liveCompressionHandedOff;
+    _liveCompressionHandedOff = false;
+    final live = _desktopCompressionInFlight && !_desktopCompressionRpcInFlight;
+    if (!live && !handedOff) return;
+    _desktopCompressionInFlight = false;
+    final runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId != null) {
+      unawaited(
+        _clearCompressionRestoreRecord(
+          storedSessionId: serverSessionId,
+          runtimeId: runtimeId,
+        ),
+      );
+    }
+    _emit(ActiveChatEvent.sessionInfo);
+    if (!isStreaming) {
+      unawaited(
+        loadMessages(
+          profile: _storedSessionProfile,
+          passiveOnly: true,
+        ).catchError((_) {}),
+      );
+    }
+  }
+
+  void _noteDesktopCompressingText(Object? text, {bool emit = true}) {
     if (text is! String) return;
     final match = _compressingLine.firstMatch(text);
     if (match == null) return;
@@ -18051,7 +17591,7 @@ class ActiveChat {
     if (tokens == null && messages == null) return;
     _desktopCompactionMessagesBefore = messages;
     _desktopCompactionTokensBefore = tokens;
-    _emit(ActiveChatEvent.sessionInfo);
+    if (emit) _emit(ActiveChatEvent.sessionInfo);
   }
 
   void _noteDesktopCompactionChunks(Map<String, dynamic> payload) {
@@ -18116,22 +17656,6 @@ class ActiveChat {
     final parsed = DesktopSessionRuntimeInfo.fromJson(
       rawInfo is Map ? rawInfo : payload,
     );
-    // The upstream late-ack path emits session.info on the same runtime after
-    // it has adopted the compression tip. Only an exact tip/root change or a
-    // native compression counter can settle the gate; an unrelated info event
-    // is not a completion inference. Check before identity adoption can rotate
-    // the local epoch.
-    final pending = _pendingDesktopCompression;
-    final compressionEvidence = pending == null
-        ? const DesktopCompressionFenceEvidence.none()
-        : _pendingCompressionEvidence(pending, payload);
-    final settlesPendingCompression =
-        pending != null &&
-        _isPendingDesktopCompressionCurrent(pending) &&
-        compressionEvidence.provesSettlement;
-    if (settlesPendingCompression) {
-      unawaited(_settlePendingDesktopCompression(pending, compressionEvidence));
-    }
     // `status.update(compacting)` es transitorio. Algunos Gateway publican el
     // terminal únicamente como `session.info(running=false)`, sin repetir
     // message.complete/error para el tip anterior. No dejar ese flag pegado:
@@ -18144,8 +17668,7 @@ class ActiveChat {
       _autoCompactionStaleTimer = null;
     }
     final storedId = parsed.storedSessionId?.trim();
-    if (!settlesPendingCompression &&
-        storedId != null &&
+    if (storedId != null &&
         storedId.isNotEmpty &&
         storedId != _desktopStoredSessionId) {
       _desktopStoredSessionId = storedId;
@@ -24252,6 +23775,8 @@ class ActiveChat {
     suspendSubagentForegroundPresentation();
     _autoCompactionStaleTimer?.cancel();
     _autoCompactionStaleTimer = null;
+    _restoredCompressionProbeTimer?.cancel();
+    _restoredCompressionProbeTimer = null;
     _disposed = true;
     _messageLoadEpoch++;
     final stop = _stopTransition;
@@ -24347,7 +23872,7 @@ class ActiveChatService {
     this.policy,
     SharedPreferences? prefs,
     CancelledTurnTombstoneStore? cancelledTurnStore,
-    DesktopCompressionFenceStore? compressionFenceStore,
+    CompressionRestoreStore? compressionRestoreStore,
     GlobalActivityAggregate? globalActivity,
     bool attachDesktopRuntimeOnLoad = true,
   }) : _prefs = prefs,
@@ -24366,8 +23891,8 @@ class ActiveChatService {
                      profile: scope.profile,
                    ),
            ),
-       _compressionFenceStore =
-           compressionFenceStore ?? DesktopCompressionFenceStore() {
+       _compressionRestoreStore =
+           compressionRestoreStore ?? CompressionRestoreStore() {
     _restoreObservedFirstTokenLatencies();
     unawaited(_drainPendingCancelledTurnCleanup());
   }
@@ -24382,7 +23907,7 @@ class ActiveChatService {
   /// Si es null (p.ej. en tests), el registro se omite sin efecto secundario.
   final SharedPreferences? _prefs;
   final CancelledTurnTombstoneStore? _cancelledTurnStore;
-  final DesktopCompressionFenceStore _compressionFenceStore;
+  final CompressionRestoreStore _compressionRestoreStore;
   final bool _attachDesktopRuntimeOnLoadByDefault;
   final GlobalActivityAggregate globalActivity;
 
@@ -24451,20 +23976,18 @@ class ActiveChatService {
     return operation;
   }
 
-  Future<int> clearCompressionFenceForSession({
+  Future<void> clearCompressionRestoreForSession({
     required String connectionId,
     required String profile,
-    required String logicalSessionId,
-  }) => _compressionFenceStore.clearSession(
-    DesktopCompressionFenceScope(
-      connectionId: connectionId,
-      profile: profile,
-      logicalSessionId: logicalSessionId,
-    ),
+    required String storedSessionId,
+  }) => _compressionRestoreStore.clear(
+    connectionId: connectionId,
+    profile: profile,
+    storedSessionId: storedSessionId,
   );
 
-  Future<int> clearCompressionFencesForConnection(String connectionId) =>
-      _compressionFenceStore.clearConnection(connectionId);
+  Future<void> clearCompressionRestoreForConnection(String connectionId) =>
+      _compressionRestoreStore.clearConnection(connectionId);
 
   Future<int> clearCancelledTurnsForSession({
     required String connectionId,
@@ -24515,12 +24038,11 @@ class ActiveChatService {
       chat.clearCancelledTurnTombstones();
     }
     // This entry point is called only after the backend confirmed the exact
-    // remote session deletion. Do not broaden the durable fence cleanup to
-    // aliases discovered from local history.
-    await clearCompressionFenceForSession(
+    // remote session deletion.
+    await clearCompressionRestoreForSession(
       connectionId: connectionId,
       profile: owner,
-      logicalSessionId: sessionId,
+      storedSessionId: sessionId,
     );
     if (firstError != null) Error.throwWithStackTrace(firstError, firstStack!);
     return removed;
@@ -24534,7 +24056,7 @@ class ActiveChatService {
       await _enqueueCancelledTurnCleanup(['connection', connectionId]);
       rethrow;
     } finally {
-      await clearCompressionFencesForConnection(connectionId);
+      await clearCompressionRestoreForConnection(connectionId);
       for (final entry in _chats.entries) {
         try {
           final parts = jsonDecode(entry.key);
@@ -25208,7 +24730,7 @@ class ActiveChatService {
             },
       api: api,
       desktopGateway: desktopGateway,
-      compressionFenceStore: _compressionFenceStore,
+      compressionRestoreStore: _compressionRestoreStore,
       storedMessageLoader: storedMessageLoader,
       attachDesktopRuntimeOnLoad:
           attachDesktopRuntimeOnLoad ?? _attachDesktopRuntimeOnLoadByDefault,

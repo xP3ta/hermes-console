@@ -10,7 +10,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 SavedConnection _connection(String id) => SavedConnection(
   id: id,
@@ -21,7 +21,7 @@ SavedConnection _connection(String id) => SavedConnection(
 );
 
 ActiveChat _chat(String id, {HermesDesktopGateway? gateway}) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(id),
   sessionId: 'session-$id',
   sessionTitle: 'Queue actions',

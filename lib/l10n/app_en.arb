@@ -3322,8 +3322,6 @@
   "chaCompressionAborted": "Compression was aborted. Hermes kept the authoritative conversation state.",
   "chaCompressionPending": "Compression is still running. Hermes will refresh this conversation when it confirms the result.",
   "chaCompressionLockHeld": "Another compression is already in progress for this conversation. Try again shortly.",
-  "chaCompressionReconciling": "Compression status is being reconciled. Do not retry yet.",
-  "chaCompressionProgress": "Optimizing the conversation…",
   "chaSessionCompactedTooltip": "{count, plural, =1{This conversation has been compacted once} other{This conversation has been compacted {count} times}}",
   "@chaSessionCompactedTooltip": {"placeholders": {"count": {"type": "int"}}},
   "chaCompressionSuccess": "Context compressed: {beforeMessages} → {afterMessages} messages · ~{beforeTokens} → ~{afterTokens} tokens",
@@ -3358,7 +3356,7 @@
   "chaCompressionNoRuntime": "This chat does not have an active session to compress yet.",
   "chaCompressionUnsupported": "This server does not support manual compression. Update Hermes Agent.",
   "chaCompressionBackendFailed": "Hermes could not generate the summary. Check the provider, model, and that the compression backend is reachable.",
-  "chaCompressionUnknown": "Compression could not be confirmed. Reload the conversation to see the real result.",
+  "chaCompressionUnknown": "Compression could not be completed. Try again in a moment.",
   "slashDescModels": "Manage models and providers",
   "slashDescSkills": "Open agent skills",
   "slashDescMemory": "Open memory",
@@ -5925,9 +5923,5 @@
   "liveCompactionNothing": "Nothing to compress",
   "liveCompactionMessagesCount": "{count, plural, =1{1 message} other{{count} messages}}",
   "@liveCompactionMessagesCount": {"placeholders": {"count": {"type": "int"}}},
-  "liveCompactionTokensApprox": "~{tokens} tokens",
-  "@liveCompactionTokensApprox": {"placeholders": {"tokens": {}}},
-  "chaCompressionUnconfirmedTitle": "Compression could not be confirmed",
-  "chaCompressionUnconfirmedBody": "Hermes did not answer before the app closed or lost its connection. You can keep writing; reload to see the conversation's real state.",
   "chaSessionGone": "This conversation no longer exists in Hermes."
 }

@@ -8,7 +8,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _SettleGateway implements HermesDesktopGateway {
   final _events = StreamController<TuiGatewayEvent>.broadcast();
@@ -71,7 +71,7 @@ void main() {
   test('blank interrupted message.complete settles Stop without retiring runtime', () async {
     final gateway = _SettleGateway();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn-stop-settle',
         label: 'Test',

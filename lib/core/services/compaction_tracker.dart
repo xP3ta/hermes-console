@@ -12,7 +12,7 @@ import '../models/compaction_progress.dart';
 class CompactionTracker extends ChangeNotifier {
   CompactionTracker({
     DateTime Function()? clock,
-    this.linger = const Duration(seconds: 6),
+    this.linger = const Duration(seconds: 3),
     this.settleWait = const Duration(seconds: 3),
   }) : _clock = clock ?? DateTime.now;
 
@@ -113,10 +113,21 @@ class CompactionTracker extends ChangeNotifier {
     int? tokensAfter,
     int? messagesBefore,
     int? messagesAfter,
+    bool noop = false,
+    DateTime? startedAt,
   }) {
     if (_disposed) return;
-    final current = _current;
-    if (current == null || current.isFinished) return;
+    var current = _current;
+    if (current != null && current.isFinished) return;
+    if (current == null) {
+      // An outcome learned after the fact (restored compression): the pill
+      // still gets its one result frame.
+      if (startedAt == null) return;
+      current = _current = CompactionProgress(
+        startedAt: startedAt,
+        manual: true,
+      );
+    }
     _settleTimer?.cancel();
     _settleTimer = null;
     _awaitingResult = false;
@@ -126,17 +137,8 @@ class CompactionTracker extends ChangeNotifier {
       tokensAfter: tokensAfter,
       messagesBefore: messagesBefore,
       messagesAfter: messagesAfter,
+      noop: noop,
     );
-  }
-
-  void reportUnconfirmed() {
-    if (_disposed) return;
-    final current = _current;
-    if (current == null || current.isFinished) return;
-    _settleTimer?.cancel();
-    _settleTimer = null;
-    _awaitingResult = false;
-    _finish(_clock(), resultConfirmed: false);
   }
 
   void _finish(
@@ -145,7 +147,7 @@ class CompactionTracker extends ChangeNotifier {
     int? tokensAfter,
     int? messagesBefore,
     int? messagesAfter,
-    bool resultConfirmed = true,
+    bool noop = false,
   }) {
     final current = _current;
     if (current == null) return;
@@ -155,7 +157,7 @@ class CompactionTracker extends ChangeNotifier {
       tokensAfter: tokensAfter,
       messagesBefore: messagesBefore,
       messagesAfter: messagesAfter,
-      resultConfirmed: resultConfirmed,
+      noop: noop,
     );
     _lingerTimer?.cancel();
     _lingerTimer = Timer(linger, () {

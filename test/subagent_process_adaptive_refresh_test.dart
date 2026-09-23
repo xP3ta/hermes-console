@@ -24,7 +24,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _AdaptiveGateway
     implements
@@ -252,7 +252,7 @@ Future<_Fixture> _mountChat(
     ..failReads = failReads;
   final activeChats = ActiveChatService(
     attachDesktopRuntimeOnLoad: false,
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
   );
   final chat = activeChats.attach(
     connection: _connection,

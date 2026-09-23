@@ -11,7 +11,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 SavedConnection _conn(String id) => SavedConnection(
   id: id,
@@ -110,7 +110,7 @@ void main() {
   late ActiveChatService service;
   setUp(() {
     service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
   });
   tearDown(() => service.dispose());

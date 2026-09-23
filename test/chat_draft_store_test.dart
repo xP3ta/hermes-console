@@ -16,7 +16,7 @@ import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 const _maxLocalTranscriptMessages = 1000;
 const _maxLocalTranscriptEncodedBytes = 2 * 1024 * 1024;
@@ -1887,7 +1887,7 @@ void main() {
     expect(reopened.messages.last['content'], 'mensaje 501');
 
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn-count',
         label: 'Local',
@@ -1976,7 +1976,7 @@ void main() {
         ],
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-truncated',
           label: 'Local',

@@ -14,7 +14,7 @@ import 'package:hermes_android/core/services/bot_mention_roster.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _Store implements TurnOutboxPersistence {
   PreparedTurn? saved;
@@ -138,7 +138,7 @@ void main() {
         onTerminal: () {},
         desktopGateway: gateway,
         api: api,
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         turnIdempotencyCapability: () async => true,
         storedMessageLoader: (_, _) async => const [],
         terminalReconcileBudget: Duration.zero,

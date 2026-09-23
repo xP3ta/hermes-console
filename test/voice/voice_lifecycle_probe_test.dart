@@ -15,7 +15,7 @@ import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
@@ -221,8 +221,8 @@ void main() {
       mutationNamespaceForTesting: 'voice-lifecycle-${++storeNamespace}',
     );
     final activeChats = ActiveChatService(
-      compressionFenceStore: DesktopCompressionFenceStore(
-        storage: FlutterSecureDesktopCompressionFenceStorage(
+      compressionRestoreStore: CompressionRestoreStore(
+        storage: FlutterSecureCompressionRestoreStorage(
           secureStorage: storage,
         ),
         mutationNamespaceForTesting:

@@ -12,7 +12,7 @@ import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 
 const rows = <Map<String, dynamic>>[
   {'role': 'assistant', 'content': 'stale'},
@@ -49,7 +49,7 @@ PreparedTurn turn({
   queued: true,
 );
 
-class SlowFenceStorage implements DesktopCompressionFenceStorage {
+class SlowFenceStorage implements CompressionRestoreStorage {
   Completer<void>? release;
   Completer<void>? entered;
   @override
@@ -272,7 +272,7 @@ void main() {
     () async {
       final slow = SlowFenceStorage();
       final service = ActiveChatService(
-        compressionFenceStore: DesktopCompressionFenceStore(storage: slow),
+        compressionRestoreStore: CompressionRestoreStore(storage: slow),
       );
       final connection = SavedConnection(
         id: 'c',
@@ -296,6 +296,10 @@ void main() {
       await pumpEventQueue(times: 20);
       slow.entered = Completer<void>();
       slow.release = Completer<void>();
+      chat.beforeSendAdmissionForTesting = () async {
+        chat.beforeSendAdmissionForTesting = null;
+        await slow.read();
+      };
       final sending = result(
         chat.send(
           fullText: 'admitted before cleanup',

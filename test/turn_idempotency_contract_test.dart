@@ -18,7 +18,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/replay_coordinator.dart';
@@ -26,7 +26,7 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _MemoryOutbox implements TurnOutboxPersistence {
   _MemoryOutbox({this.beforeSave});
@@ -45,7 +45,7 @@ class _MemoryOutbox implements TurnOutboxPersistence {
   Future<void> delete(PreparedTurn turn) async => deletes.add(turn);
 }
 
-class _GatedCompressionFenceStorage implements DesktopCompressionFenceStorage {
+class _GatedCompressionFenceStorage implements CompressionRestoreStorage {
   Completer<void>? readEntered;
   Completer<void>? releaseRead;
   String? value;
@@ -643,7 +643,7 @@ class _ConflictMutationGateway extends _RecheckOwnershipGateway
   _MemoryOutbox? outbox,
   int Function()? wallClockMs,
   Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
   ApprovalPolicyService? policy,
 }) {
   final api = ApiClient(
@@ -652,7 +652,7 @@ class _ConflictMutationGateway extends _RecheckOwnershipGateway
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   );
   final chat = ActiveChat(
-    compressionFenceStore: compressionFenceStore ?? testCompressionFenceStore(),
+    compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
     connection: SavedConnection(
       id: 'conn-modern',
       label: 'Modern',
@@ -838,7 +838,7 @@ void main() {
       );
       final gateway = _RuntimeReleaseGateway(activeLists: const [idle]);
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(service.dispose);
       final connection = SavedConnection(
@@ -936,7 +936,7 @@ void main() {
 
       final freshGateway = _RuntimeReleaseGateway(activeLists: const [idle]);
       final freshService = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(freshService.dispose);
       freshGateway.activationSnapshotOverride = const DesktopSessionSnapshot(
@@ -1095,7 +1095,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: SavedConnection(
           id: 'conn-legacy',
           label: 'Legacy',
@@ -2166,7 +2166,7 @@ void main() {
     final fixture = _fixture(
       gateway,
       capability: () async => true,
-      compressionFenceStore: DesktopCompressionFenceStore(
+      compressionRestoreStore: CompressionRestoreStore(
         storage: fenceStorage,
       ),
     );

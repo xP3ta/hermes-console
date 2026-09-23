@@ -15,7 +15,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 DesktopSessionSnapshot snap(
   List<Map<String, dynamic>> messages, {
@@ -217,7 +217,7 @@ ActiveChat chatFor(
       ),
     ),
     desktopGateway: gateway,
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
     terminalReconcileBudget: reconcileBudget,
     allowUnownedDesktopSnapshotForTesting: true,
   );

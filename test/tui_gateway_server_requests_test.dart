@@ -10,7 +10,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Fake Hermes gateway speaking the v7 contract: it answers client RPCs and
 /// can push server→client request frames (`tui_gateway/server_requests.py`).
@@ -263,7 +263,7 @@ void main() {
     final connection = _connectionFor(gateway);
     final client = _clientFor(gateway);
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: connection,
       sessionId: 'stored-1',
       sessionTitle: 'Server request integration',

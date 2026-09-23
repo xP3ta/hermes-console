@@ -11,7 +11,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Gateway moderno: publica resolver durable y rewind durable, y registra por
 /// separado los `prompt.submit` planos y los que llevan dirección de recorte.
@@ -200,7 +200,7 @@ SavedConnection _connection() => SavedConnection(
   _RewriteGateway gateway,
 ) {
   final service = ActiveChatService(
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
   );
   final connection = _connection();
   final chat = service.attach(

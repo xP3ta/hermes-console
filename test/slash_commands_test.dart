@@ -18,7 +18,7 @@ import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
@@ -36,7 +36,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
 
 class _SlashGateway
     implements
@@ -239,7 +238,7 @@ class _SlashGateway
   }
 }
 
-class _GatedCompressionStorage implements DesktopCompressionFenceStorage {
+class _GatedCompressionStorage implements CompressionRestoreStorage {
   String? value;
   Completer<void>? readEntered;
   Completer<void>? releaseRead;
@@ -353,7 +352,7 @@ Future<ActiveChat> _pumpSlashChat(
   _OpenSttEngine? stt,
   bool readOnly = false,
   bool bindInitialStoredSession = true,
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
 }) async {
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -361,7 +360,7 @@ Future<ActiveChat> _pumpSlashChat(
   final manager = await ConnectionManager.create(prefs);
   final secure = SecureStorage();
   final activeChats = ActiveChatService(
-    compressionFenceStore: compressionFenceStore,
+    compressionRestoreStore: compressionRestoreStore,
   );
   final connection = _connection().copyWith(readOnly: readOnly);
   final chat = activeChats.attach(
@@ -961,73 +960,6 @@ void main() {
     );
 
     testWidgets(
-      'REGRESSION_COMP_FIX3 /compress clears on send for an ambiguous legacy '
-      'result and stays busy, not read-only-with-old-text',
-      (tester) async {
-        final gateway = _SlashGateway()
-          ..slashResult = DesktopCommandRpcResult.fromJson({
-            'type': 'exec',
-            'accepted': false,
-            'status': 'pending',
-            'output': 'queued',
-          });
-        final chat = await _pumpSlashChat(
-          tester,
-          gateway,
-          compressionFenceStore: DesktopCompressionFenceStore(
-            storage: InMemoryDesktopCompressionFenceStorage(),
-            mutationNamespaceForTesting: 'fix3-legacy-widget',
-          ),
-        );
-        final composer = find.byType(TextField).last;
-        await tester.tap(composer);
-        await tester.enterText(composer, '/compress release decisions');
-        await tester.pump(const Duration(milliseconds: 250));
-        final field = tester.widget<TextField>(composer);
-        await _submitSlash(tester);
-        expect(gateway.slashCalls, ['compress release decisions']);
-        // Clears like a normal message on send; a genuinely ambiguous
-        // outcome (still working per the backend) is not a rejection, so
-        // nothing restores the old text — the floating dock is the signal
-        // now, not stale text sitting read-only in the composer.
-        expect(field.controller?.text, isEmpty);
-        expect(field.focusNode?.hasFocus, isTrue);
-        expect(chat.desktopCompressionInFlight, isTrue);
-        expect(tester.widget<TextField>(composer).readOnly, isTrue);
-        expect(find.byKey(const ValueKey('send')), findsOneWidget);
-        // Since the compaction dock became the one live signal while
-        // compacting (no separate spinner on the send button), the button
-        // itself stays mounted as a plain arrow — just disabled, not
-        // removed. `busy` is deliberately false during a compression per
-        // `_buildComposerPrimaryAction`.
-        expect(
-          tester
-              .widget<HermesTactileAction>(
-                find.descendant(
-                  of: find.byKey(const ValueKey('send')),
-                  matching: find.byType(HermesTactileAction),
-                ),
-              )
-              .onPressed,
-          isNull,
-          reason: 'busy send surface has no invokable action',
-        );
-        await expectLater(
-          chat.compressDesktopSession(),
-          throwsA(
-            isA<TuiGatewayRpcError>().having((e) => e.code, 'code', 4009),
-          ),
-        );
-        expect(gateway.slashCalls, hasLength(1));
-        expect(gateway.submissions, isEmpty);
-        expect(tester.takeException(), isNull);
-        chat.dispose();
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-      },
-    );
-
-    testWidgets(
       'REGRESSION_COMP2A /compress invalidation is not dispatched or replayed',
       (tester) async {
         final gateway = _SlashGateway();
@@ -1035,7 +967,7 @@ void main() {
         final chat = await _pumpSlashChat(
           tester,
           gateway,
-          compressionFenceStore: DesktopCompressionFenceStore(
+          compressionRestoreStore: CompressionRestoreStore(
             storage: storage,
             mutationNamespaceForTesting: 'comp2a-authority-widget',
           ),

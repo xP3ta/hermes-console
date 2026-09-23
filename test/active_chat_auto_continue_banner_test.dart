@@ -8,7 +8,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _RunningResumeGateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
@@ -87,7 +87,7 @@ void main() {
       DateTime.now().toUtc().subtract(const Duration(minutes: 16)),
     );
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: SavedConnection(
         id: 'conn-auto-continue',
         label: 'Auto continue',

@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _InterimGateway implements HermesDesktopGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -89,7 +89,7 @@ class _InterimFixture {
 Future<_InterimFixture> _startChat() async {
   final gateway = _InterimGateway();
   final chat = ActiveChat(
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
     connection: SavedConnection(
       id: 'conn-interim',
       label: 'Interim contract',

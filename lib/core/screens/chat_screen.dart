@@ -1282,7 +1282,7 @@ class _ChatScreenState extends State<ChatScreen>
   final _textFocusNode = FocusNode();
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
-  (bool, bool, bool)? _lastDesktopCompressionPresentation;
+  bool? _lastDesktopCompressionPresentation;
   bool _compressionDraftFocusRetained = false;
   bool get _compressingSession =>
       _compressionCommandInFlight ||
@@ -4539,13 +4539,12 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _syncCompaction() {
     if (!_chatBound) return;
-    _announceRestoredCompressionOutcome();
-    final needsConfirmation = _chat.desktopCompressionNeedsConfirmation;
+    // Live compaction of this process, or one the gateway positively reports
+    // as still running after a restart (display-only: never a lock).
     final serviceActive =
-        _chat.desktopCompressionInFlight || _compressionCommandInFlight;
+        _chat.desktopCompactionVisible || _compressionCommandInFlight;
     if (!serviceActive) _compactionSettledEarly = false;
-    final active =
-        serviceActive && !needsConfirmation && !_compactionSettledEarly;
+    final active = serviceActive && !_compactionSettledEarly;
     final manual =
         _chat.desktopManualCompressionInFlight || _compressionCommandInFlight;
     Map<String, dynamic>? head;
@@ -4574,17 +4573,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (head != null && !identical(head, _consumedCompressionResult)) {
       _consumedCompressionResult = head;
       final meta = head['display_metadata'];
-      if (meta is Map && meta['noop'] != true) {
+      if (meta is Map) {
         int? number(String key) =>
             meta[key] is num ? (meta[key] as num).toInt() : null;
+        final noop = meta['noop'] == true;
         final after = number('after_tokens');
         _compaction.reportResult(
           tokensBefore: number('before_tokens'),
           tokensAfter: after,
           messagesBefore: number('before_messages'),
           messagesAfter: number('after_messages'),
+          noop: noop,
         );
-        if (after != null) _applyPostCompactionContext(after);
+        if (after != null && !noop) _applyPostCompactionContext(after);
         _compactionSettledEarly = serviceActive;
       }
       settled = true;
@@ -4600,46 +4601,21 @@ class _ChatScreenState extends State<ChatScreen>
       }
       settled = true;
     }
-    if (needsConfirmation && _compaction.running) {
-      _compaction.reportUnconfirmed();
-      _compactionSettledEarly = true;
-      settled = true;
-    }
     if (settled) _consumeCompressionInvocation();
+    _announceRestoredCompressionOutcome();
   }
 
-  /// A compression this process only learned about after the fact (the app
-  /// was killed while it ran) gets the same discreet top notice as a live
-  /// RPC outcome. Refused, aborted and no-op attempts all leave the stored
-  /// transcript unchanged and read as "nothing to compact".
+  /// A restored compression the gateway now reports finished: the same pill
+  /// shows its outcome once (a refused, aborted or no-op attempt leaves the
+  /// stored transcript unchanged and reads as "nothing to compact").
   void _announceRestoredCompressionOutcome() {
-    if (_disposed || !mounted) return;
     final outcome = _chat.takeRestoredCompressionOutcome();
     if (outcome == null) return;
-    // _syncCompaction also runs while the screen binds (during build).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_disposed || !mounted) return;
-      _showRestoredCompressionOutcome(outcome);
-    });
-  }
-
-  void _showRestoredCompressionOutcome(
-    ({bool changed, int? messagesBefore, int? messagesAfter}) outcome,
-  ) {
-    _compaction.reset();
-    final strings = Strings.of(context);
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          compressionOutcomeText(
-            strings,
-            noop: !outcome.changed,
-            beforeMessages: outcome.messagesBefore,
-            afterMessages: outcome.messagesAfter,
-          ),
-        ),
-        duration: const Duration(seconds: 5),
-      ),
+    _compaction.reportResult(
+      messagesBefore: outcome.messagesBefore,
+      messagesAfter: outcome.changed ? outcome.messagesAfter : null,
+      noop: !outcome.changed,
+      startedAt: DateTime.now(),
     );
   }
 
@@ -4657,8 +4633,14 @@ class _ChatScreenState extends State<ChatScreen>
           messagesAfter: compression?.afterMessages,
         );
         _compactionSettledEarly = _chat.desktopCompressionInFlight;
-      case DesktopCompressionStatus.noOp ||
-          DesktopCompressionStatus.aborted ||
+      case DesktopCompressionStatus.noOp:
+        _compaction.reportResult(
+          tokensBefore: compression?.beforeTokens,
+          messagesBefore: compression?.beforeMessages,
+          noop: true,
+        );
+        _compactionSettledEarly = _chat.desktopCompressionInFlight;
+      case DesktopCompressionStatus.aborted ||
           DesktopCompressionStatus.lockHeld:
         _compaction.reset();
         _compactionSettledEarly = _chat.desktopCompressionInFlight;
@@ -4831,11 +4813,7 @@ class _ChatScreenState extends State<ChatScreen>
         _chat.desktopRuntimeInfo,
       );
       final compacting = _compressingSession;
-      final compressionPresentation = (
-        _chat.desktopCompressionAwaitingReconciliation,
-        _chat.desktopCompressionTransportUncertain,
-        _chat.desktopCompressionNeedsConfirmation,
-      );
+      final compressionPresentation = _chat.desktopRestoredCompressionRunning;
       final contextCompacting = _chat.desktopCompressionInFlight;
       final passiveAggregate = _chat.passiveActivityAggregate;
       final activityPresentation = (
@@ -7774,19 +7752,21 @@ class _ChatScreenState extends State<ChatScreen>
       if (presentation.failure case final failure?) throw failure;
       final result = presentation.command!;
       final strings = Strings.of(context);
-      final message = _compressionResultMessage(strings, result);
-      // Hermes Desktop shows every compression outcome as a transient top
-      // notice (5 s), besides the transcript line: the timeline row alone can
-      // be superseded by a concurrent refresh and then nothing is shown.
-      final outcomeFacts =
+      // A finished compression (compacted or nothing to compact) has ONE
+      // feedback surface: the compaction pill turns into its outcome, the way
+      // Hermes Desktop's toast carries the headline. Only the other outcomes
+      // (aborted, lock held, pending, legacy route) need a notice.
+      final pillOutcome =
           result.compressionStatus == DesktopCompressionStatus.compressed ||
           result.compressionStatus == DesktopCompressionStatus.noOp;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          duration: Duration(seconds: outcomeFacts ? 5 : 7),
-        ),
-      );
+      if (!pillOutcome) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_compressionResultMessage(strings, result)),
+            duration: const Duration(seconds: 7),
+          ),
+        );
+      }
       final succeeded = _compressionSucceeded(result);
       _finishCompactionBar(result);
       if (!succeeded) {
@@ -7815,9 +7795,7 @@ class _ChatScreenState extends State<ChatScreen>
       _restoreComposerFocusAfterCompression();
       _restoreSlashInvocation(invocation);
       final strings = Strings.of(context);
-      final message = _chat.desktopCompressionTransportUncertain
-          ? strings.chaCompressionReconciling
-          : _compressionFailureMessage(strings, error.code);
+      final message = _compressionFailureMessage(strings, error.code);
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
       );
@@ -7844,18 +7822,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// «Recargar» del aviso sin confirmar: como Hermes Desktop tras `ready`,
-  /// relee la conversación persistida, que es la verdad del servidor.
-  void _retryUnconfirmedCompression() {
-    _dismissUnconfirmedCompression();
-    unawaited(_fetchMessages());
-  }
-
-  void _dismissUnconfirmedCompression() {
-    _chat.dismissCompressionConfirmation();
-    if (mounted) setState(() {});
-  }
-
   void _restoreComposerFocusAfterCompression({bool retainWhileFenced = true}) {
     _compressionDraftFocusRetained = retainWhileFenced;
     _textFocusNode.canRequestFocus = true;
@@ -7876,44 +7842,21 @@ class _ChatScreenState extends State<ChatScreen>
     Strings strings,
     DesktopCommandDispatch result,
   ) => switch (result.compressionStatus) {
-    DesktopCompressionStatus.compressed =>
-      _compressionFactsKnown(result.compressionResult)
-          ? compressionOutcomeText(
-              strings,
-              noop: false,
-              beforeMessages: result.compressionResult?.beforeMessages,
-              afterMessages: result.compressionResult?.afterMessages,
-              beforeTokens: result.compressionResult?.beforeTokens,
-              afterTokens: result.compressionResult?.afterTokens,
-            )
-          : strings.chaCompressionCompleted,
-    DesktopCompressionStatus.noOp =>
-      _compressionFactsKnown(result.compressionResult)
-          ? compressionOutcomeText(
-              strings,
-              noop: true,
-              beforeMessages: result.compressionResult?.beforeMessages,
-              beforeTokens: result.compressionResult?.beforeTokens,
-            )
-          : strings.chaCompressionNoop(
-              result.compressionResult?.beforeMessages ?? 0,
-              (result.compressionResult?.beforeTokens ?? 0).toString(),
-            ),
+    DesktopCompressionStatus.compressed => strings.chaCompressionCompleted,
+    DesktopCompressionStatus.noOp => strings.chaCompressionNoop(
+      result.compressionResult?.beforeMessages ?? 0,
+      (result.compressionResult?.beforeTokens ?? 0).toString(),
+    ),
     DesktopCompressionStatus.aborted => strings.chaCompressionAborted,
     DesktopCompressionStatus.pending => strings.chaCompressionPending,
     DesktopCompressionStatus.lockHeld => strings.chaCompressionLockHeld,
     null =>
-      _chat.desktopCompressionTransportUncertain
-          ? strings.chaCompressionReconciling
-          : result.accepted == DesktopCommandAcceptance.accepted
+      result.accepted == DesktopCommandAcceptance.accepted
           ? (result.output?.trim().isNotEmpty == true
                 ? result.output!.trim()
                 : strings.chaCompressionAccepted)
           : _compressionFailureMessage(strings, result.failure?.code),
   };
-
-  bool _compressionFactsKnown(DesktopCompressionResult? compression) =>
-      compression?.beforeMessages != null || compression?.beforeTokens != null;
 
   bool _compressionSucceeded(DesktopCommandDispatch result) =>
       result.compressionStatus == DesktopCompressionStatus.compressed ||
@@ -9989,6 +9932,10 @@ class _ChatScreenState extends State<ChatScreen>
                                                     _confirmInterruptSubagent,
                                               ),
                                             ),
+                                            // Nearest the composer: the
+                                            // compaction pill, padded into
+                                            // the same measured gap.
+                                            _buildCompactionPill(),
                                           ],
                                         ),
                                       ),
@@ -12633,14 +12580,6 @@ class _ChatScreenState extends State<ChatScreen>
   Widget _buildInputBar() {
     widget.performanceProbe?.composerBuilds++;
     final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    final compressionProgressLabel = _chat.desktopCompressionNeedsConfirmation
-        ? strings.chaCompressionUnknown
-        : _chat.desktopCompressionTransportUncertain
-        ? strings.chaCompressionReconciling
-        : _chat.desktopCompressionAwaitingReconciliation
-        ? strings.chaCompressionPending
-        : strings.chaCompressionProgress;
     if (widget.connection.readOnly) {
       // Mantiene la misma huella y superficie que el composer para no convertir
       // un estado persistente en una alerta separada del lugar al que afecta.
@@ -12712,43 +12651,15 @@ class _ChatScreenState extends State<ChatScreen>
               onPick: _pickSlash,
             ),
           );
-    // Una compresión sin confirmar ya no bloquea nada (Hermes Desktop no
-    // tiene valla): queda un aviso propio, legible y descartable. Va en el
-    // hueco flotante de la paleta (un overlay anclado al composer) porque sus
-    // botones deben recibir toques; el dock, pintado fuera de los límites de
-    // su Stack, nunca los recibiría.
-    final showUnconfirmedCompression =
-        _chat.desktopCompressionNeedsConfirmation && !_compressingSession;
-    final unconfirmedNotice =
-        showUnconfirmedCompression && !_navigationDrawerOpen
-        ? ValueListenableBuilder<double>(
-            valueListenable: _activityPillExtent,
-            builder: (context, pillExtent, child) => Padding(
-              padding: EdgeInsets.only(bottom: pillExtent),
-              child: child,
-            ),
-            child: CompressionUnconfirmedNotice(
-              onRetry: _retryUnconfirmedCompression,
-              onDismiss: _dismissUnconfirmedCompression,
-            ),
-          )
-        : null;
-    final mentionPalette = _isRecording || _transcribing || _navigationDrawerOpen
-        ? null
-        : ChatMentionPalette(
-            controller: _textController,
-            focusNode: _textFocusNode,
-            connectionId: widget.connection.id,
-            profile: _effectiveSessionProfile,
-          );
     final floatingPalette =
         slashPalette ??
-        (unconfirmedNotice == null
-            ? mentionPalette
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [unconfirmedNotice, ?mentionPalette],
+        (_isRecording || _transcribing || _navigationDrawerOpen
+            ? null
+            : ChatMentionPalette(
+                controller: _textController,
+                focusNode: _textFocusNode,
+                connectionId: widget.connection.id,
+                profile: _effectiveSessionProfile,
               ));
     // Composer premium (referencia live-chat): contenedor con borde sutil,
     // campo sin marco y fila inferior de acciones con send cuadrado ámbar.
@@ -12766,8 +12677,6 @@ class _ChatScreenState extends State<ChatScreen>
         final compactIme =
             MediaQuery.viewInsetsOf(imeContext).bottom > 0 &&
             MediaQuery.orientationOf(imeContext) == Orientation.landscape;
-        final showCompactionDock =
-            _compaction.current != null || _compressingSession;
         return Container(
           key: const ValueKey('chat-composer-host'),
           padding: compactIme
@@ -12959,33 +12868,59 @@ class _ChatScreenState extends State<ChatScreen>
                 )._withComposerPalette(floatingPalette),
                 _buildFloatingStatusPill(colors),
               ],
-            )._withFloatingCompactionDock(
-              !showUnconfirmedCompression && showCompactionDock
-                  ? CompactionDock(
-                      compaction:
-                          _compaction.current ??
-                          CompactionProgress(
-                            startedAt:
-                                _chat.desktopCompactionStartedAt ??
-                                DateTime.now(),
-                            manual: true,
-                          ),
-                      // Señal persistente del servicio, no del tracker: no
-                      // expira con el `linger` de una compactación normal.
-                      unconfirmed: _chat.desktopCompressionNeedsConfirmation,
-                      note:
-                          _chat.desktopCompressionNeedsConfirmation ||
-                              _chat.desktopCompressionTransportUncertain ||
-                              _chat.desktopCompressionAwaitingReconciliation
-                          ? compressionProgressLabel
-                          : null,
-                    )
-                  : null,
-              _activityPillExtent,
             ),
           ),
         );
       },
+    );
+  }
+
+  /// Pastilla de compactación: vive en la pila flotante del transcript, justo
+  /// encima del composer, así que el transcript reserva su alto medido y
+  /// nunca tapa el último mensaje ni el composer. Entra y sale con un fundido.
+  Widget _buildCompactionPill() {
+    final compaction =
+        _compaction.current ??
+        (_compressingSession || _chat.desktopRestoredCompressionRunning
+            ? CompactionProgress(
+                startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
+                manual: true,
+                messagesBefore: _chat.desktopCompactionMessagesBefore,
+                tokensBefore: _chat.desktopCompactionTokensBefore,
+              )
+            : null);
+    return AnimatedSwitcher(
+      duration: _reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.96, end: 1).animate(animation),
+          child: child,
+        ),
+      ),
+      layoutBuilder: (current, previous) => Stack(
+        alignment: Alignment.bottomCenter,
+        children: [...previous, ?current],
+      ),
+      child: compaction == null
+          ? const SizedBox.shrink(key: ValueKey('compaction-pill-empty'))
+          // One key for live and done: the pill morphs in place (no
+          // cross-fade between two pills); only appearing/leaving animates.
+          : Padding(
+              key: const ValueKey('compaction-pill'),
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: AnimatedSize(
+                duration: _reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                child: CompactionDock(compaction: compaction),
+              ),
+            ),
     );
   }
 
@@ -14367,39 +14302,6 @@ class _BotChatAppBarTitle extends StatelessWidget {
 extension _ComposerPalettePlacement on Widget {
   Widget _withComposerPalette(Widget? palette) =>
       _ComposerPaletteOverlay(palette: palette, child: this);
-
-  Widget _withFloatingCompactionDock(
-    Widget? dock,
-    ValueListenable<double> activityPillExtent,
-  ) => Stack(
-    clipBehavior: Clip.none,
-    children: [
-      this,
-      if (dock != null)
-        // La pastilla de actividad del turno (`chat-activity-pill`) vive en
-        // el flujo normal del transcript y descansa justo en este mismo
-        // borde cuando hay algo vivo; sin este desplazamiento extra, la
-        // barra flotante caería encima de ella en vez de apilarse arriba.
-        ValueListenableBuilder<double>(
-          valueListenable: activityPillExtent,
-          builder: (context, pillExtent, child) => Positioned(
-            top: -(pillExtent + 12),
-            left: 0,
-            right: 0,
-            child: child!,
-          ),
-          child: FractionalTranslation(
-            key: const ValueKey('compaction-dock-floating'),
-            // Its own height sets the offset without enlarging the IME layout.
-            translation: const Offset(0, -1),
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: dock,
-            ),
-          ),
-        ),
-    ],
-  );
 }
 
 class _ComposerPaletteOverlay extends StatefulWidget {

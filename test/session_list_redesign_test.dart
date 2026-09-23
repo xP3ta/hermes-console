@@ -12,7 +12,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
@@ -24,7 +24,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Rediseño de Conversaciones (drawer › "Conversaciones").
 ///
@@ -519,7 +519,7 @@ void main() {
 
       final gateway = _ProcessActivityGateway();
       final activeChats = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(activeChats.dispose);
       addTearDown(gateway.close);
@@ -599,23 +599,33 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      // Almacén de vallas ilegible: el chat queda en fail-closed
-      // (`desktopCompressionInFlight`) sin turno ni gateway, igual que un
-      // `/compress` manual o una valla restaurada al reabrir la app.
-      final activeChats = ActiveChatService(
-        compressionFenceStore: DesktopCompressionFenceStore(
-          storage: _UnreadableFenceStorage(),
+      // A /compress restored after a restart that the gateway's replay ring
+      // positively reports as still running: display-only "Compactando".
+      final store = CompressionRestoreStore(storage: _MemoryRestoreStorage());
+      await store.save(
+        CompressionRestoreRecord(
+          connectionId: _connection().id,
+          profile: 'default',
+          storedSessionId: 'compacting-1',
+          runtimeId: 'runtime-compacting-1',
+          startedAtMs: DateTime.now().millisecondsSinceEpoch - 20000,
         ),
       );
+      final activeChats = ActiveChatService(compressionRestoreStore: store);
       addTearDown(activeChats.dispose);
       final chat = activeChats.attach(
         connection: _connection(),
         sessionId: 'compacting-1',
         sessionTitle: 'Sesión compactando',
+        desktopGateway: _RunningCompressionGateway(),
         disableForegroundKeepAlive: true,
       );
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
       await tester.pump();
-      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(chat.desktopRestoredCompressionRunning, isTrue);
+      expect(chat.desktopManualCompressionInFlight, isFalse);
       expect(chat.sessionActivity.active, isFalse);
 
       await pump(
@@ -638,6 +648,7 @@ void main() {
       );
       expect(find.text(strings.slActivityCompacting), findsOneWidget);
       expect(find.byType(SessionRowStopControl), findsNothing);
+      activeChats.dispose();
       await tester.pump(const Duration(seconds: 10));
     },
   );
@@ -663,7 +674,7 @@ void main() {
       final aggregate = GlobalActivityAggregate.inMemory();
       final activeChats = ActiveChatService(
         globalActivity: aggregate,
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(activeChats.dispose);
       final generation = aggregate.beginRosterRequest(
@@ -758,7 +769,7 @@ void main() {
       );
       final connection = manager.getConnections().single;
       final activeChats = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(activeChats.dispose);
       final events = StreamController<TuiGatewayEvent>.broadcast();
@@ -914,7 +925,7 @@ void main() {
       final connection = manager.getConnections().single;
       final gateway = _ProcessActivityGateway();
       final activeChats = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(activeChats.dispose);
       addTearDown(gateway.close);
@@ -1126,11 +1137,30 @@ void main() {
   );
 }
 
-final class _UnreadableFenceStorage implements DesktopCompressionFenceStorage {
+final class _RunningCompressionGateway extends _ProcessActivityGateway
+    implements HermesDesktopCompressionStatusGateway {
   @override
-  Future<String?> read() async => throw StateError('keystore unavailable');
+  Future<Map<String, dynamic>> compressionEventReplay(
+    String runtimeSessionId,
+  ) async => {
+    'events': [
+      {
+        'type': 'status.update',
+        'payload': {'kind': 'compressing', 'text': 'compressing 38 messages'},
+      },
+    ],
+    'latest_seq': 1,
+    'truncated': false,
+  };
+}
+
+final class _MemoryRestoreStorage implements CompressionRestoreStorage {
+  String? value;
 
   @override
-  Future<void> write(String value) async =>
-      throw StateError('keystore unavailable');
+  Future<String?> read() async => value;
+
+  @override
+  Future<void> write(String value) async => this.value = value;
 }
+

@@ -24,7 +24,6 @@ import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
-import 'package:hermes_android/core/models/session_activity.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
@@ -32,7 +31,7 @@ import 'package:hermes_android/core/services/attachment_uploader.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/home_widget_publisher.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -40,7 +39,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 const _kWatchKey = 'bg_watch_runs'; // BackgroundWatch._key (privado)
 const _kObservedTtftKey = 'active_chat_observed_ttft_v1';
@@ -672,7 +671,7 @@ PreparedTurn _attachmentTurn(AttachmentDraft attachment) {
 }
 
 ActiveChat _attachmentChat(_AttachmentDesktopGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _conn(id: 'conn-attachment'),
   sessionId: 'sess-attachment',
   sessionTitle: 'Adjuntos',
@@ -882,7 +881,7 @@ void main() {
     'compacted terminal groups skip identities removed in the same pass',
     () {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-multi-compaction'),
         sessionId: 'sess-multi-compaction',
         sessionTitle: 'Multi compaction',
@@ -982,7 +981,7 @@ void main() {
     'passive REST replaces anchored inflight user with durable identity',
     () async {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-passive-inflight-user'),
         sessionId: 'sess-passive-inflight-user',
         sessionTitle: 'Passive inflight replacement',
@@ -1033,7 +1032,7 @@ void main() {
     'terminal REST replaces live user when its first durable anchor is that user',
     () async {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-inflight-user'),
         sessionId: 'sess-terminal-inflight-user',
         sessionTitle: 'Terminal inflight replacement',
@@ -1100,7 +1099,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-live-user'),
         sessionId: 'sess-terminal-live-user',
         sessionTitle: 'Terminal live user',
@@ -1160,7 +1159,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-physical-pair'),
         sessionId: 'sess-terminal-physical-pair',
         sessionTitle: 'Terminal physical pair',
@@ -1251,7 +1250,7 @@ void main() {
           ],
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-observer-pair'),
         sessionId: 'stored-observer',
         initialStoredSessionId: 'stored-observer',
@@ -1350,7 +1349,7 @@ void main() {
         },
       ];
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-rest-boundary'),
         sessionId: 'sess-rest-boundary',
         initialStoredSessionId: 'stored-rest-boundary',
@@ -1415,7 +1414,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-terminal-equal-resend'),
         sessionId: 'sess-terminal-equal-resend',
         sessionTitle: 'Terminal equal resend',
@@ -1493,7 +1492,7 @@ void main() {
 
   test('known-missing flag cannot cross a disallowed boundary capture', () {
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-known-missing-boundary'),
       sessionId: 'draft-known-missing-boundary',
       sessionTitle: 'Known missing boundary',
@@ -1540,7 +1539,7 @@ void main() {
           ],
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-stale-passive'),
         sessionId: 'stored-stale-passive',
         initialStoredSessionId: 'stored-stale-passive',
@@ -1629,7 +1628,7 @@ void main() {
         ],
       );
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-ambiguous-boundary'),
       sessionId: 'stored-ambiguous-boundary',
       initialStoredSessionId: 'stored-ambiguous-boundary',
@@ -1683,7 +1682,7 @@ void main() {
     'passive REST never deduplicates equal text without exact durable anchor',
     () async {
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-passive-unproven-user'),
         sessionId: 'sess-passive-unproven-user',
         sessionTitle: 'Passive fail closed',
@@ -1736,7 +1735,7 @@ void main() {
           DashboardAuthFailureCode.loginRequired,
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-dashboard-auth-warm'),
         sessionId: 'sess-dashboard-auth-warm',
         sessionTitle: 'Auth warm-up',
@@ -1787,7 +1786,7 @@ void main() {
           DashboardAuthFailureCode.loginRequired,
         );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-dashboard-auth-race'),
         sessionId: 'sess-dashboard-auth-race',
         sessionTitle: 'Auth recovery race',
@@ -1940,7 +1939,7 @@ void main() {
   test('REST silence has no client-side terminal timeout', () async {
     final api = _CapturingRunApi();
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     addTearDown(service.dispose);
     final chat = service.attach(
@@ -2437,7 +2436,7 @@ void main() {
           store: _AttachmentMemoryOutbox(eventLog: events),
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: connection,
           sessionId: 'sess-attachment',
           sessionTitle: 'Adjuntos REST',
@@ -2516,7 +2515,7 @@ void main() {
         store: _AttachmentMemoryOutbox(),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(id: 'conn-attachment'),
         sessionId: 'sess-attachment',
         sessionTitle: 'Adjuntos REST',
@@ -2581,7 +2580,7 @@ void main() {
           onDeviceLoopback: true,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: connection,
           sessionId: 'sess-attachment',
           sessionTitle: 'Adjuntos Bridge',
@@ -2657,7 +2656,7 @@ void main() {
         localChatMode: LocalChatMode.agent,
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'sess-attachment',
         sessionTitle: 'Adjuntos Bridge legacy',
@@ -2695,7 +2694,7 @@ void main() {
         localChatMode: LocalChatMode.agent,
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'mob-room-default',
         sessionTitle: '#homelab',
@@ -2726,7 +2725,7 @@ void main() {
       final gateway = _NativeSessionSplitGateway();
       final connection = _conn(id: 'conn-native-session-split');
       final durable = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'stored-a',
         initialStoredSessionId: 'stored-a',
@@ -2736,7 +2735,7 @@ void main() {
         desktopGateway: gateway,
       );
       final draft = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: connection,
         sessionId: 'mob-b',
         sessionTitle: 'B',
@@ -2782,7 +2781,7 @@ void main() {
   test('durable first submit resumes the exact id and never creates', () async {
     final gateway = _NativeSessionSplitGateway();
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-native-existing-only'),
       sessionId: 'mob-route',
       initialStoredSessionId: 'stored-exact',
@@ -2811,7 +2810,7 @@ void main() {
 
   test('known stored binding is stable and rejects retargeting', () {
     final chat = ActiveChat(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
       connection: _conn(id: 'conn-known-binding'),
       sessionId: 'mob-bot-manager',
       sessionTitle: 'Bot Chat',
@@ -2841,7 +2840,7 @@ void main() {
 
   test('authoritative repin creates a fresh ActiveChat binding', () {
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     addTearDown(service.dispose);
     final connection = _conn(id: 'conn-repin');
@@ -2916,7 +2915,7 @@ void main() {
       );
 
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         cancelledTurnStore: store,
       );
       addTearDown(service.dispose);
@@ -2985,7 +2984,7 @@ void main() {
       );
 
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       );
       expect(
@@ -3044,7 +3043,7 @@ void main() {
     'activeIds notifica al terminar solo uno de dos perfiles colisionados',
     () {
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final connection = _conn(id: 'conn-profile-activity');
       final first = service.attach(
@@ -3103,7 +3102,7 @@ void main() {
     () async {
       final gateway = _AttachmentDesktopGateway();
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(service.dispose);
       addTearDown(gateway.close);
@@ -3163,7 +3162,7 @@ void main() {
     () async {
       final gateway = _DelayedProcessGateway();
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       addTearDown(service.dispose);
       addTearDown(gateway.close);
@@ -3241,7 +3240,7 @@ void main() {
 
   test('expone actividad real y la conserva durante una reconexión', () {
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     final chat = service.attach(
       connection: _conn(id: 'conn-activity'),
@@ -3285,7 +3284,7 @@ void main() {
         ),
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
 
       service.attach(
@@ -3335,7 +3334,7 @@ void main() {
         );
         final publishedBeforeDraft = store.snapshots.length;
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
 
         service.attach(
@@ -3373,7 +3372,7 @@ void main() {
         ),
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
       final chat = service.attach(
@@ -3436,7 +3435,7 @@ void main() {
       service.dispose();
 
       final restored = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       );
       expect(
@@ -3455,7 +3454,7 @@ void main() {
           nowMs: () => 2000000000000,
         );
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
         final chat = service.attach(
           connection: _conn(),
@@ -3490,7 +3489,7 @@ void main() {
         nowMs: () => 2000000000000,
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
       final chat = service.attach(
         connection: _conn(),
@@ -3531,7 +3530,7 @@ void main() {
       () async {
         final gateway = _AttachmentDesktopGateway();
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-desktop-one-bubble'),
           sessionId: 'sess-desktop-one-bubble',
           sessionTitle: 'Un solo turno',
@@ -3618,7 +3617,7 @@ void main() {
       () async {
         final gateway = _AttachmentDesktopGateway();
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-desktop-narration-order'),
           sessionId: 'sess-desktop-narration-order',
           sessionTitle: 'Narración Desktop',
@@ -3748,7 +3747,7 @@ void main() {
         );
         var terminalCalls = 0;
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-warning-terminal'),
           sessionId: 'sess-warning-terminal',
           sessionTitle: 'Warning terminal',
@@ -3810,7 +3809,7 @@ void main() {
       () async {
         final gateway = _AttachmentDesktopGateway();
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(id: 'conn-desktop-transcript-order'),
           sessionId: 'sess-desktop-transcript-order',
           sessionTitle: 'Orden Desktop',
@@ -3927,7 +3926,7 @@ void main() {
           },
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: connection,
           sessionId: 'sess-legacy',
           sessionTitle: 'Legacy',
@@ -3995,7 +3994,7 @@ void main() {
         ),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'TTFT',
@@ -4039,7 +4038,7 @@ void main() {
         ),
       );
       final service = ActiveChatService(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
       );
       final chat = service.attach(
         connection: _conn(id: 'conn-smooth'),
@@ -4093,7 +4092,7 @@ void main() {
           ),
         );
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         );
         final chat = service.attach(
           connection: _conn(id: 'conn-reduce-motion'),
@@ -4145,7 +4144,7 @@ void main() {
         );
 
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         );
         final chat = service.attach(
           connection: _conn(),
@@ -4240,7 +4239,7 @@ void main() {
           return http.Response('not found', 404);
         });
         final service = ActiveChatService(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
         );
         final chat = service.attach(
           connection: _conn(id: 'conn-terminal-race'),
@@ -4300,7 +4299,7 @@ void main() {
         ),
       );
       return ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4361,7 +4360,7 @@ void main() {
           httpClient: race,
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'X',
@@ -4431,7 +4430,7 @@ void main() {
         }),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4512,7 +4511,7 @@ void main() {
           ),
         );
         final chat = ActiveChat(
-          compressionFenceStore: testCompressionFenceStore(),
+          compressionRestoreStore: testCompressionRestoreStore(),
           connection: _conn(),
           sessionId: 'mob-provisional',
           sessionTitle: 'Noticias',
@@ -4586,7 +4585,7 @@ void main() {
         httpClient: _gateway(events: '', finalMessages: serverMessages),
       );
       return ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4603,7 +4602,7 @@ void main() {
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       return ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'X',
@@ -4980,7 +4979,7 @@ void main() {
         }),
       );
       final chat = ActiveChat(
-        compressionFenceStore: testCompressionFenceStore(),
+        compressionRestoreStore: testCompressionRestoreStore(),
         connection: _conn(),
         sessionId: 'resume-race',
         sessionTitle: 'Resume race',
@@ -5297,20 +5296,16 @@ void main() {
     );
 
     test(
-      'a compaction shown in sessionActivity does not keep a released chat '
-      'alive',
+      'an unreadable compression restore store fails open and never keeps a '
+      'released chat alive',
       () async {
-        // Fence storage that cannot be read makes the chat fail closed
-        // (`_desktopCompressionInFlight = true` with no record) — the same
-        // state the default secure-storage store produces in the test VM and
-        // on a device whose keystore read fails. The row must say
-        // "Compactando", but release() must still dispose the chat: if the
-        // compaction counted toward `SessionActivity.active`, release()
-        // would keep it forever and the next attach() would silently reuse
-        // it (this is what hung 'a disposed invalidation cannot overwrite a
-        // replacement chat').
+        // A keystore that cannot be read (the default in the test VM, or a
+        // device whose keystore read fails) used to fail closed into a
+        // permanent "compactando". Fail-open: nothing is shown, and
+        // release() disposes the chat so the next attach() gets a fresh one
+        // (`SessionActivity.compacting` never counts toward `active`).
         final service = ActiveChatService(
-          compressionFenceStore: DesktopCompressionFenceStore(
+          compressionRestoreStore: CompressionRestoreStore(
             storage: _UnreadableFenceStorage(),
           ),
         );
@@ -5335,9 +5330,8 @@ void main() {
         final first = attach();
         await Future<void>.delayed(Duration.zero);
 
-        expect(first.desktopCompressionInFlight, isTrue);
-        expect(first.sessionActivity.kind, SessionActivityKind.compacting);
-        expect(first.sessionActivity.showsActivity, isTrue);
+        expect(first.desktopCompressionInFlight, isFalse);
+        expect(first.sessionActivity.compacting, isFalse);
         expect(first.sessionActivity.active, isFalse);
         expect(
           service.isActive(
@@ -5462,7 +5456,7 @@ void main() {
   });
 }
 
-final class _UnreadableFenceStorage implements DesktopCompressionFenceStorage {
+final class _UnreadableFenceStorage implements CompressionRestoreStorage {
   @override
   Future<String?> read() async => throw StateError('keystore unavailable');
 

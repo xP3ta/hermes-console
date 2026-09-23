@@ -9,7 +9,7 @@ import 'package:http/testing.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 
 import 'support/rpc_frame_helpers.dart';
 
@@ -36,7 +36,7 @@ void _emitGatewayReady(WebSocket socket) {
   );
 }
 
-class _Storage implements DesktopCompressionFenceStorage {
+class _Storage implements CompressionRestoreStorage {
   String? value;
   Completer<void>? readEntered, releaseRead, writeEntered, releaseWrite;
   @override
@@ -111,7 +111,7 @@ class _Fixture {
       desktopGateway: client,
       allowUnownedDesktopSnapshotForTesting:
           allowUnownedDesktopSnapshotForTesting,
-      compressionFenceStore: DesktopCompressionFenceStore(
+      compressionRestoreStore: CompressionRestoreStore(
         storage: storage,
         mutationNamespaceForTesting: 'independent-$id',
       ),
@@ -315,49 +315,23 @@ void main() {
         reason:
             'revoked authority must send no compress, replay, or fallback RPC',
       );
-      expect(f.storage.value, isNull, reason: 'revoked operation cannot arm');
+      expect(
+        f.storage.value ?? '',
+        isNot(contains('runtime_id')),
+        reason: 'a revoked operation leaves no restore record behind',
+      );
       // A genuinely new action after the external load still works once.
       await f.chat.compressDesktopSession();
-      expect(f.methods.where((method) => method != 'subagent.list'), [
-        'session.compress',
-      ]);
+      // `session.events.since` is the read-only restore probe (never a
+      // mutation, resume or replay of the revoked attempt).
+      expect(
+        f.methods.where(
+          (method) =>
+              method != 'subagent.list' && method != 'session.events.since',
+        ),
+        ['session.compress'],
+      );
     });
-  }
-  for (final invalidation in ['binding', 'profile', 'dispose']) {
-    test(
-      'INDEPENDENT before-acquisition-storage-await $invalidation',
-      () async {
-        final f = _Fixture();
-        await f.start('storage-$invalidation');
-        addTearDown(f.close);
-        f.storage.readEntered = Completer<void>();
-        f.storage.releaseRead = Completer<void>();
-        final pending = f.chat.compressDesktopSessionForPresentation();
-        await f.storage.readEntered!.future;
-        switch (invalidation) {
-          case 'binding':
-            expect(f.chat.bindKnownStoredSession('stored-B'), isTrue);
-          case 'profile':
-            expect(f.chat.bindSessionProfile('profile-B'), 'profile-B');
-          case 'dispose':
-            f.chat.dispose();
-        }
-        f.storage.releaseRead!.complete();
-        final result = await pending;
-        f.trace('storage-$invalidation', result);
-        expect(
-          f.methods.where(
-            (m) => [
-              'session.resume',
-              'session.activate',
-              'session.create',
-              'session.compress',
-            ].contains(m),
-          ),
-          isEmpty,
-        );
-      },
-    );
   }
   test(
     'INDEPENDENT concurrent acquisition cannot launder foreign binding',

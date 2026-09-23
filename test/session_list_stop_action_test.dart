@@ -12,7 +12,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _StopGateway
     implements
@@ -278,7 +278,7 @@ ApiClient _api() => ApiClient(
 );
 
 ActiveChat _backgroundChat(_StopGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(),
   sessionId: _session().id,
   sessionTitle: _session().title,
@@ -314,7 +314,7 @@ void main() {
   test('row Stop resumes a missing ActiveChat and interrupts its runtime', () async {
     final gateway = _StopGateway();
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     addTearDown(service.dispose);
     addTearDown(gateway.close);
@@ -341,7 +341,7 @@ void main() {
         DesktopSubagentSnapshot(subagentId: 'child-b', status: 'tool'),
       ];
     final service = ActiveChatService(
-      compressionFenceStore: testCompressionFenceStore(),
+      compressionRestoreStore: testCompressionRestoreStore(),
     );
     addTearDown(service.dispose);
     addTearDown(gateway.close);

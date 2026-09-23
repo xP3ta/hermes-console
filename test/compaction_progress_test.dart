@@ -191,24 +191,6 @@ void main() {
       },
     );
 
-    testWidgets(
-      'manual vencida termina como no confirmada sin afirmar éxito',
-      (tester) async {
-        final clock = _Clock(_t0);
-        final tracker = CompactionTracker(clock: () => clock.now);
-        addTearDown(tracker.dispose);
-        tracker.sync(active: true, manual: true);
-        clock.advance(const Duration(minutes: 12));
-        tracker.reportUnconfirmed();
-
-        expect(tracker.running, isFalse);
-        expect(tracker.current?.isUnconfirmed, isTrue);
-        expect(tracker.current?.duration, const Duration(minutes: 12));
-        await tester.pump(const Duration(seconds: 7));
-        expect(tracker.current, isNull);
-      },
-    );
-
     test('los hechos nuevos actualizan la medición sin reiniciarla', () {
       final tracker = CompactionTracker(clock: () => _t0);
       addTearDown(tracker.dispose);
@@ -231,467 +213,253 @@ void main() {
     });
   });
 
-  group('CompactionDock', () {
-    Widget app(CompactionProgress progress, _Clock clock, {String? note}) =>
-        MaterialApp(
-          locale: const Locale('es'),
-          localizationsDelegates: const [
-            Strings.delegate,
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
-          supportedLocales: Strings.supportedLocales,
-          theme: AppTheme.hermesRedDark,
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context).copyWith(disableAnimations: false),
-            child: child!,
-          ),
-          home: Scaffold(
-            body: Align(
+  group('CompactionTracker: outcomes learned late', () {
+    testWidgets('a no-op finishes as "nothing to compact"', (tester) async {
+      final tracker = CompactionTracker(clock: () => _t0);
+      addTearDown(tracker.dispose);
+      tracker.sync(active: true, manual: true, startedAt: _t0);
+      tracker.reportResult(messagesBefore: 6, tokensBefore: 20379, noop: true);
+      expect(tracker.current?.noop, isTrue);
+      expect(tracker.current?.isFinished, isTrue);
+      await tester.pump(const Duration(seconds: 4));
+      expect(tracker.current, isNull);
+    });
+
+    testWidgets('a restored outcome gets one result frame', (tester) async {
+      final tracker = CompactionTracker(clock: () => _t0);
+      addTearDown(tracker.dispose);
+      tracker.reportResult(messagesBefore: 35, messagesAfter: 31);
+      expect(tracker.current, isNull, reason: 'no start, nothing to show');
+      tracker.reportResult(
+        messagesBefore: 35,
+        messagesAfter: 31,
+        startedAt: _t0,
+      );
+      expect(tracker.current?.isFinished, isTrue);
+      expect(tracker.current?.messagesAfter, 31);
+      await tester.pump(const Duration(seconds: 4));
+      expect(tracker.current, isNull);
+    });
+  });
+
+  group('CompactionDock pill', () {
+    Widget app(
+      CompactionProgress progress,
+      _Clock clock, {
+      ThemeData? theme,
+      double width = 390,
+      double textScale = 1,
+      TextDirection? direction,
+      Locale locale = const Locale('es'),
+    }) => MaterialApp(
+      locale: locale,
+      localizationsDelegates: const [
+        Strings.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: Strings.supportedLocales,
+      theme: theme ?? AppTheme.hermesRedDark,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations: false,
+          textScaler: TextScaler.linear(textScale),
+        ),
+        child: direction == null
+            ? child!
+            : Directionality(textDirection: direction, child: child!),
+      ),
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: width,
+            child: Align(
               alignment: Alignment.bottomCenter,
               child: CompactionDock(
                 compaction: progress,
-                note: note,
                 clock: () => clock.now,
               ),
             ),
           ),
-        );
+        ),
+      ),
+    );
 
-    testWidgets('sin progreso: línea que se mueve, hechos reales y cronómetro', (
+    testWidgets('live: spinner, "Compactando", muted facts and real timer', (
       tester,
     ) async {
+      await loadInterFont();
       final clock = _Clock(_t0.add(const Duration(seconds: 23)));
       await tester.pumpWidget(
         app(
           CompactionProgress(
             startedAt: _t0,
             manual: true,
-            messagesBefore: 22,
-            tokensBefore: 21500,
+            messagesBefore: 38,
+            tokensBefore: 32200,
           ),
           clock,
         ),
       );
+      expect(find.byKey(const ValueKey('compaction-spinner')), findsOneWidget);
       expect(find.textContaining('Compactando'), findsOneWidget);
-      expect(find.textContaining('22 msj · ~21.5k tok'), findsOneWidget);
+      expect(find.textContaining('38 msj · ~32.2k tok'), findsOneWidget);
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('compaction-elapsed')))
             .data,
         '0:23',
       );
-      // Ni relleno determinado, ni porcentaje, ni tiempo restante, ni spinner.
-      expect(
-        find.byKey(const ValueKey('compaction-line-moving')),
-        findsOneWidget,
+      // A compact pill sized to its content, not a full-width bar.
+      final pill = tester.getSize(
+        find.byKey(const ValueKey('compaction-dock')),
       );
-      expect(find.byKey(const ValueKey('compaction-line-fill')), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(pill.width, lessThan(390));
+      expect(pill.height, lessThanOrEqualTo(48));
+      expect(find.byType(LinearProgressIndicator), findsNothing);
       expect(find.textContaining('%'), findsNothing);
-      expect(find.textContaining('≈'), findsNothing);
-      // El segmento avanza de verdad.
-      dynamic painter() => tester
-          .widget<CustomPaint>(
-            find.byKey(const ValueKey('compaction-line-moving')),
-          )
-          .painter;
-      final first = painter().t as double?;
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(painter().t as double?, isNot(first));
-    });
-
-    testWidgets('a ancho de móvil el título y los recuentos van en UNA línea', (
-      tester,
-    ) async {
-      await loadInterFont();
-      tester.view.physicalSize = const Size(360, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final progress = CompactionProgress(
-        startedAt: _t0,
-        manual: true,
-        messagesBefore: 12,
-        tokensBefore: 21600,
-      );
-      await tester.pumpWidget(
-        app(progress, _Clock(_t0.add(const Duration(seconds: 30)))),
-      );
-      expect(find.textContaining('Compactando conversación'), findsNothing);
-      final title = tester.getRect(find.text('Compactando'));
-      final facts = tester.getRect(
-        find.byKey(const ValueKey('compaction-facts')),
-      );
-      final timer = tester.getRect(
-        find.byKey(const ValueKey('compaction-elapsed')),
-      );
-      expect(find.textContaining('12 msj · ~21.6k tok'), findsOneWidget);
-      // Misma línea: alturas de un solo renglón y alineados en horizontal.
-      expect(facts.height, lessThan(20));
-      expect((facts.center.dy - title.center.dy).abs(), lessThan(4));
-      expect(timer.left, greaterThan(facts.right));
-
-      // Si no cabe, se recortan los recuentos ANTES que el título.
-      tester.view.physicalSize = const Size(200, 800);
-      await tester.pump();
-      final narrowTitle = tester.widget<Text>(find.text('Compactando'));
-      expect(narrowTitle.softWrap, isFalse);
+      clock.advance(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 1));
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('compaction-facts')))
-            .overflow,
-        TextOverflow.ellipsis,
-      );
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('con texto grande sí puede partirse en dos líneas', (
-      tester,
-    ) async {
-      await loadInterFont();
-      tester.view.physicalSize = const Size(320, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        MaterialApp(
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          theme: AppTheme.hermesRedDark,
-          home: MediaQuery(
-            data: const MediaQueryData(
-              textScaler: TextScaler.linear(2),
-              disableAnimations: true,
-            ),
-            child: Scaffold(
-              body: CompactionDock(
-                compaction: CompactionProgress(
-                  startedAt: _t0,
-                  manual: true,
-                  messagesBefore: 12,
-                  tokensBefore: 21600,
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      expect(find.byKey(const ValueKey('compaction-facts')), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('con movimiento reducido la línea queda quieta', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          theme: AppTheme.hermesRedDark,
-          home: MediaQuery(
-            data: const MediaQueryData(disableAnimations: true),
-            child: Scaffold(
-              body: CompactionDock(
-                compaction: CompactionProgress(startedAt: _t0, manual: false),
-              ),
-            ),
-          ),
-        ),
-      );
-      final painter =
-          tester
-                  .widget<CustomPaint>(
-                    find.byKey(const ValueKey('compaction-line-moving')),
-                  )
-                  .painter!
-              as dynamic;
-      expect(painter.t, isNull);
-    });
-
-    testWidgets('con trozos reales: relleno determinado desde esos números', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        app(
-          CompactionProgress(
-            startedAt: _t0,
-            manual: false,
-            chunkIndex: 2,
-            chunkCount: 4,
-          ),
-          _Clock(_t0),
-        ),
-      );
-      expect(
-        tester
-            .widget<LinearProgressIndicator>(
-              find.byKey(const ValueKey('compaction-line-fill')),
-            )
-            .value,
-        0.5,
-      );
-      expect(find.textContaining('parte 2 de 4'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('compaction-line-moving')),
-        findsNothing,
+            .widget<Text>(find.byKey(const ValueKey('compaction-elapsed')))
+            .data,
+        '0:25',
       );
     });
 
-    testWidgets('un campo inventado no rellena la barra', (tester) async {
-      // El backend actual solo dice «empezó / latido / terminó»: aunque llegue
-      // algo con pinta de porcentaje, el parser lo ignora y la línea sigue
-      // indeterminada.
-      final chunks = parseCompactionChunks({'progress': 0.9, 'percent': 90});
-      expect(chunks, isNull);
-      await tester.pumpWidget(
-        app(
-          CompactionProgress(
-            startedAt: _t0,
-            manual: false,
-            chunkIndex: chunks?.index,
-            chunkCount: chunks?.count,
-          ),
-          _Clock(_t0),
-        ),
-      );
-      expect(find.byKey(const ValueKey('compaction-line-fill')), findsNothing);
-      expect(
-        find.byKey(const ValueKey('compaction-line-moving')),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets('resultado real: solo lo que el backend dio', (tester) async {
-      final finished = _t0.add(const Duration(seconds: 71));
-      Future<void> pump(CompactionProgress p) =>
-          tester.pumpWidget(app(p, _Clock(finished)));
-      await pump(
-        CompactionProgress(
-          startedAt: _t0,
-          manual: true,
-          messagesBefore: 22,
-          messagesAfter: 12,
-          finishedAt: finished,
-        ),
-      );
-      expect(
-        find.text('Compactado · 22 → 12 mensajes · 71 s', findRichText: true),
-        findsOneWidget,
-      );
-      // Con tokens reportados se añaden; sin ellos no se muestran.
-      await pump(
-        CompactionProgress(
-          startedAt: _t0,
-          manual: true,
-          messagesBefore: 22,
-          messagesAfter: 12,
-          tokensBefore: 96000,
-          tokensAfter: 4800,
-          finishedAt: finished,
-        ),
-      );
-      expect(
-        find.text(
-          'Compactado · 22 → 12 mensajes · 96k → 4.8k tokens · 71 s',
-          findRichText: true,
-        ),
-        findsOneWidget,
-      );
-      // Automática sin cifras: solo la duración medida.
-      await pump(
-        CompactionProgress(startedAt: _t0, manual: false, finishedAt: finished),
-      );
-      expect(
-        find.text('Compactado · 71 s', findRichText: true),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
-      expect(
-        tester
-            .widget<LinearProgressIndicator>(
-              find.byKey(const ValueKey('compaction-line-fill')),
-            )
-            .value,
-        1,
-      );
-    });
-
-    testWidgets('resultado no confirmado es terminal y conserva el aviso', (
-      tester,
-    ) async {
-      const warning = 'No se pudo confirmar la compresión.';
+    testWidgets('done: check + before -> after, no timer', (tester) async {
+      final clock = _Clock(_t0);
       await tester.pumpWidget(
         app(
           CompactionProgress(
             startedAt: _t0,
             manual: true,
-            finishedAt: _t0.add(const Duration(minutes: 12)),
-            resultConfirmed: false,
+            messagesBefore: 38,
+            messagesAfter: 34,
+            finishedAt: _t0.add(const Duration(seconds: 47)),
           ),
-          _Clock(_t0.add(const Duration(minutes: 12))),
-          note: warning,
+          clock,
         ),
       );
-
-      expect(find.text(warning), findsOneWidget);
-      expect(find.byKey(const ValueKey('compaction-result')), findsOneWidget);
-      expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
       expect(
-        tester
-            .widget<LinearProgressIndicator>(
-              find.byKey(const ValueKey('compaction-line-fill')),
-            )
-            .color,
-        Theme.of(tester.element(find.byType(CompactionDock))).hermes.warning,
+        find.byKey(const ValueKey('compaction-done-icon')),
+        findsOneWidget,
       );
+      expect(find.text('Compactado · 38 → 34 mensajes'), findsOneWidget);
+      expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
+      expect(find.byKey(const ValueKey('compaction-spinner')), findsNothing);
     });
 
-    testWidgets('aviso de estado que exige atención ocupa una sola fila', (
+    testWidgets('no-op: "Nada que compactar" with the message count', (
       tester,
     ) async {
+      final clock = _Clock(_t0);
       await tester.pumpWidget(
         app(
-          CompactionProgress(startedAt: _t0, manual: true),
-          _Clock(_t0),
-          note: 'La compresión sigue en curso.',
+          CompactionProgress(
+            startedAt: _t0,
+            manual: true,
+            messagesBefore: 6,
+            finishedAt: _t0.add(const Duration(seconds: 1)),
+            noop: true,
+          ),
+          clock,
         ),
       );
-      expect(find.text('La compresión sigue en curso.'), findsOneWidget);
+      expect(find.text('Nada que compactar · 6 mensajes'), findsOneWidget);
     });
 
-    testWidgets('320 dp a escala 2 sin desbordes', (tester) async {
-      await loadInterFont();
-      tester.view.physicalSize = const Size(320, 640);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        MaterialApp(
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          theme: AppTheme.hermesRedDark,
-          home: MediaQuery(
-            data: const MediaQueryData(
-              textScaler: TextScaler.linear(2),
-              disableAnimations: true,
-            ),
-            child: Scaffold(
-              body: CompactionDock(
-                compaction: CompactionProgress(
-                  startedAt: _t0,
-                  manual: true,
-                  messagesBefore: 22,
-                  tokensBefore: 21500,
-                  chunkIndex: 1,
-                  chunkCount: 3,
-                ),
-                note:
-                    'La compresión sigue en curso. Hermes actualizará esta conversación.',
-              ),
-            ),
-          ),
-        ),
-      );
-      expect(tester.takeException(), isNull);
-    });
-  });
-
-  group('CompressionUnconfirmedNotice', () {
-    Widget host(Widget child, {double width = 360}) => MaterialApp(
-      locale: const Locale('es'),
-      localizationsDelegates: Strings.localizationsDelegates,
-      supportedLocales: Strings.supportedLocales,
-      theme: AppTheme.hermesRedDark,
-      home: Scaffold(
-        body: Align(
-          alignment: Alignment.bottomCenter,
-          child: SizedBox(width: width, child: child),
-        ),
-      ),
-    );
-
-    testWidgets(
-      'REGRESSION_COMP_UNCONFIRMED readable text, reload and dismiss actions',
-      (tester) async {
-        var retried = 0;
-        var dismissed = 0;
-        await tester.pumpWidget(
-          host(
-            CompressionUnconfirmedNotice(
-              onRetry: () => retried++,
-              onDismiss: () => dismissed++,
-            ),
-          ),
-        );
-        final title = tester.widget<Text>(
-          find.byKey(const ValueKey('compression-unconfirmed-title')),
-        );
-        expect(title.data, 'No se pudo confirmar la compresión');
-        // The explanation is never cut to one ellipsized line.
-        final body = tester.widget<Text>(
-          find.byKey(const ValueKey('compression-unconfirmed-body')),
-        );
-        expect(body.maxLines, isNot(1));
-        expect(body.overflow, isNot(TextOverflow.ellipsis));
-        // No running timer on a state that is not running anymore.
-        expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
-
-        await tester.tap(
-          find.byKey(const ValueKey('compression-unconfirmed-retry')),
-        );
-        await tester.tap(
-          find.byKey(const ValueKey('compression-unconfirmed-dismiss')),
-        );
-        expect(retried, 1);
-        expect(dismissed, 1);
-        expect(tester.takeException(), isNull);
-      },
-    );
-  });
-
-  group('compressionOutcomeText', () {
-    testWidgets('no-op and success carry the before -> after facts', (
+    testWidgets('without facts the result falls back to the duration', (
       tester,
     ) async {
-      late Strings strings;
+      final clock = _Clock(_t0);
       await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('es'),
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          home: Builder(
-            builder: (context) {
-              strings = Strings.of(context);
-              return const SizedBox();
-            },
+        app(
+          CompactionProgress(
+            startedAt: _t0,
+            manual: true,
+            finishedAt: _t0.add(const Duration(seconds: 71)),
           ),
+          clock,
         ),
       );
-      expect(
-        compressionOutcomeText(
-          strings,
-          noop: true,
-          beforeMessages: 6,
-          afterMessages: 6,
-          beforeTokens: 20379,
-          afterTokens: 20379,
+      expect(find.text('Compactado · 71 s'), findsOneWidget);
+    });
+
+    testWidgets('determinate ring only from published chunks', (tester) async {
+      final clock = _Clock(_t0);
+      await tester.pumpWidget(
+        app(
+          CompactionProgress(
+            startedAt: _t0,
+            manual: false,
+            chunkIndex: 1,
+            chunkCount: 4,
+          ),
+          clock,
         ),
-        'Nada que compactar · 6 mensajes · ~20.4k tokens',
       );
-      expect(
-        compressionOutcomeText(
-          strings,
-          noop: false,
-          beforeMessages: 34,
-          afterMessages: 12,
-          beforeTokens: 30275,
-          afterTokens: 25668,
+      final ring = tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator),
+      );
+      expect(ring.value, 0.25);
+    });
+
+    for (final theme in [AppTheme.hermesRedDark, AppTheme.hermesRedLight]) {
+      testWidgets(
+        '320 dp at 200% text, ${theme.brightness.name}: no overflow',
+        (tester) async {
+          tester.view.physicalSize = const Size(320, 640);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final clock = _Clock(_t0.add(const Duration(minutes: 3)));
+          for (final progress in [
+            CompactionProgress(
+              startedAt: _t0,
+              manual: true,
+              messagesBefore: 1234,
+              tokensBefore: 1250000,
+              chunkIndex: 2,
+              chunkCount: 9,
+            ),
+            CompactionProgress(
+              startedAt: _t0,
+              manual: true,
+              messagesBefore: 1234,
+              messagesAfter: 12,
+              tokensBefore: 1250000,
+              tokensAfter: 48000,
+              finishedAt: _t0.add(const Duration(minutes: 3)),
+            ),
+          ]) {
+            await tester.pumpWidget(
+              app(progress, clock, theme: theme, width: 320, textScale: 2),
+            );
+            expect(tester.takeException(), isNull);
+            final pill = tester.getRect(
+              find.byKey(const ValueKey('compaction-dock')),
+            );
+            expect(pill.width, lessThanOrEqualTo(320));
+          }
+        },
+      );
+    }
+
+    testWidgets('RTL and English', (tester) async {
+      final clock = _Clock(_t0.add(const Duration(seconds: 5)));
+      await tester.pumpWidget(
+        app(
+          CompactionProgress(startedAt: _t0, manual: true, messagesBefore: 3),
+          clock,
+          locale: const Locale('en'),
+          direction: TextDirection.rtl,
         ),
-        'Compactado · 34 → 12 mensajes · 30.3k → 25.7k tokens',
       );
-      expect(
-        compressionOutcomeText(strings, noop: false),
-        'Compactado',
-      );
+      expect(find.textContaining('Compacting'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

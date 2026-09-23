@@ -28,7 +28,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 const _runtimeId = 'runtime-terminal-authority';
 const _storedId = 'stored-terminal-authority';
@@ -217,7 +217,7 @@ ActiveChat _chat(
   StoredSessionMessageLoader? storedMessageLoader,
   int Function()? wallClockMs,
 }) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection('conn-$id'),
   sessionId: _storedId,
   initialStoredSessionId: _storedId,

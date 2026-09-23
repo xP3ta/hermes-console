@@ -10,7 +10,7 @@ import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/chat_render_projection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
@@ -19,7 +19,7 @@ import 'package:hermes_android/core/utils/chat_turn.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Fake del canal Desktop que graba los flags de `session.resume` y permite
 /// emitir eventos `session.resume_progress` como haría Hermes Agent 0.20.
@@ -482,10 +482,10 @@ ActiveChat _chat(
   List<CancelledTurnTombstone> initialCancelledTurnTombstones = const [],
   Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
   void Function()? onTerminal,
-  DesktopCompressionFenceStore? compressionFenceStore,
+  CompressionRestoreStore? compressionRestoreStore,
   int transcriptPageSizeForTesting = 120,
 }) => ActiveChat(
-  compressionFenceStore: compressionFenceStore ?? testCompressionFenceStore(),
+  compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
   transcriptPageSizeForTesting: transcriptPageSizeForTesting,
   connection: _connection(id),
   sessionId: sessionId,
@@ -9410,54 +9410,6 @@ void main() {
       expect(chat.coreReadCoverageIsPartial, isFalse);
       expect(chat.coreReadLineageComplete, isTrue);
       expect(chat.hasEarlierMessages, isFalse);
-    });
-
-    test('RED all-discarded is consumed by compression-fenced load', () async {
-      final server = _ControlledTranscriptServer();
-      final storage = InMemoryDesktopCompressionFenceStorage();
-      final store = DesktopCompressionFenceStore(
-        storage: storage,
-        attemptId: () => 'obj-a-compression-attempt',
-      );
-      final chat = _chat(
-        'obj-a-compression-consumer',
-        server.client(),
-        compressionFenceStore: store,
-      );
-      addTearDown(chat.dispose);
-
-      final initialLoad = chat.loadMessages();
-      await server.waitForRequests(1);
-      server.completePage(0, const [durableRow]);
-      await initialLoad;
-      expect(chat.coreReadLineageComplete, isTrue);
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-      expect(
-        (await store.arm(
-          DesktopCompressionFenceScope(
-            connectionId: 'obj-a-compression-consumer',
-            profile: 'default',
-            logicalSessionId: 'stored-chat',
-          ),
-          tipAtStart: 'stored-chat',
-          compressionsAtStart: 0,
-          createdAtMs: now,
-          reconcileUntilMs: now + 120000,
-        )).claimed,
-        isTrue,
-      );
-
-      final fencedLoad = chat.loadMessages(expectedMessageCount: 0);
-      await server.waitForRequests(2);
-      server.completePage(1, const <Object?>['discarded']);
-      await fencedLoad;
-
-      expect(chat.messages.map(canonicalTranscriptMessageId), [
-        'obj-a-durable',
-      ]);
-      expect(chat.coreReadLineageComplete, isFalse);
-      expect(chat.hasEarlierMessages, isTrue);
     });
 
     test('RED all-discarded is consumed by lifecycle prefetch', () async {

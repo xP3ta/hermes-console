@@ -11,7 +11,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 /// Doble de gateway mínimo: sólo necesita aceptar el turno vivo, dejar
 /// controlar el ACK de `session.interrupt` y publicar eventos de terminal.
@@ -186,7 +186,7 @@ ActiveChat _chat(
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   );
   return ActiveChat(
-    compressionFenceStore: testCompressionFenceStore(),
+    compressionRestoreStore: testCompressionRestoreStore(),
     connection: SavedConnection(
       id: id,
       label: 'Test',

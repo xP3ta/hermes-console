@@ -69,7 +69,7 @@ import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
-import 'package:hermes_android/core/services/desktop_compression_fence_store.dart';
+import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -189,7 +189,7 @@ class _MemoryDraftSecureStorage extends FlutterSecureStorage {
 }
 
 class _UnreadableCompressionFenceStorage
-    implements DesktopCompressionFenceStorage {
+    implements CompressionRestoreStorage {
   @override
   Future<String?> read() => Future<String?>.error(StateError('unreadable'));
 
@@ -1155,27 +1155,38 @@ class _ReplayProbeUiGateway extends _UiRewindGateway
     implements HermesDesktopCompressionStatusGateway {
   final replayRuntimeIds = <String>[];
 
+  /// `running`: the ring still pins compressing; `done`: ready followed;
+  /// `gone`: the gateway never saw the runtime (restart / eviction).
+  String state = 'running';
+
   @override
   Future<Map<String, dynamic>> compressionEventReplay(
     String runtimeSessionId,
   ) async {
     replayRuntimeIds.add(runtimeSessionId);
+    if (state == 'gone') {
+      return {'events': <Object>[], 'latest_seq': 0, 'truncated': false};
+    }
     return {
       'events': [
         {
           'type': 'status.update',
           'session_id': runtimeSessionId,
           'seq': 1,
-          'payload': {'kind': 'compressing', 'text': 'compressing 35'},
+          'payload': {
+            'kind': 'compressing',
+            'text': 'compressing 35 messages (~20,379 tok)',
+          },
         },
-        {
-          'type': 'status.update',
-          'session_id': runtimeSessionId,
-          'seq': 2,
-          'payload': {'kind': 'status', 'text': 'ready'},
-        },
+        if (state == 'done')
+          {
+            'type': 'status.update',
+            'session_id': runtimeSessionId,
+            'seq': 2,
+            'payload': {'kind': 'status', 'text': 'ready'},
+          },
       ],
-      'latest_seq': 2,
+      'latest_seq': state == 'done' ? 2 : 1,
       'truncated': false,
       'epoch': 'epoch-a',
     };
@@ -1962,7 +1973,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   var secureStore = <String, String>{};
   var draftStoreNamespace = 0;
-  var compressionFenceStoreNamespace = 0;
+  var compressionRestoreStoreNamespace = 0;
   var failOutboxWrites = false;
   var outboxWriteCalls = 0;
   Completer<String?>? delayedOutboxRead;
@@ -2281,7 +2292,7 @@ void main() {
     String? initialStoredSessionId,
     AgentProfile? missionBotProfile,
     MissionProfileAvatarCache? missionAvatarCache,
-    DesktopCompressionFenceStore? compressionFenceStore,
+    CompressionRestoreStore? compressionRestoreStore,
     FlutterSecureStorage? draftSecureStorage,
     VoidCallback? beforeChatPush,
     Duration chatRouteTransition = const Duration(milliseconds: 350),
@@ -2314,14 +2325,14 @@ void main() {
     final sec = SecureStorage();
     final activeChats = ActiveChatService(
       attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
-      compressionFenceStore:
-          compressionFenceStore ??
-          DesktopCompressionFenceStore(
-            storage: FlutterSecureDesktopCompressionFenceStorage(
+      compressionRestoreStore:
+          compressionRestoreStore ??
+          CompressionRestoreStore(
+            storage: FlutterSecureCompressionRestoreStorage(
               secureStorage: _MemoryDraftSecureStorage(secureStore),
             ),
             mutationNamespaceForTesting:
-                'chat-screen-compression-${++compressionFenceStoreNamespace}',
+                'chat-screen-compression-${++compressionRestoreStoreNamespace}',
           ),
     );
     if (registerActiveChatsTearDown) addTearDown(activeChats.dispose);
@@ -2572,6 +2583,41 @@ void main() {
       );
       gateway.emit('message.complete', {'text': 'done'});
       await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'REGRESSION_SEND_BUSY_KEEPS_TEXT a send refused as busy (4009) keeps the '
+    'text and says Hermes is busy',
+    (tester) async {
+      // After a restart nothing locks the composer (fail-open). If the server
+      // is still compacting and refuses the turn as busy, the user's text must
+      // stay in the composer with a clear, discreet notice.
+      final gateway = _UiRewindGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'prompt.submit',
+          'session busy',
+          code: 4009,
+        );
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-send-busy'),
+        messagesLoaded: true,
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await tester.enterText(find.byType(TextField), 'Mi mensaje importante');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'Mi mensaje importante',
+      );
+      expect(find.textContaining('Hermes está ocupado'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -5624,69 +5670,172 @@ void main() {
     },
   );
 
-  testWidgets(
-    'REGRESSION_COMP_KILL_OUTCOME_NOTICE a compression settled after a kill '
-    'announces its outcome and unlocks the composer',
-    (tester) async {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final fenceStore = DesktopCompressionFenceStore(
-        storage: FlutterSecureDesktopCompressionFenceStorage(
-          secureStorage: _MemoryDraftSecureStorage(<String, String>{}),
-        ),
-        attemptId: () => 'kill-outcome',
-        mutationNamespaceForTesting:
-            'chat-screen-kill-outcome-${++compressionFenceStoreNamespace}',
-      );
-      final connection = _remoteConn('conn-kill-outcome');
-      await fenceStore.arm(
-        DesktopCompressionFenceScope(
-          connectionId: connection.id,
-          profile: 'default',
-          logicalSessionId: 'sess-test',
-        ),
-        tipAtStart: 'sess-test',
-        compressionsAtStart: null,
-        messagesAtStart: 35,
-        runtimeAtStart: 'runtime-killed',
-        createdAtMs: now - 30000,
-        reconcileUntilMs: now + 600000,
-      );
-      final gateway = _ReplayProbeUiGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: connection,
-        compressionFenceStore: fenceStore,
-        messages: const [
-          {'role': 'assistant', 'content': 'Historial intacto'},
-        ],
-        api: ApiClient(
-          baseUrl: 'http://127.0.0.1:8642',
-          apiKey: 'k',
-          httpClient: MockClient(
-            (_) async => http.Response(
-              jsonEncode({
-                'session': {'id': 'sess-test', 'message_count': 35},
-              }),
-              200,
-            ),
+  Future<(ActiveChat, _ReplayProbeUiGateway)> pumpRestoredCompression(
+    WidgetTester tester, {
+    required String connectionId,
+    String state = 'running',
+    int restMessageCount = 35,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final store = CompressionRestoreStore(
+      storage: FlutterSecureCompressionRestoreStorage(
+        secureStorage: _MemoryDraftSecureStorage(<String, String>{}),
+      ),
+      mutationNamespaceForTesting:
+          'chat-screen-restored-${++compressionRestoreStoreNamespace}',
+    );
+    await store.save(
+      CompressionRestoreRecord(
+        connectionId: connectionId,
+        profile: 'default',
+        storedSessionId: 'sess-test',
+        runtimeId: 'runtime-killed',
+        startedAtMs: now - 42000,
+      ),
+    );
+    final gateway = _ReplayProbeUiGateway()..state = state;
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn(connectionId),
+      compressionRestoreStore: store,
+      messages: const [
+        {'role': 'assistant', 'content': 'Historial intacto'},
+      ],
+      api: ApiClient(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'k',
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'session': {'id': 'sess-test', 'message_count': restMessageCount},
+            }),
+            200,
           ),
         ),
-      );
-      const notice = 'Nada que compactar · 35 mensajes';
-      for (var i = 0; i < 40 && find.text(notice).evaluate().isEmpty; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-      expect(find.text(notice), findsOneWidget);
-      expect(chat.desktopCompressionInFlight, isFalse);
-      expect(
-        tester.widget<TextField>(find.byType(TextField)).readOnly,
-        isFalse,
+      ),
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    return (chat, gateway);
+  }
+
+  testWidgets(
+    'REGRESSION_COMP_RESTORED_RUNNING positive evidence restores the pill with '
+    'the real start and never locks the composer',
+    (tester) async {
+      final (chat, gateway) = await pumpRestoredCompression(
+        tester,
+        connectionId: 'conn-restored-running',
       );
       expect(gateway.replayRuntimeIds, contains('runtime-killed'));
+      expect(chat.desktopRestoredCompressionRunning, isTrue);
+      expect(chat.sessionActivity.compacting, isTrue);
+      expect(chat.sessionActivity.active, isFalse);
+      expect(chat.desktopManualCompressionInFlight, isFalse);
+      expect(find.byKey(const ValueKey('compaction-dock')), findsOneWidget);
+      expect(find.textContaining('Compactando'), findsOneWidget);
+      expect(find.textContaining('35 msj'), findsOneWidget);
+      // Real elapsed from the recorded start, not a fresh 0:00.
+      final elapsed = tester
+          .widget<Text>(find.byKey(const ValueKey('compaction-elapsed')))
+          .data!;
+      expect(elapsed, isNot('0:00'));
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.readOnly, isFalse);
+      expect(field.enabled, isNot(false));
+
+      // The server finishes (refused / no-op: transcript unchanged): the same
+      // pill shows the outcome once, then goes away.
+      gateway.state = 'done';
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+        if (find.text('Nada que compactar · 35 mensajes').evaluate().isNotEmpty) {
+          break;
+        }
+      }
+      expect(find.text('Nada que compactar · 35 mensajes'), findsOneWidget);
+      expect(chat.desktopRestoredCompressionRunning, isFalse);
+      expect(chat.sessionActivity.compacting, isFalse);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 400));
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'REGRESSION_COMP_PILL_NO_OVERLAP the pill never covers the last message '
+    'or the composer',
+    (tester) async {
+      await pumpRestoredCompression(
+        tester,
+        connectionId: 'conn-restored-overlap',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      final pill = tester.getRect(find.byKey(const ValueKey('compaction-dock')));
+      final lastMessage = tester.getRect(find.text('Historial intacto'));
+      final composer = tester.getRect(find.byType(HermesComposerSurface));
+      expect(pill.overlaps(lastMessage), isFalse);
+      expect(pill.bottom, lessThanOrEqualTo(composer.top));
+      // A compact, centred pill — not a full-width bar.
+      final screen = tester.getSize(find.byType(ChatScreen));
+      expect(pill.width, lessThan(screen.width - 32));
+      expect(
+        (pill.center.dx - screen.width / 2).abs(),
+        lessThan(2),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'REGRESSION_COMP_RESTORED_COMPACTED a restored compression that shrank the '
+    'transcript reports before -> after in the pill',
+    (tester) async {
+      final (_, gateway) = await pumpRestoredCompression(
+        tester,
+        connectionId: 'conn-restored-compacted',
+        restMessageCount: 31,
+      );
+      gateway.state = 'done';
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+        if (find.textContaining('35 → 31').evaluate().isNotEmpty) break;
+      }
+      expect(find.textContaining('Compactado · 35 → 31 mensajes'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final state in ['done', 'gone']) {
+    testWidgets(
+      'REGRESSION_COMP_RESTORED_NO_EVIDENCE ring=$state shows nothing and '
+      'leaves the composer free',
+      (tester) async {
+        final (chat, _) = await pumpRestoredCompression(
+          tester,
+          connectionId: 'conn-restored-none-$state',
+          state: state,
+        );
+        expect(chat.desktopRestoredCompressionRunning, isFalse);
+        expect(chat.sessionActivity.compacting, isFalse);
+        // Let the pill's fade-out finish.
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
+        expect(find.textContaining('Nada que compactar'), findsNothing);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).readOnly,
+          isFalse,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'REGRESSION_GONE_SESSION a session deleted on the server opens as a fresh '
@@ -6026,15 +6175,15 @@ void main() {
             ),
           ],
         );
-      final fenceStore = DesktopCompressionFenceStore(
-        storage: FlutterSecureDesktopCompressionFenceStorage(
+      final fenceStore = CompressionRestoreStore(
+        storage: FlutterSecureCompressionRestoreStorage(
           secureStorage: _MemoryDraftSecureStorage(secureStore),
         ),
         mutationNamespaceForTesting:
-            'chat-screen-native-split-${++compressionFenceStoreNamespace}',
+            'chat-screen-native-split-${++compressionRestoreStoreNamespace}',
       );
       final ownerA = ActiveChat(
-        compressionFenceStore: fenceStore,
+        compressionRestoreStore: fenceStore,
         connection: _remoteConn('conn-ui-native-split'),
         sessionId: 'stored-a',
         initialStoredSessionId: 'stored-a',
@@ -6064,7 +6213,7 @@ void main() {
         messagesLoaded: true,
         attachDesktopRuntimeOnLoad: false,
         allowUnownedDesktopSnapshotForTesting: false,
-        compressionFenceStore: fenceStore,
+        compressionRestoreStore: fenceStore,
       );
       expect(chatB, isNot(same(ownerA)));
       expect(chatB.hasAuthoritativePassiveRemoteActivity, isFalse);
@@ -11808,7 +11957,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('/compress con fence ilegible no adquiere runtime', (
+  testWidgets('/compress con almacén de restauración ilegible sigue '
+      'funcionando (fail-open)', (
     tester,
   ) async {
     final gateway = _UiNativeCompressionGateway(
@@ -11819,7 +11969,7 @@ void main() {
       desktopGateway: gateway,
       connection: _remoteConn('conn-compress-unreadable'),
       messagesLoaded: true,
-      compressionFenceStore: DesktopCompressionFenceStore(
+      compressionRestoreStore: CompressionRestoreStore(
         storage: _UnreadableCompressionFenceStorage(),
         mutationNamespaceForTesting: 'chat-screen-unreadable',
       ),
@@ -11830,9 +11980,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump(const Duration(milliseconds: 350));
 
-    expect(gateway.resumeExistingCalls, 0);
+    // The restore record is best effort: an unreadable keystore only hides
+    // restored progress after a restart, it never blocks /compress.
     expect(gateway.createCalls, 0);
-    expect(gateway.nativeCompressionCalls, 0);
+    expect(gateway.nativeCompressionCalls, 1);
+    await tester.pump(const Duration(seconds: 4));
   });
 
   testWidgets('REGRESSION_COMP_FIX1_UI_STALE_COMPLETED', (tester) async {
@@ -11917,6 +12069,8 @@ void main() {
     expect(gateway.slashCalls, isEmpty);
     expect(gateway.dispatchCalls, isEmpty);
     expect(gateway.submissions, isEmpty);
+    // Let the pill's short settle/linger timers run out.
+    await tester.pump(const Duration(seconds: 4));
     expect(tester.takeException(), isNull);
   });
 
@@ -11952,7 +12106,6 @@ void main() {
         await tester.pump();
       }
       expect(chat.desktopCompressionInFlight, isFalse);
-      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
       // El resultado exacto del RPC pasa a la barra unos segundos.
       final dock = find.byKey(const ValueKey('compaction-result'));
       expect(dock, findsOneWidget);
@@ -11964,6 +12117,7 @@ void main() {
         findsOneWidget,
       );
       expect(_dockText('96k → 4.8k tokens'), findsOneWidget);
+      // The transcript keeps its compression timeline row.
       expect(find.text('La compresión de contexto terminó.'), findsOneWidget);
       expect(find.textContaining('Respuesta conservada'), findsOneWidget);
       expect(
@@ -12018,12 +12172,11 @@ void main() {
         await tester.pump();
       }
       expect(chat.desktopCompressionInFlight, isFalse);
-      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
       expect(
         find.byKey(const ValueKey('desktop-session-compression-progress')),
         findsNothing,
       );
-      expect(find.text('La compresión de contexto terminó.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('compaction-result')), findsOneWidget);
       expect(find.textContaining('Respuesta conservada'), findsOneWidget);
       expect(
         chat.messages.map((message) => message['content']),
@@ -12042,8 +12195,8 @@ void main() {
   );
 
   testWidgets(
-    'COMP_CONVERGENCE lost reply releases the composer with a dismissible '
-    'notice once the window runs out',
+    'COMP_CONVERGENCE lost reply frees the composer at once with no amber '
+    'state (fail-open)',
     (tester) async {
       final gate = Completer<DesktopCompressionResult>();
       final gateway = _UiNativeCompressionGateway(
@@ -12063,49 +12216,26 @@ void main() {
       await submitComposerFromKeyboard(tester);
       await gateway.compressionEntered.future;
       gate.completeError(TimeoutException('private transport detail'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 20));
-      await tester.pump(const Duration(seconds: 11));
-      // Un transporte ambiguo comparte la misma ventana larga que una
-      // compactación que el servidor sí aceptó (hasta 12 min, ver
-      // `_desktopCompressionReconciliationFallback`): un intento perdido no
-      // se declara sin confirmar antes de agotarla.
-      await tester.pump(const Duration(minutes: 13));
       for (var frame = 0; frame < 12; frame++) {
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
       }
-      // Hermes Desktop never locks input on a compression: once the window
-      // runs out without proof the composer is usable again and a readable,
-      // dismissible notice replaces the "compacting" dock.
       expect(chat.desktopCompressionInFlight, isFalse);
-      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
-      expect(
-        find.text('No se pudo confirmar la compresión'),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('compression-unconfirmed-retry')),
-        findsOneWidget,
-      );
+      // The pill waits a moment for a late terminal, then leaves.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 300));
+      // Hermes Desktop never locks input on a compression it cannot see:
+      // no waiting window, no "could not confirm" state.
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(find.textContaining('No se pudo confirmar'), findsNothing);
       expect(
         find.byKey(const ValueKey('desktop-session-compression-progress')),
         findsNothing,
       );
-      expect(find.text('Optimizando la conversación…'), findsNothing);
       expect(find.textContaining('Historial intacto'), findsOneWidget);
       expect(
         tester.widget<TextField>(find.byType(TextField)).readOnly,
         isFalse,
       );
-      await tester.tap(
-        find.byKey(const ValueKey('compression-unconfirmed-dismiss')),
-      );
-      await tester.pump();
-      expect(
-        find.text('No se pudo confirmar la compresión'),
-        findsNothing,
-      );
-      expect(chat.desktopCompressionNeedsConfirmation, isFalse);
       expect(gateway.nativeCompressionCalls, 1);
       expect(gateway.slashCalls, isEmpty);
       expect(gateway.dispatchCalls, isEmpty);
@@ -12168,10 +12298,12 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       '',
     );
-    expect(chat.desktopCompressionInFlight, isTrue);
+    // Fail-open: a stale, unanswered attempt holds no lock.
+    expect(chat.desktopCompressionInFlight, isFalse);
     expect(gateway.nativeCompressionCalls, 1);
     expect(gateway.slashCalls, isEmpty);
     expect(gateway.dispatchCalls, isEmpty);
+    await tester.pump(const Duration(seconds: 4));
     expect(tester.takeException(), isNull);
   });
 
@@ -12224,10 +12356,12 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       '',
     );
-    expect(chat.desktopCompressionInFlight, isTrue);
+    // Fail-open: a stale, unanswered attempt holds no lock.
+    expect(chat.desktopCompressionInFlight, isFalse);
     expect(gateway.slashCalls, hasLength(1));
     expect(gateway.dispatchCalls, isEmpty);
     expect(gateway.submissions, isEmpty);
+    await tester.pump(const Duration(seconds: 4));
     expect(tester.takeException(), isNull);
   });
 
@@ -12290,12 +12424,14 @@ void main() {
       );
       expect(chat.desktopCompressionInFlight, isFalse);
       expect(gateway.nativeCompressionCalls, 1);
+      await tester.pump(const Duration(seconds: 4));
       expect(tester.takeException(), isNull);
     });
   }
 
   for (final variant in <(DesktopCompressionStatus, String)>[
-    (DesktopCompressionStatus.compressed, 'La compresión de contexto terminó.'),
+    // A finished compression reports in the pill itself (single surface).
+    (DesktopCompressionStatus.compressed, 'Compactado'),
     (DesktopCompressionStatus.aborted, 'La compresión se canceló.'),
     (DesktopCompressionStatus.lockHeld, 'Ya hay otra compresión en curso'),
   ]) {
@@ -12343,12 +12479,13 @@ void main() {
       const TuiGatewayRpcError('session.compress', 'neutral', code: 5555),
     );
     final errorNotice = find.text(
-      'Se está reconciliando el estado de la compresión. No la reintentes todavía.',
+      'No se pudo completar la compresión. Inténtalo de nuevo en un momento.',
     );
     await pumpUntilVisible(tester, errorNotice);
 
     expect(errorNotice, findsWidgets);
-    expect(chat.desktopCompressionInFlight, isTrue);
+    // Fail-open: an unanswered /compress never keeps the composer locked.
+    expect(chat.desktopCompressionInFlight, isFalse);
     expect(gateway.nativeCompressionCalls, 1);
     expect(tester.takeException(), isNull);
   });
@@ -12393,12 +12530,15 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
 
-      // La compactación en marcha la cuenta la pastilla de actividad.
-      expect(_dockText('Compactando'), findsOneWidget);
-      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+      // Fail-open: an uncorrelated legacy acceptance holds no lock (Hermes
+      // Desktop never blocks input on compression).
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).enabled,
+        isNot(false),
+      );
+      await tester.pump(const Duration(seconds: 4));
       expect(chat.storedSessionId, 'sess-test');
       expect(find.textContaining('Contexto listo'), findsNothing);
-      expect(find.textContaining('Hermes aceptó la compresión'), findsNothing);
       expect(gateway.submissions, isEmpty);
       expect(tester.takeException(), isNull);
     },
@@ -12429,7 +12569,9 @@ void main() {
     expect(gateway.nativeCompressionCalls, 1);
     expect(gateway.slashCalls, isEmpty);
     expect(gateway.dispatchCalls, isEmpty);
-    expect(find.text('La compresión de contexto terminó.'), findsOneWidget);
+    // The pill turns into the outcome; no duplicate top notice.
+    expect(find.byKey(const ValueKey('compaction-result')), findsOneWidget);
+    expect(find.text('La compresión de contexto terminó.'), findsNothing);
     expect(
       find.byKey(const ValueKey('desktop-session-compression-progress')),
       findsNothing,
@@ -12516,16 +12658,10 @@ void main() {
       await pumpUntilVisible(tester, find.textContaining('No hacía falta'));
 
       expect(find.textContaining('No hacía falta'), findsOneWidget);
-      // Hermes Desktop also shows every outcome in a transient top notice,
+      // The pill itself reports the no-op (one feedback surface),
       // independent of the timeline row (which a concurrent refresh can drop).
-      await pumpUntilVisible(
-        tester,
-        find.text('Nada que compactar · 6 mensajes · ~16.6k tokens'),
-      );
-      expect(
-        find.text('Nada que compactar · 6 mensajes · ~16.6k tokens'),
-        findsOneWidget,
-      );
+      await pumpUntilVisible(tester, _dockText('Nada que compactar · 6 mensajes'));
+      expect(_dockText('Nada que compactar · 6 mensajes'), findsOneWidget);
       expect(find.textContaining('La compresión se canceló.'), findsNothing);
       expect(find.text('La compresión de contexto terminó.'), findsNothing);
       expect(
@@ -12540,7 +12676,6 @@ void main() {
       );
       expect(find.text('transcript anterior'), findsOneWidget);
       expect(chat.desktopCompressionInFlight, isFalse);
-      expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
       expect(gateway.nativeCompressionCalls, 1);
       expect(gateway.slashCalls, isEmpty);
       expect(gateway.dispatchCalls, isEmpty);
@@ -12690,7 +12825,7 @@ void main() {
       await tester.enterText(find.byType(TextField), '/compress real backend');
       await submitComposerFromKeyboard(tester);
       await tester.pump(const Duration(milliseconds: 350));
-      expect(chat.desktopCompressionAwaitingReconciliation, isTrue);
+      expect(chat.desktopManualCompressionInFlight, isTrue);
 
       gateway.emit('status.update', const {
         'kind': 'compressing',
@@ -12772,13 +12907,13 @@ void main() {
       expect(_dockText('Compactando'), findsOneWidget);
       expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
       expect(find.byKey(const ValueKey('compaction-elapsed')), findsOneWidget);
-      // Sin spinner en ningún sitio: ni en la barra ni en el botón de envío.
+      // The pill carries its own small ring; the send button never spins.
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('compaction-dock')),
-          matching: find.byType(CircularProgressIndicator),
+          matching: find.byKey(const ValueKey('compaction-spinner')),
         ),
-        findsNothing,
+        findsOneWidget,
       );
       expect(
         find.descendant(
@@ -12823,6 +12958,8 @@ void main() {
         findsNothing,
       );
       await tester.pump(const Duration(seconds: 7));
+      await tester.pump(const Duration(milliseconds: 300));
+      // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(tester.takeException(), isNull);
@@ -12881,12 +13018,14 @@ void main() {
         findsNothing,
         reason: 'el dock flotante no pertenece a la superficie del composer',
       );
+      // The pill lives in the transcript's floating stack (which pads the
+      // message list by its measured height), never inside the composer.
       expect(
         find.ancestor(
           of: dock,
           matching: find.byKey(const ValueKey('chat-composer-host')),
         ),
-        findsOneWidget,
+        findsNothing,
       );
 
       void expectDockClearsComposer() {
@@ -12928,6 +13067,8 @@ void main() {
       expect(_dockText('Compactado · '), findsOneWidget);
       expect(_dockText('96k → 4.8k tokens'), findsOneWidget);
       await tester.pump(const Duration(seconds: 7));
+      await tester.pump(const Duration(milliseconds: 300));
+      // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(tester.takeException(), isNull);
@@ -13021,7 +13162,9 @@ void main() {
     expect(gateway.dispatchCalls.single.arg, 'prioridades');
     expect(gateway.submissions, isEmpty);
     expect(chat.storedSessionId, 'sess-test');
-    expect(chat.desktopCompressionInFlight, isTrue);
+    // Fail-open: an uncorrelated legacy acceptance holds no lock.
+    expect(chat.desktopCompressionInFlight, isFalse);
+    await tester.pump(const Duration(seconds: 4));
     expect(tester.takeException(), isNull);
   });
 
@@ -13055,10 +13198,13 @@ void main() {
     expect(gateway.slashCalls, hasLength(1));
     expect(gateway.dispatchCalls, hasLength(1));
     expect(gateway.submissions, isEmpty);
+    // The safe, localized diagnosis of the backend failure (no reconciling
+    // state any more: nothing waits on a fence).
     expect(
-      find.textContaining('Se está reconciliando el estado de la compresión'),
+      find.textContaining('Hermes no pudo generar el resumen'),
       findsWidgets,
     );
+    await tester.pump(const Duration(seconds: 4));
     expect(tester.takeException(), isNull);
   });
 
@@ -17103,11 +17249,7 @@ void main() {
       // mueve, sin spinner y sin número inventado.
       expect(_dockText('Compactando'), findsOneWidget);
       expect(find.byKey(const ValueKey('compaction-elapsed')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('compaction-line-moving')),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('compaction-line-fill')), findsNothing);
+      expect(find.byKey(const ValueKey('compaction-spinner')), findsOneWidget);
       expect(find.textContaining('≈', findRichText: true), findsNothing);
       // Con la barra en marcha ni la pastilla ni el botón de envío llevan
       // spinner: no hay turno vivo, así que no hay pastilla.
@@ -17132,6 +17274,8 @@ void main() {
       expect(find.textContaining('tokens', findRichText: true), findsNothing);
       // Unos segundos después se retira sola: nunca queda colgada.
       await tester.pump(const Duration(seconds: 7));
+      await tester.pump(const Duration(milliseconds: 300));
+      // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(tester.takeException(), isNull);
@@ -17167,6 +17311,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
 
       gateway.emit('status.update', const {
@@ -17194,6 +17340,8 @@ void main() {
       expect(chat.isStreaming, isTrue);
       await tester.pump(const Duration(seconds: 7));
       await tester.pump(const Duration(milliseconds: 300));
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
 
@@ -17216,6 +17364,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       // La app llega (o se reconecta) con una compactación ya en marcha: no
       // hay estado local que la delate, solo el latido periódico de Hermes.
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       gateway.emit('status.update', const {
         'kind': 'compacting',
@@ -17234,6 +17384,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(seconds: 4));
       expect(chat.desktopAutoCompacting, isFalse);
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(
         find.textContaining('Compactado', findRichText: true),
@@ -17266,6 +17418,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(seconds: 4));
       expect(chat.desktopAutoCompacting, isFalse);
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
 
       // 2) Sin ninguna señal más, la regla de caducidad (3 min sin latido) la
@@ -17282,6 +17436,8 @@ void main() {
       await tester.pump(const Duration(minutes: 2));
       await tester.pump(const Duration(seconds: 4));
       expect(chat.desktopAutoCompacting, isFalse);
+      // Let the pill's fade-out finish.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(
         find.textContaining('Compactado', findRichText: true),
@@ -17320,6 +17476,8 @@ void main() {
       await tester.pump();
       expect(_dockText('Compactado · '), findsOneWidget);
       await tester.pump(const Duration(seconds: 7));
+      await tester.pump(const Duration(milliseconds: 300));
+      // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
     },

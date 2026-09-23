@@ -8,7 +8,7 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-import 'support/in_memory_compression_fence_storage.dart';
+import 'support/in_memory_compression_restore_storage.dart';
 
 class _RosterGateway
     implements HermesDesktopGateway, HermesDesktopSessionActivityGateway {
@@ -86,7 +86,7 @@ class _RosterGateway
 }
 
 ActiveChat _chat(_RosterGateway gateway) => ActiveChat(
-  compressionFenceStore: testCompressionFenceStore(),
+  compressionRestoreStore: testCompressionRestoreStore(),
   connection: SavedConnection(
     id: 'conn-stop',
     label: 'Stop',
