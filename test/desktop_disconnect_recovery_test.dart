@@ -6709,9 +6709,16 @@ void main() {
   test('Stop publica un tombstone durable anclado', () async {
     final recorded = <CancelledTurnTombstone>[];
     final gateway = _LifecycleRecoverableGateway();
+    // The fake gateway never streams a terminal after `session.interrupt`,
+    // so Stop finalizes when its settle window (min(recovery attempt
+    // timeout, 2 s)) runs out. With the default 15 s attempt timeout that
+    // window was exactly 2 s — the same as `_waitUntil`'s deadline — and the
+    // tombstone landed at ~2.02 s: a coin flip. Bound the window like the
+    // sibling Stop tests so the wait has real slack.
     final chat = _recoverableChat(
       'persist-cancel',
       gateway,
+      desktopRecoveryAttemptTimeout: const Duration(milliseconds: 200),
       onCancelledTurn: (tombstone) async => recorded.add(tombstone),
     );
     addTearDown(chat.dispose);

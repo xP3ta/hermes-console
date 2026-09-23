@@ -891,7 +891,13 @@ void main() {
           dashboardUrl: 'http://127.0.0.1:${server.port}',
         ),
         dashboard: _TicketDashboardClient(),
-        heartbeatInterval: const Duration(milliseconds: 20),
+        // The test drives exactly one heartbeat with `debugHeartbeatTick` on
+        // the fake clock. A 20 ms REAL periodic timer also fired whenever
+        // connect + resume took longer than 20 ms of wall time, sending extra
+        // pings (pingCalls == 2): it failed when run alone and passed in
+        // warmed-up full-suite runs. Keep the real timer out of the window;
+        // the watchdog deadline stays on the fake clock.
+        heartbeatInterval: const Duration(hours: 1),
         heartbeatDeadline: const Duration(milliseconds: 200),
         fanoutInactivityDeadline: const Duration(milliseconds: 20),
         now: () => now,
