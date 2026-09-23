@@ -1,13 +1,15 @@
 # Hermes Console 1.2.12 — notas de publicación
 
-Build candidata: `1.2.12+9200` (2026-09-22). La validación física final en Pixel 9 Pro queda
-pendiente del propietario antes de cualquier publicación; nada se sube sin su visto bueno.
-Pruebas hechas: suite completa (111/111, dos pasadas), `flutter analyze` limpio, gitleaks y grep
-manual de rutas/IPs/tokens sobre todo el diff limpios, emulador Android 35 y Pixel 9 Pro
-conectados a la instancia real de Hermes (con el plugin de enrutado Laya activo), incluidos
-cortes de red reales por `adb`. Esta build añade sobre la `+9010`: el rediseño de la píldora de
-actividad/panel/compactación/editor inline, y las correcciones de una auditoría de seguridad y
-una revisión de código independientes (ver más abajo).
+Build de publicación: `1.2.12+9320` (2026-09-23), probada físicamente en Pixel 9 Pro contra la
+instancia real de Hermes (build de QA `+9310`, mismo código salvo cabecera del bloque del asistente,
+dos tests deterministas, documentación y SBOM). Pruebas hechas: suite completa
+(6393 pasan, 0 fallos, dos pasadas), `flutter analyze` limpio, gitleaks y grep manual de
+rutas/IPs/tokens sobre todo el diff limpios, emulador Android 35 y Pixel 9 Pro conectados a la
+instancia real de Hermes (con el plugin de enrutado Laya activo), incluidos cortes de red reales
+por `adb` y cierres forzados de la app a mitad de `/compress`. Esta build añade sobre la `+9010`:
+el rediseño de la píldora de actividad/panel/compactación/editor inline, las correcciones de una
+auditoría de seguridad y una revisión de código independientes, y el rediseño de la compactación
+«abierta por defecto» descrito más abajo.
 
 ## Lo más importante frente a 1.2.11
 
@@ -29,10 +31,15 @@ una revisión de código independientes (ver más abajo).
 - **Aprobaciones y preguntas del agente (#42), voz desde la segunda grabación (#39) y borrador
   (#37, con pruebas de regresión).**
 - **Una burbuja por turno,** con la cabecera del avatar sin aro de carga y en el color de acento,
-  y un desplegable «Completado ⌄» debajo del nombre; **una sola píldora de actividad** que se
+  y una línea atenuada debajo del nombre redactada como Desktop («Pensó durante 40s» en vivo,
+  «Pensó un momento», «Pensó» al reabrir); **una sola píldora de actividad** que se
   expande en el sitio a un panel compacto con scroll (tareas con check animado, ahora, hecho con
   duraciones, segundo plano/subagentes/bucles); **compactación real** (manual y automática) con
-  barra indeterminada y hechos reales del backend, nunca un porcentaje inventado; **editar en la
+  una píldora flotante con anillo, hechos reales del backend y cronómetro real, que al terminar
+  pasa a «Compactado · 38 → 34 mensajes» o «Nada que compactar», nunca un porcentaje inventado;
+  si se cierra la app a mitad de compactación no se bloquea nada: al reabrir se muestra la píldora
+  solo si el servidor sigue comprimiendo y luego un único resultado; **el estado de cada chat en
+  las listas** con su propio color (verde trabajando, ámbar necesita atención, rojo fallo); **editar en la
   propia burbuja**, sin ventana modal, con más espacio para escribir; **aviso de Stop discreto**
   que se desvanece solo; **archivos con visor propio** (imagen, vídeo, PDF, texto, audio);
   **trabajo en segundo plano visible** en el chat, Inicio y la lista, incluido Stop de
@@ -66,7 +73,18 @@ servidor) y desde Inicio; editar en la burbuja y cola con «forzar»; cabecera y
 (TXT, PDF, imagen, audio); tareas del agente y su panel; aprobaciones (`clarify`); compactación
 manual y automática; voz con dos grabaciones seguidas contra un STT del servidor.
 
+## Validado en el Pixel 9 Pro (2026-09-23, build de QA `+9310`)
+
+`/compress` en vivo (píldora con hechos y cronómetro reales, composer bloqueado solo durante la
+compactación, «Compactado · N s» al terminar); `/compress` sin cambios («Nada que compactar · N
+mensajes» al instante); cierre forzado de la app a mitad de compactación y reapertura, con un chat
+creado en la misma sesión y con uno ya guardado (píldora con el tiempo real sin bloquear el
+composer, un único «Compactado» al terminar, sin avisos falsos); menú de comandos que ya no queda
+sobre el drawer; Stop desde el chat y desde la fila de la lista (el servidor confirma la
+interrupción); edición en la propia burbuja (una sola burbuja, una sola fila en el servidor);
+colores de estado en la lista.
+
 ## Pendiente
 
-Prueba física final del propietario en el Pixel 9 Pro con la build `+9200` antes de publicar;
-modo voz/Realtime queda fuera de alcance de esta versión (auditoría aparte).
+Modo voz/Realtime queda fuera de alcance de esta versión (auditoría aparte). La cabecera
+«Pensó…» y los colores en tema claro se validaron con tests, no a ojo en el Pixel.

@@ -3,7 +3,7 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## 1.2.12 (9200) — 2026-09-22
+## 1.2.12 (9320) — 2026-09-23
 
 Reliability and long-session release. Hermes kept working when Console was
 closed, stopped or lost its connection; what failed was what Console showed
@@ -56,8 +56,11 @@ Hermes backend.
   animated checks (a finished task keeps its check on screen for a moment
   instead of vanishing instantly), the current step, a "Done" list with
   durations, and background work, subagents and loops each keeping their own
-  controls. The bubble itself keeps only a muted "Completado ⌄" / "Razonó
-  durante Ns ⌄" line under the assistant name, expandable to the same detail;
+  controls. The bubble itself keeps only a muted line under the assistant
+  name, worded and timed like Hermes Desktop's "Thought for 40s" / "Thought
+  briefly" / "Thought" ("Pensó durante 40s" / "Pensó un momento" / "Pensó" in
+  Spanish; the measured time while you watch it live, no time once reopened),
+  expandable to the same detail;
   internal bridge-only steps (tool routing plumbing) are never shown, and a
   reply that only reasoned or only ran bridge steps no longer leaves an empty
   second bubble.
@@ -69,17 +72,33 @@ Hermes backend.
   the text becomes an editable field in place, no modal sheet — and the field
   now opens with room for several lines from the start instead of a single
   cramped line.
-- Compacting a conversation, automatic or manual, shows a floating card above
-  the composer (never embedded inside it, never overlapping it or the turn's
-  own activity pill): an indeterminate moving line with the real facts the
-  backend reports (message/token counts, elapsed time) and the real result
-  once it finishes — never an invented percentage, since the backend does not
-  report compaction progress. The composer never shows a spinner while this
-  runs, and clears its leftover "/compress" text as soon as the result settles
-  — including the honest cases where it never gets confirmed (a lost reply, or
-  a compute-host compaction that stays unconfirmed past its own reconciliation
-  window): the card then says so with a plain warning instead of either
-  hanging on "Compactando" forever or silently going quiet.
+- Compacting a conversation, automatic or manual, shows one small floating
+  pill above the composer (never overlapping the composer, the turn's own
+  activity pill or the last message): a ring, "Compactando", the real facts the
+  backend reports (message/token counts) and a real timer — never an invented
+  percentage, since the backend does not report compaction progress. When it
+  finishes the same pill turns into "Compactado · 38 → 34 mensajes" (or
+  "Nada que compactar · N mensajes" when the server had nothing to do) and
+  fades. Like Hermes Desktop it is driven by the server's own events while the
+  app is alive, and the composer is locked only during that live compaction.
+- If the app is closed or loses its connection while Hermes is compacting,
+  Console never guesses and never locks you out: when you reopen the chat it
+  reads what the gateway recorded while you were away and shows the pill again
+  (with the real elapsed time) only if the server is still compressing, then a
+  single "Compactado" result; if it cannot tell, it shows nothing and leaves the
+  composer free. Sending while the server is compacting keeps your text and
+  says Hermes is busy.
+- A conversation whose session no longer exists on the server opens as a
+  fresh chat with a small notice instead of a red error card, and a compacted
+  transcript shows the server's own display text instead of the internal
+  "prior context" marker. An edit whose target was compressed away is no longer
+  retried pointlessly. The slash-command palette closes when the drawer opens or
+  the composer loses focus instead of floating over the drawer.
+- In the conversation lists (Conversaciones and Inicio) the status line under
+  a chat's title now has its own colour and weight instead of the title's:
+  green for "working / using tools", a calm secondary tone for compacting,
+  amber when it needs you, red for a failure and muted when idle — all meeting
+  WCAG AA contrast on every theme.
 - Stop's confirmation is a small, discreet single line above the composer that
   clears itself a few seconds after a clean stop and disappears the moment a
   new turn starts; it only stays on screen while something still needs your
