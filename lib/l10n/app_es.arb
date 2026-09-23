@@ -7138,5 +7138,6 @@
   "liveCompactionTokensApprox": "~{tokens} tokens",
   "@liveCompactionTokensApprox": {"placeholders": {"tokens": {}}},
   "chaCompressionUnconfirmedTitle": "No se pudo confirmar la compresión",
-  "chaCompressionUnconfirmedBody": "Hermes no respondió antes de que la app se cerrara o perdiera la conexión. Puedes seguir escribiendo; recarga para ver el estado real de la conversación."
+  "chaCompressionUnconfirmedBody": "Hermes no respondió antes de que la app se cerrara o perdiera la conexión. Puedes seguir escribiendo; recarga para ver el estado real de la conversación.",
+  "chaSessionGone": "Esta conversación ya no existe en Hermes."
 }

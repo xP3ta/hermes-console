@@ -5546,10 +5546,27 @@ void main() {
   testWidgets(
     '404 de sesion persistida muestra error estable y permite reintentar',
     (tester) async {
+      // The session row still exists: a messages 404 is not proof of
+      // deletion, so the stable error with retry stays.
       final chat = await pumpChat(
         tester,
         desktopGateway: _UiRewindGateway(),
         connection: _remoteConn('conn-cold-load-404'),
+        api: ApiClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          apiKey: 'k',
+          httpClient: MockClient((request) async {
+            if (request.url.path == '/api/sessions/sess-test') {
+              return http.Response(
+                jsonEncode({
+                  'session': {'id': 'sess-test', 'message_count': 1},
+                }),
+                200,
+              );
+            }
+            return http.Response('not found', 404);
+          }),
+        ),
         session: Session(
           id: 'sess-test',
           title: 'Conversación persistida',
@@ -5572,6 +5589,63 @@ void main() {
       expect(chat.messagesLoaded, isFalse);
       expect(find.text('No se pudieron cargar los mensajes'), findsWidgets);
       expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'REGRESSION_GONE_SESSION a session deleted on the server opens as a fresh '
+    'chat instead of a red load error',
+    (tester) async {
+      // Real case: a chat deleted elsewhere was still reachable (notification
+      // / stale row); both its transcript and its row 404. Hermes Desktop
+      // drops a verifiably gone id to a fresh draft instead of an error.
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-gone-session'),
+        session: Session(
+          id: 'sess-gone',
+          title: 'Conversación borrada',
+          model: 'hermes-agent',
+          source: 'desktop',
+          messageCount: 4,
+          isActive: false,
+          preview: '',
+          startedAt: 0,
+        ),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-gone',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+        storedMessageLoader: (_, _) async =>
+            throw StateError('HTTP 404 not found'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+      expect(find.text('↺ reintentar'), findsNothing);
+      expect(
+        find.text('Esta conversación ya no existe en Hermes.'),
+        findsOneWidget,
+      );
+      expect(chat.messagesLoaded, isTrue);
+      expect(chat.storedSessionKnownMissing, isTrue);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
+
+      // Writing there starts a new session; it never resumes the dead id.
+      await tester.enterText(find.byType(TextField), 'Empiezo de nuevo');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.createCalls, 1);
+      expect(gateway.resumeExistingCalls, 0);
+      expect(gateway.submissions.single, contains('Empiezo de nuevo'));
+      gateway.emit('message.complete', {'text': 'hecho'});
+      await tester.pump(const Duration(milliseconds: 1200));
       expect(tester.takeException(), isNull);
     },
   );

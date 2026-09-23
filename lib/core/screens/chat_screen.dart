@@ -6198,6 +6198,25 @@ class _ChatScreenState extends State<ChatScreen>
             widget.session.source == 'mobile' &&
             widget.session.messageCount == 0 &&
             _messages.isEmpty;
+        // Hermes Desktop drops a verifiably gone id (its transcript AND its
+        // row 404) to a fresh draft instead of an error; a 404 on the
+        // transcript alone keeps the stable error with retry.
+        final storedSessionGone =
+            !isUnpersistedMobileChat &&
+            _messages.isEmpty &&
+            await _storedSessionIsGone();
+        if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
+          return false;
+        }
+        if (storedSessionGone) {
+          _chat.markStoredSessionGone();
+          setState(() => _error = null);
+          HermesNotice.of(context).showSnackBar(
+            SnackBar(content: Text(Strings.of(context).chaSessionGone)),
+            kind: HermesNoticeKind.warning,
+          );
+          return false;
+        }
         if (isUnpersistedMobileChat) {
           // Un chat recién creado solo existe en el móvil hasta el primer
           // envío. Que el servidor aún no tenga transcript es el estado
@@ -6230,6 +6249,18 @@ class _ChatScreenState extends State<ChatScreen>
         _messageRefreshInFlight = null;
         if (!_disposed && mounted) setState(() {});
       }
+    }
+  }
+
+  /// The session's own row answers 404 too: deleted (here or on another
+  /// surface), not a transient transcript read failure.
+  Future<bool> _storedSessionIsGone() async {
+    try {
+      await _chat.loadPersistedSessionSnapshot();
+      return false;
+    } catch (error) {
+      final text = error.toString();
+      return text.contains('404') || text.toLowerCase().contains('not found');
     }
   }
 

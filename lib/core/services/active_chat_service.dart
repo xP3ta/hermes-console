@@ -6936,6 +6936,18 @@ class ActiveChat {
     _markTranscriptComplete(visibleCount: 0);
   }
 
+  /// The pinned stored session was verifiably deleted (its row and its
+  /// transcript both 404). Like Hermes Desktop's gone-session fallback, the
+  /// chat becomes a fresh draft: the next submit creates a new session
+  /// instead of resuming a dead id.
+  void markStoredSessionGone() {
+    if (_desktopRuntimeSessionId != null || _messages.isNotEmpty) return;
+    _desktopStoredSessionId = null;
+    _desktopStoredSessionKnownMissing = true;
+    messagesLoaded = true;
+    _markTranscriptComplete(visibleCount: 0);
+  }
+
   @visibleForTesting
   bool get storedSessionKnownMissing => _desktopStoredSessionKnownMissing;
 
