@@ -780,6 +780,102 @@ void main() {
     },
   );
 
+  group('DesktopCompressionReplayVerdict (session.events.since ring)', () {
+    Map<String, dynamic> ring(
+      List<Map<String, dynamic>> events, {
+      int? latest,
+      bool truncated = false,
+    }) => {
+      'events': events,
+      'latest_seq': latest ?? events.length,
+      'truncated': truncated,
+      'count': events.length,
+      'epoch': 'epoch-a',
+    };
+    Map<String, dynamic> status(String kind, [String? text]) => {
+      'type': 'status.update',
+      'session_id': 'runtime-a',
+      'payload': {'kind': kind, 'text': ?text},
+    };
+    // tui_gateway/methods_session.py _compress_live: "compressing" is pinned
+    // before the work and `_status_update(sid, "ready")` always runs in the
+    // finally, which server.py:790 emits as {kind: status, text: ready}.
+    final compressing = status('compressing', '⠋ compressing 35 messages');
+    final ready = status('status', 'ready');
+
+    test('compressing followed by ready means it is no longer running', () {
+      expect(
+        DesktopCompressionReplayVerdict.evaluate(ring([compressing, ready])),
+        DesktopCompressionReplayVerdict.finished,
+      );
+      expect(
+        DesktopCompressionReplayVerdict.evaluate(
+          ring([compressing, status('compacted', 'done')]),
+        ),
+        DesktopCompressionReplayVerdict.finished,
+      );
+    });
+
+    test('a pinned compressing with no terminal is still running', () {
+      expect(
+        DesktopCompressionReplayVerdict.evaluate(
+          ring([compressing, ready, compressing]),
+        ),
+        DesktopCompressionReplayVerdict.running,
+      );
+    });
+
+    test('a complete ring without any compressing marker is idle', () {
+      expect(
+        DesktopCompressionReplayVerdict.evaluate(
+          ring([
+            {'type': 'message.complete', 'session_id': 'runtime-a'},
+          ]),
+        ),
+        DesktopCompressionReplayVerdict.finished,
+      );
+    });
+
+    test('unknown sid, truncation or malformed payloads prove nothing', () {
+      for (final payload in <Map<String, dynamic>>[
+        ring(const [], latest: 0),
+        ring([ready], truncated: true),
+        {'events': 'nope', 'latest_seq': 2, 'truncated': false},
+        {'events': <Object>[], 'truncated': false},
+      ]) {
+        expect(
+          DesktopCompressionReplayVerdict.evaluate(payload),
+          DesktopCompressionReplayVerdict.unknown,
+          reason: '$payload',
+        );
+      }
+    });
+  });
+
+  test('runtime at start round-trips as optional metadata', () async {
+    final storage = _MemoryFenceStorage();
+    final scope = DesktopCompressionFenceScope(
+      connectionId: 'connection-a',
+      profile: 'default',
+      logicalSessionId: 'root-a',
+    );
+    await DesktopCompressionFenceStore(
+      storage: storage,
+      attemptId: () => 'attempt-a',
+    ).arm(
+      scope,
+      tipAtStart: 'root-a',
+      compressionsAtStart: null,
+      runtimeAtStart: 'runtime-a',
+      createdAtMs: 100,
+      reconcileUntilMs: 200,
+    );
+    final lookup = await DesktopCompressionFenceStore(
+      storage: storage,
+    ).lookup(scope);
+    expect(lookup.record?.runtimeAtStart, 'runtime-a');
+  });
+
   test('read write phase and delete failures all fail closed', () async {
     final readFailure = _MemoryFenceStorage()..readError = StateError('read');
     final scope = DesktopCompressionFenceScope(

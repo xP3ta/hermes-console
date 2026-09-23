@@ -719,6 +719,13 @@ abstract class HermesDesktopCommandGateway {
   });
 }
 
+/// Read-only replay ring of one runtime (`session.events.since`,
+/// `last_seen: 0`). Lets a relaunched client learn whether a compression that
+/// runtime ran is still pinned, without resuming or stealing it.
+abstract class HermesDesktopCompressionStatusGateway {
+  Future<Map<String, dynamic>> compressionEventReplay(String runtimeSessionId);
+}
+
 /// Compresión manual y explícita de una sesión inactiva.
 ///
 /// Es opcional para mantener compatibles servidores y dobles anteriores a 0.19.
@@ -1231,6 +1238,7 @@ final class _SessionRosterSocketLease {
 class TuiGatewayClient
     implements
         HermesDesktopGateway,
+        HermesDesktopCompressionStatusGateway,
         BotMentionRosterGateway,
         BotRoomLinkGateway,
         BotProfileGateway,
@@ -5743,6 +5751,16 @@ class TuiGatewayClient
         origin: CompressionFailureOrigin.malformed,
       );
     }
+  }
+
+  @override
+  Future<Map<String, dynamic>> compressionEventReplay(String runtimeSessionId) {
+    const method = 'session.events.since';
+    final runtime = _validatedRuntimeId(method, runtimeSessionId);
+    return _requestConnected(method, <String, dynamic>{
+      'session_id': runtime,
+      'last_seen': 0,
+    }, timeout: const Duration(seconds: 10));
   }
 
   String _validatedRuntimeId(String method, String runtimeSessionId) {

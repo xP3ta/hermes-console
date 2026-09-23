@@ -13538,38 +13538,66 @@ class ActiveChat {
     DesktopCompressionFenceRecord record,
   ) async {
     try {
-      final response = await _api
-          .apiGet(
-            ApiClient.profileEndpoint(
-              'api/sessions/${Uri.encodeComponent(record.scope.logicalSessionId)}',
-              profile: record.scope.profile,
-            ),
-          )
-          .timeout(_desktopCompressionReconcileRpcBudget);
+      Future<Map<String, dynamic>?> readRow(String id) async {
+        try {
+          return await _api
+              .apiGet(
+                ApiClient.profileEndpoint(
+                  'api/sessions/${Uri.encodeComponent(id)}',
+                  profile: record.scope.profile,
+                ),
+              )
+              .timeout(_desktopCompressionReconcileRpcBudget);
+        } catch (_) {
+          return null;
+        }
+      }
+
+      var evidence = const DesktopCompressionFenceEvidence.none();
+      int? messagesNow;
+      void observe(Map<String, dynamic>? response) {
+        if (response == null) return;
+        if (!evidence.provesSettlement) {
+          evidence = DesktopCompressionFenceEvidence.evaluate(record, response);
+        }
+        final wrapped = response['session'];
+        final row = wrapped is Map ? wrapped : response;
+        final count = row['message_count'];
+        if (row['id'] == record.tipAtStart && count is int && count >= 0) {
+          messagesNow = count;
+        }
+      }
+
+      observe(await readRow(record.scope.logicalSessionId));
       if (_disposed) return false;
-      var evidence = DesktopCompressionFenceEvidence.evaluate(record, response);
       if (!evidence.provesSettlement &&
           record.messagesAtStart != null &&
           record.tipAtStart != record.scope.logicalSessionId) {
         // In-place compaction shrinks the tip row, not the lineage root.
-        final tipResponse = await _api
-            .apiGet(
-              ApiClient.profileEndpoint(
-                'api/sessions/${Uri.encodeComponent(record.tipAtStart)}',
-                profile: record.scope.profile,
-              ),
-            )
-            .timeout(_desktopCompressionReconcileRpcBudget);
+        observe(await readRow(record.tipAtStart));
         if (_disposed) return false;
-        evidence = DesktopCompressionFenceEvidence.evaluate(
-          record,
-          tipResponse,
-        );
       }
-      if (!evidence.provesSettlement) return false;
+      var changed = evidence.provesSettlement;
+      if (!evidence.provesSettlement) {
+        // Nothing durable changed: the attempt may have been refused, found
+        // nothing to compress, or still be running. Ask the gateway whether
+        // the runtime that ran it is still pinned "compressing".
+        if (await _compressionReplayVerdict(record) !=
+            DesktopCompressionReplayVerdict.finished) {
+          return false;
+        }
+        if (_disposed) return false;
+        changed = false;
+      }
       final tip = evidence.authoritativeTip;
       final deleted = await _deleteDurableCompressionFence(record);
       if (!deleted || _disposed) return deleted;
+      _restoredCompressionOutcome = (
+        changed: changed,
+        messagesBefore: record.messagesAtStart,
+        messagesAfter: messagesNow,
+      );
+      _emit(ActiveChatEvent.sessionInfo);
       if (tip != null) _desktopStoredSessionId = tip;
       final hydrationStoredId = serverSessionId;
       final loadEpoch = ++_messageLoadEpoch;
@@ -13585,6 +13613,44 @@ class ActiveChat {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Read-only `session.events.since` probe of the runtime that ran the
+  /// attempt (never `session.resume`: it cannot steal another client's
+  /// transport). See [DesktopCompressionReplayVerdict].
+  Future<DesktopCompressionReplayVerdict> _compressionReplayVerdict(
+    DesktopCompressionFenceRecord record,
+  ) async {
+    final runtime = record.runtimeAtStart;
+    final gateway = _desktopGateway;
+    if (runtime == null ||
+        gateway == null ||
+        gateway is! HermesDesktopCompressionStatusGateway ||
+        record.scope.connectionId != connection.id) {
+      return DesktopCompressionReplayVerdict.unknown;
+    }
+    try {
+      await gateway.connect().timeout(_desktopCompressionReconcileRpcBudget);
+      final result = await (gateway as HermesDesktopCompressionStatusGateway)
+          .compressionEventReplay(runtime)
+          .timeout(_desktopCompressionReconcileRpcBudget);
+      return DesktopCompressionReplayVerdict.evaluate(result);
+    } catch (_) {
+      return DesktopCompressionReplayVerdict.unknown;
+    }
+  }
+
+  ({bool changed, int? messagesBefore, int? messagesAfter})?
+  _restoredCompressionOutcome;
+
+  /// Outcome of a compression this process only learned about after the
+  /// fact (fence restored after a kill, settled by the server's state). The
+  /// chat shows it once, like the RPC outcome notice.
+  ({bool changed, int? messagesBefore, int? messagesAfter})?
+  takeRestoredCompressionOutcome() {
+    final outcome = _restoredCompressionOutcome;
+    _restoredCompressionOutcome = null;
+    return outcome;
   }
 
   Future<bool> _deleteDurableCompressionFence(
@@ -13911,6 +13977,7 @@ class ActiveChat {
       tipAtStart: receipt.storedSessionId,
       compressionsAtStart: receipt.evidence.compressionsAtStart,
       messagesAtStart: messagesAtStart,
+      runtimeAtStart: runtimeId,
       createdAtMs: createdAtMs,
       reconcileUntilMs:
           createdAtMs + _desktopCompressionReconciliationWindow.inMilliseconds,

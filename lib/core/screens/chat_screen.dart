@@ -4539,6 +4539,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _syncCompaction() {
     if (!_chatBound) return;
+    _announceRestoredCompressionOutcome();
     final needsConfirmation = _chat.desktopCompressionNeedsConfirmation;
     final serviceActive =
         _chat.desktopCompressionInFlight || _compressionCommandInFlight;
@@ -4605,6 +4606,41 @@ class _ChatScreenState extends State<ChatScreen>
       settled = true;
     }
     if (settled) _consumeCompressionInvocation();
+  }
+
+  /// A compression this process only learned about after the fact (the app
+  /// was killed while it ran) gets the same discreet top notice as a live
+  /// RPC outcome. Refused, aborted and no-op attempts all leave the stored
+  /// transcript unchanged and read as "nothing to compact".
+  void _announceRestoredCompressionOutcome() {
+    if (_disposed || !mounted) return;
+    final outcome = _chat.takeRestoredCompressionOutcome();
+    if (outcome == null) return;
+    // _syncCompaction also runs while the screen binds (during build).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted) return;
+      _showRestoredCompressionOutcome(outcome);
+    });
+  }
+
+  void _showRestoredCompressionOutcome(
+    ({bool changed, int? messagesBefore, int? messagesAfter}) outcome,
+  ) {
+    _compaction.reset();
+    final strings = Strings.of(context);
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          compressionOutcomeText(
+            strings,
+            noop: !outcome.changed,
+            beforeMessages: outcome.messagesBefore,
+            afterMessages: outcome.messagesAfter,
+          ),
+        ),
+        duration: const Duration(seconds: 5),
+      ),
+    );
   }
 
   /// El resultado del RPC `session.compress` cierra la barra al instante: con

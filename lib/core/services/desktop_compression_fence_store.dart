@@ -66,6 +66,9 @@ final class DesktopCompressionFenceRecord {
   };
   // Optional: records armed before the in-place baseline existed omit it.
   static const _optionalMessagesKey = 'messages_at_start';
+  // Optional: the gateway runtime that ran the attempt, whose replay ring
+  // (`session.events.since`) tells a later process whether it still runs.
+  static const _optionalRuntimeKey = 'runtime_at_start';
   static final RegExp _opaqueId = RegExp(
     r'^[A-Za-z0-9][A-Za-z0-9._:@/+\-]{0,255}$',
   );
@@ -77,6 +80,7 @@ final class DesktopCompressionFenceRecord {
     required this.tipAtStart,
     required this.compressionsAtStart,
     this.messagesAtStart,
+    this.runtimeAtStart,
     required this.createdAtMs,
     required this.reconcileUntilMs,
   });
@@ -91,6 +95,7 @@ final class DesktopCompressionFenceRecord {
   /// in place (same id, no lineage change, no counter in REST), so a smaller
   /// count on the exact row is the only durable proof the attempt finished.
   final int? messagesAtStart;
+  final String? runtimeAtStart;
   final int createdAtMs;
   final int reconcileUntilMs;
 
@@ -103,6 +108,7 @@ final class DesktopCompressionFenceRecord {
     'tip_at_start': tipAtStart,
     'compressions_at_start': compressionsAtStart,
     if (messagesAtStart != null) _optionalMessagesKey: messagesAtStart,
+    if (runtimeAtStart != null) _optionalRuntimeKey: runtimeAtStart,
     'created_at_ms': createdAtMs,
     'reconcile_until_ms': reconcileUntilMs,
   };
@@ -117,18 +123,26 @@ final class DesktopCompressionFenceRecord {
     tipAtStart: tipAtStart,
     compressionsAtStart: compressionsAtStart,
     messagesAtStart: messagesAtStart,
+    runtimeAtStart: runtimeAtStart,
     createdAtMs: createdAtMs,
     reconcileUntilMs: reconcileUntilMs,
   );
 
   static DesktopCompressionFenceRecord fromJson(Map<String, Object?> json) {
-    final keys = json.keys.toSet()..remove(_optionalMessagesKey);
+    final keys = json.keys.toSet()
+      ..remove(_optionalMessagesKey)
+      ..remove(_optionalRuntimeKey);
     if (keys.length != _jsonKeys.length || !keys.containsAll(_jsonKeys)) {
       throw const FormatException('record shape');
     }
     final messagesAtStart = json[_optionalMessagesKey];
     if (messagesAtStart != null &&
         (messagesAtStart is! int || messagesAtStart < 0)) {
+      throw const FormatException('record value');
+    }
+    final runtimeAtStart = json[_optionalRuntimeKey];
+    if (runtimeAtStart != null &&
+        (runtimeAtStart is! String || !_opaqueId.hasMatch(runtimeAtStart))) {
       throw const FormatException('record value');
     }
     final connectionId = json['connection_id'];
@@ -172,6 +186,7 @@ final class DesktopCompressionFenceRecord {
       tipAtStart: tipAtStart,
       compressionsAtStart: compressionCount as int?,
       messagesAtStart: messagesAtStart as int?,
+      runtimeAtStart: runtimeAtStart as String?,
       createdAtMs: createdAtMs,
       reconcileUntilMs: reconcileUntilMs,
     );
@@ -305,6 +320,78 @@ final class DesktopCompressionFenceEvidence {
   }
 }
 
+/// What the gateway's per-runtime replay ring (`session.events.since` with
+/// `last_seen: 0`) says about a manual compression that runtime ran.
+///
+/// `tui_gateway/methods_session.py` `_compress_live` pins
+/// `status.update(kind: compressing)` before the work and ALWAYS emits
+/// `status.update(ready)` in its `finally` (success, no-op, refusal or
+/// error; server.py `_status_update` sends it as `{kind: status, text:
+/// ready}`); the compute-host path ends with `compacted`. Hermes Desktop
+/// clears its compacting flag on exactly those events
+/// (`gateway-event/status.ts`). Every frame is stamped into the ring even
+/// when the owning client is gone, so a relaunched Console can read it.
+enum DesktopCompressionReplayVerdict {
+  running,
+  finished,
+  unknown;
+
+  static bool _isTerminal(Map<dynamic, dynamic> event) {
+    final type = event['type'];
+    if (type == 'error') return true;
+    if (type != 'status.update') return false;
+    final payload = event['payload'];
+    if (payload is! Map) return false;
+    final kind = payload['kind'];
+    return kind == 'ready' ||
+        kind == 'compacted' ||
+        (kind == 'status' && payload['text'] == 'ready');
+  }
+
+  static bool _isCompressing(Map<dynamic, dynamic> event) {
+    if (event['type'] != 'status.update') return false;
+    final payload = event['payload'];
+    return payload is Map &&
+        (payload['kind'] == 'compressing' || payload['kind'] == 'compacting');
+  }
+
+  static DesktopCompressionReplayVerdict evaluate(Map<String, dynamic> result) {
+    final events = result['events'];
+    final latest = result['latest_seq'];
+    final truncated = result['truncated'];
+    // latest_seq 0: this server process never stamped the runtime (restart
+    // or ring eviction), which alone proves nothing.
+    if (events is! List ||
+        latest is! int ||
+        latest <= 0 ||
+        truncated is! bool) {
+      return DesktopCompressionReplayVerdict.unknown;
+    }
+    var sawCompressing = false;
+    var terminalAfter = false;
+    for (final raw in events) {
+      if (raw is! Map) return DesktopCompressionReplayVerdict.unknown;
+      if (_isCompressing(raw)) {
+        sawCompressing = true;
+        terminalAfter = false;
+      } else if (sawCompressing && _isTerminal(raw)) {
+        terminalAfter = true;
+      }
+    }
+    if (sawCompressing) {
+      return terminalAfter
+          ? DesktopCompressionReplayVerdict.finished
+          : DesktopCompressionReplayVerdict.running;
+    }
+    // A complete ring with no pin: the gateway pins before any real work, so
+    // nothing of this runtime is compressing (the attempt never arrived, or
+    // finished instantly on a tiny transcript).
+    return truncated
+        ? DesktopCompressionReplayVerdict.unknown
+        : DesktopCompressionReplayVerdict.finished;
+  }
+}
+
 enum DesktopCompressionFenceLookupStatus { absent, present, unavailable }
 
 final class DesktopCompressionFenceLookup {
@@ -372,6 +459,7 @@ final class DesktopCompressionFenceStore {
     required String tipAtStart,
     required int? compressionsAtStart,
     int? messagesAtStart,
+    String? runtimeAtStart,
     required int createdAtMs,
     required int reconcileUntilMs,
   }) => _serialized(() async {
@@ -398,6 +486,7 @@ final class DesktopCompressionFenceStore {
           tipAtStart: tipAtStart,
           compressionsAtStart: compressionsAtStart,
           messagesAtStart: messagesAtStart,
+          runtimeAtStart: runtimeAtStart,
           createdAtMs: createdAtMs,
           reconcileUntilMs: reconcileUntilMs,
         ).toJson(),

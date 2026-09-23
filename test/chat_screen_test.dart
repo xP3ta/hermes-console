@@ -1151,6 +1151,37 @@ DesktopCompressionResult _uiNativeCompressionResult(
   }),
 };
 
+class _ReplayProbeUiGateway extends _UiRewindGateway
+    implements HermesDesktopCompressionStatusGateway {
+  final replayRuntimeIds = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> compressionEventReplay(
+    String runtimeSessionId,
+  ) async {
+    replayRuntimeIds.add(runtimeSessionId);
+    return {
+      'events': [
+        {
+          'type': 'status.update',
+          'session_id': runtimeSessionId,
+          'seq': 1,
+          'payload': {'kind': 'compressing', 'text': 'compressing 35'},
+        },
+        {
+          'type': 'status.update',
+          'session_id': runtimeSessionId,
+          'seq': 2,
+          'payload': {'kind': 'status', 'text': 'ready'},
+        },
+      ],
+      'latest_seq': 2,
+      'truncated': false,
+      'epoch': 'epoch-a',
+    };
+  }
+}
+
 class _CompleteShortHistoryGateway extends _UiRewindGateway
     implements HermesDesktopSessionHistoryGateway {
   static const rows = <Map<String, Object>>[
@@ -5589,6 +5620,70 @@ void main() {
       expect(chat.messagesLoaded, isFalse);
       expect(find.text('No se pudieron cargar los mensajes'), findsWidgets);
       expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'REGRESSION_COMP_KILL_OUTCOME_NOTICE a compression settled after a kill '
+    'announces its outcome and unlocks the composer',
+    (tester) async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final fenceStore = DesktopCompressionFenceStore(
+        storage: FlutterSecureDesktopCompressionFenceStorage(
+          secureStorage: _MemoryDraftSecureStorage(<String, String>{}),
+        ),
+        attemptId: () => 'kill-outcome',
+        mutationNamespaceForTesting:
+            'chat-screen-kill-outcome-${++compressionFenceStoreNamespace}',
+      );
+      final connection = _remoteConn('conn-kill-outcome');
+      await fenceStore.arm(
+        DesktopCompressionFenceScope(
+          connectionId: connection.id,
+          profile: 'default',
+          logicalSessionId: 'sess-test',
+        ),
+        tipAtStart: 'sess-test',
+        compressionsAtStart: null,
+        messagesAtStart: 35,
+        runtimeAtStart: 'runtime-killed',
+        createdAtMs: now - 30000,
+        reconcileUntilMs: now + 600000,
+      );
+      final gateway = _ReplayProbeUiGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: connection,
+        compressionFenceStore: fenceStore,
+        messages: const [
+          {'role': 'assistant', 'content': 'Historial intacto'},
+        ],
+        api: ApiClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          apiKey: 'k',
+          httpClient: MockClient(
+            (_) async => http.Response(
+              jsonEncode({
+                'session': {'id': 'sess-test', 'message_count': 35},
+              }),
+              200,
+            ),
+          ),
+        ),
+      );
+      const notice = 'Nada que compactar · 35 mensajes';
+      for (var i = 0; i < 40 && find.text(notice).evaluate().isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.text(notice), findsOneWidget);
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).readOnly,
+        isFalse,
+      );
+      expect(gateway.replayRuntimeIds, contains('runtime-killed'));
       expect(tester.takeException(), isNull);
     },
   );

@@ -331,6 +331,22 @@ class _NativeCompressionGateway extends _SnapshotGateway
   }
 }
 
+class _ReplayProbeGateway extends _SnapshotGateway
+    implements HermesDesktopCompressionStatusGateway {
+  _ReplayProbeGateway(this.replay);
+
+  Map<String, dynamic> Function() replay;
+  final replayRuntimeIds = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> compressionEventReplay(
+    String runtimeSessionId,
+  ) async {
+    replayRuntimeIds.add(runtimeSessionId);
+    return replay();
+  }
+}
+
 SavedConnection _connection(String id) => SavedConnection(
   id: id,
   label: id,
@@ -5664,6 +5680,147 @@ void main() {
       expect(published, 1);
       expect(chat.messages, hasLength(2));
       expect(events, isNot(contains(ActiveChatEvent.messagesHydrated)));
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_KILL_ABORTED a restored fence settles from the gateway '
+    'replay ring when the compression ended without shrinking the transcript',
+    () async {
+      // Real case (Pixel, build 9270): app killed 4 s into /compress; the
+      // server refused the compaction ("compressed transcript would be
+      // larger"), message_count stayed 35, and the chat stayed locked for the
+      // whole window. The gateway's replay ring for the runtime that ran it
+      // holds "compressing" and the always-emitted "ready".
+      final storage = _MemoryCompressionFenceStorage();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'kill-aborted',
+        profile: 'default',
+        logicalSessionId: 'stored-chat',
+      );
+      await DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'kill-aborted-attempt',
+      ).arm(
+        scope,
+        tipAtStart: 'stored-chat',
+        compressionsAtStart: null,
+        messagesAtStart: 35,
+        runtimeAtStart: 'runtime-killed',
+        createdAtMs: now - 60000,
+        reconcileUntilMs: now + 600000,
+      );
+      var replayState = 'running';
+      final gateway = _ReplayProbeGateway(
+        () => {
+          'events': [
+            {
+              'type': 'status.update',
+              'session_id': 'runtime-killed',
+              'seq': 1,
+              'payload': {'kind': 'compressing', 'text': 'compressing 35'},
+            },
+            if (replayState == 'done')
+              {
+                'type': 'status.update',
+                'session_id': 'runtime-killed',
+                'seq': 2,
+                'payload': {'kind': 'status', 'text': 'ready'},
+              },
+          ],
+          'latest_seq': replayState == 'done' ? 2 : 1,
+          'truncated': false,
+          'epoch': 'epoch-a',
+        },
+      );
+      final chat = _chat(
+        'kill-aborted',
+        gateway,
+        logicalSessionId: 'stored-chat',
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        desktopCompressionReconciliationDelay: const Duration(milliseconds: 5),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'session': {'id': 'stored-chat', 'message_count': 35},
+            }),
+            200,
+          ),
+        ),
+        storedMessageLoader: (_, _) async => const [
+          {'id': 'row-1', 'role': 'user', 'content': 'Hola'},
+        ],
+      );
+      addTearDown(chat.dispose);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // Still pinned "compressing" on the server: stay fenced.
+      expect(chat.desktopCompressionInFlight, isTrue);
+      expect(gateway.replayRuntimeIds, contains('runtime-killed'));
+
+      replayState = 'done';
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.sessionActivity.compacting, isFalse);
+      expect(chat.desktopCompressionNeedsConfirmation, isFalse);
+      expect(
+        (await DesktopCompressionFenceStore(storage: storage).lookup(scope))
+            .status,
+        DesktopCompressionFenceLookupStatus.absent,
+      );
+      final outcome = chat.takeRestoredCompressionOutcome();
+      expect(outcome?.changed, isFalse);
+      expect(outcome?.messagesBefore, 35);
+      expect(chat.takeRestoredCompressionOutcome(), isNull);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_KILL_COMPACTED an in-place settle reports before -> after',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'kill-compacted',
+      ).arm(
+        DesktopCompressionFenceScope(
+          connectionId: 'kill-compacted',
+          profile: 'default',
+          logicalSessionId: 'stored-chat',
+        ),
+        tipAtStart: 'stored-chat',
+        compressionsAtStart: null,
+        messagesAtStart: 38,
+        createdAtMs: now - 60000,
+        reconcileUntilMs: now + 600000,
+      );
+      final chat = _chat(
+        'kill-compacted',
+        _SnapshotGateway(),
+        logicalSessionId: 'stored-chat',
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'session': {'id': 'stored-chat', 'message_count': 35},
+            }),
+            200,
+          ),
+        ),
+        storedMessageLoader: (_, _) async => const [
+          {'id': 'row-1', 'role': 'user', 'content': 'Hola'},
+        ],
+      );
+      addTearDown(chat.dispose);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      final outcome = chat.takeRestoredCompressionOutcome();
+      expect(outcome?.changed, isTrue);
+      expect(outcome?.messagesBefore, 38);
+      expect(outcome?.messagesAfter, 35);
     },
   );
 
