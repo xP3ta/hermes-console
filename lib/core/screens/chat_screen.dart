@@ -7489,10 +7489,16 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// La paleta de comandos slash está a la vista sobre el compositor.
+  ///
+  /// Como el menú de Hermes Desktop (se cierra al perder el foco), solo vive
+  /// mientras el composer tiene el foco, y nunca sobre el drawer abierto: el
+  /// overlay que la aloja pinta por encima del Scaffold entero.
   bool get _slashPaletteVisible =>
       !(_isRecording ||
           _transcribing ||
           _compressingSession ||
+          _navigationDrawerOpen ||
+          !_textFocusNode.hasFocus ||
           _slashSuggestions.isEmpty);
 
   void _consumeSlashInvocation(String invocation) {
@@ -12631,7 +12637,14 @@ class _ChatScreenState extends State<ChatScreen>
         !_compressingSession;
     final slashPalette = !_slashPaletteVisible
         ? null
-        : _SlashPalette(commands: _slashSuggestions, onPick: _pickSlash);
+        // Part of the composer's tap region: picking a command (even with a
+        // mouse) never blurs the field and hides the palette mid-tap.
+        : TextFieldTapRegion(
+            child: _SlashPalette(
+              commands: _slashSuggestions,
+              onPick: _pickSlash,
+            ),
+          );
     // Una compresión sin confirmar ya no bloquea nada (Hermes Desktop no
     // tiene valla): queda un aviso propio, legible y descartable. Va en el
     // hueco flotante de la paleta (un overlay anclado al composer) porque sus
@@ -12653,7 +12666,7 @@ class _ChatScreenState extends State<ChatScreen>
             ),
           )
         : null;
-    final mentionPalette = _isRecording || _transcribing
+    final mentionPalette = _isRecording || _transcribing || _navigationDrawerOpen
         ? null
         : ChatMentionPalette(
             controller: _textController,

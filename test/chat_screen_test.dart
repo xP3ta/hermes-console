@@ -2643,6 +2643,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'REGRESSION_SLASH_PALETTE_DRAWER the slash palette never floats over the '
+    'open navigation drawer',
+    (tester) async {
+      await pumpChat(tester);
+      await tester.enterText(find.byType(TextField), '/co');
+      await tester.pump(const Duration(milliseconds: 300));
+      final palette = find.byKey(const ValueKey('chat-slash-palette'));
+      expect(palette, findsOneWidget);
+
+      final scaffold = tester.state<ScaffoldState>(
+        find
+            .descendant(
+              of: find.byType(ChatScreen),
+              matching: find.byType(Scaffold),
+            )
+            .first,
+      );
+      scaffold.openDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(Drawer), findsOneWidget);
+      expect(palette, findsNothing);
+
+      scaffold.closeDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // Focusing the composer again brings the still-typed command back.
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(palette, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'REGRESSION_SLASH_PALETTE_FOCUS the slash palette hides when focus '
+    'leaves the composer',
+    (tester) async {
+      await pumpChat(tester);
+      await tester.enterText(find.byType(TextField), '/co');
+      await tester.pump(const Duration(milliseconds: 300));
+      final palette = find.byKey(const ValueKey('chat-slash-palette'));
+      expect(palette, findsOneWidget);
+
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(palette, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('mentions: slash directed prompt uses prepared handoff once', (
     tester,
   ) async {
