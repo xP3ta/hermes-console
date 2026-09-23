@@ -56,6 +56,36 @@ String compactionResultText(
     formatCompactionDuration(compaction.duration!, languageCode: languageCode),
 ].join(' · ');
 
+/// Resultado de un `/compress` como lo resume Hermes Desktop en su aviso
+/// («No changes from compression: 6 messages», «Compressed: 34 → 12
+/// messages» + «Approx request size: ~X → ~Y tokens»), localizado y con solo
+/// las cifras que el backend dio.
+String compressionOutcomeText(
+  Strings strings, {
+  required bool noop,
+  int? beforeMessages,
+  int? afterMessages,
+  int? beforeTokens,
+  int? afterTokens,
+}) => [
+  if (noop) ...[
+    strings.liveCompactionNothing,
+    if (beforeMessages != null)
+      strings.liveCompactionMessagesCount(beforeMessages),
+    if (beforeTokens != null)
+      strings.liveCompactionTokensApprox(formatCompactTokens(beforeTokens)),
+  ] else ...[
+    strings.liveCompactionDone,
+    if (beforeMessages != null && afterMessages != null)
+      strings.liveCompactionMessagesChange(beforeMessages, afterMessages),
+    if (beforeTokens != null && afterTokens != null)
+      strings.liveCompactionTokensChange(
+        formatCompactTokens(beforeTokens),
+        formatCompactTokens(afterTokens),
+      ),
+  ],
+].join(' · ');
+
 /// Aviso flotante cuando una compresión no se pudo confirmar (la app se
 /// cerró o perdió la conexión y el plazo de reconciliación venció sin
 /// prueba). Ya no bloquea nada: explica el estado y ofrece recargar o cerrar.

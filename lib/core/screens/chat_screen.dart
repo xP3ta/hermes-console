@@ -7702,23 +7702,18 @@ class _ChatScreenState extends State<ChatScreen>
       final result = presentation.command!;
       final strings = Strings.of(context);
       final message = _compressionResultMessage(strings, result);
-      final compression = result.compressionResult;
-      final hasDurableTimelineOutcome =
-          (result.compressionStatus == DesktopCompressionStatus.compressed ||
-              result.compressionStatus == DesktopCompressionStatus.noOp) &&
-          compression?.removed != null &&
-          compression?.beforeMessages != null &&
-          compression?.afterMessages != null &&
-          compression?.beforeTokens != null &&
-          compression?.afterTokens != null;
-      if (!hasDurableTimelineOutcome) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            duration: const Duration(seconds: 7),
-          ),
-        );
-      }
+      // Hermes Desktop shows every compression outcome as a transient top
+      // notice (5 s), besides the transcript line: the timeline row alone can
+      // be superseded by a concurrent refresh and then nothing is shown.
+      final outcomeFacts =
+          result.compressionStatus == DesktopCompressionStatus.compressed ||
+          result.compressionStatus == DesktopCompressionStatus.noOp;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: Duration(seconds: outcomeFacts ? 5 : 7),
+        ),
+      );
       final succeeded = _compressionSucceeded(result);
       _finishCompactionBar(result);
       if (!succeeded) {
@@ -7808,11 +7803,29 @@ class _ChatScreenState extends State<ChatScreen>
     Strings strings,
     DesktopCommandDispatch result,
   ) => switch (result.compressionStatus) {
-    DesktopCompressionStatus.compressed => strings.chaCompressionCompleted,
-    DesktopCompressionStatus.noOp => strings.chaCompressionNoop(
-      result.compressionResult?.beforeMessages ?? 0,
-      (result.compressionResult?.beforeTokens ?? 0).toString(),
-    ),
+    DesktopCompressionStatus.compressed =>
+      _compressionFactsKnown(result.compressionResult)
+          ? compressionOutcomeText(
+              strings,
+              noop: false,
+              beforeMessages: result.compressionResult?.beforeMessages,
+              afterMessages: result.compressionResult?.afterMessages,
+              beforeTokens: result.compressionResult?.beforeTokens,
+              afterTokens: result.compressionResult?.afterTokens,
+            )
+          : strings.chaCompressionCompleted,
+    DesktopCompressionStatus.noOp =>
+      _compressionFactsKnown(result.compressionResult)
+          ? compressionOutcomeText(
+              strings,
+              noop: true,
+              beforeMessages: result.compressionResult?.beforeMessages,
+              beforeTokens: result.compressionResult?.beforeTokens,
+            )
+          : strings.chaCompressionNoop(
+              result.compressionResult?.beforeMessages ?? 0,
+              (result.compressionResult?.beforeTokens ?? 0).toString(),
+            ),
     DesktopCompressionStatus.aborted => strings.chaCompressionAborted,
     DesktopCompressionStatus.pending => strings.chaCompressionPending,
     DesktopCompressionStatus.lockHeld => strings.chaCompressionLockHeld,
@@ -7825,6 +7838,9 @@ class _ChatScreenState extends State<ChatScreen>
                 : strings.chaCompressionAccepted)
           : _compressionFailureMessage(strings, result.failure?.code),
   };
+
+  bool _compressionFactsKnown(DesktopCompressionResult? compression) =>
+      compression?.beforeMessages != null || compression?.beforeTokens != null;
 
   bool _compressionSucceeded(DesktopCommandDispatch result) =>
       result.compressionStatus == DesktopCompressionStatus.compressed ||

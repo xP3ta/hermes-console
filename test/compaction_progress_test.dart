@@ -647,4 +647,51 @@ void main() {
       },
     );
   });
+
+  group('compressionOutcomeText', () {
+    testWidgets('no-op and success carry the before -> after facts', (
+      tester,
+    ) async {
+      late Strings strings;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('es'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: Builder(
+            builder: (context) {
+              strings = Strings.of(context);
+              return const SizedBox();
+            },
+          ),
+        ),
+      );
+      expect(
+        compressionOutcomeText(
+          strings,
+          noop: true,
+          beforeMessages: 6,
+          afterMessages: 6,
+          beforeTokens: 20379,
+          afterTokens: 20379,
+        ),
+        'Nada que compactar · 6 mensajes · ~20.4k tokens',
+      );
+      expect(
+        compressionOutcomeText(
+          strings,
+          noop: false,
+          beforeMessages: 34,
+          afterMessages: 12,
+          beforeTokens: 30275,
+          afterTokens: 25668,
+        ),
+        'Compactado · 34 → 12 mensajes · 30.3k → 25.7k tokens',
+      );
+      expect(
+        compressionOutcomeText(strings, noop: false),
+        'Compactado',
+      );
+    });
+  });
 }

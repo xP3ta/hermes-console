@@ -12276,6 +12276,16 @@ void main() {
       await pumpUntilVisible(tester, find.textContaining('No hacía falta'));
 
       expect(find.textContaining('No hacía falta'), findsOneWidget);
+      // Hermes Desktop also shows every outcome in a transient top notice,
+      // independent of the timeline row (which a concurrent refresh can drop).
+      await pumpUntilVisible(
+        tester,
+        find.text('Nada que compactar · 6 mensajes · ~16.6k tokens'),
+      );
+      expect(
+        find.text('Nada que compactar · 6 mensajes · ~16.6k tokens'),
+        findsOneWidget,
+      );
       expect(find.textContaining('La compresión se canceló.'), findsNothing);
       expect(find.text('La compresión de contexto terminó.'), findsNothing);
       expect(
@@ -12295,6 +12305,48 @@ void main() {
       expect(gateway.slashCalls, isEmpty);
       expect(gateway.dispatchCalls, isEmpty);
       expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'REGRESSION_COMP_RESULT_FACTS a finished /compress announces before -> '
+    'after messages and tokens like Hermes Desktop',
+    (tester) async {
+      final gateway =
+          _UiNativeCompressionGateway(
+              _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
+            )
+            ..compressionWireResult = {
+              'status': 'compressed',
+              'removed': 22,
+              'before_messages': 34,
+              'after_messages': 12,
+              'before_tokens': 30275,
+              'after_tokens': 25668,
+              'summary': {
+                'noop': false,
+                'aborted': false,
+                'headline': 'Compressed: 34 → 12 messages',
+                'token_line': 'Approx request size: ~30,275 → ~25,668 tokens',
+              },
+              'info': {'stored_session_id': 'sess-facts'},
+              'messages': <Object>[],
+            };
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-comp-result-facts'),
+        messagesLoaded: true,
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+
+      await tester.enterText(find.byType(TextField), '/compress');
+      await submitComposerFromKeyboard(tester);
+      await gateway.compressionEntered.future;
+      const facts = 'Compactado · 34 → 12 mensajes · 30.3k → 25.7k tokens';
+      await pumpUntilVisible(tester, find.text(facts));
+      expect(find.text(facts), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
