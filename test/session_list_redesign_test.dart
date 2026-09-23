@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/session_status_tone.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
@@ -647,6 +648,35 @@ void main() {
         findsOneWidget,
       );
       expect(find.text(strings.slActivityCompacting), findsOneWidget);
+      // The status line has its own semantic colour, smaller and lighter
+      // than the title (it used to be the same white as the title).
+      final colors = Theme.of(
+        tester.element(find.byType(SessionListScreen)),
+      ).hermes;
+      final status = tester.widget<Text>(
+        find.byKey(const ValueKey('session-running-compacting-1')),
+      );
+      final title = tester.widget<Text>(find.text('Sesión compactando'));
+      expect(
+        status.style!.color,
+        sessionStatusColor(colors, SessionStatusTone.compacting),
+      );
+      expect(status.style!.color, isNot(title.style!.color));
+      expect(status.style!.fontSize, lessThan(title.style!.fontSize!));
+      expect(
+        status.style!.fontWeight!.value,
+        lessThan(title.style!.fontWeight!.value),
+      );
+      final dotFills = tester
+          .widgetList<Container>(
+            find.descendant(
+              of: find.byKey(const ValueKey('session-live-dot-compacting-1')),
+              matching: find.byType(Container),
+            ),
+          )
+          .map((c) => (c.decoration as BoxDecoration?)?.color)
+          .whereType<Color>();
+      expect(dotFills, contains(status.style!.color));
       expect(find.byType(SessionRowStopControl), findsNothing);
       activeChats.dispose();
       await tester.pump(const Duration(seconds: 10));

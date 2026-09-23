@@ -40,6 +40,7 @@ import 'chat_screen.dart';
 import 'mission_control_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/session_status_tone.dart';
 
 const sessionLibraryRefreshGap = Duration(seconds: 10);
 const sessionLibrarySafetyRefreshInterval = Duration(seconds: 60);
@@ -2283,7 +2284,7 @@ class _SwipeAffordance extends StatelessWidget {
 class _LiveDot extends StatefulWidget {
   final Color color;
 
-  const _LiveDot({required this.color});
+  const _LiveDot({required this.color, super.key});
 
   @override
   State<_LiveDot> createState() => _LiveDotState();
@@ -2622,14 +2623,18 @@ class _SessionTile extends StatelessWidget {
     required this.onLongPress,
   });
 
-  /// Color del estado vivo: gris cuando el último estado conocido está
-  /// caducado, ámbar cuando la conversación te necesita, verde cuando corre.
-  Color _liveTone(HermesThemeColors colors) =>
-      (activity?.stale == true || localActivity?.stale == true)
-      ? colors.textDisabled
-      : activity?.requiresAction == true
-      ? colors.warning
-      : colors.success;
+  /// Semantic state of the live row: the dot and the status line share its
+  /// colour (green working, calm tint compacting, amber waiting, error
+  /// failed, muted stale/idle), so the status never reads like the title.
+  SessionStatusTone get _statusTone {
+    final local = localActivity;
+    if (local != null && local.showsActivity) {
+      return sessionStatusToneFor(local.kind, stale: local.stale);
+    }
+    final global = activity;
+    if (global != null) return globalStatusToneFor(global);
+    return SessionStatusTone.working;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2649,7 +2654,7 @@ class _SessionTile extends StatelessWidget {
     final previewText = session.hasLocalDraft
         ? <String>[draftLabel, if (preview.isNotEmpty) preview].join(' · ')
         : preview;
-    final liveTone = _liveTone(colors);
+    final liveTone = sessionStatusColor(colors, _statusTone);
 
     return InkWell(
       onTap: onTap,
@@ -2670,7 +2675,10 @@ class _SessionTile extends StatelessWidget {
                     Row(
                       children: [
                         if (streamActive) ...[
-                          _LiveDot(color: liveTone),
+                          _LiveDot(
+                            key: ValueKey('session-live-dot-${session.id}'),
+                            color: liveTone,
+                          ),
                           const SizedBox(width: 8),
                         ],
                         Flexible(
@@ -2739,16 +2747,18 @@ class _SessionTile extends StatelessWidget {
                           container: true,
                           excludeSemantics: true,
                           label: activityLabel,
+                          // Smaller and lighter than the title, in the state's
+                          // own colour (it used to be the title's white).
                           child: Text(
                             activityLabel,
                             key: ValueKey('session-running-${session.id}'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 12.5,
                               height: 1.25,
                               fontWeight: FontWeight.w500,
-                              color: colors.textPrimary,
+                              color: liveTone,
                             ),
                           ),
                         ),

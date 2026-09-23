@@ -1,3 +1,6 @@
+export '../widgets/session_status_tone.dart'
+    show readableActivityTone, resolveActivityTone;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -60,6 +63,7 @@ import 'session_list_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
+import '../widgets/session_status_tone.dart';
 import '../../l10n/app_localizations.dart';
 
 /// App home: clean dashboard around the active gateway.
@@ -1196,6 +1200,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           title: title,
           summary: summary,
           activityLabel: activityLabel,
+          activityTone: sessionStatusToneFor(activity),
           relativeTime: relativeTime(
             session.lastActivityAt,
             languageCode: Localizations.localeOf(context).languageCode,
@@ -2403,79 +2408,6 @@ class _RecentGroupHeader extends StatelessWidget {
   }
 }
 
-/// Contraste mínimo WCAG AA para texto pequeño.
-const double _kMinActivityContrast = 4.5;
-
-double _contrastRatio(Color a, Color b) {
-  final la = a.computeLuminance();
-  final lb = b.computeLuminance();
-  final hi = la > lb ? la : lb;
-  final lo = la > lb ? lb : la;
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-/// Tono legible para la línea de "actividad en curso" sobre [background].
-///
-/// `colors.secondary` cambia radicalmente entre los ~8 temas del catálogo
-/// (de `#1540B1` en Nous claro a `#FFE600` en alto contraste, pasando por
-/// `#606060` en Mono): en varios queda por debajo de 4.5:1 sobre la
-/// superficie y el usuario lo veía "en blanco", indistinguible del título de
-/// la conversación. En vez de fijar un color que solo funciona en un tema, el
-/// tono del tema se aclara —u oscurece, en temas claros— hasta cruzar el
-/// umbral, conservando su identidad.
-@visibleForTesting
-Color readableActivityTone(Color tone, Color background) {
-  if (_contrastRatio(tone, background) >= _kMinActivityContrast) return tone;
-  final target = background.computeLuminance() < 0.5
-      ? Colors.white
-      : Colors.black;
-  var candidate = tone;
-  for (var step = 1; step <= 10; step++) {
-    candidate = Color.lerp(tone, target, step / 10)!;
-    if (_contrastRatio(candidate, background) >= _kMinActivityContrast) {
-      return candidate;
-    }
-  }
-  return candidate;
-}
-
-/// Contraste mínimo para que un tono se perciba como distinto del título.
-const double _kMinTitleSeparation = 1.3;
-
-/// Tono definitivo de la línea de actividad para un tema concreto.
-///
-/// Dos trampas reales del catálogo, las dos con el mismo síntoma (la
-/// actividad acaba con el color del título, que es literalmente la queja
-/// "no se aprecia la diferencia con el título"):
-///  - Mono: `secondary` ya es el gris claro del título (`#EAEAEA`), y
-///    aclararlo para cumplir AA lo deja idéntico. Su `accent` gris medio sí
-///    se separa.
-///  - Cyberpunk: ni `secondary` ni `accent` se separan del `textPrimary`
-///    neón. Ahí se atenúa el tono hacia el fondo hasta separarlo, sin bajar
-///    nunca del umbral AA.
-@visibleForTesting
-Color resolveActivityTone(HermesThemeColors colors) {
-  bool separated(Color tone) =>
-      _contrastRatio(tone, colors.textPrimary) >= _kMinTitleSeparation;
-
-  Color? fallback;
-  for (final candidate in <Color>[colors.secondary, colors.accent]) {
-    final tone = readableActivityTone(candidate, colors.background);
-    if (separated(tone)) return tone;
-    fallback ??= tone;
-  }
-  var tone = fallback!;
-  for (var step = 1; step <= 12; step++) {
-    final dimmed = Color.lerp(fallback, colors.background, step / 20)!;
-    if (_contrastRatio(dimmed, colors.background) < _kMinActivityContrast) {
-      break;
-    }
-    tone = dimmed;
-    if (separated(dimmed)) return dimmed;
-  }
-  return tone;
-}
-
 String _sentenceCase(String value) =>
     value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
 
@@ -2488,14 +2420,21 @@ String _sentenceCase(String value) =>
 /// haciendo la conversación. El tinte de fondo + el punto + el peso dan la
 /// diferencia sin depender de que el `secondary` del tema tenga contraste.
 class _ActivityLine extends StatelessWidget {
-  const _ActivityLine({required this.label, super.key});
+  const _ActivityLine({
+    required this.label,
+    this.tone = SessionStatusTone.working,
+    super.key,
+  });
 
   final String label;
+
+  /// Semantic state: the dot, tint and text share its colour.
+  final SessionStatusTone tone;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final tone = resolveActivityTone(colors);
+    final tone = sessionStatusColor(colors, this.tone);
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -2538,6 +2477,7 @@ class _RecentSessionTile extends StatelessWidget {
   final String title;
   final HomeRecentSummary summary;
   final String? activityLabel;
+  final SessionStatusTone activityTone;
   final String relativeTime;
   final VoidCallback onTap;
   final Future<void> Function()? onStop;
@@ -2548,6 +2488,7 @@ class _RecentSessionTile extends StatelessWidget {
     required this.title,
     required this.summary,
     required this.activityLabel,
+    this.activityTone = SessionStatusTone.working,
     required this.relativeTime,
     required this.onTap,
     this.onStop,
@@ -2649,6 +2590,7 @@ class _RecentSessionTile extends StatelessWidget {
                                         'home-activity-${session.id}',
                                       ),
                                       label: activityLabel!,
+                                      tone: activityTone,
                                     ),
                                   )
                                 : Padding(
@@ -2746,6 +2688,7 @@ class HomeRecentSessionTileForTesting extends StatelessWidget {
     this.userPreview,
     this.assistantPreview,
     this.activityLabel,
+    this.activityTone = SessionStatusTone.working,
     this.hasLocalDraft = false,
     this.relativeTime = '12:40',
     this.onStop,
@@ -2757,6 +2700,7 @@ class HomeRecentSessionTileForTesting extends StatelessWidget {
   final String? userPreview;
   final String? assistantPreview;
   final String? activityLabel;
+  final SessionStatusTone activityTone;
   final bool hasLocalDraft;
   final String relativeTime;
   final Future<void> Function()? onStop;
@@ -2777,6 +2721,7 @@ class HomeRecentSessionTileForTesting extends StatelessWidget {
     title: title,
     summary: HomeRecentSummary(user: userPreview, assistant: assistantPreview),
     activityLabel: activityLabel,
+    activityTone: activityTone,
     relativeTime: relativeTime,
     onTap: () {},
     onStop: onStop,
