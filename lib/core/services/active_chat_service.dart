@@ -4682,11 +4682,21 @@ class ActiveChat {
 
   bool get desktopManualCompressionInFlight => _desktopCompressionInFlight;
   // A retained safety fence is not evidence that the server is still working.
+  // Once the reconciliation window runs out without proof the fence is
+  // released (Hermes Desktop never locks input on compression); what remains
+  // is this dismissible "could not confirm" notice.
   bool get desktopCompressionNeedsConfirmation =>
-      _desktopCompressionInFlight &&
       !_desktopCompressionRpcInFlight &&
       _pendingDesktopCompression == null &&
       _desktopCompressionUnconfirmable;
+
+  /// The user acknowledged the "could not confirm" notice.
+  void dismissCompressionConfirmation() {
+    if (!_desktopCompressionUnconfirmable) return;
+    _desktopCompressionUnconfirmable = false;
+    if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+  }
+
   bool get desktopCompressionAwaitingReconciliation =>
       _pendingDesktopCompression != null;
   bool get desktopCompressionTransportUncertain =>
@@ -7760,8 +7770,15 @@ class ActiveChat {
       if (!stillAuthorized()) return;
       messagesLoaded = true;
       if (transition.publishesProjection || transition.preservesAsSuccess) {
-        onMessagesPublished?.call();
-        _emit(ActiveChatEvent.messagesHydrated);
+        // Like the unfenced load: a caller-owned read is announced only to its
+        // caller. Echoing `messagesHydrated` too reached the chat screen after
+        // its refresh had ended and read as an external change, re-arming an
+        // immediate passive read forever while the fence was up.
+        if (onMessagesPublished != null) {
+          onMessagesPublished();
+        } else {
+          _emit(ActiveChatEvent.messagesHydrated);
+        }
       }
     } on StateError {
       rethrow;
@@ -13424,6 +13441,7 @@ class ActiveChat {
       record.createdAtMs,
     );
     if (await _reconcileDurableCompressionFence(record)) return;
+    if (await _releaseExpiredDurableCompressionFence(record)) return;
     _scheduleDurableCompressionReconciliation(
       _durableCompressionFence ?? record,
     );
@@ -13453,10 +13471,41 @@ class ActiveChat {
       record.createdAtMs,
     );
     if (await _reconcileDurableCompressionFence(record)) return false;
+    if (await _releaseExpiredDurableCompressionFence(record)) return false;
     _scheduleDurableCompressionReconciliation(
       _durableCompressionFence ?? record,
     );
     return true;
+  }
+
+  /// An unproven fence past its deadline stops holding anything: the
+  /// composer, Home/Conversaciones and runtime attach behave like Hermes
+  /// Desktop (which has no fence at all) and a dismissible notice says the
+  /// result could not be confirmed. The server's own compression lock still
+  /// refuses a conflicting turn with 4009.
+  Future<bool> _releaseExpiredDurableCompressionFence(
+    DesktopCompressionFenceRecord record, {
+    bool deadlineReached = false,
+  }) async {
+    if (!deadlineReached && record.reconcileUntilMs > _wallClockMs()) {
+      return false;
+    }
+    if (_durableCompressionFence?.scope.key != record.scope.key ||
+        _durableCompressionFence?.attemptId != record.attemptId) {
+      return false;
+    }
+    _desktopCompressionReconciliationTimer?.cancel();
+    _desktopCompressionReconciliationTimer = null;
+    final released = await _deleteDurableCompressionFence(
+      record,
+      unconfirmed: true,
+    );
+    if (!released) {
+      // Storage refused the delete: keep failing closed, but say so.
+      _desktopCompressionUnconfirmable = true;
+      if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+    }
+    return released;
   }
 
   Future<bool> _reconcileDurableCompressionFence(
@@ -13472,10 +13521,25 @@ class ActiveChat {
           )
           .timeout(_desktopCompressionReconcileRpcBudget);
       if (_disposed) return false;
-      final evidence = DesktopCompressionFenceEvidence.evaluate(
-        record,
-        response,
-      );
+      var evidence = DesktopCompressionFenceEvidence.evaluate(record, response);
+      if (!evidence.provesSettlement &&
+          record.messagesAtStart != null &&
+          record.tipAtStart != record.scope.logicalSessionId) {
+        // In-place compaction shrinks the tip row, not the lineage root.
+        final tipResponse = await _api
+            .apiGet(
+              ApiClient.profileEndpoint(
+                'api/sessions/${Uri.encodeComponent(record.tipAtStart)}',
+                profile: record.scope.profile,
+              ),
+            )
+            .timeout(_desktopCompressionReconcileRpcBudget);
+        if (_disposed) return false;
+        evidence = DesktopCompressionFenceEvidence.evaluate(
+          record,
+          tipResponse,
+        );
+      }
       if (!evidence.provesSettlement) return false;
       final tip = evidence.authoritativeTip;
       final deleted = await _deleteDurableCompressionFence(record);
@@ -13498,8 +13562,9 @@ class ActiveChat {
   }
 
   Future<bool> _deleteDurableCompressionFence(
-    DesktopCompressionFenceRecord record,
-  ) async {
+    DesktopCompressionFenceRecord record, {
+    bool unconfirmed = false,
+  }) async {
     final deleted = await _compressionFenceStore.deleteAttempt(
       record.scope,
       attemptId: record.attemptId,
@@ -13533,7 +13598,8 @@ class ActiveChat {
       _desktopCompressionReconciliationTimer = null;
       // A clean delete with nothing else outstanding is a real settle: any
       // earlier "couldn't confirm" from a previous attempt no longer applies.
-      _desktopCompressionUnconfirmable = false;
+      // An expired, unproven release keeps (or raises) that notice instead.
+      _desktopCompressionUnconfirmable = unconfirmed;
     }
     _desktopCompressionInFlight =
         _durableCompressionFence != null || _pendingDesktopCompression != null;
@@ -13552,7 +13618,7 @@ class ActiveChat {
       // saying "still working" forever once the deadline passed — including
       // right after reopening the app on a session whose fence had already
       // expired while it was closed. Say so instead.
-      _abandonDurableCompressionFence(record);
+      unawaited(_releaseExpiredDurableCompressionFence(record));
       return;
     }
     final delayMs = math.min(
@@ -13570,22 +13636,6 @@ class ActiveChat {
         _scheduleDurableCompressionReconciliation(record);
       },
     );
-  }
-
-  /// A durable fence restored from a previous process (or reconciled across
-  /// several) whose deadline has run out with no proof of settlement.
-  /// Mirrors [_abandonPendingDesktopCompression]: it does not delete the
-  /// fence record (nothing here proves it is actually done), only stops
-  /// polling and surfaces the same honest "can't confirm" state.
-  void _abandonDurableCompressionFence(DesktopCompressionFenceRecord record) {
-    if (_durableCompressionFence?.scope.key != record.scope.key ||
-        _durableCompressionFence?.attemptId != record.attemptId) {
-      return;
-    }
-    _desktopCompressionReconciliationTimer?.cancel();
-    _desktopCompressionReconciliationTimer = null;
-    _desktopCompressionUnconfirmable = true;
-    if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
   }
 
   /// Comprime mediante `session.compress`, el contrato autoritativo actual de
@@ -13825,11 +13875,16 @@ class ActiveChat {
       token.expectedRootId,
     );
 
+    final messagesAtStart = await _storedMessageCountForFence(
+      receipt.storedSessionId,
+      profile: receipt.scope.profile,
+    );
     final createdAtMs = _wallClockMs();
     final arm = await _compressionFenceStore.arm(
       fenceScope,
       tipAtStart: receipt.storedSessionId,
       compressionsAtStart: receipt.evidence.compressionsAtStart,
+      messagesAtStart: messagesAtStart,
       createdAtMs: createdAtMs,
       reconcileUntilMs:
           createdAtMs + _desktopCompressionReconciliationWindow.inMilliseconds,
@@ -13933,6 +13988,34 @@ class ActiveChat {
         _clearDesktopCompactingIndicator();
       }
       if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+    }
+  }
+
+  /// Stored `message_count` of the exact row about to be compressed: the
+  /// baseline that lets a later REST read prove an in-place compaction that
+  /// this process never heard back about (killed app, lost transport).
+  Future<int?> _storedMessageCountForFence(
+    String storedSessionId, {
+    required String profile,
+  }) async {
+    try {
+      final response = await _api
+          .apiGet(
+            ApiClient.profileEndpoint(
+              'api/sessions/${Uri.encodeComponent(storedSessionId)}',
+              profile: profile,
+            ),
+          )
+          .timeout(_desktopCompressionReconcileRpcBudget);
+      final wrapped = response['session'];
+      final row = wrapped is Map ? wrapped : response;
+      final count = row['message_count'];
+      return row['id'] == storedSessionId && count is int && count >= 0
+          ? count
+          : null;
+    } catch (_) {
+      // No baseline only means a lost reply falls back to the deadline.
+      return null;
     }
   }
 
@@ -14235,6 +14318,14 @@ class ActiveChat {
     _desktopCompressionInFlight = _durableCompressionFence != null;
     if (unconfirmable) _desktopCompressionUnconfirmable = true;
     if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+    if (unconfirmable && expected != null) {
+      unawaited(
+        _releaseExpiredDurableCompressionFence(
+          expected.durableRecord,
+          deadlineReached: true,
+        ),
+      );
+    }
   }
 
   Future<void> _reconcilePendingDesktopCompression(

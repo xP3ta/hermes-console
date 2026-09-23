@@ -1293,6 +1293,9 @@ class _ChatScreenState extends State<ChatScreen>
   bool _composerEmpty = true;
   // Sugerencias de comandos slash mientras se escribe `/…` en el compositor.
   List<SlashCommand> _slashSuggestions = const [];
+  // The navigation drawer paints below overlay-hosted composer popovers
+  // (slash palette, floating notices): they must hide while it is open.
+  bool _navigationDrawerOpen = false;
   DesktopCommandCatalog? _desktopCommandCatalog;
   Timer? _slashCompletionDebounce;
   int _slashCompletionEpoch = 0;
@@ -7773,6 +7776,18 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// «Recargar» del aviso sin confirmar: como Hermes Desktop tras `ready`,
+  /// relee la conversación persistida, que es la verdad del servidor.
+  void _retryUnconfirmedCompression() {
+    _dismissUnconfirmedCompression();
+    unawaited(_fetchMessages());
+  }
+
+  void _dismissUnconfirmedCompression() {
+    _chat.dismissCompressionConfirmation();
+    if (mounted) setState(() {});
+  }
+
   void _restoreComposerFocusAfterCompression({bool retainWhileFenced = true}) {
     _compressionDraftFocusRetained = retainWhileFenced;
     _textFocusNode.canRequestFocus = true;
@@ -9424,6 +9439,10 @@ class _ChatScreenState extends State<ChatScreen>
       child: Scaffold(
         drawerEnableOpenDragGesture: true,
         drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
+        onDrawerChanged: (open) {
+          if (_navigationDrawerOpen == open || !mounted) return;
+          setState(() => _navigationDrawerOpen = open);
+        },
         drawer: dedicatedChrome || connManager == null
             ? null
             : HermesDrawer(
@@ -12597,15 +12616,43 @@ class _ChatScreenState extends State<ChatScreen>
     final slashPalette = !_slashPaletteVisible
         ? null
         : _SlashPalette(commands: _slashSuggestions, onPick: _pickSlash);
+    // Una compresión sin confirmar ya no bloquea nada (Hermes Desktop no
+    // tiene valla): queda un aviso propio, legible y descartable. Va en el
+    // hueco flotante de la paleta (un overlay anclado al composer) porque sus
+    // botones deben recibir toques; el dock, pintado fuera de los límites de
+    // su Stack, nunca los recibiría.
+    final showUnconfirmedCompression =
+        _chat.desktopCompressionNeedsConfirmation && !_compressingSession;
+    final unconfirmedNotice =
+        showUnconfirmedCompression && !_navigationDrawerOpen
+        ? ValueListenableBuilder<double>(
+            valueListenable: _activityPillExtent,
+            builder: (context, pillExtent, child) => Padding(
+              padding: EdgeInsets.only(bottom: pillExtent),
+              child: child,
+            ),
+            child: CompressionUnconfirmedNotice(
+              onRetry: _retryUnconfirmedCompression,
+              onDismiss: _dismissUnconfirmedCompression,
+            ),
+          )
+        : null;
+    final mentionPalette = _isRecording || _transcribing
+        ? null
+        : ChatMentionPalette(
+            controller: _textController,
+            focusNode: _textFocusNode,
+            connectionId: widget.connection.id,
+            profile: _effectiveSessionProfile,
+          );
     final floatingPalette =
         slashPalette ??
-        (_isRecording || _transcribing
-            ? null
-            : ChatMentionPalette(
-                controller: _textController,
-                focusNode: _textFocusNode,
-                connectionId: widget.connection.id,
-                profile: _effectiveSessionProfile,
+        (unconfirmedNotice == null
+            ? mentionPalette
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [unconfirmedNotice, ?mentionPalette],
               ));
     // Composer premium (referencia live-chat): contenedor con borde sutil,
     // campo sin marco y fila inferior de acciones con send cuadrado ámbar.
@@ -12623,10 +12670,6 @@ class _ChatScreenState extends State<ChatScreen>
         final compactIme =
             MediaQuery.viewInsetsOf(imeContext).bottom > 0 &&
             MediaQuery.orientationOf(imeContext) == Orientation.landscape;
-        // Sigue mostrándose aunque el resultado no se pueda confirmar: ese
-        // estado puede durar indefinidamente (hasta reabrir Hermes Desktop),
-        // y el aviso no debe desaparecer solo porque el `linger` normal del
-        // tracker expiró.
         final showCompactionDock =
             _compaction.current != null || _compressingSession;
         return Container(
@@ -12821,7 +12864,7 @@ class _ChatScreenState extends State<ChatScreen>
                 _buildFloatingStatusPill(colors),
               ],
             )._withFloatingCompactionDock(
-              showCompactionDock
+              !showUnconfirmedCompression && showCompactionDock
                   ? CompactionDock(
                       compaction:
                           _compaction.current ??

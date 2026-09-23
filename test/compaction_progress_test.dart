@@ -594,4 +594,57 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('CompressionUnconfirmedNotice', () {
+    Widget host(Widget child, {double width = 360}) => MaterialApp(
+      locale: const Locale('es'),
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
+      theme: AppTheme.hermesRedDark,
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.bottomCenter,
+          child: SizedBox(width: width, child: child),
+        ),
+      ),
+    );
+
+    testWidgets(
+      'REGRESSION_COMP_UNCONFIRMED readable text, reload and dismiss actions',
+      (tester) async {
+        var retried = 0;
+        var dismissed = 0;
+        await tester.pumpWidget(
+          host(
+            CompressionUnconfirmedNotice(
+              onRetry: () => retried++,
+              onDismiss: () => dismissed++,
+            ),
+          ),
+        );
+        final title = tester.widget<Text>(
+          find.byKey(const ValueKey('compression-unconfirmed-title')),
+        );
+        expect(title.data, 'No se pudo confirmar la compresión');
+        // The explanation is never cut to one ellipsized line.
+        final body = tester.widget<Text>(
+          find.byKey(const ValueKey('compression-unconfirmed-body')),
+        );
+        expect(body.maxLines, isNot(1));
+        expect(body.overflow, isNot(TextOverflow.ellipsis));
+        // No running timer on a state that is not running anymore.
+        expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
+
+        await tester.tap(
+          find.byKey(const ValueKey('compression-unconfirmed-retry')),
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('compression-unconfirmed-dismiss')),
+        );
+        expect(retried, 1);
+        expect(dismissed, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
 }

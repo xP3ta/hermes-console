@@ -5272,8 +5272,11 @@ void main() {
   );
 
   test(
-    'expired durable fence stops polling but still blocks compression and send',
+    'expired durable fence stops polling and releases compression and send',
     () async {
+      // Policy (Hermes Desktop has no fence at all): past its deadline an
+      // unproven fence stops polling and stops holding anything; the chat is
+      // left with a dismissible "could not confirm" notice.
       final storage = _MemoryCompressionFenceStorage();
       final now = DateTime.now().millisecondsSinceEpoch;
       final scope = DesktopCompressionFenceScope(
@@ -5315,28 +5318,14 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(reads, readsAfterAttach);
 
-      await expectLater(
-        chat.compressDesktopSession(),
-        throwsA(
-          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
-        ),
-      );
-      await expectLater(
-        chat.send(fullText: 'blocked', model: 'model-a', history: const []),
-        throwsA(
-          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4009),
-        ),
-      );
-      expect(gateway.resumeExistingCalls, 0);
-      expect(gateway.resumeLegacyCalls, 0);
-      expect(gateway.createCalls, 0);
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopCompressionNeedsConfirmation, isTrue);
       expect(gateway.compressSessionCalls, 0);
-      expect(gateway.submitPromptCalls, 0);
       expect(
         (await DesktopCompressionFenceStore(
           storage: storage,
         ).lookup(scope)).isFenced,
-        isTrue,
+        isFalse,
       );
     },
   );
@@ -5528,8 +5517,205 @@ void main() {
       addTearDown(chat.dispose);
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(chat.desktopCompressionInFlight, isTrue);
+      // Hermes Desktop never blocks input on a compression it cannot see:
+      // an expired, unproven fence becomes a dismissible notice, not a lock
+      // on the composer or a permanent "compactando" on Home/Conversaciones.
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.desktopManualCompressionInFlight, isFalse);
+      expect(chat.sessionActivity.compacting, isFalse);
       expect(chat.desktopCompressionNeedsConfirmation, isTrue);
+      expect(
+        (await DesktopCompressionFenceStore(storage: storage).lookup(scope))
+            .status,
+        DesktopCompressionFenceLookupStatus.absent,
+      );
+
+      chat.dismissCompressionConfirmation();
+      expect(chat.desktopCompressionNeedsConfirmation, isFalse);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_IN_PLACE_KILL a fence restored after the app was killed '
+    'settles when the server compacted in place (same id, fewer messages)',
+    () async {
+      // Real case (Pixel, 1.2.12+9260): /compress, app killed mid-way, the
+      // server finished in place: same session id, no lineage/tip change and
+      // no compression counter in `GET /api/sessions/{id}` — only
+      // `message_count` dropped 38 -> 35. The fence never settled and the
+      // chat stayed locked for the whole 12-minute window.
+      final storage = _MemoryCompressionFenceStorage();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'in-place-kill',
+        profile: 'default',
+        logicalSessionId: 'stored-chat',
+      );
+      await DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'in-place-kill-attempt',
+      ).arm(
+        scope,
+        tipAtStart: 'stored-chat',
+        compressionsAtStart: null,
+        messagesAtStart: 38,
+        createdAtMs: now - 60000,
+        reconcileUntilMs: now + 600000,
+      );
+      final chat = _chat(
+        'in-place-kill',
+        _SnapshotGateway()
+          ..snapshot = _snapshot({
+            'session_id': 'runtime-in-place-kill',
+            'session_key': 'stored-chat',
+          }),
+        logicalSessionId: 'stored-chat',
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        client: MockClient((request) async {
+          if (request.url.path == '/api/sessions/stored-chat') {
+            return http.Response(
+              jsonEncode({
+                'object': 'hermes.session',
+                'session': {
+                  'id': 'stored-chat',
+                  'message_count': 35,
+                  'parent_session_id': null,
+                },
+              }),
+              200,
+            );
+          }
+          return http.Response('unexpected REST', 500);
+        }),
+        storedMessageLoader: (_, _) async => const [
+          {'id': 'row-1', 'role': 'user', 'content': 'Hola'},
+          {'id': 'row-2', 'role': 'assistant', 'content': 'Compactado'},
+        ],
+      );
+      addTearDown(chat.dispose);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(chat.desktopCompressionInFlight, isFalse);
+      expect(chat.sessionActivity.compacting, isFalse);
+      expect(chat.desktopCompressionNeedsConfirmation, isFalse);
+      expect(
+        (await DesktopCompressionFenceStore(storage: storage).lookup(scope))
+            .status,
+        DesktopCompressionFenceLookupStatus.absent,
+      );
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_FENCED_READ_LOOP a caller-owned read while fenced does '
+    'not echo messagesHydrated back as an external change',
+    () async {
+      // Real case: with a fence restored the chat has no runtime, so the
+      // screen's passive reader polls REST. Every fenced read emitted
+      // `messagesHydrated`, which reached the screen after its own refresh
+      // had finished and was taken as a new external change: an immediate
+      // re-read, forever (~1000 session + messages reads per minute).
+      final storage = _MemoryCompressionFenceStorage();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'fenced-read-loop',
+      ).arm(
+        DesktopCompressionFenceScope(
+          connectionId: 'fenced-read-loop',
+          profile: 'default',
+          logicalSessionId: 'stored-chat',
+        ),
+        tipAtStart: 'stored-chat',
+        compressionsAtStart: null,
+        createdAtMs: now,
+        reconcileUntilMs: now + 600000,
+      );
+      final events = <ActiveChatEvent>[];
+      final chat = _chat(
+        'fenced-read-loop',
+        _SnapshotGateway(),
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'session': {'id': 'stored-chat', 'message_count': 2},
+            }),
+            200,
+          ),
+        ),
+        storedMessageLoader: (_, _) async => const [
+          {'id': 'row-1', 'role': 'user', 'content': 'Hola'},
+          {'id': 'row-2', 'role': 'assistant', 'content': 'Respuesta'},
+        ],
+        onEvent: events.add,
+      );
+      addTearDown(chat.dispose);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(chat.desktopCompressionInFlight, isTrue);
+
+      events.clear();
+      var published = 0;
+      await chat.loadMessages(
+        passiveOnly: true,
+        onMessagesPublished: () => published++,
+      );
+
+      expect(published, 1);
+      expect(chat.messages, hasLength(2));
+      expect(events, isNot(contains(ActiveChatEvent.messagesHydrated)));
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_IN_PLACE_BASELINE /compress records the stored message '
+    'count as the in-place settlement baseline',
+    () async {
+      final storage = _MemoryCompressionFenceStorage();
+      final compressionGate = Completer<DesktopCompressionResult>();
+      final gateway = _NativeCompressionGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-baseline',
+          'session_key': 'stored-chat',
+          'messages': const <Map<String, dynamic>>[],
+        })
+        ..compressionResult = _nativeCompressionResult()
+        ..nativeCompressionGate = compressionGate;
+      final chat = _chat(
+        'in-place-baseline',
+        gateway,
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        client: MockClient((request) async {
+          if (request.url.path == '/api/sessions/stored-chat') {
+            return http.Response(
+              jsonEncode({
+                'session': {'id': 'stored-chat', 'message_count': 38},
+              }),
+              200,
+            );
+          }
+          return http.Response('unexpected REST', 500);
+        }),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      final compression = chat.compressDesktopSession();
+      while (gateway.compressSessionCalls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final lookup = await DesktopCompressionFenceStore(storage: storage)
+          .lookup(
+            DesktopCompressionFenceScope(
+              connectionId: 'in-place-baseline',
+              profile: 'default',
+              logicalSessionId: 'stored-chat',
+            ),
+          );
+      expect(lookup.record?.messagesAtStart, 38);
+
+      compressionGate.complete(gateway.compressionResult);
+      await compression;
     },
   );
 
@@ -5706,12 +5892,14 @@ void main() {
         storage: storage,
         attemptId: () => 'send-attempt',
       );
+      // Still inside its reconciliation window: an expired one is released.
+      final armedAt = DateTime.now().millisecondsSinceEpoch;
       final armed = await seedStore.arm(
         scope,
         tipAtStart: 'tip-send',
         compressionsAtStart: null,
-        createdAtMs: 100,
-        reconcileUntilMs: 200,
+        createdAtMs: armedAt,
+        reconcileUntilMs: armedAt + 600000,
       );
       expect(armed.claimed, isTrue);
       storage

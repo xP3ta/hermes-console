@@ -3358,7 +3358,7 @@
   "chaCompressionNoRuntime": "This chat does not have an active session to compress yet.",
   "chaCompressionUnsupported": "This server does not support manual compression. Update Hermes Agent.",
   "chaCompressionBackendFailed": "Hermes could not generate the summary. Check the provider, model, and that the compression backend is reachable.",
-  "chaCompressionUnknown": "Compression could not be confirmed. Check the result in Hermes Desktop, then reopen this chat to check whether it can sync. Do not repeat /compress: sending stays blocked until the server confirms the result.",
+  "chaCompressionUnknown": "Compression could not be confirmed. Reload the conversation to see the real result.",
   "slashDescModels": "Manage models and providers",
   "slashDescSkills": "Open agent skills",
   "slashDescMemory": "Open memory",
@@ -5921,5 +5921,12 @@
   "liveCompactionMessagesShort": "{count} msgs",
   "@liveCompactionMessagesShort": {"placeholders": {"count": {"type": "int"}}},
   "liveCompactionTokensShort": "~{tokens} tok",
-  "@liveCompactionTokensShort": {"placeholders": {"tokens": {}}}
+  "@liveCompactionTokensShort": {"placeholders": {"tokens": {}}},
+  "liveCompactionNothing": "Nothing to compress",
+  "liveCompactionMessagesCount": "{count, plural, =1{1 message} other{{count} messages}}",
+  "@liveCompactionMessagesCount": {"placeholders": {"count": {"type": "int"}}},
+  "liveCompactionTokensApprox": "~{tokens} tokens",
+  "@liveCompactionTokensApprox": {"placeholders": {"tokens": {}}},
+  "chaCompressionUnconfirmedTitle": "Compression could not be confirmed",
+  "chaCompressionUnconfirmedBody": "Hermes did not answer before the app closed or lost its connection. You can keep writing; reload to see the conversation's real state."
 }

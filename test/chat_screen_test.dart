@@ -11802,7 +11802,8 @@ void main() {
   );
 
   testWidgets(
-    'COMP_CONVERGENCE lost reply remains fenced with actionable copy',
+    'COMP_CONVERGENCE lost reply releases the composer with a dismissible '
+    'notice once the window runs out',
     (tester) async {
       final gate = Completer<DesktopCompressionResult>();
       final gateway = _UiNativeCompressionGateway(
@@ -11833,15 +11834,38 @@ void main() {
       for (var frame = 0; frame < 12; frame++) {
         await tester.pump();
       }
-      expect(chat.desktopCompressionInFlight, isTrue);
+      // Hermes Desktop never locks input on a compression: once the window
+      // runs out without proof the composer is usable again and a readable,
+      // dismissible notice replaces the "compacting" dock.
+      expect(chat.desktopCompressionInFlight, isFalse);
       expect(chat.desktopCompressionAwaitingReconciliation, isFalse);
       expect(
-        find.textContaining('Comprueba el resultado en Hermes Desktop'),
+        find.text('No se pudo confirmar la compresión'),
         findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('compression-unconfirmed-retry')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('desktop-session-compression-progress')),
+        findsNothing,
       );
       expect(find.text('Optimizando la conversación…'), findsNothing);
       expect(find.textContaining('Historial intacto'), findsOneWidget);
-      expect(tester.widget<TextField>(find.byType(TextField)).readOnly, isTrue);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).readOnly,
+        isFalse,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('compression-unconfirmed-dismiss')),
+      );
+      await tester.pump();
+      expect(
+        find.text('No se pudo confirmar la compresión'),
+        findsNothing,
+      );
+      expect(chat.desktopCompressionNeedsConfirmation, isFalse);
       expect(gateway.nativeCompressionCalls, 1);
       expect(gateway.slashCalls, isEmpty);
       expect(gateway.dispatchCalls, isEmpty);

@@ -154,6 +154,18 @@ void main() {
       {
         'v': 1,
         'records': [
+          {...validRecord, 'messages_at_start': -1},
+        ],
+      },
+      {
+        'v': 1,
+        'records': [
+          {...validRecord, 'messages_at_start': '38'},
+        ],
+      },
+      {
+        'v': 1,
+        'records': [
           {...validRecord, 'reconcile_until_ms': 99},
         ],
       },
@@ -637,6 +649,134 @@ void main() {
 
       expect(evidence.provesSettlement, isTrue);
       expect(evidence.authoritativeTip, isNull);
+    },
+  );
+
+  test(
+    'REGRESSION_COMP_IN_PLACE an exact REST read with fewer stored messages '
+    'proves an in-place compaction settled',
+    () {
+      DesktopCompressionFenceRecord record({int? messages = 38}) =>
+          DesktopCompressionFenceRecord(
+            scope: DesktopCompressionFenceScope(
+              connectionId: 'connection-a',
+              profile: 'default',
+              logicalSessionId: 'root-a',
+            ),
+            attemptId: 'attempt-a',
+            phase: DesktopCompressionFencePhase.armed,
+            tipAtStart: 'root-a',
+            compressionsAtStart: null,
+            messagesAtStart: messages,
+            createdAtMs: 100,
+            reconcileUntilMs: 200,
+          );
+      // `GET /api/sessions/{id}` as the real server answers it: no lineage
+      // root, no compression counter, only the durable row.
+      final settled = DesktopCompressionFenceEvidence.evaluate(record(), {
+        'object': 'hermes.session',
+        'session': {'id': 'root-a', 'message_count': 35},
+      });
+      expect(settled.provesSettlement, isTrue);
+      expect(settled.authoritativeTip, isNull);
+      // Flat dashboard shape is the same evidence.
+      expect(
+        DesktopCompressionFenceEvidence.evaluate(record(), {
+          'id': 'root-a',
+          'message_count': 35,
+        }).provesSettlement,
+        isTrue,
+      );
+
+      for (final payload in <Map<String, dynamic>>[
+        {
+          'session': {'id': 'root-a', 'message_count': 38},
+        },
+        {
+          'session': {'id': 'root-a', 'message_count': 40},
+        },
+        {
+          'session': {'id': 'other-root', 'message_count': 3},
+        },
+        {
+          'session': {'id': 'root-a', 'message_count': '3'},
+        },
+        {
+          'session': {
+            'id': 'root-a',
+            'message_count': 3,
+            '_lineage_root_id': 'root-b',
+          },
+        },
+        {
+          'session': {'message_count': 3},
+        },
+      ]) {
+        expect(
+          DesktopCompressionFenceEvidence.evaluate(
+            record(),
+            payload,
+          ).provesSettlement,
+          isFalse,
+          reason: '$payload',
+        );
+      }
+      expect(
+        DesktopCompressionFenceEvidence.evaluate(record(messages: null), {
+          'session': {'id': 'root-a', 'message_count': 3},
+        }).provesSettlement,
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'message baseline round-trips and legacy records without it still decode',
+    () async {
+      final storage = _MemoryFenceStorage();
+      final scope = DesktopCompressionFenceScope(
+        connectionId: 'connection-a',
+        profile: 'default',
+        logicalSessionId: 'root-a',
+      );
+      await DesktopCompressionFenceStore(
+        storage: storage,
+        attemptId: () => 'attempt-a',
+      ).arm(
+        scope,
+        tipAtStart: 'root-a',
+        compressionsAtStart: null,
+        messagesAtStart: 38,
+        createdAtMs: 100,
+        reconcileUntilMs: 200,
+      );
+      final reopened = await DesktopCompressionFenceStore(
+        storage: storage,
+      ).lookup(scope);
+      expect(reopened.record?.messagesAtStart, 38);
+
+      final legacy = _MemoryFenceStorage()
+        ..value = jsonEncode({
+          'v': 1,
+          'records': [
+            {
+              'connection_id': 'connection-a',
+              'profile': 'default',
+              'logical_session_id': 'root-a',
+              'attempt_id': 'attempt-a',
+              'phase': 'armed',
+              'tip_at_start': 'root-a',
+              'compressions_at_start': null,
+              'created_at_ms': 100,
+              'reconcile_until_ms': 200,
+            },
+          ],
+        });
+      final legacyLookup = await DesktopCompressionFenceStore(
+        storage: legacy,
+      ).lookup(scope);
+      expect(legacyLookup.status, DesktopCompressionFenceLookupStatus.present);
+      expect(legacyLookup.record?.messagesAtStart, isNull);
     },
   );
 

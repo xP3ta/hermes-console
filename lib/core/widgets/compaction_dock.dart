@@ -56,6 +56,127 @@ String compactionResultText(
     formatCompactionDuration(compaction.duration!, languageCode: languageCode),
 ].join(' · ');
 
+/// Aviso flotante cuando una compresión no se pudo confirmar (la app se
+/// cerró o perdió la conexión y el plazo de reconciliación venció sin
+/// prueba). Ya no bloquea nada: explica el estado y ofrece recargar o cerrar.
+class CompressionUnconfirmedNotice extends StatelessWidget {
+  const CompressionUnconfirmedNotice({
+    required this.onRetry,
+    required this.onDismiss,
+    super.key,
+  });
+
+  final VoidCallback onRetry;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final title = strings.chaCompressionUnconfirmedTitle;
+    final body = strings.chaCompressionUnconfirmedBody;
+    return Semantics(
+      key: const ValueKey('compression-unconfirmed-notice'),
+      liveRegion: true,
+      container: true,
+      label: '$title. $body',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 5, 10, 3),
+        child: Material(
+          color: colors.surface,
+          elevation: 8,
+          shadowColor: Colors.black.withValues(alpha: 0.35),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(
+              color: colors.warning.withValues(alpha: 0.45),
+              width: 0.8,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 9, 4, 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    size: 16,
+                    color: colors.warning,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ExcludeSemantics(
+                        child: Text(
+                          title,
+                          key: const ValueKey('compression-unconfirmed-title'),
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.3,
+                            fontWeight: FontWeight.w700,
+                            color: colors.warning,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      ExcludeSemantics(
+                        child: Text(
+                          body,
+                          key: const ValueKey('compression-unconfirmed-body'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          key: const ValueKey('compression-unconfirmed-retry'),
+                          onPressed: onRetry,
+                          style: TextButton.styleFrom(
+                            foregroundColor: colors.accent,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            minimumSize: const Size(0, 36),
+                            visualDensity: VisualDensity.compact,
+                            textStyle: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          icon: const Icon(Icons.refresh_rounded, size: 16),
+                          label: Text(strings.commonReload),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  key: const ValueKey('compression-unconfirmed-dismiss'),
+                  onPressed: onDismiss,
+                  tooltip: strings.commonClose,
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  color: colors.textSecondary,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Barra fina pegada sobre el compositor mientras se compacta.
 ///
 ///  * sin progreso publicado: un segmento que se mueve (honesto: «está
