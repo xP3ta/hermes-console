@@ -12145,6 +12145,15 @@ class ActiveChat {
   }
 
   bool _isStaleRewriteTarget(Object? error) {
+    // Hermes Desktop's isCompressedAwayError: a negative segment ordinal
+    // means the turn now lives inside a compaction summary, so resuming and
+    // retrying can never find it.
+    if (error is TuiGatewayRpcError &&
+        error.code == 4018 &&
+        error.data['segment_ordinal'] is num &&
+        (error.data['segment_ordinal'] as num) < 0) {
+      return false;
+    }
     if (error is TuiGatewayRpcError && error.code == 4018) return true;
     final message = error is TuiGatewayRpcError
         ? error.message
@@ -15423,7 +15432,9 @@ class ActiveChat {
             );
           } on TuiGatewayRpcError catch (error) {
             final fallbackOrdinal = _rewind4018FallbackOrdinal;
+            final segmentOrdinal = error.data['segment_ordinal'];
             if (error.code != 4018 ||
+                (segmentOrdinal is num && segmentOrdinal < 0) ||
                 fallbackOrdinal == null ||
                 fallbackOrdinal == truncateBeforeUserOrdinal) {
               rethrow;

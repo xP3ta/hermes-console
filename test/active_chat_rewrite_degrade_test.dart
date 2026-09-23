@@ -640,6 +640,56 @@ void main() {
   });
 
   test(
+    'REGRESSION_EDIT_COMPRESSED_AWAY a target compressed away is not retried',
+    () async {
+      // Hermes Desktop (isCompressedAwayError): 4018 with a negative
+      // segment_ordinal means the edited turn now lives in a compaction
+      // summary; a resume + retry can never find it.
+      final initialResume = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-1',
+        storedSessionId: 'sess-rewrite',
+        created: false,
+      );
+      final gateway = _RewriteGateway(
+        resumeSnapshots: [initialResume, initialResume],
+        durableOutcomes: const [
+          TuiGatewayRpcError(
+            'prompt.submit',
+            'target user message is no longer in session history',
+            code: 4018,
+            data: {'segment_ordinal': -1},
+          ),
+          null,
+        ],
+      );
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      chat.internalMessagesForTesting = [
+        {'role': 'assistant', 'content': 'respuesta', '_desktopRowId': 74},
+        {'role': 'user', 'content': 'pregunta', '_desktopRowId': 73},
+      ];
+      chat.state = ChatPipelineState.completed;
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isTrue,
+      );
+      final resumesBefore = gateway.resumeExistingCalls;
+
+      try {
+        await chat.rewrite(
+          userOrdinal: 0,
+          text: 'pregunta corregida',
+          model: 'hermes-agent',
+        );
+      } catch (_) {}
+
+      expect(gateway.durableRewinds, hasLength(1));
+      expect(gateway.resumeExistingCalls, resumesBefore);
+    },
+  );
+
+  test(
     'failed live edit rollback removes pipeline rows and stays cancelled',
     () async {
       final gateway = _RewriteGateway(
