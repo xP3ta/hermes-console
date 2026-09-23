@@ -5778,6 +5778,96 @@ void main() {
   );
 
   test(
+    'REGRESSION_COMP_KILL_CREATED_CHAT a chat created in this process keeps '
+    'its /compress fence after a restart that reopens it by stored id',
+    () async {
+      // Real case (Pixel, build 9280): a chat created via the share intent
+      // (provisional `mob-` id), one turn, /compress, app killed; reopened
+      // from Conversaciones by its stored id. The fence had been keyed by the
+      // provisional id, so the new process never found it: no dock, composer
+      // unlocked, no outcome.
+      final storage = _MemoryCompressionFenceStorage();
+      final compressionGate = Completer<DesktopCompressionResult>();
+      final gateway = _NativeCompressionGateway()
+        ..createSnapshot = DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-created',
+            'session_key': 'stored-created',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: '',
+          created: true,
+          method: 'session.create',
+        )
+        ..snapshot = DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-created',
+            'session_key': 'stored-created',
+            'messages': <Object>[],
+          },
+          requestedStoredSessionId: 'stored-created',
+          created: false,
+          method: 'session.resume',
+        )
+        ..compressionResult = _nativeCompressionResult()
+        ..nativeCompressionGate = compressionGate;
+      final first = _chat(
+        'created-chat-compress',
+        gateway,
+        sessionId: 'mob-created-compress',
+        allowUnownedDesktopSnapshotForTesting: false,
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+      );
+      addTearDown(first.dispose);
+      first.markStoredSessionMissing();
+      expect(
+        await first.send(
+          fullText: 'primer turno',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.complete', const {'text': 'hecho'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(first.storedSessionId, 'stored-created');
+
+      final compression = first.compressDesktopSession();
+      while (gateway.compressSessionCalls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(first.desktopCompressionInFlight, isTrue);
+
+      // "Kill": a new process attaches the same chat by its stored id.
+      final reopened = _chat(
+        'created-chat-compress',
+        _SnapshotGateway(),
+        sessionId: 'stored-created',
+        logicalSessionId: 'stored-created',
+        compressionFenceStore: DesktopCompressionFenceStore(storage: storage),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'session': {'id': 'stored-created', 'message_count': 2},
+            }),
+            200,
+          ),
+        ),
+      );
+      addTearDown(reopened.dispose);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(storage.value, contains('"logical_session_id":"stored-created"'));
+      expect(reopened.desktopCompressionInFlight, isTrue);
+      expect(reopened.sessionActivity.compacting, isTrue);
+      expect(reopened.desktopCompactionStartedAt, isNotNull);
+
+      compressionGate.complete(gateway.compressionResult);
+      await compression;
+    },
+  );
+
+  test(
     'REGRESSION_COMP_KILL_COMPACTED an in-place settle reports before -> after',
     () async {
       final storage = _MemoryCompressionFenceStorage();

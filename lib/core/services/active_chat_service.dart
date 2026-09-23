@@ -12663,14 +12663,14 @@ class ActiveChat {
       operationIdentity: Object(),
       initialState: initial,
       requestedDurableId: initial.storedSessionId ?? serverSessionId,
-      expectedRootId: logicalSessionId,
+      expectedRootId: _durableLogicalSessionId,
       scope: DesktopCompressionAuthorityScope(
         connectionId: connection.id,
         profile: Session.profileOwner(
           _sessionProfileOwner,
           fallback: _storedSessionProfile,
         ),
-        logicalSessionId: logicalSessionId,
+        logicalSessionId: _durableLogicalSessionId,
       ),
     );
   }
@@ -13447,8 +13447,18 @@ class ActiveChat {
           _sessionProfileOwner,
           fallback: _storedSessionProfile,
         ),
-        logicalSessionId: logicalSessionId,
+        logicalSessionId: _durableLogicalSessionId,
       );
+
+  /// The lineage root every later surface knows this chat by. A chat created
+  /// in this process was constructed with its provisional draft id (`mob-…`);
+  /// once Hermes created the durable session, that stored id is the root a
+  /// relaunched app reopens it by (Conversaciones, Home, notifications), so
+  /// durable state such as the compression fence must be keyed by it.
+  String get _durableLogicalSessionId =>
+      logicalSessionId == sessionId && _createdDraftSessionId != null
+      ? _createdDraftSessionId!
+      : logicalSessionId;
 
   Future<void> _restoreDurableCompressionFence() async {
     final lookup = await _compressionFenceStore.lookup(
