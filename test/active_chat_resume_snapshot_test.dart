@@ -3893,10 +3893,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 60));
       expect(chat.desktopRestoredCompressionRunning, isFalse);
       expect(chat.sessionActivity.compacting, isFalse);
-      final outcome = chat.takeRestoredCompressionOutcome();
-      expect(outcome?.changed, isFalse);
-      expect(outcome?.messagesBefore, 38);
-      expect(chat.takeRestoredCompressionOutcome(), isNull);
+      // Only THAT it finished is known after a restart: one signal, no facts.
+      expect(chat.takeRestoredCompressionFinished(), isTrue);
+      expect(chat.takeRestoredCompressionFinished(), isFalse);
       expect(
         await CompressionRestoreStore(storage: storage).lookup(
           connectionId: 'restore-positive',
@@ -3925,7 +3924,7 @@ void main() {
         expect(chat.desktopRestoredCompressionRunning, isFalse);
         expect(chat.sessionActivity.compacting, isFalse);
         expect(chat.desktopCompactionStartedAt, isNull);
-        expect(chat.takeRestoredCompressionOutcome(), isNull);
+        expect(chat.takeRestoredCompressionFinished(), isFalse);
         expect(
           await CompressionRestoreStore(storage: storage).lookup(
             connectionId: 'restore-none-$state',

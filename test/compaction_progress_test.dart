@@ -224,22 +224,6 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       expect(tracker.current, isNull);
     });
-
-    testWidgets('a restored outcome gets one result frame', (tester) async {
-      final tracker = CompactionTracker(clock: () => _t0);
-      addTearDown(tracker.dispose);
-      tracker.reportResult(messagesBefore: 35, messagesAfter: 31);
-      expect(tracker.current, isNull, reason: 'no start, nothing to show');
-      tracker.reportResult(
-        messagesBefore: 35,
-        messagesAfter: 31,
-        startedAt: _t0,
-      );
-      expect(tracker.current?.isFinished, isTrue);
-      expect(tracker.current?.messagesAfter, 31);
-      await tester.pump(const Duration(seconds: 4));
-      expect(tracker.current, isNull);
-    });
   });
 
   group('CompactionDock pill', () {

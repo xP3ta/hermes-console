@@ -4601,22 +4601,32 @@ class _ChatScreenState extends State<ChatScreen>
       }
       settled = true;
     }
+    // The live reply's outcome, independent of the transcript projection
+    // (a refresh racing a fast no-op used to drop it): the pill morphs to
+    // it right away.
+    final live = _chat.takeLiveCompressionOutcome();
+    if (live != null) {
+      _compaction.reportResult(
+        tokensBefore: live.tokensBefore,
+        tokensAfter: live.noop ? null : live.tokensAfter,
+        messagesBefore: live.messagesBefore,
+        messagesAfter: live.noop ? null : live.messagesAfter,
+        noop: live.noop,
+      );
+      _compactionSettledEarly = serviceActive;
+      settled = true;
+    }
     if (settled) _consumeCompressionInvocation();
     _announceRestoredCompressionOutcome();
   }
 
-  /// A restored compression the gateway now reports finished: the same pill
-  /// shows its outcome once (a refused, aborted or no-op attempt leaves the
-  /// stored transcript unchanged and reads as "nothing to compact").
+  /// A restored compression the gateway now reports finished: the pill that
+  /// was showing it turns into "Compactado · <time>". Only THAT it finished
+  /// is known after a restart, so no facts and never "nothing to compact";
+  /// with no pill showing, nothing new appears.
   void _announceRestoredCompressionOutcome() {
-    final outcome = _chat.takeRestoredCompressionOutcome();
-    if (outcome == null) return;
-    _compaction.reportResult(
-      messagesBefore: outcome.messagesBefore,
-      messagesAfter: outcome.changed ? outcome.messagesAfter : null,
-      noop: !outcome.changed,
-      startedAt: DateTime.now(),
-    );
+    if (!_chat.takeRestoredCompressionFinished()) return;
+    if (_compaction.running) _compaction.reportResult();
   }
 
   /// El resultado del RPC `session.compress` cierra la barra al instante: con

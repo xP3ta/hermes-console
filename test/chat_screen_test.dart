@@ -5746,22 +5746,20 @@ void main() {
       expect(field.readOnly, isFalse);
       expect(field.enabled, isNot(false));
 
-      // The server finishes (refused / no-op: transcript unchanged): the same
-      // pill shows the outcome once, then goes away.
+      // The server finishes. After a restart the client only knows THAT it
+      // finished, so the same pill shows one honest outcome, "Compactado ·
+      // <time>", and never a guessed "Nada que compactar" (device, 9300: a
+      // second, false "Nada que compactar" pill followed the first).
       gateway.state = 'done';
-      for (var i = 0; i < 40; i++) {
-        await tester.pump(const Duration(milliseconds: 200));
-        if (find.text('Nada que compactar · 35 mensajes').evaluate().isNotEmpty) {
-          break;
-        }
+      var sawDone = false;
+      for (var i = 0; i < 80; i++) {
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(find.textContaining('Nada que compactar'), findsNothing);
+        if (_dockText('Compactado · ').evaluate().isNotEmpty) sawDone = true;
       }
-      expect(find.text('Nada que compactar · 35 mensajes'), findsOneWidget);
+      expect(sawDone, isTrue);
       expect(chat.desktopRestoredCompressionRunning, isFalse);
       expect(chat.sessionActivity.compacting, isFalse);
-      await tester.pump(const Duration(seconds: 4));
-      await tester.pump(const Duration(milliseconds: 400));
-      // Let the pill's fade-out finish.
-      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -5788,26 +5786,6 @@ void main() {
         (pill.center.dx - screen.width / 2).abs(),
         lessThan(2),
       );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'REGRESSION_COMP_RESTORED_COMPACTED a restored compression that shrank the '
-    'transcript reports before -> after in the pill',
-    (tester) async {
-      final (_, gateway) = await pumpRestoredCompression(
-        tester,
-        connectionId: 'conn-restored-compacted',
-        restMessageCount: 31,
-      );
-      gateway.state = 'done';
-      for (var i = 0; i < 40; i++) {
-        await tester.pump(const Duration(milliseconds: 200));
-        if (find.textContaining('35 → 31').evaluate().isNotEmpty) break;
-      }
-      expect(find.textContaining('Compactado · 35 → 31 mensajes'), findsOneWidget);
-      await tester.pump(const Duration(seconds: 4));
       expect(tester.takeException(), isNull);
     },
   );
@@ -12608,6 +12586,68 @@ void main() {
     expect(find.text('La compresión de contexto terminó.'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'REGRESSION_COMP_LIVE_NOOP a fast no-progress reply morphs the pill to '
+    '"Nada que compactar" at once, even after a concurrent refresh',
+    (tester) async {
+      // Device, 9300: `Compression made no progress` answers in ms; the pill
+      // stayed "Compactando 0:03" for seconds and left with no outcome,
+      // because a refresh triggered by the start of the compaction made the
+      // reply look stale and its outcome was dropped.
+      final gate = Completer<DesktopCompressionResult>();
+      final gateway = _UiNativeCompressionGateway(
+        _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
+      )..nativeCompressionGate = gate;
+      final chat = await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'assistant', 'content': 'transcript compacto'},
+        ],
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-live-noop'),
+        messagesLoaded: true,
+        acquireDesktopRuntimeBeforeMount: true,
+        storedMessageLoader: (_, _) async => const [
+          {'role': 'assistant', 'content': 'transcript compacto'},
+        ],
+      );
+      await tester.enterText(find.byType(TextField), '/compress');
+      await submitComposerFromKeyboard(tester);
+      await gateway.compressionEntered.future;
+      await chat.loadMessages();
+      gate.complete(
+        DesktopCompressionResult.fromJson({
+          'status': 'compressed',
+          'removed': 0,
+          'before_messages': 31,
+          'after_messages': 31,
+          'before_tokens': 26100,
+          // Re-estimated after the attempt: the no-op is in the summary.
+          'after_tokens': 26140,
+          'summary': {
+            'noop': true,
+            'aborted': false,
+            'headline': 'No changes from compression: 31 messages',
+            'token_line': 'Approx request size: ~26,100 → ~26,140 tokens',
+          },
+          'info': {'stored_session_id': 'sess-test'},
+          'messages': [
+            {'role': 'assistant', 'content': 'transcript compacto'},
+          ],
+        }),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(_dockText('Nada que compactar · 31 mensajes'), findsOneWidget);
+      expect(find.textContaining('Compactando'), findsNothing);
+      expect(chat.desktopManualCompressionInFlight, isFalse);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'COMP2 no-progress is accepted, neutral, terminal, and unblocks composer',

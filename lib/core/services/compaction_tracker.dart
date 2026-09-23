@@ -114,20 +114,10 @@ class CompactionTracker extends ChangeNotifier {
     int? messagesBefore,
     int? messagesAfter,
     bool noop = false,
-    DateTime? startedAt,
   }) {
     if (_disposed) return;
-    var current = _current;
-    if (current != null && current.isFinished) return;
-    if (current == null) {
-      // An outcome learned after the fact (restored compression): the pill
-      // still gets its one result frame.
-      if (startedAt == null) return;
-      current = _current = CompactionProgress(
-        startedAt: startedAt,
-        manual: true,
-      );
-    }
+    final current = _current;
+    if (current == null || current.isFinished) return;
     _settleTimer?.cancel();
     _settleTimer = null;
     _awaitingResult = false;

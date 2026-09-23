@@ -13409,24 +13409,14 @@ class ActiveChat {
   }
 
   /// A restored compression the gateway now reports finished: reload the
-  /// transcript and hand the chat its outcome once (the pill shows it).
+  /// transcript and tell the chat once THAT it finished. After a restart
+  /// nothing else is known (the replay ring's `ready` carries no outcome),
+  /// so no before -> after facts and never a guessed "nothing to compact".
   Future<void> _announceRestoredCompressionFinished(
     CompressionRestoreRecord record,
   ) async {
-    final before = _desktopCompactionMessagesBefore;
-    int? after;
-    try {
-      final snapshot = await _api
-          .getSession(record.storedSessionId, profile: record.profile)
-          .timeout(_compressionRestoreRpcBudget);
-      after = snapshot.messageCount;
-    } catch (_) {}
     if (_disposed) return;
-    _restoredCompressionOutcome = (
-      changed: before != null && after != null && after < before,
-      messagesBefore: before,
-      messagesAfter: after,
-    );
+    _restoredCompressionFinished = true;
     _emit(ActiveChatEvent.sessionInfo);
     if (!isStreaming) {
       try {
@@ -13435,15 +13425,62 @@ class ActiveChat {
     }
   }
 
-  ({bool changed, int? messagesBefore, int? messagesAfter})?
-  _restoredCompressionOutcome;
+  bool _restoredCompressionFinished = false;
 
-  /// Outcome of a restored compression, handed to the chat once.
-  ({bool changed, int? messagesBefore, int? messagesAfter})?
-  takeRestoredCompressionOutcome() {
-    final outcome = _restoredCompressionOutcome;
-    _restoredCompressionOutcome = null;
+  /// A restored compression finished; handed to the chat once.
+  bool takeRestoredCompressionFinished() {
+    final finished = _restoredCompressionFinished;
+    _restoredCompressionFinished = false;
+    return finished;
+  }
+
+  ({
+    bool noop,
+    int? messagesBefore,
+    int? messagesAfter,
+    int? tokensBefore,
+    int? tokensAfter,
+  })?
+  _liveCompressionOutcome;
+
+  /// The live `/compress` reply's outcome, handed to the chat once. It is
+  /// kept apart from the transcript projection: a refresh racing a fast
+  /// reply must not drop what the user is told (Hermes Desktop's toast is
+  /// likewise independent of the transcript).
+  ({
+    bool noop,
+    int? messagesBefore,
+    int? messagesAfter,
+    int? tokensBefore,
+    int? tokensAfter,
+  })?
+  takeLiveCompressionOutcome() {
+    final outcome = _liveCompressionOutcome;
+    _liveCompressionOutcome = null;
     return outcome;
+  }
+
+  void _noteLiveCompressionOutcome(DesktopCompressionResult compression) {
+    final status = compression.outcome;
+    if (status != DesktopCompressionStatus.compressed &&
+        status != DesktopCompressionStatus.noOp) {
+      return;
+    }
+    // The summary's `noop` is the server's own verdict ("No changes from
+    // compression"); the token estimate may move while nothing changed.
+    final noop =
+        status == DesktopCompressionStatus.noOp ||
+        (compression.summary?.noop == true &&
+            compression.summary?.aborted != true &&
+            compression.removed == 0 &&
+            compression.beforeMessages == compression.afterMessages);
+    _liveCompressionOutcome = (
+      noop: noop,
+      messagesBefore: compression.beforeMessages,
+      messagesAfter: compression.afterMessages,
+      tokensBefore: compression.beforeTokens,
+      tokensAfter: compression.afterTokens,
+    );
   }
 
   /// This process lost the live stream of its own `/compress` (reply lost,
@@ -13755,6 +13792,12 @@ class ActiveChat {
       );
       final outcome = dispatch.evidence.outcome;
       final compression = dispatch.evidence.nativeResult;
+      if (outcome.resolvesAttempt &&
+          compression != null &&
+          outcome != DesktopCompressionOutcome.ownershipLost &&
+          _desktopRuntimeSessionId == runtimeId) {
+        _noteLiveCompressionOutcome(compression);
+      }
       if (outcome.resolvesAttempt) {
         await _clearCompressionRestoreRecord(
           storedSessionId: receipt.storedSessionId,
