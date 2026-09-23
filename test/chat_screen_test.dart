@@ -5696,10 +5696,27 @@ void main() {
   testWidgets('persisted android-share missing remotely surfaces load error', (
     tester,
   ) async {
+    // The row itself still answers: only the transcript read 404s, so this is
+    // a load error with retry, not a verifiably deleted session.
     final chat = await pumpChat(
       tester,
       desktopGateway: _UiRewindGateway(),
       connection: _remoteConn('conn-android-share-missing'),
+      api: ApiClient(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'k',
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/api/sessions/stored-android-share') {
+            return http.Response(
+              jsonEncode({
+                'session': {'id': 'stored-android-share', 'message_count': 1},
+              }),
+              200,
+            );
+          }
+          return http.Response('not found', 404);
+        }),
+      ),
       session: Session(
         id: 'stored-android-share',
         title: 'Compartido persistido',
