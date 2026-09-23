@@ -489,10 +489,15 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
   final rawDisplayKind = message['display_kind']?.toString().trim() ?? '';
   if (rawDisplayKind == 'hidden') return null;
 
-  final rawContent =
-      desktopSessionDisplayText(message['content']) ??
-      desktopSessionDisplayText(message['text']) ??
-      '';
+  // Display reads project compaction carriers into `display_content` and
+  // keep the model-facing text ("[PRIOR CONTEXT — …]") in `content`; Hermes
+  // Desktop renders the projection whenever the server sends one.
+  final displayContent = message['display_content'];
+  final rawContent = displayContent != null
+      ? desktopSessionDisplayText(displayContent) ?? ''
+      : desktopSessionDisplayText(message['content']) ??
+            desktopSessionDisplayText(message['text']) ??
+            '';
   var content = rawContent;
   if (role == 'assistant') {
     if (rawContent.trim().isEmpty) {

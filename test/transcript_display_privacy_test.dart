@@ -9,6 +9,34 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  group('normalizeTranscriptMessageForDisplay compaction projection', () {
+    test('REGRESSION_COMPACTION_DISPLAY_CONTENT renders the server display '
+        'projection, never the model-facing carrier text', () {
+      // Real row after an in-place compaction (GET .../messages keeps the
+      // physical text in `content` and adds `display_content`, which Hermes
+      // Desktop renders; hydration.ts prefers it whenever present).
+      final normalized = normalizeTranscriptMessageForDisplay(const {
+        'id': 409786,
+        'role': 'assistant',
+        'content':
+            '[PRIOR CONTEXT — for reference only; not a new message]\n'
+            'El ajedrez nació en la India.',
+        'display_content': 'El ajedrez nació en la India.',
+      });
+      expect(normalized?['content'], 'El ajedrez nació en la India.');
+      expect(normalized?['id'], 409786);
+
+      // No projection: the stored content is still what is shown.
+      expect(
+        normalizeTranscriptMessageForDisplay(const {
+          'role': 'assistant',
+          'content': 'Respuesta normal',
+        })?['content'],
+        'Respuesta normal',
+      );
+    });
+  });
+
   group('normalizeTranscriptMessageForDisplay privacy boundary', () {
     test(
       'drops missing invalid and explicitly private roles or classifiers',
@@ -107,7 +135,10 @@ void main() {
         ],
       });
       expect(structured, {'role': 'assistant', 'content': 'Respuesta.'});
-      expect(structured.toString(), isNot(contains('PRIVATE_STRUCTURED_DETAILS')));
+      expect(
+        structured.toString(),
+        isNot(contains('PRIVATE_STRUCTURED_DETAILS')),
+      );
     });
 
     test('routes Codex commentary and analysis only to reasoning', () {
