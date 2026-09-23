@@ -36,7 +36,7 @@ Widget _app(
 
 Widget _subtitle() => Builder(
   builder: (context) => Text(
-    'Completado · 1:12',
+    'Pensó durante 1:12',
     key: const ValueKey('fake-summary'),
     style: TextStyle(
       fontSize: 11.5,

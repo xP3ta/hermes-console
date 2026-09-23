@@ -1062,7 +1062,6 @@
   "cevTraceFailed": "Error · view details",
   "cevTraceRecovered": "Completed · retried (view details)",
   "cevTraceStopped": "Stopped",
-  "cevTraceCompleted": "Completed",
   "cevTraceCompletedActions": "Completed · {count, plural, =1{1 action} other{{count} actions}}",
   "@cevTraceCompletedActions": {
     "placeholders": {
@@ -5906,8 +5905,6 @@
   "liveStepFailed": "failed",
   "liveStepDone": "done",
   "liveStepRunning": "running",
-  "cevTraceCompletedDuration": "Completed · {duration}",
-  "@cevTraceCompletedDuration": {"placeholders": {"duration": {}}},
   "liveHeaderWorking": "Working…",
   "liveCompactionDone": "Compacted",
   "liveCompactionMessagesChange": "{before} → {after} messages",
@@ -5923,5 +5920,9 @@
   "liveCompactionNothing": "Nothing to compress",
   "liveCompactionMessagesCount": "{count, plural, =1{1 message} other{{count} messages}}",
   "@liveCompactionMessagesCount": {"placeholders": {"count": {"type": "int"}}},
-  "chaSessionGone": "This conversation no longer exists in Hermes."
+  "chaSessionGone": "This conversation no longer exists in Hermes.",
+  "chatActivityThought": "Thought",
+  "chatActivityThoughtBriefly": "Thought briefly",
+  "chatActivityThoughtForDuration": "Thought for {duration}",
+  "@chatActivityThoughtForDuration": {"placeholders": {"duration": {}}}
 }

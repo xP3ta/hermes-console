@@ -1621,7 +1621,6 @@
   "cevTraceFailed": "Error · ver detalles",
   "cevTraceRecovered": "Completado · se reintentó (ver detalles)",
   "cevTraceStopped": "Detenido",
-  "cevTraceCompleted": "Completado",
   "cevTraceCompletedActions": "Completado · {count, plural, =1{1 acción} other{{count} acciones}}",
   "@cevTraceCompletedActions": {
     "placeholders": {
@@ -7116,8 +7115,6 @@
   "liveStepFailed": "falló",
   "liveStepDone": "hecho",
   "liveStepRunning": "en curso",
-  "cevTraceCompletedDuration": "Completado · {duration}",
-  "@cevTraceCompletedDuration": {"placeholders": {"duration": {}}},
   "liveHeaderWorking": "Trabajando…",
   "liveCompactionDone": "Compactado",
   "liveCompactionMessagesChange": "{before} → {after} mensajes",
@@ -7133,5 +7130,9 @@
   "liveCompactionNothing": "Nada que compactar",
   "liveCompactionMessagesCount": "{count, plural, =1{1 mensaje} other{{count} mensajes}}",
   "@liveCompactionMessagesCount": {"placeholders": {"count": {"type": "int"}}},
-  "chaSessionGone": "Esta conversación ya no existe en Hermes."
+  "chaSessionGone": "Esta conversación ya no existe en Hermes.",
+  "chatActivityThought": "Pensó",
+  "chatActivityThoughtBriefly": "Pensó un momento",
+  "chatActivityThoughtForDuration": "Pensó durante {duration}",
+  "@chatActivityThoughtForDuration": {"placeholders": {"duration": {}}}
 }

@@ -383,7 +383,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Completed'), findsOneWidget);
+    // Hermes Desktop: a finished block with no measured time says "Thought".
+    expect(find.text('Thought'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -441,10 +442,12 @@ void main() {
       ),
     );
 
-    expect(find.text('Razonamiento'), findsOneWidget);
+    // Reopened from history: Hermes Desktop's plain «Thought» («Pensó»).
+    expect(find.text('Pensó'), findsOneWidget);
+    expect(find.text('Razonamiento'), findsNothing);
     expect(find.textContaining('Primero inspecciono'), findsNothing);
 
-    await tester.tap(find.text('Razonamiento'));
+    await tester.tap(find.text('Pensó'));
     await tester.pumpAndSettle();
     expect(find.text('Primero inspecciono. Luego verifico.'), findsOneWidget);
   });
@@ -516,14 +519,14 @@ void main() {
     expect(find.byIcon(Icons.expand_more), findsNothing);
     expect(tester.getSize(find.byType(ThinkingTraceCard)).height, 0);
 
-    // Terminado: la entrada plegada «Completed ⌄» y, al abrirla, las mismas
-    // filas que el panel en vivo («terminal · date  0.7 s»).
+    // Terminado: la entrada plegada «Thought ⌄» (Hermes Desktop) y, al
+    // abrirla, las mismas filas que el panel en vivo.
     await pump(active: false);
     await tester.pump();
-    expect(find.text('Completed'), findsOneWidget);
+    expect(find.text('Thought'), findsOneWidget);
     expect(find.byIcon(Icons.expand_more), findsOneWidget);
     expect(find.byKey(const ValueKey('activity-done-section')), findsNothing);
-    await tester.tap(find.text('Completed'));
+    await tester.tap(find.text('Thought'));
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.byKey(const ValueKey('activity-done-title')), findsOneWidget);
     expect(find.text('terminal · date', findRichText: true), findsOneWidget);
@@ -560,15 +563,23 @@ void main() {
         kind: ChatTraceEventKind.reasoning,
         preview: 'pienso',
       );
-      // Herramientas + razonamiento: cuenta el trabajo, no «Razonamiento».
+      // Hermes Desktop has ONE label, with or without tools: watched live
+      // it reports the measured time (`formatElapsed`: 72 s -> 1:12).
       await pump([thought, tool], duration: const Duration(seconds: 72));
       await tester.pump();
-      expect(find.text('Completed · 1:12'), findsOneWidget);
-      // Sin duración conocida: solo «Completed».
+      expect(find.text('Thought for 1:12'), findsOneWidget);
+      // Reopened from history (no measured time): «Thought», never
+      // «Completed» or «Reasoning».
       await pump([thought, tool]);
       await tester.pump();
-      expect(find.text('Completed'), findsOneWidget);
-      // Solo razonar: «Thought for 4s».
+      expect(find.text('Thought'), findsOneWidget);
+      await pump([thought]);
+      await tester.pump();
+      expect(find.text('Thought'), findsOneWidget);
+      // Under a second: «Thought briefly».
+      await pump([thought], duration: const Duration(milliseconds: 400));
+      await tester.pump();
+      expect(find.text('Thought briefly'), findsOneWidget);
       await pump([thought], duration: const Duration(seconds: 4));
       await tester.pump();
       expect(find.text('Thought for 4s'), findsOneWidget);
@@ -639,10 +650,10 @@ void main() {
     expect(find.byKey(const ValueKey('thinking-trace-state-icon')), findsNothing);
     expect(find.byKey(const ValueKey('thinking-shimmer')), findsNothing);
 
-    // Terminado: «Completed · 1:12 ⌄» con el mismo tono del resto de la línea.
+    // Terminado: «Thought for 1:12 ⌄» con el mismo tono del resto de la línea.
     await pump(active: false);
     await tester.pump();
-    final label = tester.widget<Text>(find.text('Completed · 1:12'));
+    final label = tester.widget<Text>(find.text('Thought for 1:12'));
     expect(label.style!.color, colors.textSecondary);
     expect(label.style!.fontSize, 11.5);
     final chevron = tester.widget<Icon>(find.byIcon(Icons.expand_more));

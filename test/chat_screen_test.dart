@@ -16526,10 +16526,10 @@ void main() {
       ],
     );
 
-    expect(find.text('Razonamiento'), findsOneWidget);
+    expect(find.text('Pensó'), findsOneWidget);
     expect(find.textContaining('RAZONAMIENTO_DURABLE_VISIBLE'), findsNothing);
 
-    await tester.tap(find.text('Razonamiento'));
+    await tester.tap(find.text('Pensó'));
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.textContaining('RAZONAMIENTO_DURABLE_VISIBLE'), findsOneWidget);
@@ -16573,7 +16573,7 @@ void main() {
       expect(companion.animate, isFalse);
       // La mascota va suelta (sin disco ni anillo) y el resumen apagado del
       // turno cuelga bajo el título.
-      expect(find.textContaining('Completado'), findsOneWidget);
+      expect(find.textContaining('Pensó'), findsOneWidget);
       expect(find.byKey(const ValueKey('assistant-avatar-ring')), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -16661,7 +16661,7 @@ void main() {
       expect(finishedCompanion.mood, HermesSparkMood.success);
       expect(finishedCompanion.animate, isFalse);
       // Terminado: la línea bajo el título es el desplegable apagado del turno.
-      expect(find.textContaining('Completado'), findsOneWidget);
+      expect(find.textContaining('Pensó'), findsOneWidget);
       expect(
         tester.getRect(find.text('Hermes Console')).left,
         closeTo(activeHeader.left, 0.5),
@@ -16746,7 +16746,7 @@ void main() {
       find.byKey(const ValueKey('assistant-avatar-initial')),
       findsOneWidget,
     );
-    expect(find.textContaining('Completado'), findsOneWidget);
+    expect(find.textContaining('Pensó'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -16831,7 +16831,7 @@ void main() {
       ],
     );
 
-    expect(find.text('Razonamiento'), findsOneWidget);
+    expect(find.text('Pensó'), findsOneWidget);
     final copyTarget = find
         .ancestor(
           of: find.byIcon(Icons.copy_rounded).first,
@@ -16884,13 +16884,14 @@ void main() {
     expect(find.byType(ThinkingTraceCard), findsOneWidget);
     expect(find.byType(ReasoningBlock), findsNothing);
     expect(find.text('Respuesta terminada.'), findsOneWidget);
-    expect(find.text('Razonamiento'), findsOneWidget);
+    // Watched live: Hermes Desktop's «Thought for …» / «Thought briefly».
+    expect(find.textContaining('Pensó'), findsOneWidget);
     expect(
       find.textContaining('RAZONAMIENTO_DEL_TURNO_TERMINADO'),
       findsNothing,
     );
 
-    await tester.tap(find.text('Razonamiento'));
+    await tester.tap(find.textContaining('Pensó'));
     await tester.pump(const Duration(milliseconds: 250));
     expect(
       find.textContaining('RAZONAMIENTO_DEL_TURNO_TERMINADO'),
@@ -17556,7 +17557,7 @@ void main() {
     };
 
     testWidgets(
-      'traza + respuesta del mismo turno: una cabecera y un solo «Completado · 1:12»',
+      'traza + respuesta del mismo turno: una cabecera y un solo «Pensó durante 1:12»',
       (tester) async {
         await pumpChat(
           tester,
@@ -17573,7 +17574,7 @@ void main() {
           findsOneWidget,
         );
         expect(find.byIcon(Icons.expand_more), findsOneWidget);
-        expect(find.text('Completado · 1:12'), findsOneWidget);
+        expect(find.text('Pensó durante 1:12'), findsOneWidget);
         // El desplegable trae los pasos de las DOS filas.
         await tester.tap(find.byIcon(Icons.expand_more));
         await tester.pump(const Duration(milliseconds: 300));
@@ -17646,7 +17647,7 @@ void main() {
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
-      expect(find.text('Completado · 0:40'), findsOneWidget);
+      expect(find.text('Pensó durante 40s'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
 
       await pumpChat(
@@ -17680,7 +17681,7 @@ void main() {
       );
       // La traza queda como bloque propio (dos cabeceras: traza + parada).
       expect(find.text('terminal · sleep', findRichText: true), findsNothing);
-      expect(find.text('Completado · 0:40'), findsOneWidget);
+      expect(find.text('Pensó durante 40s'), findsOneWidget);
       expect(find.textContaining('RESPUESTA_PARADA'), findsOneWidget);
     });
 
@@ -17709,7 +17710,7 @@ void main() {
       gateway.emit('message.delta', const {'text': 'PUBLIC_STREAMING_TEXT'});
       await tester.pump(const Duration(milliseconds: 300));
       // El turno anterior conserva su bloque propio; el vivo no absorbe nada.
-      expect(find.text('Completado · 0:40'), findsOneWidget);
+      expect(find.text('Pensó durante 40s'), findsOneWidget);
       expect(find.textContaining('PUBLIC_STREAMING_TEXT'), findsOneWidget);
       gateway.emit('message.complete', const {'text': 'PUBLIC_STREAMING_TEXT'});
       await tester.pump();
@@ -17742,7 +17743,7 @@ void main() {
       // Solo herramientas puente: nada que enseñar, así que ni burbuja ni
       // cabecera vacía «Hermes / Completado».
       expect(find.byKey(const ValueKey('assistant-header-name')), findsNothing);
-      expect(find.textContaining('Completado'), findsNothing);
+      expect(find.textContaining('Pensó'), findsNothing);
       expect(find.text('PUBLIC_AFTER_COMPACTION'), findsOneWidget);
       expect(tester.takeException(), isNull);
 
@@ -17936,7 +17937,7 @@ void main() {
   );
 
   testWidgets(
-    'historial reabierto sin ruido: sin herramientas puente, con Tareas, detalle y «Completado · 1:12»',
+    'historial reabierto sin ruido: sin herramientas puente, con Tareas, detalle y «Pensó durante 1:12»',
     (tester) async {
       final gateway = _TodoResumeGateway(
         AgentTaskList.tryParse(const {
@@ -17989,7 +17990,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       // El bloque plegado dice cómo acabó y cuánto tardó, no «Razonamiento».
-      expect(find.text('Completado · 1:12'), findsOneWidget);
+      expect(find.text('Pensó durante 1:12'), findsOneWidget);
       expect(find.text('Razonamiento'), findsNothing);
       await tester.tap(find.byIcon(Icons.expand_more).first);
       await tester.pump(const Duration(milliseconds: 300));

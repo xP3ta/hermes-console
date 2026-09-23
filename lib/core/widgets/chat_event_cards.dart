@@ -12,7 +12,6 @@ import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
-import 'activity_pill.dart' show formatTurnElapsed;
 import 'activity_sections.dart';
 import 'agent_task_widgets.dart';
 import 'hermes_premium_ui.dart';
@@ -1655,6 +1654,14 @@ class _TraceStateIconState extends State<_TraceStateIcon>
   }
 }
 
+/// Hermes Desktop's `formatElapsed` (components/chat/activity-timer.ts):
+/// "12s" under a minute, "m:ss" from there.
+String formatThoughtDuration(Duration duration) {
+  final seconds = duration.inSeconds;
+  if (seconds < 60) return '${seconds}s';
+  return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+}
+
 class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
   /// null = expansión automática (expandido mientras hay una herramienta en
   /// curso, colapsado cuando todas terminan). Un toque del usuario fija un
@@ -1698,49 +1705,29 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         ChatTraceEventKind.skill => s.chatActivityRunningSkill,
       };
     }
-    if (_outcome == TraceOutcome.stopped) return s.cevTraceStopped;
-    // Con trabajo real (herramientas o tareas) el bloque dice cómo acabó y
-    // cuánto tardó; con solo razonamiento, cuánto pensó.
-    final didWork =
-        _visibleEvents.any(
-          (event) => event.kind != ChatTraceEventKind.reasoning,
-        ) ||
-        _ownedTasks != null;
-    if (didWork) {
-      switch (_outcome) {
-        case TraceOutcome.failed:
-          return s.cevTraceFailed;
-        case TraceOutcome.recovered:
-          return s.cevTraceRecovered;
-        case TraceOutcome.stopped:
-        case TraceOutcome.working:
-        case TraceOutcome.completed:
-          final seconds = widget.duration?.inSeconds ?? 0;
-          return seconds > 0
-              ? s.cevTraceCompletedDuration(
-                  formatTurnElapsed(Duration(seconds: seconds)),
-                )
-              : s.cevTraceCompleted;
-      }
-    }
-    if (widget.events.any(
-      (event) => event.kind == ChatTraceEventKind.reasoning,
-    )) {
-      final seconds = widget.duration?.inSeconds ?? 0;
-      return seconds > 0
-          ? s.chatActivityThoughtFor(seconds)
-          : s.chatActivityReasoning;
-    }
+    // Hermes Desktop has one label for a finished block, with or without
+    // tools (components/assistant-ui/thread/message-parts.tsx): watched live
+    // it reports the measured time ("Thought for 1:12", `formatElapsed`),
+    // under a second "Thought briefly", and reopened from history — where no
+    // time was measured — plain "Thought". Failed/recovered/stopped keep
+    // their own outcome.
     switch (_outcome) {
+      case TraceOutcome.stopped:
+        return s.cevTraceStopped;
       case TraceOutcome.failed:
         return s.cevTraceFailed;
       case TraceOutcome.recovered:
         return s.cevTraceRecovered;
-      case TraceOutcome.stopped:
-        return s.cevTraceStopped;
       case TraceOutcome.working:
       case TraceOutcome.completed:
-        return s.cevTraceCompleted;
+        final duration = widget.duration;
+        if (duration == null) return s.chatActivityThought;
+        if (duration < const Duration(seconds: 1)) {
+          return s.chatActivityThoughtBriefly;
+        }
+        return s.chatActivityThoughtForDuration(
+          formatThoughtDuration(duration),
+        );
     }
   }
 
