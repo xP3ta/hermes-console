@@ -21495,9 +21495,25 @@ class ActiveChat {
           identical(owner.delivery, queued.delivery) &&
           owner.state == _PreparedTurnOwnershipState.queued;
     });
-    if (_queueLease != QueueLease.parked && hasDurablePreparedOwner) {
+    // Plain-text queue entries (`_messageQueue`) have no per-item ownership
+    // record to check — they are local-only memory owned by this ActiveChat
+    // for the lifetime of the queue. Missing them here left a text-only queue
+    // parked forever after a Stop: nothing re-armed the lease, so the "EN
+    // COLA" strip stayed on screen and `_drainQueue` bailed out on every
+    // later attempt.
+    //
+    // Re-arming the lease is all a plain-text queue needs. Scheduling the
+    // drain from here as well would submit it on a turn that never earned
+    // terminal authority (an unlinked tool call, a stale REST read during
+    // compaction); that edge stays owned by `_commitTerminalSideEffectsOnce`,
+    // which only runs once the terminal is authoritative.
+    final hasQueuedPlainText = _messageQueue.isNotEmpty;
+    if (_queueLease != QueueLease.parked &&
+        (hasDurablePreparedOwner || hasQueuedPlainText)) {
       _queueLease = QueueLease.active;
-      _scheduleTerminalQueueDrainOnce(completingEpoch);
+      if (hasDurablePreparedOwner) {
+        _scheduleTerminalQueueDrainOnce(completingEpoch);
+      }
     }
     final hadVisibleTerminalText = assistantContent.trim().isNotEmpty;
     if (hadVisibleTerminalText) {

@@ -555,6 +555,54 @@ void main() {
     expect(gateway.submissions, ['turno vivo']);
   });
 
+  test(
+    'plain-text queue drains automatically once the live turn completes',
+    () async {
+      // Regression for the "EN COLA" badge sticking after a turn finished:
+      // the terminal drain gate only re-armed itself for prepared (attachment)
+      // turns with a durable owner record. A queue holding only plain text
+      // (`enqueue`, no attachments) has no such per-item ownership record, so
+      // the old condition never scheduled a drain and the queue strip stayed
+      // on screen until the user sent something else manually.
+      final gateway = _QueuedDrainGateway();
+      final chat = _chat('queue-drain-plaintext', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      expect(
+        await chat.send(
+          fullText: 'turno vivo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      // Queue while the turn is still live: `enqueue()` only auto-schedules
+      // an immediate drain when `!isStreaming`, so this reproduces the queue
+      // sitting untouched until the terminal callback fires.
+      expect(chat.isStreaming, isTrue);
+      expect(chat.enqueue('seguimiento en cola'), isTrue);
+      expect(chat.queuedEntries.map((entry) => entry.text), [
+        'seguimiento en cola',
+      ]);
+
+      gateway.controller.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-queue',
+          payload: {'text': 'turno vivo respondido'},
+        ),
+      );
+
+      for (var i = 0; i < 100 && gateway.queuedSubmissions.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(gateway.queuedSubmissions, ['seguimiento en cola']);
+      expect(chat.queuedEntries, isEmpty);
+    },
+  );
+
   test('prepared queue drain submits with queued transport intent', () async {
     final gateway = _QueuedDrainGateway();
     final chat = _chat('queue-prepared', gateway: gateway)
