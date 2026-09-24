@@ -18798,6 +18798,43 @@ void main() {
   );
 
   testWidgets(
+    'el borrador sobrevive a salir del chat sin enviar (#37)',
+    (tester) async {
+      // #37: escribir en el composer y navegar fuera sin enviar perdía el
+      // texto. El guardado va con debounce de 350ms y `dispose()` captura un
+      // último snapshot, así que la prueba sale del chat SIN esperar al
+      // debounce: es el caso real de quien escribe y se va enseguida.
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('draft-survives-exit'),
+      );
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      const borrador = 'un borrador largo\ncon varias lineas\nsin enviar';
+
+      await tester.enterText(find.byType(TextField), borrador);
+      await tester.pump();
+
+      // El debounce de guardado (350ms) NO se cumple: se sale antes, así el
+      // único que puede salvar el texto es el snapshot final de dispose().
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.pop();
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pumpAndSettle();
+
+      expect(
+        (await screen.draftStoreOverride!.load(
+          screen.connection.id,
+          screen.session.id,
+          profile: 'default',
+        )).text,
+        borrador,
+        reason: 'dispose() debe capturar el borrador al salir del chat',
+      );
+      expect(chat.messages, isEmpty, reason: 'nada se envió');
+    },
+  );
+
+  testWidgets(
     'el texto narrado antes de una herramienta sigue visible durante el turno',
     (tester) async {
       // Regresión del texto que desaparecía en pantalla: el servicio conserva

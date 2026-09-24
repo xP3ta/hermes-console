@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/scroll_behavior.dart';
-import 'package:hermes_android/core/widgets/diagnostic_bundle_tile.dart';
 
 /// Regresión de #48: los logs largos dentro de una hoja flotante no
 /// respondían al arrastre. `SelectableText` reclama el gesto vertical para
