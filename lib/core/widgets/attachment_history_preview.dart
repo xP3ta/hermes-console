@@ -209,44 +209,44 @@ class _AttachmentBytesPreviewScreenState
         child: FutureBuilder<Uint8List>(
           future: _bytes,
           builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  Text(strings.chaAttachmentPreviewLoading),
-                ],
-              ),
+            if (snapshot.connectionState != ConnectionState.done) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(strings.chaAttachmentPreviewLoading),
+                  ],
+                ),
+              );
+            }
+            final bytes = snapshot.data;
+            if (snapshot.hasError || bytes == null) {
+              return _PreviewUnavailable(
+                message: strings.chaAttachmentPreviewUnavailable,
+              );
+            }
+            return Column(
+              children: [
+                _AttachmentMetadataHeader(
+                  mimeType: widget.reference.mimeType,
+                  sizeLabel: widget.sizeLabel,
+                  digest: widget.reference.sha256Hex,
+                ),
+                Expanded(
+                  child: _isText
+                      ? _TextBytesPreview(bytes: bytes)
+                      : _isPdf(bytes)
+                      ? _PdfBytesPreview(
+                          reference: widget.reference,
+                          file: widget.file,
+                          fallbackBytes: bytes,
+                        )
+                      : _BinaryBytesPreview(bytes: bytes),
+                ),
+              ],
             );
-          }
-          final bytes = snapshot.data;
-          if (snapshot.hasError || bytes == null) {
-            return _PreviewUnavailable(
-              message: strings.chaAttachmentPreviewUnavailable,
-            );
-          }
-          return Column(
-            children: [
-              _AttachmentMetadataHeader(
-                mimeType: widget.reference.mimeType,
-                sizeLabel: widget.sizeLabel,
-                digest: widget.reference.sha256Hex,
-              ),
-              Expanded(
-                child: _isText
-                    ? _TextBytesPreview(bytes: bytes)
-                    : _isPdf(bytes)
-                    ? _PdfBytesPreview(
-                        reference: widget.reference,
-                        file: widget.file,
-                        fallbackBytes: bytes,
-                      )
-                    : _BinaryBytesPreview(bytes: bytes),
-              ),
-            ],
-          );
           },
         ),
       ),
@@ -312,13 +312,15 @@ class _TextBytesPreview extends StatelessWidget {
         ),
         child: Align(
           alignment: Alignment.topLeft,
-          child: SelectableText(
-            text,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              height: 1.5,
-              fontSize: 12.5,
-              color: colors.textPrimary,
+          child: SelectionArea(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                height: 1.5,
+                fontSize: 12.5,
+                color: colors.textPrimary,
+              ),
             ),
           ),
         ),
@@ -355,12 +357,12 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
 
   final Map<int, Future<_PdfPageResult>> _pages = {};
 
-  Future<_PdfPageResult> _renderPage(int page) => _pages.putIfAbsent(
-    page,
-    () async {
-      final locator = GeneratedMediaService.cacheLocator(widget.file);
-      final response = await _channel
-          .invokeMapMethod<String, dynamic>('renderPdfPage', {
+  Future<_PdfPageResult> _renderPage(int page) =>
+      _pages.putIfAbsent(page, () async {
+        final locator = GeneratedMediaService.cacheLocator(widget.file);
+        final response = await _channel.invokeMapMethod<String, dynamic>(
+          'renderPdfPage',
+          {
             'storageKey': widget.reference.storageKey,
             'page': page,
             'expectedSize': widget.reference.sizeBytes,
@@ -369,15 +371,15 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
               'generatedConnectionKey': locator.connectionKey,
               'generatedFileKey': locator.fileKey,
             },
-          });
-      final png = response?['pngBytes'];
-      final count = (response?['pageCount'] as num?)?.toInt();
-      if (png is! Uint8List || png.isEmpty || count == null || count <= 0) {
-        throw const FormatException('invalid native PDF preview response');
-      }
-      return _PdfPageResult(pngBytes: png, pageCount: count);
-    },
-  );
+          },
+        );
+        final png = response?['pngBytes'];
+        final count = (response?['pageCount'] as num?)?.toInt();
+        if (png is! Uint8List || png.isEmpty || count == null || count <= 0) {
+          throw const FormatException('invalid native PDF preview response');
+        }
+        return _PdfPageResult(pngBytes: png, pageCount: count);
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -518,13 +520,15 @@ class _BinaryBytesPreview extends StatelessWidget {
               color: colors.surfaceVariant,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: SelectableText(
-              _hexExcerpt(bytes),
-              style: TextStyle(
-                fontFamily: 'monospace',
-                height: 1.45,
-                fontSize: 12,
-                color: colors.textSecondary,
+            child: SelectionArea(
+              child: Text(
+                _hexExcerpt(bytes),
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  height: 1.45,
+                  fontSize: 12,
+                  color: colors.textSecondary,
+                ),
               ),
             ),
           ),

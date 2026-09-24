@@ -154,10 +154,19 @@ void main() {
 
       expect(find.text(sample.content), findsOneWidget);
       expect(find.textContaining('Nunca los ejecuta'), findsOneWidget);
+      // La fuente se muestra como texto plano seleccionable (SelectionArea +
+      // Text): nunca como widget renderizado del lenguaje del artefacto.
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('generated-artifact-source-0')),
-          matching: find.byType(SelectableText),
+          matching: find.byType(SelectionArea),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('generated-artifact-source-0')),
+          matching: find.text(sample.content),
         ),
         findsOneWidget,
       );
