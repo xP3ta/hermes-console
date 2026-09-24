@@ -23372,7 +23372,6 @@ class ActiveChat {
     }
     if (!isStreaming) throw StateError('run_not_active');
 
-    final assistantCharsBeforeSteer = _visibleAssistantChars();
     final steerEpoch = _turnEpoch;
     final recovery = _recoveringDesktopTurnEpoch == steerEpoch
         ? _desktopTurnRecovery
@@ -23514,18 +23513,7 @@ class ActiveChat {
       '${result.usedLegacySteer ? 'legacy_steer' : 'redirected'}',
     );
     debugPrint('[active-chat] live correction accepted');
-    debugPrint(
-      '[active-chat] live correction visible assistant chars '
-      '$assistantCharsBeforeSteer -> ${_visibleAssistantChars()}',
-    );
     return result.disposition;
-  }
-
-  /// Longitud del texto del assistant visible en cabeza, o -1 si no hay burbuja.
-  /// Solo para diagnóstico: nunca se registra el contenido.
-  int _visibleAssistantChars() {
-    if (_messages.isEmpty || _messages.first['role'] != 'assistant') return -1;
-    return ((_messages.first['content'] as String?) ?? '').length;
   }
 
   /// Reconciliación durable al volver de 2º plano o recibir una invalidación
@@ -23741,16 +23729,7 @@ class ActiveChat {
       }
       _captureArtifactMaps(m, logicalSessionId: logicalSessionId);
       _commitRefreshedTailEvidence(normalized, graft);
-      final visibleCharsBefore = _visibleAssistantChars();
       _messages = nextMessages;
-      final visibleCharsAfter = _visibleAssistantChars();
-      if (visibleCharsBefore > 0 && visibleCharsAfter < visibleCharsBefore) {
-        debugPrint(
-          '[active-chat] resume reconciliation shortened visible assistant '
-          'text ($visibleCharsBefore -> $visibleCharsAfter chars, '
-          'replacesIncomplete=$replacesIncompleteProjection)',
-        );
-      }
       if (localSnapshot != null) {
         _recordLocalTranscriptCoverage(localSnapshot);
       } else {
