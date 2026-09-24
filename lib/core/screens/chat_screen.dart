@@ -222,7 +222,27 @@ const int _liveAssistantStableSplitMinChars = 1600;
 // Planes de troceado terminal indexados por CONTENIDO (no por identidad del
 // Map del mensaje): el servicio sustituye ese Map en cada flush y una
 // respuesta reemitida reutiliza el plan ya calculado.
-const int _assistantRenderPlanCacheLimit = 48;
+//
+// El troceado verifica cada frontera contra el render CommonMark del resto
+// del documento, así que su coste crece con el cuadrado de la longitud: una
+// respuesta de 63 KB tarda ~520 ms. Un historial largo tiene muchas más de 48
+// respuestas troceables, de modo que al recorrerlo los planes salían del LRU y
+// se recalculaban al reentrar en viewport — el tirón intermitente al hacer
+// scroll. Un plan son unas pocas cadenas que ya viven en el transcript, así
+// que el techo se sube a 512: barato en memoria frente a medio segundo de
+// frames perdidos.
+const int _assistantRenderPlanCacheLimit = 512;
+
+/// Compilada una vez: el troceado la evalúa por cada línea del documento.
+final RegExp _markdownFenceRe = RegExp(r'^ {0,3}(`{3,}|~{3,})(.*)$');
+
+/// Definición de referencia CommonMark (`[etiqueta]: destino`). Su presencia
+/// obliga a verificar cada frontera contra el documento entero, porque un
+/// tramo puede usar una etiqueta declarada mucho más abajo.
+final RegExp _linkReferenceDefinitionRe = RegExp(
+  r'^ {0,3}\[[^\]]+\]:',
+  multiLine: true,
+);
 
 @visibleForTesting
 bool isDeterministicRoomTaskWriteFailure(Object error) =>
@@ -382,7 +402,7 @@ List<String> splitAssistantMarkdownForViewport(
     final lineEnd = newline < 0 ? markdown.length : newline;
     final breakOffset = newline < 0 ? markdown.length : newline + 1;
     final line = markdown.substring(cursor, lineEnd);
-    final fence = RegExp(r'^ {0,3}(`{3,}|~{3,})(.*)$').firstMatch(line);
+    final fence = _markdownFenceRe.firstMatch(line);
     if (fence != null) {
       final marker = fence.group(1)!;
       final suffix = fence.group(2)!;
@@ -420,13 +440,46 @@ List<String> splitAssistantMarkdownForViewport(
     }
   });
 
+  // Comparar la firma del resto del documento (no la del documento entero)
+  // es lo que permite trocear textos cuyas definiciones de referencia viven
+  // al final: un tramo aislado no resuelve `[texto][ref]`, pero la cola que
+  // lo acompaña sí, y la concatenación reproduce el render original.
+  //
+  // Parsear el resto entero en cada tramo hace que el coste crezca con el
+  // cuadrado de la longitud (las colas suman ~10x el documento; medido: 520ms
+  // para 63KB). Cuando el documento no declara ninguna definición de
+  // referencia, ningún tramo puede depender de lo que viene después, así que
+  // basta comparar contra una ventana acotada: el tramo más el siguiente.
+  final hasLinkReferenceDefinitions = _linkReferenceDefinitionRe.hasMatch(
+    markdown,
+  );
+  int restEndFor(int start) => hasLinkReferenceDefinitions
+      ? markdown.length
+      : math.min(start + 2 * maxChars, markdown.length);
+
+  // La cola se memoiza por `start`: dentro de un tramo se prueban varios
+  // candidatos y todos comparten la misma, así que sin esto se reparsea la
+  // ventana una vez por candidato.
+  var restStart = -1;
+  String? restSignature;
+  String? signatureOfRest(int start) {
+    if (restStart != start) {
+      restStart = start;
+      restSignature = signature(markdown.substring(start, restEndFor(start)));
+    }
+    return restSignature;
+  }
+
   bool preservesRendering(int start, int end) {
-    final rest = markdown.substring(start);
-    final whole = signature(rest);
+    final whole = signatureOfRest(start);
     if (whole == null) return false;
     final left = signature(markdown.substring(start, end));
-    final right = signature(markdown.substring(end));
-    return left != null && right != null && '$left$right' == whole;
+    if (left == null || !whole.startsWith(left)) {
+      // Sin prefijo común no hay frontera válida: ahorra parsear la derecha.
+      return false;
+    }
+    final right = signature(markdown.substring(end, restEndFor(start)));
+    return right != null && '$left$right' == whole;
   }
 
   Iterable<int> candidatesFor(int start) sync* {
@@ -1428,9 +1481,7 @@ class _ChatScreenState extends State<ChatScreen>
   String? _compressionInvocation;
   void _setActivityPillExtent(double value) {
     if (_disposed || _activityPillExtent.value == value) return;
-    _recordTranscriptOverlayExtentChange(
-      value - _activityPillExtent.value,
-    );
+    _recordTranscriptOverlayExtentChange(value - _activityPillExtent.value);
     _activityPillExtent.value = value;
   }
 
@@ -3736,8 +3787,7 @@ class _ChatScreenState extends State<ChatScreen>
           Duration(seconds: 30),
           Duration(seconds: 60),
         ],
-        changeEventsAvailable:
-            _chat.desktopChangeEventsAvailable,
+        changeEventsAvailable: _chat.desktopChangeEventsAvailable,
         durableChatId: () => _chat.serverSessionId,
         externallyOwnedTurnActive: () => _chat.remoteSurfaceOwnsLiveTurn,
         recoveryConverging: () => _chat.resumeReconciliationInFlight,
@@ -4008,8 +4058,7 @@ class _ChatScreenState extends State<ChatScreen>
   void _captureAdaptiveRefreshRevisions() {
     _seenAdaptiveEventRevision = _chat.adaptiveRefreshEventRevision;
     _seenAdaptiveFullRefreshRevision = _chat.adaptiveFullRefreshRevision;
-    _seenAdaptiveSubagentRepairRevision =
-        _chat.adaptiveSubagentRepairRevision;
+    _seenAdaptiveSubagentRepairRevision = _chat.adaptiveSubagentRepairRevision;
     _seenAdaptiveProcessRepairRevision = _chat.adaptiveProcessRepairRevision;
     _seenAdaptiveControlRepairRevision = _chat.adaptiveControlRepairRevision;
   }
@@ -4083,9 +4132,7 @@ class _ChatScreenState extends State<ChatScreen>
       _subagentRepairDebounce?.cancel();
       _subagentRepairDebounce = Timer(const Duration(milliseconds: 250), () {
         _subagentRepairDebounce = null;
-        unawaited(
-          _runAdaptiveSnapshot(processes: false, control: false),
-        );
+        unawaited(_runAdaptiveSnapshot(processes: false, control: false));
       });
     }
 
@@ -4095,7 +4142,8 @@ class _ChatScreenState extends State<ChatScreen>
         controlRevision != _seenAdaptiveControlRepairRevision) {
       final refreshProcesses =
           processRevision != _seenAdaptiveProcessRepairRevision;
-      final refreshControl = controlRevision != _seenAdaptiveControlRepairRevision;
+      final refreshControl =
+          controlRevision != _seenAdaptiveControlRepairRevision;
       _seenAdaptiveProcessRepairRevision = processRevision;
       _seenAdaptiveControlRepairRevision = controlRevision;
       _processControlRepairDebounce?.cancel();
@@ -4146,8 +4194,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (processes) _chat.refreshBackgroundProcesses(),
       if (control) _chat.refreshSessionControl(),
     ]);
-    final failed =
-        _chat.adaptiveSnapshotFailureRevision != failureRevision;
+    final failed = _chat.adaptiveSnapshotFailureRevision != failureRevision;
     _adaptiveSnapshotInFlight = false;
     if (_disposed ||
         !mounted ||
@@ -4405,9 +4452,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) {
       if (!mounted) return;
       HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(Strings.of(context).chaBackgroundActionFailed),
-        ),
+        SnackBar(content: Text(Strings.of(context).chaBackgroundActionFailed)),
         kind: HermesNoticeKind.error,
       );
     }
@@ -4557,9 +4602,7 @@ class _ChatScreenState extends State<ChatScreen>
         break;
       }
     }
-    if (!active &&
-        !_compaction.running &&
-        _compressionInvocation == null) {
+    if (!active && !_compaction.running && _compressionInvocation == null) {
       _consumedCompressionResult = head;
     }
     // Solo hechos: lo que la línea de estado de Hermes dice y el tiempo local.
@@ -4766,9 +4809,7 @@ class _ChatScreenState extends State<ChatScreen>
         event == ActiveChatEvent.interactiveRequest;
     _syncPassiveTranscriptRefresh(
       refreshNow:
-          passiveTerminalEvent ||
-          passiveRecoveryEvent ||
-          passiveRuntimeEvent,
+          passiveTerminalEvent || passiveRecoveryEvent || passiveRuntimeEvent,
       recoveryConverging: passiveRecoveryEvent,
       terminal: passiveTerminalEvent,
     );
@@ -7087,9 +7128,11 @@ class _ChatScreenState extends State<ChatScreen>
     if (includePayload && sentinel >= 0) {
       result.add('⟦adjunto⟧');
       result.addAll(
-        lines.skip(sentinel + 1).where(
-          (line) => AttachmentHistoryReference.tryParseMarker(line) == null,
-        ),
+        lines
+            .skip(sentinel + 1)
+            .where(
+              (line) => AttachmentHistoryReference.tryParseMarker(line) == null,
+            ),
       );
     }
     result.addAll(
@@ -7125,8 +7168,9 @@ class _ChatScreenState extends State<ChatScreen>
         _structuredGeneratedVideos(row).isNotEmpty) {
       return false;
     }
-    return normalizeAssistantActivityTrace(row[assistantActivityTraceKey])
-            .isNotEmpty ||
+    return normalizeAssistantActivityTrace(
+          row[assistantActivityTraceKey],
+        ).isNotEmpty ||
         (row['reasoning'] is String &&
             (row['reasoning'] as String).trim().isNotEmpty);
   }
@@ -7350,9 +7394,7 @@ class _ChatScreenState extends State<ChatScreen>
       final message = failure is DashboardAuthException
           ? localizedApiError(str, failure)
           : (authRequired ? str.dashboardAuthLoginRequired : str.chaEditFailed);
-      HermesNotice.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -11976,8 +12018,7 @@ class _ChatScreenState extends State<ChatScreen>
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             ),
-            if (stop == StopConfirmationState.failed &&
-                !backgroundStopWarning)
+            if (stop == StopConfirmationState.failed && !backgroundStopWarning)
               TextButton(
                 key: const ValueKey('chat-stop-retry'),
                 onPressed: _cancelStream,
@@ -12529,8 +12570,7 @@ class _ChatScreenState extends State<ChatScreen>
                           !_attachmentMutationInFlight &&
                           !_nothingToSend,
                 onSend: _sendMessage,
-                onQueue:
-                    _sending || _chat.hasAuthoritativePassiveRemoteActivity
+                onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
                     ? () => _sendMessage(queueOnly: true)
                     : null,
                 onStop: _cancelStream,
@@ -13115,139 +13155,147 @@ class _ChatScreenState extends State<ChatScreen>
           onPointerUp: _finishStreamingScrollInteraction,
           onPointerCancel: _cancelStreamingScrollInteraction,
           child: ListView.builder(
-        controller: _scrollController,
-        // En `reverse:true` el asistente vivo crece por debajo del contenido
-        // que el lector está mirando. Conservar el mismo offset numérico hace
-        // que ese contenido suba una línea por cada reflow. Mientras el usuario
-        // haya pausado el seguimiento, compensa el cambio de extensión dentro
-        // del propio layout del viewport: no cancela el drag ni ejecuta saltos
-        // tardíos que compitan con el dedo.
-        physics: _ChatStreamingViewportPhysics(lock: _streamingViewportLock),
-        // Deja aire real bajo la última respuesta. Con solo 4 dp el cierre del
-        // texto quedaba pegado al compositor y parecía visualmente recortado.
-        // `bottom` reserva la altura medida de toda la pila flotante y de la
-        // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
-        // aunque cambie de alto o convivan varias actividades.
-        padding: EdgeInsets.only(bottom: 12 + overlayExtent),
-        reverse: true,
-        // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
-        // se materializan entradas frías en medio de un frame de scroll.
-        scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
-        itemCount: entries.length,
-        // Una selección que sale del viewport no debe retener el RenderObject
-        // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
-        // completo sigue disponible en su cabecera y la selección visible se
-        // mantiene dentro de cada bloque virtualizado.
-        addAutomaticKeepAlives: false,
-        // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
-        // reparentar un árbol todavía dependiente del diálogo puede disparar
-        // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
-        // RenderObjects ligeros que no reutilizan el árbol Markdown.
-        itemBuilder: (context, index) {
-          final entry = entries[index];
-          if (entry is _RetainedTerminalErrorChatListEntry) {
-            return _buildRetainedTerminalErrorEntry(entry);
-          }
-          final plan = entry.sourcePlan;
-          final assistantSlice = entry is _AssistantSliceChatListEntry
-              ? entry.slice
-              : null;
-          final sourceMessages = _sourceMessagesForRenderPlan(plan);
-          final reportsPreservedTurnInsertion = sourceMessages.any(
-            _readerPreservedTurnInsertions.contains,
-          );
-          final unit = _materializeRenderUnit(plan);
-          final child = _buildRenderUnit(unit, assistantSlice: assistantSlice);
-          final assistantMessage =
-              unit is Map<String, dynamic> &&
-                  unit['role'] == 'assistant' &&
-                  unit['_pipeline'] != true
-              ? unit
-              : null;
-          final ownsAnchor = assistantSlice?.showHeader ?? true;
-          Widget result = child;
-          if (ownsAnchor) {
-            result = ChatAnswerAnchor(
-              onLayout: (anchor) {
-                for (final message in sourceMessages) {
-                  _messageAnchors[message] = anchor;
-                }
-              },
-              onDetach: (anchor) {
-                for (final message in sourceMessages) {
-                  if (identical(_messageAnchors[message], anchor)) {
-                    _messageAnchors.remove(message);
-                  }
-                }
-              },
-              child: child,
-            );
-          }
-          if (assistantSlice != null && assistantMessage != null) {
-            result = KeyedSubtree(
-              key: ValueKey((assistantMessage, assistantSlice.index)),
-              child: result,
-            );
-          }
-          // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
-          // lista es reverse). El turno que esta superficie ya presentó queda
-          // fuera: su host crece por streaming y un translate adicional de 8 px
-          // se percibe como un pequeño tirón si el usuario empieza a leer o
-          // arrastrar. La guarda sobrevive al terminal para que cancelación,
-          // error o una reconciliación tardía tampoco animen de nuevo la fila.
-          final key = _entranceKey(unit);
-          final belongsToSurfaceTurn =
-              _surfaceTurnSerial == _assistantEntranceSerial &&
-              (_chat.isStreaming || _surfaceTurnTerminal);
-          if (index == 0 && key != null && !belongsToSurfaceTurn) {
-            result = MotionEntrance(key: ValueKey<Object>(key), child: result);
-          }
-          if (reportsPreservedTurnInsertion) {
-            result = _SurfaceTurnInitialExtentReporter(
-              onInitialExtent: _streamingViewportLock.record,
-              child: result,
-            );
-          }
-          // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
-          // reveal gradual) no invalida la rasterización del historial visible.
-          // El host vivo/retenido queda fuera: su geometría la mide el lock del
-          // viewport y una capa intermedia rompe esa medición.
-          final keepsLiveHost =
-              assistantMessage != null &&
-              _messageKeepsLiveHost(assistantMessage);
-          final isLiveHead =
-              _chat.isStreaming &&
-              _messages.isNotEmpty &&
-              identical(unit, _messages.first);
-          if (!keepsLiveHost && !isLiveHead) {
-            result = RepaintBoundary(child: result);
-          }
-          final durableEntryIds = sourceMessages
-              .map((message) {
-                final messageId = canonicalTranscriptMessageId(message);
-                if (messageId != null) return 'message:$messageId';
-                final rowId = canonicalTranscriptRowId(message);
-                return rowId == null ? null : 'row:$rowId';
-              })
-              .whereType<String>()
-              .toList(growable: false);
-          if (durableEntryIds.length == sourceMessages.length) {
-            // This must remain the outermost list child. Sliver reconciliation
-            // can then retain the complete bubble subtree even when refresh
-            // replaces its source Map or runtime presentation wrappers change.
-            result = KeyedSubtree(
-              key: ValueKey<Object>((
-                'chat-render-entry',
-                durableEntryIds.join('\u0000'),
-                assistantSlice?.index,
-              )),
-              child: result,
-            );
-          }
-          return result;
-        },
-      ),
-    );
+            controller: _scrollController,
+            // En `reverse:true` el asistente vivo crece por debajo del contenido
+            // que el lector está mirando. Conservar el mismo offset numérico hace
+            // que ese contenido suba una línea por cada reflow. Mientras el usuario
+            // haya pausado el seguimiento, compensa el cambio de extensión dentro
+            // del propio layout del viewport: no cancela el drag ni ejecuta saltos
+            // tardíos que compitan con el dedo.
+            physics: _ChatStreamingViewportPhysics(
+              lock: _streamingViewportLock,
+            ),
+            // Deja aire real bajo la última respuesta. Con solo 4 dp el cierre del
+            // texto quedaba pegado al compositor y parecía visualmente recortado.
+            // `bottom` reserva la altura medida de toda la pila flotante y de la
+            // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
+            // aunque cambie de alto o convivan varias actividades.
+            padding: EdgeInsets.only(bottom: 12 + overlayExtent),
+            reverse: true,
+            // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
+            // se materializan entradas frías en medio de un frame de scroll.
+            scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
+            itemCount: entries.length,
+            // Una selección que sale del viewport no debe retener el RenderObject
+            // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
+            // completo sigue disponible en su cabecera y la selección visible se
+            // mantiene dentro de cada bloque virtualizado.
+            addAutomaticKeepAlives: false,
+            // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
+            // reparentar un árbol todavía dependiente del diálogo puede disparar
+            // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
+            // RenderObjects ligeros que no reutilizan el árbol Markdown.
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              if (entry is _RetainedTerminalErrorChatListEntry) {
+                return _buildRetainedTerminalErrorEntry(entry);
+              }
+              final plan = entry.sourcePlan;
+              final assistantSlice = entry is _AssistantSliceChatListEntry
+                  ? entry.slice
+                  : null;
+              final sourceMessages = _sourceMessagesForRenderPlan(plan);
+              final reportsPreservedTurnInsertion = sourceMessages.any(
+                _readerPreservedTurnInsertions.contains,
+              );
+              final unit = _materializeRenderUnit(plan);
+              final child = _buildRenderUnit(
+                unit,
+                assistantSlice: assistantSlice,
+              );
+              final assistantMessage =
+                  unit is Map<String, dynamic> &&
+                      unit['role'] == 'assistant' &&
+                      unit['_pipeline'] != true
+                  ? unit
+                  : null;
+              final ownsAnchor = assistantSlice?.showHeader ?? true;
+              Widget result = child;
+              if (ownsAnchor) {
+                result = ChatAnswerAnchor(
+                  onLayout: (anchor) {
+                    for (final message in sourceMessages) {
+                      _messageAnchors[message] = anchor;
+                    }
+                  },
+                  onDetach: (anchor) {
+                    for (final message in sourceMessages) {
+                      if (identical(_messageAnchors[message], anchor)) {
+                        _messageAnchors.remove(message);
+                      }
+                    }
+                  },
+                  child: child,
+                );
+              }
+              if (assistantSlice != null && assistantMessage != null) {
+                result = KeyedSubtree(
+                  key: ValueKey((assistantMessage, assistantSlice.index)),
+                  child: result,
+                );
+              }
+              // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
+              // lista es reverse). El turno que esta superficie ya presentó queda
+              // fuera: su host crece por streaming y un translate adicional de 8 px
+              // se percibe como un pequeño tirón si el usuario empieza a leer o
+              // arrastrar. La guarda sobrevive al terminal para que cancelación,
+              // error o una reconciliación tardía tampoco animen de nuevo la fila.
+              final key = _entranceKey(unit);
+              final belongsToSurfaceTurn =
+                  _surfaceTurnSerial == _assistantEntranceSerial &&
+                  (_chat.isStreaming || _surfaceTurnTerminal);
+              if (index == 0 && key != null && !belongsToSurfaceTurn) {
+                result = MotionEntrance(
+                  key: ValueKey<Object>(key),
+                  child: result,
+                );
+              }
+              if (reportsPreservedTurnInsertion) {
+                result = _SurfaceTurnInitialExtentReporter(
+                  onInitialExtent: _streamingViewportLock.record,
+                  child: result,
+                );
+              }
+              // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
+              // reveal gradual) no invalida la rasterización del historial visible.
+              // El host vivo/retenido queda fuera: su geometría la mide el lock del
+              // viewport y una capa intermedia rompe esa medición.
+              final keepsLiveHost =
+                  assistantMessage != null &&
+                  _messageKeepsLiveHost(assistantMessage);
+              final isLiveHead =
+                  _chat.isStreaming &&
+                  _messages.isNotEmpty &&
+                  identical(unit, _messages.first);
+              if (!keepsLiveHost && !isLiveHead) {
+                result = RepaintBoundary(child: result);
+              }
+              final durableEntryIds = sourceMessages
+                  .map((message) {
+                    final messageId = canonicalTranscriptMessageId(message);
+                    if (messageId != null) return 'message:$messageId';
+                    final rowId = canonicalTranscriptRowId(message);
+                    return rowId == null ? null : 'row:$rowId';
+                  })
+                  .whereType<String>()
+                  .toList(growable: false);
+              if (durableEntryIds.length == sourceMessages.length) {
+                // This must remain the outermost list child. Sliver reconciliation
+                // can then retain the complete bubble subtree even when refresh
+                // replaces its source Map or runtime presentation wrappers change.
+                result = KeyedSubtree(
+                  key: ValueKey<Object>((
+                    'chat-render-entry',
+                    durableEntryIds.join('\u0000'),
+                    assistantSlice?.index,
+                  )),
+                  child: result,
+                );
+              }
+              return result;
+            },
+          ),
+        );
       },
     );
     return ChatRefreshStatusOverlay(
@@ -13424,8 +13472,7 @@ class _ChatScreenState extends State<ChatScreen>
             content == rawContent &&
                 unit.supplements.isEmpty &&
                 _canEditUserMessage(unit.primary)
-            ? (bubbleWidth) =>
-                  _editUserMessage(unit.primary, bubbleWidth)
+            ? (bubbleWidth) => _editUserMessage(unit.primary, bubbleWidth)
             : null,
         editing: identical(unit.primary, _editingUserMessageTarget),
         editingText: _editingUserMessageText,
@@ -16058,8 +16105,7 @@ class _UserMessage extends StatelessWidget {
                 );
               }
               final imgPath = attachment.imagePath;
-              final imgFile =
-                  (imgPath != null && File(imgPath).existsSync())
+              final imgFile = (imgPath != null && File(imgPath).existsSync())
                   ? File(imgPath)
                   : null;
               return AttachmentCard(
@@ -16180,7 +16226,9 @@ class _UserMessage extends StatelessWidget {
                                 const SizedBox(width: 6),
                                 Flexible(
                                   child: Text(
-                                    Strings.of(context).chaSteerSupplementsLabel,
+                                    Strings.of(
+                                      context,
+                                    ).chaSteerSupplementsLabel,
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w700,
@@ -16191,10 +16239,16 @@ class _UserMessage extends StatelessWidget {
                               ],
                             ),
                             const SizedBox(height: 7),
-                            for (var index = 0; index < supplements.length; index++)
+                            for (
+                              var index = 0;
+                              index < supplements.length;
+                              index++
+                            )
                               Padding(
                                 padding: EdgeInsets.only(
-                                  bottom: index == supplements.length - 1 ? 0 : 7,
+                                  bottom: index == supplements.length - 1
+                                      ? 0
+                                      : 7,
                                 ),
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -16202,9 +16256,14 @@ class _UserMessage extends StatelessWidget {
                                     Container(
                                       width: 2,
                                       height: 18,
-                                      margin: const EdgeInsets.only(top: 2, right: 8),
+                                      margin: const EdgeInsets.only(
+                                        top: 2,
+                                        right: 8,
+                                      ),
                                       decoration: BoxDecoration(
-                                        color: colors.accent.withValues(alpha: 0.55),
+                                        color: colors.accent.withValues(
+                                          alpha: 0.55,
+                                        ),
                                         borderRadius: BorderRadius.circular(2),
                                       ),
                                     ),
@@ -16233,8 +16292,9 @@ class _UserMessage extends StatelessWidget {
                   if (onEdit != null)
                     IconButton(
                       onPressed: () {
-                        final box = bubbleMeasureKey.currentContext
-                            ?.findRenderObject() as RenderBox?;
+                        final box =
+                            bubbleMeasureKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (box != null && box.hasSize) {
                           onEdit!(box.size.width);
                         }
@@ -16919,13 +16979,14 @@ class _AssistantMessage extends StatelessWidget {
       active: activityActive,
       stopped: stopped,
     );
-    final headerMood = companionMood ??
+    final headerMood =
+        companionMood ??
         switch (activityOutcome) {
           TraceOutcome.working => HermesSparkMood.thinking,
           TraceOutcome.stopped => HermesSparkMood.idle,
           TraceOutcome.failed => HermesSparkMood.error,
-          TraceOutcome.completed || TraceOutcome.recovered =>
-            HermesSparkMood.success,
+          TraceOutcome.completed ||
+          TraceOutcome.recovered => HermesSparkMood.success,
         };
     final headerAnimated = isStreaming || metadata['_pipeline'] == true;
     final showTrace = showHeader && (activityEvents.isNotEmpty || stopped);
@@ -17200,78 +17261,85 @@ class _AssistantMessage extends StatelessWidget {
                               animate: headerAnimated,
                               subtitle: summary,
                               actions: [
-                    if (onSpeak != null && readAloudMessageKey != null) ...[
-                      const SizedBox(width: 6),
-                      ReadAloudButton(
-                        messageKey: readAloudMessageKey!,
-                        state: readAloud,
-                        stopBehavior: readAloudStopBehavior,
-                        onPressed: onSpeak,
-                      ),
-                    ],
-                    Semantics(
-                      button: true,
-                      label: Strings.of(context).chaCopyMessage,
-                      excludeSemantics: true,
-                      child: Tooltip(
-                        message: Strings.of(context).chaCopyMessage,
-                        child: InkWell(
-                          onTap: () {
-                            Clipboard.setData(
-                              ClipboardData(
-                                text: markdownToClipboardText(
-                                  GeneratedMediaService.stripDirectives(answer),
+                                if (onSpeak != null &&
+                                    readAloudMessageKey != null) ...[
+                                  const SizedBox(width: 6),
+                                  ReadAloudButton(
+                                    messageKey: readAloudMessageKey!,
+                                    state: readAloud,
+                                    stopBehavior: readAloudStopBehavior,
+                                    onPressed: onSpeak,
+                                  ),
+                                ],
+                                Semantics(
+                                  button: true,
+                                  label: Strings.of(context).chaCopyMessage,
+                                  excludeSemantics: true,
+                                  child: Tooltip(
+                                    message: Strings.of(context).chaCopyMessage,
+                                    child: InkWell(
+                                      onTap: () {
+                                        Clipboard.setData(
+                                          ClipboardData(
+                                            text: markdownToClipboardText(
+                                              GeneratedMediaService.stripDirectives(
+                                                answer,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                        HermesNotice.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              Strings.of(context).chaCopied,
+                                            ),
+                                            duration: Duration(seconds: 1),
+                                          ),
+                                          kind: HermesNoticeKind.success,
+                                        );
+                                      },
+                                      borderRadius: BorderRadius.circular(24),
+                                      child: SizedBox(
+                                        width: 48,
+                                        height: 48,
+                                        child: Center(
+                                          child: Icon(
+                                            Icons.copy_rounded,
+                                            size: 16,
+                                            color: colors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            );
-                            HermesNotice.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(Strings.of(context).chaCopied),
-                                duration: Duration(seconds: 1),
-                              ),
-                              kind: HermesNoticeKind.success,
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(24),
-                          child: SizedBox(
-                            width: 48,
-                            height: 48,
-                            child: Center(
-                              child: Icon(
-                                Icons.copy_rounded,
-                                size: 16,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (onRegenerate != null)
-                      Semantics(
-                        button: true,
-                        label: Strings.of(context).chaRegenerate,
-                        excludeSemantics: true,
-                        child: Tooltip(
-                          message: Strings.of(context).chaRegenerate,
-                          child: InkWell(
-                            onTap: onRegenerate,
-                            borderRadius: BorderRadius.circular(24),
-                            child: SizedBox(
-                              width: 48,
-                              height: 48,
-                              child: Center(
-                                child: Icon(
-                                  Icons.refresh_rounded,
-                                  size: 18,
-                                  color: colors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                                if (onRegenerate != null)
+                                  Semantics(
+                                    button: true,
+                                    label: Strings.of(context).chaRegenerate,
+                                    excludeSemantics: true,
+                                    child: Tooltip(
+                                      message: Strings.of(
+                                        context,
+                                      ).chaRegenerate,
+                                      child: InkWell(
+                                        onTap: onRegenerate,
+                                        borderRadius: BorderRadius.circular(24),
+                                        child: SizedBox(
+                                          width: 48,
+                                          height: 48,
+                                          child: Center(
+                                            child: Icon(
+                                              Icons.refresh_rounded,
+                                              size: 18,
+                                              color: colors.textSecondary,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                             details,
                           ],
@@ -17654,7 +17722,8 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
     VoidCallback onShare,
     VoidCallback onSave,
   ) async {
-    final isPdf = widget.reference.mimeType == 'application/pdf' ||
+    final isPdf =
+        widget.reference.mimeType == 'application/pdf' ||
         widget.reference.displayName.toLowerCase().endsWith('.pdf');
     if (!isPdf) {
       await Navigator.of(context).push<void>(
@@ -17742,41 +17811,35 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
       ),
       errorLabelBuilder: _downloadErrorLabel,
       onOpen: _open,
-      readyBuilder: (
-        context,
-        file,
-        sizeBytes,
-        onOpenExternal,
-        onShare,
-        onSave,
-      ) {
-        if (widget.reference.mimeType == 'application/pdf' ||
-            widget.reference.displayName.toLowerCase().endsWith('.pdf')) {
-          return GeneratedPdfPreviewCard(
-            file: file,
-            name: widget.reference.displayName,
-            sizeBytes: sizeBytes,
-            onOpen: () => _open(
-              context,
-              file,
-              sizeBytes,
-              onOpenExternal,
-              onShare,
-              onSave,
-            ),
-            onShare: onShare,
-            onSave: onSave,
-          );
-        }
-        return switch (widget.reference.kind) {
-          GeneratedMediaKind.image => GeneratedImageCard(
-            status: GeneratedImageStatus.ready,
-            file: file,
-          ),
-          GeneratedMediaKind.video => GeneratedVideoCard(file: file),
-          GeneratedMediaKind.audio || GeneratedMediaKind.file => null,
-        };
-      },
+      readyBuilder:
+          (context, file, sizeBytes, onOpenExternal, onShare, onSave) {
+            if (widget.reference.mimeType == 'application/pdf' ||
+                widget.reference.displayName.toLowerCase().endsWith('.pdf')) {
+              return GeneratedPdfPreviewCard(
+                file: file,
+                name: widget.reference.displayName,
+                sizeBytes: sizeBytes,
+                onOpen: () => _open(
+                  context,
+                  file,
+                  sizeBytes,
+                  onOpenExternal,
+                  onShare,
+                  onSave,
+                ),
+                onShare: onShare,
+                onSave: onSave,
+              );
+            }
+            return switch (widget.reference.kind) {
+              GeneratedMediaKind.image => GeneratedImageCard(
+                status: GeneratedImageStatus.ready,
+                file: file,
+              ),
+              GeneratedMediaKind.video => GeneratedVideoCard(file: file),
+              GeneratedMediaKind.audio || GeneratedMediaKind.file => null,
+            };
+          },
     );
   }
 }
@@ -18743,9 +18806,7 @@ class _ChatTopButtonState extends State<_ChatTopButton> {
               iconSize: 20,
               loading: widget.loading,
             )
-          : const SizedBox.shrink(
-              key: ValueKey('chat-top-button-hidden'),
-            ),
+          : const SizedBox.shrink(key: ValueKey('chat-top-button-hidden')),
     ),
   );
 }
