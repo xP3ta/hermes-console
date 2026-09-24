@@ -3863,7 +3863,10 @@ void main() {
             )
             .toList(growable: false);
         expect(transcript, const [
-          (role: 'assistant', content: 'Resumen final del proyecto.'),
+          (
+            role: 'assistant',
+            content: 'Voy a revisar los archivos.\n\nResumen final del proyecto.',
+          ),
           (role: 'user', content: 'Revisa el proyecto'),
         ]);
       },

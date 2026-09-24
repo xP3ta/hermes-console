@@ -18867,7 +18867,7 @@ void main() {
       await tester.pump();
       expect(chat.desktopAutoCompacting, isTrue);
       expect(chat.messages, before);
-      expect(chat.assistantContent, 'PUBLIC_LIVE_ONE');
+      expect(chat.assistantContent, 'PUBLIC_EDITORIAL\n\nPUBLIC_LIVE_ONE');
       gateway.emit('session.info', const {
         'stored_session_id': 'auto-stored-tip',
         'running': true,
@@ -18881,7 +18881,7 @@ void main() {
       expect(chat.storedSessionId, 'auto-stored-tip');
       expect(chat.messages, before);
       expect(chat.isStreaming, isTrue);
-      expect(chat.assistantContent, 'PUBLIC_LIVE_ONE');
+      expect(chat.assistantContent, 'PUBLIC_EDITORIAL\n\nPUBLIC_LIVE_ONE');
       expect(liveHost.evaluate().single, same(liveElement));
       expect(chat.subagentActivities, isEmpty);
       gateway.emit('subagent.progress', const {
@@ -18920,7 +18920,7 @@ void main() {
       );
       expect(
         chat.assistantContent,
-        'PUBLIC_LIVE_ONE PUBLIC_PENDING PUBLIC_LIVE_TWO',
+        'PUBLIC_EDITORIAL\n\nPUBLIC_LIVE_ONE PUBLIC_PENDING PUBLIC_LIVE_TWO',
       );
       expect(chat.messages.any((m) => m['content'] == 'PUBLIC_PREFIX'), isTrue);
       expect(

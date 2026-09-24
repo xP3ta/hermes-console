@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -638,76 +637,89 @@ void main() {
       },
     );
 
-    test(
-      'el texto previo a una herramienta se reemplaza y deja rastro sin contenido',
-      () async {
-        final logs = <String>[];
-        final originalDebugPrint = debugPrint;
-        debugPrint = (String? message, {int? wrapWidth}) {
-          if (message != null) logs.add(message);
-        };
-        addTearDown(() => debugPrint = originalDebugPrint);
-        final fixture = await _startChat();
-        addTearDown(fixture.dispose);
+    test('el texto previo a una herramienta sobrevive al texto posterior', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
 
-        const preface = 'Voy a revisar el archivo.';
-        await _emitAndSettle(fixture, 'message.interim', const {
-          'text': preface,
-        });
-        await _emitAndSettle(fixture, 'tool.start', const {
-          'name': 'read_file',
-          'tool_id': 't1',
-        });
-        final replaced = fixture.chat.changes.firstWhere(
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Voy a revisar el archivo.',
+      });
+      await _emitAndSettle(fixture, 'tool.start', const {
+        'name': 'read_file',
+        'tool_id': 't1',
+      });
+      await _emitAndSettle(fixture, 'tool.complete', const {
+        'name': 'read_file',
+        'tool_id': 't1',
+      });
+      final resumed = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.token,
+      );
+      fixture.gateway.emit('message.delta', const {'text': 'Resultado.'});
+      await resumed.timeout(const Duration(seconds: 1));
+
+      // Paridad con Desktop: el interim sellado no lo retira ninguna herramienta.
+      expect(_nonEmptyAssistantTexts(fixture.chat), [
+        'Voy a revisar el archivo.\n\nResultado.',
+      ]);
+
+      await _complete(fixture, const {'text': 'Resultado.'});
+      expect(_nonEmptyAssistantTexts(fixture.chat), [
+        'Voy a revisar el archivo.\n\nResultado.',
+      ]);
+    });
+
+    test('varios interims separados por herramientas se conservan todos', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      Future<void> delta(String text) async {
+        final shown = fixture.chat.changes.firstWhere(
           (event) => event == ActiveChatEvent.token,
         );
-        fixture.gateway.emit('message.delta', const {'text': 'Resultado.'});
-        await replaced.timeout(const Duration(seconds: 1));
+        fixture.gateway.emit('message.delta', {'text': text});
+        await shown.timeout(const Duration(seconds: 1));
+      }
 
-        // Contrato de paridad con Desktop: tras la herramienta el segmento
-        // previo cede su sitio al texto posterior.
-        expect(_nonEmptyAssistantTexts(fixture.chat), ['Resultado.']);
-        final trace = logs
-            .where((line) => line.contains('visible interim replaced'))
-            .toList(growable: false);
-        expect(trace, [
-          '[active-chat] visible interim replaced after tool boundary '
-              '(chars=${preface.length})',
-        ]);
-        expect(logs.join('\n'), isNot(contains('Voy a revisar')));
-      },
-    );
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Primero leo el archivo.',
+      });
+      await _emitAndSettle(fixture, 'tool.start', const {'name': 'read_file'});
+      await delta('Ahora lo edito.');
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Ahora lo edito.',
+      });
+      await _emitAndSettle(fixture, 'tool.start', const {'name': 'patch'});
 
-    test(
-      'sin herramienta de por medio el interim se conserva sin rastro',
-      () async {
-        final logs = <String>[];
-        final originalDebugPrint = debugPrint;
-        debugPrint = (String? message, {int? wrapWidth}) {
-          if (message != null) logs.add(message);
-        };
-        addTearDown(() => debugPrint = originalDebugPrint);
-        final fixture = await _startChat();
-        addTearDown(fixture.dispose);
+      expect(_nonEmptyAssistantTexts(fixture.chat), [
+        'Primero leo el archivo.\n\nAhora lo edito.',
+      ]);
 
-        await _emitAndSettle(fixture, 'message.interim', const {
-          'text': 'Estoy revisando el proyecto.',
-        });
-        final resumed = fixture.chat.changes.firstWhere(
-          (event) => event == ActiveChatEvent.token,
-        );
-        fixture.gateway.emit('message.delta', const {'text': 'Todo bien.'});
-        await resumed.timeout(const Duration(seconds: 1));
+      await delta('Listo.');
+      await _complete(fixture, const {'text': 'Listo.'});
 
-        expect(_nonEmptyAssistantTexts(fixture.chat), [
-          'Estoy revisando el proyecto.\n\nTodo bien.',
-        ]);
-        expect(
-          logs.where((line) => line.contains('interim replaced')),
-          isEmpty,
-        );
-      },
-    );
+      expect(_nonEmptyAssistantTexts(fixture.chat), [
+        'Primero leo el archivo.\n\nAhora lo edito.\n\nListo.',
+      ]);
+    });
+
+    test('sin herramienta de por medio el interim también se conserva', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Estoy revisando el proyecto.',
+      });
+      final resumed = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.token,
+      );
+      fixture.gateway.emit('message.delta', const {'text': 'Todo bien.'});
+      await resumed.timeout(const Duration(seconds: 1));
+
+      expect(_nonEmptyAssistantTexts(fixture.chat), [
+        'Estoy revisando el proyecto.\n\nTodo bien.',
+      ]);
+    });
 
     test('response_previewed deduplica un final idéntico', () async {
       final fixture = await _startChat();

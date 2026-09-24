@@ -17360,7 +17360,6 @@ class ActiveChat {
       case 'thinking.delta':
         final delta = payload['text'] ?? payload['delta'];
         if (delta is String && delta.isNotEmpty) {
-          _retireDesktopInterimSegment();
           _appendAssistantReasoningActivity(delta);
           state = ChatPipelineState.executing;
           _emit(ActiveChatEvent.toolProgress);
@@ -17368,7 +17367,6 @@ class ActiveChat {
       case 'reasoning.available':
         final reasoning = payload['text'] ?? payload['reasoning'];
         if (reasoning is String && reasoning.trim().isNotEmpty) {
-          _retireDesktopInterimSegment();
           _appendAssistantReasoningActivity(reasoning, authoritative: true);
           state = ChatPipelineState.executing;
           _emit(ActiveChatEvent.toolProgress);
@@ -17400,7 +17398,6 @@ class ActiveChat {
       case 'tool.start':
       case 'tool.progress':
       case 'tool.generating':
-        _retireDesktopInterimSegment();
         _flushTokenBuffer();
         state = ChatPipelineState.executing;
         if (event.type == 'tool.start') {
@@ -17422,7 +17419,6 @@ class ActiveChat {
         );
         _emit(ActiveChatEvent.toolProgress);
       case 'tool.complete':
-        _retireDesktopInterimSegment();
         _flushTokenBuffer();
         _captureDesktopGeneratedImage(payload);
         _handleLegacyDelegateEvent(event.type, runtimeId, payload);
@@ -18595,16 +18591,6 @@ class ActiveChat {
     };
   }
 
-  void _retireDesktopInterimSegment() {
-    if (_messages.isEmpty ||
-        _messages.first['role'] != 'assistant' ||
-        _messages.first['_desktopReplaceInterimOnDelta'] != true) {
-      return;
-    }
-    _messages[0] = Map<String, dynamic>.from(_messages.first)
-      ..remove('_desktopPreserveInterimOnDelta');
-  }
-
   void _prepareDesktopPostInterimSegment() {
     if (_messages.isEmpty ||
         _messages.first['role'] != 'assistant' ||
@@ -18614,16 +18600,12 @@ class ActiveChat {
     final preserve =
         _messages.first['_desktopPreserveInterimOnDelta'] == true;
     final current = (_messages.first['content'] as String?) ?? '';
-    if (!preserve && current.isNotEmpty) {
-      // Reemplazo intencional (paridad Desktop), pero es la única ruta donde
-      // texto ya visible se sustituye en vivo: deja rastro solo con longitudes.
-      debugPrint(
-        '[active-chat] visible interim replaced after tool boundary '
-        '(chars=${current.length})',
-      );
-    }
+    // Desktop sella el interim como burbuja propia y las herramientas no lo
+    // retiran: el texto posterior se acumula detrás, nunca lo sustituye.
+    final segmentPrefix = preserve && current.isNotEmpty ? '$current\n\n' : '';
     final next = Map<String, dynamic>.from(_messages.first)
-      ..['content'] = preserve && current.isNotEmpty ? '$current\n\n' : ''
+      ..['content'] = segmentPrefix
+      ..['_desktopInterimSegmentPrefix'] = segmentPrefix
       ..['_desktopInterimWasPreserved'] = preserve
       ..remove('_desktopReplaceInterimOnDelta')
       ..remove('_desktopPreserveInterimOnDelta');
@@ -18642,14 +18624,24 @@ class ActiveChat {
     _flushTokenBuffer();
     final key = 'assistant-interim-$_turnEpoch-${++_desktopInterimSerial}';
     if (_messages.isNotEmpty && _messages.first['role'] == 'assistant') {
+      // Los interims anteriores del turno viven delante de este tramo. Si no
+      // hubo delta desde el último sello, el contenido actual ya es ese
+      // prefijo; si lo hubo, `_prepareDesktopPostInterimSegment` lo guardó.
+      final top = _messages.first;
+      final head = top['_desktopReplaceInterimOnDelta'] == true
+          ? (((top['content'] as String?) ?? '').isEmpty
+                ? ''
+                : '${top['content']}\n\n')
+          : (top['_desktopInterimSegmentPrefix'] as String?) ?? '';
       _messages[0] = {
         ..._messages[0],
-        'content': rawText,
+        'content': '$head$rawText',
         '_pipeline': true,
         '_desktopInterim': true,
         '_desktopInterimPublic': narratable,
         '_desktopInterimKey': key,
         '_desktopInterimText': rawText,
+        '_desktopInterimHead': head,
         '_desktopReplaceInterimOnDelta': true,
         '_desktopPreserveInterimOnDelta': true,
       };
@@ -18689,6 +18681,9 @@ class ActiveChat {
                 '')
             .trim();
     if (interimText.isEmpty) return finalText;
+    // Interims sellados antes del último: el final nunca los sustituye.
+    final head = (message['_desktopInterimHead'] as String?) ?? '';
+    final interimBlock = '$head$interimText'.trim();
     final trimmedFinal = finalText.trim();
     final finalContinuesInterim =
         trimmedFinal == interimText ||
@@ -18701,13 +18696,13 @@ class ActiveChat {
             message['_desktopInterimWasPreserved'] == true);
     final currentText = ((message['content'] as String?) ?? '').trim();
     final settledText = preserveInterim
-        ? currentText.startsWith(interimText) &&
+        ? currentText.startsWith(interimBlock) &&
                   currentText.endsWith(trimmedFinal)
               ? currentText
-              : '$interimText\n\n$trimmedFinal'
-        : finalText;
+              : '$interimBlock\n\n$trimmedFinal'
+        : '$head$finalText';
     final streamFinalTail =
-        currentText == interimText &&
+        currentText == interimBlock &&
         trimmedFinal.startsWith(interimText) &&
         trimmedFinal.length > interimText.length;
     final settled = Map<String, dynamic>.from(message)
@@ -18715,6 +18710,8 @@ class ActiveChat {
       ..['_pipeline'] = false
       ..['_responsePreviewed'] = true
       ..remove('_desktopInterimText')
+      ..remove('_desktopInterimHead')
+      ..remove('_desktopInterimSegmentPrefix')
       ..remove('_desktopReplaceInterimOnDelta')
       ..remove('_desktopPreserveInterimOnDelta')
       ..remove('_desktopInterimWasPreserved');
