@@ -283,6 +283,47 @@ void main() {
     },
   );
 
+  test(
+    'una corrección durable display_kind=steer no crea un segundo turno de usuario',
+    () {
+      // Regresión: la corrección en vuelo («Añadido mientras Hermes trabajaba»)
+      // se persiste como role=user con display_kind='steer'. Sin traducirla al
+      // flag estructural `_steer`, la fila durable volvía como turno real:
+      // duplicaba la burbuja ya colgada del turno padre y desplazaba todos los
+      // ordinales de usuario posteriores.
+      final prompt = normalizeTranscriptMessageForDisplay(<String, dynamic>{
+        'row_id': 4101,
+        'role': 'user',
+        'content': 'revisa esta sesión',
+      })!;
+      final correction = normalizeTranscriptMessageForDisplay(
+        <String, dynamic>{
+          'row_id': 4102,
+          'role': 'user',
+          'content': 'y se duplica la burbuja',
+          'display_kind': 'steer',
+        },
+      )!;
+
+      expect(correction['_steer'], isTrue);
+      expect(isRealUserTurn(correction), isFalse);
+      // El flag estructural sustituye a la etiqueta editorial: una corrección
+      // no es un envelope del runtime, es texto del usuario dentro del turno.
+      expect(effectiveUserDisplayKind(correction), isEmpty);
+
+      // Lista viva = más nuevo primero: la corrección precede a su prompt.
+      final projection = ChatRenderProjection.build([correction, prompt]);
+
+      // Una sola burbuja de usuario, con la corrección como suplemento.
+      expect(projection.visibleUserCount, 1);
+      expect(projection.userOrdinalFor(prompt), 0);
+      expect(projection.userOrdinalFor(correction), isNull);
+      final unit = projection.units.single;
+      expect(unit, isA<ChatUserTurnUnitPlan>());
+      expect((unit as ChatUserTurnUnitPlan).supplementMessageIndexes, [0]);
+    },
+  );
+
   test('un personality_switch durable conserva su etiqueta y nunca es turno de usuario', () {
     final normalized = normalizeTranscriptMessageForDisplay(<String, dynamic>{
       'row_id': 9098,

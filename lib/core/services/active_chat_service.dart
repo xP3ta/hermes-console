@@ -596,6 +596,15 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
     }
     if (calls.isNotEmpty) normalized['tool_calls'] = calls;
   }
+  // Una corrección en vuelo se persiste como `role=user` con
+  // `display_kind='steer'`. Sin traducirla al flag estructural `_steer`, la
+  // fila durable vuelve como turno de usuario real: se pinta una segunda
+  // burbuja idéntica a la que ya cuelga de su turno padre y, peor, desplaza
+  // todos los ordinales de usuario posteriores (rewind, edición y la
+  // retención de proyecciones locales van por ordinal).
+  if (rawDisplayKind == 'steer') {
+    normalized['_steer'] = true;
+  }
   // Estos eventos viajan como `role=user`; su clasificación estructural es la
   // que impide que el transcript los atribuya a la persona.
   final displayKind =
