@@ -25,6 +25,7 @@ import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
+import 'core/services/startup_destination.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
@@ -1767,7 +1768,56 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     setState(() => _showSplash = false);
     _retryPendingNewSessionLaunch();
     unawaited(_openVoiceOwnerChatIfReady());
+    unawaited(_openConfiguredStartupDestination());
   }
+
+  /// Aplica la pantalla de arranque elegida por el usuario (issue #47).
+  ///
+  /// Se ejecuta una sola vez, al terminar el splash de un arranque en frío.
+  /// Cede el paso a cualquier navegación ya en curso —notificación, enlace de
+  /// emparejamiento, chat de voz—: quien llega por una notificación espera ir
+  /// a ESE destino, no al suyo por defecto.
+  Future<void> _openConfiguredStartupDestination() async {
+    if (_startupDestinationApplied) return;
+    _startupDestinationApplied = true;
+
+    final nav = _navigatorKey.currentState;
+    if (nav == null || nav.canPop()) return;
+
+    // El fence se abre ANTES de leer la preferencia: entre ese `await` y el
+    // push puede llegar una notificación o un enlace de emparejamiento, y esa
+    // navegación invalida la petición. Quien abre desde una notificación
+    // espera ESE destino, no el de arranque.
+    const intent = 'startup-destination';
+    final request = _appNavigationFence.begin(nav, intent: intent);
+
+    final destination = await StartupDestinationStore.load();
+    if (!mounted || destination == StartupDestination.home) return;
+    if (!_appNavigationFence.canCommit(request, nav, intent: intent)) return;
+    if (nav.canPop()) return;
+
+    final connections = widget.connManager.getConnections();
+    if (connections.isEmpty) return;
+    final activeId = widget.connManager.activeConnectionId.value;
+    final connection = connections.firstWhere(
+      (c) => c.id == activeId,
+      orElse: () => connections.first,
+    );
+
+    unawaited(
+      nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => MissionControlScreen(
+            connection: connection,
+            connManager: widget.connManager,
+            activeChats: activeChats,
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _startupDestinationApplied = false;
 
   void _markHomeInitialLoadComplete() {
     if (!mounted ||
@@ -2130,9 +2180,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (connections.isEmpty) {
       if (!_shareWaitingNoticeShown) {
         _shareWaitingNoticeShown = true;
-        HermesNotice.ofNavigator(nav)?.show(
-          message: Strings.of(nav.context).shareNeedsInstance,
-        );
+        HermesNotice.ofNavigator(
+          nav,
+        )?.show(message: Strings.of(nav.context).shareNeedsInstance);
       }
       return;
     }

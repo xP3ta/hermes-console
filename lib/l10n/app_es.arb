@@ -589,13 +589,21 @@
   "chaContextUsageSummary": "{used} de {max} tokens",
   "@chaContextUsageSummary": {
     "placeholders": {
-      "used": {"type": "String"},
-      "max": {"type": "String"}
+      "used": {
+        "type": "String"
+      },
+      "max": {
+        "type": "String"
+      }
     }
   },
   "chaContextUsagePercent": "{percent}% ocupado",
   "@chaContextUsagePercent": {
-    "placeholders": {"percent": {"type": "int"}}
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
   },
   "chaContextUsageLoading": "Calculando el desglose de esta sesión…",
   "chaContextUsageUnavailable": "Este servidor no expone todavía el desglose. El total superior sigue siendo real.",
@@ -635,17 +643,29 @@
   "chaCompressionConfigEnabledHint": "Hermes inicia la compresión al alcanzar el umbral configurado.",
   "chaCompressionConfigThreshold": "Empezar al {percent}%",
   "@chaCompressionConfigThreshold": {
-    "placeholders": {"percent": {"type": "int"}}
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
   },
   "chaCompressionConfigThresholdSemantics": "Umbral de inicio",
   "chaCompressionConfigTarget": "Reducir hasta el {percent}% del umbral",
   "@chaCompressionConfigTarget": {
-    "placeholders": {"percent": {"type": "int"}}
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
   },
   "chaCompressionConfigTargetSemantics": "Objetivo de reducción",
   "chaCompressionConfigProtect": "Conservar intactos los últimos {count} mensajes",
   "@chaCompressionConfigProtect": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "chaCompressionConfigProtectSemantics": "Mensajes protegidos",
   "chaCompressionConfigThresholdTokens": "Límite absoluto de tokens",
@@ -668,7 +688,11 @@
   "chaCompressionConfigDefaultProfile": "Perfil predeterminado",
   "chaCompressionConfigProfile": "Perfil: {profile}",
   "@chaCompressionConfigProfile": {
-    "placeholders": {"profile": {"type": "String"}}
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
   },
   "chaControlTitle": "Ajustes de esta conversación",
   "chaControlScope": "Solo esta conversación",
@@ -948,11 +972,26 @@
   "genMediaLoad": "Cargar contenido generado",
   "genMediaLoadFrom": "Cargar contenido generado desde {domain}",
   "genMediaTextSummary": "{lineCount, plural, =1{1 línea} other{{lineCount} líneas}} · {size}",
-  "@genMediaTextSummary": {"placeholders": {"lineCount": {"type": "int"}, "size": {"type": "String"}}},
+  "@genMediaTextSummary": {
+    "placeholders": {
+      "lineCount": {
+        "type": "int"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "genMediaViewFullText": "Ver texto completo",
   "genMediaOpenWith": "Abrir con…",
   "genMediaPages": "{count, plural, =1{1 página} other{{count} páginas}}",
-  "@genMediaPages": {"placeholders": {"count": {"type": "int"}}},
+  "@genMediaPages": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "genVideoSemanticLabel": "Vídeo generado por el agente",
   "genVideoPlay": "Reproducir vídeo",
   "genVideoPause": "Pausar vídeo",
@@ -1206,7 +1245,9 @@
   "litertStoreOpenError": "No se pudo abrir {url}",
   "@litertStoreOpenError": {
     "placeholders": {
-      "url": {"type": "String"}
+      "url": {
+        "type": "String"
+      }
     }
   },
   "litertNoteRecommended": "Recomendado para la mayoría de móviles",
@@ -2490,7 +2531,13 @@
   "notifBgSub": "Recibe avisos con la app cerrada · usa una notificación persistente",
   "notifBgActive": "Activo hasta que la desactives · escuchando eventos del agente",
   "notifBgActiveUntil": "Activo hasta que la desactives · escuchando eventos del agente",
-  "@notifBgActiveUntil": {"placeholders": {"time": {"type": "String"}}},
+  "@notifBgActiveUntil": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
   "notifBgPaused": "En pausa · activa la escucha para recibir eventos en segundo plano",
   "notifBgFiniteNotice": "La escucha permanece activa hasta que la desactives y muestra una notificación persistente de Android.",
   "notifFgsChannelLabel": "Canal del servicio persistente",
@@ -3274,15 +3321,45 @@
   "crnStatusCompleted": "completada",
   "crnOpenFromConversation": "Abrir programación asociada",
   "crnMetaDelivery": "entrega: {value}",
-  "@crnMetaDelivery": {"placeholders": {"value": {"type": "String"}}},
+  "@crnMetaDelivery": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "crnMetaModel": "modelo: {value}",
-  "@crnMetaModel": {"placeholders": {"value": {"type": "String"}}},
+  "@crnMetaModel": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "crnMetaProvider": "proveedor: {value}",
-  "@crnMetaProvider": {"placeholders": {"value": {"type": "String"}}},
+  "@crnMetaProvider": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "crnMetaContext": "contexto: {value}",
-  "@crnMetaContext": {"placeholders": {"value": {"type": "String"}}},
+  "@crnMetaContext": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "crnMetaWorkdir": "carpeta: {value}",
-  "@crnMetaWorkdir": {"placeholders": {"value": {"type": "String"}}},
+  "@crnMetaWorkdir": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "crnScriptBadge": "script",
   "crnRunNow": "Ejecutar ahora",
   "crnCronEdit": "Editar",
@@ -3503,9 +3580,21 @@
   "secConnectionPrivateHttp": "Red privada · HTTP",
   "secConnectionPublicHttp": "HTTP público · inseguro",
   "secConnectionFor": "Instancia activa: {name}",
-  "@secConnectionFor": {"placeholders": {"name": {"type": "String"}}},
+  "@secConnectionFor": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "secConnectionPublicHttpSub": "{name} es accesible mediante HTTP público sin cifrar. Usa HTTPS o Tailscale antes de introducir credenciales.",
-  "@secConnectionPublicHttpSub": {"placeholders": {"name": {"type": "String"}}},
+  "@secConnectionPublicHttpSub": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "secCredentialStorageTitle": "Almacenamiento de credenciales",
   "secCredentialStorageSub": "Las API keys y contraseñas se guardan en Android Keystore, fuera de las preferencias normales.",
   "secStatusProtected": "protegido",
@@ -3903,19 +3992,25 @@
   "slRelativeMinutes": "hace {count}m",
   "@slRelativeMinutes": {
     "placeholders": {
-      "count": {"type": "int"}
+      "count": {
+        "type": "int"
+      }
     }
   },
   "slRelativeHours": "hace {count}h",
   "@slRelativeHours": {
     "placeholders": {
-      "count": {"type": "int"}
+      "count": {
+        "type": "int"
+      }
     }
   },
   "slRelativeDays": "hace {count}d",
   "@slRelativeDays": {
     "placeholders": {
-      "count": {"type": "int"}
+      "count": {
+        "type": "int"
+      }
     }
   },
   "slSearchHint": "Buscar conversaciones…",
@@ -4136,7 +4231,13 @@
   "chaCompressionPending": "La compresión sigue en curso. Hermes actualizará esta conversación cuando confirme el resultado.",
   "chaCompressionLockHeld": "Ya hay otra compresión en curso para esta conversación. Inténtalo de nuevo dentro de un momento.",
   "chaSessionCompactedTooltip": "{count, plural, =1{Esta conversación se compactó una vez} other{Esta conversación se compactó {count} veces}}",
-  "@chaSessionCompactedTooltip": {"placeholders": {"count": {"type": "int"}}},
+  "@chaSessionCompactedTooltip": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chaCompressionSuccess": "Contexto comprimido: {beforeMessages} → {afterMessages} mensajes · ~{beforeTokens} → ~{afterTokens} tokens",
   "@chaCompressionSuccess": {
     "placeholders": {
@@ -4813,7 +4914,9 @@
   "ieExternalPairingBody": "El enlace externo quiere comprobar y configurar automáticamente {host}. Revisa que reconoces el servidor; después la app resolverá gateway, Dashboard y bridge por ti.",
   "@ieExternalPairingBody": {
     "placeholders": {
-      "host": {"type": "String"}
+      "host": {
+        "type": "String"
+      }
     }
   },
   "ieExternalPairingReview": "Solo revisar",
@@ -4822,8 +4925,12 @@
   "ieDuplicateBody": "Ya tienes «{label}» conectada a {endpoint}. No se creará otra instancia ni se modificarán sus credenciales.",
   "@ieDuplicateBody": {
     "placeholders": {
-      "label": {"type": "String"},
-      "endpoint": {"type": "String"}
+      "label": {
+        "type": "String"
+      },
+      "endpoint": {
+        "type": "String"
+      }
     }
   },
   "ieDuplicateOpen": "Abrir existente",
@@ -5156,7 +5263,13 @@
   "extApplyRejected": "El servidor rechazó el cambio de modelo.",
   "extVenvUnavailable": "El entorno del agente local no está disponible. Usa Reparar agente desde el panel de control local.",
   "extApplyError": "No se pudo aplicar: {error}",
-  "@extApplyError": {"placeholders": {"error": {"type": "String"}}},
+  "@extApplyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "extEditTitle": "Editar proveedor",
   "extTitle": "Proveedor externo",
   "extReachabilityInfo": "La app prueba esta URL desde el móvil. Hermes también debe poder llegar al proveedor desde su servidor mediante la misma LAN, VPN o red Tailscale.",
@@ -5202,7 +5315,7 @@
   "connectSimpleQuestion": "¿Cómo quieres conectar?",
   "connectSimpleIntro": "Escanea un QR existente o prepara el servidor con un solo comando. No tendrás que introducir puertos, instancias ni modelos.",
   "connectScanQr": "Escanear QR",
-  "connectScanQrBody": "Carga la conexión y comprueba automáticamente Gateway, Dashboard y Mobile Bridge.",
+  "connectScanQrBody": "La forma más rápida: escanea el QR que imprime tu servidor, sin teclear IP ni token.",
   "connectPrepareServer": "Preparar servidor",
   "connectPrepareServerBody": "Elige su sistema, copia un comando y termina escaneando el QR.",
   "connectInstallHelp": "¿Aún no tienes Hermes Agent? Abrir la guía",
@@ -5226,7 +5339,6 @@
   "connectDiagramSemantics": "Tu servidor genera un código seguro y este móvil lo escanea.",
   "connectIntro": "Elige cómo conectar con tu servidor Hermes.",
   "connectScanQrTitle": "Escanear QR",
-  "connectScanQrBody": "La forma más rápida: escanea el QR que imprime tu servidor, sin teclear IP ni token.",
   "connectManualTitle": "Introducir manualmente",
   "connectManualBody": "Escribe la dirección y el token de tu gateway.",
   "connectAssistTitle": "Preparar en una terminal",
@@ -5324,7 +5436,11 @@
   "chaQueuedPausedCount": "EN PAUSA · {count}",
   "@chaQueuedPausedCount": {
     "description": "Cabecera de la cola estacionada tras Stop.",
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "chaQueueParkedNote": "pausada después de Stop",
   "chaQueueResume": "Reanudar cola",
@@ -5342,10 +5458,18 @@
   "chaNoRecentActivity": "Sin actividad reciente",
   "chaBackgroundProcessRunning": "Proceso en segundo plano activo",
   "chaBackgroundProcessCommand": "En segundo plano · {command}",
-  "@chaBackgroundProcessCommand": {"placeholders": {"command": {}}},
+  "@chaBackgroundProcessCommand": {
+    "placeholders": {
+      "command": {}
+    }
+  },
   "chaBackgroundProcessWillNotify": "Te avisaré al terminar",
   "chaBackgroundActivityCount": "En segundo plano · {count}",
-  "@chaBackgroundActivityCount": {"placeholders": {"count": {}}},
+  "@chaBackgroundActivityCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "chaBackgroundActivityTitle": "Trabajo en segundo plano",
   "chaBackgroundActivityStale": "Último estado conocido",
   "chaBackgroundWatchPatterns": "Vigilando",
@@ -5353,37 +5477,84 @@
   "chaBackgroundLoop": "Bucle recurrente",
   "chaBackgroundHeartbeat": "Latido",
   "chaBackgroundTasks": "Tareas · {done}/{total}",
-  "@chaBackgroundTasks": {"placeholders": {"done": {}, "total": {}}},
+  "@chaBackgroundTasks": {
+    "placeholders": {
+      "done": {},
+      "total": {}
+    }
+  },
   "agentTasksPillTitle": "Tareas {done}/{total}",
-  "@agentTasksPillTitle": {"placeholders": {"done": {}, "total": {}}},
+  "@agentTasksPillTitle": {
+    "placeholders": {
+      "done": {},
+      "total": {}
+    }
+  },
   "agentTasksSummary": "{done} de {total} tareas completadas",
-  "@agentTasksSummary": {"placeholders": {"done": {}, "total": {}}},
+  "@agentTasksSummary": {
+    "placeholders": {
+      "done": {},
+      "total": {}
+    }
+  },
   "agentTasksAllDone": "Todo completado",
   "agentTasksShowList": "Ver la lista de tareas",
   "agentTasksCancelledCount": "{count, plural, =1{1 cancelada} other{{count} canceladas}}",
-  "@agentTasksCancelledCount": {"placeholders": {"count": {"type": "int"}}},
+  "@agentTasksCancelledCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "agentTasksIncomplete": "incompleta",
   "agentTasksStatusPending": "pendiente",
   "agentTasksStatusInProgress": "en curso",
   "agentTasksStatusCompleted": "completada",
   "agentTasksStatusCancelled": "cancelada",
   "agentTasksMore": "+{count} más",
-  "@agentTasksMore": {"placeholders": {"count": {"type": "int"}}},
+  "@agentTasksMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "agentTasksEmpty": "El agente no tiene tareas activas.",
   "chaBackgroundStatus": "Estado · {status}",
-  "@chaBackgroundStatus": {"placeholders": {"status": {}}},
+  "@chaBackgroundStatus": {
+    "placeholders": {
+      "status": {}
+    }
+  },
   "chaBackgroundStatusActive": "Activo",
   "chaBackgroundStatusPaused": "Pausado",
   "chaBackgroundStatusWaiting": "Esperando",
   "chaBackgroundStatusDone": "Completado",
   "chaBackgroundInterval": "Cada {duration}",
-  "@chaBackgroundInterval": {"placeholders": {"duration": {}}},
+  "@chaBackgroundInterval": {
+    "placeholders": {
+      "duration": {}
+    }
+  },
   "chaBackgroundNextDue": "Próxima · {time}",
-  "@chaBackgroundNextDue": {"placeholders": {"time": {}}},
+  "@chaBackgroundNextDue": {
+    "placeholders": {
+      "time": {}
+    }
+  },
   "chaBackgroundLastRun": "Última ejecución · {time}",
-  "@chaBackgroundLastRun": {"placeholders": {"time": {}}},
+  "@chaBackgroundLastRun": {
+    "placeholders": {
+      "time": {}
+    }
+  },
   "chaBackgroundRunCount": "Ejecuciones · {count}",
-  "@chaBackgroundRunCount": {"placeholders": {"count": {}}},
+  "@chaBackgroundRunCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "chaBackgroundAwaitingResponse": "Esperando a que termine la ejecución actual",
   "chaBackgroundDeferredByGoal": "Aplazado mientras el goal permanente está activo",
   "chaBackgroundActionStop": "Detener",
@@ -5397,7 +5568,13 @@
   "chaStopConfirmed": "Detenido",
   "chaBackgroundWorkStopped": "Trabajo en segundo plano detenido",
   "chaBackgroundWorkRemaining": "{count, plural, one {No se pudo detener todo: queda 1 tarea en segundo plano} other {No se pudo detener todo: quedan {count} tareas en segundo plano}}",
-  "@chaBackgroundWorkRemaining": {"placeholders": {"count": {"type": "int"}}},
+  "@chaBackgroundWorkRemaining": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chaStopFailed": "Stop no se confirmó",
   "chaStopRetry": "Reintentar Stop",
   "chaStopPersistenceFailed": "Stop no se pudo guardar o confirmar de forma segura. Reinténtalo.",
@@ -5405,12 +5582,21 @@
   "chaStaleRunningStopBody": "Esta sesión ya estaba trabajando al abrirse. Detenla si ese trabajo ya no corresponde.",
   "chaStaleRunningStopAction": "Detener esta sesión",
   "chaGoalTurnLabel": "Turno {used}/{max}",
-  "@chaGoalTurnLabel": {"placeholders": {"used": {}, "max": {}}},
+  "@chaGoalTurnLabel": {
+    "placeholders": {
+      "used": {},
+      "max": {}
+    }
+  },
   "chaGoalPaused": "Goal en pausa",
   "chaGoalWaiting": "Goal esperando",
   "chaGoalDone": "Goal terminado",
   "chaGoalDoneTurns": "Terminado · {used} turnos",
-  "@chaGoalDoneTurns": {"placeholders": {"used": {}}},
+  "@chaGoalDoneTurns": {
+    "placeholders": {
+      "used": {}
+    }
+  },
   "chaGoalBlocked": "Goal bloqueado",
   "chaGoalSheetTitle": "Objetivo permanente",
   "chaGoalSheetOutcome": "Resultado esperado",
@@ -5486,7 +5672,13 @@
   "setBridgeChecking": "Comprobando la versión instalada…",
   "setBridgeStatusUnavailable": "No se detecta el bridge. Puede estar apagado o aún no instalado.",
   "setBridgeStatusCurrent": "Instalado v{version} · actualizado",
-  "@setBridgeStatusCurrent": {"placeholders": {"version": {"type": "String"}}},
+  "@setBridgeStatusCurrent": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
   "setBridgeUpdateNow": "Actualizar ahora",
   "setBridgeReadOnly": "Esta instancia es de solo lectura; se bloquean los cambios automáticos del bridge.",
   "notifListenerStartFailed": "No se pudo iniciar la escucha en segundo plano. Reinténtalo.",
@@ -5524,9 +5716,21 @@
   "voiceDetectingKokoro": "Comprobando Kokoro…",
   "voiceDetectedBaseUrl": "URL detectada",
   "voiceKokoroDetected": "Kokoro listo · {count} voces detectadas",
-  "@voiceKokoroDetected": {"placeholders": {"count": {"type": "int"}}},
+  "@voiceKokoroDetected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "voiceKokoroDetectionFailed": "No se pudo configurar Kokoro: {error}",
-  "@voiceKokoroDetectionFailed": {"placeholders": {"error": {"type": "String"}}},
+  "@voiceKokoroDetectionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "voiceSaveConfiguration": "Guardar configuración",
   "voiceGuideButton": "Guía paso a paso",
   "voiceConversationSectionTitle": "Conversación con Hermes",
@@ -5542,7 +5746,13 @@
   "voiceServerCardTitle": "Voz de esta instancia",
   "voiceServerCardSub": "Perfil predeterminado de Hermes",
   "voiceServerCardProfileSub": "Perfil {profile}",
-  "@voiceServerCardProfileSub": {"placeholders": {"profile": {"type": "String"}}},
+  "@voiceServerCardProfileSub": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
   "voiceServerSttLabel": "Reconocimiento",
   "voiceServerTtsLabel": "Voz",
   "voiceServerDeliveryLabel": "Streaming",
@@ -5576,16 +5786,37 @@
   "voiceCurrentLocalFallback": "Servidor Hermes · no disponible · sin cambio local",
   "voiceCurrentServerUnknown": "Servidor Hermes · configuración no disponible",
   "voiceCurrentServer": "Servidor Hermes · {provider} · {voice}",
-  "@voiceCurrentServer": {"placeholders": {"provider": {"type": "String"}, "voice": {"type": "String"}}},
+  "@voiceCurrentServer": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      },
+      "voice": {
+        "type": "String"
+      }
+    }
+  },
   "voiceStatusLocal": "Listo en este móvil",
   "voiceStatusChecking": "Comprobando disponibilidad y configuración…",
   "voiceStatusUsingFallback": "El servidor no está disponible; Voz no se iniciará hasta recuperarlo o elegir este móvil",
   "voiceStatusServerReadyConfigUnknown": "Servidor disponible; no se pudo leer el proveedor actual",
   "voiceStatusServerReady": "Endpoints y configuración detectados · se valida al hablar",
   "voiceCurrentLiveDictation": "Dictado en directo · {engine}",
-  "@voiceCurrentLiveDictation": {"placeholders": {"engine": {"type": "String"}}},
+  "@voiceCurrentLiveDictation": {
+    "placeholders": {
+      "engine": {
+        "type": "String"
+      }
+    }
+  },
   "voiceCurrentFinishedDictation": "Transcribir al terminar · {model}",
-  "@voiceCurrentFinishedDictation": {"placeholders": {"model": {"type": "String"}}},
+  "@voiceCurrentFinishedDictation": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
   "voiceStatusReady": "Listo para usar",
   "voiceStatusDownloadNeeded": "Falta descargar el modelo seleccionado",
   "voiceStatusDependsOnAndroid": "Depende del servicio de voz instalado en Android",
@@ -5608,7 +5839,16 @@
   "voiceServerReadOnly": "Esta instancia es de solo lectura. Puedes ver la voz, pero no cambiarla.",
   "voiceServerEdgeBehavior": "Edge genera la voz en el servidor. Puede empezar por frases, pero no ofrece PCM continuo.",
   "voiceServerFallbackNote": "Si el servidor falla, la conversación conserva la ruta Hermes. No activa automáticamente {stt} ni {tts}: reintenta o elige este móvil.",
-  "@voiceServerFallbackNote": {"placeholders": {"stt": {"type": "String"}, "tts": {"type": "String"}}},
+  "@voiceServerFallbackNote": {
+    "placeholders": {
+      "stt": {
+        "type": "String"
+      },
+      "tts": {
+        "type": "String"
+      }
+    }
+  },
   "voiceServerVoiceSheetTitle": "Voz Edge del servidor",
   "voiceServerVoiceSheetHelp": "Elige una voz de la lista. Si ya conoces otro ID de Edge, puedes añadirlo desde la opción manual.",
   "voiceServerVoiceManualTitle": "Usar otro ID de Edge (avanzado)",
@@ -5616,7 +5856,13 @@
   "voiceServerVoiceSave": "Guardar en el servidor",
   "voiceServerVoiceSaving": "Guardando voz…",
   "voiceServerVoiceSaved": "Voz del servidor cambiada a {voice}",
-  "@voiceServerVoiceSaved": {"placeholders": {"voice": {"type": "String"}}},
+  "@voiceServerVoiceSaved": {
+    "placeholders": {
+      "voice": {
+        "type": "String"
+      }
+    }
+  },
   "voiceServerVoiceSaveFailed": "No se pudo guardar la voz en el servidor. La configuración anterior sigue activa.",
   "voiceServerManageAction": "Configurar",
   "voiceServerManageTitle": "Configura la voz del servidor",
@@ -5638,14 +5884,26 @@
   "voiceServerProviderUse": "Usar este proveedor",
   "voiceServerProviderSwitching": "Cambiando proveedor…",
   "voiceServerProviderChanged": "Proveedor del servidor cambiado a {provider}",
-  "@voiceServerProviderChanged": {"placeholders": {"provider": {"type": "String"}}},
+  "@voiceServerProviderChanged": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
   "voiceServerProviderChangeFailed": "No se pudo cambiar el proveedor. La selección anterior sigue activa.",
   "voiceServerProviderPcmCapable": "Compatible con PCM continuo",
   "voiceServerProviderPhraseOnly": "Entrega por frases",
   "voiceServerCredentialConfigured": "Configurada en el servidor",
   "voiceServerCredentialMissing": "Sin configurar",
   "voiceServerCredentialHint": "Nueva {label}",
-  "@voiceServerCredentialHint": {"placeholders": {"label": {"type": "String"}}},
+  "@voiceServerCredentialHint": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
   "voiceServerCredentialSave": "Guardar clave en el servidor",
   "voiceServerCredentialSaved": "Clave guardada. El valor no se conserva ni se vuelve a mostrar en el móvil.",
   "voiceServerCredentialFailed": "No se pudo guardar la clave en el servidor.",
@@ -5657,7 +5915,13 @@
   "voiceServerSetupFailed": "La preparación del proveedor no terminó correctamente.",
   "voiceServerParametersAction": "Personalizar",
   "voiceServerParametersTitle": "Personalizar {provider}",
-  "@voiceServerParametersTitle": {"placeholders": {"provider": {"type": "String"}}},
+  "@voiceServerParametersTitle": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
   "voiceServerParametersSub": "Elige opciones válidas de Hermes; aquí no tendrás que escribir rutas ni nombres técnicos.",
   "voiceServerParametersCurrentTitle": "Configuración activa",
   "voiceServerParametersAdvancedTitle": "Avanzado",
@@ -5684,8 +5948,12 @@
   "voiceServerLanguageMismatch": "El servidor escucha en {serverLanguage}; la app está en {appLanguage}.",
   "@voiceServerLanguageMismatch": {
     "placeholders": {
-      "serverLanguage": {"type": "String"},
-      "appLanguage": {"type": "String"}
+      "serverLanguage": {
+        "type": "String"
+      },
+      "appLanguage": {
+        "type": "String"
+      }
     }
   },
   "voiceServerFieldSpeed": "Velocidad de habla",
@@ -5713,14 +5981,32 @@
   "voiceTextToSpeechTab": "Texto a voz",
   "voiceTextToSpeechHelp": "Elige qué voz leerá las respuestas y pruébala aquí mismo.",
   "voiceAdvancedActive": "Activo: {name} · toca para configurar",
-  "@voiceAdvancedActive": {"placeholders": {"name": {"type": "String"}}},
+  "@voiceAdvancedActive": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "voiceManageLiveDictationModel": "Modelo del dictado en directo",
   "voiceManageFinishedDictationModel": "Modelo para transcribir al terminar",
   "voiceManageOfflineVoices": "Cambiar o descargar voz",
   "voiceSelectedAssetReady": "{name} · listo para usar",
-  "@voiceSelectedAssetReady": {"placeholders": {"name": {"type": "String"}}},
+  "@voiceSelectedAssetReady": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "voiceSelectedAssetDownloadNeeded": "{name} · falta descargarlo",
-  "@voiceSelectedAssetDownloadNeeded": {"placeholders": {"name": {"type": "String"}}},
+  "@voiceSelectedAssetDownloadNeeded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "voiceElevenVoiceIdLabel": "Identificador de voz de ElevenLabs",
   "voiceSetupSpeakStep": "1. Hablar",
   "voiceSetupSpeakHelp": "Elige cómo convierte la app tu voz en texto.",
@@ -5767,7 +6053,13 @@
   "voiceErrorInvalidAudio": "El servicio de voz devolvió un archivo de audio vacío o no válido.",
   "voiceErrorCustomResponseMissingAudio": "La respuesta de la API personalizada no contenía audio utilizable.",
   "voiceErrorCustomHttpFailure": "La API TTS personalizada respondió con HTTP {status}.",
-  "@voiceErrorCustomHttpFailure": {"placeholders": {"status": {"type": "String"}}},
+  "@voiceErrorCustomHttpFailure": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
   "voiceErrorDashboardLogin": "El Dashboard de Hermes necesita iniciar sesión. Configura sus credenciales para esta instancia.",
   "voiceErrorUnavailable": "El servicio de voz elegido no está disponible para la instancia activa.",
   "voiceErrorPreviewTimeout": "La voz no produjo audio a tiempo. Comprueba que el modelo esté descargado y vuelve a probar.",
@@ -6211,8 +6503,12 @@
   "interactiveBatchProgress": "Respondidas {answered} de {total}",
   "@interactiveBatchProgress": {
     "placeholders": {
-      "answered": {"type": "int"},
-      "total": {"type": "int"}
+      "answered": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "interactiveBatchOtherHint": "Otro",
@@ -6222,8 +6518,12 @@
   "subagentActivitySummary": "{active, plural, =1{1 activo} other{{active} activos}} · {completed, plural, =1{1 cerrado} other{{completed} cerrados}}",
   "@subagentActivitySummary": {
     "placeholders": {
-      "active": {"type": "int"},
-      "completed": {"type": "int"}
+      "active": {
+        "type": "int"
+      },
+      "completed": {
+        "type": "int"
+      }
     }
   },
   "subagentActivityRequested": "pendiente",
@@ -6235,30 +6535,80 @@
   "subagentActivityCancelled": "cancelado",
   "subagentActivityUnknown": "estado desconocido",
   "subagentActivityModel": "Modelo: {model}",
-  "@subagentActivityModel": {"placeholders": {"model": {"type": "String"}}},
+  "@subagentActivityModel": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
   "subagentActivityToolCount": "{count, plural, =1{1 herramienta} other{{count} herramientas}}",
-  "@subagentActivityToolCount": {"placeholders": {"count": {"type": "int"}}},
+  "@subagentActivityToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "subagentActivityCallCount": "{count, plural, =1{1 llamada} other{{count} llamadas}}",
-  "@subagentActivityCallCount": {"placeholders": {"count": {"type": "int"}}},
+  "@subagentActivityCallCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "subagentActivityFilesRead": "{count} leídos",
-  "@subagentActivityFilesRead": {"placeholders": {"count": {"type": "int"}}},
+  "@subagentActivityFilesRead": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "subagentActivityFilesWritten": "{count} escritos",
-  "@subagentActivityFilesWritten": {"placeholders": {"count": {"type": "int"}}},
+  "@subagentActivityFilesWritten": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "subagentActivityResultSummary": "Resumen del resultado",
   "subagentActivityMetadataUnavailable": "No se conservaron los objetivos ni los modelos individuales.",
   "subagentActivityAggregateCompleted": "{count, plural, =1{1 completado} other{{count} completados}}",
-  "@subagentActivityAggregateCompleted": {"placeholders": {"count": {"type": "int"}}},
+  "@subagentActivityAggregateCompleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "subagentActivityAggregateFailed": "{count, plural, =1{1 falló} other{{count} fallaron}}",
-  "@subagentActivityAggregateFailed": {"placeholders": {"count": {"type": "int"}}},
+  "@subagentActivityAggregateFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "subagentActivityItem": "Subagente {index}",
   "@subagentActivityItem": {
-    "placeholders": {"index": {"type": "int"}}
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
   },
   "subagentActivityProgress": "Tarea {current} de {total}",
   "@subagentActivityProgress": {
     "placeholders": {
-      "current": {"type": "int"},
-      "total": {"type": "int"}
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "subagentActivityOpenConversation": "Abrir conversación",
@@ -6283,7 +6633,11 @@
   "artifactTitle": "Artefactos de la sesión",
   "artifactCount": "{count, plural, =1{1 elemento} other{{count} elementos}}",
   "@artifactCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "artifactEmptyTitle": "Todavía no hay artefactos",
   "artifactEmptyBody": "Las imágenes, documentos y resultados generados en esta sesión aparecerán aquí.",
@@ -6301,17 +6655,29 @@
   "artifactSourceUnavailable": "No se pudo localizar el mensaje de origen en el historial cargado.",
   "artifactJumpSemantics": "{name}. Ir al mensaje de origen",
   "@artifactJumpSemantics": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "artifactSourceOne": "Origen: mensaje {number}",
   "@artifactSourceOne": {
-    "placeholders": {"number": {"type": "int"}}
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
   },
   "artifactSourceMany": "Origen: mensaje {number} · {count} referencias",
   "@artifactSourceMany": {
     "placeholders": {
-      "number": {"type": "int"},
-      "count": {"type": "int"}
+      "number": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
   "generatedArtifactSection": "Artefactos generados",
@@ -6320,40 +6686,72 @@
   "generatedArtifactKindSvg": "Fuente SVG",
   "generatedArtifactVersionCount": "{count, plural, =1{1 versión} other{{count} versiones}}",
   "@generatedArtifactVersionCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "generatedArtifactOpenSemantics": "{name}. Abrir artefacto generado",
   "@generatedArtifactOpenSemantics": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "generatedArtifactSourceOnly": "Por seguridad, Hermes Console muestra HTML y SVG solo como código fuente. Nunca los ejecuta ni los abre en un WebView.",
   "generatedArtifactSourceSemantics": "Código fuente de {title}",
   "@generatedArtifactSourceSemantics": {
-    "placeholders": {"title": {"type": "String"}}
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
   },
   "generatedArtifactCharacterCount": "{count} caracteres",
   "@generatedArtifactCharacterCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "generatedArtifactPreviewTruncated": "La vista previa se limita a {limit} caracteres. Copiar, compartir y guardar siguen usando la versión completa.",
   "@generatedArtifactPreviewTruncated": {
-    "placeholders": {"limit": {"type": "int"}}
+    "placeholders": {
+      "limit": {
+        "type": "int"
+      }
+    }
   },
   "generatedArtifactCopied": "Contenido del artefacto copiado.",
   "generatedArtifactSaved": "Guardado como {name}.",
   "@generatedArtifactSaved": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "generatedArtifactExportTooLarge": "Este artefacto supera el límite de exportación de {mb} MB.",
   "@generatedArtifactExportTooLarge": {
-    "placeholders": {"mb": {"type": "int"}}
+    "placeholders": {
+      "mb": {
+        "type": "int"
+      }
+    }
   },
   "generatedArtifactExportFailed": "No se pudo exportar el artefacto.",
   "generatedArtifactVersionOf": "Versión {current} de {total}",
   "@generatedArtifactVersionOf": {
     "placeholders": {
-      "current": {"type": "int"},
-      "total": {"type": "int"}
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "generatedArtifactPreviousVersion": "Versión anterior",
@@ -6384,7 +6782,11 @@
   "recoveryCenterSavedFallback": "Checkpoint guardado",
   "recoveryCenterStaleView": "{error} Se conserva la última vista.",
   "@recoveryCenterStaleView": {
-    "placeholders": {"error": {"type": "String"}}
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "recoveryCenterDetailFallback": "Detalle del checkpoint",
   "recoveryCenterReadOnlyRestore": "Modo solo lectura: la restauración está deshabilitada.",
@@ -6422,9 +6824,15 @@
   "extensionsCenterChangeBody": "{action} “{name}” {scope}.",
   "@extensionsCenterChangeBody": {
     "placeholders": {
-      "action": {"type": "String"},
-      "name": {"type": "String"},
-      "scope": {"type": "String"}
+      "action": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      },
+      "scope": {
+        "type": "String"
+      }
     }
   },
   "extensionsCenterConfirmChange": "Confirmar cambio",
@@ -6448,8 +6856,12 @@
   "extensionsCenterResultCount": "{visible} de {total}",
   "@extensionsCenterResultCount": {
     "placeholders": {
-      "visible": {"type": "int"},
-      "total": {"type": "int"}
+      "visible": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "extensionsCenterReloadControlled": "Recarga controlada",
@@ -6457,23 +6869,39 @@
   "extensionsCenterReloading": "Recargando…",
   "extensionsCenterStaleInventory": "{error} Se conserva el último inventario.",
   "@extensionsCenterStaleInventory": {
-    "placeholders": {"error": {"type": "String"}}
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterPluginVersion": "v{version}",
   "@extensionsCenterPluginVersion": {
-    "placeholders": {"version": {"type": "String"}}
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterActive": "activo",
   "extensionsCenterInactive": "inactivo",
   "extensionsCenterToolCount": "{count, plural, one{1 herramienta} other{{count} herramientas}}",
   "@extensionsCenterToolCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "extensionsCenterToolCountWithDescription": "{count, plural, one{1 herramienta · {description}} other{{count} herramientas · {description}}}",
   "@extensionsCenterToolCountWithDescription": {
     "placeholders": {
-      "count": {"type": "int"},
-      "description": {"type": "String"}
+      "count": {
+        "type": "int"
+      },
+      "description": {
+        "type": "String"
+      }
     }
   },
   "extensionsCenterFailureUnsupported": "Esta versión de Hermes no publica plugins ni herramientas.",
@@ -6502,14 +6930,24 @@
   "agentCenterStopProcessTitle": "Detener proceso",
   "agentCenterStopProcessBody": "Se detendrá únicamente “{process}”.",
   "@agentCenterStopProcessBody": {
-    "placeholders": {"process": {"type": "String"}}
+    "placeholders": {
+      "process": {
+        "type": "String"
+      }
+    }
   },
   "agentCenterStop": "Detener",
   "agentCenterStopFailed": "Hermes no pudo detener ese proceso.",
   "agentCenterStopAll": "Detener todos",
   "agentCenterStopAllTitle": "¿Detener todos los procesos activos?",
   "agentCenterStopAllBody": "Se detendrán {count} procesos en segundo plano de esta conversación. El historial de delegaciones seguirá disponible.",
-  "@agentCenterStopAllBody": {"placeholders": {"count": {"type": "int"}}},
+  "@agentCenterStopAllBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "agentCenterStopAllFailed": "No se pudieron detener algunos procesos.",
   "agentCenterNewTaskTitle": "Nueva tarea en segundo plano",
   "agentCenterNewTaskHint": "Describe una tarea concreta para esta conversación",
@@ -6523,14 +6961,22 @@
   "agentCenterNoProcesses": "No hay procesos activos para esta conversación.",
   "agentCenterProcessFallback": "Proceso {id}",
   "@agentCenterProcessFallback": {
-    "placeholders": {"id": {"type": "String"}}
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
   },
   "agentCenterActive": "activo",
   "agentCenterProcessStatus": "{status} · {seconds} s",
   "@agentCenterProcessStatus": {
     "placeholders": {
-      "status": {"type": "String"},
-      "seconds": {"type": "int"}
+      "status": {
+        "type": "String"
+      },
+      "seconds": {
+        "type": "int"
+      }
     }
   },
   "agentCenterStopTooltip": "Detener este proceso",
@@ -6538,18 +6984,30 @@
   "agentCenterNoHistory": "Hermes todavía no ha guardado ninguna delegación de subagentes.",
   "agentCenterSubagentCount": "{count, plural, one{1 subagente} other{{count} subagentes}}",
   "@agentCenterSubagentCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "agentCenterSubagentCountWithDate": "{count, plural, one{1 subagente · {date}} other{{count} subagentes · {date}}}",
   "@agentCenterSubagentCountWithDate": {
     "placeholders": {
-      "count": {"type": "int"},
-      "date": {"type": "String"}
+      "count": {
+        "type": "int"
+      },
+      "date": {
+        "type": "String"
+      }
     }
   },
   "agentCenterStaleView": "{error} Se conserva la última vista.",
   "@agentCenterStaleView": {
-    "placeholders": {"error": {"type": "String"}}
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "projectsCenterTitle": "Proyectos",
   "projectsCenterRefreshTooltip": "Actualizar proyectos",
@@ -6567,23 +7025,39 @@
   "projectsCenterEmptyBody": "Abre una conversación con una carpeta de trabajo (cwd) en el servidor. Aparecerá aquí cuando Hermes pueda agruparla por carpeta o repositorio Git.",
   "projectsCenterStaleView": "{error} Se conserva la última vista.",
   "@projectsCenterStaleView": {
-    "placeholders": {"error": {"type": "String"}}
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "projectsCenterUnnamedProject": "Proyecto sin nombre",
   "projectsCenterProjectSemantics": "{label}, {count, plural, one{1 conversación} other{{count} conversaciones}}",
   "@projectsCenterProjectSemantics": {
     "placeholders": {
-      "label": {"type": "String"},
-      "count": {"type": "int"}
+      "label": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
   "projectsCenterConversationCount": "{count, plural, one{1 conversación} other{{count} conversaciones}}",
   "@projectsCenterConversationCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "projectsCenterRepositoryCount": "{count, plural, one{1 repositorio} other{{count} repositorios}}",
   "@projectsCenterRepositoryCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "projectsCenterServerPathReadOnly": "Ruta del servidor, solo lectura",
   "projectsCenterDetailStale": "No se pudo actualizar el detalle; se muestra el resumen disponible.",
@@ -6613,7 +7087,11 @@
   "extensionsCenterMcpCatalogSearchHint": "Buscar en el catálogo…",
   "extensionsCenterMcpCatalogSubtitle": "{count, plural, =0{No hay entradas disponibles} one{1 servidor disponible} other{{count} servidores disponibles}}",
   "@extensionsCenterMcpCatalogSubtitle": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "extensionsCenterMcpCatalogTitle": "Catálogo MCP",
   "extensionsCenterMcpConfiguredSection": "Configurados",
@@ -6633,7 +7111,11 @@
   "extensionsCenterMcpRemoveAction": "Eliminar servidor",
   "extensionsCenterMcpRemoveBody": "Se eliminará «{name}» de la configuración de esta instancia.",
   "@extensionsCenterMcpRemoveBody": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterMcpRemoveTitle": "Eliminar servidor MCP",
   "extensionsCenterMcpRemoved": "Servidor MCP eliminado.",
@@ -6645,15 +7127,27 @@
   "extensionsCenterMcpTestNeedsAuth": "El servidor MCP necesita autorización.",
   "extensionsCenterMcpTestSuccess": "{count, plural, =0{Conexión correcta} one{Conexión correcta · 1 herramienta} other{Conexión correcta · {count} herramientas}}",
   "@extensionsCenterMcpTestSuccess": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "extensionsCenterMcpToggleBody": "Se cambiará el estado de «{name}» y se recargará MCP.",
   "@extensionsCenterMcpToggleBody": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterMcpToolCount": "{count, plural, one{1 herramienta} other{{count} herramientas}}",
   "@extensionsCenterMcpToolCount": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "extensionsCenterMcpTransportLabel": "Transporte",
   "extensionsCenterNoMatchesBody": "Prueba con otro término o desactiva el filtro de activos.",
@@ -6665,7 +7159,11 @@
   "extensionsCenterPluginInstallAction": "Instalar",
   "extensionsCenterPluginInstallConfirmBody": "Hermes descargará y ejecutará código de terceros desde «{source}». Revisa el origen antes de continuar.",
   "@extensionsCenterPluginInstallConfirmBody": {
-    "placeholders": {"source": {"type": "String"}}
+    "placeholders": {
+      "source": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterPluginInstallConfirmTitle": "Confirmar instalación",
   "extensionsCenterPluginInstallRisk": "Los plugins ejecutan código en tu servidor. Instala únicamente repositorios en los que confíes.",
@@ -6675,7 +7173,11 @@
   "extensionsCenterPluginRemoveAction": "Eliminar plugin",
   "extensionsCenterPluginRemoveBody": "Se eliminará «{name}» de esta instancia. Sus datos externos pueden permanecer en el servidor.",
   "@extensionsCenterPluginRemoveBody": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterPluginRemoveTitle": "Eliminar plugin",
   "extensionsCenterPluginRemoved": "Plugin eliminado.",
@@ -6683,7 +7185,11 @@
   "extensionsCenterPluginUpdateAction": "Actualizar plugin",
   "extensionsCenterPluginUpdateBody": "Hermes actualizará «{name}» desde su origen Git.",
   "@extensionsCenterPluginUpdateBody": {
-    "placeholders": {"name": {"type": "String"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "extensionsCenterPluginUpdateTitle": "Actualizar plugin",
   "extensionsCenterPluginUpdated": "Plugin actualizado.",
@@ -6709,13 +7215,17 @@
   "dockSettingsResetProfile": "Restablecer {profile}",
   "@dockSettingsResetProfile": {
     "placeholders": {
-      "profile": {"type": "String"}
+      "profile": {
+        "type": "String"
+      }
     }
   },
   "dockSettingsResetConfirmBody": "Se restablecerán elementos, comportamiento de Atrás y estilo del perfil {profile}. Los ajustes actuales de este perfil se perderán.",
   "@dockSettingsResetConfirmBody": {
     "placeholders": {
-      "profile": {"type": "String"}
+      "profile": {
+        "type": "String"
+      }
     }
   },
   "dockProfileBots": "Bots",
@@ -6727,8 +7237,12 @@
   "dockItemsVisibleCount": "{visible} de {total} visibles",
   "@dockItemsVisibleCount": {
     "placeholders": {
-      "visible": {"type": "int"},
-      "total": {"type": "int"}
+      "visible": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "dockBehaviorSectionTitle": "Comportamiento",
@@ -6754,7 +7268,9 @@
   "dockItemDragHandleLabel": "Arrastrar para reordenar {item}",
   "@dockItemDragHandleLabel": {
     "placeholders": {
-      "item": {"type": "String"}
+      "item": {
+        "type": "String"
+      }
     }
   },
   "missionSharedRooms": "Salas",
@@ -6777,22 +7293,41 @@
   "missionHostedMemberCount": "{count, plural, one{1 miembro} other{{count} miembros}}",
   "@missionHostedMemberCount": {
     "description": "Número de miembros de una sala oficial.",
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "missionHostedRoomCount": "{count, plural, one{1 sala} other{{count} salas}}",
   "@missionHostedRoomCount": {
     "description": "Número de salas oficiales visibles.",
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "missionSharedRoomSemantics": "Sala {name}, {count, plural, one{1 miembro} other{{count} miembros}}",
   "@missionSharedRoomSemantics": {
     "description": "Etiqueta accesible de una sala oficial sin identificadores opacos.",
-    "placeholders": {"name": {"type": "String"}, "count": {"type": "int"}}
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "roomAvatarMembers": "{count, plural, one{1 miembro, equipo incompleto} other{{count} miembros}}",
   "@roomAvatarMembers": {
     "description": "Etiqueta accesible del grupo visual de avatares.",
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "missionApprovalNoLongerAvailable": "La aprobación ya no está disponible. Actualiza Trabajo.",
   "missionApprovalNoVerifiedTarget": "No hay un destino verificado para esta aprobación.",
@@ -6970,12 +7505,24 @@
   "botSave": "Guardar",
   "botCancel": "Cancelar",
   "botSectionPartial": "No se pudieron actualizar: {names}.",
-  "@botSectionPartial": {"placeholders": {"names": {"type": "String"}}},
+  "@botSectionPartial": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "botProfileFailed": "No se pudo guardar. Comprueba la conexión y vuelve a intentarlo.",
   "botRecentSession": "Conversación reciente",
   "botDuplicate": "Duplicar bot",
   "botDuplicated": "Copia creada: {name}",
-  "@botDuplicated": {"placeholders": {"name": {"type": "String"}}},
+  "@botDuplicated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "botAdvanced": "Configuración avanzada",
   "botDescription": "Descripción",
   "botSkills": "Habilidades",
@@ -6997,7 +7544,9 @@
   "chatImageFromHostTapToEnlarge": "Imagen de {host}, toca para ampliar",
   "@chatImageFromHostTapToEnlarge": {
     "placeholders": {
-      "host": { "type": "String" }
+      "host": {
+        "type": "String"
+      }
     }
   },
   "chatQueueBlockedRetry": "Envío pendiente. Reintenta.",
@@ -7005,21 +7554,29 @@
   "memoryBackupSaved": "Backup guardado: {path}",
   "@memoryBackupSaved": {
     "placeholders": {
-      "path": { "type": "String" }
+      "path": {
+        "type": "String"
+      }
     }
   },
   "memoryConfiguredCount": "{configured} / {total} configuradas",
   "@memoryConfiguredCount": {
     "placeholders": {
-      "configured": { "type": "int" },
-      "total": { "type": "int" }
+      "configured": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "memoryFilterHint": "Filtrar proveedores y archivos…",
   "memoryNoMatches": "Sin coincidencias para \"{filter}\"",
   "@memoryNoMatches": {
     "placeholders": {
-      "filter": { "type": "String" }
+      "filter": {
+        "type": "String"
+      }
     }
   },
   "memoryProviderNotConfigured": "No configurado",
@@ -7034,7 +7591,9 @@
   "voiceProfileLabel": "Perfil · {profile}",
   "@voiceProfileLabel": {
     "placeholders": {
-      "profile": { "type": "String" }
+      "profile": {
+        "type": "String"
+      }
     }
   },
   "uninstallOpenTermux": "Abrir Termux para activarlo",
@@ -7044,10 +7603,22 @@
   "botFaceColor": "Color",
   "botShowHidden": "Mostrar bots ocultos",
   "botRoomLinkFailed": "Sala creada. No se pudo enlazar a estos bots: {names}. Reintenta sus enlaces antes de enviar.",
-  "@botRoomLinkFailed": {"placeholders": {"names": {"type": "String"}}},
+  "@botRoomLinkFailed": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "botRoomLinkUnavailable": "Ningún bot guardado anuncia ahora un RoomLink accesible.",
   "botDuplicateIncomplete": "Se copió {name}, pero no se pudo restablecer su chat y título. Reintenta para terminar esta copia.",
-  "@botDuplicateIncomplete": {"placeholders": {"name": {"type": "String"}}},
+  "@botDuplicateIncomplete": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "botToolsetsInherit": "Sin herramientas seleccionadas, Hermes hereda sus herramientas predeterminadas.",
   "botManageRooms": "Gestionar salas",
   "botRoomMembersUnavailable": "Abre una sala para gestionarla. Este servidor no permite cambiar los miembros de una sala existente.",
@@ -7069,8 +7640,12 @@
   "installRamCompatible": "RAM: {ram} · {count, plural, =1{1 modelo compatible} other{{count} modelos compatibles}}",
   "@installRamCompatible": {
     "placeholders": {
-      "ram": { "type": "String" },
-      "count": { "type": "int" }
+      "ram": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
   "installUseAiApi": "Usar API de IA (OpenAI, Anthropic, Mistral…)",
@@ -7090,15 +7665,48 @@
   "liveCompacting": "Compactando",
   "liveWaitingForUser": "Esperando tu respuesta",
   "liveMoreBackground": "+{count} en segundo plano",
-  "@liveMoreBackground": {"placeholders": {"count": {"type": "int"}}},
+  "@liveMoreBackground": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveMoreSubagents": "+{count, plural, =1{1 subagente} other{{count} subagentes}}",
-  "@liveMoreSubagents": {"placeholders": {"count": {"type": "int"}}},
+  "@liveMoreSubagents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveSubagentsWorking": "{count, plural, =1{1 subagente trabajando} other{{count} subagentes trabajando}}",
-  "@liveSubagentsWorking": {"placeholders": {"count": {"type": "int"}}},
+  "@liveSubagentsWorking": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveSubagentsEnded": "{count, plural, =1{1 subagente terminado} other{{count} subagentes terminados}}",
-  "@liveSubagentsEnded": {"placeholders": {"count": {"type": "int"}}},
+  "@liveSubagentsEnded": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveTasksShort": "{done}/{total} tareas",
-  "@liveTasksShort": {"placeholders": {"done": {"type": "int"}, "total": {"type": "int"}}},
+  "@liveTasksShort": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "liveShowActivity": "Ver la actividad",
   "liveHideActivity": "Cerrar la actividad",
   "liveActivityTitle": "Actividad en vivo",
@@ -7110,7 +7718,13 @@
   "liveSectionGoal": "Objetivo",
   "liveShowLess": "Ver menos",
   "liveOlderSteps": "+{count} anteriores",
-  "@liveOlderSteps": {"placeholders": {"count": {"type": "int"}}},
+  "@liveOlderSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveSubagentControl": "Detalles y control",
   "liveStepFailed": "falló",
   "liveStepDone": "hecho",
@@ -7118,21 +7732,66 @@
   "liveHeaderWorking": "Trabajando…",
   "liveCompactionDone": "Compactado",
   "liveCompactionMessagesChange": "{before} → {after} mensajes",
-  "@liveCompactionMessagesChange": {"placeholders": {"before": {"type": "int"}, "after": {"type": "int"}}},
+  "@liveCompactionMessagesChange": {
+    "placeholders": {
+      "before": {
+        "type": "int"
+      },
+      "after": {
+        "type": "int"
+      }
+    }
+  },
   "liveCompactionTokensChange": "{before} → {after} tokens",
-  "@liveCompactionTokensChange": {"placeholders": {"before": {}, "after": {}}},
+  "@liveCompactionTokensChange": {
+    "placeholders": {
+      "before": {},
+      "after": {}
+    }
+  },
   "liveCompactionChunks": "parte {index} de {count}",
-  "@liveCompactionChunks": {"placeholders": {"index": {"type": "int"}, "count": {"type": "int"}}},
+  "@liveCompactionChunks": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveCompactionMessagesShort": "{count} msj",
-  "@liveCompactionMessagesShort": {"placeholders": {"count": {"type": "int"}}},
+  "@liveCompactionMessagesShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "liveCompactionTokensShort": "~{tokens} tok",
-  "@liveCompactionTokensShort": {"placeholders": {"tokens": {}}},
+  "@liveCompactionTokensShort": {
+    "placeholders": {
+      "tokens": {}
+    }
+  },
   "liveCompactionNothing": "Nada que compactar",
   "liveCompactionMessagesCount": "{count, plural, =1{1 mensaje} other{{count} mensajes}}",
-  "@liveCompactionMessagesCount": {"placeholders": {"count": {"type": "int"}}},
+  "@liveCompactionMessagesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chaSessionGone": "Esta conversación ya no existe en Hermes.",
   "chatActivityThought": "Pensó",
   "chatActivityThoughtBriefly": "Pensó un momento",
   "chatActivityThoughtForDuration": "Pensó durante {duration}",
-  "@chatActivityThoughtForDuration": {"placeholders": {"duration": {}}}
+  "@chatActivityThoughtForDuration": {
+    "placeholders": {
+      "duration": {}
+    }
+  },
+  "settingsStartupBotsTitle": "Abrir Bots al iniciar",
+  "settingsStartupBotsSubtitle": "Arranca la app en modo Bots en vez de Inicio. Las notificaciones siguen abriendo su pantalla."
 }
