@@ -1614,10 +1614,13 @@ class _ChatScreenState extends State<ChatScreen>
         identical(frame.metadata, head)) {
       return;
     }
-    final hasActivity = normalizeAssistantActivityTrace(
-      head[assistantActivityTraceKey],
-    ).isNotEmpty;
-    final content = hasActivity ? '' : (head['content'] as String? ?? '');
+    // El texto ya sellado del turno sigue siendo visible: la actividad abre un
+    // tramo NUEVO detrás de él, no vacía la burbuja. Publicar '' aquí borraba
+    // de pantalla la narración previa a la herramienta («Voy a revisar…») y
+    // solo reaparecía al cerrar el turno, cuando el terminal reconstruye la
+    // burbuja entera. El servicio nunca perdió ese texto — lo conserva en
+    // `content` — así que el frame vivo debe reflejarlo tal cual.
+    final content = (head['content'] as String?) ?? '';
     _revealedChars = content.length;
     _liveAssistantFrame.value = _LiveAssistantFrame(
       turnSerial: _assistantEntranceSerial,

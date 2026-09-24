@@ -6600,6 +6600,11 @@ void main() {
     }
   }
 
+  bool liveTextVisible(WidgetTester tester, String fragment) => tester
+      .widgetList<RichText>(find.byType(RichText))
+      .map((w) => w.text.toPlainText())
+      .any((t) => t.contains(fragment));
+
   Future<void> pumpDesktopDelta(
     WidgetTester tester,
     _UiRewindGateway gateway,
@@ -18789,6 +18794,96 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_FOLLOW_UP_DONE'});
       await tester.pump(const Duration(milliseconds: 900));
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'el texto narrado antes de una herramienta sigue visible durante el turno',
+    (tester) async {
+      // Regresión del texto que desaparecía en pantalla: el servicio conserva
+      // el interim sellado dentro de `content`, pero la UI republicaba el
+      // frame vivo con '' en cuanto la cabeza tenía traza de actividad. El
+      // dato nunca se perdía; simplemente dejaba de pintarse hasta el final
+      // del turno, que es justo lo que se veía con modelos que narran antes
+      // de llamar a una herramienta.
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('live-narration-visible'),
+        desktopGateway: gateway,
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_REQUEST',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      await pumpDesktopDelta(
+        tester,
+        gateway,
+        chat,
+        'PUBLIC_NARRACION',
+        expectedFragment: 'PUBLIC_NARRACION',
+      );
+      // El revelado gradual necesita frames adicionales tras el delta.
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(
+        liveTextVisible(tester, 'PUBLIC_NARRACION'),
+        isTrue,
+        reason: 'la narración debe verse mientras se escribe',
+      );
+
+      gateway.emit('message.interim', const {'text': 'PUBLIC_NARRACION'});
+      gateway.emit('tool.start', const {
+        'name': 'terminal',
+        'tool_id': 'vanish-tool',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+
+      // El servicio conserva el texto: el bug era exclusivamente visual.
+      expect(chat.messages.first['content'], contains('PUBLIC_NARRACION'));
+      expect(
+        liveTextVisible(tester, 'PUBLIC_NARRACION'),
+        isTrue,
+        reason: 'la narración no puede desaparecer al abrirse la herramienta',
+      );
+
+      gateway.emit('tool.complete', const {
+        'name': 'terminal',
+        'tool_id': 'vanish-tool',
+        'summary': 'PUBLIC_TOOL_DONE',
+        'result': 'SYNTHETIC_TOOL_RESULT',
+      });
+      await tester.pump();
+      await pumpDesktopDelta(
+        tester,
+        gateway,
+        chat,
+        'PUBLIC_CONTINUACION',
+        expectedFragment: 'PUBLIC_CONTINUACION',
+      );
+
+      // El revelado del segundo tramo también es gradual.
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      // Ambos tramos conviven: el previo a la herramienta y el posterior.
+      expect(liveTextVisible(tester, 'PUBLIC_NARRACION'), isTrue);
+      expect(liveTextVisible(tester, 'PUBLIC_CONTINUACION'), isTrue);
+
+      // Cierra el turno para que no queden timers del streaming vivos.
+      gateway.emit('message.complete', const {
+        'text': 'PUBLIC_NARRACION\n\nPUBLIC_CONTINUACION',
+      });
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
     },
   );
 
