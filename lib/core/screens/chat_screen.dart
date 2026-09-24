@@ -213,6 +213,7 @@ void pruneMessageAnchorCache<T>(
 // partir una sección Markdown justo al alcanzar el objetivo.
 const int _assistantChunkTargetChars = 3200;
 const int _assistantChunkMaxChars = 5200;
+
 const int _assistantTerminalProjectionCacheLimit = 64;
 // Respuestas vivas más largas que esto se reparten en prefijo estable (se
 // proyecta una vez por contenido) + cola mutable (se reprocesa por frame).
@@ -241,6 +242,30 @@ final RegExp _markdownFenceRe = RegExp(r'^ {0,3}(`{3,}|~{3,})(.*)$');
 /// tramo puede usar una etiqueta declarada mucho más abajo.
 final RegExp _linkReferenceDefinitionRe = RegExp(
   r'^ {0,3}\[[^\]]+\]:',
+  multiLine: true,
+);
+
+/// Construcciones cuyo render depende de las líneas vecinas: listas (flojas o
+/// apretadas según el entorno), citas, tablas GFM, vallas de código,
+/// definiciones de referencia, encabezados subrayados y HTML embebido.
+/// Deliberadamente amplia: un falso positivo sólo cuesta tomar la ruta
+/// verificada con `markdownToHtml`, mientras que un falso negativo cambiaría
+/// el render. Ante la duda, verificar.
+final RegExp _contextDependentMarkdownRe = RegExp(
+  r'^ {0,3}(?:'
+  r'[-*+][ \t]'
+  r'|\d{1,9}[.)][ \t]'
+  r'|>'
+  r'|```|~~~'
+  r'|\[[^\]]+\]:'
+  r'|={2,}[ \t]*$'
+  r'|-{2,}[ \t]*$'
+  r'|\|'
+  r'|<[A-Za-z!/]'
+  r')'
+  r'|\|[^\n]*\|'
+  r'|^\t'
+  r'|^ {4,}\S',
   multiLine: true,
 );
 
@@ -423,6 +448,38 @@ List<String> splitAssistantMarkdownForViewport(
   }
 
   if (blockBreaks.isEmpty) return [markdown];
+
+  // Atajo para prosa simple. Verificar fronteras con `markdownToHtml` cuesta
+  // ~11ms por ventana de 10KB, y una respuesta larga tiene decenas de tramos
+  // (medido: 349ms para 68KB, 727ms para 137KB). Ese parseo sólo hace falta
+  // si el documento contiene alguna construcción cuyo render dependa de las
+  // líneas vecinas: listas, citas, tablas, vallas, definiciones de
+  // referencia, encabezados subrayados o HTML embebido. Un texto de párrafos
+  // separados por línea en blanco no tiene ninguna, así que cortar en un
+  // salto de bloque es seguro por construcción y el corte se decide sin
+  // parsear nada (0,2ms para el documento entero).
+  if (!_contextDependentMarkdownRe.hasMatch(markdown)) {
+    final simpleChunks = <String>[];
+    var simpleStart = 0;
+    while (markdown.length - simpleStart > maxChars) {
+      final target = simpleStart + targetChars;
+      final upper = math.min(simpleStart + maxChars, markdown.length);
+      var cut = -1;
+      for (final offset in blockBreaks) {
+        if (offset > simpleStart &&
+            offset <= upper &&
+            offset < markdown.length) {
+          cut = offset;
+          if (offset >= target) break;
+        }
+      }
+      if (cut <= simpleStart) break;
+      simpleChunks.add(markdown.substring(simpleStart, cut));
+      simpleStart = cut;
+    }
+    simpleChunks.add(markdown.substring(simpleStart));
+    return List<String>.unmodifiable(simpleChunks);
+  }
 
   // markdownToHtml usa el mismo Document + ExtensionSet GFM que
   // flutter_markdown. Comparar su salida evita reimplementar parcialmente la

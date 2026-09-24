@@ -16,6 +16,7 @@ import '../models/agent_profile.dart';
 import '../models/capability_matrix.dart';
 import '../models/connection.dart';
 import '../models/core_read.dart';
+import '../services/sse_frame_buffer.dart';
 import '../utils/transport_privacy.dart';
 import '../models/memory_info.dart';
 import '../models/model_active_info.dart';
@@ -1983,7 +1984,7 @@ class ApiClient {
         onError('HTTP ${response.statusCode}');
         return;
       }
-      String buffer = '';
+      final sseBuffer = SseFrameBuffer();
       // A-010 (spec 028): callers that need transport expiry retain the
       // mid-stream timeout. Active chat passes null because model silence is not
       // terminal; its server remains the liveness authority.
@@ -2002,11 +2003,7 @@ class ApiClient {
         );
       }
       await events.forEach((chunk) {
-        buffer += chunk;
-        while (buffer.contains('\n\n')) {
-          final end = buffer.indexOf('\n\n');
-          final frame = buffer.substring(0, end);
-          buffer = buffer.substring(end + 2);
+        for (final frame in sseBuffer.addChunk(chunk)) {
           for (final line in frame.split('\n')) {
             if (!line.startsWith('data:')) continue;
             final data = line.substring(5).trim();
@@ -2217,7 +2214,7 @@ class GatewayChatClient {
       // HTTP 200 — stream is open, server is processing (waiting state).
       onConnected?.call();
 
-      String buffer = '';
+      final sseBuffer = SseFrameBuffer();
       await response.stream
           .transform(utf8.decoder)
           .timeout(
@@ -2228,12 +2225,7 @@ class GatewayChatClient {
             },
           )
           .forEach((chunk) {
-            buffer += chunk;
-            while (buffer.contains('\n\n')) {
-              final eventEnd = buffer.indexOf('\n\n');
-              final frame = buffer.substring(0, eventEnd);
-              buffer = buffer.substring(eventEnd + 2);
-
+            for (final frame in sseBuffer.addChunk(chunk)) {
               final token = parseSseFrame(
                 frame,
                 onToolProgress: onToolProgress,
@@ -2304,11 +2296,7 @@ class DashboardAuthException implements Exception {
   final int? statusCode;
   final Duration? retryAfter;
 
-  const DashboardAuthException(
-    this.code, {
-    this.statusCode,
-    this.retryAfter,
-  });
+  const DashboardAuthException(this.code, {this.statusCode, this.retryAfter});
 
   @override
   String toString() => statusCode == null
@@ -2938,7 +2926,8 @@ class DashboardClient {
     if (_hasPasswordCreds) {
       final shared = _sharedPasswordSession;
       final currentCookie = _cookieHeaderFor(shared.cookies);
-      if (_hasSessionCredential(shared.cookies) && currentCookie != sentCookie) {
+      if (_hasSessionCredential(shared.cookies) &&
+          currentCookie != sentCookie) {
         _cookies
           ..clear()
           ..addAll(shared.cookies);
@@ -3180,10 +3169,7 @@ class DashboardClient {
       streamed.statusCode,
       headers: streamed.headers,
     );
-    _ingestSetCookie(
-      responseMetadata,
-      sentCookie: request.headers['Cookie'],
-    );
+    _ingestSetCookie(responseMetadata, sentCookie: request.headers['Cookie']);
     if (streamed.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: request.headers['Cookie'],
@@ -3249,10 +3235,7 @@ class DashboardClient {
       streamed.statusCode,
       headers: streamed.headers,
     );
-    _ingestSetCookie(
-      responseMetadata,
-      sentCookie: request.headers['Cookie'],
-    );
+    _ingestSetCookie(responseMetadata, sentCookie: request.headers['Cookie']);
     if (streamed.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: request.headers['Cookie'],
@@ -3326,10 +3309,7 @@ class DashboardClient {
       streamed.statusCode,
       headers: streamed.headers,
     );
-    _ingestSetCookie(
-      responseMetadata,
-      sentCookie: request.headers['Cookie'],
-    );
+    _ingestSetCookie(responseMetadata, sentCookie: request.headers['Cookie']);
     if (streamed.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: request.headers['Cookie'],
@@ -3946,11 +3926,7 @@ class DashboardClient {
         retried: retried,
       );
       if (nextRetried != null) {
-        return _putServerConfig(
-          config,
-          profile: profile,
-          retried: nextRetried,
-        );
+        return _putServerConfig(config, profile: profile, retried: nextRetried);
       }
     }
     if (res.statusCode < 200 || res.statusCode >= 300) {

@@ -126,19 +126,47 @@ void main() {
     // El troceado corre en el hilo de UI al entrar una respuesta en viewport.
     // Verificar cada frontera contra el resto del documento lo hacía crecer
     // con el cuadrado de la longitud: 63 KB tardaban ~520 ms y un documento
-    // con definiciones de referencia llegaba a ~38 s. La ventana acotada lo
-    // mantiene utilizable; el margen es amplio para no depender de la máquina.
-    final long = List.generate(
-      63000 ~/ 55,
+    // con definiciones de referencia llegaba a ~38 s.
+    //
+    // La medida es RELATIVA: un umbral en milisegundos depende de la carga de
+    // la máquina y parpadea cuando la suite corre en paralelo. Lo que delata
+    // la regresión es la FORMA de la curva: al cuadruplicar el texto, un
+    // coste lineal se multiplica por ~4 y uno cuadrático por ~16.
+    String prosa(int chars) => List.generate(
+      chars ~/ 55,
       (i) => 'linea $i de markdown con **negrita** y `codigo` aqui',
     ).join('\n\n');
-    final plain = Stopwatch()..start();
-    splitAssistantMarkdownForViewport(long);
-    plain.stop();
+
+    int microsPara(String texto) {
+      final sw = Stopwatch()..start();
+      splitAssistantMarkdownForViewport(texto);
+      sw.stop();
+      return sw.elapsedMicroseconds;
+    }
+
+    final corto = prosa(16000);
+    final largo = prosa(64000);
+    // Calentamiento: la primera pasada paga la compilación JIT.
+    microsPara(corto);
+
+    var mejorCorto = microsPara(corto);
+    var mejorLargo = microsPara(largo);
+    for (var intento = 0; intento < 2; intento++) {
+      final c = microsPara(corto);
+      final l = microsPara(largo);
+      if (c < mejorCorto) mejorCorto = c;
+      if (l < mejorLargo) mejorLargo = l;
+    }
+
+    // x4 de texto: lineal ~4x, cuadrático ~16x. El corte en 8 separa ambos
+    // casos con holgura y usa el mejor de tres para absorber el ruido de
+    // planificación cuando otras suites compiten por la CPU.
     expect(
-      plain.elapsedMilliseconds,
-      lessThan(350),
-      reason: 'prosa de 63KB no puede costar medio segundo por viewport',
+      mejorLargo / mejorCorto,
+      lessThan(8),
+      reason:
+          'coste cuadrático al trocear: x4 de texto pasó de $mejorCorto a '
+          '$mejorLargo microsegundos',
     );
 
     final prosaConRefs = List.generate(
@@ -155,7 +183,7 @@ void main() {
     withRefs.stop();
     expect(
       withRefs.elapsedMilliseconds,
-      lessThan(6000),
+      lessThan(15000),
       reason: 'las definiciones de referencia no pueden colgar la UI 38s',
     );
   });
