@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -634,6 +635,77 @@ void main() {
         expect(_nonEmptyAssistantTexts(fixture.chat), [
           'Estoy revisando el proyecto.\n\nAquí tienes el resumen final.',
         ]);
+      },
+    );
+
+    test(
+      'el texto previo a una herramienta se reemplaza y deja rastro sin contenido',
+      () async {
+        final logs = <String>[];
+        final originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) logs.add(message);
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+        final fixture = await _startChat();
+        addTearDown(fixture.dispose);
+
+        const preface = 'Voy a revisar el archivo.';
+        await _emitAndSettle(fixture, 'message.interim', const {
+          'text': preface,
+        });
+        await _emitAndSettle(fixture, 'tool.start', const {
+          'name': 'read_file',
+          'tool_id': 't1',
+        });
+        final replaced = fixture.chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.token,
+        );
+        fixture.gateway.emit('message.delta', const {'text': 'Resultado.'});
+        await replaced.timeout(const Duration(seconds: 1));
+
+        // Contrato de paridad con Desktop: tras la herramienta el segmento
+        // previo cede su sitio al texto posterior.
+        expect(_nonEmptyAssistantTexts(fixture.chat), ['Resultado.']);
+        final trace = logs
+            .where((line) => line.contains('visible interim replaced'))
+            .toList(growable: false);
+        expect(trace, [
+          '[active-chat] visible interim replaced after tool boundary '
+              '(chars=${preface.length})',
+        ]);
+        expect(logs.join('\n'), isNot(contains('Voy a revisar')));
+      },
+    );
+
+    test(
+      'sin herramienta de por medio el interim se conserva sin rastro',
+      () async {
+        final logs = <String>[];
+        final originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) logs.add(message);
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+        final fixture = await _startChat();
+        addTearDown(fixture.dispose);
+
+        await _emitAndSettle(fixture, 'message.interim', const {
+          'text': 'Estoy revisando el proyecto.',
+        });
+        final resumed = fixture.chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.token,
+        );
+        fixture.gateway.emit('message.delta', const {'text': 'Todo bien.'});
+        await resumed.timeout(const Duration(seconds: 1));
+
+        expect(_nonEmptyAssistantTexts(fixture.chat), [
+          'Estoy revisando el proyecto.\n\nTodo bien.',
+        ]);
+        expect(
+          logs.where((line) => line.contains('interim replaced')),
+          isEmpty,
+        );
       },
     );
 
