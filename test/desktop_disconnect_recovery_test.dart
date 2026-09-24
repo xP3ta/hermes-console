@@ -2283,6 +2283,160 @@ void main() {
     timeout: const Timeout(Duration(seconds: 15)),
   );
 
+  test(
+    'real idle socket loss after the server reaped the runtime settles '
+    'connected without adopting a new runtime',
+    () async {
+      // Android Doze/app freezing drops an idle Bot Chat socket (1006) and
+      // Hermes Agent reaps the orphaned idle runtime after its grace window.
+      // On reconnect the durable session is dormant: absent from the roster.
+      const storedSessionId = 'session-reaped-idle';
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>{};
+      final methodsBySocket = <List<String>>[];
+      var advertisedRuntimeId = '';
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        final methods = <String>[];
+        methodsBySocket.add(methods);
+        sockets.add(socket);
+        socket.done.whenComplete(() => sockets.remove(socket));
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {
+              'type': 'gateway.ready',
+              'payload': {'replay_epoch': 'epoch-${methodsBySocket.length}'},
+            },
+          }),
+        );
+        await for (final raw in socket) {
+          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          final method = frame['method']?.toString() ?? '';
+          methods.add(method);
+          final result = switch (method) {
+            'gateway.capabilities' => <String, dynamic>{
+              'per_session_exclusive_submit': true,
+            },
+            'session.active_list' => <String, dynamic>{
+              'sessions': [
+                if (advertisedRuntimeId.isNotEmpty)
+                  {
+                    'id': advertisedRuntimeId,
+                    'session_key': storedSessionId,
+                    'status': 'idle',
+                  },
+              ],
+            },
+            'session.resume' => <String, dynamic>{
+              'session_id': advertisedRuntimeId.isEmpty
+                  ? 'runtime-cold-open'
+                  : advertisedRuntimeId,
+              'stored_session_id': storedSessionId,
+              'created': false,
+              'messages': <dynamic>[],
+              'running': false,
+              'status': 'idle',
+            },
+            _ => <String, dynamic>{},
+          };
+          if (socket.readyState != WebSocket.open) break;
+          try {
+            socket.add(
+              jsonEncode({
+                'jsonrpc': '2.0',
+                'id': frame['id'],
+                'result': result,
+              }),
+            );
+          } on StateError {
+            break;
+          }
+        }
+      });
+      Future<void> dropSockets() async {
+        for (final socket in sockets.toList(growable: false)) {
+          await socket.close(WebSocketStatus.goingAway, 'client gone');
+        }
+      }
+
+      final gateway = TuiGatewayClient(
+        SavedConnection(
+          id: 'real-reaped-idle',
+          label: 'Real reaped idle',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: String.fromCharCodes(const [113, 97]),
+          dashboardUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        dashboard: _StaticTicketDashboardClient(),
+      );
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: _connection('real-reaped-idle'),
+        sessionId: storedSessionId,
+        sessionTitle: 'Bot Chat',
+        notifications: null,
+        onTerminal: () {},
+        api: ApiClient(
+          baseUrl: 'http://127.0.0.1:1',
+          apiKey: 'test-key',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
+        desktopGateway: gateway,
+        attachDesktopRuntimeOnLoad: true,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'reaped-idle-history',
+            'role': 'assistant',
+            'content': 'durable history',
+          },
+        ],
+        desktopRecoveryBackoff: const [Duration.zero],
+      );
+      addTearDown(() async {
+        chat.dispose();
+        await gateway.close();
+        await server.close(force: true);
+      });
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == 'runtime-cold-open',
+      );
+
+      await dropSockets();
+      await _waitUntil(
+        () =>
+            methodsBySocket.length == 2 &&
+            methodsBySocket[1].contains('session.active_list'),
+      );
+      await _waitUntil(
+        () => chat.transportStatus.state == ChatTransportState.connected,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      // A dormant durable session has no live runtime to rejoin. Recovery must
+      // not strand the chat in "Reconnecting…" nor cold-resume on its own.
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(methodsBySocket[1], isNot(contains('session.resume')));
+      expect(methodsBySocket[1], isNot(contains('session.create')));
+      expect(methodsBySocket[1], isNot(contains('prompt.submit')));
+
+      // Recovery stays open: once another surface revives the runtime, the next
+      // socket loss rejoins it through the unchanged roster-bound proof.
+      advertisedRuntimeId = 'runtime-revived-elsewhere';
+      await dropSockets();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == 'runtime-revived-elsewhere',
+      );
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+    },
+    timeout: const Timeout(Duration(seconds: 15)),
+  );
+
   test('real socket-refused upgrade retries viewer only', () async {
     final reservation = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,

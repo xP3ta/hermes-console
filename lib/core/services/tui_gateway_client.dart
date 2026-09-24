@@ -73,9 +73,18 @@ class TuiGatewayRpcError implements Exception {
     return normalized.isEmpty ? null : normalized;
   }
 
+  /// Local roster proof that the durable session has no live runtime: Hermes
+  /// reaped it (for example after its orphan grace window) and nothing is
+  /// left to rejoin. It is neither a transport failure nor an identity fault.
+  bool get rosterSessionNotActive =>
+      origin == CompressionFailureOrigin.localPreflight &&
+      data['reason'] == rosterSessionNotActiveReason;
+
   @override
   String toString() => 'TuiGatewayRpcError($method, $code): $message';
 }
+
+const String rosterSessionNotActiveReason = 'ROSTER_SESSION_NOT_ACTIVE';
 
 /// Non-sensitive local failure metadata for policies that must not inspect copy.
 enum TuiGatewayRpcFailureKind { timeout, connectionLost }
@@ -394,6 +403,7 @@ abstract class HermesDesktopRecoverySessionLifecycleGateway {
 /// Implementations must obtain `session.active_list` and `session.resume` on
 /// one unchanged socket/channel/replay epoch and reject absent, duplicate,
 /// malformed, or identity-mismatched rows without reconnecting in between.
+/// An absent row is reported with [TuiGatewayRpcError.rosterSessionNotActive].
 abstract class HermesDesktopRosterBoundRecoveryGateway {
   Future<DesktopRosterBoundRecovery> resumeAdvertisedExistingForRecovery(
     String storedSessionId, {
@@ -4069,6 +4079,14 @@ class TuiGatewayClient
     final matches = roster.sessions
         .where((row) => row.storedSessionId == storedSessionId)
         .toList(growable: false);
+    if (matches.isEmpty) {
+      throw const TuiGatewayRpcError(
+        activeMethod,
+        'Hermes did not advertise an active runtime for this session',
+        data: {'reason': rosterSessionNotActiveReason},
+        origin: CompressionFailureOrigin.localPreflight,
+      );
+    }
     if (matches.length != 1) {
       throw const TuiGatewayRpcError(
         activeMethod,

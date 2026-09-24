@@ -15649,6 +15649,15 @@ class ActiveChat {
         return;
       } catch (error) {
         if (!isCurrent()) return;
+        if (error is TuiGatewayRpcError && error.rosterSessionNotActive) {
+          // Hermes reaps an idle runtime once its socket is gone past the
+          // orphan grace window (Android Doze or a frozen app ends it as 1006).
+          // A dormant session has nothing live to rejoin: the transcript stays
+          // durable and the next submit resumes it. Settle instead of leaving
+          // "Reconnecting…" forever, and keep recovery open for a later loss.
+          _publishTransportState(ChatTransportState.connected);
+          return;
+        }
         _publishTransportState(
           gateway.isConnected
               ? ChatTransportState.reconnecting
