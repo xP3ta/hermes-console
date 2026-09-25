@@ -8,6 +8,7 @@ Widget _host({
   required Locale locale,
   required String themeId,
   required VoidCallback onStop,
+  VoidCallback? onDismiss,
 }) => MaterialApp(
   locale: locale,
   localizationsDelegates: Strings.localizationsDelegates,
@@ -20,20 +21,22 @@ Widget _host({
       disableAnimations: true,
     ),
     child: Scaffold(
-      body: StaleRunningSessionBanner(enabled: true, onStop: onStop),
+      body: StaleRunningSessionBanner(
+        enabled: true,
+        onStop: onStop,
+        onDismiss: onDismiss ?? () {},
+      ),
     ),
   ),
 );
 
 void main() {
-  testWidgets('localized stale Stop banner fits and stops once', (tester) async {
+  testWidgets('localized stale Stop banner fits and stops once', (
+    tester,
+  ) async {
     var stopCalls = 0;
     for (final fixture in <({Locale locale, String theme, String action})>[
-      (
-        locale: const Locale('en'),
-        theme: 'light',
-        action: 'Stop this session',
-      ),
+      (locale: const Locale('en'), theme: 'light', action: 'Stop this session'),
       (
         locale: const Locale('es'),
         theme: 'dark',
@@ -57,10 +60,41 @@ void main() {
       expect(tester.takeException(), isNull);
     }
 
-    await tester.tap(
-      find.byKey(const ValueKey('stale-running-session-stop')),
-    );
+    await tester.tap(find.byKey(const ValueKey('stale-running-session-stop')));
     await tester.pump();
     expect(stopCalls, 1);
+  });
+
+  testWidgets('the notice can be closed without stopping the session', (
+    tester,
+  ) async {
+    var stopCalls = 0;
+    var dismissCalls = 0;
+    for (final key in const [
+      ValueKey('stale-running-session-dismiss'),
+      ValueKey('stale-running-session-keep'),
+    ]) {
+      await tester.pumpWidget(
+        _host(
+          locale: const Locale('es'),
+          themeId: 'dark',
+          onStop: () => stopCalls++,
+          onDismiss: () => dismissCalls++,
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      if (key.value == 'stale-running-session-dismiss') {
+        // The compact close icon keeps a full 48 dp touch target.
+        expect(
+          tester.getSize(find.byKey(key)).height,
+          greaterThanOrEqualTo(48),
+        );
+      }
+      await tester.tap(find.byKey(key));
+      await tester.pump();
+    }
+    expect(dismissCalls, 2);
+    expect(stopCalls, 0);
   });
 }

@@ -10272,6 +10272,8 @@ class _ChatScreenState extends State<ChatScreen>
                                   StaleRunningSessionBanner(
                                     enabled: _chat.gatewayConnected,
                                     onStop: _cancelStream,
+                                    onDismiss: _chat
+                                        .dismissStaleResumedSessionStopOffer,
                                   ),
                                 // Ownership conflicts keep the transcript and composer
                                 // mounted while fencing every mutation.

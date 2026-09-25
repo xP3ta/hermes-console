@@ -4562,6 +4562,8 @@
   "chaStaleRunningStopTitle": "Stop this session",
   "chaStaleRunningStopBody": "This session was already running when it opened. Stop it if that work is no longer expected.",
   "chaStaleRunningStopAction": "Stop this session",
+  "chaStaleRunningKeepAction": "Let it continue",
+  "chaStaleRunningDismiss": "Dismiss notice",
   "chaGoalTurnLabel": "Turn {used}/{max}",
   "@chaGoalTurnLabel": {
     "placeholders": {

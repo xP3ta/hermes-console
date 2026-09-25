@@ -5585,6 +5585,8 @@
   "chaStaleRunningStopTitle": "Detener esta sesión",
   "chaStaleRunningStopBody": "Esta sesión ya estaba trabajando al abrirse. Detenla si ese trabajo ya no corresponde.",
   "chaStaleRunningStopAction": "Detener esta sesión",
+  "chaStaleRunningKeepAction": "Dejar que siga",
+  "chaStaleRunningDismiss": "Cerrar aviso",
   "chaGoalTurnLabel": "Turno {used}/{max}",
   "@chaGoalTurnLabel": {
     "placeholders": {

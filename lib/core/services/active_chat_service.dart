@@ -1418,6 +1418,74 @@ DateTime? _transcriptTimestamp(Map<String, dynamic> message) {
   }
 }
 
+/// Evidencia pura de si un turno con transporte iniciado ya está en el
+/// transcript durable. Solo una fila de usuario real posterior a la frontera
+/// persistida al enviar ([PreparedTurn.retryBoundary]) puede ser el turno:
+/// ninguna fila nueva → no entregado; exactamente una y con el mismo texto →
+/// entregado; cualquier otra cosa → desconocido (fail-closed).
+const Duration _deliveredRowClockSkew = Duration(minutes: 2);
+
+@visibleForTesting
+AmbiguousRetryEvidence ambiguousTurnTranscriptEvidence(
+  PreparedTurn turn,
+  List<Map<String, dynamic>> chronological, {
+  bool requireRowAfterTurnCreation = false,
+}) {
+  final boundary = turn.retryBoundary;
+  if (boundary == null ||
+      boundary.kind == PreparedTurnRetryBoundaryKind.unknown) {
+    return AmbiguousRetryEvidence.unknown;
+  }
+  var start = 0;
+  if (boundary.kind == PreparedTurnRetryBoundaryKind.identity) {
+    final expected = TranscriptMessageIdentity(
+      messageId: boundary.messageId,
+      rowId: boundary.rowId,
+    );
+    final unique = _uniqueTranscriptIdentityMatch(expected, chronological);
+    if (unique == null) return AmbiguousRetryEvidence.unknown;
+    final index = chronological.indexWhere((message) {
+      final identity = transcriptIdentityAliasesAreConsistent(message)
+          ? _transcriptMessageIdentity(message)
+          : null;
+      return identity != null && identity.matches(unique);
+    });
+    if (index < 0) return AmbiguousRetryEvidence.unknown;
+    start = index + 1;
+  }
+  final candidates = <String>{
+    turn.text.trim(),
+    turn.fullText.trim(),
+    stripBotMentionNote(turn.desktopText ?? '').trim(),
+  }..remove('');
+  var newUsers = 0;
+  var matching = 0;
+  for (final message in chronological.skip(start)) {
+    if (!isRealUserTurn(message)) continue;
+    newUsers++;
+    final content = stripBotMentionNote(
+      (message['content'] ?? '').toString(),
+    ).trim();
+    if (!candidates.contains(content)) continue;
+    if (requireRowAfterTurnCreation) {
+      // Una fila con el mismo texto anterior a la creación del turno no puede
+      // ser este turno (p. ej. el mismo «ok» enviado antes por otra vía).
+      final at = _transcriptTimestamp(message);
+      if (at == null ||
+          at.millisecondsSinceEpoch <
+              turn.createdAtMs - _deliveredRowClockSkew.inMilliseconds) {
+        continue;
+      }
+    }
+    matching++;
+  }
+  if (newUsers == 0) return AmbiguousRetryEvidence.notDelivered;
+  if (newUsers == 1 && matching == 1) {
+    return AmbiguousRetryEvidence.delivered;
+  }
+  return AmbiguousRetryEvidence.unknown;
+}
+
 TranscriptMessageIdentity? _desktopSnapshotTranscriptIdentity(
   DesktopSessionMessage message,
 ) {
@@ -2474,6 +2542,35 @@ class ActiveTurnDelivery {
       _persistenceFailed = true;
       return false;
     }
+  });
+
+  /// El transcript durable demuestra que este turno ya llegó al servidor:
+  /// se retira de la outbox sin volver a tocar el transporte.
+  Future<bool> forgetDeliveredFromTranscript() => _serializeMutation(() async {
+    if (_discarded) return true;
+    if (!_transportStarted) return false;
+    final terminal = _current.copyWith(
+      updatedAtMs: _nowMs(),
+      state: PreparedTurnState.terminal,
+    );
+    try {
+      // Tombstone primero: un cierre entre ambas escrituras no resucita el
+      // turno como pendiente.
+      await _store.save(terminal);
+    } catch (_) {
+      _persistenceFailed = true;
+      return false;
+    }
+    _current = terminal;
+    _acknowledged = true;
+    // Ningún callback de transporte tardío puede volver a escribir el lote.
+    _discarded = true;
+    try {
+      await _store.delete(terminal);
+    } catch (_) {
+      _persistenceFailed = true;
+    }
+    return true;
   });
 
   Future<bool> discardPrepared() => _serializeMutation(() async {
@@ -4202,6 +4299,22 @@ class ActiveChat {
     _emit(ActiveChatEvent.sessionInfo);
   }
 
+  /// Turnos (sesión + inicio del turno) cuyo aviso de "Detener esta sesión"
+  /// el usuario ya cerró. Vive en el proceso: al reabrir el mismo chat con el
+  /// MISMO turno aún en marcha no vuelve a aparecer; un turno nuevo sí avisa.
+  static final Set<String> _dismissedStaleTurns = <String>{};
+  String? _staleOfferTurnKey;
+
+  /// El usuario cierra el aviso sin detener nada: el trabajo sigue.
+  void dismissStaleResumedSessionStopOffer() {
+    final key = _staleOfferTurnKey;
+    if (key != null) _dismissedStaleTurns.add(key);
+    clearStaleResumedSessionStopOffer();
+  }
+
+  @visibleForTesting
+  static void debugResetDismissedStaleTurns() => _dismissedStaleTurns.clear();
+
   bool _clearFailedStopConfirmation() {
     if (_stopConfirmationState != StopConfirmationState.failed) return false;
     _stopConfirmationState = StopConfirmationState.idle;
@@ -4398,8 +4511,14 @@ class ActiveChat {
       _offerStaleResumedSessionStop = false;
     } else if (coldOpen) {
       final startedAt = turnStartedAt;
+      final turnKey = startedAt == null
+          ? null
+          : '$sessionId@'
+                '${startedAt.millisecondsSinceEpoch}';
+      _staleOfferTurnKey = turnKey;
       _offerStaleResumedSessionStop =
           startedAt != null &&
+          !_dismissedStaleTurns.contains(turnKey) &&
           DateTime.fromMillisecondsSinceEpoch(
                 _wallClockMs(),
               ).difference(startedAt) >=
@@ -7568,6 +7687,14 @@ class ActiveChat {
   }
 
   void _emit(ActiveChatEvent e) {
+    // Un transcript recién hidratado o un turno recién terminado es la
+    // evidencia que puede demostrar entregado un turno encolado incierto.
+    if ((e == ActiveChatEvent.messagesHydrated || e == ActiveChatEvent.done) &&
+        !_queuedDeliverySettleInFlight &&
+        !_preparedTurnDrainInFlight &&
+        _uncertainQueuedTurns.isNotEmpty) {
+      Timer.run(() => unawaited(_settleDeliveredQueuedTurns()));
+    }
     if (const {
       ActiveChatEvent.started,
       ActiveChatEvent.messagesHydrated,
@@ -15039,43 +15166,7 @@ class ActiveChat {
       return AmbiguousRetryEvidence.unknown;
     }
     if (!stillCurrent()) return AmbiguousRetryEvidence.unknown;
-    var start = 0;
-    if (boundary.kind == PreparedTurnRetryBoundaryKind.identity) {
-      final expected = TranscriptMessageIdentity(
-        messageId: boundary.messageId,
-        rowId: boundary.rowId,
-      );
-      final unique = _uniqueTranscriptIdentityMatch(expected, chronological);
-      if (unique == null) return AmbiguousRetryEvidence.unknown;
-      final index = chronological.indexWhere((message) {
-        final identity = transcriptIdentityAliasesAreConsistent(message)
-            ? _transcriptMessageIdentity(message)
-            : null;
-        return identity != null && identity.matches(unique);
-      });
-      if (index < 0) return AmbiguousRetryEvidence.unknown;
-      start = index + 1;
-    }
-    final candidates = <String>{
-      turn.text.trim(),
-      turn.fullText.trim(),
-      stripBotMentionNote(turn.desktopText ?? '').trim(),
-    }..remove('');
-    var newUsers = 0;
-    var matching = 0;
-    for (final message in chronological.skip(start)) {
-      if (!isRealUserTurn(message)) continue;
-      newUsers++;
-      final content = stripBotMentionNote(
-        (message['content'] ?? '').toString(),
-      ).trim();
-      if (candidates.contains(content)) matching++;
-    }
-    if (newUsers == 0) return AmbiguousRetryEvidence.notDelivered;
-    if (newUsers == 1 && matching == 1) {
-      return AmbiguousRetryEvidence.delivered;
-    }
-    return AmbiguousRetryEvidence.unknown;
+    return ambiguousTurnTranscriptEvidence(turn, chronological);
   }
 
   /// Resuelve una entrega ambigua únicamente mediante el contrato negociado.
@@ -20075,6 +20166,120 @@ class ActiveChat {
     }
   }
 
+  bool _queuedDeliverySettleInFlight = false;
+  int _lastQueuedDeliverySettleMs = 0;
+
+  /// Evidencia `unknown` ya calculada: (clientTurnId → nº de filas del
+  /// transcript). No se recarga el historial por ese turno hasta que cambie.
+  final Map<String, int> _queuedDeliveryUnknownAt = {};
+  static const Duration _queuedDeliverySettleMinInterval = Duration(seconds: 5);
+
+  /// Turnos encolados con transporte iniciado que NO son la entrega en curso.
+  List<QueuedPreparedTurn> get _uncertainQueuedTurns => _preparedTurnQueue
+      .where(
+        (item) =>
+            !identical(item.delivery, _activeTurnDelivery) &&
+            const {
+              PreparedTurnState.submitting,
+              PreparedTurnState.ambiguous,
+              PreparedTurnState.accepted,
+              PreparedTurnState.running,
+            }.contains(item.turn.state),
+      )
+      .toList(growable: false);
+
+  /// Retira de la cola los turnos cuyo transporte ya empezó (submitting,
+  /// ambiguous, accepted, running) y que el transcript durable demuestra
+  /// entregados. Sin esto, un turno enviado cuya confirmación se perdió
+  /// (reconexión, process death, servidor sin `turn.status`) se quedaba en el
+  /// panel como «Envío pendiente» aunque el agente ya lo estuviera
+  /// procesando. Nunca reenvía nada: solo evidencia exacta lo retira.
+  Future<void> _settleDeliveredQueuedTurns() async {
+    if (_queuedDeliverySettleInFlight ||
+        _disposed ||
+        _preparedTurnDrainInFlight ||
+        mutationsBlockedByOwnershipConflict) {
+      return;
+    }
+    final uncertain = _uncertainQueuedTurns;
+    if (uncertain.isEmpty) return;
+    final nowMs = _wallClockMs();
+    if (nowMs - _lastQueuedDeliverySettleMs <
+        _queuedDeliverySettleMinInterval.inMilliseconds) {
+      return;
+    }
+    _lastQueuedDeliverySettleMs = nowMs;
+    _queuedDeliverySettleInFlight = true;
+    try {
+      final generation = _queueGeneration;
+      final requestedSessionId = serverSessionId;
+      final profile = _storedSessionProfile;
+      final List<Map<String, dynamic>> chronological;
+      try {
+        chronological = await _loadStoredMessages(profile);
+      } catch (_) {
+        return;
+      }
+      if (_disposed ||
+          generation != _queueGeneration ||
+          requestedSessionId != serverSessionId ||
+          profile != _storedSessionProfile) {
+        return;
+      }
+      var changed = false;
+      for (final item in uncertain) {
+        final clientTurnId = item.turn.clientTurnId;
+        if (_queuedDeliveryUnknownAt[clientTurnId] == chronological.length) {
+          continue;
+        }
+        // Solo con frontera de identidad o transcript vacío al enviar: sin
+        // ella no hay forma segura de atribuir la fila a este turno.
+        final boundaryKind = item.turn.retryBoundary?.kind;
+        final evidence =
+            boundaryKind == PreparedTurnRetryBoundaryKind.identity ||
+                boundaryKind == PreparedTurnRetryBoundaryKind.empty
+            ? ambiguousTurnTranscriptEvidence(
+                item.turn,
+                chronological,
+                requireRowAfterTurnCreation: true,
+              )
+            : AmbiguousRetryEvidence.unknown;
+        if (evidence != AmbiguousRetryEvidence.delivered) {
+          _queuedDeliveryUnknownAt[clientTurnId] = chronological.length;
+          continue;
+        }
+        // Re-verificado tras los await: nunca la entrega que está en vuelo.
+        if (_preparedTurnDrainInFlight ||
+            identical(item.delivery, _activeTurnDelivery) ||
+            !_preparedTurnQueue.any((q) => identical(q, item))) {
+          continue;
+        }
+        // Sin borrado durable reaparecería tras reiniciar: se deja visible.
+        if (!await item.delivery.forgetDeliveredFromTranscript()) continue;
+        if (_disposed || generation != _queueGeneration) return;
+        _queuedDeliveryUnknownAt.remove(clientTurnId);
+        _preparedTurnQueue.remove(item);
+        final owner = _preparedTurnOwners[clientTurnId];
+        if (owner?.delivery == item.delivery) {
+          owner!.state = _PreparedTurnOwnershipState.terminal;
+          _preparedTurnOwners.remove(clientTurnId);
+        }
+        _clearQueuedRetryState(clientTurnId);
+        if (_blockedPreparedTurnId == clientTurnId) {
+          _blockedPreparedTurnId = null;
+        }
+        changed = true;
+      }
+      if (changed) {
+        _unparkQueueLeaseIfEmpty();
+        _emit(ActiveChatEvent.queueChanged);
+        if (!isStreaming) Timer.run(_drainQueue);
+      }
+    } finally {
+      _queuedDeliverySettleInFlight = false;
+    }
+  }
+
   Future<void> restoreQueuedTurns(
     Iterable<PreparedTurn> turns,
     TurnOutboxPersistence store, {
@@ -20199,7 +20404,10 @@ class ActiveChat {
         }
         changed = true;
       }
-      if (changed) _emit(ActiveChatEvent.queueChanged);
+      if (changed) {
+        _emit(ActiveChatEvent.queueChanged);
+        unawaited(_settleDeliveredQueuedTurns());
+      }
     } finally {
       if (!_disposed && restoreGeneration == _queueGeneration) {
         _queueDrainSuspended = scheduleDrain ? wasDrainSuspended : true;
@@ -20715,6 +20923,7 @@ class ActiveChat {
           )) {
         _blockedPreparedTurnId = turn.clientTurnId;
         _emit(ActiveChatEvent.queueChanged);
+        unawaited(_settleDeliveredQueuedTurns());
         return;
       }
       _preparedTurnDrainInFlight = true;
