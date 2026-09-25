@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/models/bot_mention.dart';
 import 'package:hermes_android/core/services/bot_mention_roster.dart';
 // Widget tests de ChatScreen.
@@ -22,6 +23,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart' show MarkdownBody;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,6 +53,7 @@ import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_result.dart';
 
 import 'support/projected_compression_reply.dart';
+import 'support/large_compacted_session_fixture.dart';
 
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
@@ -79,6 +82,8 @@ import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/chat_preference_store.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
+import 'package:hermes_android/core/utils/chat_turn.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
@@ -188,8 +193,7 @@ class _MemoryDraftSecureStorage extends FlutterSecureStorage {
   }) async => Map<String, String>.of(values);
 }
 
-class _UnreadableCompressionFenceStorage
-    implements CompressionRestoreStorage {
+class _UnreadableCompressionFenceStorage implements CompressionRestoreStorage {
   @override
   Future<String?> read() => Future<String?>.error(StateError('unreadable'));
 
@@ -411,10 +415,7 @@ class _ScreenServerSession implements ServerSttSession {
   void sendFinal() {
     finalSent = true;
     incoming.add(
-      jsonEncode({
-        'type': 'final',
-        'text': poisoned ? '' : 'Recording $turn',
-      }),
+      jsonEncode({'type': 'final', 'text': poisoned ? '' : 'Recording $turn'}),
     );
   }
 
@@ -825,6 +826,26 @@ class _UiRewindGateway
   @override
   Future<void> close() async {
     if (!_events.isClosed) await _events.close();
+  }
+}
+
+// Real producer ordering also permits a successor started by another viewer.
+class _SequencedSuccessorGateway extends _UiRewindGateway {
+  final Object producer = Object();
+  int sequence = 0;
+
+  @override
+  void emit(String type, [Map<String, dynamic> payload = const {}]) {
+    _events.add(
+      TuiGatewayEvent(
+        type: type,
+        sessionId: 'runtime-ui-test',
+        payload: payload,
+        sequence: ++sequence,
+        transportGeneration: 1,
+        producerChannel: producer,
+      ),
+    );
   }
 }
 
@@ -2175,6 +2196,8 @@ void main() {
   }
 
   setUp(() {
+    // Caché estática de planes de render: cada test empieza vacío.
+    ChatScreen.resetAssistantRenderPlanCacheForTesting();
     BotMentionRoster.shared.clear();
     secureStore = <String, String>{};
     failOutboxWrites = false;
@@ -2666,6 +2689,43 @@ void main() {
     },
   );
 
+  testWidgets('keyboard stays open while the agent streams a reply', (
+    tester,
+  ) async {
+    final connection = _remoteConn('ime-while-streaming');
+    final gateway = _SubmissionGateway();
+    await pumpChat(tester, connection: connection, desktopGateway: gateway);
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final composer = find.byType(TextField).last;
+    await tester.tap(composer);
+    await tester.pump();
+    tester.testTextInput.enterText('primera');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Send closes the keyboard by design; reopening it mid-turn must stick.
+    await tester.tap(composer);
+    await tester.pump();
+    expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+    for (final inset in [120.0, 240.0, 320.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: inset);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+
+    gateway.emitComplete();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('mentions: initial Share prompt takes the prepared route', (
     tester,
   ) async {
@@ -2804,40 +2864,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'busy slash directed prompt stays in the encrypted queue',
-    (tester) async {
-      final connection = _remoteConn('busy-directed-slash');
-      final gateway = _MentionSlashGateway();
-      final chat = await pumpChat(
-        tester,
-        connection: connection,
-        desktopGateway: gateway,
-        messagesLoaded: false,
-      );
-      mentionRoster(connection.id);
+  testWidgets('busy slash directed prompt stays in the encrypted queue', (
+    tester,
+  ) async {
+    final connection = _remoteConn('busy-directed-slash');
+    final gateway = _MentionSlashGateway();
+    final chat = await pumpChat(
+      tester,
+      connection: connection,
+      desktopGateway: gateway,
+      messagesLoaded: false,
+    );
+    mentionRoster(connection.id);
 
-      await tester.enterText(find.byType(TextField), 'active turn');
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(find.byType(TextField), 'active turn');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 100));
 
-      await tester.enterText(find.byType(TextField), '/handoff @ops');
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump(const Duration(milliseconds: 600));
+    await tester.enterText(find.byType(TextField), '/handoff @ops');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 600));
 
-      expect(gateway.slashCalls.single.command, 'handoff @ops');
-      expect(gateway.steers, isEmpty);
-      expect(chat.queuedMessages, ['directed @ops']);
-      gateway.emit('message.complete', {'text': 'done'});
-      await tester.pump(const Duration(milliseconds: 1200));
-      expect(gateway.submissions.last, startsWith('directed @ops\n\n[@mentions'));
-      gateway.emit('message.complete', {'text': 'queued done'});
-      await tester.pump(const Duration(milliseconds: 350));
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(gateway.slashCalls.single.command, 'handoff @ops');
+    expect(gateway.steers, isEmpty);
+    expect(chat.queuedMessages, ['directed @ops']);
+    gateway.emit('message.complete', {'text': 'done'});
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(gateway.submissions.last, startsWith('directed @ops\n\n[@mentions'));
+    gateway.emit('message.complete', {'text': 'queued done'});
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'mentions: Desktop history bubble and copy hide annotation after reload',
@@ -4151,131 +4210,143 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reapertura corta con filas internas no muestra flecha superior', (
-    tester,
-  ) async {
-    tester.view
-      ..physicalSize = const Size(960, 2142)
-      ..devicePixelRatio = 2.5;
-    addTearDown(tester.view.reset);
-    final gateway = _CompleteShortHistoryGateway();
-    var restCalls = 0;
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: MockClient((request) async {
-        restCalls += 1;
-        final limit = int.parse(request.url.queryParameters['limit'] ?? '120');
-        final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
-        return http.Response(
-          jsonEncode({
-            'object': 'list',
-            'session_id': 'sess-test',
-            'data': offset == 0 ? _CompleteShortHistoryGateway.rows : const [],
-            'pagination': {
-              'limit': limit,
-              'offset': offset,
-              'order': 'latest',
-              'returned': offset == 0
-                  ? _CompleteShortHistoryGateway.rows.length
-                  : 0,
-            },
-          }),
-          200,
-          headers: const {'content-type': 'application/json'},
-        );
-      }),
-    );
-    addTearDown(api.close);
-    final chat = await pumpChat(
-      tester,
-      desktopGateway: gateway,
-      api: api,
-      session: _session().copyWith(messageCount: 4),
-      messagesLoaded: false,
-    );
-    for (var frame = 0; frame < 20 && !chat.messagesLoaded; frame++) {
-      await tester.pump(const Duration(milliseconds: 10));
-    }
-    await tester.pump();
+  testWidgets(
+    'reapertura corta con filas internas no muestra flecha superior',
+    (tester) async {
+      tester.view
+        ..physicalSize = const Size(960, 2142)
+        ..devicePixelRatio = 2.5;
+      addTearDown(tester.view.reset);
+      final gateway = _CompleteShortHistoryGateway();
+      var restCalls = 0;
+      final api = ApiClient(
+        baseUrl: 'https://example.test',
+        apiKey: 'test-key',
+        httpClient: MockClient((request) async {
+          restCalls += 1;
+          final limit = int.parse(
+            request.url.queryParameters['limit'] ?? '120',
+          );
+          final offset = int.parse(
+            request.url.queryParameters['offset'] ?? '0',
+          );
+          return http.Response(
+            jsonEncode({
+              'object': 'list',
+              'session_id': 'sess-test',
+              'data': offset == 0
+                  ? _CompleteShortHistoryGateway.rows
+                  : const [],
+              'pagination': {
+                'limit': limit,
+                'offset': offset,
+                'order': 'latest',
+                'returned': offset == 0
+                    ? _CompleteShortHistoryGateway.rows.length
+                    : 0,
+              },
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        api: api,
+        session: _session().copyWith(messageCount: 4),
+        messagesLoaded: false,
+      );
+      for (var frame = 0; frame < 20 && !chat.messagesLoaded; frame++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.pump();
 
-    expect(gateway.historyCalls, 1);
-    expect(restCalls, 1);
-    expect(chat.hasEarlierMessages, isFalse);
-    expect(find.text('Pregunta corta reabierta'), findsOneWidget);
-    expect(find.text('Respuesta corta reabierta'), findsOneWidget);
-    expect(find.text('resultado interno'), findsNothing);
-    expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('scroll-to-bottom-hidden')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
+      expect(gateway.historyCalls, 1);
+      expect(restCalls, 1);
+      expect(chat.hasEarlierMessages, isFalse);
+      expect(find.text('Pregunta corta reabierta'), findsOneWidget);
+      expect(find.text('Respuesta corta reabierta'), findsOneWidget);
+      expect(find.text('resultado interno'), findsNothing);
+      expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-hidden')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('chat corto sigue sin flechas tras arrastre y cierre del stream', (
-    tester,
-  ) async {
-    tester.view
-      ..physicalSize = const Size(960, 2142)
-      ..devicePixelRatio = 2.5;
-    addTearDown(tester.view.reset);
-    final gateway = _UiRewindGateway();
-    final chat = await pumpChat(
-      tester,
-      connection: _remoteConn('conn-short-scroll-arrows'),
-      desktopGateway: gateway,
-    );
-    expect(
-      await chat.send(
-        fullText: 'Pregunta corta',
-        model: 'hermes-agent',
-        history: const [],
-      ),
-      isTrue,
-    );
-    gateway.emit('message.start');
-    gateway.emit('message.delta', const {'text': 'Respuesta corta'});
-    for (var frame = 0; frame < 30 && chat.assistantContent.isEmpty; frame++) {
-      await tester.pump(const Duration(milliseconds: 33));
-    }
+  testWidgets(
+    'chat corto sigue sin flechas tras arrastre y cierre del stream',
+    (tester) async {
+      tester.view
+        ..physicalSize = const Size(960, 2142)
+        ..devicePixelRatio = 2.5;
+      addTearDown(tester.view.reset);
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-short-scroll-arrows'),
+        desktopGateway: gateway,
+      );
+      expect(
+        await chat.send(
+          fullText: 'Pregunta corta',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('message.delta', const {'text': 'Respuesta corta'});
+      for (
+        var frame = 0;
+        frame < 30 && chat.assistantContent.isEmpty;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
 
-    final list = find.descendant(
-      of: find.byType(ChatScrollInteractionGuard),
-      matching: find.byType(ListView),
-    );
-    final controller = tester.widget<ListView>(list).controller!;
-    expect(
-      controller.position.maxScrollExtent,
-      controller.position.minScrollExtent,
-    );
-    final gesture = await tester.startGesture(tester.getCenter(list));
-    await gesture.moveBy(const Offset(0, 80));
-    await tester.pump();
-    await gesture.up();
-    for (
-      var frame = 0;
-      frame < 30 &&
-          controller.position.pixels != controller.position.minScrollExtent;
-      frame++
-    ) {
-      await tester.pump(const Duration(milliseconds: 33));
-    }
-    expect(controller.position.pixels, controller.position.minScrollExtent);
+      final list = find.descendant(
+        of: find.byType(ChatScrollInteractionGuard),
+        matching: find.byType(ListView),
+      );
+      final controller = tester.widget<ListView>(list).controller!;
+      expect(
+        controller.position.maxScrollExtent,
+        controller.position.minScrollExtent,
+      );
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, 80));
+      await tester.pump();
+      await gesture.up();
+      for (
+        var frame = 0;
+        frame < 30 &&
+            controller.position.pixels != controller.position.minScrollExtent;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(controller.position.pixels, controller.position.minScrollExtent);
 
-    gateway.emit('message.complete', const {'text': 'Respuesta corta'});
-    for (var frame = 0; frame < 30 && chat.isStreaming; frame++) {
-      await tester.pump(const Duration(milliseconds: 33));
-    }
-    await tester.pump();
+      gateway.emit('message.complete', const {'text': 'Respuesta corta'});
+      for (var frame = 0; frame < 30 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await tester.pump();
 
-    expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('scroll-to-bottom-hidden')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
+      expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-hidden')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('las flechas reaccionan cuando el stream empieza a desbordar', (
     tester,
@@ -4363,7 +4434,8 @@ void main() {
           return {
             'id': 'top-arrow-$index',
             'role': index.isEven ? 'assistant' : 'user',
-            'content': 'Mensaje alto $index ${List.filled(8, 'contenido').join(' ')}',
+            'content':
+                'Mensaje alto $index ${List.filled(8, 'contenido').join(' ')}',
           };
         }),
       );
@@ -5774,7 +5846,9 @@ void main() {
         connectionId: 'conn-restored-overlap',
       );
       await tester.pump(const Duration(milliseconds: 400));
-      final pill = tester.getRect(find.byKey(const ValueKey('compaction-dock')));
+      final pill = tester.getRect(
+        find.byKey(const ValueKey('compaction-dock')),
+      );
       final lastMessage = tester.getRect(find.text('Historial intacto'));
       final composer = tester.getRect(find.byType(HermesComposerSurface));
       expect(pill.overlaps(lastMessage), isFalse);
@@ -5782,10 +5856,7 @@ void main() {
       // A compact, centred pill — not a full-width bar.
       final screen = tester.getSize(find.byType(ChatScreen));
       expect(pill.width, lessThan(screen.width - 32));
-      expect(
-        (pill.center.dx - screen.width / 2).abs(),
-        lessThan(2),
-      );
+      expect((pill.center.dx - screen.width / 2).abs(), lessThan(2));
       expect(tester.takeException(), isNull);
     },
   );
@@ -6600,6 +6671,11 @@ void main() {
     }
   }
 
+  bool liveTextVisible(WidgetTester tester, String fragment) => tester
+      .widgetList<RichText>(find.byType(RichText))
+      .map((w) => w.text.toPlainText())
+      .any((t) => t.contains(fragment));
+
   Future<void> pumpDesktopDelta(
     WidgetTester tester,
     _UiRewindGateway gateway,
@@ -7295,7 +7371,7 @@ void main() {
   ) async {
     final retry = Completer<List<Map<String, dynamic>>>();
     var loads = 0;
-    await pumpChat(
+    final chat = await pumpChat(
       tester,
       connection: _remoteConn('conn-bot-composer-retry'),
       session: _session().copyWith(source: 'bot-mode'),
@@ -7312,7 +7388,31 @@ void main() {
     await tester.pump();
     expect(loads, 2);
     final composer = find.byType(TextField);
-    expect(tester.widget<TextField>(composer).enabled, isFalse);
+    expect(tester.widget<TextField>(composer).enabled, isTrue);
+    await tester.tap(composer);
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isTrue);
+    tester.testTextInput.enterText('Borrador mientras publica');
+    await tester.pump();
+    final send = find.byKey(const ValueKey('send'));
+    final blockedSend = tester.widget<HermesTactileAction>(
+      find.descendant(of: send, matching: find.byType(HermesTactileAction)),
+    );
+    expect(blockedSend.enabled, isFalse);
+    await tester.tap(send);
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(composer).controller!.text,
+      'Borrador mientras publica',
+    );
+    expect(
+      chat.messages.where(
+        (message) =>
+            message['role'] == 'user' &&
+            message['content'] == 'Borrador mientras publica',
+      ),
+      isEmpty,
+    );
     retry.complete(const [
       {'role': 'user', 'content': 'Pregunta recuperada'},
       {'role': 'assistant', 'content': 'Respuesta recuperada'},
@@ -7368,7 +7468,7 @@ void main() {
       await tester.pump();
       expect(loads, 3);
       final composer = find.byType(TextField);
-      expect(tester.widget<TextField>(composer).enabled, isFalse);
+      expect(tester.widget<TextField>(composer).enabled, isTrue);
       retry.complete(const [
         {'role': 'user', 'content': 'Pregunta tras recuperar backend'},
         {'role': 'assistant', 'content': 'Historial REST recuperado'},
@@ -7422,7 +7522,10 @@ void main() {
           expect(loads, attempt + 1);
         }
         final composer = find.byType(TextField);
-        expect(tester.widget<TextField>(composer).enabled, isFalse);
+        expect(tester.widget<TextField>(composer).enabled, isTrue);
+        await tester.tap(composer);
+        await tester.pump();
+        expect(tester.testTextInput.isVisible, isTrue);
 
         Future<void> completeNewest() async {
           requests.last.complete(const [
@@ -7449,10 +7552,7 @@ void main() {
             ]);
           }
           await tester.pump();
-          expect(
-            tester.widget<TextField>(composer).enabled,
-            newestFinishesFirst,
-          );
+          expect(tester.widget<TextField>(composer).enabled, isTrue);
           expect(find.textContaining('Respuesta obsoleta'), findsNothing);
           expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
         }
@@ -7558,7 +7658,7 @@ void main() {
         );
         expect(loads, 1);
         final composer = find.byType(TextField);
-        expect(tester.widget<TextField>(composer).enabled, isFalse);
+        expect(tester.widget<TextField>(composer).enabled, isTrue);
         await chat.refreshPassiveRemoteActivity();
         expect(chat.remoteSurfaceOwnsLiveTurn, isTrue);
         gateway.activeSessionList = const DesktopActiveSessionList();
@@ -7740,7 +7840,7 @@ void main() {
 
       await triggerChatRefresh(tester);
       expect(loadCalls, 2);
-      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
 
       second.complete(const [
         {'role': 'user', 'content': 'Pregunta vigente'},
@@ -8065,41 +8165,66 @@ void main() {
     },
   );
 
+  testWidgets('MEDIA de audio inicia carga sin filtrar la ruta ni reproducir', (
+    tester,
+  ) async {
+    const source = '/workspace/private/resumen.mp3';
+    await pumpChat(
+      tester,
+      messages: const [
+        {'role': 'assistant', 'content': 'MEDIA:$source'},
+        {'role': 'user', 'content': 'Envía el audio'},
+      ],
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('generated-audio-card')),
+      findsOneWidget,
+    );
+    expect(find.text('resumen.mp3'), findsOneWidget);
+    expect(find.text('Descargar'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+    expect(find.textContaining(source), findsNothing);
+    expect(find.textContaining('MEDIA:'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('MEDIA de imagen en historial inicia la carga automáticamente', (
+    tester,
+  ) async {
+    const source = '/workspace/generated/circle.png';
+    await pumpChat(
+      tester,
+      messages: const [
+        {'role': 'assistant', 'content': 'MEDIA:$source'},
+        {'role': 'user', 'content': 'Envía la imagen'},
+      ],
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('generated-image-card')),
+      findsOneWidget,
+    );
+    expect(find.text('Descargar'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.textContaining(source), findsNothing);
+    expect(find.textContaining('MEDIA:'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'MEDIA de audio inicia carga sin filtrar la ruta ni reproducir',
+    '::preview de imagen (issue #49) pinta la tarjeta de media y no el texto',
     (tester) async {
-      const source = '/workspace/private/resumen.mp3';
+      const source = '/tmp/x.png';
       await pumpChat(
         tester,
         messages: const [
-          {'role': 'assistant', 'content': 'MEDIA:$source'},
-          {'role': 'user', 'content': 'Envía el audio'},
-        ],
-      );
-
-      expect(
-        find.byKey(const ValueKey<String>('generated-audio-card')),
-        findsOneWidget,
-      );
-      expect(find.text('resumen.mp3'), findsOneWidget);
-      expect(find.text('Descargar'), findsNothing);
-      expect(find.byType(LinearProgressIndicator), findsOneWidget);
-      expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
-      expect(find.textContaining(source), findsNothing);
-      expect(find.textContaining('MEDIA:'), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'MEDIA de imagen en historial inicia la carga automáticamente',
-    (tester) async {
-      const source = '/workspace/generated/circle.png';
-      await pumpChat(
-        tester,
-        messages: const [
-          {'role': 'assistant', 'content': 'MEDIA:$source'},
-          {'role': 'user', 'content': 'Envía la imagen'},
+          {
+            'role': 'assistant',
+            'content': 'Aquí tienes la imagen:\n::preview{file="$source"}',
+          },
+          {'role': 'user', 'content': 'Genera una imagen'},
         ],
       );
 
@@ -8107,13 +8232,58 @@ void main() {
         find.byKey(const ValueKey<String>('generated-image-card')),
         findsOneWidget,
       );
-      expect(find.text('Descargar'), findsNothing);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.textContaining('::preview'), findsNothing);
       expect(find.textContaining(source), findsNothing);
-      expect(find.textContaining('MEDIA:'), findsNothing);
+      expect(find.textContaining('Aquí tienes la imagen'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    '::preview de html (issue #49) muestra tarjeta de fichero descargable',
+    (tester) async {
+      const source = '/workspace/out/widget.html';
+      await pumpChat(
+        tester,
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': '::preview{file="$source" height="480"}',
+          },
+          {'role': 'user', 'content': 'Genera un widget'},
+        ],
+      );
+
+      expect(
+        find.byKey(const ValueKey<String>('generated-html-preview-card')),
+        findsOneWidget,
+      );
+      expect(find.text('widget.html'), findsOneWidget);
+      expect(find.textContaining('Vista previa HTML'), findsOneWidget);
+      expect(find.textContaining('::preview'), findsNothing);
+      expect(find.textContaining(source), findsNothing);
+      expect(find.textContaining('480'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('una directiva desconocida ::foo se muestra como texto literal', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      messages: const [
+        {'role': 'assistant', 'content': '::foo{a="b"}'},
+        {'role': 'user', 'content': 'Hola'},
+      ],
+    );
+
+    expect(find.textContaining('::foo{a="b"}'), findsOneWidget);
+    expect(find.byType(AttachmentCard), findsNothing);
+    expect(find.byType(GeneratedImageCard), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'MEDIA de imagen tras message.complete inicia la carga automáticamente',
@@ -8193,40 +8363,39 @@ void main() {
     },
   );
 
-  testWidgets(
-    'video_generate estructurado inicia carga sin mostrar la ruta',
-    (tester) async {
-      const source = '/home/hermes/.hermes/cache/videos/tool-result.mp4';
-      await pumpChat(
-        tester,
-        messages: const [
-          {
-            'role': 'assistant',
-            'content': 'El vídeo generado está preparado.',
-            '_generatedImages': [
-              {
-                'media_kind': 'video',
-                'kind': 'serverPath',
-                'source': source,
-                'tool_call_id': 'call-video-structured',
-                'echo_sources': [source],
-              },
-            ],
-          },
-          {'role': 'user', 'content': 'Genera un vídeo'},
-        ],
-      );
+  testWidgets('video_generate estructurado inicia carga sin mostrar la ruta', (
+    tester,
+  ) async {
+    const source = '/home/hermes/.hermes/cache/videos/tool-result.mp4';
+    await pumpChat(
+      tester,
+      messages: const [
+        {
+          'role': 'assistant',
+          'content': 'El vídeo generado está preparado.',
+          '_generatedImages': [
+            {
+              'media_kind': 'video',
+              'kind': 'serverPath',
+              'source': source,
+              'tool_call_id': 'call-video-structured',
+              'echo_sources': [source],
+            },
+          ],
+        },
+        {'role': 'user', 'content': 'Genera un vídeo'},
+      ],
+    );
 
-      expect(
-        find.byKey(const ValueKey<String>('generated-video-card')),
-        findsOneWidget,
-      );
-      expect(find.text('Descargar'), findsNothing);
-      expect(find.byType(LinearProgressIndicator), findsOneWidget);
-      expect(find.textContaining(source), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(
+      find.byKey(const ValueKey<String>('generated-video-card')),
+      findsOneWidget,
+    );
+    expect(find.text('Descargar'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.textContaining(source), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('dos calls con el mismo basename pintan dos tarjetas', (
     tester,
@@ -9720,7 +9889,9 @@ void main() {
     },
   );
 
-  testWidgets('roster remoto muestra Stop y permite interrumpir', (tester) async {
+  testWidgets('roster remoto muestra Stop y permite interrumpir', (
+    tester,
+  ) async {
     final gateway = _RosterSubmissionGateway();
     var cancelCalls = 0;
     final chat = await pumpChat(
@@ -9741,7 +9912,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1300));
   });
 
-  testWidgets('turno frío antiguo ofrece banner Stop de un toque', (tester) async {
+  testWidgets('turno frío antiguo ofrece banner Stop de un toque', (
+    tester,
+  ) async {
     final gateway = _OrderedSubmissionGateway(
       turnStartedAt: DateTime.now().subtract(const Duration(minutes: 16)),
     );
@@ -9756,16 +9929,16 @@ void main() {
     final banner = find.byKey(
       const ValueKey('stale-running-session-stop-banner'),
     );
-    for (var attempt = 0;
-        attempt < 30 && banner.evaluate().isEmpty;
-        attempt++) {
+    for (
+      var attempt = 0;
+      attempt < 30 && banner.evaluate().isEmpty;
+      attempt++
+    ) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     expect(banner, findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey('stale-running-session-stop')),
-    );
+    await tester.tap(find.byKey(const ValueKey('stale-running-session-stop')));
     await tester.pump();
     expect(cancelCalls, 1);
     expect(banner, findsNothing);
@@ -9789,9 +9962,11 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'nuevo turno');
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('send')));
-    for (var attempt = 0;
-        attempt < 30 && gateway.operations.length < 2;
-        attempt++) {
+    for (
+      var attempt = 0;
+      attempt < 30 && gateway.operations.length < 2;
+      attempt++
+    ) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
@@ -9866,20 +10041,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1300));
   });
 
-  testWidgets('un turno que tarda sin emitir texto cuenta el tiempo a la vista', (
-    tester,
-  ) async {
-    // La queja del mantenedor: en Desktop un turno ocupado siempre lleva un
-    // cronómetro a la vista (`ActivityTimerText`), así que una herramienta
-    // lenta se lee como «sigue en marcha». Aquí no había ninguna señal
-    // temporal y una espera larga era indistinguible de un cuelgue.
-    await pumpChat(
-      tester,
-      chatState: ChatPipelineState.executing,
-      messages: const [
-        {'role': 'user', 'content': 'revisa el repo', 'id': 1},
-      ],
-    );
+  testWidgets(
+    'un turno que tarda sin emitir texto cuenta el tiempo a la vista',
+    (tester) async {
+      // La queja del mantenedor: en Desktop un turno ocupado siempre lleva un
+      // cronómetro a la vista (`ActivityTimerText`), así que una herramienta
+      // lenta se lee como «sigue en marcha». Aquí no había ninguna señal
+      // temporal y una espera larga era indistinguible de un cuelgue.
+      await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        messages: const [
+          {'role': 'user', 'content': 'revisa el repo', 'id': 1},
+        ],
+      );
 
       // El cronómetro corre sobre el reloj de pared, que `pump` no adelanta, así
       // que aquí se comprueba el cableado (turno activo + origen sembrado) y el
@@ -10893,6 +11068,61 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('los adjuntos pendientes se alinean al inicio del composer', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('chat-strip-align-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final image = File('${temp.path}/aligned.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+          'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      );
+    final attachment = AttachmentDraft(
+      localId: 'aligned-1',
+      type: AttachmentType.image,
+      name: 'aligned.png',
+      mimeType: 'image/png',
+      sizeBytes: image.lengthSync(),
+      localPath: image.path,
+    );
+    secureStore[ChatDraftStore.keyForTesting(
+      'conn-test',
+      'sess-test',
+      profile: 'default',
+    )] = jsonEncode({
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+      'text': '',
+      'attachments': [attachment.toJson()],
+    });
+
+    await pumpChat(tester);
+    final card = find.byKey(const ValueKey('attachment-card-aligned-1'));
+    for (var frame = 0; frame < 20 && card.evaluate().isEmpty; frame++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    expect(card, findsOneWidget);
+
+    final strip = find.byKey(const ValueKey('composer-attachment-preview'));
+    final inputRow = find.byKey(const ValueKey('composer-input-row'));
+    final cardRect = tester.getRect(card);
+    final rowRect = tester.getRect(inputRow);
+    // One 120 dp thumb in a full-width composer: it must sit at the start
+    // edge, not float in the middle of the input.
+    expect(
+      cardRect.left,
+      closeTo(rowRect.left, 8),
+      reason: 'card.left=${cardRect.left} row.left=${rowRect.left}',
+    );
+    expect(cardRect.center.dx, lessThan(rowRect.center.dx - 40));
+    expect(tester.getRect(strip).width, closeTo(rowRect.width, 1));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('una imagen con error conserva disponible su preview', (
     tester,
   ) async {
@@ -11451,6 +11681,309 @@ void main() {
     expect(editable.focusNode.hasFocus, isFalse);
   });
 
+  testWidgets('long tool-heavy chat opens the keyboard on the first tap', (
+    tester,
+  ) async {
+    final bigPayload = 'x' * 40000;
+    await pumpChat(
+      tester,
+      attachDesktopRuntimeOnLoad: false,
+      allowUnownedDesktopSnapshotForTesting: false,
+      messages: [
+        for (var i = 299; i >= 0; i--)
+          if (i % 3 == 0)
+            {
+              'id': i,
+              'message_id': 'long-$i',
+              'role': 'user',
+              'content': 'Prompt $i',
+            }
+          else if (i % 3 == 1)
+            {
+              'id': i,
+              'message_id': 'long-$i',
+              'role': 'assistant',
+              'content': 'Answer $i',
+              'tool_calls': [
+                {
+                  'id': 'call-$i',
+                  'type': 'function',
+                  'function': {'name': 'terminal', 'arguments': '{}'},
+                },
+              ],
+            }
+          else
+            {
+              'id': i,
+              'message_id': 'long-$i',
+              'role': 'tool',
+              'tool_call_id': 'call-${i - 1}',
+              'content': bigPayload,
+            },
+      ],
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final composer = find.byType(TextField).last;
+    expect(tester.widget<TextField>(composer).enabled, isTrue);
+    await tester.tap(composer);
+    await tester.pump();
+    expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+
+    // Simulate the IME animating in: several inset frames must not steal
+    // focus or hide the keyboard again.
+    for (final inset in [80.0, 180.0, 280.0, 320.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: inset);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    addTearDown(tester.view.resetViewInsets);
+    expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('opening cached long chat does not reproject history per row', (
+    tester,
+  ) async {
+    final probe = ChatPerformanceProbe();
+    final chat = await pumpChat(
+      tester,
+      performanceProbe: probe,
+      attachDesktopRuntimeOnLoad: false,
+      allowUnownedDesktopSnapshotForTesting: false,
+      messages: [
+        for (var i = 599; i >= 0; i--)
+          {
+            'id': i,
+            'message_id': 'cached-$i',
+            'role': i.isOdd ? 'assistant' : 'user',
+            'content': 'Cached message $i.',
+          },
+      ],
+    );
+    // The cache is already hydrated: opening must not repeatedly run the
+    // whole privacy/editorial projection just to index one row in the list.
+    expect(probe.publicTranscriptReads, lessThan(200));
+    expect(find.textContaining('Cached message 599.'), findsWidgets);
+    expect(chat.messages, hasLength(600));
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets(
+    'reabrir una sesión larga compactada no retrocea sus respuestas largas',
+    (tester) async {
+      // QA 9340 (Pixel 9 Pro): abrir una sesión de ~800 filas con 555
+      // compactadas dejó frames de build de ~1,4 s. El troceado verificado
+      // de cada respuesta larga (markdownToHtml por frontera) se cacheaba
+      // por State: cada ChatScreen nuevo —volver de la lista, reabrir— lo
+      // recalculaba para TODO el historial dentro del frame que aplica la
+      // página REST, aunque el contenido fuera idéntico.
+      final page = largeCompactedSessionPage();
+      expect(page, hasLength(500));
+      expect(page.where((row) => row['compacted'] == 1), hasLength(450));
+      final body = jsonEncode({
+        'session_id': 'long-compacted',
+        'messages': page,
+        'pagination': {
+          'limit': 500,
+          'offset': 0,
+          'order': 'latest',
+          'returned': page.length,
+        },
+      });
+      final api = ApiClient(
+        baseUrl: 'http://192.168.255.254:8642',
+        apiKey: 'test-key',
+        connectionId: 'conn-long-compacted',
+        httpClient: MockClient(
+          (_) async => http.Response(
+            body,
+            200,
+            headers: const {'content-type': 'application/json'},
+          ),
+        ),
+      );
+      addTearDown(api.close);
+      const session = Session(
+        id: 'long-compacted',
+        lineageRootId: 'long-compacted',
+        title: 'Sesión larga compactada',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 500,
+        isActive: false,
+        preview: '',
+        startedAt: 0,
+      );
+      final probe = ChatPerformanceProbe();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-long-compacted'),
+        session: session,
+        initialStoredSessionId: 'long-compacted',
+        api: api,
+        messagesLoaded: false,
+        performanceProbe: probe,
+        transcriptPageSizeForTesting: 500,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(chat.messagesLoaded, isTrue);
+      final firstOpenPlans = probe.assistantRenderPlanComputations;
+      expect(
+        firstOpenPlans,
+        greaterThan(0),
+        reason: 'el fixture debe contener respuestas largas troceables',
+      );
+      List<String> visibleMarkdown() => tester
+          .widgetList<MarkdownBody>(find.byType(MarkdownBody))
+          .map((body) => body.data)
+          .toList(growable: false);
+      final firstVisible = visibleMarkdown();
+      expect(firstVisible, isNotEmpty);
+
+      // Un segundo ChatScreen (State nuevo) sobre la misma sesión ya cargada:
+      // la forma de volver a abrirla desde la lista o desde Inicio.
+      final reopenProbe = ChatPerformanceProbe();
+      Navigator.of(tester.element(find.byType(ChatScreen))).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            connection: _remoteConn('conn-long-compacted'),
+            session: session,
+            initialStoredSessionId: 'long-compacted',
+            performanceProbe: reopenProbe,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(reopenProbe.screenBuilds, greaterThan(0));
+      expect(
+        reopenProbe.assistantRenderPlanComputations,
+        0,
+        reason:
+            'el plan de troceado es puro por contenido: reabrir no debe '
+            'repetir $firstOpenPlans troceados verificados en el frame',
+      );
+      expect(
+        visibleMarkdown(),
+        firstVisible,
+        reason: 'el render de la reapertura es idéntico al de la apertura',
+      );
+      expect(tester.takeException(), isNull);
+      final stats = ChatScreen.assistantRenderPlanCacheStatsForTesting;
+      expect(stats.entries, greaterThan(0));
+      expect(
+        stats.bytes,
+        lessThanOrEqualTo(ChatScreen.assistantRenderPlanCacheMaxBytes),
+      );
+      // Borrar conexión / revocar keys / cambiar perfil pasan por aquí.
+      PrivateRenderCaches.clearAll();
+      expect(ChatScreen.codeHighlightCacheLengthForTesting, 0);
+      expect(ChatScreen.assistantRenderPlanCacheStatsForTesting.entries, 0);
+      expect(ChatScreen.assistantRenderPlanCacheStatsForTesting.bytes, 0);
+    },
+  );
+  testWidgets('la caché de resaltado de código se vacía con '
+      'PrivateRenderCaches', (tester) async {
+    PrivateRenderCaches.clearAll();
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-qa9343-highlight'),
+      messages: [
+        {
+          'role': 'assistant',
+          'content': '```python\nprint("secreto QA9343")\n```',
+          'id': 2,
+        },
+        {'role': 'user', 'content': 'dame código', 'id': 1},
+      ],
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(ChatScreen.codeHighlightCacheLengthForTesting, greaterThan(0));
+    PrivateRenderCaches.clearAll();
+    expect(ChatScreen.codeHighlightCacheLengthForTesting, 0);
+  });
+  testWidgets('abrir el teclado no reproyecta el transcript ya cargado (D1)', (
+    tester,
+  ) async {
+    // Pixel 9 Pro: la primera apertura del IME mostraba 3 frames de jank
+    // (dos de ~130 ms). `_onKeyboardBottomInset` armaba `_scrollToBottom`,
+    // que al detectar `_revealedChars != assistantContent.length` hacía
+    // setState y anulaba `_renderProjection`/`_listEntries`: todo el
+    // transcript se reproyectaba en mitad de la animación del teclado.
+    final performance = ChatPerformanceProbe();
+    final gateway = _UiRewindGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-keyboard-inset'),
+      performanceProbe: performance,
+      messages: List.generate(30, (index) {
+        final assistant = index.isEven;
+        return {
+          'id': 'kb-$index',
+          'role': assistant ? 'assistant' : 'user',
+          'content': assistant
+              ? '## Respuesta $index\n\n'
+                    '${List.filled(12, 'contenido largo').join(' ')}\n\n'
+                    '| Clave | Valor |\n| --- | --- |\n| uno | dos |'
+              : 'Pregunta $index',
+        };
+      }),
+    );
+    addTearDown(tester.view.resetViewInsets);
+    expect(chat.isStreaming, isFalse);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(performance.renderProjectionBuilds, greaterThan(0));
+
+    // Un turno terminado deja `_revealedChars` en 0 (se reinicia al empezar
+    // el turno); esa es la ruta en la que el primer teclado reproyectaba.
+    await tester.enterText(find.byType(TextField), 'Pregunta nueva');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 100));
+    gateway.emit('message.complete', {'text': 'Respuesta terminada'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(chat.isStreaming, isFalse);
+
+    final list = find.descendant(
+      of: find.byType(ChatScrollInteractionGuard),
+      matching: find.byType(ListView),
+    );
+    final controller = tester.widget<ListView>(list).controller!;
+    // Lector al fondo: abrir el teclado no debe mover ni reproyectar nada.
+    expect(controller.position.pixels, 0);
+    performance.reset();
+
+    // Android anima la entrada del IME frame a frame.
+    for (final inset in const [60.0, 180.0, 300.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: inset);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    // Deja vencer el temporizador de 150 ms de `_onKeyboardBottomInset`.
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      performance.renderProjectionBuilds,
+      0,
+      reason: 'abrir el teclado no debe reproyectar el transcript',
+    );
+    expect(
+      performance.listEntryProjections,
+      0,
+      reason: 'abrir el teclado no debe reconstruir la lista de entradas',
+    );
+    // El último mensaje sigue visible (lista reverse: 0 es el fondo).
+    expect(controller.position.pixels, 0);
+    expect(find.text('Respuesta terminada'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('la proyección terminal se reutiliza en rebuilds del chat', (
     tester,
   ) async {
@@ -11936,9 +12469,7 @@ void main() {
   });
 
   testWidgets('/compress con almacén de restauración ilegible sigue '
-      'funcionando (fail-open)', (
-    tester,
-  ) async {
+      'funcionando (fail-open)', (tester) async {
     final gateway = _UiNativeCompressionGateway(
       _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
     );
@@ -12700,7 +13231,10 @@ void main() {
       expect(find.textContaining('No hacía falta'), findsOneWidget);
       // The pill itself reports the no-op (one feedback surface),
       // independent of the timeline row (which a concurrent refresh can drop).
-      await pumpUntilVisible(tester, _dockText('Nada que compactar · 6 mensajes'));
+      await pumpUntilVisible(
+        tester,
+        _dockText('Nada que compactar · 6 mensajes'),
+      );
       expect(_dockText('Nada que compactar · 6 mensajes'), findsOneWidget);
       expect(find.textContaining('La compresión se canceló.'), findsNothing);
       expect(find.text('La compresión de contexto terminó.'), findsNothing);
@@ -13635,6 +14169,404 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Reintentar tras fallo de transporte pre-ACK reenvía exactamente una vez',
+    (tester) async {
+      const prompt = 'QA offline: responde CUATRO';
+      final connection = _remoteConn('conn-qa9341-offline-retry');
+      final gateway = _SubmissionGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      var durable = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
+        {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
+      ];
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        desktopGateway: gateway,
+        messages: [for (final message in durable.reversed) Map.of(message)],
+        storedMessageLoader: (_, _) async => [
+          for (final message in durable) Map.of(message),
+        ],
+      );
+      await tester.enterText(find.byType(TextField), prompt);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(gateway.submissions, [prompt]);
+      expect(chat.state, ChatPipelineState.failed);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        prompt,
+      );
+
+      // La red vuelve; el servidor no tiene ninguna fila del turno.
+      gateway.submitError = null;
+      await tester.tap(find.text('↺ reintentar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(gateway.submissions, [prompt, prompt]);
+      expect(
+        chat.messages
+            .where((m) => m['role'] == 'user' && m['content'] == prompt)
+            .length,
+        1,
+      );
+      gateway.emitComplete('CUATRO');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        chat.messages
+            .where((m) => m['role'] == 'user' && m['content'] == prompt)
+            .length,
+        1,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Reintentar no reenvía si el servidor sí persistió el turno',
+    (tester) async {
+      const prompt = 'QA offline: responde CUATRO';
+      final connection = _remoteConn('conn-qa9341-offline-persisted');
+      final gateway = _SubmissionGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      var durable = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
+        {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
+      ];
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        desktopGateway: gateway,
+        messages: [for (final message in durable.reversed) Map.of(message)],
+        storedMessageLoader: (_, _) async => [
+          for (final message in durable) Map.of(message),
+        ],
+      );
+      await tester.enterText(find.byType(TextField), prompt);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, [prompt]);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      // El ACK se perdió pero el servidor sí ejecutó el turno.
+      durable = [
+        ...durable,
+        {'role': 'user', 'content': prompt, 'message_id': 'u-2'},
+        {'role': 'assistant', 'content': 'CUATRO', 'message_id': 'a-2'},
+      ];
+      gateway.submitError = null;
+      await tester.tap(find.text('↺ reintentar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(gateway.submissions, [prompt]);
+      expect(
+        chat.messages
+            .where((m) => m['role'] == 'user' && m['content'] == prompt)
+            .length,
+        1,
+      );
+      expect(find.text('CUATRO'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Reintentar sin evidencia durable legible no reenvía ni borra el error',
+    (tester) async {
+      const prompt = 'QA offline: responde CUATRO';
+      final connection = _remoteConn('conn-qa9341-offline-unknown');
+      final gateway = _SubmissionGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      const durable = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
+        {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
+      ];
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        desktopGateway: gateway,
+        messages: [for (final message in durable.reversed) Map.of(message)],
+        storedMessageLoader: (_, _) async =>
+            throw const SocketException('offline'),
+      );
+      await tester.enterText(find.byType(TextField), prompt);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      gateway.submitError = null;
+      await tester.tap(find.text('↺ reintentar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(gateway.submissions, [prompt]);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(
+        chat.messages
+            .where((m) => m['role'] == 'user' && m['content'] == prompt)
+            .length,
+        1,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        prompt,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Reintentar tras un refresco que ya adoptó el turno no reenvía (P1)',
+    (tester) async {
+      const prompt = 'QA offline: responde CUATRO';
+      final connection = _remoteConn('conn-qa9343-p1');
+      final gateway = _SubmissionGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      var durable = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
+        {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
+      ];
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        desktopGateway: gateway,
+        messages: [for (final message in durable.reversed) Map.of(message)],
+        storedMessageLoader: (_, _) async => [
+          for (final message in durable) Map.of(message),
+        ],
+      );
+      await tester.enterText(find.byType(TextField), prompt);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, [prompt]);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      // El servidor sí persistió el turno y un refresco durable lo adopta
+      // ANTES de que el usuario pulse reintentar.
+      durable = [
+        ...durable,
+        {'role': 'user', 'content': prompt, 'message_id': 'u-2'},
+        {'role': 'assistant', 'content': 'CUATRO', 'message_id': 'a-2'},
+      ];
+      await chat.loadMessages(passiveOnly: true);
+      await chat.reconcileAfterResume();
+      await tester.pump(const Duration(milliseconds: 300));
+      gateway.submitError = null;
+      if (find.text('↺ reintentar').evaluate().isNotEmpty) {
+        await tester.tap(find.text('↺ reintentar'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
+      }
+
+      expect(gateway.submissions, [prompt], reason: 'doble envío');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Reintentar el primer mensaje de un chat nuevo (sesión 404) '
+    'reenvía exactamente una vez',
+    (tester) async {
+      const prompt = 'primer mensaje sin red';
+      final connection = _remoteConn('conn-qa9343-first');
+      const provisional = Session(
+        id: 'mob-qa9343-first',
+        title: 'New',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        profile: 'default',
+        startedAt: 1,
+      );
+      final gateway = _SubmissionGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      var historyReads = 0;
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        session: provisional,
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async {
+          historyReads++;
+          // El gateway crea la fila de sesión en el mismo prompt.submit.
+          throw const CoreReadException(
+            CoreReadErrorKind.notFound,
+            statusCode: 404,
+          );
+        },
+      );
+      chat.markStoredSessionMissing();
+      await tester.enterText(find.byType(TextField), prompt);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, [prompt]);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      gateway.submitError = null;
+      await tester.tap(find.text('↺ reintentar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(historyReads, greaterThanOrEqualTo(1));
+      expect(gateway.submissions, [
+        prompt,
+        prompt,
+      ], reason: 'el botón no puede quedarse muerto');
+      expect(chat.messages.where((m) => m['content'] == prompt), hasLength(1));
+      gateway.emitComplete('ok');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'process death tras fallar el primer mensaje de un chat nuevo '
+    'no reenvía el prompt',
+    (tester) async {
+      const prompt = 'primer mensaje antes del kill';
+      final connection = _remoteConn('conn-qa9344-a5');
+      const provisional = Session(
+        id: 'mob-qa9344-a5',
+        title: 'New',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        profile: 'default',
+        startedAt: 1,
+      );
+      // session.create devuelve `stored-submission-test`; prompt.submit
+      // persiste la fila y el socket muere antes del ACK.
+      final gateway = _SubmissionGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      final reads = <String>[];
+      Future<List<Map<String, dynamic>>> loader(String id, String _) async {
+        reads.add(id);
+        if (id == 'stored-submission-test') {
+          return [
+            {'role': 'user', 'content': prompt, 'message_id': 'u-1'},
+          ];
+        }
+        // El id provisional nunca existe en el servidor.
+        throw const CoreReadException(
+          CoreReadErrorKind.notFound,
+          statusCode: 404,
+        );
+      }
+
+      final firstChat = await pumpChat(
+        tester,
+        connection: connection,
+        session: provisional,
+        desktopGateway: gateway,
+        storedMessageLoader: loader,
+      );
+      firstChat.markStoredSessionMissing();
+      await tester.enterText(find.byType(TextField), prompt);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, [prompt]);
+
+      // Android mata el proceso: solo sobreviven los stores persistidos.
+      final backendAtProcessDeath = Map<String, String>.from(secureStore);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 20));
+      secureStore = backendAtProcessDeath;
+      LocalConversationCleanupFence.resetForTesting();
+      TurnOutboxStore.resetSerializationForTesting();
+
+      gateway.submitError = null;
+      final restartedChat = await pumpChat(
+        tester,
+        connection: connection,
+        session: provisional,
+        desktopGateway: gateway,
+        storedMessageLoader: loader,
+      );
+      restartedChat.markStoredSessionMissing();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        prompt,
+      );
+      // El usuario pulsa Enviar sobre el compositor restaurado y, si aparece,
+      // también Reintentar.
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      if (find.text('↺ reintentar').evaluate().isNotEmpty) {
+        await tester.tap(find.text('↺ reintentar'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
+      }
+
+      expect(gateway.submissions, [prompt], reason: 'doble envío tras kill');
+      // El error sigue visible y el texto no se pierde.
+      expect(
+        find.textContaining('No se pudo confirmar si este turno llegó'),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        prompt,
+      );
+      // La clave creada quedó persistida junto a retry_boundary.
+      final stored =
+          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+              as Map<String, dynamic>;
+      final boundary =
+          (stored.values.single as Map<String, dynamic>)['retry_boundary']
+              as Map<String, dynamic>;
+      expect(boundary['kind'], 'knownMissing');
+      expect(boundary['created_session_id'], 'stored-submission-test');
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Reintentar reconcilia un fallo durable sin reenviar el prompt', (
     tester,
@@ -15009,9 +15941,7 @@ void main() {
       );
       // El aviso "modelo activo" flota arriba, sobre la cabecera: se retira
       // (un toque o deslizar en el dispositivo) antes de volver a tocarla.
-      HermesNotice.of(
-        tester.element(find.byType(ChatScreen)),
-      ).clearSnackBars();
+      HermesNotice.of(tester.element(find.byType(ChatScreen))).clearSnackBars();
       await tester.pump();
       await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
       await tester.pump();
@@ -15595,7 +16525,9 @@ void main() {
         'pregunta que no debe enviarse',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 700));
 
@@ -15660,7 +16592,9 @@ void main() {
         'texto que no se enviará',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 700));
 
@@ -15750,6 +16684,112 @@ void main() {
   });
 
   testWidgets(
+    'la miniatura de una imagen enviada no parpadea al reconstruir la burbuja',
+    (tester) async {
+      AttachmentHistoryCard.clearVerifiedCacheForTesting();
+      addTearDown(AttachmentHistoryCard.clearVerifiedCacheForTesting);
+      late final Directory temp;
+      late final AttachmentHistoryReference reference;
+      await tester.runAsync(() async {
+        temp = await Directory.systemTemp.createTemp('chat-bubble-flicker-');
+        final file = File('${temp.path}/foto.png');
+        await file.writeAsBytes(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+            'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          ),
+        );
+        reference = (await AttachmentUploader.persistForHistory(
+          AttachmentDraft(
+            type: AttachmentType.image,
+            name: 'foto.png',
+            mimeType: 'image/png',
+            sizeBytes: await file.length(),
+            localPath: file.path,
+          ),
+          index: 0,
+          baseDir: temp,
+        ))!;
+      });
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (_) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-bubble-flicker'),
+        messages: [
+          {
+            'role': 'user',
+            'content':
+                '[📎 foto.png · 70 B]\nMira esta foto\n${reference.toMarker()}',
+            'id': 'image-turn',
+            '_desktopRowId': 41,
+          },
+          {'role': 'assistant', 'content': 'Bonita foto'},
+        ],
+      );
+      final card = find.byType(AttachmentHistoryCard);
+      final thumb = find.descendant(of: card, matching: find.byType(Image));
+      for (var frame = 0; frame < 40 && thumb.evaluate().isEmpty; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(card, findsOneWidget);
+      expect(thumb, findsOneWidget);
+
+      // Sending a new turn shifts every row of the reverse list by two slots;
+      // the unkeyed ListView remounts the bubble at its new index (fresh
+      // State), and streaming then rebuilds it on every delta. The thumb must
+      // stay painted through all of it: a remount that re-resolves the file
+      // asynchronously shows the bare file card for a few frames — the
+      // "flicker" the owner sees right after sending an image.
+      expect(
+        await chat.send(
+          fullText: 'Y ahora un comentario',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      var framesWithoutThumb = 0;
+      for (var frame = 0; frame < 12; frame++) {
+        gateway.emit('message.delta', {'text': 'Trozo $frame. '});
+        await tester.pump(const Duration(milliseconds: 33));
+        expect(card, findsOneWidget, reason: 'frame $frame');
+        if (thumb.evaluate().isEmpty) framesWithoutThumb++;
+      }
+      gateway.emit('message.complete', {'text': 'Fin'});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+
+      expect(
+        framesWithoutThumb,
+        0,
+        reason: 'frames sin miniatura durante el streaming',
+      );
+      expect(
+        tester.widget<Image>(thumb).gaplessPlayback,
+        isTrue,
+        reason: 'un re-decode no debe dejar la miniatura en blanco',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'editar con adjunto conserva la fila y vuelve a adjuntar la referencia segura',
     (tester) async {
       late final Directory temp;
@@ -15813,7 +16853,9 @@ void main() {
         'pregunta corregida',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
       for (var frame = 0; frame < 60 && gateway.rewinds.isEmpty; frame++) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 5)),
@@ -16472,8 +17514,8 @@ void main() {
 
       expect(find.byType(SubagentCompletionCard), findsOneWidget);
       expect(find.text('Trabajo en segundo plano'), findsNothing);
-      expect(find.text('Subagente 1'), findsOneWidget);
-      expect(find.text('estado desconocido'), findsNWidgets(3));
+      expect(find.textContaining('2 completados'), findsOneWidget);
+      expect(find.text('estado desconocido'), findsNothing);
       expect(find.textContaining('[ASYNC DELEGATION'), findsNothing);
       expect(find.textContaining('/home/demo-user'), findsNothing);
       expect(find.textContaining('sa-private-one'), findsNothing);
@@ -17004,9 +18046,7 @@ void main() {
       expect(find.text('READY_SAFE'), findsOneWidget);
       expect(find.text('Coincidencia detectada'), findsOneWidget);
       expect(find.textContaining('Te avisaré al terminar'), findsOneWidget);
-      Navigator.of(
-        tester.element(find.text('READY_SAFE')),
-      ).pop();
+      Navigator.of(tester.element(find.text('READY_SAFE'))).pop();
       await tester.pump(const Duration(milliseconds: 300));
 
       final list = chatListFinder();
@@ -17015,9 +18055,10 @@ void main() {
       await tester.pump();
       final viewport = tester.getRect(list);
       RenderBox? readerAnchor;
-      for (final element in find
-          .descendant(of: list, matching: find.byType(ChatAnswerAnchor))
-          .evaluate()) {
+      for (final element
+          in find
+              .descendant(of: list, matching: find.byType(ChatAnswerAnchor))
+              .evaluate()) {
         final candidate = element.renderObject! as RenderBox;
         final rect = candidate.localToGlobal(Offset.zero) & candidate.size;
         if (rect.bottom > viewport.top && rect.top < viewport.bottom) {
@@ -17236,9 +18277,7 @@ void main() {
         find.byKey(const ValueKey('background-loop-resume')),
       );
       await tester.pump();
-      await tester.tap(
-        find.byKey(const ValueKey('background-loop-resume')),
-      );
+      await tester.tap(find.byKey(const ValueKey('background-loop-resume')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(gateway.controlActions, contains('loop.resume'));
@@ -18792,6 +19831,355 @@ void main() {
     },
   );
 
+  testWidgets('el borrador sobrevive a salir del chat sin enviar (#37)', (
+    tester,
+  ) async {
+    // #37: escribir en el composer y navegar fuera sin enviar perdía el
+    // texto. El guardado va con debounce de 350ms y `dispose()` captura un
+    // último snapshot, así que la prueba sale del chat SIN esperar al
+    // debounce: es el caso real de quien escribe y se va enseguida.
+    final chat = await pumpChat(
+      tester,
+      connection: _remoteConn('draft-survives-exit'),
+    );
+    final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    const borrador = 'un borrador largo\ncon varias lineas\nsin enviar';
+
+    await tester.enterText(find.byType(TextField), borrador);
+    await tester.pump();
+
+    // El debounce de guardado (350ms) NO se cumple: se sale antes, así el
+    // único que puede salvar el texto es el snapshot final de dispose().
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    navigator.pop();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pumpAndSettle();
+
+    expect(
+      (await screen.draftStoreOverride!.load(
+        screen.connection.id,
+        screen.session.id,
+        profile: 'default',
+      )).text,
+      borrador,
+      reason: 'dispose() debe capturar el borrador al salir del chat',
+    );
+    expect(chat.messages, isEmpty, reason: 'nada se envió');
+  });
+
+  // Count complete rendered bodies, not merely activity indicators.
+  for (final scenario in [
+    (successor: 'local', retain: true),
+    (successor: 'external', retain: false),
+    (successor: 'external', retain: true),
+  ]) {
+    final successor = scenario.successor;
+    testWidgets(
+      'successor keeps one assistant body retain=${scenario.retain} $successor',
+      (tester) async {
+        tester.view.physicalSize = const Size(600, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.platformDispatcher.accessibilityFeaturesTestValue =
+            const FakeAccessibilityFeatures(disableAnimations: true);
+        addTearDown(
+          tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+        );
+        final gateway = _SequencedSuccessorGateway();
+        final restGate = Completer<List<Map<String, dynamic>>>();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn(
+            'duplicate-probe-$successor-${scenario.retain}',
+          ),
+          desktopGateway: gateway,
+          storedMessageLoader: (_, _) => restGate.future,
+          messages: scrollableChatHistory('duplicate-probe'),
+        );
+        addTearDown(() {
+          chat.dispose();
+          if (!restGate.isCompleted) restGate.complete(const []);
+        });
+        final events = <String>[];
+        final subscription = chat.changes.listen(
+          (event) => events.add(event.name),
+        );
+        addTearDown(subscription.cancel);
+        final previous =
+            'PUBLIC_PREVIOUS_ANSWER must remain historical. '
+            '${List.filled(32, 'Previous answer context.').join(' ')}';
+        const current =
+            'The next assistant response contains a new paragraph. '
+            'This paragraph belongs only to the current turn, while the earlier '
+            'answer must keep its own text when a tool starts working.';
+
+        Map<String, Object?> snapshot() {
+          final historicalText = find.byWidgetPredicate(
+            (widget) =>
+                widget is RichText &&
+                widget.text.toPlainText().contains(previous),
+          );
+          final historicalAnchor = find.ancestor(
+            of: historicalText,
+            matching: find.byType(ChatAnswerAnchor),
+          );
+          final bodies = tester
+              .widgetList<RichText>(find.byType(RichText))
+              .map((widget) => widget.text.toPlainText())
+              .where((text) => text.contains(current))
+              .toList();
+          return <String, Object?>{
+            'historicalTop': historicalAnchor.evaluate().isNotEmpty
+                ? tester.getTopLeft(historicalAnchor.first).dy
+                : null,
+            'currentModelCopies': chat.messages
+                .where(
+                  (message) =>
+                      message['role'] == 'assistant' &&
+                      message['content'] == current,
+                )
+                .length,
+            'oldModelCopies': chat.messages
+                .where(
+                  (message) =>
+                      message['role'] == 'assistant' &&
+                      message['content'] == previous,
+                )
+                .length,
+            'completeBodies': bodies,
+            'liveHosts': find
+                .byKey(chatLiveAssistantViewportKey)
+                .evaluate()
+                .length,
+            'workingHeaders': find
+                .byWidgetPredicate(
+                  (widget) =>
+                      widget is Text &&
+                      widget.data == 'Trabajando…' &&
+                      (widget.key ==
+                              const ValueKey('assistant-header-working') ||
+                          widget.key ==
+                              const ValueKey('thinking-trace-live-in-pill')),
+                )
+                .evaluate()
+                .length,
+          };
+        }
+
+        expect(
+          await chat.send(
+            fullText: 'PUBLIC_PREVIOUS_REQUEST',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        await pumpDesktopDelta(
+          tester,
+          gateway,
+          chat,
+          previous,
+          expectedFragment: previous,
+        );
+        final probeController = tester
+            .widget<ListView>(chatListFinder())
+            .controller!;
+        if (scenario.retain) {
+          final readerGesture = await tester.startGesture(
+            tester.getCenter(chatListFinder()),
+          );
+          await readerGesture.moveBy(const Offset(0, 40));
+          await tester.pump();
+          await readerGesture.moveBy(const Offset(0, 180));
+          await tester.pump();
+          await readerGesture.up();
+          await tester.pump();
+          expect(
+            probeController.position.pixels,
+            greaterThan(100),
+            reason: 'precondition: reader has actually left the bottom',
+          );
+        }
+        gateway.emit('message.complete', {'text': previous});
+        for (var frame = 0; frame < 30 && chat.isStreaming; frame++) {
+          await tester.pump(const Duration(milliseconds: 33));
+        }
+        await tester.pump();
+        expect(chat.isStreaming, isFalse);
+        expect(
+          find.byKey(chatLiveAssistantViewportKey),
+          scenario.retain ? findsOneWidget : findsNothing,
+          reason: 'precondition: the actual terminal host was retained',
+        );
+        final retainedMessage = chat.messages.first;
+        final beforeSuccessor = snapshot();
+        events.clear();
+
+        if (successor == 'local') {
+          expect(
+            await chat.send(
+              fullText: 'PUBLIC_CURRENT_REQUEST',
+              model: 'hermes-agent',
+              history: const [],
+            ),
+            isTrue,
+          );
+        }
+        // A later, ordered message.start is real external-turn authority.
+        gateway.emit('message.start');
+        await tester.pump();
+        await pumpDesktopDelta(
+          tester,
+          gateway,
+          chat,
+          current,
+          expectedFragment: current,
+        );
+        // Both arms observe the same off-bottom viewport. Local start correctly
+        // preserves the reader's old anchor and can otherwise virtualize the head.
+        final beforeReposition = snapshot();
+        probeController.jumpTo(120);
+        await tester.pump();
+        final afterDelta = snapshot();
+        expect(chat.isStreaming, isTrue);
+        expect(afterDelta['currentModelCopies'], 1);
+        expect(
+          chat.messages.any((m) => identical(m, retainedMessage)),
+          isTrue,
+          reason: 'unchanged historical Map stays identity-stable',
+        );
+        gateway.emit('message.interim', const {'text': current});
+        gateway.emit('tool.start', const {
+          'name': 'terminal',
+          'tool_id': 'duplicate-probe-tool',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 120));
+        final afterInterim = snapshot();
+        // Dispose before assertions: the binding checks timers before test
+        // tearDown callbacks run, including the live activity watchdog.
+        chat.dispose();
+        await tester.pump();
+        expect(afterInterim['currentModelCopies'], 1);
+        expect(afterInterim['oldModelCopies'], 1);
+        expect(tester.takeException(), isNull);
+        expect(
+          afterDelta['completeBodies'],
+          hasLength(1),
+          reason: 'one incoming assistant body must be rendered exactly once',
+        );
+        expect(
+          afterInterim['completeBodies'],
+          hasLength(1),
+          reason: 'sealing an interim must preserve one body, not duplicate it',
+        );
+        expect(afterInterim['liveHosts'], 1);
+        expect(afterInterim['workingHeaders'], 1);
+        expect(events.contains('started'), successor == 'local');
+        if (scenario.retain && successor == 'external') {
+          expect(beforeSuccessor['historicalTop'], isNotNull);
+          expect(
+            beforeReposition['historicalTop'],
+            closeTo(beforeSuccessor['historicalTop']! as double, 1.5),
+            reason: 'a successor must preserve the historical reader anchor',
+          );
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'el texto narrado antes de una herramienta sigue visible durante el turno',
+    (tester) async {
+      // Regresión del texto que desaparecía en pantalla: el servicio conserva
+      // el interim sellado dentro de `content`, pero la UI republicaba el
+      // frame vivo con '' en cuanto la cabeza tenía traza de actividad. El
+      // dato nunca se perdía; simplemente dejaba de pintarse hasta el final
+      // del turno, que es justo lo que se veía con modelos que narran antes
+      // de llamar a una herramienta.
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('live-narration-visible'),
+        desktopGateway: gateway,
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_REQUEST',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      await pumpDesktopDelta(
+        tester,
+        gateway,
+        chat,
+        'PUBLIC_NARRACION',
+        expectedFragment: 'PUBLIC_NARRACION',
+      );
+      // El revelado gradual necesita frames adicionales tras el delta.
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(
+        liveTextVisible(tester, 'PUBLIC_NARRACION'),
+        isTrue,
+        reason: 'la narración debe verse mientras se escribe',
+      );
+
+      gateway.emit('message.interim', const {'text': 'PUBLIC_NARRACION'});
+      gateway.emit('tool.start', const {
+        'name': 'terminal',
+        'tool_id': 'vanish-tool',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+
+      // El servicio conserva el texto: el bug era exclusivamente visual.
+      expect(chat.messages.first['content'], contains('PUBLIC_NARRACION'));
+      expect(
+        liveTextVisible(tester, 'PUBLIC_NARRACION'),
+        isTrue,
+        reason: 'la narración no puede desaparecer al abrirse la herramienta',
+      );
+
+      gateway.emit('tool.complete', const {
+        'name': 'terminal',
+        'tool_id': 'vanish-tool',
+        'summary': 'PUBLIC_TOOL_DONE',
+        'result': 'SYNTHETIC_TOOL_RESULT',
+      });
+      await tester.pump();
+      await pumpDesktopDelta(
+        tester,
+        gateway,
+        chat,
+        'PUBLIC_CONTINUACION',
+        expectedFragment: 'PUBLIC_CONTINUACION',
+      );
+
+      // El revelado del segundo tramo también es gradual.
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      // Ambos tramos conviven: el previo a la herramienta y el posterior.
+      expect(liveTextVisible(tester, 'PUBLIC_NARRACION'), isTrue);
+      expect(liveTextVisible(tester, 'PUBLIC_CONTINUACION'), isTrue);
+
+      // Cierra el turno para que no queden timers del streaming vivos.
+      gateway.emit('message.complete', const {
+        'text': 'PUBLIC_NARRACION\n\nPUBLIC_CONTINUACION',
+      });
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+    },
+  );
+
   for (final doneEdge in [true, false]) {
     testWidgets('QA8973 autocompress live tip rotation doneEdge=$doneEdge', (
       tester,
@@ -18867,7 +20255,7 @@ void main() {
       await tester.pump();
       expect(chat.desktopAutoCompacting, isTrue);
       expect(chat.messages, before);
-      expect(chat.assistantContent, 'PUBLIC_LIVE_ONE');
+      expect(chat.assistantContent, 'PUBLIC_EDITORIAL\n\nPUBLIC_LIVE_ONE');
       gateway.emit('session.info', const {
         'stored_session_id': 'auto-stored-tip',
         'running': true,
@@ -18881,7 +20269,7 @@ void main() {
       expect(chat.storedSessionId, 'auto-stored-tip');
       expect(chat.messages, before);
       expect(chat.isStreaming, isTrue);
-      expect(chat.assistantContent, 'PUBLIC_LIVE_ONE');
+      expect(chat.assistantContent, 'PUBLIC_EDITORIAL\n\nPUBLIC_LIVE_ONE');
       expect(liveHost.evaluate().single, same(liveElement));
       expect(chat.subagentActivities, isEmpty);
       gateway.emit('subagent.progress', const {
@@ -18920,7 +20308,7 @@ void main() {
       );
       expect(
         chat.assistantContent,
-        'PUBLIC_LIVE_ONE PUBLIC_PENDING PUBLIC_LIVE_TWO',
+        'PUBLIC_EDITORIAL\n\nPUBLIC_LIVE_ONE PUBLIC_PENDING PUBLIC_LIVE_TWO',
       );
       expect(chat.messages.any((m) => m['content'] == 'PUBLIC_PREFIX'), isTrue);
       expect(
@@ -20925,63 +22313,109 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Enter durante turno activo redirige texto plano primero', (
-    tester,
-  ) async {
-    final gateway = _NoLiveMutationGateway();
-    final chat = await pumpChat(
-      tester,
-      desktopGateway: gateway,
-      connection: _remoteConn('conn-live-redirect'),
-      messagesLoaded: false,
-    );
-    final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+  testWidgets(
+    'envío normal durante turno vivo conserva FIFO durable sin mutarlo',
+    (tester) async {
+      final gateway = _NoLiveMutationGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-live-normal-fifo'),
+        messagesLoaded: false,
+      );
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
 
-    await tester.enterText(find.byType(TextField), 'Primera petición');
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(gateway.submissions, ['Primera petición']);
+      await tester.enterText(find.byType(TextField), 'Primera petición');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.submissions, ['Primera petición']);
+      expect(chat.isStreaming, isTrue);
+      final writesBeforeQueue = outboxWriteCalls;
+      const nextTurns = ['Siguiente turno', 'Tercer turno'];
 
-    await tester.enterText(find.byType(TextField), 'Siguiente turno');
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump(const Duration(milliseconds: 100));
+      for (final text in nextTurns) {
+        await tester.enterText(find.byType(TextField), text);
+        await tester.pump(const Duration(milliseconds: 250));
+        if (text == nextTurns.first) {
+          await tester.tap(find.byKey(const ValueKey('send')));
+        } else {
+          await submitComposerFromKeyboard(tester);
+        }
+        await tester.pump(const Duration(milliseconds: 100));
 
-    expect(gateway.redirects, ['Siguiente turno']);
-    expect(gateway.steerCalls, 0);
-    expect(gateway.submissions, ['Primera petición']);
-    expect(chat.queuedMessages, isEmpty);
-    expect(
-      chat.messages.where(
-        (message) =>
-            message['role'] == 'user' &&
-            message['content'] == 'Siguiente turno',
-      ),
-      hasLength(1),
-    );
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller?.text,
-      isEmpty,
-    );
-    expect(
-      (await screen.draftStoreOverride!.load(
-        screen.connection.id,
-        screen.session.id,
-      )).text,
-      isEmpty,
-    );
+        expect(gateway.redirects, isEmpty);
+        expect(gateway.steers, isEmpty);
+        expect(gateway.interruptCalls, 0);
+        expect(gateway.rewinds, isEmpty);
+        expect(gateway.submissions, ['Primera petición']);
+        expect(chat.isStreaming, isTrue);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          isEmpty,
+        );
+        expect(
+          (await screen.draftStoreOverride!.load(
+            screen.connection.id,
+            screen.session.id,
+          )).text,
+          isEmpty,
+        );
+      }
 
-    gateway.emit('message.complete', {'text': 'terminado'});
-    await tester.pump(const Duration(milliseconds: 1200));
-    expect(gateway.submissions, ['Primera petición']);
-    expect(gateway.redirects, ['Siguiente turno']);
-    expect(gateway.steerCalls, 0);
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(tester.takeException(), isNull);
-  });
+      expect(chat.queuedMessages, nextTurns);
+      expect(outboxWriteCalls, writesBeforeQueue + nextTurns.length);
+      // Read the durable backing store, not the in-memory queue: both turns
+      // must be independently recoverable exactly once in admission order.
+      final stored = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      final queued =
+          stored.values
+              .map(
+                (value) => PreparedTurn.fromJson(
+                  Map<String, dynamic>.from(value as Map),
+                ),
+              )
+              .where((turn) => turn.queued)
+              .toList()
+            ..sort(
+              (left, right) => left.queueOrder!.compareTo(right.queueOrder!),
+            );
+      expect(queued.map((turn) => turn.text), nextTurns);
+      expect(queued.map((turn) => turn.clientTurnId).toSet(), hasLength(2));
+      expect(queued.map((turn) => turn.queueOrder).toSet(), hasLength(2));
+      expect(
+        queued.every((turn) => turn.state == PreparedTurnState.prepared),
+        isTrue,
+      );
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' &&
+              nextTurns.contains(message['content']),
+        ),
+        isEmpty,
+      );
 
-  testWidgets('redirect rechazado cae a la cola exactamente una vez', (
+      gateway.emit('message.complete', {'text': 'primera terminada'});
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(gateway.submissions, ['Primera petición', nextTurns.first]);
+      expect(chat.queuedMessages, [nextTurns.last]);
+      gateway.emit('message.complete', {'text': 'segunda terminada'});
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(gateway.submissions, ['Primera petición', ...nextTurns]);
+      expect(chat.queuedMessages, isEmpty);
+      gateway.emit('message.complete', {'text': 'tercera terminada'});
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(gateway.submissions, ['Primera petición', ...nextTurns]);
+      expect(gateway.redirects, isEmpty);
+      expect(gateway.steers, isEmpty);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.rewinds, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('envío normal encola sin consultar redirect que rechazaría', (
     tester,
   ) async {
     final gateway = _NoLiveMutationGateway()
@@ -21003,7 +22437,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(gateway.redirects, ['Siguiente turno']);
+    expect(gateway.redirects, isEmpty);
+    expect(gateway.steers, isEmpty);
+    expect(gateway.interruptCalls, 0);
+    expect(gateway.submissions, ['Primera petición']);
     expect(chat.queuedMessages, ['Siguiente turno']);
     expect(
       chat.messages.where(
@@ -21020,7 +22457,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('error de redirect cae a la cola exactamente una vez', (
+  testWidgets('envío normal encola sin consultar redirect que fallaría', (
     tester,
   ) async {
     final gateway = _NoLiveMutationGateway()
@@ -21042,7 +22479,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(gateway.redirects, ['Siguiente turno']);
+    expect(gateway.redirects, isEmpty);
+    expect(gateway.steers, isEmpty);
+    expect(gateway.interruptCalls, 0);
+    expect(gateway.submissions, ['Primera petición']);
     expect(chat.queuedMessages, ['Siguiente turno']);
     expect(
       chat.messages.where(
@@ -21287,6 +22727,96 @@ void main() {
   });
 
   testWidgets(
+    'editar durante streaming con subagente vivo deja una sola cabecera '
+    'Trabajando y el subagente cancelado',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-edit-live-subagent'),
+        messages: const [
+          {'role': 'user', 'content': 'turno previo'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'delega esta tarea',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'id': 'call-live-edit',
+        'name': 'delegate_task',
+      });
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-live-edit',
+        'tool_call_id': 'call-live-edit',
+        'delegation_id': 'deleg_live_edit',
+        'goal': 'trabajo delegado',
+        'status': 'running',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.isStreaming, isTrue);
+      expect(chat.activeSubagentCount, 1);
+      expect(find.byType(ThinkingTraceCard), findsOneWidget);
+
+      Finder workingHeaders() => find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            widget.data == 'Trabajando…' &&
+            (widget.key == const ValueKey('assistant-header-working') ||
+                widget.key == const ValueKey('thinking-trace-live-in-pill')),
+      );
+      expect(workingHeaders(), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.edit_outlined).last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      final editor = find.byKey(const ValueKey('inline-message-editor-field'));
+      expect(editor, findsOneWidget);
+      await tester.enterText(editor, 'delega esta otra tarea');
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(editor, findsNothing);
+      expect(tester.takeException(), isNull);
+      expect(chat.isStreaming, isTrue);
+      expect(find.textContaining('delega esta otra tarea'), findsOneWidget);
+      // Only one live turn exists, so at most one "Trabajando…" header.
+      expect(
+        workingHeaders().evaluate().length,
+        lessThanOrEqualTo(1),
+        reason: 'two live headers means the old turn survived the edit',
+      );
+      // The old child was interrupted with its parent turn: cancelled, not
+      // failed, and not still counted as active.
+      final old = chat.subagentActivities
+          .where((activity) => activity.subagentId == 'sa-live-edit')
+          .toList(growable: false);
+      expect(old, hasLength(1));
+      expect(old.single.phase, SubagentActivityPhase.cancelled);
+      expect(chat.activeSubagentCount, 0);
+
+      gateway.emit('message.complete', {'text': 'Respuesta del turno editado'});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(chat.isStreaming, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'turno nuevo durante interrupt drain conserva ownership y aborta rewind',
     (tester) async {
       final gateway = _UiRewindGateway()..interruptGate = Completer<void>();
@@ -21313,7 +22843,9 @@ void main() {
         'pregunta corregida obsoleta',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
       await tester.pump(const Duration(milliseconds: 100));
       expect(gateway.interruptCalls, 1);
       expect(gateway.rewinds, isEmpty);
@@ -21766,7 +23298,8 @@ void main() {
       expect(
         transport.sessions.every((session) => !session.abnormalClose),
         isTrue,
-        reason: 'the client must request a normal close before cancelling reads',
+        reason:
+            'the client must request a normal close before cancelling reads',
       );
       expect(
         transport.sessions.map((session) => session.poisoned),
@@ -23879,29 +25412,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('con teclado abierto el aviso sigue arriba y sin tapar el composer', (
-    tester,
-  ) async {
-    tester.view
-      ..devicePixelRatio = 1
-      ..physicalSize = const Size(360, 800)
-      ..padding = const FakeViewPadding(top: 24, bottom: 24)
-      ..viewPadding = const FakeViewPadding(top: 24, bottom: 24)
-      ..viewInsets = const FakeViewPadding(bottom: 300);
-    addTearDown(tester.view.reset);
-    await pumpChat(tester, messages: scrollableChatHistory('aviso teclado'));
+  testWidgets(
+    'con teclado abierto el aviso sigue arriba y sin tapar el composer',
+    (tester) async {
+      tester.view
+        ..devicePixelRatio = 1
+        ..physicalSize = const Size(360, 800)
+        ..padding = const FakeViewPadding(top: 24, bottom: 24)
+        ..viewPadding = const FakeViewPadding(top: 24, bottom: 24)
+        ..viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.reset);
+      await pumpChat(tester, messages: scrollableChatHistory('aviso teclado'));
 
-    await showChatNotice(tester, 'Aviso con teclado');
-    final notice = noticeRect(tester);
-    final composer = composerHostRect(tester);
-    expect(find.byType(SnackBar), findsNothing);
-    expect(notice.overlaps(composer), isFalse);
-    expect(notice.top, greaterThanOrEqualTo(24));
-    // El aviso queda por encima del composer, que a su vez queda sobre el teclado.
-    expect(notice.bottom, lessThanOrEqualTo(composer.top));
-    expect(composer.bottom, lessThanOrEqualTo(800 - 300));
-    expect(tester.takeException(), isNull);
-  });
+      await showChatNotice(tester, 'Aviso con teclado');
+      final notice = noticeRect(tester);
+      final composer = composerHostRect(tester);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(notice.overlaps(composer), isFalse);
+      expect(notice.top, greaterThanOrEqualTo(24));
+      // El aviso queda por encima del composer, que a su vez queda sobre el teclado.
+      expect(notice.bottom, lessThanOrEqualTo(composer.top));
+      expect(composer.bottom, lessThanOrEqualTo(800 - 300));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('un aviso no se mueve cuando el composer crece', (tester) async {
     tester.view
@@ -23957,31 +25491,30 @@ void main() {
     await holdTranscriptAwayFromBottom(tester);
     expectScrollToBottomVisible();
 
-      await showChatNotice(tester, 'Aviso con pila completa');
-      final notice = noticeRect(tester);
-      final cardRect = tester.getRect(card);
-      final arrow = tester.getRect(scrollToBottomFinder());
-      final composer = composerHostRect(tester);
-      expect(cardRect.height, greaterThan(0));
-      expect(notice.overlaps(cardRect), isFalse, reason: '$notice vs $cardRect');
-      expect(notice.overlaps(arrow), isFalse, reason: '$notice vs $arrow');
-      expect(notice.overlaps(composer), isFalse, reason: '$notice vs $composer');
-      expect(arrow.overlaps(cardRect), isFalse);
-      expect(cardRect.bottom, lessThanOrEqualTo(composer.top));
-      // Orden vertical del diseño: aviso (arriba) > flecha > tarjeta > composer.
-      expect(notice.bottom, lessThanOrEqualTo(arrow.top));
-      expect(arrow.bottom, lessThanOrEqualTo(cardRect.top));
-      expect(tester.takeException(), isNull);
+    await showChatNotice(tester, 'Aviso con pila completa');
+    final notice = noticeRect(tester);
+    final cardRect = tester.getRect(card);
+    final arrow = tester.getRect(scrollToBottomFinder());
+    final composer = composerHostRect(tester);
+    expect(cardRect.height, greaterThan(0));
+    expect(notice.overlaps(cardRect), isFalse, reason: '$notice vs $cardRect');
+    expect(notice.overlaps(arrow), isFalse, reason: '$notice vs $arrow');
+    expect(notice.overlaps(composer), isFalse, reason: '$notice vs $composer');
+    expect(arrow.overlaps(cardRect), isFalse);
+    expect(cardRect.bottom, lessThanOrEqualTo(composer.top));
+    // Orden vertical del diseño: aviso (arriba) > flecha > tarjeta > composer.
+    expect(notice.bottom, lessThanOrEqualTo(arrow.top));
+    expect(arrow.bottom, lessThanOrEqualTo(cardRect.top));
+    expect(tester.takeException(), isNull);
 
-      gateway.emit('subagent.complete', const {
-        'subagent_id': 'notice-overlap-child',
-        'status': 'completed',
-      });
-      gateway.emit('message.complete', const {'text': 'TRABAJO ENTREGADO'});
-      await tester.pump();
-      await tester.pump(const Duration(minutes: 2));
-    },
-  );
+    gateway.emit('subagent.complete', const {
+      'subagent_id': 'notice-overlap-child',
+      'status': 'completed',
+    });
+    gateway.emit('message.complete', const {'text': 'TRABAJO ENTREGADO'});
+    await tester.pump();
+    await tester.pump(const Duration(minutes: 2));
+  });
 
   testWidgets('el aviso de historial local va en flujo, sobre el transcript', (
     tester,
@@ -24072,8 +25605,369 @@ void main() {
     expect(find.text('Detenido'), findsNothing);
     expect(tester.takeException(), isNull);
   });
-}
 
+  // QA 9340: a brand-new chat's first turn completes while a spurious
+  // `status.update(compacting)` suppresses durable terminal adoption (three
+  // rejected REST reads). A later durable read (app resume or session-list
+  // invalidation) then served by native `session.history` must replace the
+  // identity-less local pair, not render it next to its durable copy.
+  for (final compactionFence in [false, true]) {
+    for (final trigger in ['resume', 'invalidation']) {
+      testWidgets(
+        'first turn of a new chat is not duplicated by a later durable read '
+        '(compactionFence=$compactionFence, trigger=$trigger)',
+        (tester) async {
+          const prompt = 'PROMPT_DUP9340_FIRST_TURN';
+          const reply = 'REPLY_DUP9340_FIRST_TURN';
+          const durablePair = <Map<String, dynamic>>[
+            {'id': 419209, 'role': 'user', 'content': prompt},
+            {'id': 419210, 'role': 'assistant', 'content': reply},
+          ];
+          var durableReady = false;
+          var restMessageReads = 0;
+          final api = ApiClient(
+            baseUrl: 'http://127.0.0.1:8642',
+            apiKey: 'test',
+            httpClient: MockClient((request) async {
+              final path = request.url.path;
+              if (request.method == 'GET' &&
+                  path == '/api/sessions/sess-test/messages') {
+                restMessageReads += 1;
+                if (!durableReady) return http.Response('not found', 404);
+                return http.Response(
+                  jsonEncode({
+                    'session_id': 'sess-test',
+                    'messages': durablePair,
+                  }),
+                  200,
+                );
+              }
+              return http.Response('not found', 404);
+            }),
+          );
+          final gateway = _Dup9340HistoryGateway(durablePair);
+          const provisional = Session(
+            id: 'mob-dup9340-first-turn',
+            title: 'Nuevo chat',
+            model: 'hermes-agent',
+            source: 'mobile',
+            messageCount: 0,
+            isActive: true,
+            preview: '',
+            profile: 'default',
+            startedAt: 1,
+          );
+          final connection = _remoteConn('conn-dup9340-first-turn');
+          final chat = await pumpChat(
+            tester,
+            session: provisional,
+            connection: connection,
+            desktopGateway: gateway,
+            api: api,
+          );
+
+          await tester.enterText(find.byType(TextField).first, prompt);
+          await tester.pump();
+          await tester.tap(find.byKey(const ValueKey('send')));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(gateway.submissions, [prompt]);
+          expect(chat.storedSessionId, 'sess-test');
+
+          gateway.emit('message.start');
+          if (compactionFence) {
+            gateway.emit('status.update', const {
+              'kind': 'compacting',
+              'text': 'Compacting context',
+            });
+          }
+          gateway.emit('message.delta', const {'text': reply});
+          await tester.pump(const Duration(milliseconds: 100));
+          durableReady = true;
+          gateway.durableReady = true;
+          gateway.emit('message.complete', const {'text': reply});
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 2));
+          // Physical evidence: one REST read on the passing path, three
+          // rejected recovery reads when the compaction fence is armed.
+          expect(restMessageReads, compactionFence ? 3 : 1);
+
+          if (trigger == 'resume') {
+            final binding = tester.binding;
+            binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+            binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+            binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+            await tester.pump();
+            binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+            binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+            binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+          } else {
+            final app = tester.state<HermesAppState>(find.byType(HermesApp));
+            unawaited(
+              app.activeChats.invalidateDurableSession(
+                connectionId: connection.id,
+                profile: 'default',
+                sessionId: 'sess-test',
+              ),
+            );
+          }
+          for (var i = 0; i < 6; i++) {
+            await tester.pump(const Duration(seconds: 1));
+          }
+
+          final users = chat.messages.where(isRealUserTurn).toList();
+          final assistants = chat.messages
+              .where((m) => m['role'] == 'assistant')
+              .toList();
+          expect(
+            users,
+            hasLength(1),
+            reason:
+                'rows=${chat.messages.map((m) => '${m['role']}:${m['id']}')}',
+          );
+          expect(assistants, hasLength(1));
+          int renderedBodies(String text) => tester
+              .widgetList<RichText>(find.byType(RichText, skipOffstage: false))
+              .where((w) => w.text.toPlainText().trim() == text)
+              .length;
+          expect(renderedBodies(prompt), 1);
+          expect(renderedBodies(reply), 1);
+          if (gateway.historyCalls > 0 || compactionFence) {
+            // Once a durable read was adopted the rows carry server identity.
+            expect(users.single['id'], 419209);
+            expect(assistants.single['id'], 419210);
+          }
+        },
+      );
+    }
+  }
+
+  // Review 9341 (hallazgo MEDIA): tras la valla `compacting` espuria el
+  // usuario envía un 2º mensaje antes de cualquier lectura durable. Hermes
+  // Desktop solo se salta la hidratación del turno que vio `compacting`
+  // (compactedTurnRef.delete, use-message-stream/index.ts:878-887) y la
+  // limpia con `compacted`/`ready` (gateway-event/status.ts:45-61); el 2º
+  // turno hidrata desde el almacén y no duplica el chat.
+  testWidgets(
+    'second send after a compaction fence does not duplicate the chat',
+    (tester) async {
+      const prompt1 = 'PROMPT_DUP9341_FIRST';
+      const reply1 = 'REPLY_DUP9341_FIRST';
+      const prompt2 = 'PROMPT_DUP9341_SECOND';
+      const reply2 = 'REPLY_DUP9341_SECOND';
+      final durable = <Map<String, dynamic>>[];
+      final api = ApiClient(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        httpClient: MockClient((request) async {
+          if (request.method == 'GET' &&
+              request.url.path == '/api/sessions/sess-test/messages') {
+            if (durable.isEmpty) return http.Response('not found', 404);
+            return http.Response(
+              jsonEncode({'session_id': 'sess-test', 'messages': durable}),
+              200,
+            );
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+      final gateway = _Dup9340HistoryGateway(durable);
+      const provisional = Session(
+        id: 'mob-dup9341-second-send',
+        title: 'Nuevo chat',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        profile: 'default',
+        startedAt: 1,
+      );
+      final chat = await pumpChat(
+        tester,
+        session: provisional,
+        connection: _remoteConn('conn-dup9341-second-send'),
+        desktopGateway: gateway,
+        api: api,
+      );
+
+      await tester.enterText(find.byType(TextField).first, prompt1);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      gateway.emit('message.start');
+      gateway.emit('status.update', const {
+        'kind': 'compacting',
+        'text': 'Compacting context',
+      });
+      gateway.emit('message.delta', const {'text': reply1});
+      await tester.pump(const Duration(milliseconds: 100));
+      durable.addAll(const [
+        {'id': 419209, 'role': 'user', 'content': prompt1},
+        {'id': 419210, 'role': 'assistant', 'content': reply1},
+      ]);
+      gateway.durableReady = true;
+      gateway.emit('message.complete', const {'text': reply1});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+
+      await tester.enterText(find.byType(TextField).first, prompt2);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.submissions, [prompt1, prompt2]);
+      gateway.emit('message.start');
+      gateway.emit('message.delta', const {'text': reply2});
+      await tester.pump(const Duration(milliseconds: 100));
+      durable.addAll(const [
+        {'id': 419211, 'role': 'user', 'content': prompt2},
+        {'id': 419212, 'role': 'assistant', 'content': reply2},
+      ]);
+      gateway.emit('message.complete', const {'text': reply2});
+      await tester.pump();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      unawaited(
+        app.activeChats.invalidateDurableSession(
+          connectionId: 'conn-dup9341-second-send',
+          profile: 'default',
+          sessionId: 'sess-test',
+        ),
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+
+      final rows = chat.messages
+          .where((m) => isRealUserTurn(m) || m['role'] == 'assistant')
+          .map((m) => '${m['role'] == 'user' ? 'u' : 'a'}:${m['id']}')
+          .toList();
+      expect(rows, [
+        'a:419212',
+        'u:419211',
+        'a:419210',
+        'u:419209',
+      ], reason: 'rows=$rows');
+    },
+  );
+
+  testWidgets(
+    'repeated compacting fence in turn 2 does not duplicate the chat',
+    (tester) async {
+      const prompt1 = 'PROMPT_DUP9343_FIRST';
+      const reply1 = 'REPLY_DUP9343_FIRST';
+      const prompt2 = 'PROMPT_DUP9343_SECOND';
+      const reply2 = 'REPLY_DUP9343_SECOND';
+      final durable = <Map<String, dynamic>>[];
+      final api = ApiClient(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        httpClient: MockClient((request) async {
+          if (request.method == 'GET' &&
+              request.url.path == '/api/sessions/sess-test/messages') {
+            if (durable.isEmpty) return http.Response('not found', 404);
+            return http.Response(
+              jsonEncode({'session_id': 'sess-test', 'messages': durable}),
+              200,
+            );
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+      final gateway = _Dup9340HistoryGateway(durable);
+      const provisional = Session(
+        id: 'mob-dup9343-second-send',
+        title: 'Nuevo chat',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        profile: 'default',
+        startedAt: 1,
+      );
+      final chat = await pumpChat(
+        tester,
+        session: provisional,
+        connection: _remoteConn('conn-dup9343-second-send'),
+        desktopGateway: gateway,
+        api: api,
+      );
+
+      await tester.enterText(find.byType(TextField).first, prompt1);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      gateway.emit('message.start');
+      gateway.emit('status.update', const {
+        'kind': 'compacting',
+        'text': 'Compacting context',
+      });
+      gateway.emit('message.delta', const {'text': reply1});
+      await tester.pump(const Duration(milliseconds: 100));
+      durable.addAll(const [
+        {'id': 419209, 'role': 'user', 'content': prompt1},
+        {'id': 419210, 'role': 'assistant', 'content': reply1},
+      ]);
+      gateway.durableReady = true;
+      gateway.emit('message.complete', const {'text': reply1});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+
+      await tester.enterText(find.byType(TextField).first, prompt2);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.submissions, [prompt1, prompt2]);
+      gateway.emit('message.start');
+      gateway.emit('status.update', const {
+        'kind': 'compacting',
+        'text': 'Compacting context',
+      });
+      gateway.emit('message.delta', const {'text': reply2});
+      await tester.pump(const Duration(milliseconds: 100));
+      durable.addAll(const [
+        {'id': 419211, 'role': 'user', 'content': prompt2},
+        {'id': 419212, 'role': 'assistant', 'content': reply2},
+      ]);
+      gateway.emit('message.complete', const {'text': reply2});
+      await tester.pump();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      unawaited(
+        app.activeChats.invalidateDurableSession(
+          connectionId: 'conn-dup9343-second-send',
+          profile: 'default',
+          sessionId: 'sess-test',
+        ),
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+
+      final rows = chat.messages
+          .where((m) => isRealUserTurn(m) || m['role'] == 'assistant')
+          .map((m) => '${m['role'] == 'user' ? 'u' : 'a'}:${m['id']}')
+          .toList();
+      expect(rows, [
+        'a:419212',
+        'u:419211',
+        'a:419210',
+        'u:419209',
+      ], reason: 'rows=$rows');
+    },
+  );
+}
 
 class _TodoResumeGateway extends _StableRefreshGateway {
   _TodoResumeGateway(this.todoState) : super(subagents: const []);
@@ -24105,4 +25999,26 @@ class _TodoResumeGateway extends _StableRefreshGateway {
     created: false,
     todoState: todoState,
   );
+}
+
+class _Dup9340HistoryGateway extends _UiRewindGateway
+    implements HermesDesktopSessionHistoryGateway {
+  _Dup9340HistoryGateway(this.durablePair);
+
+  final List<Map<String, dynamic>> durablePair;
+  bool durableReady = false;
+  int historyCalls = 0;
+
+  @override
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  }) async {
+    historyCalls += 1;
+    return SessionMessagesPage.fromRaw(
+      rawMessages: durableReady ? durablePair : const [],
+      pagination: null,
+      paginationProvided: false,
+    );
+  }
 }

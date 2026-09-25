@@ -5,10 +5,15 @@ import '../models/transcript_privacy_state.dart';
 final class TranscriptPublicationCoordinator {
   TranscriptPrivacyGraph _graph = TranscriptPrivacyGraph();
   int _revision = 0;
+  int _generation = 0;
   bool _suppressedWindow = false;
 
   TranscriptPrivacyGraph get graph => _graph;
   int get revision => _revision;
+
+  /// Changes whenever [project] could return a different result, including a
+  /// [restore] to an older or equal [revision]. Projection caches key off it.
+  int get generation => _generation;
   bool get hasSuppressedWindow => _suppressedWindow;
 
   void reduce(Iterable<TranscriptPrivacyObservation> observations) {
@@ -20,6 +25,7 @@ final class TranscriptPublicationCoordinator {
     if (next.facts.length == _graph.facts.length) return;
     _graph = next;
     _revision++;
+    _generation++;
   }
 
   List<Map<String, dynamic>> project(List<Map<String, dynamic>> source) {
@@ -51,5 +57,6 @@ final class TranscriptPublicationCoordinator {
     _graph = TranscriptPrivacyGraph(checkpoint.facts);
     _revision = checkpoint.revision;
     _suppressedWindow = checkpoint.suppressedWindow;
+    _generation++;
   }
 }

@@ -199,12 +199,14 @@ class _DiagnosticBundleTileState extends State<DiagnosticBundleTile> {
                   const SizedBox(height: 12),
                   Flexible(
                     child: SingleChildScrollView(
-                      child: SelectableText(
-                        bundle.preview,
-                        key: const ValueKey('diagnostic-bundle-preview'),
-                        style: const TextStyle(
-                          fontFamily: 'JetBrainsMono',
-                          fontSize: 11,
+                      child: SelectionArea(
+                        child: Text(
+                          bundle.preview,
+                          key: const ValueKey('diagnostic-bundle-preview'),
+                          style: const TextStyle(
+                            fontFamily: 'JetBrainsMono',
+                            fontSize: 11,
+                          ),
                         ),
                       ),
                     ),

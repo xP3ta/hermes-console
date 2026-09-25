@@ -271,4 +271,87 @@ void main() {
     expect(rebound.remoteTransport, isNull);
     expect(rebound.canTransitionTo(AttachmentUploadState.uploading), isTrue);
   });
+
+  test('retry_boundary sobrevive a process death y falla cerrado', () {
+    PreparedTurn turn(PreparedTurnRetryBoundary? boundary) => PreparedTurn(
+      connectionId: 'c',
+      sessionId: 's',
+      clientTurnId: 't',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      text: 'hola',
+      attachments: const [],
+      model: 'm',
+      profile: '',
+      retryBoundary: boundary,
+    );
+    for (final boundary in [
+      PreparedTurnRetryBoundary.identity(messageId: 'u-1', rowId: 7),
+      const PreparedTurnRetryBoundary.empty(),
+      const PreparedTurnRetryBoundary.knownMissing(),
+      const PreparedTurnRetryBoundary.unknown(),
+    ]) {
+      final restored = PreparedTurn.fromJson(turn(boundary).toJson());
+      expect(restored.retryBoundary?.kind, boundary.kind);
+      expect(restored.retryBoundary?.messageId, boundary.messageId);
+      expect(restored.retryBoundary?.rowId, boundary.rowId);
+    }
+    expect(PreparedTurn.fromJson(turn(null).toJson()).retryBoundary, isNull);
+    // Sin coordenada válida no hay identidad.
+    expect(
+      PreparedTurnRetryBoundary.identity(messageId: '', rowId: 0).kind,
+      PreparedTurnRetryBoundaryKind.unknown,
+    );
+    final corrupt = turn(null).toJson()..['retry_boundary'] = 'x';
+    expect(
+      PreparedTurn.fromJson(corrupt).retryBoundary?.kind,
+      PreparedTurnRetryBoundaryKind.unknown,
+    );
+    // copyWith conserva la frontera al cambiar de estado.
+    final ambiguous = turn(
+      const PreparedTurnRetryBoundary.empty(),
+    ).copyWith(state: PreparedTurnState.ambiguous);
+    expect(ambiguous.retryBoundary?.kind, PreparedTurnRetryBoundaryKind.empty);
+  });
+
+  test('la clave creada viaja en retry_boundary y es solo de '
+      'knownMissing', () {
+    PreparedTurn turn(PreparedTurnRetryBoundary? boundary) => PreparedTurn(
+      connectionId: 'c',
+      sessionId: 'mob-a5',
+      clientTurnId: 't',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      text: 'hola',
+      attachments: const [],
+      model: 'm',
+      profile: '',
+      retryBoundary: boundary,
+    );
+    final created = const PreparedTurnRetryBoundary.knownMissing()
+        .withCreatedSessionId('20260925_101010_abcdef');
+    final restored = PreparedTurn.fromJson(turn(created).toJson());
+    expect(
+      restored.retryBoundary?.kind,
+      PreparedTurnRetryBoundaryKind.knownMissing,
+    );
+    expect(restored.retryBoundary?.createdSessionId, '20260925_101010_abcdef');
+    // No se sobrescribe con otra clave ni se aplica a otras fronteras.
+    expect(
+      created.withCreatedSessionId('otra').createdSessionId,
+      '20260925_101010_abcdef',
+    );
+    expect(
+      const PreparedTurnRetryBoundary.empty()
+          .withCreatedSessionId('x')
+          .createdSessionId,
+      isNull,
+    );
+    // Clave corrupta → knownMissing sin clave (el retry falla cerrado).
+    final corrupt = turn(null).toJson()
+      ..['retry_boundary'] = {'kind': 'knownMissing', 'created_session_id': 7};
+    final degraded = PreparedTurn.fromJson(corrupt).retryBoundary;
+    expect(degraded?.kind, PreparedTurnRetryBoundaryKind.knownMissing);
+    expect(degraded?.createdSessionId, isNull);
+  });
 }

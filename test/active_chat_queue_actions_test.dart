@@ -182,14 +182,20 @@ class _QueuedDrainGateway extends _QueueGateway
   }
 }
 
-class _MentionLifecycleGateway extends _QueueGateway implements HermesDesktopSessionLifecycleGateway {
+class _MentionLifecycleGateway extends _QueueGateway
+    implements HermesDesktopSessionLifecycleGateway {
   @override
-  Future<DesktopSessionBinding> resumeExisting(String storedSessionId, {
-    String profile = '', bool omitMessages = false, bool deferHistory = false,
+  Future<DesktopSessionBinding> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
   }) => resumeSession(storedSessionId, profile: profile);
   @override
-  Future<DesktopSessionBinding> createForFirstSubmit({String profile = '',
-    List<Map<String, dynamic>> seedMessages = const [], String model = '',
+  Future<DesktopSessionBinding> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
   }) => resumeSession('session-queue-prepared', profile: profile);
 }
 
@@ -231,68 +237,130 @@ PreparedTurn _prepared(String id, String text) {
 void main() {
   setUp(BotMentionRoster.shared.clear);
   tearDown(BotMentionRoster.shared.clear);
-  void mentionRoster() => BotMentionRoster.shared.replace('queue-prepared', 'Local', const [
-    AgentProfile(name: 'ops'),
-  ]);
+  void mentionRoster() => BotMentionRoster.shared.replace(
+    'queue-prepared',
+    'Local',
+    const [AgentProfile(name: 'ops')],
+  );
 
-  test('mentions: queued steer and restored drain use the frozen note after roster loss', () async {
-    mentionRoster();
-    final note = buildBotMentionAnnotation(const [BotMention(connectionId: 'queue-prepared', profile: 'ops', handle: 'ops')]);
-    final gateway = _MentionLifecycleGateway();
-    final chat = _chat('queue-prepared', gateway: gateway)..state = ChatPipelineState.idle;
-    addTearDown(chat.dispose);
-    addTearDown(gateway.close);
-    await chat.send(fullText: 'initial', model: 'hermes-agent', history: const []);
-    final store = _MemoryOutbox();
-    final prepared = _prepared('mention-steer', '@ops').copyWith(mentionAnnotation: note);
-    await chat.enqueuePreparedTurn(ActiveTurnDelivery(prepared: prepared, store: store));
-    BotMentionRoster.shared.clear();
-    expect(await chat.steerQueuedTurn('prepared:mention-steer'), isTrue);
-    expect(gateway.steers, ['@ops$note']);
-    expect(chat.messages.where((row) => row['role'] == 'user').any((row) => row['content'] == '@ops'), isTrue);
-    final restored = PreparedTurn.fromJson(_prepared('mention-restore', '@ops').copyWith(
-      mentionAnnotation: note, queueOrder: 9, queued: true,
-    ).toJson());
-    await chat.restoreQueuedTurns([restored], store);
-    chat.state = ChatPipelineState.idle;
-    await chat.sendQueuedNow('prepared:mention-restore');
-    expect(gateway.submissions.last, '@ops$note');
-  });
+  test(
+    'mentions: queued steer and restored drain use the frozen note after roster loss',
+    () async {
+      mentionRoster();
+      final note = buildBotMentionAnnotation(const [
+        BotMention(
+          connectionId: 'queue-prepared',
+          profile: 'ops',
+          handle: 'ops',
+        ),
+      ]);
+      final gateway = _MentionLifecycleGateway();
+      final chat = _chat('queue-prepared', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final store = _MemoryOutbox();
+      final prepared = _prepared(
+        'mention-steer',
+        '@ops',
+      ).copyWith(mentionAnnotation: note);
+      await chat.enqueuePreparedTurn(
+        ActiveTurnDelivery(prepared: prepared, store: store),
+      );
+      BotMentionRoster.shared.clear();
+      expect(await chat.steerQueuedTurn('prepared:mention-steer'), isTrue);
+      expect(gateway.steers, ['@ops$note']);
+      expect(
+        chat.messages
+            .where((row) => row['role'] == 'user')
+            .any((row) => row['content'] == '@ops'),
+        isTrue,
+      );
+      final restored = PreparedTurn.fromJson(
+        _prepared('mention-restore', '@ops')
+            .copyWith(mentionAnnotation: note, queueOrder: 9, queued: true)
+            .toJson(),
+      );
+      await chat.restoreQueuedTurns([restored], store);
+      chat.state = ChatPipelineState.idle;
+      await chat.sendQueuedNow('prepared:mention-restore');
+      expect(gateway.submissions.last, '@ops$note');
+    },
+  );
 
-  test('mentions: legacy queue freezes resolution including an empty result', () async {
-    mentionRoster();
-    final gateway = _QueueGateway();
-    final chat = _chat('queue-prepared', gateway: gateway)..state = ChatPipelineState.idle;
-    addTearDown(chat.dispose);
-    addTearDown(gateway.close);
-    await chat.send(fullText: 'initial', model: 'hermes-agent', history: const []);
-    chat.enqueue('@ops');
-    chat.enqueue('@future');
-    BotMentionRoster.shared.replace('queue-prepared', 'Local', const [AgentProfile(name: 'future')]);
-    final entries = chat.queuedEntries;
-    expect(entries.map((e) => e.text), ['@ops', '@future']);
-    chat.state = ChatPipelineState.idle;
-    await chat.sendQueuedNow(entries.first.id);
-    expect(gateway.submissions.last, startsWith('@ops\n\n[@mentions'));
-    chat.state = ChatPipelineState.idle;
-    await chat.sendQueuedNow(entries.last.id);
-    expect(gateway.submissions.last, '@future');
-  });
+  test(
+    'mentions: legacy queue freezes resolution including an empty result',
+    () async {
+      mentionRoster();
+      final gateway = _QueueGateway();
+      final chat = _chat('queue-prepared', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      chat.enqueue('@ops');
+      chat.enqueue('@future');
+      BotMentionRoster.shared.replace('queue-prepared', 'Local', const [
+        AgentProfile(name: 'future'),
+      ]);
+      final entries = chat.queuedEntries;
+      expect(entries.map((e) => e.text), ['@ops', '@future']);
+      chat.state = ChatPipelineState.idle;
+      await chat.sendQueuedNow(entries.first.id);
+      expect(gateway.submissions.last, startsWith('@ops\n\n[@mentions'));
+      chat.state = ChatPipelineState.idle;
+      await chat.sendQueuedNow(entries.last.id);
+      expect(gateway.submissions.last, '@future');
+    },
+  );
 
-  test('mentions: prepared payload wins over changed caller text on idempotent resend', () async {
-    final gateway = _QueueGateway();
-    final chat = _chat('queue-prepared', gateway: gateway)..state = ChatPipelineState.idle;
-    addTearDown(chat.dispose);
-    addTearDown(gateway.close);
-    final note = buildBotMentionAnnotation(const [BotMention(connectionId: 'remote', profile: 'ops', handle: 'ops-remote', remote: true)]);
-    final original = _prepared('frozen', '@ops-remote').copyWith(mentionAnnotation: note);
-    final delivery = ActiveTurnDelivery(prepared: PreparedTurn.fromJson(original.toJson()), store: _MemoryOutbox());
-    await chat.send(fullText: 'must not replace frozen payload', desktopText: 'nor this',
-      model: 'hermes-agent', history: const [], delivery: delivery);
-    expect(gateway.submissions, ['@ops-remote$note']);
-    expect(chat.messages.where((row) => row['role'] == 'user').single['content'], '@ops-remote');
-  });
-
+  test(
+    'mentions: prepared payload wins over changed caller text on idempotent resend',
+    () async {
+      final gateway = _QueueGateway();
+      final chat = _chat('queue-prepared', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      final note = buildBotMentionAnnotation(const [
+        BotMention(
+          connectionId: 'remote',
+          profile: 'ops',
+          handle: 'ops-remote',
+          remote: true,
+        ),
+      ]);
+      final original = _prepared(
+        'frozen',
+        '@ops-remote',
+      ).copyWith(mentionAnnotation: note);
+      final delivery = ActiveTurnDelivery(
+        prepared: PreparedTurn.fromJson(original.toJson()),
+        store: _MemoryOutbox(),
+      );
+      await chat.send(
+        fullText: 'must not replace frozen payload',
+        desktopText: 'nor this',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: delivery,
+      );
+      expect(gateway.submissions, ['@ops-remote$note']);
+      expect(
+        chat.messages.where((row) => row['role'] == 'user').single['content'],
+        '@ops-remote',
+      );
+    },
+  );
 
   test(
     'exhausted text waits for manual retry despite a fresh queue drain',
@@ -554,6 +622,54 @@ void main() {
     expect(gateway.queuedSubmissions, ['seguimiento drenado']);
     expect(gateway.submissions, ['turno vivo']);
   });
+
+  test(
+    'plain-text queue drains automatically once the live turn completes',
+    () async {
+      // Regression for the "EN COLA" badge sticking after a turn finished:
+      // the terminal drain gate only re-armed itself for prepared (attachment)
+      // turns with a durable owner record. A queue holding only plain text
+      // (`enqueue`, no attachments) has no such per-item ownership record, so
+      // the old condition never scheduled a drain and the queue strip stayed
+      // on screen until the user sent something else manually.
+      final gateway = _QueuedDrainGateway();
+      final chat = _chat('queue-drain-plaintext', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      expect(
+        await chat.send(
+          fullText: 'turno vivo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      // Queue while the turn is still live: `enqueue()` only auto-schedules
+      // an immediate drain when `!isStreaming`, so this reproduces the queue
+      // sitting untouched until the terminal callback fires.
+      expect(chat.isStreaming, isTrue);
+      expect(chat.enqueue('seguimiento en cola'), isTrue);
+      expect(chat.queuedEntries.map((entry) => entry.text), [
+        'seguimiento en cola',
+      ]);
+
+      gateway.controller.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-queue',
+          payload: {'text': 'turno vivo respondido'},
+        ),
+      );
+
+      for (var i = 0; i < 100 && gateway.queuedSubmissions.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(gateway.queuedSubmissions, ['seguimiento en cola']);
+      expect(chat.queuedEntries, isEmpty);
+    },
+  );
 
   test('prepared queue drain submits with queued transport intent', () async {
     final gateway = _QueuedDrainGateway();

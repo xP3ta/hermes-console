@@ -916,49 +916,20 @@ class SubagentCompletionCard extends StatelessWidget {
     final completed = data.completedCount;
     final failed = data.failedCount;
     final duration = _formatDuration(data.durationSeconds);
-    final rowCount = (data.taskCount ?? data.subagentIds.length).clamp(0, 64);
-    final homogeneousCompleted =
-        data.taskCount != null &&
-        data.completedCount == data.taskCount &&
-        data.failedCount == 0;
-    final homogeneousFailed =
-        data.taskCount != null &&
-        data.failedCount == data.taskCount &&
-        data.completedCount == 0;
-    final rowStatus = homogeneousCompleted
-        ? s.subagentActivityCompleted
-        : homogeneousFailed
-        ? s.subagentActivityFailed
-        : s.subagentActivityUnknown;
     final facts = <String>[
       if (completed != null) s.subagentActivityAggregateCompleted(completed),
       if (failed != null) s.subagentActivityAggregateFailed(failed),
       ?duration,
     ];
 
+    // Historical evidence carries only aggregate counts: per-child rows would
+    // repeat the summary (or read "unknown") and add no information.
     return HermesInlineActivity(
       title: s.subagentActivityTitle,
       summary: facts.isEmpty ? s.subagentActivityUnknown : facts.join(' · '),
       titleMaxLines: 2,
       summaryMaxLines: 1,
       leading: const Icon(Icons.account_tree_outlined, size: 19),
-      detail: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var index = 1; index <= rowCount; index++) ...[
-            if (index > 1) const SizedBox(height: 8),
-            Text(
-              s.subagentActivityItem(index),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(rowStatus, maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
-          if (rowCount > 0) const SizedBox(height: 8),
-          Text(s.subagentActivityMetadataUnavailable),
-        ],
-      ),
       semanticLabel: s.subagentActivityTitle,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
     );

@@ -128,10 +128,12 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       if (mounted) setState(() => _olliteRt = snap);
     } catch (e) {
       if (mounted) {
-        setState(() => _olliteRt = OlliteRtSnapshot(
-              status: OlliteRtStatus.unreachable,
-              error: e.toString(),
-            ));
+        setState(
+          () => _olliteRt = OlliteRtSnapshot(
+            status: OlliteRtStatus.unreachable,
+            error: e.toString(),
+          ),
+        );
       }
     } finally {
       client.close();
@@ -144,8 +146,10 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
   Future<void> _loadActiveModel() async {
     try {
       final base = widget.connection.derivedBridgeUrl;
-      final token =
-          await BridgeClient.provision(base, widget.connection.apiKey.trim());
+      final token = await BridgeClient.provision(
+        base,
+        widget.connection.apiKey.trim(),
+      );
       if (token == null || token.isEmpty) return;
       final client = BridgeClient(baseUrl: base, token: token);
       try {
@@ -222,7 +226,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     }
     await _termux.startOllama();
     final ok = await _termux.waitUntilOllamaReady(
-        timeout: const Duration(seconds: 30));
+      timeout: const Duration(seconds: 30),
+    );
     if (!mounted) return;
     if (ok) {
       await _refresh();
@@ -231,7 +236,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     setState(() {
       _stage = _OllamaStage.error;
       _errorFromInstall = false;
-      _ollamaMsg = 'El servidor no respondió en :11434. Suele ser que Android '
+      _ollamaMsg =
+          'El servidor no respondió en :11434. Suele ser que Android '
           'congeló Termux: abre Termux, déjalo en primer plano y reintenta. '
           'Pulsa «Ver log del servidor» para la causa exacta.';
     });
@@ -262,7 +268,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (mounted) setState(() => _stage = _OllamaStage.starting);
     await _termux.startOllama();
     if (await _termux.waitUntilOllamaReady(
-        timeout: const Duration(seconds: 45))) {
+      timeout: const Duration(seconds: 45),
+    )) {
       if (mounted) setState(() => _stage = _OllamaStage.ready);
       return true;
     }
@@ -296,12 +303,14 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     }
     if (!mounted) return;
     final colors = Theme.of(context).hermes;
-    final title = server ? 'Log del servidor Ollama' : 'Log de instalación de Ollama';
+    final title = server
+        ? 'Log del servidor Ollama'
+        : 'Log de instalación de Ollama';
     final empty = server
         ? 'Sin log del servidor todavía. Pulsa «Arrancar» y vuelve a mirar aquí '
-            'si no levanta.'
+              'si no levanta.'
         : 'Sin log todavía. Pulsa "Instalar" y vuelve a mirar aquí si tarda o '
-            'falla.';
+              'falla.';
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -310,12 +319,14 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
-            child: SelectableText(
-              log ?? empty,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: colors.textPrimary,
+            child: SelectionArea(
+              child: Text(
+                log ?? empty,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
           ),
@@ -334,7 +345,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (mounted) {
       setState(() {
         _stage = _OllamaStage.installing;
-        _ollamaMsg = 'Descargando Ollama… (pkg install, puede tardar unos minutos)';
+        _ollamaMsg =
+            'Descargando Ollama… (pkg install, puede tardar unos minutos)';
       });
     }
     await _termux.installOllama();
@@ -357,18 +369,22 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
         setState(() {
           _stage = _OllamaStage.error;
           _errorFromInstall = true;
-          _ollamaMsg = 'La instalación no terminó a tiempo. '
+          _ollamaMsg =
+              'La instalación no terminó a tiempo. '
               'Pulsa "Ver log de instalación" para ver por qué.';
         });
       }
       return false;
     }
     if (mounted) {
-      setState(() => _ollamaMsg = 'Instalado. Arrancando el servidor en :11434…');
+      setState(
+        () => _ollamaMsg = 'Instalado. Arrancando el servidor en :11434…',
+      );
     }
     await _termux.startOllama();
     if (await _termux.waitUntilOllamaReady(
-        timeout: const Duration(seconds: 45))) {
+      timeout: const Duration(seconds: 45),
+    )) {
       if (mounted) {
         setState(() {
           _stage = _OllamaStage.ready;
@@ -381,7 +397,8 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       setState(() {
         _stage = _OllamaStage.error;
         _errorFromInstall = false;
-        _ollamaMsg = 'Ollama se instaló pero no respondió en :11434. '
+        _ollamaMsg =
+            'Ollama se instaló pero no respondió en :11434. '
             'Pulsa «Ver log del servidor» para la causa.';
       });
     }
@@ -414,60 +431,68 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     // check de isOllamaRunning (timeout 3 s). También cierra la race condition
     // de doble tap porque el guard del inicio ya ve la entry en _pulls.
     if (mounted) {
-      setState(() => _pulls[tag] = OllamaPullProgress(
-            status: s.ollStageChecking,
-            fraction: null,
-            done: false,
-          ));
+      setState(
+        () => _pulls[tag] = OllamaPullProgress(
+          status: s.ollStageChecking,
+          fraction: null,
+          done: false,
+        ),
+      );
     }
     if (!await _termux.isOllamaRunning()) {
       if (!mounted) return;
       // Arranca y, si hace falta, instala Ollama (causa típica del fallo en
       // móvil real: no estaba instalado → connection refused).
-      setState(() => _pulls[tag] = OllamaPullProgress(
-            status: s.ollStageStarting,
-            fraction: null,
-            done: false,
-          ));
+      setState(
+        () => _pulls[tag] = OllamaPullProgress(
+          status: s.ollStageStarting,
+          fraction: null,
+          done: false,
+        ),
+      );
       final ready = await _ensureOllama(tryInstall: true);
       if (!ready) {
         if (!mounted) return;
         setState(() => _pulls.remove(tag));
-        _toast(_stage == _OllamaStage.error
-            ? s.ollInstallFailed
-            : s.ollNoResponse);
+        _toast(
+          _stage == _OllamaStage.error ? s.ollInstallFailed : s.ollNoResponse,
+        );
         return;
       }
     }
     if (!mounted) return;
-    setState(() => _pulls[tag] = OllamaPullProgress(
-          status: s.ollStageStarting,
-          fraction: null,
-          done: false,
-        ));
-    final sub = _termux.pullOllamaModelStream(tag).listen(
-      (p) {
-        if (mounted) setState(() => _pulls[tag] = p);
-      },
-      onError: (Object e) async {
-        await _pullSubs.remove(tag)?.cancel();
-        if (!mounted) return;
-        setState(() => _pulls.remove(tag));
-        final msg = e.toString().contains('Connection refused')
-            ? s.ollamaNotActive
-            : s.ollDownloadFailed(name);
-        _toast(msg);
-      },
-      onDone: () async {
-        _pullSubs.remove(tag);
-        final models = await _termux.listOllamaModels();
-        if (!mounted) return;
-        setState(() {
-          _downloaded = models;
-          _pulls.remove(tag);
-        });
-      },
+    setState(
+      () => _pulls[tag] = OllamaPullProgress(
+        status: s.ollStageStarting,
+        fraction: null,
+        done: false,
+      ),
     );
+    final sub = _termux
+        .pullOllamaModelStream(tag)
+        .listen(
+          (p) {
+            if (mounted) setState(() => _pulls[tag] = p);
+          },
+          onError: (Object e) async {
+            await _pullSubs.remove(tag)?.cancel();
+            if (!mounted) return;
+            setState(() => _pulls.remove(tag));
+            final msg = e.toString().contains('Connection refused')
+                ? s.ollamaNotActive
+                : s.ollDownloadFailed(name);
+            _toast(msg);
+          },
+          onDone: () async {
+            _pullSubs.remove(tag);
+            final models = await _termux.listOllamaModels();
+            if (!mounted) return;
+            setState(() {
+              _downloaded = models;
+              _pulls.remove(tag);
+            });
+          },
+        );
     _pullSubs[tag] = sub;
   }
 
@@ -525,7 +550,11 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
   }
 
   /// Diálogo de confirmación simple (sin TextField → seguro con showDialog).
-  Future<bool> _confirm(String title, String message, String confirmLabel) async {
+  Future<bool> _confirm(
+    String title,
+    String message,
+    String confirmLabel,
+  ) async {
     final colors = Theme.of(context).hermes;
     final ok = await showDialog<bool>(
       context: context,
@@ -592,10 +621,14 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
         await _ensureFreshBridge();
         String? token;
         try {
-          token =
-              await BridgeClient.provision(base, widget.connection.apiKey.trim());
+          token = await BridgeClient.provision(
+            base,
+            widget.connection.apiKey.trim(),
+          );
         } catch (e) {
-          debugPrint('[ollama] excepción silenciada (fallback: token = null): $e');
+          debugPrint(
+            '[ollama] excepción silenciada (fallback: token = null): $e',
+          );
           token = null;
         }
         if (token == null || token.isEmpty) {
@@ -667,10 +700,14 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       await _ensureFreshBridge();
       String? token;
       try {
-        token =
-            await BridgeClient.provision(base, widget.connection.apiKey.trim());
+        token = await BridgeClient.provision(
+          base,
+          widget.connection.apiKey.trim(),
+        );
       } catch (e) {
-        debugPrint('[ollama] excepción silenciada (fallback: token = null): $e');
+        debugPrint(
+          '[ollama] excepción silenciada (fallback: token = null): $e',
+        );
         token = null;
       }
       if (token == null || token.isEmpty) {
@@ -757,12 +794,15 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       // Antes de nada, asegura que corre el bridge de ESTE APK. Si tu móvil tenía
       // uno viejo (causa del 404), esto lo reemplaza por el actual y reintenta.
       final fresh = await _ensureFreshBridge();
-      final token =
-          await BridgeClient.provision(base, widget.connection.apiKey.trim());
+      final token = await BridgeClient.provision(
+        base,
+        widget.connection.apiKey.trim(),
+      );
       if (token == null || token.isEmpty) {
-        summary = 'No se pudo conectar con el bridge local (:9131).\n'
+        summary =
+            'No se pudo conectar con el bridge local (:9131).\n'
             '${fresh ? '' : 'Además, no pude actualizar el bridge a la versión '
-                'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
+                      'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
             '¿Está el agente local arrancado? Arráncalo y reintenta.';
       } else {
         final client = BridgeClient(baseUrl: base, token: token);
@@ -817,19 +857,24 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     String summary;
     try {
       final fresh = await _ensureFreshBridge();
-      final token =
-          await BridgeClient.provision(base, widget.connection.apiKey.trim());
+      final token = await BridgeClient.provision(
+        base,
+        widget.connection.apiKey.trim(),
+      );
       if (token == null || token.isEmpty) {
-        summary = 'No se pudo conectar con el bridge local (:9131).\n'
+        summary =
+            'No se pudo conectar con el bridge local (:9131).\n'
             '${fresh ? '' : 'Además, no pude actualizar el bridge a la versión '
-                'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
+                      'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
             '¿Está el agente local arrancado? Arráncalo y reintenta.';
       } else {
         final client = BridgeClient(baseUrl: base, token: token);
         try {
           final res = await client.llamacppBench();
           final s = (res['summary'] as String?)?.trim() ?? '';
-          summary = s.isNotEmpty ? s : 'El benchmark no devolvió resumen.\n$res';
+          summary = s.isNotEmpty
+              ? s
+              : 'El benchmark no devolvió resumen.\n$res';
         } finally {
           client.close();
         }
@@ -840,7 +885,10 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
     setState(() => _benchRunning = false);
-    await _showDiagDialog(summary, title: Strings.of(context).ollamaGpuBenchTitle);
+    await _showDiagDialog(
+      summary,
+      title: Strings.of(context).ollamaGpuBenchTitle,
+    );
   }
 
   /// Sonda de ALCANCE de la GPU: ¿deja Android ver la GPU (OpenCL/Vulkan) a
@@ -875,12 +923,15 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     String summary;
     try {
       final fresh = await _ensureFreshBridge();
-      final token =
-          await BridgeClient.provision(base, widget.connection.apiKey.trim());
+      final token = await BridgeClient.provision(
+        base,
+        widget.connection.apiKey.trim(),
+      );
       if (token == null || token.isEmpty) {
-        summary = 'No se pudo conectar con el bridge local (:9131).\n'
+        summary =
+            'No se pudo conectar con el bridge local (:9131).\n'
             '${fresh ? '' : 'Además, no pude actualizar el bridge a la versión '
-                'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
+                      'de esta app (${AgentRuntimeConsts.expectedBridgeVersion}).\n'}'
             '¿Está el agente local arrancado? Arráncalo y reintenta.';
       } else {
         final client = BridgeClient(baseUrl: base, token: token);
@@ -898,19 +949,26 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
     setState(() => _gpuProbeRunning = false);
-    await _showDiagDialog(summary, title: Strings.of(context).ollamaGpuProbeTitle);
+    await _showDiagDialog(
+      summary,
+      title: Strings.of(context).ollamaGpuProbeTitle,
+    );
   }
 
-  Future<void> _showDiagDialog(String summary,
-      {String title = 'Diagnóstico local'}) async {
+  Future<void> _showDiagDialog(
+    String summary, {
+    String title = 'Diagnóstico local',
+  }) async {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
         content: SingleChildScrollView(
-          child: SelectableText(
-            summary,
-            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+          child: SelectionArea(
+            child: Text(
+              summary,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
           ),
         ),
         actions: [
@@ -1026,15 +1084,15 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
   /// Panel CPU: las secciones de Ollama de siempre (estado + descargados + tag
   /// manual + catálogo). Es el fallback optimizado «por si acaso».
   List<Widget> _cpuPanel(HermesThemeColors colors) => [
-        _statusBanner(colors),
-        HermesInfoBanner(Strings.of(context).ollIntro, icon: Icons.memory),
-        const SizedBox(height: 16),
-        _downloadedSection(colors),
-        const SizedBox(height: 20),
-        _customTagSection(colors),
-        const SizedBox(height: 20),
-        _catalogSection(colors),
-      ];
+    _statusBanner(colors),
+    HermesInfoBanner(Strings.of(context).ollIntro, icon: Icons.memory),
+    const SizedBox(height: 16),
+    _downloadedSection(colors),
+    const SizedBox(height: 20),
+    _customTagSection(colors),
+    const SizedBox(height: 20),
+    _catalogSection(colors),
+  ];
 
   /// Panel GPU: estado de OlliteRT + modelos servidos (con «Usar») + acceso a
   /// la tienda de modelos `.litertlm`. Si OlliteRT no responde, guía para
@@ -1065,22 +1123,18 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     final (IconData icon, String title, Color color) = probing
         ? (Icons.hourglass_empty, 'Comprobando OlliteRT…', colors.accent)
         : running
-            ? (
-                Icons.check_circle_outline,
-                'OlliteRT en marcha (:$kOlliteRtDefaultPort)',
-                colors.success
-              )
-            : (
-                Icons.bolt_outlined,
-                'OlliteRT no responde',
-                colors.warning,
-              );
+        ? (
+            Icons.check_circle_outline,
+            'OlliteRT en marcha (:$kOlliteRtDefaultPort)',
+            colors.success,
+          )
+        : (Icons.bolt_outlined, 'OlliteRT no responde', colors.warning);
     final modelsLine = running
         ? (snap!.models.isEmpty
-            ? 'Servidor arriba, sin modelos cargados. Arranca uno en OlliteRT.'
-            : '${snap.models.length} modelo(s) servido(s).')
+              ? 'Servidor arriba, sin modelos cargados. Arranca uno en OlliteRT.'
+              : '${snap.models.length} modelo(s) servido(s).')
         : 'Instala OlliteRT y arranca el servidor de un modelo .litertlm para '
-            'usar la GPU. La app llega por loopback a 127.0.0.1:$kOlliteRtDefaultPort.';
+              'usar la GPU. La app llega por loopback a 127.0.0.1:$kOlliteRtDefaultPort.';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
@@ -1097,8 +1151,10 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                 SizedBox(
                   width: 16,
                   height: 16,
-                  child:
-                      CircularProgressIndicator(strokeWidth: 2, color: color),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: color,
+                  ),
                 )
               else
                 Icon(icon, size: 18, color: color),
@@ -1206,14 +1262,12 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                 if (catalog != null)
                   Text(
                     '${catalog.family} · ${catalog.contextLabel} · ${catalog.sizeGb} GB',
-                    style: TextStyle(
-                        fontSize: 11, color: colors.textSecondary),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
                   )
                 else
                   Text(
                     m.id,
-                    style: TextStyle(
-                        fontSize: 11, color: colors.textSecondary),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
                   ),
               ],
             ),
@@ -1249,8 +1303,9 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                 connection: widget.connection,
                 deviceInfo: _deviceInfo,
                 served: _olliteRt?.models ?? const [],
-                activeModelId:
-                    _engine == _LocalEngine.gpu ? _selectedTag : null,
+                activeModelId: _engine == _LocalEngine.gpu
+                    ? _selectedTag
+                    : null,
               ),
             ),
           );
@@ -1282,14 +1337,20 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       );
       if (!ok) throw Exception('launchUrl=false');
       if (mounted) {
-        _toast('Abriendo la descarga de OlliteRT (solo hay versión beta por '
-            'ahora). Instala la última a mano y vuelve a pulsar «Comprobar».');
+        _toast(
+          'Abriendo la descarga de OlliteRT (solo hay versión beta por '
+          'ahora). Instala la última a mano y vuelve a pulsar «Comprobar».',
+        );
       }
     } catch (e) {
-      debugPrint('[ollama] excepción silenciada (se avisa al usuario y se sigue): $e');
+      debugPrint(
+        '[ollama] excepción silenciada (se avisa al usuario y se sigue): $e',
+      );
       if (mounted) {
-        _toast('No se pudo abrir la descarga de OlliteRT '
-            '($kOlliteRtReleasesUrl).');
+        _toast(
+          'No se pudo abrir la descarga de OlliteRT '
+          '($kOlliteRtReleasesUrl).',
+        );
       }
     }
   }
@@ -1305,20 +1366,36 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
     final bool busy =
         _stage == _OllamaStage.installing || _stage == _OllamaStage.starting;
     final (IconData icon, String text, Color color) = switch (_stage) {
-      _OllamaStage.starting => (Icons.play_circle_outline, s.ollStageStarting, colors.accent),
-      _OllamaStage.installing => (Icons.downloading, s.ollStageInstalling, colors.accent),
+      _OllamaStage.starting => (
+        Icons.play_circle_outline,
+        s.ollStageStarting,
+        colors.accent,
+      ),
+      _OllamaStage.installing => (
+        Icons.downloading,
+        s.ollStageInstalling,
+        colors.accent,
+      ),
       _OllamaStage.stopped => (
-          Icons.pause_circle_outline,
-          'Ollama está instalado pero el servidor no responde en :11434.',
-          colors.warning
-        ),
-      _OllamaStage.notInstalled => (Icons.info_outline, s.ollNotInstalled, colors.warning),
+        Icons.pause_circle_outline,
+        'Ollama está instalado pero el servidor no responde en :11434.',
+        colors.warning,
+      ),
+      _OllamaStage.notInstalled => (
+        Icons.info_outline,
+        s.ollNotInstalled,
+        colors.warning,
+      ),
       _OllamaStage.unknown => (
-          Icons.help_outline,
-          'No se pudo comprobar Ollama (Termux no respondió).',
-          colors.warning
-        ),
-      _OllamaStage.error => (Icons.error_outline, s.ollStartError, colors.error),
+        Icons.help_outline,
+        'No se pudo comprobar Ollama (Termux no respondió).',
+        colors.warning,
+      ),
+      _OllamaStage.error => (
+        Icons.error_outline,
+        s.ollStartError,
+        colors.error,
+      ),
       _ => (Icons.info_outline, '', colors.textSecondary),
     };
     return Container(
@@ -1338,7 +1415,10 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                 SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: color),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: color,
+                  ),
                 )
               else
                 Icon(icon, size: 18, color: color),
@@ -1376,53 +1456,63 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
   /// «Ver log» (el log relevante) + acción primaria (Arrancar/Instalar/Reintentar).
   List<Widget> _bannerActions(HermesThemeColors colors, Strings s) {
     Widget logPill(String label, {required bool server}) => _pill(
-          colors,
-          icon: Icons.article_outlined,
-          label: label,
-          color: colors.textSecondary,
-          onTap: server ? _showOllamaServeLog : _showOllamaInstallLog,
-        );
-    Widget primary(IconData icon, String label, Future<void> Function() onTap) =>
-        _pill(colors, icon: icon, label: label, color: colors.accent,
-            onTap: () => onTap());
+      colors,
+      icon: Icons.article_outlined,
+      label: label,
+      color: colors.textSecondary,
+      onTap: server ? _showOllamaServeLog : _showOllamaInstallLog,
+    );
+    Widget primary(
+      IconData icon,
+      String label,
+      Future<void> Function() onTap,
+    ) => _pill(
+      colors,
+      icon: icon,
+      label: label,
+      color: colors.accent,
+      onTap: () => onTap(),
+    );
 
     final (String hint, List<Widget> buttons) = switch (_stage) {
       _OllamaStage.stopped => (
-          'El servidor no está arrancado. Pulsa «Arrancar» para levantarlo en :11434.',
-          [
-            logPill('Ver log del servidor', server: true),
-            primary(Icons.play_arrow_rounded, 'Arrancar', _startDaemon),
-          ],
-        ),
+        'El servidor no está arrancado. Pulsa «Arrancar» para levantarlo en :11434.',
+        [
+          logPill('Ver log del servidor', server: true),
+          primary(Icons.play_arrow_rounded, 'Arrancar', _startDaemon),
+        ],
+      ),
       _OllamaStage.notInstalled => (
-          s.ollNotInstalledHint,
-          [
-            logPill('Ver log', server: false),
-            primary(Icons.download_rounded, s.ollInstallNow, () async {
+        s.ollNotInstalledHint,
+        [
+          logPill('Ver log', server: false),
+          primary(Icons.download_rounded, s.ollInstallNow, () async {
+            final ok = await _installAndStart();
+            if (ok) await _refresh();
+          }),
+        ],
+      ),
+      _OllamaStage.unknown => (
+        'Abre Termux (déjalo en primer plano) y reintenta el diagnóstico.',
+        [primary(Icons.refresh_rounded, s.ollRetry, _refresh)],
+      ),
+      _OllamaStage.error => (
+        _errorFromInstall ? s.ollNotInstalledHint : '',
+        [
+          logPill(
+            _errorFromInstall ? 'Ver log' : 'Ver log del servidor',
+            server: !_errorFromInstall,
+          ),
+          primary(Icons.refresh_rounded, s.ollRetry, () async {
+            if (_errorFromInstall) {
               final ok = await _installAndStart();
               if (ok) await _refresh();
-            }),
-          ],
-        ),
-      _OllamaStage.unknown => (
-          'Abre Termux (déjalo en primer plano) y reintenta el diagnóstico.',
-          [primary(Icons.refresh_rounded, s.ollRetry, _refresh)],
-        ),
-      _OllamaStage.error => (
-          _errorFromInstall ? s.ollNotInstalledHint : '',
-          [
-            logPill(_errorFromInstall ? 'Ver log' : 'Ver log del servidor',
-                server: !_errorFromInstall),
-            primary(Icons.refresh_rounded, s.ollRetry, () async {
-              if (_errorFromInstall) {
-                final ok = await _installAndStart();
-                if (ok) await _refresh();
-              } else {
-                await _startDaemon();
-              }
-            }),
-          ],
-        ),
+            } else {
+              await _startDaemon();
+            }
+          }),
+        ],
+      ),
       _ => ('', <Widget>[]),
     };
 
@@ -1500,23 +1590,29 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
               width: 16,
               height: 16,
               child: CircularProgressIndicator(
-                  strokeWidth: 2, color: colors.textSecondary),
+                strokeWidth: 2,
+                color: colors.textSecondary,
+              ),
             )
           else ...[
             if (selected)
-              Text(Strings.of(context).ollInUse,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                    color: colors.success,
-                  ))
+              Text(
+                Strings.of(context).ollInUse,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: colors.success,
+                ),
+              )
             else
-              _pill(colors,
-                  icon: Icons.check_rounded,
-                  label: Strings.of(context).ollUse,
-                  color: colors.accent,
-                  onTap: _pinningTag == null ? () => _use(tag) : null,
-                  busy: _pinningTag == tag),
+              _pill(
+                colors,
+                icon: Icons.check_rounded,
+                label: Strings.of(context).ollUse,
+                color: colors.accent,
+                onTap: _pinningTag == null ? () => _use(tag) : null,
+                busy: _pinningTag == tag,
+              ),
             const SizedBox(width: 4),
             IconButton(
               icon: const Icon(Icons.delete_outline, size: 18),
@@ -1559,36 +1655,45 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                 decoration: InputDecoration(
                   isDense: true,
                   hintText: Strings.of(context).ollTagHint,
-                  hintStyle:
-                      TextStyle(fontSize: 12, color: colors.textDisabled),
+                  hintStyle: TextStyle(
+                    fontSize: 12,
+                    color: colors.textDisabled,
+                  ),
                   filled: true,
                   fillColor: colors.surfaceVariant.withValues(alpha: 0.3),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide:
-                        BorderSide(color: colors.divider.withValues(alpha: 0.55)),
+                    borderSide: BorderSide(
+                      color: colors.divider.withValues(alpha: 0.55),
+                    ),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide:
-                        BorderSide(color: colors.divider.withValues(alpha: 0.55)),
+                    borderSide: BorderSide(
+                      color: colors.divider.withValues(alpha: 0.55),
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                     borderSide: BorderSide(
-                        color: colors.accent.withValues(alpha: 0.6)),
+                      color: colors.accent.withValues(alpha: 0.6),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(width: 8),
-            _pill(colors,
-                icon: Icons.download_rounded,
-                label: Strings.of(context).ollDownload,
-                color: colors.accent,
-                onTap: _downloadCustomTag),
+            _pill(
+              colors,
+              icon: Icons.download_rounded,
+              label: Strings.of(context).ollDownload,
+              color: colors.accent,
+              onTap: _downloadCustomTag,
+            ),
           ],
         ),
         // Progreso de descargas por tag libre (no están en el catálogo).
@@ -1601,7 +1706,10 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
   }
 
   Widget _customPullTile(
-      HermesThemeColors colors, String tag, OllamaPullProgress progress) {
+    HermesThemeColors colors,
+    String tag,
+    OllamaPullProgress progress,
+  ) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -1615,21 +1723,24 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           Row(
             children: [
               Expanded(
-                child: Text(tag,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontFamily: 'monospace',
-                      color: colors.textPrimary,
-                    )),
+                child: Text(
+                  tag,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontFamily: 'monospace',
+                    color: colors.textPrimary,
+                  ),
+                ),
               ),
               Text(
                 progress.fraction != null
                     ? '${(progress.fraction! * 100).toStringAsFixed(0)} %'
                     : '…',
                 style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: colors.accent),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colors.accent,
+                ),
               ),
               const SizedBox(width: 4),
               _cancelButton(colors, tag),
@@ -1646,8 +1757,12 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
             ),
           ),
           const SizedBox(height: 4),
-          Text(progress.status.isEmpty ? Strings.of(context).ollDownloading : progress.status,
-              style: TextStyle(fontSize: 10, color: colors.textDisabled)),
+          Text(
+            progress.status.isEmpty
+                ? Strings.of(context).ollDownloading
+                : progress.status,
+            style: TextStyle(fontSize: 10, color: colors.textDisabled),
+          ),
         ],
       ),
     );
@@ -1673,10 +1788,14 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
       children: [
         Row(
           children: [
-            Expanded(child: HermesSectionHeader(Strings.of(context).ollCatalog)),
+            Expanded(
+              child: HermesSectionHeader(Strings.of(context).ollCatalog),
+            ),
             if (_deviceInfo.known)
-              Text('RAM: ${totalRamGb.toStringAsFixed(1)} GB',
-                  style: TextStyle(fontSize: 10.5, color: colors.textDisabled)),
+              Text(
+                'RAM: ${totalRamGb.toStringAsFixed(1)} GB',
+                style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+              ),
           ],
         ),
         const SizedBox(height: 4),
@@ -1685,14 +1804,18 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
           style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
         ),
         const SizedBox(height: 8),
-        ...OllamaModelCatalog.all
-            .map((m) => _catalogTile(colors, m, totalRamGb)),
+        ...OllamaModelCatalog.all.map(
+          (m) => _catalogTile(colors, m, totalRamGb),
+        ),
       ],
     );
   }
 
   Widget _catalogTile(
-      HermesThemeColors colors, DownloadableModel m, double totalRamGb) {
+    HermesThemeColors colors,
+    DownloadableModel m,
+    double totalRamGb,
+  ) {
     final installed = _isInstalled(m.tag);
     final progress = _pulls[m.tag];
     final pulling = progress != null;
@@ -1715,56 +1838,64 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(m.name,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color:
-                              fits ? colors.textPrimary : colors.textSecondary,
-                        )),
+                    Text(
+                      m.name,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: fits ? colors.textPrimary : colors.textSecondary,
+                      ),
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       '~${m.sizeGb.toStringAsFixed(1)} GB · '
                       'RAM ${m.ramGb.toStringAsFixed(0)} GB',
-                      style:
-                          TextStyle(fontSize: 11, color: colors.textSecondary),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.textSecondary,
+                      ),
                     ),
                     if (!fits && !installed && !pulling) ...[
                       const SizedBox(height: 2),
-                      Text(Strings.of(context).ollRequiresMoreRam,
-                          style:
-                              TextStyle(fontSize: 10, color: colors.warning)),
+                      Text(
+                        Strings.of(context).ollRequiresMoreRam,
+                        style: TextStyle(fontSize: 10, color: colors.warning),
+                      ),
                     ],
                   ],
                 ),
               ),
               const SizedBox(width: 10),
               if (installed)
-                _pill(colors,
-                    icon: Icons.check_rounded,
-                    label: Strings.of(context).ollUse,
-                    color: colors.accent,
-                    onTap: _pinningTag == null ? () => _use(m.tag) : null,
-                    busy: _pinningTag == m.tag)
+                _pill(
+                  colors,
+                  icon: Icons.check_rounded,
+                  label: Strings.of(context).ollUse,
+                  color: colors.accent,
+                  onTap: _pinningTag == null ? () => _use(m.tag) : null,
+                  busy: _pinningTag == m.tag,
+                )
               else if (pulling) ...[
                 Text(
                   progress.fraction != null
                       ? '${(progress.fraction! * 100).toStringAsFixed(0)} %'
                       : '…',
                   style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: colors.accent),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colors.accent,
+                  ),
                 ),
                 const SizedBox(width: 4),
                 _cancelButton(colors, m.tag),
-              ]
-              else
-                _pill(colors,
-                    icon: Icons.download_rounded,
-                    label: Strings.of(context).ollDownload,
-                    color: fits ? colors.accent : colors.textSecondary,
-                    onTap: () => _download(m)),
+              ] else
+                _pill(
+                  colors,
+                  icon: Icons.download_rounded,
+                  label: Strings.of(context).ollDownload,
+                  color: fits ? colors.accent : colors.textSecondary,
+                  onTap: () => _download(m),
+                ),
             ],
           ),
           if (pulling) ...[
@@ -1779,8 +1910,12 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
               ),
             ),
             const SizedBox(height: 4),
-            Text(progress.status.isEmpty ? Strings.of(context).ollDownloading : progress.status,
-                style: TextStyle(fontSize: 10, color: colors.textDisabled)),
+            Text(
+              progress.status.isEmpty
+                  ? Strings.of(context).ollDownloading
+                  : progress.status,
+              style: TextStyle(fontSize: 10, color: colors.textDisabled),
+            ),
           ],
         ],
       ),
@@ -1822,16 +1957,21 @@ class _OllamaModelsScreenState extends State<OllamaModelsScreen> {
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: effColor),
+                    strokeWidth: 2,
+                    color: effColor,
+                  ),
                 )
               else
                 Icon(icon, size: 14, color: effColor),
               const SizedBox(width: 4),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
-                      color: effColor)),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: effColor,
+                ),
+              ),
             ],
           ),
         ),

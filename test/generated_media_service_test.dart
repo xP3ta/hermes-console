@@ -94,6 +94,96 @@ void main() {
       },
     );
 
+    test('::preview{file=...} renders like MEDIA and mixes with MEDIA', () {
+      final segments = GeneratedMediaService.parseSegments(
+        'Aquí tienes la imagen:\n'
+        '::preview{file="/home/hermes/out/render.png"}\n'
+        'Y el vídeo:\n'
+        'MEDIA:/home/hermes/out/clip.mp4\n'
+        "::preview{file='/home/hermes/out/audio.mp3' height=\"480\"}\n"
+        'Fin',
+      );
+
+      final media = segments.whereType<GeneratedMediaFileSegment>().toList();
+      expect(media, hasLength(3));
+      expect(media[0].reference.kind, GeneratedMediaKind.image);
+      expect(media[0].reference.source, '/home/hermes/out/render.png');
+      expect(media[0].reference.htmlPreview, isFalse);
+      expect(media[1].reference.kind, GeneratedMediaKind.video);
+      expect(media[2].reference.kind, GeneratedMediaKind.audio);
+      expect(media[2].reference.source, '/home/hermes/out/audio.mp3');
+      final text = segments
+          .whereType<GeneratedMediaTextSegment>()
+          .map((e) => e.text)
+          .join();
+      expect(text, 'Aquí tienes la imagen:\n\nY el vídeo:\n\n\nFin');
+      expect(text, isNot(contains('::preview')));
+      expect(
+        GeneratedMediaService.stripDirectives(
+          '::preview{file="/home/hermes/out/render.png"}',
+        ),
+        isNot(contains('/home/hermes')),
+      );
+    });
+
+    test('::preview of an html file becomes a downloadable html preview', () {
+      final segments = GeneratedMediaService.parseSegments(
+        '::preview{file="/home/hermes/out/widget.html" height="320"}',
+      );
+
+      final media = segments.whereType<GeneratedMediaFileSegment>().single;
+      expect(media.reference.kind, GeneratedMediaKind.file);
+      expect(media.reference.mimeType, 'text/html');
+      expect(media.reference.displayName, 'widget.html');
+      expect(media.reference.htmlPreview, isTrue);
+    });
+
+    test('::preview with an unsafe path is withheld like malformed MEDIA', () {
+      for (final source in <String>[
+        'relative/path.png',
+        '/home/hermes/../secret.png',
+        'file:///etc/passwd',
+        '/home/hermes/.env',
+      ]) {
+        final segments = GeneratedMediaService.parseSegments(
+          'Antes\n::preview{file="$source"}\nDespués',
+        );
+        expect(
+          segments.whereType<GeneratedMediaFileSegment>(),
+          isEmpty,
+          reason: source,
+        );
+        final text = segments
+            .whereType<GeneratedMediaTextSegment>()
+            .map((e) => e.text)
+            .join();
+        expect(text, isNot(contains(source)), reason: source);
+        expect(text, contains('Antes'));
+        expect(text, contains('Después'));
+      }
+    });
+
+    test('unknown, inline and fenced ::preview stay literal text', () {
+      const fenced = '```md\n::preview{file="/home/hermes/out/a.png"}\n```';
+      const unknown = '::foo{file="/home/hermes/out/a.png"}';
+      const inline = 'Mira ::preview{file="/home/hermes/out/a.png"} ya';
+      const cpp = 'Usa std::vector<int> aquí';
+      const noFile = '::preview{height="200"}';
+      for (final content in [fenced, unknown, inline, cpp, noFile]) {
+        final segments = GeneratedMediaService.parseSegments(content);
+        expect(
+          segments.whereType<GeneratedMediaFileSegment>(),
+          isEmpty,
+          reason: content,
+        );
+        expect(
+          (segments.single as GeneratedMediaTextSegment).text,
+          content,
+          reason: content,
+        );
+      }
+    });
+
     test('does not execute MEDIA examples inside fenced code', () {
       final segments = GeneratedMediaService.parseSegments(
         '```text\nMEDIA:/home/hermes/output.mp4\n```',
@@ -167,7 +257,12 @@ void main() {
 
       expect(document.whereType<GeneratedMediaFileSegment>(), hasLength(1));
       expect(
-        document.whereType<GeneratedMediaFileSegment>().single.reference.kind.name,
+        document
+            .whereType<GeneratedMediaFileSegment>()
+            .single
+            .reference
+            .kind
+            .name,
         'file',
       );
       expect(audio.whereType<GeneratedMediaFileSegment>(), hasLength(1));
@@ -177,7 +272,12 @@ void main() {
       );
       expect(unknown.whereType<GeneratedMediaFileSegment>(), hasLength(1));
       expect(
-        unknown.whereType<GeneratedMediaFileSegment>().single.reference.kind.name,
+        unknown
+            .whereType<GeneratedMediaFileSegment>()
+            .single
+            .reference
+            .kind
+            .name,
         'file',
       );
     });
@@ -197,30 +297,33 @@ void main() {
       expect(text, isNot(contains('/workspace/report.pdf')));
     });
 
-    test('unsafe directives stay non-fetching and never reveal their source', () {
-      const unsafe = <String>[
-        'MEDIA:https://user:password@example.test/report.pdf',
-        'MEDIA:file:///workspace/report.pdf',
-        'MEDIA:/workspace/../private/report.pdf',
-        'MEDIA:/workspace/key.properties',
-        'MEDIA:/workspace/.env',
-        'MEDIA:/workspace/%2Eenv',
-      ];
+    test(
+      'unsafe directives stay non-fetching and never reveal their source',
+      () {
+        const unsafe = <String>[
+          'MEDIA:https://user:password@example.test/report.pdf',
+          'MEDIA:file:///workspace/report.pdf',
+          'MEDIA:/workspace/../private/report.pdf',
+          'MEDIA:/workspace/key.properties',
+          'MEDIA:/workspace/.env',
+          'MEDIA:/workspace/%2Eenv',
+        ];
 
-      for (final directive in unsafe) {
-        final segments = GeneratedMediaService.parseSegments(directive);
-        expect(
-          segments.whereType<GeneratedMediaFileSegment>(),
-          isEmpty,
-          reason: directive,
-        );
-        expect(
-          GeneratedMediaService.stripDirectives(directive),
-          isNot(contains(directive.substring('MEDIA:'.length))),
-          reason: directive,
-        );
-      }
-    });
+        for (final directive in unsafe) {
+          final segments = GeneratedMediaService.parseSegments(directive);
+          expect(
+            segments.whereType<GeneratedMediaFileSegment>(),
+            isEmpty,
+            reason: directive,
+          );
+          expect(
+            GeneratedMediaService.stripDirectives(directive),
+            isNot(contains(directive.substring('MEDIA:'.length))),
+            reason: directive,
+          );
+        }
+      },
+    );
 
     test('rejects credential, key, history, and sensitive-directory paths', () {
       const blocked = <String>[
@@ -449,33 +552,37 @@ void main() {
       },
     );
 
-    test('generic file bytes are promoted atomically and retain safe suffix', () async {
-      const reference = GeneratedMediaReference(
-        source: '/workspace/private/report.txt',
-        kind: GeneratedMediaKind.file,
-        sourceKind: GeneratedMediaSourceKind.serverPath,
-        displayName: 'report.txt',
-        mimeType: 'text/plain',
-      );
+    test(
+      'generic file bytes are promoted atomically and retain safe suffix',
+      () async {
+        const reference = GeneratedMediaReference(
+          source: '/workspace/private/report.txt',
+          kind: GeneratedMediaKind.file,
+          sourceKind: GeneratedMediaSourceKind.serverPath,
+          displayName: 'report.txt',
+          mimeType: 'text/plain',
+        );
 
-      final file = await GeneratedMediaService.ensureDownloaded(
-        'connection-file',
-        reference,
-        fetchServerPath: (_) async => Uint8List.fromList(utf8.encode('report')),
-        baseDir: temporary,
-      );
+        final file = await GeneratedMediaService.ensureDownloaded(
+          'connection-file',
+          reference,
+          fetchServerPath: (_) async =>
+              Uint8List.fromList(utf8.encode('report')),
+          baseDir: temporary,
+        );
 
-      expect(file.path, endsWith('.txt'));
-      expect(await file.readAsString(), 'report');
-      expect(file.path, isNot(contains('/workspace/private')));
-      expect(
-        temporary
-            .listSync(recursive: true)
-            .whereType<File>()
-            .where((entry) => entry.path.contains('.tmp-')),
-        isEmpty,
-      );
-    });
+        expect(file.path, endsWith('.txt'));
+        expect(await file.readAsString(), 'report');
+        expect(file.path, isNot(contains('/workspace/private')));
+        expect(
+          temporary
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((entry) => entry.path.contains('.tmp-')),
+          isEmpty,
+        );
+      },
+    );
 
     test('generic file download can retry after a cleaned failure', () async {
       const reference = GeneratedMediaReference(
@@ -503,10 +610,7 @@ void main() {
         ),
         throwsA(isA<FileSystemException>()),
       );
-      expect(
-        temporary.listSync(recursive: true).whereType<File>(),
-        isEmpty,
-      );
+      expect(temporary.listSync(recursive: true).whereType<File>(), isEmpty);
 
       final file = await GeneratedMediaService.ensureDownloaded(
         'connection-retry',

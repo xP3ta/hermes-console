@@ -20,8 +20,8 @@ class RoomMirrorAvatar extends StatelessWidget {
     width: size,
     height: size,
     fit: BoxFit.cover,
+    // Solo un lado: fijar ancho y alto deforma imágenes no cuadradas.
     cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).ceil(),
-    cacheHeight: (size * MediaQuery.devicePixelRatioOf(context)).ceil(),
     excludeFromSemantics: true,
     frameBuilder: (_, child, _, _) => ClipOval(child: child),
     errorBuilder: (_, _, _) => fallback,

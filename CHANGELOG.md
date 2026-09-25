@@ -3,6 +3,70 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.13 (9345) — 2026-09-25
+
+Chat reliability, long-session performance and attachment fixes, aligned with
+Hermes Desktop behavior. Physically tested on a Pixel 9 Pro (Android 17).
+
+### Sending, retry and subagents
+- Show the first turn of a new chat once: the provisional-to-durable session
+  boundary no longer duplicates the user message or the reply.
+- Retry a failed send only when durable history proves it was not delivered;
+  ambiguous states keep the error and offer discard, so a retry can never send
+  twice. The created session id is persisted, so this holds even if Android
+  kills the app between the failure and the retry.
+- Update the live subagent card to its final counts and duration in the first
+  turn of a new chat; delegation metadata with ids only is hydrated from
+  history. Historical subagent activity is one compact line.
+- Do not count gateway processes reported as `exited` as background work in the
+  session list (Desktop parity), and clear stale "working" rows after network
+  loss.
+- Repeat history hydration only after transient connection errors or timeouts,
+  never on permanent server errors.
+- Keep durable history usable while a session is compacting (Desktop parity);
+  projection caches are byte-bounded and invalidated on profile or connection
+  changes.
+- Keep the Home composer draft across backgrounding and force-stop; delete it
+  with the profile's data.
+
+### Chat and long sessions
+- Keep narrated assistant text visible across tool calls and interim segments.
+- Prevent a retained historical assistant row from displaying the next external
+  turn's live response a second time. Reset the visual turn identity without
+  deduplicating text or discarding the historical answer.
+- Keep durable in-flight corrections out of the real user-turn count, preserving
+  edit targets and transcript reconciliation after refresh.
+- Queue ordinary sends durably in FIFO order while a turn is running, without
+  implicit steering or interrupting the parent or its children. Explicit
+  "Steer now" and edit/rewind actions retain their existing behavior.
+- Re-arm plain-text queues when a turn reaches its authoritative terminal state.
+- Reduce repeated transcript projection and Markdown work in long chats, while
+  preserving split-rendering equivalence and streaming frame-budget coverage.
+- Keep the composer editable during transcript refresh and avoid invalidating
+  the whole transcript during keyboard opening. Submission remains fenced until
+  the interactive refresh publishes.
+- Share only identical in-flight opening reads of the stored transcript;
+  scrollback and recovery retain independent reads and authority checks.
+- Settle interrupted subagents as cancelled after an explicit edit/rewind, rather
+  than leaving old activity running or presenting cancellation as a failure.
+
+### Attachments and previews
+- Render `::preview{file="..."}` image/file directives through the authenticated
+  media pipeline (#49). HTML previews are downloadable file cards, not live
+  embedded Desktop widgets. Unknown directives remain visible as text.
+- Preserve image thumbnails across transcript rebuilds, keep their aspect ratio,
+  align composer attachments to the start, and remove misleading pending badges.
+
+### Recovery and navigation
+- Recover idle chats after the server reaps their runtime instead of remaining
+  indefinitely on "Reconnecting…" (#46). This fixes a demonstrated recovery path,
+  not every possible Android process crash or network failure.
+- Let Kanban logs and other long text panes scroll under a vertical drag (#48).
+- Allow Home or Bots to be selected as the initial screen, without overriding
+  notification or deep-link navigation (#47).
+- Add regression coverage for composer drafts across navigation and Bot Chat
+  (#37), and for speech-engine recycling between recordings (#39).
+
 ## 1.2.12 (9320) — 2026-09-23
 
 Reliability and long-session release. Hermes kept working when Console was

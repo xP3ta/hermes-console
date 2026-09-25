@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
+import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -14,6 +15,7 @@ import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/session_row_stop_control.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -1076,6 +1078,406 @@ void main() {
   );
 
   testWidgets(
+    'finished turns do not stay working after a transport loss and '
+    'a non-busy roster',
+    (tester) async {
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      var rosterFails = false;
+      var rosterRows = const <DesktopActiveSession>[
+        DesktopActiveSession(
+          runtimeSessionId: 'desktop-runtime-0',
+          storedSessionId: 'session-0',
+          status: 'working',
+        ),
+        DesktopActiveSession(
+          runtimeSessionId: 'desktop-runtime-1',
+          storedSessionId: 'session-1',
+          status: 'working',
+        ),
+      ];
+      final gateway = _gateway(
+        MockClient((request) async {
+          if (request.url.path == '/health') return http.Response('{}', 200);
+          if (request.url.path == '/api/sessions') {
+            return http.Response(
+              jsonEncode({
+                'data': [_sessionRow(0), _sessionRow(1)],
+                'has_more': false,
+              }),
+              200,
+            );
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: gateway,
+            eventStreamOverride: events.stream,
+            globalActivityOverride: aggregate,
+            eventReconnectOverride: () async {},
+            eventReconnectRandomOverride: () => 0.75,
+            activeSessionListLoader: () async {
+              if (rosterFails) throw StateError('offline');
+              return DesktopActiveSessionList(sessions: rosterRows);
+            },
+          ),
+        ),
+      );
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('session-running-session-0')),
+      );
+      // Both one-turn chats finish: authoritative terminal events.
+      for (final runtime in ['desktop-runtime-0', 'desktop-runtime-1']) {
+        events.add(
+          TuiGatewayEvent(
+            type: 'message.complete',
+            sessionId: runtime,
+            payload: const {'text': 'ok'},
+          ),
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        find.byKey(const ValueKey('session-running-session-0')),
+        findsNothing,
+      );
+      // The runtimes stay alive but idle (no turn lease), like the gateway.
+      rosterRows = const [
+        DesktopActiveSession(
+          runtimeSessionId: 'desktop-runtime-0',
+          storedSessionId: 'session-0',
+          status: 'idle',
+        ),
+        DesktopActiveSession(
+          runtimeSessionId: 'desktop-runtime-1',
+          storedSessionId: 'session-1',
+          status: 'idle',
+        ),
+      ];
+      // Total network loss, then restore.
+      rosterFails = true;
+      events.addError(StateError('offline'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      rosterFails = false;
+      events.addError(StateError('still reconnecting'));
+      await tester.pump();
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      for (final id in ['session-0', 'session-1']) {
+        expect(
+          find.byKey(ValueKey('session-running-$id')),
+          findsNothing,
+          reason: '$id finished; an idle roster must not revive it as working',
+        );
+        expect(aggregate.isActive(_connectionId, 'default', id), isFalse);
+      }
+      expect(find.byType(SessionRowStopControl), findsNothing);
+      // Empty roster after recovery too.
+      rosterRows = const [];
+      events.addError(StateError('flap'));
+      await tester.pump();
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expect(find.byType(SessionRowStopControl), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 61));
+    },
+  );
+
+  Future<void> recoverTransport(
+    WidgetTester tester,
+    StreamController<TuiGatewayEvent> events,
+    void Function(bool) setRosterFails,
+  ) async {
+    setRosterFails(true);
+    events.addError(StateError('offline'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    setRosterFails(false);
+    events.addError(StateError('still reconnecting'));
+    await tester.pump();
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+  }
+
+  http.Client sessionsHttp() => MockClient((request) async {
+    if (request.url.path == '/health') return http.Response('{}', 200);
+    if (request.url.path == '/api/sessions') {
+      return http.Response(
+        jsonEncode({
+          'data': [_sessionRow(0)],
+          'has_more': false,
+        }),
+        200,
+      );
+    }
+    return http.Response('{}', 404);
+  });
+
+  testWidgets(
+    'a finished turn with live background processes keeps its '
+    'background indicator after a reconnect',
+    (tester) async {
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      var rosterFails = false;
+      var rosterStatus = 'working';
+      final processReads = <String>[];
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: _gateway(sessionsHttp()),
+            eventStreamOverride: events.stream,
+            globalActivityOverride: aggregate,
+            eventReconnectOverride: () async {},
+            eventReconnectRandomOverride: () => 0.75,
+            activeSessionListLoader: () async {
+              if (rosterFails) throw StateError('offline');
+              return DesktopActiveSessionList(
+                sessions: [
+                  DesktopActiveSession(
+                    runtimeSessionId: 'desktop-runtime-0',
+                    storedSessionId: 'session-0',
+                    status: rosterStatus,
+                  ),
+                ],
+              );
+            },
+            agentCenterSnapshotLoader: (runtime) async {
+              processReads.add(runtime);
+              // terminal(background=true) sigue vivo tras el turno.
+              return const AgentCenterSnapshot(
+                snapshots: [],
+                processes: [
+                  BackgroundProcessEntry(
+                    opaqueId: 'proc-1',
+                    status: AgentCenterStatus.running,
+                    uptimeSeconds: 30,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('session-running-session-0')),
+      );
+      events.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'desktop-runtime-0',
+          payload: {'text': 'ok'},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      rosterStatus = 'idle';
+      final readsBeforeRecovery = processReads.length;
+      await recoverTransport(tester, events, (v) => rosterFails = v);
+
+      expect(processReads.length, greaterThan(readsBeforeRecovery));
+      expect(aggregate.isActive(_connectionId, 'default', 'session-0'), isTrue);
+      expect(
+        aggregate.activityFor(_connectionId, 'default', 'session-0')?.phase,
+        GlobalActivityPhase.backgroundWork,
+      );
+      final label = tester.widget<Text>(
+        find.byKey(const ValueKey('session-running-session-0')),
+      );
+      expect(label.data, 'background work', reason: 'never "working"');
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 61));
+    },
+  );
+
+  testWidgets(
+    'an idle roster row without live processes stays idle after a '
+    'reconnect',
+    (tester) async {
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      var rosterFails = false;
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: _gateway(sessionsHttp()),
+            eventStreamOverride: events.stream,
+            globalActivityOverride: aggregate,
+            eventReconnectOverride: () async {},
+            eventReconnectRandomOverride: () => 0.75,
+            activeSessionListLoader: () async {
+              if (rosterFails) throw StateError('offline');
+              return const DesktopActiveSessionList(
+                sessions: [
+                  DesktopActiveSession(
+                    runtimeSessionId: 'desktop-runtime-0',
+                    storedSessionId: 'session-0',
+                    status: 'idle',
+                  ),
+                ],
+              );
+            },
+            agentCenterSnapshotLoader: (_) async => const AgentCenterSnapshot(
+              snapshots: [],
+              processes: [
+                BackgroundProcessEntry(
+                  opaqueId: 'proc-done',
+                  status: AgentCenterStatus.completed,
+                  uptimeSeconds: 30,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await _pumpUntil(tester, find.text('Conversation 0'));
+      await recoverTransport(tester, events, (v) => rosterFails = v);
+      expect(
+        find.byKey(const ValueKey('session-running-session-0')),
+        findsNothing,
+      );
+      expect(
+        aggregate.isActive(_connectionId, 'default', 'session-0'),
+        isFalse,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 61));
+    },
+  );
+
+  testWidgets(
+    'a busy roster after a truncated replay labels the real phase',
+    (tester) async {
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      var rosterFails = false;
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: _gateway(sessionsHttp()),
+            eventStreamOverride: events.stream,
+            globalActivityOverride: aggregate,
+            eventReconnectOverride: () async {},
+            eventReconnectRandomOverride: () => 0.75,
+            activeSessionListLoader: () async {
+              if (rosterFails) throw StateError('offline');
+              return const DesktopActiveSessionList(
+                sessions: [
+                  DesktopActiveSession(
+                    runtimeSessionId: 'desktop-runtime-0',
+                    storedSessionId: 'session-0',
+                    status: 'working',
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('session-running-session-0')),
+      );
+      await recoverTransport(tester, events, (v) => rosterFails = v);
+      expect(aggregate.isActive(_connectionId, 'default', 'session-0'), isTrue);
+      final label = tester.widget<Text>(
+        find.byKey(const ValueKey('session-running-session-0')),
+      );
+      expect(label.data, startsWith('working'));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 61));
+    },
+  );
+
+  testWidgets(
+    'idle row with gateway status exited is not background work',
+    (tester) async {
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      var rosterFails = false;
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: _gateway(sessionsHttp()),
+            eventStreamOverride: events.stream,
+            globalActivityOverride: aggregate,
+            eventReconnectOverride: () async {},
+            eventReconnectRandomOverride: () => 0.75,
+            activeSessionListLoader: () async {
+              if (rosterFails) throw StateError('offline');
+              return const DesktopActiveSessionList(
+                sessions: [
+                  DesktopActiveSession(
+                    runtimeSessionId: 'desktop-runtime-0',
+                    storedSessionId: 'session-0',
+                    status: 'idle',
+                  ),
+                ],
+              );
+            },
+            agentCenterSnapshotLoader: (_) async =>
+                AgentCenterSnapshot.fromJson(
+                  snapshots: const {'entries': []},
+                  processes: const {
+                    'processes': [
+                      {
+                        'session_id': 'proc_0123456789ab',
+                        'command': 'npm run build',
+                        'status': 'exited',
+                        'exit_code': 0,
+                        'uptime_seconds': 30,
+                      },
+                    ],
+                  },
+                ),
+          ),
+        ),
+      );
+      await _pumpUntil(tester, find.text('Conversation 0'));
+      await recoverTransport(tester, events, (v) => rosterFails = v);
+      expect(
+        find.byKey(const ValueKey('session-running-session-0')),
+        findsNothing,
+      );
+      expect(
+        aggregate.isActive(_connectionId, 'default', 'session-0'),
+        isFalse,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 61));
+    },
+  );
+
+  testWidgets(
     'stale Spanish activity pill is neutral, bounded and accessible',
     (tester) async {
       tester.view.physicalSize = const Size(640, 900);
@@ -1138,11 +1540,9 @@ void main() {
       final semantics = tester.getSemantics(
         find.byKey(const ValueKey('session-running-session-0')),
       );
-      expect(semantics.label, 'trabajando · último estado conocido');
-      expect(
-        find.bySemanticsLabel('trabajando · último estado conocido'),
-        findsOneWidget,
-      );
+      // QA9343: una fase `unknown` (replay truncado) no afirma «trabajando».
+      expect(semantics.label, 'último estado conocido');
+      expect(find.bySemanticsLabel('último estado conocido'), findsOneWidget);
     },
   );
 

@@ -78,28 +78,61 @@ void main() {
         );
   });
 
-  test('load waits for a save admitted before its persistence dependency', () async {
-    final store = ChatDraftStore(await SharedPreferences.getInstance());
-    final gate = Completer<bool>();
-    final saved = store.save('connection', 'session', 'Last keystroke', const [], afterSave: gate.future);
-    var loaded = false;
-    final read = store.load('connection', 'session').then((draft) { loaded = true; return draft; });
-    await Future<void>.delayed(Duration.zero);
-    expect(loaded, isFalse);
-    gate.complete(true);
-    expect(await saved, isTrue);
-    expect((await read).text, 'Last keystroke');
-  });
+  test(
+    'load waits for a save admitted before its persistence dependency',
+    () async {
+      final store = ChatDraftStore(await SharedPreferences.getInstance());
+      final gate = Completer<bool>();
+      final saved = store.save(
+        'connection',
+        'session',
+        'Last keystroke',
+        const [],
+        afterSave: gate.future,
+      );
+      var loaded = false;
+      final read = store.load('connection', 'session').then((draft) {
+        loaded = true;
+        return draft;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(loaded, isFalse);
+      gate.complete(true);
+      expect(await saved, isTrue);
+      expect((await read).text, 'Last keystroke');
+    },
+  );
 
-  test('room reply draft preserves its thread and remains out of recovery lists', () async {
-    final store = ChatDraftStore(await SharedPreferences.getInstance());
-    await store.save('connection', 'mob-room-fixture', 'Reply\ntext', const [], profile: 'builder', replyThreadId: 'thread-one');
-    final draft = await store.load('connection', 'mob-room-fixture', profile: 'builder');
-    expect(draft.text, 'Reply\ntext');
-    expect(draft.replyThreadId, 'thread-one');
-    expect(await store.listForConnection('connection'), isEmpty);
-    expect((await store.load('connection', 'mob-room-fixture', profile: 'other')).text, isEmpty);
-  });
+  test(
+    'room reply draft preserves its thread and remains out of recovery lists',
+    () async {
+      final store = ChatDraftStore(await SharedPreferences.getInstance());
+      await store.save(
+        'connection',
+        'mob-room-fixture',
+        'Reply\ntext',
+        const [],
+        profile: 'builder',
+        replyThreadId: 'thread-one',
+      );
+      final draft = await store.load(
+        'connection',
+        'mob-room-fixture',
+        profile: 'builder',
+      );
+      expect(draft.text, 'Reply\ntext');
+      expect(draft.replyThreadId, 'thread-one');
+      expect(await store.listForConnection('connection'), isEmpty);
+      expect(
+        (await store.load(
+          'connection',
+          'mob-room-fixture',
+          profile: 'other',
+        )).text,
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'canonical draft scope: promotion keeps connection and profile fences',
@@ -1665,6 +1698,50 @@ void main() {
     );
   });
 
+  test('borrar datos del perfil o de la conexión retira el borrador '
+      'de Inicio de ese ámbito', () async {
+    final store = ChatDraftStore(await SharedPreferences.getInstance());
+    const home = ChatDraftStore.newChatDraftSessionId;
+    Future<String> homeText(String conn, String profile) async =>
+        (await store.load(conn, home, profile: profile)).text;
+    await store.save(
+      'conn-e',
+      home,
+      'inicio manager',
+      const [],
+      profile: 'manager',
+    );
+    await store.save('conn-e', home, 'inicio otro', const [], profile: 'otro');
+    await store.save(
+      'conn-e2',
+      home,
+      'inicio conn2',
+      const [],
+      profile: 'manager',
+    );
+    await store.save(
+      'conn-e',
+      'mob-bot-bot-1',
+      'bot',
+      const [],
+      profile: 'manager',
+    );
+
+    await store.deleteForProfile('conn-e', 'manager');
+    expect(await homeText('conn-e', 'manager'), isEmpty);
+    // Otros ámbitos intactos; bots conservan su borrador dedicado.
+    expect(await homeText('conn-e', 'otro'), 'inicio otro');
+    expect(await homeText('conn-e2', 'manager'), 'inicio conn2');
+    expect(
+      (await store.load('conn-e', 'mob-bot-bot-1', profile: 'manager')).text,
+      'bot',
+    );
+
+    await store.deleteForConnection('conn-e2');
+    expect(await homeText('conn-e2', 'manager'), isEmpty);
+    expect(await homeText('conn-e', 'otro'), 'inicio otro');
+  });
+
   test('cleanup v3 conserva adjunto referenciado por v1 retenido', () async {
     final prefs = await SharedPreferences.getInstance();
     final store = ChatDraftStore(
@@ -1961,49 +2038,46 @@ void main() {
     expect(envelope['older_history_truncated'], isTrue);
   });
 
-  test(
-    'reapertura sobre el límite expone aviso y cargar anteriores',
-    () async {
-      await LocalTranscriptStore.saveFromNewestFirst(
-        'conn-truncated',
-        'session-truncated',
-        [
-          for (var index = 1001; index >= 1; index--)
-            {
-              'role': index.isOdd ? 'user' : 'assistant',
-              'content': 'mensaje $index',
-            },
-        ],
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: SavedConnection(
-          id: 'conn-truncated',
-          label: 'Local',
-          host: '127.0.0.1',
-          port: 8642,
-          apiKey: 'test-key',
-          kind: InstanceKind.localhost,
-          onDeviceLoopback: true,
-        ),
-        sessionId: 'session-truncated',
-        sessionTitle: 'Historial local',
-        notifications: null,
-        onTerminal: () {},
-      );
-      addTearDown(chat.dispose);
+  test('reapertura sobre el límite expone aviso y cargar anteriores', () async {
+    await LocalTranscriptStore.saveFromNewestFirst(
+      'conn-truncated',
+      'session-truncated',
+      [
+        for (var index = 1001; index >= 1; index--)
+          {
+            'role': index.isOdd ? 'user' : 'assistant',
+            'content': 'mensaje $index',
+          },
+      ],
+    );
+    final chat = ActiveChat(
+      compressionRestoreStore: testCompressionRestoreStore(),
+      connection: SavedConnection(
+        id: 'conn-truncated',
+        label: 'Local',
+        host: '127.0.0.1',
+        port: 8642,
+        apiKey: 'test-key',
+        kind: InstanceKind.localhost,
+        onDeviceLoopback: true,
+      ),
+      sessionId: 'session-truncated',
+      sessionTitle: 'Historial local',
+      notifications: null,
+      onTerminal: () {},
+    );
+    addTearDown(chat.dispose);
 
-      await chat.loadMessages();
+    await chat.loadMessages();
 
-      expect(chat.messages, hasLength(_maxLocalTranscriptMessages));
-      expect(chat.messages.first['content'], 'mensaje 1001');
-      expect(chat.messages.last['content'], 'mensaje 2');
-      expect(chat.localTranscriptOlderHistoryTruncated, isTrue);
-      expect(chat.transcriptExtentForTesting, 'partial');
-      expect(chat.needsTranscriptTailHydrationForTesting, isTrue);
-      expect(chat.hasEarlierMessages, isTrue);
-    },
-  );
+    expect(chat.messages, hasLength(_maxLocalTranscriptMessages));
+    expect(chat.messages.first['content'], 'mensaje 1001');
+    expect(chat.messages.last['content'], 'mensaje 2');
+    expect(chat.localTranscriptOlderHistoryTruncated, isTrue);
+    expect(chat.transcriptExtentForTesting, 'partial');
+    expect(chat.needsTranscriptTailHydrationForTesting, isTrue);
+    expect(chat.hasEarlierMessages, isTrue);
+  });
 
   test('transcript local registra recorte por bytes al reabrir', () async {
     final newestFirst = <Map<String, dynamic>>[
@@ -2040,36 +2114,39 @@ void main() {
     );
   });
 
-  test('1000 message transcript encode measurement stays under 2 MiB', () async {
-    final newestFirst = <Map<String, dynamic>>[
-      for (var index = 1000; index >= 1; index--)
-        {
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'mensaje-$index:${'x' * 1800}',
-        },
-    ];
-    final stopwatch = Stopwatch()..start();
+  test(
+    '1000 message transcript encode measurement stays under 2 MiB',
+    () async {
+      final newestFirst = <Map<String, dynamic>>[
+        for (var index = 1000; index >= 1; index--)
+          {
+            'role': index.isOdd ? 'user' : 'assistant',
+            'content': 'mensaje-$index:${'x' * 1800}',
+          },
+      ];
+      final stopwatch = Stopwatch()..start();
 
-    final snapshot = await LocalTranscriptStore.saveFromNewestFirst(
-      'conn-measure',
-      'session-measure',
-      newestFirst,
-    );
-    stopwatch.stop();
-    final encodedBytes = utf8
-        .encode(
-          secureStore[_transcriptKey('conn-measure', 'session-measure')]!,
-        )
-        .length;
-    debugPrint(
-      'local transcript encode measurement: $encodedBytes bytes in '
-      '${stopwatch.elapsedMicroseconds} us',
-    );
+      final snapshot = await LocalTranscriptStore.saveFromNewestFirst(
+        'conn-measure',
+        'session-measure',
+        newestFirst,
+      );
+      stopwatch.stop();
+      final encodedBytes = utf8
+          .encode(
+            secureStore[_transcriptKey('conn-measure', 'session-measure')]!,
+          )
+          .length;
+      debugPrint(
+        'local transcript encode measurement: $encodedBytes bytes in '
+        '${stopwatch.elapsedMicroseconds} us',
+      );
 
-    expect(snapshot.messages, hasLength(_maxLocalTranscriptMessages));
-    expect(snapshot.olderHistoryTruncated, isFalse);
-    expect(encodedBytes, lessThanOrEqualTo(_maxLocalTranscriptEncodedBytes));
-  });
+      expect(snapshot.messages, hasLength(_maxLocalTranscriptMessages));
+      expect(snapshot.olderHistoryTruncated, isFalse);
+      expect(encodedBytes, lessThanOrEqualTo(_maxLocalTranscriptEncodedBytes));
+    },
+  );
 
   test(
     'transcript legacy corrupto no migra ni destruye recuperación',
@@ -2089,91 +2166,94 @@ void main() {
     },
   );
 
-  test('local transcript keeps reply and reasoning in separate fields', () async {
-    const commentary = 'CACHE_COMMENTARY_REASONING';
-    const analysis = 'CACHE_ANALYSIS_REASONING';
-    const inlineMarker = 'PRIVATE_CACHE_INLINE_TEXT';
-    const reasoningOnly = 'CACHE_REASONING_ONLY';
-    await LocalTranscriptStore.saveFromNewestFirst(
-      'conn-codex',
-      'session-sidecar',
-      const [
+  test(
+    'local transcript keeps reply and reasoning in separate fields',
+    () async {
+      const commentary = 'CACHE_COMMENTARY_REASONING';
+      const analysis = 'CACHE_ANALYSIS_REASONING';
+      const inlineMarker = 'PRIVATE_CACHE_INLINE_TEXT';
+      const reasoningOnly = 'CACHE_REASONING_ONLY';
+      await LocalTranscriptStore.saveFromNewestFirst(
+        'conn-codex',
+        'session-sidecar',
+        const [
+          {
+            'role': 'assistant',
+            'content': '',
+            'codex_message_items': [
+              {
+                'type': 'message',
+                'role': 'assistant',
+                'phase': 'commentary',
+                'content': [
+                  {'type': 'output_text', 'text': commentary},
+                ],
+              },
+              {
+                'type': 'message',
+                'role': 'assistant',
+                'phase': 'analysis',
+                'content': [
+                  {'type': 'output_text', 'text': analysis},
+                ],
+              },
+              {
+                'type': 'message',
+                'role': 'assistant',
+                'phase': 'final_answer',
+                'content': [
+                  {
+                    'type': 'output_text',
+                    'text': '<think>$inlineMarker</think>Respuesta en caché.',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            'role': 'assistant',
+            'content': '',
+            'codex_message_items': [
+              {
+                'type': 'message',
+                'role': 'assistant',
+                'phase': 'analysis',
+                'content': [
+                  {'type': 'output_text', 'text': reasoningOnly},
+                ],
+              },
+            ],
+            'tool_calls': [
+              {
+                'id': 'call-private',
+                'function': {'name': 'shell', 'arguments': '{}'},
+              },
+            ],
+          },
+        ],
+      );
+
+      final restored = await LocalTranscriptStore.load(
+        'conn-codex',
+        'session-sidecar',
+      );
+
+      expect(restored, [
+        {'role': 'assistant', 'content': '', 'reasoning': reasoningOnly},
         {
           'role': 'assistant',
-          'content': '',
-          'codex_message_items': [
-            {
-              'type': 'message',
-              'role': 'assistant',
-              'phase': 'commentary',
-              'content': [
-                {'type': 'output_text', 'text': commentary},
-              ],
-            },
-            {
-              'type': 'message',
-              'role': 'assistant',
-              'phase': 'analysis',
-              'content': [
-                {'type': 'output_text', 'text': analysis},
-              ],
-            },
-            {
-              'type': 'message',
-              'role': 'assistant',
-              'phase': 'final_answer',
-              'content': [
-                {
-                  'type': 'output_text',
-                  'text': '<think>$inlineMarker</think>Respuesta en caché.',
-                },
-              ],
-            },
-          ],
+          'content': 'Respuesta en caché.',
+          'reasoning': '$commentary\n\n$analysis',
         },
-        {
-          'role': 'assistant',
-          'content': '',
-          'codex_message_items': [
-            {
-              'type': 'message',
-              'role': 'assistant',
-              'phase': 'analysis',
-              'content': [
-                {'type': 'output_text', 'text': reasoningOnly},
-              ],
-            },
-          ],
-          'tool_calls': [
-            {
-              'id': 'call-private',
-              'function': {'name': 'shell', 'arguments': '{}'},
-            },
-          ],
-        },
-      ],
-    );
-
-    final restored = await LocalTranscriptStore.load(
-      'conn-codex',
-      'session-sidecar',
-    );
-
-    expect(restored, [
-      {'role': 'assistant', 'content': '', 'reasoning': reasoningOnly},
-      {
-        'role': 'assistant',
-        'content': 'Respuesta en caché.',
-        'reasoning': '$commentary\n\n$analysis',
-      },
-    ]);
-    final raw = secureStore[_transcriptKey('conn-codex', 'session-sidecar')]!;
-    expect(raw, contains(commentary));
-    expect(raw, contains(analysis));
-    expect(raw, contains(reasoningOnly));
-    expect(raw, isNot(contains(inlineMarker)));
-    expect(raw, isNot(contains('codex_message_items')));
-  });
+      ]);
+      final raw = secureStore[_transcriptKey('conn-codex', 'session-sidecar')]!;
+      expect(raw, contains(commentary));
+      expect(raw, contains(analysis));
+      expect(raw, contains(reasoningOnly));
+      expect(raw, isNot(contains(inlineMarker)));
+      expect(raw, isNot(contains('codex_message_items')));
+    },
+  );
 
   test(
     'transcript local descarta classifiers y reasoning antes de guardar',
