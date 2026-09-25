@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'transcript_directive_parser.dart';
+
 enum GeneratedMediaKind { image, video, audio, file }
 
 enum GeneratedMediaSourceKind { serverPath, https }
@@ -68,6 +70,11 @@ class GeneratedMediaReference {
   final int? sizeBytes;
   final DateTime? modifiedAt;
 
+  /// True for a `::preview{file="….html"}` directive: Console renders it as a
+  /// downloadable file card labelled as an HTML preview (no live iframe yet),
+  /// never as an inline source-text preview.
+  final bool htmlPreview;
+
   const GeneratedMediaReference({
     required this.source,
     required this.kind,
@@ -76,6 +83,7 @@ class GeneratedMediaReference {
     this.mimeType = 'application/octet-stream',
     this.sizeBytes,
     this.modifiedAt,
+    this.htmlPreview = false,
   });
 }
 
@@ -93,8 +101,9 @@ class GeneratedMediaFileSegment extends GeneratedMediaSegment {
   const GeneratedMediaFileSegment(this.reference);
 }
 
-/// Detects Hermes' canonical `MEDIA:<path-or-url>` directives and keeps their
-/// bytes in app-private storage. Server paths are fetched by the authenticated
+/// Detects Hermes' canonical `MEDIA:<path-or-url>` directives and Desktop's
+/// `::preview{file="…"}` transcript directive, and keeps their bytes in
+/// app-private storage. Server paths are fetched by the authenticated
 /// Dashboard client supplied by the caller; they are never exposed as public
 /// URLs or Android external-storage paths.
 class GeneratedMediaService {
@@ -369,7 +378,8 @@ class GeneratedMediaService {
   }
 
   static List<GeneratedMediaSegment> parseSegments(String content) {
-    if (content.isEmpty || !content.contains('MEDIA:')) {
+    if (content.isEmpty ||
+        (!content.contains('MEDIA:') && !content.contains('::preview'))) {
       return <GeneratedMediaSegment>[GeneratedMediaTextSegment(content)];
     }
 
@@ -406,12 +416,14 @@ class GeneratedMediaService {
         continue;
       }
 
-      final reference = fenceMarker != null ? null : _parseDirective(line);
+      final reference = fenceMarker != null ? null : _parseLine(line);
       if (reference == null) {
         // Outside a code fence, MEDIA is a control directive rather than prose.
         // Drop malformed/unsupported directives so local paths, signed URLs or
         // traversal attempts never leak through Markdown, clipboard or TTS.
-        if (fenceMarker == null && line.trimLeft().startsWith('MEDIA:')) {
+        if (fenceMarker == null &&
+            (line.trimLeft().startsWith('MEDIA:') ||
+                _isRejectedPreviewDirective(line))) {
           withheldDirective = true;
           if (hasNewline) text.write('\n');
           continue;
@@ -436,6 +448,47 @@ class GeneratedMediaService {
     final source = rawSource.trim();
     if (source.isEmpty) return null;
     return _parseDirective('MEDIA:$source');
+  }
+
+  /// One transcript line: a `MEDIA:` directive or a whole-line
+  /// `::preview{file="…"}` directive (Desktop contract). Any other `::name`
+  /// stays prose.
+  static GeneratedMediaReference? _parseLine(String line) =>
+      _parseDirective(line) ?? _parsePreviewDirective(line);
+
+  static const Set<String> _htmlExtensions = {'.html', '.htm', '.xhtml'};
+
+  /// `::preview{file="X"}`: X is handled exactly like `MEDIA:X` (same path
+  /// and URL protections). An `.html` target becomes a downloadable file card
+  /// flagged [GeneratedMediaReference.htmlPreview]; `height` is ignored.
+  static GeneratedMediaReference? _parsePreviewDirective(String line) {
+    final directive = parseTranscriptDirective(line);
+    if (directive == null || directive.name != 'preview') return null;
+    final file = directive.attrs['file'];
+    if (file == null) return null;
+    final reference = referenceFromSource(file);
+    if (reference == null) return null;
+    final lowerName = reference.displayName.toLowerCase();
+    if (!_htmlExtensions.any(lowerName.endsWith)) return reference;
+    return GeneratedMediaReference(
+      source: reference.source,
+      kind: GeneratedMediaKind.file,
+      sourceKind: reference.sourceKind,
+      displayName: reference.displayName,
+      mimeType: 'text/html',
+      sizeBytes: reference.sizeBytes,
+      modifiedAt: reference.modifiedAt,
+      htmlPreview: true,
+    );
+  }
+
+  /// A well-formed `::preview{file="…"}` whose target was rejected: withheld
+  /// like a malformed `MEDIA:` line so the path never reaches the transcript.
+  static bool _isRejectedPreviewDirective(String line) {
+    final directive = parseTranscriptDirective(line);
+    return directive != null &&
+        directive.name == 'preview' &&
+        directive.attrs.containsKey('file');
   }
 
   /// Extracts only successful first-party producer results. `agent_visible_image`
@@ -600,7 +653,8 @@ class GeneratedMediaService {
         return true;
       }
       if (!_sensitiveDirectoryNames.contains(component)) continue;
-      final isAllowedSshPublicFile = component == '.ssh' &&
+      final isAllowedSshPublicFile =
+          component == '.ssh' &&
           index == lower.length - 2 &&
           !lower.last.startsWith('.') &&
           (lower.last == 'known_hosts' || lower.last.endsWith('.pub'));
@@ -629,8 +683,7 @@ class GeneratedMediaService {
   }
 
   static bool _isExecutableOrInstaller(String name, {String? mimeType}) {
-    if (mimeType?.toLowerCase() ==
-        'application/vnd.android.package-archive') {
+    if (mimeType?.toLowerCase() == 'application/vnd.android.package-archive') {
       return true;
     }
     final lower = _decodedBasename(name).toLowerCase();
@@ -954,9 +1007,7 @@ class GeneratedMediaService {
           String.fromCharCodes(bytes.sublist(0, 3)) == 'ID3') {
         return true;
       }
-      if (bytes.length >= 2 &&
-          bytes[0] == 0xff &&
-          (bytes[1] & 0xe0) == 0xe0) {
+      if (bytes.length >= 2 && bytes[0] == 0xff && (bytes[1] & 0xe0) == 0xe0) {
         return true;
       }
       if (bytes.length >= 4) {

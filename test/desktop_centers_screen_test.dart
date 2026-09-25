@@ -8,6 +8,7 @@ import 'package:hermes_android/core/screens/projects_center_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -318,6 +319,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Fresh project'), findsOneWidget);
     expect(secondGateway.projectTreeCalls, 1);
+    // QA9343: la caché de proyectos es privada de la autoridad y se vacía
+    // con borrar conexión / revocar keys / cambiar perfil.
+    expect(ProjectsCenterScreen.memoryCacheLengthForTesting, greaterThan(0));
+    PrivateRenderCaches.clearAll();
+    expect(ProjectsCenterScreen.memoryCacheLengthForTesting, 0);
   });
 
   testWidgets(

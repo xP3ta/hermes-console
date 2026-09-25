@@ -754,10 +754,18 @@ SubagentActivityPhase _nativePhase(
 }
 
 SubagentActivityPhase _legacyCompletionPhase(Map<String, dynamic> json) {
+  final result = _stringKeyedMap(json['result']);
+  // Hermes core reports an interrupted child as `status: "interrupted"` AND
+  // `error: "Operation interrupted."` (delegate_tool_child_run
+  // `_build_result_entry`). An explicit terminal status is authoritative and
+  // must win over the error-presence heuristic below, otherwise a user
+  // cancellation is painted as a failure.
+  final explicitTerminal =
+      _phaseFromStatus(result?['status']) ?? _phaseFromStatus(json['status']);
+  if (explicitTerminal?.isTerminal == true) return explicitTerminal!;
   if (json['success'] == false || json['error'] != null) {
     return SubagentActivityPhase.failed;
   }
-  final result = _stringKeyedMap(json['result']);
   if (result != null) {
     if (result['success'] == false || result['error'] != null) {
       return SubagentActivityPhase.failed;

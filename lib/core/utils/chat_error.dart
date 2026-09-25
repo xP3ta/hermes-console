@@ -11,6 +11,7 @@ enum ChatErrorKind {
   localColdStart,
   firstTokenTimeout,
   searchToolUnavailable,
+  sessionTooLarge,
   unknown,
 }
 
@@ -23,6 +24,7 @@ extension ChatErrorKindMeta on ChatErrorKind {
         ChatErrorKind.localColdStart => Icons.hourglass_empty_rounded,
         ChatErrorKind.firstTokenTimeout => Icons.hourglass_empty_rounded,
         ChatErrorKind.searchToolUnavailable => Icons.search_off_rounded,
+        ChatErrorKind.sessionTooLarge => Icons.history_toggle_off_rounded,
         ChatErrorKind.unknown => Icons.error_outline_rounded,
       };
 }
@@ -40,6 +42,18 @@ ChatErrorKind classifyChatError(String raw) {
   //     de inactividad no emite este prefijo.
   if (e.startsWith('firsttokentimeout:') || has(['firsttokentimeout'])) {
     return ChatErrorKind.firstTokenTimeout;
+  }
+
+  // 1a'. Sesión que ya no cabe en el contexto del modelo ni se puede compactar
+  //      más (`context_overflow` del backend). Reintentar repite el fallo: la
+  //      salida es una sesión nueva, igual que en Desktop.
+  if (has([
+    'context_overflow',
+    'too large to compress',
+    "under the model's context window",
+    'too long to reload safely',
+  ])) {
+    return ChatErrorKind.sessionTooLarge;
   }
 
   // 1b. Search tool no disponible: emitido por el gateway o detectado por texto.

@@ -288,8 +288,9 @@ class _AvatarFace extends StatelessWidget {
         height: size,
         // Decodificar acotado al tamaño mostrado (×3 de DPR): los avatares
         // subidos pueden ser PNG grandes y el widget nunca pasa de `size` dp.
+        // Solo UN lado: con ambos el decoder no conserva la proporción y un
+        // avatar no cuadrado llega achatado antes de que `cover` lo recorte.
         cacheWidth: (size * 3).round(),
-        cacheHeight: (size * 3).round(),
         fit: BoxFit.cover,
         gaplessPlayback: true,
         filterQuality: FilterQuality.medium,

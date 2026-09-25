@@ -12,7 +12,8 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, visibleForTesting;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -94,7 +95,7 @@ import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
-    show DesktopRedirectDisposition, TuiGatewayClient, TuiGatewayRpcError;
+    show TuiGatewayClient, TuiGatewayRpcError;
 import '../widgets/chat_connection_recovery_row.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/inline_message_editor.dart';
@@ -117,6 +118,7 @@ import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
+import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/chat_turn.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/responsive.dart';
@@ -213,6 +215,7 @@ void pruneMessageAnchorCache<T>(
 // partir una sección Markdown justo al alcanzar el objetivo.
 const int _assistantChunkTargetChars = 3200;
 const int _assistantChunkMaxChars = 5200;
+
 const int _assistantTerminalProjectionCacheLimit = 64;
 // Respuestas vivas más largas que esto se reparten en prefijo estable (se
 // proyecta una vez por contenido) + cola mutable (se reprocesa por frame).
@@ -222,7 +225,77 @@ const int _liveAssistantStableSplitMinChars = 1600;
 // Planes de troceado terminal indexados por CONTENIDO (no por identidad del
 // Map del mensaje): el servicio sustituye ese Map en cada flush y una
 // respuesta reemitida reutiliza el plan ya calculado.
-const int _assistantRenderPlanCacheLimit = 48;
+//
+// El troceado verifica cada frontera contra el render CommonMark del resto
+// del documento, así que su coste crece con el cuadrado de la longitud: una
+// respuesta de 63 KB tarda ~520 ms. Un historial largo tiene muchas más de 48
+// respuestas troceables, de modo que al recorrerlo los planes salían del LRU y
+// se recalculaban al reentrar en viewport — el tirón intermitente al hacer
+// scroll. Un plan son unas pocas cadenas que ya viven en el transcript, así
+// que el techo se sube a 512: barato en memoria frente a medio segundo de
+// frames perdidos.
+const int _assistantRenderPlanCacheLimit = 512;
+
+/// Techo en bytes (aprox.) de la caché estática de planes: las claves son el
+/// texto completo de la respuesta y cada plan duplica sus trozos. 512
+/// respuestas de 60 KB serían ~60 MB sin este límite.
+const int _assistantRenderPlanCacheMaxBytes = 8 * 1024 * 1024;
+
+/// Tamaño aproximado (UTF-16: 2 bytes por code unit) de clave + plan.
+int _assistantRenderPlanCacheBytes(
+  String content,
+  _CachedAssistantRenderPlan cached,
+) {
+  var units = content.length;
+  final plan = cached.plan;
+  if (plan != null) {
+    units += plan.split.answer.length + plan.split.reasoning.length;
+    for (final chunk in plan.chunks) {
+      units += switch (chunk) {
+        _AssistantMarkdownChunk(:final data) => data.length,
+        _AssistantGeneratedImageChunk(:final basename) => basename.length,
+        _AssistantGeneratedMediaChunk(:final reference) =>
+          reference.source.length + reference.displayName.length,
+      };
+    }
+  }
+  return units * 2 + 64;
+}
+
+/// Compilada una vez: el troceado la evalúa por cada línea del documento.
+final RegExp _markdownFenceRe = RegExp(r'^ {0,3}(`{3,}|~{3,})(.*)$');
+
+/// Definición de referencia CommonMark (`[etiqueta]: destino`). Su presencia
+/// obliga a verificar cada frontera contra el documento entero, porque un
+/// tramo puede usar una etiqueta declarada mucho más abajo.
+final RegExp _linkReferenceDefinitionRe = RegExp(
+  r'^ {0,3}\[[^\]]+\]:',
+  multiLine: true,
+);
+
+/// Construcciones cuyo render depende de las líneas vecinas: listas (flojas o
+/// apretadas según el entorno), citas, tablas GFM, vallas de código,
+/// definiciones de referencia, encabezados subrayados y HTML embebido.
+/// Deliberadamente amplia: un falso positivo sólo cuesta tomar la ruta
+/// verificada con `markdownToHtml`, mientras que un falso negativo cambiaría
+/// el render. Ante la duda, verificar.
+final RegExp _contextDependentMarkdownRe = RegExp(
+  r'^ {0,3}(?:'
+  r'[-*+][ \t]'
+  r'|\d{1,9}[.)][ \t]'
+  r'|>'
+  r'|```|~~~'
+  r'|\[[^\]]+\]:'
+  r'|={2,}[ \t]*$'
+  r'|-{2,}[ \t]*$'
+  r'|\|'
+  r'|<[A-Za-z!/]'
+  r')'
+  r'|\|[^\n]*\|'
+  r'|^\t'
+  r'|^ {4,}\S',
+  multiLine: true,
+);
 
 @visibleForTesting
 bool isDeterministicRoomTaskWriteFailure(Object error) =>
@@ -382,7 +455,7 @@ List<String> splitAssistantMarkdownForViewport(
     final lineEnd = newline < 0 ? markdown.length : newline;
     final breakOffset = newline < 0 ? markdown.length : newline + 1;
     final line = markdown.substring(cursor, lineEnd);
-    final fence = RegExp(r'^ {0,3}(`{3,}|~{3,})(.*)$').firstMatch(line);
+    final fence = _markdownFenceRe.firstMatch(line);
     if (fence != null) {
       final marker = fence.group(1)!;
       final suffix = fence.group(2)!;
@@ -404,6 +477,38 @@ List<String> splitAssistantMarkdownForViewport(
 
   if (blockBreaks.isEmpty) return [markdown];
 
+  // Atajo para prosa simple. Verificar fronteras con `markdownToHtml` cuesta
+  // ~11ms por ventana de 10KB, y una respuesta larga tiene decenas de tramos
+  // (medido: 349ms para 68KB, 727ms para 137KB). Ese parseo sólo hace falta
+  // si el documento contiene alguna construcción cuyo render dependa de las
+  // líneas vecinas: listas, citas, tablas, vallas, definiciones de
+  // referencia, encabezados subrayados o HTML embebido. Un texto de párrafos
+  // separados por línea en blanco no tiene ninguna, así que cortar en un
+  // salto de bloque es seguro por construcción y el corte se decide sin
+  // parsear nada (0,2ms para el documento entero).
+  if (!_contextDependentMarkdownRe.hasMatch(markdown)) {
+    final simpleChunks = <String>[];
+    var simpleStart = 0;
+    while (markdown.length - simpleStart > maxChars) {
+      final target = simpleStart + targetChars;
+      final upper = math.min(simpleStart + maxChars, markdown.length);
+      var cut = -1;
+      for (final offset in blockBreaks) {
+        if (offset > simpleStart &&
+            offset <= upper &&
+            offset < markdown.length) {
+          cut = offset;
+          if (offset >= target) break;
+        }
+      }
+      if (cut <= simpleStart) break;
+      simpleChunks.add(markdown.substring(simpleStart, cut));
+      simpleStart = cut;
+    }
+    simpleChunks.add(markdown.substring(simpleStart));
+    return List<String>.unmodifiable(simpleChunks);
+  }
+
   // markdownToHtml usa el mismo Document + ExtensionSet GFM que
   // flutter_markdown. Comparar su salida evita reimplementar parcialmente la
   // gramática CommonMark (listas flojas, referencias, blockquotes, tablas…).
@@ -420,13 +525,46 @@ List<String> splitAssistantMarkdownForViewport(
     }
   });
 
+  // Comparar la firma del resto del documento (no la del documento entero)
+  // es lo que permite trocear textos cuyas definiciones de referencia viven
+  // al final: un tramo aislado no resuelve `[texto][ref]`, pero la cola que
+  // lo acompaña sí, y la concatenación reproduce el render original.
+  //
+  // Parsear el resto entero en cada tramo hace que el coste crezca con el
+  // cuadrado de la longitud (las colas suman ~10x el documento; medido: 520ms
+  // para 63KB). Cuando el documento no declara ninguna definición de
+  // referencia, ningún tramo puede depender de lo que viene después, así que
+  // basta comparar contra una ventana acotada: el tramo más el siguiente.
+  final hasLinkReferenceDefinitions = _linkReferenceDefinitionRe.hasMatch(
+    markdown,
+  );
+  int restEndFor(int start) => hasLinkReferenceDefinitions
+      ? markdown.length
+      : math.min(start + 2 * maxChars, markdown.length);
+
+  // La cola se memoiza por `start`: dentro de un tramo se prueban varios
+  // candidatos y todos comparten la misma, así que sin esto se reparsea la
+  // ventana una vez por candidato.
+  var restStart = -1;
+  String? restSignature;
+  String? signatureOfRest(int start) {
+    if (restStart != start) {
+      restStart = start;
+      restSignature = signature(markdown.substring(start, restEndFor(start)));
+    }
+    return restSignature;
+  }
+
   bool preservesRendering(int start, int end) {
-    final rest = markdown.substring(start);
-    final whole = signature(rest);
+    final whole = signatureOfRest(start);
     if (whole == null) return false;
     final left = signature(markdown.substring(start, end));
-    final right = signature(markdown.substring(end));
-    return left != null && right != null && '$left$right' == whole;
+    if (left == null || !whole.startsWith(left)) {
+      // Sin prefijo común no hay frontera válida: ahorra parsear la derecha.
+      return false;
+    }
+    final right = signature(markdown.substring(end, restEndFor(start)));
+    return right != null && '$left$right' == whole;
   }
 
   Iterable<int> candidatesFor(int start) sync* {
@@ -907,6 +1045,7 @@ String friendlyModelName(String id) {
 /// histórico. Solo se inyecta desde widget tests; en producción permanece null.
 @visibleForTesting
 class ChatPerformanceProbe {
+  int publicTranscriptReads = 0;
   int screenBuilds = 0;
   int composerBuilds = 0;
   int terminalAssistantBuilds = 0;
@@ -914,13 +1053,26 @@ class ChatPerformanceProbe {
   int terminalProjectionComputations = 0;
   int liveStableProjectionComputations = 0;
 
+  /// Proyecciones completas del transcript (`ChatRenderProjection.build`).
+  int renderProjectionBuilds = 0;
+
+  /// Reconstrucciones de la lista de entradas del transcript.
+  int listEntryProjections = 0;
+
+  /// Planes de troceado de respuestas largas calculados (fallos de caché).
+  int assistantRenderPlanComputations = 0;
+
   void reset() {
+    publicTranscriptReads = 0;
     screenBuilds = 0;
     composerBuilds = 0;
     terminalAssistantBuilds = 0;
     liveAssistantBuilds = 0;
     terminalProjectionComputations = 0;
     liveStableProjectionComputations = 0;
+    renderProjectionBuilds = 0;
+    listEntryProjections = 0;
+    assistantRenderPlanComputations = 0;
   }
 }
 
@@ -1007,6 +1159,27 @@ String _stableChatReadAloudHash(String value) {
 }
 
 class ChatScreen extends StatefulWidget {
+  /// Vacía la caché estática de planes de render (aislamiento entre tests).
+  @visibleForTesting
+  static void resetAssistantRenderPlanCacheForTesting() =>
+      _ChatScreenState._assistantRenderPlans.clear();
+
+  /// Entradas de la caché estática de resaltado de bloques de código.
+  @visibleForTesting
+  static int get codeHighlightCacheLengthForTesting =>
+      _CodeBlockWrapperState._highlightCache.length;
+
+  @visibleForTesting
+  static ({int entries, int bytes})
+  get assistantRenderPlanCacheStatsForTesting => (
+    entries: _ChatScreenState._assistantRenderPlans.length,
+    bytes: _ChatScreenState._assistantRenderPlans.bytes,
+  );
+
+  @visibleForTesting
+  static const int assistantRenderPlanCacheMaxBytes =
+      _assistantRenderPlanCacheMaxBytes;
+
   final SavedConnection connection;
   final Session session;
   final String? initialPrompt;
@@ -1108,8 +1281,12 @@ class _ChatScreenState extends State<ChatScreen>
   /// Congela la proyección visual mientras el editor está abierto. El agente
   /// puede avanzar en segundo plano, pero su respuesta no aparece mientras se
   /// edita: Cancelar revela el progreso real y Guardar rebobina el turno.
-  List<Map<String, dynamic>> get _messages =>
-      _editingMessagesSnapshot ?? _chat.messages;
+  List<Map<String, dynamic>> get _messages {
+    final probe = widget.performanceProbe;
+    if (probe != null) probe.publicTranscriptReads += 1;
+    return _editingMessagesSnapshot ?? _chat.messages;
+  }
+
   bool get _editingTranscriptChanged {
     final before = _editingMessagesSnapshot;
     if (before == null) return false;
@@ -1428,9 +1605,7 @@ class _ChatScreenState extends State<ChatScreen>
   String? _compressionInvocation;
   void _setActivityPillExtent(double value) {
     if (_disposed || _activityPillExtent.value == value) return;
-    _recordTranscriptOverlayExtentChange(
-      value - _activityPillExtent.value,
-    );
+    _recordTranscriptOverlayExtentChange(value - _activityPillExtent.value);
     _activityPillExtent.value = value;
   }
 
@@ -1453,8 +1628,26 @@ class _ChatScreenState extends State<ChatScreen>
   ChatRenderProjection? _renderProjection;
   ChatRenderProjection? _listEntriesProjection;
   List<_ChatListEntry>? _listEntries;
-  final LinkedHashMap<String, _CachedAssistantRenderPlan>
-  _assistantRenderPlans = LinkedHashMap();
+  // Estática (proceso): el plan es puro por contenido. Con caché por State,
+  // cada ChatScreen nuevo (volver de la lista, reabrir) repetía el troceado
+  // verificado de todas las respuestas largas dentro del frame que aplica la
+  // página REST (QA 9340; parte del frame lento al reabrir sesiones largas).
+  static final ByteBoundedLruCache<String, _CachedAssistantRenderPlan>
+  _assistantRenderPlans = _createAssistantRenderPlanCache();
+
+  static ByteBoundedLruCache<String, _CachedAssistantRenderPlan>
+  _createAssistantRenderPlanCache() {
+    final cache = ByteBoundedLruCache<String, _CachedAssistantRenderPlan>(
+      maxEntries: _assistantRenderPlanCacheLimit,
+      maxBytes: _assistantRenderPlanCacheMaxBytes,
+      sizeOf: _assistantRenderPlanCacheBytes,
+    );
+    // Borrar conexión, revocar API keys o cambiar de perfil vacían la caché:
+    // las claves son texto de conversaciones de esa autoridad.
+    PrivateRenderCaches.register(cache.clear);
+    return cache;
+  }
+
   final LinkedHashMap<
     _AssistantTerminalProjectionKey,
     _AssistantTerminalProjection
@@ -1614,10 +1807,13 @@ class _ChatScreenState extends State<ChatScreen>
         identical(frame.metadata, head)) {
       return;
     }
-    final hasActivity = normalizeAssistantActivityTrace(
-      head[assistantActivityTraceKey],
-    ).isNotEmpty;
-    final content = hasActivity ? '' : (head['content'] as String? ?? '');
+    // El texto ya sellado del turno sigue siendo visible: la actividad abre un
+    // tramo NUEVO detrás de él, no vacía la burbuja. Publicar '' aquí borraba
+    // de pantalla la narración previa a la herramienta («Voy a revisar…») y
+    // solo reaparecía al cerrar el turno, cuando el terminal reconstruye la
+    // burbuja entera. El servicio nunca perdió ese texto — lo conserva en
+    // `content` — así que el frame vivo debe reflejarlo tal cual.
+    final content = (head['content'] as String?) ?? '';
     _revealedChars = content.length;
     _liveAssistantFrame.value = _LiveAssistantFrame(
       turnSerial: _assistantEntranceSerial,
@@ -3733,8 +3929,7 @@ class _ChatScreenState extends State<ChatScreen>
           Duration(seconds: 30),
           Duration(seconds: 60),
         ],
-        changeEventsAvailable:
-            _chat.desktopChangeEventsAvailable,
+        changeEventsAvailable: _chat.desktopChangeEventsAvailable,
         durableChatId: () => _chat.serverSessionId,
         externallyOwnedTurnActive: () => _chat.remoteSurfaceOwnsLiveTurn,
         recoveryConverging: () => _chat.resumeReconciliationInFlight,
@@ -3838,11 +4033,16 @@ class _ChatScreenState extends State<ChatScreen>
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
     if (_disposed || !mounted || bottomInset <= 0) return;
+    // Si ya está al fondo, el resize del viewport mantiene visible el último
+    // mensaje. No programes un scroll/setState durante la animación del IME.
+    if (_isNearBottom) return;
     _keyboardScrollTimer?.cancel();
-    _keyboardScrollTimer = Timer(
-      const Duration(milliseconds: 150),
-      _scrollToBottom,
-    );
+    _keyboardScrollTimer = Timer(const Duration(milliseconds: 150), () {
+      // El teclado solo ajusta el viewport: nunca invalida las proyecciones del
+      // transcript. Estas se reconstruyen exclusivamente cuando cambia el
+      // contenido, no por un cambio de `viewInsets`.
+      _scrollToBottom(animate: false, invalidateTerminalProjection: false);
+    });
   }
 
   void _onVoicePreferenceChanged() {
@@ -4005,8 +4205,7 @@ class _ChatScreenState extends State<ChatScreen>
   void _captureAdaptiveRefreshRevisions() {
     _seenAdaptiveEventRevision = _chat.adaptiveRefreshEventRevision;
     _seenAdaptiveFullRefreshRevision = _chat.adaptiveFullRefreshRevision;
-    _seenAdaptiveSubagentRepairRevision =
-        _chat.adaptiveSubagentRepairRevision;
+    _seenAdaptiveSubagentRepairRevision = _chat.adaptiveSubagentRepairRevision;
     _seenAdaptiveProcessRepairRevision = _chat.adaptiveProcessRepairRevision;
     _seenAdaptiveControlRepairRevision = _chat.adaptiveControlRepairRevision;
   }
@@ -4080,9 +4279,7 @@ class _ChatScreenState extends State<ChatScreen>
       _subagentRepairDebounce?.cancel();
       _subagentRepairDebounce = Timer(const Duration(milliseconds: 250), () {
         _subagentRepairDebounce = null;
-        unawaited(
-          _runAdaptiveSnapshot(processes: false, control: false),
-        );
+        unawaited(_runAdaptiveSnapshot(processes: false, control: false));
       });
     }
 
@@ -4092,7 +4289,8 @@ class _ChatScreenState extends State<ChatScreen>
         controlRevision != _seenAdaptiveControlRepairRevision) {
       final refreshProcesses =
           processRevision != _seenAdaptiveProcessRepairRevision;
-      final refreshControl = controlRevision != _seenAdaptiveControlRepairRevision;
+      final refreshControl =
+          controlRevision != _seenAdaptiveControlRepairRevision;
       _seenAdaptiveProcessRepairRevision = processRevision;
       _seenAdaptiveControlRepairRevision = controlRevision;
       _processControlRepairDebounce?.cancel();
@@ -4143,8 +4341,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (processes) _chat.refreshBackgroundProcesses(),
       if (control) _chat.refreshSessionControl(),
     ]);
-    final failed =
-        _chat.adaptiveSnapshotFailureRevision != failureRevision;
+    final failed = _chat.adaptiveSnapshotFailureRevision != failureRevision;
     _adaptiveSnapshotInFlight = false;
     if (_disposed ||
         !mounted ||
@@ -4402,9 +4599,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) {
       if (!mounted) return;
       HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(Strings.of(context).chaBackgroundActionFailed),
-        ),
+        SnackBar(content: Text(Strings.of(context).chaBackgroundActionFailed)),
         kind: HermesNoticeKind.error,
       );
     }
@@ -4554,9 +4749,7 @@ class _ChatScreenState extends State<ChatScreen>
         break;
       }
     }
-    if (!active &&
-        !_compaction.running &&
-        _compressionInvocation == null) {
+    if (!active && !_compaction.running && _compressionInvocation == null) {
       _consumedCompressionResult = head;
     }
     // Solo hechos: lo que la línea de estado de Hermes dice y el tiempo local.
@@ -4739,6 +4932,14 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    // An externally observed successor can become live without a local
+    // `started` event. Retire the old terminal host before publishing its
+    // successor's frame, or both rows would read the same live notifier.
+    if (event != ActiveChatEvent.started &&
+        _surfaceTurnTerminal &&
+        _chat.isStreaming) {
+      _beginSurfaceTurn();
+    }
     _syncStopConfirmationVisibility();
     if (event == ActiveChatEvent.started) {
       _lastNonEmptySubagentActivities = const <SubagentActivity>[];
@@ -4763,9 +4964,7 @@ class _ChatScreenState extends State<ChatScreen>
         event == ActiveChatEvent.interactiveRequest;
     _syncPassiveTranscriptRefresh(
       refreshNow:
-          passiveTerminalEvent ||
-          passiveRecoveryEvent ||
-          passiveRuntimeEvent,
+          passiveTerminalEvent || passiveRecoveryEvent || passiveRuntimeEvent,
       recoveryConverging: passiveRecoveryEvent,
       terminal: passiveTerminalEvent,
     );
@@ -5824,7 +6023,10 @@ class _ChatScreenState extends State<ChatScreen>
     return pos.pixels <= pos.minScrollExtent + 100;
   }
 
-  void _scrollToBottom({bool animate = true}) {
+  void _scrollToBottom({
+    bool animate = true,
+    bool invalidateTerminalProjection = true,
+  }) {
     final target = _chat.assistantContent.length;
     _streamingViewportLock.disable();
     if (!_autoFollowStreaming || _revealedChars != target) {
@@ -5832,7 +6034,7 @@ class _ChatScreenState extends State<ChatScreen>
         _autoFollowStreaming = true;
         _revealedChars = target;
         _showScrollToBottom = false;
-        if (!_chat.isStreaming) {
+        if (!_chat.isStreaming && invalidateTerminalProjection) {
           _liveAssistantMaterialized = false;
           _clearRetainedTerminalReferences();
           _renderProjection = null;
@@ -5866,6 +6068,7 @@ class _ChatScreenState extends State<ChatScreen>
     final messages = _messages;
     final cached = _renderProjection;
     if (cached != null && cached.canReuseFor(messages)) return cached;
+    widget.performanceProbe?.renderProjectionBuilds++;
     return _renderProjection = ChatRenderProjection.build(messages);
   }
 
@@ -5875,7 +6078,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (cached != null && identical(_listEntriesProjection, projection)) {
       return cached;
     }
+    widget.performanceProbe?.listEntryProjections++;
 
+    // ActiveChat.messages computes the privacy/editorial projection. Read one
+    // coherent snapshot for this synchronous pass, not the full history once
+    // per row (quadratic on a cached long chat, before any network request).
+    final messages = _messages;
     final entries = <_ChatListEntry>[];
     final retainedErrorPair =
         !_chat.isStreaming &&
@@ -5883,9 +6091,9 @@ class _ChatScreenState extends State<ChatScreen>
         !_autoFollowStreaming &&
         _retainedTerminalError != null &&
         _retainedTerminalAssistant != null &&
-        _messages.length > 1 &&
-        identical(_messages[0], _retainedTerminalError) &&
-        identical(_messages[1], _retainedTerminalAssistant);
+        messages.length > 1 &&
+        identical(messages[0], _retainedTerminalError) &&
+        identical(messages[1], _retainedTerminalAssistant);
     if (retainedErrorPair) {
       entries.add(
         _RetainedTerminalErrorChatListEntry(
@@ -5894,8 +6102,8 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       );
     }
-    if (_chat.isStreaming && _messages.isNotEmpty) {
-      final head = _messages.first;
+    if (_chat.isStreaming && messages.isNotEmpty) {
+      final head = messages.first;
       // El servicio puede retirar `_pipeline` antes del primer token. Como el
       // planner omite texto vacío, conserva una unidad para proyectar el estado
       // vivo en vez de dejar solo la petición del usuario.
@@ -5916,7 +6124,7 @@ class _ChatScreenState extends State<ChatScreen>
         continue;
       }
       if (sourcePlan is ChatMessageUnitPlan) {
-        final message = _messages[sourcePlan.messageIndex];
+        final message = messages[sourcePlan.messageIndex];
         final plan = _assistantRenderPlanFor(message);
         if (plan != null) {
           // La lista es reverse:true: la última parte debe tener el índice más
@@ -5956,11 +6164,9 @@ class _ChatScreenState extends State<ChatScreen>
     // La caché va por contenido: un Map nuevo con el mismo texto (cada flush
     // del streaming sustituye el mapa de cabeza) reutiliza el plan, así el
     // split con verificación CommonMark se ejecuta UNA vez por respuesta.
-    final cached = _assistantRenderPlans.remove(content);
-    if (cached != null) {
-      _assistantRenderPlans[content] = cached;
-      return cached.plan;
-    }
+    final cached = _assistantRenderPlans.lookup(content);
+    if (cached != null) return cached.value.plan;
+    widget.performanceProbe?.assistantRenderPlanComputations++;
 
     final split = ReasoningSplit(
       reasoning: '',
@@ -6009,10 +6215,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _cacheAssistantRenderPlan(String content, _AssistantRenderPlan? plan) {
-    _assistantRenderPlans[content] = _CachedAssistantRenderPlan(plan);
-    while (_assistantRenderPlans.length > _assistantRenderPlanCacheLimit) {
-      _assistantRenderPlans.remove(_assistantRenderPlans.keys.first);
-    }
+    _assistantRenderPlans.put(content, _CachedAssistantRenderPlan(plan));
   }
 
   static final _urlRegex = RegExp(r'https?://[^\s\)\"]+');
@@ -6463,8 +6666,11 @@ class _ChatScreenState extends State<ChatScreen>
         recoveredAmbiguous.restoresComposer &&
         recoveredAmbiguous.state == PreparedTurnState.ambiguous &&
         recoveredAmbiguous.text == text) {
-      _showHiddenRecoveredTurn(recoveredAmbiguous);
-      return false;
+      // Solo la evidencia durable decide: sin fila nueva de usuario tras la
+      // frontera el turno nunca llegó y se reenvía con el mismo clientTurnId.
+      if (!await _settleAmbiguousTurnForRetry(recoveredAmbiguous)) {
+        return false;
+      }
     }
 
     // Desktop consume el envío como aceptado para que el draft desaparezca y
@@ -6636,35 +6842,8 @@ class _ChatScreenState extends State<ChatScreen>
     // composer is cleared. This preserves FIFO across process death and keeps a
     // rejected head visible for explicit retry instead of dropping it.
     if (_sending || waitsForExternalOwner) {
-      if (_sending &&
-          !queueOnly &&
-          !skipSlashRouting &&
-          attachments.isEmpty &&
-          _chat.pendingApproval == null &&
-          text.isNotEmpty) {
-        var accepted = false;
-        try {
-          final disposition = await _chat.steer(text);
-          accepted = disposition != DesktopRedirectDisposition.rejected;
-        } catch (_) {}
-        if (accepted) {
-          if (usesComposerState &&
-              _textController.text == composerTextAtSubmit &&
-              _sameAttachmentDrafts(_pendingAttachments, attachments)) {
-            _draftTimer?.cancel();
-            _restoringDraft = true;
-            setState(() {
-              _textController.clear();
-              _pendingAttachments.clear();
-            });
-            _restoringDraft = false;
-            await _clearDraft();
-          } else {
-            _scheduleDraftSave();
-          }
-          return true;
-        }
-      }
+      // Normal sends are next turns, never implicit steering: redirecting can
+      // interrupt the live parent and its children. Steer stays a queue action.
       final now = DateTime.now().millisecondsSinceEpoch;
       final prepared = PreparedTurn(
         connectionId: widget.connection.id,
@@ -7019,6 +7198,22 @@ class _ChatScreenState extends State<ChatScreen>
       // anything, so the retry the user asked for is a real resend.
     }
     if (prompt.isEmpty) return;
+    // Un fallo de transporte antes del ACK deja el turno `ambiguous`. Hay que
+    // resolverlo ANTES de retirar la proyección fallida: si no se puede
+    // demostrar que el servidor no lo tiene, la burbuja y el error se quedan.
+    // La burbuja se empareja con su lote por clientTurnId (el texto puede
+    // diferir por adjuntos/menciones). Solo burbujas legadas sin identidad
+    // caen al texto exacto.
+    final pending = _preparedTurn;
+    final failedClientTurnId = _chat.latestFailedTurnClientTurnId;
+    if (pending != null &&
+        pending.restoresComposer &&
+        pending.state == PreparedTurnState.ambiguous &&
+        (failedClientTurnId != null
+            ? failedClientTurnId == pending.clientTurnId
+            : pending.text == prompt.trim())) {
+      if (!await _settleAmbiguousTurnForRetry(pending) || !mounted) return;
+    }
     _removeLatestFailedPromptProjection(prompt, allowLegacyContentPair: true);
     // En un fallo previo al ACK, el composer ya conserva el texto y todos los
     // adjuntos originales. Solo reconstruimos desde lastPrompt para sesiones
@@ -7028,6 +7223,61 @@ class _ChatScreenState extends State<ChatScreen>
     }
     setState(() => _pipelineState = ChatPipelineState.idle);
     await _sendMessage();
+  }
+
+  /// Resuelve un turno `ambiguous` del composer contra el transcript durable.
+  /// Devuelve true solo cuando está demostrado que el servidor no lo recibió
+  /// (el lote queda como `failedBeforeAcceptance` y el envío reutiliza su ID).
+  /// Si el servidor ya lo persistió, se adopta el transcript sin reenviar.
+  Future<bool> _settleAmbiguousTurnForRetry(PreparedTurn prepared) async {
+    final evidence = await _chat.resolveAmbiguousRetryFromTranscript(prepared);
+    if (!mounted || !identical(_preparedTurn, prepared)) return false;
+    switch (evidence) {
+      case AmbiguousRetryEvidence.notDelivered:
+        final proven = prepared.copyWith(
+          updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+          state: PreparedTurnState.failedBeforeAcceptance,
+        );
+        if (!await _persistPreparedTurn(await _outboxStore(), proven)) {
+          _showOutboxUnavailable();
+          return false;
+        }
+        _composerPreparedTurnClientTurnId = proven.clientTurnId;
+        return mounted;
+      case AmbiguousRetryEvidence.delivered:
+        try {
+          await (await _outboxStore()).delete(prepared);
+        } catch (error) {
+          debugPrint(
+            '[turn-outbox] delivered retry cleanup failed '
+            '(${error.runtimeType})',
+          );
+          return false;
+        }
+        if (identical(_preparedTurn, prepared)) {
+          _preparedTurn = null;
+          _composerPreparedTurnClientTurnId = null;
+        }
+        _chat.removeLatestFailedPromptProjection(
+          prepared.fullText,
+          allowLegacyContentPair: true,
+        );
+        if (mounted && _textController.text.trim() == prepared.text) {
+          _restoringDraft = true;
+          setState(() {
+            _textController.clear();
+            _pendingAttachments.clear();
+          });
+          _restoringDraft = false;
+          await _clearDraft();
+        }
+        if (mounted) setState(() => _pipelineState = ChatPipelineState.idle);
+        await _chat.reconcileAfterResume();
+        return false;
+      case AmbiguousRetryEvidence.unknown:
+        _showHiddenRecoveredTurn(prepared);
+        return false;
+    }
   }
 
   bool _removeLatestFailedPromptProjection(
@@ -7084,9 +7334,11 @@ class _ChatScreenState extends State<ChatScreen>
     if (includePayload && sentinel >= 0) {
       result.add('⟦adjunto⟧');
       result.addAll(
-        lines.skip(sentinel + 1).where(
-          (line) => AttachmentHistoryReference.tryParseMarker(line) == null,
-        ),
+        lines
+            .skip(sentinel + 1)
+            .where(
+              (line) => AttachmentHistoryReference.tryParseMarker(line) == null,
+            ),
       );
     }
     result.addAll(
@@ -7122,8 +7374,9 @@ class _ChatScreenState extends State<ChatScreen>
         _structuredGeneratedVideos(row).isNotEmpty) {
       return false;
     }
-    return normalizeAssistantActivityTrace(row[assistantActivityTraceKey])
-            .isNotEmpty ||
+    return normalizeAssistantActivityTrace(
+          row[assistantActivityTraceKey],
+        ).isNotEmpty ||
         (row['reasoning'] is String &&
             (row['reasoning'] as String).trim().isNotEmpty);
   }
@@ -7347,9 +7600,7 @@ class _ChatScreenState extends State<ChatScreen>
       final message = failure is DashboardAuthException
           ? localizedApiError(str, failure)
           : (authRequired ? str.dashboardAuthLoginRequired : str.chaEditFailed);
-      HermesNotice.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -11973,8 +12224,7 @@ class _ChatScreenState extends State<ChatScreen>
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             ),
-            if (stop == StopConfirmationState.failed &&
-                !backgroundStopWarning)
+            if (stop == StopConfirmationState.failed && !backgroundStopWarning)
               TextButton(
                 key: const ValueKey('chat-stop-retry'),
                 onPressed: _cancelStream,
@@ -12520,14 +12770,14 @@ class _ChatScreenState extends State<ChatScreen>
                 mode: showStop ? _SendMode.stop : _SendMode.send,
                 enabled: showStop
                     ? _chat.gatewayConnected
-                    : !_composerSubmissionInFlight &&
+                    : !_interactiveMessageRefreshPending &&
+                          !_composerSubmissionInFlight &&
                           !_attachmentSubmitting &&
                           !_compressingSession &&
                           !_attachmentMutationInFlight &&
                           !_nothingToSend,
                 onSend: _sendMessage,
-                onQueue:
-                    _sending || _chat.hasAuthoritativePassiveRemoteActivity
+                onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
                     ? () => _sendMessage(queueOnly: true)
                     : null,
                 onStop: _cancelStream,
@@ -12819,8 +13069,13 @@ class _ChatScreenState extends State<ChatScreen>
                                         // A retained invocation may keep focus without
                                         // authorizing edits or a second submission.
                                         readOnly: _compressingSession,
+                                        // El usuario puede preparar texto y abrir el
+                                        // teclado mientras el transcript interactivo
+                                        // termina de publicar. El envío se mantiene
+                                        // bloqueado abajo hasta entonces; adjuntar y
+                                        // dictar siguen cerrados porque mezclarían el
+                                        // lote en vuelo.
                                         enabled:
-                                            !_interactiveMessageRefreshPending &&
                                             !_attachmentSubmitting &&
                                             (!_compressingSession ||
                                                 _compressionDraftFocusRetained),
@@ -13014,6 +13269,7 @@ class _ChatScreenState extends State<ChatScreen>
         ChatErrorKind.localColdStart => str.chaErrLocalColdStart,
         ChatErrorKind.firstTokenTimeout => str.chaErrFirstTokenTimeout,
         ChatErrorKind.searchToolUnavailable => str.chaErrSearchToolUnavailable,
+        ChatErrorKind.sessionTooLarge => str.chaErrSessionTooLarge,
         ChatErrorKind.unknown => str.chaErrUnknown,
       };
       return Center(
@@ -13112,139 +13368,147 @@ class _ChatScreenState extends State<ChatScreen>
           onPointerUp: _finishStreamingScrollInteraction,
           onPointerCancel: _cancelStreamingScrollInteraction,
           child: ListView.builder(
-        controller: _scrollController,
-        // En `reverse:true` el asistente vivo crece por debajo del contenido
-        // que el lector está mirando. Conservar el mismo offset numérico hace
-        // que ese contenido suba una línea por cada reflow. Mientras el usuario
-        // haya pausado el seguimiento, compensa el cambio de extensión dentro
-        // del propio layout del viewport: no cancela el drag ni ejecuta saltos
-        // tardíos que compitan con el dedo.
-        physics: _ChatStreamingViewportPhysics(lock: _streamingViewportLock),
-        // Deja aire real bajo la última respuesta. Con solo 4 dp el cierre del
-        // texto quedaba pegado al compositor y parecía visualmente recortado.
-        // `bottom` reserva la altura medida de toda la pila flotante y de la
-        // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
-        // aunque cambie de alto o convivan varias actividades.
-        padding: EdgeInsets.only(bottom: 12 + overlayExtent),
-        reverse: true,
-        // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
-        // se materializan entradas frías en medio de un frame de scroll.
-        scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
-        itemCount: entries.length,
-        // Una selección que sale del viewport no debe retener el RenderObject
-        // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
-        // completo sigue disponible en su cabecera y la selección visible se
-        // mantiene dentro de cada bloque virtualizado.
-        addAutomaticKeepAlives: false,
-        // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
-        // reparentar un árbol todavía dependiente del diálogo puede disparar
-        // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
-        // RenderObjects ligeros que no reutilizan el árbol Markdown.
-        itemBuilder: (context, index) {
-          final entry = entries[index];
-          if (entry is _RetainedTerminalErrorChatListEntry) {
-            return _buildRetainedTerminalErrorEntry(entry);
-          }
-          final plan = entry.sourcePlan;
-          final assistantSlice = entry is _AssistantSliceChatListEntry
-              ? entry.slice
-              : null;
-          final sourceMessages = _sourceMessagesForRenderPlan(plan);
-          final reportsPreservedTurnInsertion = sourceMessages.any(
-            _readerPreservedTurnInsertions.contains,
-          );
-          final unit = _materializeRenderUnit(plan);
-          final child = _buildRenderUnit(unit, assistantSlice: assistantSlice);
-          final assistantMessage =
-              unit is Map<String, dynamic> &&
-                  unit['role'] == 'assistant' &&
-                  unit['_pipeline'] != true
-              ? unit
-              : null;
-          final ownsAnchor = assistantSlice?.showHeader ?? true;
-          Widget result = child;
-          if (ownsAnchor) {
-            result = ChatAnswerAnchor(
-              onLayout: (anchor) {
-                for (final message in sourceMessages) {
-                  _messageAnchors[message] = anchor;
-                }
-              },
-              onDetach: (anchor) {
-                for (final message in sourceMessages) {
-                  if (identical(_messageAnchors[message], anchor)) {
-                    _messageAnchors.remove(message);
-                  }
-                }
-              },
-              child: child,
-            );
-          }
-          if (assistantSlice != null && assistantMessage != null) {
-            result = KeyedSubtree(
-              key: ValueKey((assistantMessage, assistantSlice.index)),
-              child: result,
-            );
-          }
-          // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
-          // lista es reverse). El turno que esta superficie ya presentó queda
-          // fuera: su host crece por streaming y un translate adicional de 8 px
-          // se percibe como un pequeño tirón si el usuario empieza a leer o
-          // arrastrar. La guarda sobrevive al terminal para que cancelación,
-          // error o una reconciliación tardía tampoco animen de nuevo la fila.
-          final key = _entranceKey(unit);
-          final belongsToSurfaceTurn =
-              _surfaceTurnSerial == _assistantEntranceSerial &&
-              (_chat.isStreaming || _surfaceTurnTerminal);
-          if (index == 0 && key != null && !belongsToSurfaceTurn) {
-            result = MotionEntrance(key: ValueKey<Object>(key), child: result);
-          }
-          if (reportsPreservedTurnInsertion) {
-            result = _SurfaceTurnInitialExtentReporter(
-              onInitialExtent: _streamingViewportLock.record,
-              child: result,
-            );
-          }
-          // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
-          // reveal gradual) no invalida la rasterización del historial visible.
-          // El host vivo/retenido queda fuera: su geometría la mide el lock del
-          // viewport y una capa intermedia rompe esa medición.
-          final keepsLiveHost =
-              assistantMessage != null &&
-              _messageKeepsLiveHost(assistantMessage);
-          final isLiveHead =
-              _chat.isStreaming &&
-              _messages.isNotEmpty &&
-              identical(unit, _messages.first);
-          if (!keepsLiveHost && !isLiveHead) {
-            result = RepaintBoundary(child: result);
-          }
-          final durableEntryIds = sourceMessages
-              .map((message) {
-                final messageId = canonicalTranscriptMessageId(message);
-                if (messageId != null) return 'message:$messageId';
-                final rowId = canonicalTranscriptRowId(message);
-                return rowId == null ? null : 'row:$rowId';
-              })
-              .whereType<String>()
-              .toList(growable: false);
-          if (durableEntryIds.length == sourceMessages.length) {
-            // This must remain the outermost list child. Sliver reconciliation
-            // can then retain the complete bubble subtree even when refresh
-            // replaces its source Map or runtime presentation wrappers change.
-            result = KeyedSubtree(
-              key: ValueKey<Object>((
-                'chat-render-entry',
-                durableEntryIds.join('\u0000'),
-                assistantSlice?.index,
-              )),
-              child: result,
-            );
-          }
-          return result;
-        },
-      ),
-    );
+            controller: _scrollController,
+            // En `reverse:true` el asistente vivo crece por debajo del contenido
+            // que el lector está mirando. Conservar el mismo offset numérico hace
+            // que ese contenido suba una línea por cada reflow. Mientras el usuario
+            // haya pausado el seguimiento, compensa el cambio de extensión dentro
+            // del propio layout del viewport: no cancela el drag ni ejecuta saltos
+            // tardíos que compitan con el dedo.
+            physics: _ChatStreamingViewportPhysics(
+              lock: _streamingViewportLock,
+            ),
+            // Deja aire real bajo la última respuesta. Con solo 4 dp el cierre del
+            // texto quedaba pegado al compositor y parecía visualmente recortado.
+            // `bottom` reserva la altura medida de toda la pila flotante y de la
+            // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
+            // aunque cambie de alto o convivan varias actividades.
+            padding: EdgeInsets.only(bottom: 12 + overlayExtent),
+            reverse: true,
+            // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
+            // se materializan entradas frías en medio de un frame de scroll.
+            scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
+            itemCount: entries.length,
+            // Una selección que sale del viewport no debe retener el RenderObject
+            // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
+            // completo sigue disponible en su cabecera y la selección visible se
+            // mantiene dentro de cada bloque virtualizado.
+            addAutomaticKeepAlives: false,
+            // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
+            // reparentar un árbol todavía dependiente del diálogo puede disparar
+            // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
+            // RenderObjects ligeros que no reutilizan el árbol Markdown.
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              if (entry is _RetainedTerminalErrorChatListEntry) {
+                return _buildRetainedTerminalErrorEntry(entry);
+              }
+              final plan = entry.sourcePlan;
+              final assistantSlice = entry is _AssistantSliceChatListEntry
+                  ? entry.slice
+                  : null;
+              final sourceMessages = _sourceMessagesForRenderPlan(plan);
+              final reportsPreservedTurnInsertion = sourceMessages.any(
+                _readerPreservedTurnInsertions.contains,
+              );
+              final unit = _materializeRenderUnit(plan);
+              final child = _buildRenderUnit(
+                unit,
+                assistantSlice: assistantSlice,
+              );
+              final assistantMessage =
+                  unit is Map<String, dynamic> &&
+                      unit['role'] == 'assistant' &&
+                      unit['_pipeline'] != true
+                  ? unit
+                  : null;
+              final ownsAnchor = assistantSlice?.showHeader ?? true;
+              Widget result = child;
+              if (ownsAnchor) {
+                result = ChatAnswerAnchor(
+                  onLayout: (anchor) {
+                    for (final message in sourceMessages) {
+                      _messageAnchors[message] = anchor;
+                    }
+                  },
+                  onDetach: (anchor) {
+                    for (final message in sourceMessages) {
+                      if (identical(_messageAnchors[message], anchor)) {
+                        _messageAnchors.remove(message);
+                      }
+                    }
+                  },
+                  child: child,
+                );
+              }
+              if (assistantSlice != null && assistantMessage != null) {
+                result = KeyedSubtree(
+                  key: ValueKey((assistantMessage, assistantSlice.index)),
+                  child: result,
+                );
+              }
+              // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
+              // lista es reverse). El turno que esta superficie ya presentó queda
+              // fuera: su host crece por streaming y un translate adicional de 8 px
+              // se percibe como un pequeño tirón si el usuario empieza a leer o
+              // arrastrar. La guarda sobrevive al terminal para que cancelación,
+              // error o una reconciliación tardía tampoco animen de nuevo la fila.
+              final key = _entranceKey(unit);
+              final belongsToSurfaceTurn =
+                  _surfaceTurnSerial == _assistantEntranceSerial &&
+                  (_chat.isStreaming || _surfaceTurnTerminal);
+              if (index == 0 && key != null && !belongsToSurfaceTurn) {
+                result = MotionEntrance(
+                  key: ValueKey<Object>(key),
+                  child: result,
+                );
+              }
+              if (reportsPreservedTurnInsertion) {
+                result = _SurfaceTurnInitialExtentReporter(
+                  onInitialExtent: _streamingViewportLock.record,
+                  child: result,
+                );
+              }
+              // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
+              // reveal gradual) no invalida la rasterización del historial visible.
+              // El host vivo/retenido queda fuera: su geometría la mide el lock del
+              // viewport y una capa intermedia rompe esa medición.
+              final keepsLiveHost =
+                  assistantMessage != null &&
+                  _messageKeepsLiveHost(assistantMessage);
+              final isLiveHead =
+                  _chat.isStreaming &&
+                  _messages.isNotEmpty &&
+                  identical(unit, _messages.first);
+              if (!keepsLiveHost && !isLiveHead) {
+                result = RepaintBoundary(child: result);
+              }
+              final durableEntryIds = sourceMessages
+                  .map((message) {
+                    final messageId = canonicalTranscriptMessageId(message);
+                    if (messageId != null) return 'message:$messageId';
+                    final rowId = canonicalTranscriptRowId(message);
+                    return rowId == null ? null : 'row:$rowId';
+                  })
+                  .whereType<String>()
+                  .toList(growable: false);
+              if (durableEntryIds.length == sourceMessages.length) {
+                // This must remain the outermost list child. Sliver reconciliation
+                // can then retain the complete bubble subtree even when refresh
+                // replaces its source Map or runtime presentation wrappers change.
+                result = KeyedSubtree(
+                  key: ValueKey<Object>((
+                    'chat-render-entry',
+                    durableEntryIds.join('\u0000'),
+                    assistantSlice?.index,
+                  )),
+                  child: result,
+                );
+              }
+              return result;
+            },
+          ),
+        );
       },
     );
     return ChatRefreshStatusOverlay(
@@ -13421,8 +13685,7 @@ class _ChatScreenState extends State<ChatScreen>
             content == rawContent &&
                 unit.supplements.isEmpty &&
                 _canEditUserMessage(unit.primary)
-            ? (bubbleWidth) =>
-                  _editUserMessage(unit.primary, bubbleWidth)
+            ? (bubbleWidth) => _editUserMessage(unit.primary, bubbleWidth)
             : null,
         editing: identical(unit.primary, _editingUserMessageTarget),
         editingText: _editingUserMessageText,
@@ -13485,6 +13748,7 @@ class _ChatScreenState extends State<ChatScreen>
             : () => unawaited(_retryLastPrompt(prompt)),
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
+        onNewSession: _chat.conflictReadOnly ? null : _newChat,
       );
     }
 
@@ -14595,78 +14859,88 @@ class _AttachmentPreviewStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A horizontal scroll view shrink-wraps to its content, and the composer
+    // column centres its children: one or two thumbs ended up floating in the
+    // middle of the input. Take the full width and pin the row to the start
+    // edge (RTL-aware) so attachments stack from the leading side.
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var index = 0; index < attachments.length; index++) ...[
-              if (index > 0) const SizedBox(width: 10),
-              Builder(
-                builder: (context) {
-                  final attachment = attachments[index];
-                  final hasLocalImage =
-                      attachment.isImage &&
-                      attachment.localPath.isNotEmpty &&
-                      File(attachment.localPath).existsSync();
-                  final previewable =
-                      hasLocalImage &&
-                      (attachment.uploadState ==
-                              AttachmentUploadState.pending ||
-                          attachment.uploadState ==
-                              AttachmentUploadState.error);
-                  final changing =
-                      attachment.uploadState == AttachmentUploadState.uploading;
-                  final openPreview = previewable
-                      ? () =>
-                            showImageViewer(context, File(attachment.localPath))
-                      : null;
-                  return Semantics(
-                    container: changing || previewable,
-                    explicitChildNodes: changing || previewable,
-                    liveRegion:
-                        changing ||
-                        attachment.uploadState == AttachmentUploadState.error,
-                    label: changing
-                        ? Strings.of(
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var index = 0; index < attachments.length; index++) ...[
+                if (index > 0) const SizedBox(width: 10),
+                Builder(
+                  builder: (context) {
+                    final attachment = attachments[index];
+                    final hasLocalImage =
+                        attachment.isImage &&
+                        attachment.localPath.isNotEmpty &&
+                        File(attachment.localPath).existsSync();
+                    final previewable =
+                        hasLocalImage &&
+                        (attachment.uploadState ==
+                                AttachmentUploadState.pending ||
+                            attachment.uploadState ==
+                                AttachmentUploadState.error);
+                    final changing =
+                        attachment.uploadState ==
+                        AttachmentUploadState.uploading;
+                    final openPreview = previewable
+                        ? () => showImageViewer(
                             context,
-                          ).chaAttachmentUploadInProgress(attachment.name)
-                        : previewable
-                        ? Strings.of(
-                            context,
-                          ).chaPreviewAttachment(attachment.name)
-                        : null,
-                    button: previewable,
-                    onTap: openPreview,
-                    child: AttachmentCard(
-                      key: ValueKey('attachment-card-${attachment.localId}'),
-                      name: attachment.name,
-                      mimeType: attachment.mimeType,
-                      sizeLabel: attachment.formattedSize,
-                      thumbnailFile: hasLocalImage
-                          ? File(attachment.localPath)
+                            File(attachment.localPath),
+                          )
+                        : null;
+                    return Semantics(
+                      container: changing || previewable,
+                      explicitChildNodes: changing || previewable,
+                      liveRegion:
+                          changing ||
+                          attachment.uploadState == AttachmentUploadState.error,
+                      label: changing
+                          ? Strings.of(
+                              context,
+                            ).chaAttachmentUploadInProgress(attachment.name)
+                          : previewable
+                          ? Strings.of(
+                              context,
+                            ).chaPreviewAttachment(attachment.name)
                           : null,
-                      showUploadState: true,
-                      uploadState: attachment.uploadState,
+                      button: previewable,
                       onTap: openPreview,
-                      onRetry:
-                          attachment.uploadState ==
-                                  AttachmentUploadState.error &&
-                              attachment.localId.isNotEmpty &&
-                              onRetry != null
-                          ? () => onRetry!(attachment.localId)
-                          : null,
-                      onRemove: attachment.localId.isEmpty || onRemove == null
-                          ? null
-                          : () => onRemove!(attachment.localId),
-                    ),
-                  );
-                },
-              ),
+                      child: AttachmentCard(
+                        key: ValueKey('attachment-card-${attachment.localId}'),
+                        name: attachment.name,
+                        mimeType: attachment.mimeType,
+                        sizeLabel: attachment.formattedSize,
+                        thumbnailFile: hasLocalImage
+                            ? File(attachment.localPath)
+                            : null,
+                        showUploadState: true,
+                        uploadState: attachment.uploadState,
+                        onTap: openPreview,
+                        onRetry:
+                            attachment.uploadState ==
+                                    AttachmentUploadState.error &&
+                                attachment.localId.isNotEmpty &&
+                                onRetry != null
+                            ? () => onRetry!(attachment.localId)
+                            : null,
+                        onRemove: attachment.localId.isEmpty || onRemove == null
+                            ? null
+                            : () => onRemove!(attachment.localId),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -14880,11 +15154,16 @@ class _ErrorBubble extends StatefulWidget {
   /// "agente colgado"/conexión, donde el servidor puede estar atascado).
   final VoidCallback? onRestartGateway;
 
+  /// Abre una sesión nueva; se ofrece cuando la sesión ya no cabe en el
+  /// contexto del modelo (reintentar repetiría el mismo fallo).
+  final VoidCallback? onNewSession;
+
   const _ErrorBubble({
     required this.error,
     required this.prompt,
     required this.onRetry,
     this.onRestartGateway,
+    this.onNewSession,
   });
 
   @override
@@ -14902,6 +15181,7 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     _ErrorKind.localColdStart => s.chaErrLocalColdStart,
     _ErrorKind.firstTokenTimeout => s.chaErrFirstTokenTimeout,
     _ErrorKind.searchToolUnavailable => s.chaErrSearchToolUnavailable,
+    _ErrorKind.sessionTooLarge => s.chaErrSessionTooLarge,
     _ErrorKind.unknown => s.chaErrUnknown,
   };
 
@@ -14913,6 +15193,7 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     _ErrorKind.localColdStart => s.chaErrHintLocalColdStart,
     _ErrorKind.firstTokenTimeout => s.chaErrHintFirstTokenTimeout,
     _ErrorKind.searchToolUnavailable => s.chaErrHintSearchToolUnavailable,
+    _ErrorKind.sessionTooLarge => s.chaErrHintSessionTooLarge,
     _ErrorKind.unknown => null,
   };
 
@@ -15001,7 +15282,14 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                 // ~25dp tocables); el visual compacto se conserva.
                 Row(
                   children: [
-                    if (widget.onRetry != null)
+                    if (kind == _ErrorKind.sessionTooLarge &&
+                        widget.onNewSession != null)
+                      _ErrorBubbleAction(
+                        label: Strings.of(context).chaNewChatTooltip,
+                        color: colors.error,
+                        onTap: widget.onNewSession!,
+                      )
+                    else if (widget.onRetry != null)
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaRetry,
                         color: colors.error,
@@ -16055,8 +16343,7 @@ class _UserMessage extends StatelessWidget {
                 );
               }
               final imgPath = attachment.imagePath;
-              final imgFile =
-                  (imgPath != null && File(imgPath).existsSync())
+              final imgFile = (imgPath != null && File(imgPath).existsSync())
                   ? File(imgPath)
                   : null;
               return AttachmentCard(
@@ -16177,7 +16464,9 @@ class _UserMessage extends StatelessWidget {
                                 const SizedBox(width: 6),
                                 Flexible(
                                   child: Text(
-                                    Strings.of(context).chaSteerSupplementsLabel,
+                                    Strings.of(
+                                      context,
+                                    ).chaSteerSupplementsLabel,
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w700,
@@ -16188,10 +16477,16 @@ class _UserMessage extends StatelessWidget {
                               ],
                             ),
                             const SizedBox(height: 7),
-                            for (var index = 0; index < supplements.length; index++)
+                            for (
+                              var index = 0;
+                              index < supplements.length;
+                              index++
+                            )
                               Padding(
                                 padding: EdgeInsets.only(
-                                  bottom: index == supplements.length - 1 ? 0 : 7,
+                                  bottom: index == supplements.length - 1
+                                      ? 0
+                                      : 7,
                                 ),
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -16199,9 +16494,14 @@ class _UserMessage extends StatelessWidget {
                                     Container(
                                       width: 2,
                                       height: 18,
-                                      margin: const EdgeInsets.only(top: 2, right: 8),
+                                      margin: const EdgeInsets.only(
+                                        top: 2,
+                                        right: 8,
+                                      ),
                                       decoration: BoxDecoration(
-                                        color: colors.accent.withValues(alpha: 0.55),
+                                        color: colors.accent.withValues(
+                                          alpha: 0.55,
+                                        ),
                                         borderRadius: BorderRadius.circular(2),
                                       ),
                                     ),
@@ -16230,8 +16530,9 @@ class _UserMessage extends StatelessWidget {
                   if (onEdit != null)
                     IconButton(
                       onPressed: () {
-                        final box = bubbleMeasureKey.currentContext
-                            ?.findRenderObject() as RenderBox?;
+                        final box =
+                            bubbleMeasureKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (box != null && box.hasSize) {
                           onEdit!(box.size.width);
                         }
@@ -16916,13 +17217,14 @@ class _AssistantMessage extends StatelessWidget {
       active: activityActive,
       stopped: stopped,
     );
-    final headerMood = companionMood ??
+    final headerMood =
+        companionMood ??
         switch (activityOutcome) {
           TraceOutcome.working => HermesSparkMood.thinking,
           TraceOutcome.stopped => HermesSparkMood.idle,
           TraceOutcome.failed => HermesSparkMood.error,
-          TraceOutcome.completed || TraceOutcome.recovered =>
-            HermesSparkMood.success,
+          TraceOutcome.completed ||
+          TraceOutcome.recovered => HermesSparkMood.success,
         };
     final headerAnimated = isStreaming || metadata['_pipeline'] == true;
     final showTrace = showHeader && (activityEvents.isNotEmpty || stopped);
@@ -17197,78 +17499,85 @@ class _AssistantMessage extends StatelessWidget {
                               animate: headerAnimated,
                               subtitle: summary,
                               actions: [
-                    if (onSpeak != null && readAloudMessageKey != null) ...[
-                      const SizedBox(width: 6),
-                      ReadAloudButton(
-                        messageKey: readAloudMessageKey!,
-                        state: readAloud,
-                        stopBehavior: readAloudStopBehavior,
-                        onPressed: onSpeak,
-                      ),
-                    ],
-                    Semantics(
-                      button: true,
-                      label: Strings.of(context).chaCopyMessage,
-                      excludeSemantics: true,
-                      child: Tooltip(
-                        message: Strings.of(context).chaCopyMessage,
-                        child: InkWell(
-                          onTap: () {
-                            Clipboard.setData(
-                              ClipboardData(
-                                text: markdownToClipboardText(
-                                  GeneratedMediaService.stripDirectives(answer),
+                                if (onSpeak != null &&
+                                    readAloudMessageKey != null) ...[
+                                  const SizedBox(width: 6),
+                                  ReadAloudButton(
+                                    messageKey: readAloudMessageKey!,
+                                    state: readAloud,
+                                    stopBehavior: readAloudStopBehavior,
+                                    onPressed: onSpeak,
+                                  ),
+                                ],
+                                Semantics(
+                                  button: true,
+                                  label: Strings.of(context).chaCopyMessage,
+                                  excludeSemantics: true,
+                                  child: Tooltip(
+                                    message: Strings.of(context).chaCopyMessage,
+                                    child: InkWell(
+                                      onTap: () {
+                                        Clipboard.setData(
+                                          ClipboardData(
+                                            text: markdownToClipboardText(
+                                              GeneratedMediaService.stripDirectives(
+                                                answer,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                        HermesNotice.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              Strings.of(context).chaCopied,
+                                            ),
+                                            duration: Duration(seconds: 1),
+                                          ),
+                                          kind: HermesNoticeKind.success,
+                                        );
+                                      },
+                                      borderRadius: BorderRadius.circular(24),
+                                      child: SizedBox(
+                                        width: 48,
+                                        height: 48,
+                                        child: Center(
+                                          child: Icon(
+                                            Icons.copy_rounded,
+                                            size: 16,
+                                            color: colors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            );
-                            HermesNotice.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(Strings.of(context).chaCopied),
-                                duration: Duration(seconds: 1),
-                              ),
-                              kind: HermesNoticeKind.success,
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(24),
-                          child: SizedBox(
-                            width: 48,
-                            height: 48,
-                            child: Center(
-                              child: Icon(
-                                Icons.copy_rounded,
-                                size: 16,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (onRegenerate != null)
-                      Semantics(
-                        button: true,
-                        label: Strings.of(context).chaRegenerate,
-                        excludeSemantics: true,
-                        child: Tooltip(
-                          message: Strings.of(context).chaRegenerate,
-                          child: InkWell(
-                            onTap: onRegenerate,
-                            borderRadius: BorderRadius.circular(24),
-                            child: SizedBox(
-                              width: 48,
-                              height: 48,
-                              child: Center(
-                                child: Icon(
-                                  Icons.refresh_rounded,
-                                  size: 18,
-                                  color: colors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                                if (onRegenerate != null)
+                                  Semantics(
+                                    button: true,
+                                    label: Strings.of(context).chaRegenerate,
+                                    excludeSemantics: true,
+                                    child: Tooltip(
+                                      message: Strings.of(
+                                        context,
+                                      ).chaRegenerate,
+                                      child: InkWell(
+                                        onTap: onRegenerate,
+                                        borderRadius: BorderRadius.circular(24),
+                                        child: SizedBox(
+                                          width: 48,
+                                          height: 48,
+                                          child: Center(
+                                            child: Icon(
+                                              Icons.refresh_rounded,
+                                              size: 18,
+                                              color: colors.textSecondary,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                             details,
                           ],
@@ -17651,7 +17960,8 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
     VoidCallback onShare,
     VoidCallback onSave,
   ) async {
-    final isPdf = widget.reference.mimeType == 'application/pdf' ||
+    final isPdf =
+        widget.reference.mimeType == 'application/pdf' ||
         widget.reference.displayName.toLowerCase().endsWith('.pdf');
     if (!isPdf) {
       await Navigator.of(context).push<void>(
@@ -17739,41 +18049,35 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
       ),
       errorLabelBuilder: _downloadErrorLabel,
       onOpen: _open,
-      readyBuilder: (
-        context,
-        file,
-        sizeBytes,
-        onOpenExternal,
-        onShare,
-        onSave,
-      ) {
-        if (widget.reference.mimeType == 'application/pdf' ||
-            widget.reference.displayName.toLowerCase().endsWith('.pdf')) {
-          return GeneratedPdfPreviewCard(
-            file: file,
-            name: widget.reference.displayName,
-            sizeBytes: sizeBytes,
-            onOpen: () => _open(
-              context,
-              file,
-              sizeBytes,
-              onOpenExternal,
-              onShare,
-              onSave,
-            ),
-            onShare: onShare,
-            onSave: onSave,
-          );
-        }
-        return switch (widget.reference.kind) {
-          GeneratedMediaKind.image => GeneratedImageCard(
-            status: GeneratedImageStatus.ready,
-            file: file,
-          ),
-          GeneratedMediaKind.video => GeneratedVideoCard(file: file),
-          GeneratedMediaKind.audio || GeneratedMediaKind.file => null,
-        };
-      },
+      readyBuilder:
+          (context, file, sizeBytes, onOpenExternal, onShare, onSave) {
+            if (widget.reference.mimeType == 'application/pdf' ||
+                widget.reference.displayName.toLowerCase().endsWith('.pdf')) {
+              return GeneratedPdfPreviewCard(
+                file: file,
+                name: widget.reference.displayName,
+                sizeBytes: sizeBytes,
+                onOpen: () => _open(
+                  context,
+                  file,
+                  sizeBytes,
+                  onOpenExternal,
+                  onShare,
+                  onSave,
+                ),
+                onShare: onShare,
+                onSave: onSave,
+              );
+            }
+            return switch (widget.reference.kind) {
+              GeneratedMediaKind.image => GeneratedImageCard(
+                status: GeneratedImageStatus.ready,
+                file: file,
+              ),
+              GeneratedMediaKind.video => GeneratedVideoCard(file: file),
+              GeneratedMediaKind.audio || GeneratedMediaKind.file => null,
+            };
+          },
     );
   }
 }
@@ -17906,8 +18210,18 @@ class _CodeBlockWrapper extends StatefulWidget {
 class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
   static const int _maxSyntaxHighlightChars = 16000;
   static const int _maxHighlightCacheEntries = 32;
+  // Claves y spans son código de conversaciones privadas: se vacía con los
+  // cambios de autoridad (borrar conexión, revocar keys, cambiar perfil).
   static final LinkedHashMap<(String, String), List<TextSpan>?>
-  _highlightCache = LinkedHashMap<(String, String), List<TextSpan>?>();
+  _highlightCache = _createHighlightCache();
+
+  static LinkedHashMap<(String, String), List<TextSpan>?>
+  _createHighlightCache() {
+    // ignore: prefer_collection_literals
+    final cache = LinkedHashMap<(String, String), List<TextSpan>?>();
+    PrivateRenderCaches.register(cache.clear);
+    return cache;
+  }
 
   bool _copied = false;
   Timer? _resetTimer;
@@ -18740,9 +19054,7 @@ class _ChatTopButtonState extends State<_ChatTopButton> {
               iconSize: 20,
               loading: widget.loading,
             )
-          : const SizedBox.shrink(
-              key: ValueKey('chat-top-button-hidden'),
-            ),
+          : const SizedBox.shrink(key: ValueKey('chat-top-button-hidden')),
     ),
   );
 }

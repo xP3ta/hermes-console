@@ -13,6 +13,7 @@ import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
+import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -1678,6 +1679,24 @@ void main() {
       expect(fences, 6);
       await deletion;
     });
+    test('borrar conexión, revocar keys y cambiar perfil vacían las cachés de '
+        'render', () async {
+      final fixture = await managerWithCapabilities();
+      var clears = 0;
+      void clearer() => clears += 1;
+      PrivateRenderCaches.register(clearer);
+      addTearDown(() => PrivateRenderCaches.unregister(clearer));
+
+      await fixture.manager.setActiveProfile(id, 'coding');
+      expect(clears, 1);
+      // Mismo perfil: no hay cambio de autoridad.
+      await fixture.manager.setActiveProfile(id, 'coding');
+      expect(clears, 1);
+      await fixture.manager.wipeAllApiKeys();
+      expect(clears, 2);
+      await fixture.manager.deleteConnection(id);
+      expect(clears, 3);
+    });
     test(
       'deleteConnection dispone notifiers por id y un reemplazo empieza limpio',
       () async {
@@ -2632,7 +2651,11 @@ void main() {
             }(),
         ]);
 
-        expect(loginCalls, 1, reason: 'the initial login remains single-flight');
+        expect(
+          loginCalls,
+          1,
+          reason: 'the initial login remains single-flight',
+        );
         expect(
           outcomes,
           everyElement(
@@ -2716,7 +2739,11 @@ void main() {
 
         expect(responses, hasLength(3));
         expect(retryRequests, 2, reason: 'stale siblings each retry once');
-        expect(loginCalls, 1, reason: 'cookie rotation must not password-login');
+        expect(
+          loginCalls,
+          1,
+          reason: 'cookie rotation must not password-login',
+        );
       },
     );
 
@@ -2843,69 +2870,72 @@ void main() {
       },
     );
 
-    test('rate-limit cooldown blocks retries and succeeds after Retry-After', () async {
-      var now = DateTime.utc(2026, 9, 22);
-      var loginCalls = 0;
-      var allowLogin = false;
+    test(
+      'rate-limit cooldown blocks retries and succeeds after Retry-After',
+      () async {
+        var now = DateTime.utc(2026, 9, 22);
+        var loginCalls = 0;
+        var allowLogin = false;
 
-      MockClient backend() => MockClient((request) async {
-        expect(request.url.path, '/auth/password-login');
-        loginCalls++;
-        if (!allowLogin) {
+        MockClient backend() => MockClient((request) async {
+          expect(request.url.path, '/auth/password-login');
+          loginCalls++;
+          if (!allowLogin) {
+            return http.Response(
+              '{"detail":"rate limited"}',
+              429,
+              headers: {'retry-after': '10'},
+            );
+          }
           return http.Response(
-            '{"detail":"rate limited"}',
-            429,
-            headers: {'retry-after': '10'},
+            '{"ok":true}',
+            200,
+            headers: {'set-cookie': 'hermes_session_at=AT_AFTER_COOLDOWN'},
           );
-        }
-        return http.Response(
-          '{"ok":true}',
-          200,
-          headers: {'set-cookie': 'hermes_session_at=AT_AFTER_COOLDOWN'},
+        });
+
+        DashboardClient client() => DashboardClient(
+          host: 'media-rate-limit.local',
+          basicUser: 'admin',
+          basicPass: 'secret',
+          httpClientOverride: backend(),
+          nowOverride: () => now,
         );
-      });
 
-      DashboardClient client() => DashboardClient(
-        host: 'media-rate-limit.local',
-        basicUser: 'admin',
-        basicPass: 'secret',
-        httpClientOverride: backend(),
-        nowOverride: () => now,
-      );
-
-      final first = client();
-      addTearDown(first.close);
-      await expectLater(
-        first.authHeadersForDiagnostics(),
-        throwsA(
-          isA<DashboardAuthException>().having(
-            (error) => error.code,
-            'code',
-            DashboardAuthFailureCode.rateLimited,
+        final first = client();
+        addTearDown(first.close);
+        await expectLater(
+          first.authHeadersForDiagnostics(),
+          throwsA(
+            isA<DashboardAuthException>().having(
+              (error) => error.code,
+              'code',
+              DashboardAuthFailureCode.rateLimited,
+            ),
           ),
-        ),
-      );
+        );
 
-      final immediateRetry = client();
-      addTearDown(immediateRetry.close);
-      await expectLater(
-        immediateRetry.authHeadersForDiagnostics(),
-        throwsA(isA<DashboardAuthException>()),
-      );
-      expect(
-        loginCalls,
-        1,
-        reason: 'cooldown retries do not hit the login API',
-      );
+        final immediateRetry = client();
+        addTearDown(immediateRetry.close);
+        await expectLater(
+          immediateRetry.authHeadersForDiagnostics(),
+          throwsA(isA<DashboardAuthException>()),
+        );
+        expect(
+          loginCalls,
+          1,
+          reason: 'cooldown retries do not hit the login API',
+        );
 
-      now = now.add(const Duration(seconds: 10));
-      allowLogin = true;
-      final afterCooldown = client();
-      addTearDown(afterCooldown.close);
-      final headers = await afterCooldown.authHeadersForDiagnostics();
-      expect(headers['Cookie'], contains('AT_AFTER_COOLDOWN'));
-      expect(loginCalls, 2);
-    });
+        now = now.add(const Duration(seconds: 10));
+        allowLogin = true;
+        final afterCooldown = client();
+        addTearDown(afterCooldown.close);
+        final headers = await afterCooldown.authHeadersForDiagnostics();
+        expect(headers['Cookie'], contains('AT_AFTER_COOLDOWN'));
+        expect(loginCalls, 2);
+      },
+    );
 
     test('repeated login failures enter exponential cooldown', () async {
       var now = DateTime.utc(2026, 9, 22);
@@ -2936,7 +2966,11 @@ void main() {
         blocked.authHeadersForDiagnostics(),
         throwsA(isA<DashboardAuthException>()),
       );
-      expect(loginCalls, 1, reason: 'the first cooldown blocks retries locally');
+      expect(
+        loginCalls,
+        1,
+        reason: 'the first cooldown blocks retries locally',
+      );
 
       now = now.add(const Duration(seconds: 5));
       await expectLater(
@@ -2952,7 +2986,11 @@ void main() {
         stillBlocked.authHeadersForDiagnostics(),
         throwsA(isA<DashboardAuthException>()),
       );
-      expect(loginCalls, 2, reason: 'the second cooldown doubles to ten seconds');
+      expect(
+        loginCalls,
+        2,
+        reason: 'the second cooldown doubles to ten seconds',
+      );
     });
 
     test('reuses refresh-token rotation without password re-login', () async {

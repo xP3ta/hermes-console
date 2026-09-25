@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
+import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_result.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
+import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/models/session_activity.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/chat_render_projection.dart';
@@ -354,6 +356,52 @@ SavedConnection _connection(String id) => SavedConnection(
   apiKey: 'test-key',
   kind: InstanceKind.vps,
 );
+
+/// `session.history` devuelve el almacén durable con `display_metadata`.
+class _DurableHistorySnapshotGateway extends _SnapshotGateway
+    implements HermesDesktopSessionHistoryGateway {
+  _DurableHistorySnapshotGateway(this.rows, {this.historyLatency});
+
+  final List<Map<String, dynamic>> Function() rows;
+  final Duration? historyLatency;
+  int historyCalls = 0;
+
+  /// Número de lecturas siguientes que fallan por transporte.
+  int failNextHistoryReads = 0;
+
+  /// El servidor no soporta `session.history` (error RPC permanente).
+  bool historyAlwaysUnsupported = false;
+
+  @override
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  }) async {
+    historyCalls += 1;
+    if (historyAlwaysUnsupported) {
+      throw const TuiGatewayRpcError(
+        'session.history',
+        'Method not found',
+        code: -32601,
+      );
+    }
+    if (failNextHistoryReads > 0) {
+      failNextHistoryReads -= 1;
+      throw const TuiGatewayRpcError(
+        'session.history',
+        'Hermes Desktop connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
+    final latency = historyLatency;
+    if (latency != null) await Future<void>.delayed(latency);
+    return SessionMessagesPage.fromRaw(
+      rawMessages: rows(),
+      pagination: null,
+      paginationProvided: false,
+    );
+  }
+}
 
 DesktopSessionSnapshot _snapshot(Map<String, dynamic> json) =>
     DesktopSessionSnapshot.fromJson(
@@ -2064,6 +2112,83 @@ void main() {
     },
   );
 
+  test(
+    'cold open hydrating coalesces the identical REST transcript read',
+    () async {
+      var restGets = 0;
+      final firstGetEntered = Completer<void>();
+      final firstGetRelease = Completer<void>();
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-heavy-open',
+          'session_key': 'stored-chat',
+          'message_count': 2,
+          'messages': <Object>[],
+        })
+        ..deferredSnapshot = _snapshot({
+          'session_id': 'runtime-heavy-open',
+          'session_key': 'stored-chat',
+          'message_count': 2,
+          'hydrating': true,
+          'messages': <Object>[],
+        });
+      final chat = _chat(
+        'heavy-open-dedup',
+        gateway,
+        client: MockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/api/sessions/stored-chat/messages');
+          expect(request.url.queryParameters, {
+            'limit': '500',
+            'order': 'latest',
+            'offset': '0',
+            'include_compacted': 'true',
+          });
+          restGets += 1;
+          if (restGets == 1) {
+            firstGetEntered.complete();
+            await firstGetRelease.future;
+          }
+          return http.Response(
+            '{"data":[{"role":"user","content":"pregunta pesada"},'
+            '{"role":"assistant","content":"respuesta pesada"}]}',
+            200,
+          );
+        }),
+      );
+      addTearDown(chat.dispose);
+
+      final loading = chat.loadMessages(expectedMessageCount: 2);
+      await firstGetEntered.future;
+      for (
+        var attempt = 0;
+        attempt < 20 && !chat.isHydratingDesktopHistory;
+        attempt++
+      ) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(chat.isHydratingDesktopHistory, isTrue);
+      gateway.emit('session.resume_progress', const {
+        'status': 'complete',
+        'message_count': 2,
+      });
+      for (var attempt = 0; attempt < 20 && restGets == 1; attempt++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(restGets, 1);
+      firstGetRelease.complete();
+      await loading;
+
+      expect(restGets, 1);
+      expect(chat.messages.map((message) => message['content']), [
+        'respuesta pesada',
+        'pregunta pesada',
+      ]);
+      expect(ChatRenderProjection.build(chat.messages).units, hasLength(2));
+    },
+  );
+
   test('REST repara marker editorial mientras resume 0.20 hidrata', () async {
     const raw = '[ASYNC DELEGATION BATCH COMPLETE — deleg_0d84d484]';
     final gateway = _SnapshotGateway()
@@ -3161,6 +3286,799 @@ void main() {
   );
 
   test(
+    'tarjeta de subagentes en vivo conserva los conteos durables',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const marker =
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_0a1b2c3d]\n'
+          'A background fan-out unit you dispatched earlier has finished.';
+      const metadata = <String, dynamic>{
+        'display_text': 'Subagent finished',
+        'delegation_id': 'deleg_0a1b2c3d',
+        'task_count': 1,
+        'completed_count': 1,
+        'failed_count': 0,
+        'duration_seconds': 45.7,
+      };
+      var durable = <Map<String, dynamic>>[
+        {
+          'message_id': 'turn-1-user',
+          'role': 'user',
+          'content': 'delega y responde HECHO',
+          'timestamp': 100,
+        },
+        {
+          'message_id': 'turn-1-assistant',
+          'role': 'assistant',
+          'content': 'HECHO',
+          'timestamp': 101,
+        },
+      ];
+      // REST 8642 (`_message_response`, api_server.py:2784) omite
+      // display_metadata; `session.history` (almacén durable, como la
+      // hidratación de Desktop) sí la conserva.
+      List<Map<String, dynamic>> restRows() => [
+        for (final row in durable)
+          {
+            for (final entry in row.entries)
+              if (entry.key != 'display_metadata') entry.key: entry.value,
+          },
+      ];
+      final producer = Object();
+      final gateway = _DurableHistorySnapshotGateway(() => durable)
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-subagent-live',
+          'session_key': 'stored-chat',
+          'messages': durable,
+          'inflight': {'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'resume-subagent-live',
+        gateway,
+        storedMessageLoader: (_, _) async => restRows(),
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      final turnOneDone = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'HECHO'},
+        40,
+        7,
+        producer,
+      );
+      await turnOneDone.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // El hijo termina: el gateway persiste la fila sintética y arranca el
+      // turno de notificación (message.start sin payload).
+      durable = <Map<String, dynamic>>[
+        ...durable,
+        {
+          'message_id': 'delegation-complete',
+          'role': 'user',
+          'content': marker,
+          'display_kind': 'async_delegation_complete',
+          'display_metadata': metadata,
+          'timestamp': 150,
+        },
+        {
+          'message_id': 'turn-2-assistant',
+          'role': 'assistant',
+          'content': 'HECHO',
+          'timestamp': 160,
+        },
+      ];
+      gateway.snapshot = _snapshot({
+        'session_id': 'runtime-subagent-live',
+        'session_key': 'stored-chat',
+        'messages': durable,
+        'running': false,
+        'status': 'idle',
+      });
+      gateway.emit('message.start', const {}, 41, 7, producer);
+      gateway.emit('message.delta', const {'text': 'HECHO'}, 42, 7, producer);
+      await Future<void>.delayed(Duration.zero);
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'HECHO'},
+        43,
+        7,
+        producer,
+      );
+      await done.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      List<SubagentCompletionCardData> cards() => chat.messages
+          .map(historicalSubagentCompletionOf)
+          .whereType<SubagentCompletionCardData>()
+          .toList(growable: false);
+
+      // En vivo, tras el terminal: exactamente una tarjeta con los conteos.
+      expect(cards(), hasLength(1), reason: 'live: la tarjeta no aparece');
+      expect(
+        gateway.historyCalls,
+        greaterThanOrEqualTo(1),
+        reason: 'la tarjeta live se hidrata desde session.history durable',
+      );
+      expect(cards().single.completedCount, 1);
+      expect(cards().single.failedCount, 0);
+      expect(cards().single.taskCount, 1);
+
+      // Un refresco REST posterior (sin display_metadata) no degrada la
+      // tarjeta a "estado desconocido".
+      await chat.loadMessages(passiveOnly: true);
+      await chat.reconcileAfterResume();
+      expect(cards(), hasLength(1));
+      expect(cards().single.completedCount, 1);
+      expect(cards().single.failedCount, 0);
+      expect(cards().single.durationSeconds, 45.7);
+
+      // Otro turno terminal (cola/refresco) leído desde REST sin metadata.
+      durable = <Map<String, dynamic>>[
+        ...durable,
+        {
+          'message_id': 'turn-3-user',
+          'role': 'user',
+          'content': 'otra',
+          'timestamp': 170,
+        },
+        {
+          'message_id': 'turn-3-assistant',
+          'role': 'assistant',
+          'content': 'OK',
+          'timestamp': 171,
+        },
+      ];
+      final turnThreeDone = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit('message.start', const {}, 44, 7, producer);
+      gateway.emit('message.delta', const {'text': 'OK'}, 45, 7, producer);
+      await Future<void>.delayed(Duration.zero);
+      gateway.emit('message.complete', const {'text': 'OK'}, 46, 7, producer);
+      await turnThreeDone.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // El terminal de un turno posterior adopta el transcript REST 8642 sin
+      // display_metadata: la tarjeta debe conservar los conteos durables.
+      expect(cards(), hasLength(1));
+      expect(cards().single.completedCount, 1, reason: 'estado desconocido');
+      expect(cards().single.failedCount, 0);
+    },
+  );
+
+  test(
+    'tarjeta de subagente live con payloads reales (REST id / '
+    'session.history row_id) muestra conteos tras el terminal sintético',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const marker =
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_059692bc]\n'
+          'A background fan-out unit you dispatched earlier has finished.';
+      const metadata = <String, dynamic>{
+        'display_text': 'Subagent Task Completed: Ejecuta exactamente sleep 30',
+        'delegation_id': 'deleg_059692bc',
+        'task_count': 1,
+        'completed_count': 1,
+        'failed_count': 0,
+        'duration_seconds': 37.52,
+      };
+      // Filas del almacén (state.db) tal cual; cada lector las proyecta con
+      // su forma real.
+      final store = <Map<String, dynamic>>[
+        {
+          'id': 421600,
+          'role': 'user',
+          'content': 'QA9342: lanza UN subagente',
+          'timestamp': 1790294068.019716,
+        },
+        {
+          'id': 421605,
+          'role': 'assistant',
+          'content': '',
+          'timestamp': 1790294072.794395,
+          'tool_calls': [
+            {
+              'id': 'call_1',
+              'type': 'function',
+              'function': {'name': 'delegate_task', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'id': 421606,
+          'role': 'tool',
+          'content': '{"status": "dispatched", "mode": "background"}',
+          'tool_call_id': 'call_1',
+          'tool_name': 'delegate_task',
+          'timestamp': 1790294072.8562357,
+        },
+        {
+          'id': 421609,
+          'role': 'assistant',
+          'content': 'HECHO',
+          'timestamp': 1790294080.8552423,
+        },
+      ];
+      // REST 8642 `_message_response`: `id` int, sin display_metadata.
+      List<Map<String, dynamic>> restRows() => [
+        for (final row in store)
+          {
+            for (final entry in row.entries)
+              if (entry.key != 'display_metadata') entry.key: entry.value,
+          },
+      ];
+      // tui_gateway/session_history.py:240-259: `text`, `row_id`, sin `id`;
+      // tools como {role, name, context} sin identidad.
+      List<Map<String, dynamic>> historyRows() => [
+        for (final row in store)
+          if (row['role'] == 'tool')
+            {'role': 'tool', 'name': row['tool_name'], 'context': 'dispatch'}
+          else if ((row['content'] as String).isNotEmpty)
+            {
+              'role': row['role'],
+              'text': row['content'],
+              'timestamp': row['timestamp'],
+              'row_id': row['id'],
+              if (row['display_kind'] != null)
+                'display_kind': row['display_kind'],
+              if (row['display_metadata'] != null)
+                'display_metadata': row['display_metadata'],
+            },
+      ];
+      final producer = Object();
+      // session.history es un RPC real: tarda más que el refresco REST que
+      // la pantalla dispara en `done` (_syncPassiveTranscriptRefresh).
+      final gateway =
+          _DurableHistorySnapshotGateway(
+              historyRows,
+              historyLatency: const Duration(milliseconds: 30),
+            )
+            ..snapshot = _snapshot({
+              'session_id': 'runtime-subagent-real',
+              'session_key': 'stored-chat',
+              'messages': historyRows(),
+              'inflight': {'assistant': '', 'streaming': true},
+              'running': true,
+              'status': 'working',
+            });
+      final chat = _chat(
+        'resume-subagent-real',
+        gateway,
+        storedMessageLoader: (_, _) async => restRows(),
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      // Igual que ChatScreen._onChatEvent: cada terminal dispara un refresco
+      // pasivo del transcript (REST 8642, sin display_metadata).
+      final screenRefresh = chat.changes.listen((event) {
+        if (event == ActiveChatEvent.done) {
+          unawaited(chat.loadMessages(passiveOnly: true));
+        }
+      });
+      addTearDown(screenRefresh.cancel);
+      await chat.loadMessages();
+      final turnOneDone = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'HECHO'},
+        40,
+        7,
+        producer,
+      );
+      await turnOneDone.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // El hijo termina: `_notif_submit` emite message.start (sin payload) y
+      // `_run_prompt_submit` persiste la fila sintética con metadata.
+      store.add({
+        'id': 421618,
+        'role': 'user',
+        'content': marker,
+        'display_kind': 'async_delegation_complete',
+        'display_metadata': metadata,
+        'timestamp': 1790294110.390943,
+      });
+      gateway.emit('message.start', const {}, 41, 7, producer);
+      gateway.emit('message.delta', const {'text': 'HECHO'}, 42, 7, producer);
+      await Future<void>.delayed(Duration.zero);
+      store.add({
+        'id': 421621,
+        'role': 'assistant',
+        'content': 'HECHO',
+        'timestamp': 1790294114.3165755,
+      });
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'HECHO'},
+        43,
+        7,
+        producer,
+      );
+      await done.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final cards = chat.messages
+          .map(historicalSubagentCompletionOf)
+          .whereType<SubagentCompletionCardData>()
+          .toList(growable: false);
+      expect(cards, hasLength(1), reason: 'live: la tarjeta no aparece');
+      expect(
+        cards.single.completedCount,
+        1,
+        reason: 'estado desconocido tras el terminal del turno sintético',
+      );
+      expect(cards.single.failedCount, 0);
+      expect(cards.single.taskCount, 1);
+      expect(cards.single.durationSeconds, 37.52);
+    },
+  );
+
+  test(
+    'primer turno: subagent_ids inyectados por la proyección no '
+    'cuentan como metadata; session.history aporta los conteos (1 lectura)',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const marker =
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_0a1b2c3d]\n'
+          'A background fan-out unit you dispatched earlier has finished.';
+      const durableMetadata = <String, dynamic>{
+        'display_text': 'Subagent Task Completed: sleep 30',
+        'delegation_id': 'deleg_0a1b2c3d',
+        'task_count': 1,
+        'completed_count': 1,
+        'failed_count': 0,
+        'duration_seconds': 37.52,
+      };
+      final store = <Map<String, dynamic>>[
+        {
+          'id': 500600,
+          'role': 'user',
+          'content': 'lanza UN subagente',
+          'timestamp': 1790294068.0,
+        },
+        {
+          'id': 500605,
+          'role': 'assistant',
+          'content': '',
+          'timestamp': 1790294072.7,
+          'tool_calls': [
+            {
+              'id': 'call_1',
+              'type': 'function',
+              'function': {'name': 'delegate_task', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'id': 500606,
+          'role': 'tool',
+          // El dispatch sí trae ids: la proyección pública los inyecta.
+          'content':
+              '{"status": "dispatched", "mode": "background", '
+              '"delegation_id": "deleg_0a1b2c3d", '
+              '"subagent_ids": ["sa-0-p0first"]}',
+          'tool_call_id': 'call_1',
+          'tool_name': 'delegate_task',
+          'timestamp': 1790294072.8,
+        },
+        {
+          'id': 500609,
+          'role': 'assistant',
+          'content': 'HECHO',
+          'timestamp': 1790294080.8,
+        },
+      ];
+      List<Map<String, dynamic>> restRows() => [
+        for (final row in store)
+          {
+            for (final entry in row.entries)
+              if (entry.key != 'display_metadata') entry.key: entry.value,
+          },
+      ];
+      List<Map<String, dynamic>> historyRows() => [
+        for (final row in store)
+          if (row['role'] == 'tool')
+            {'role': 'tool', 'name': row['tool_name'], 'context': 'dispatch'}
+          else if ((row['content'] as String).isNotEmpty)
+            {
+              'role': row['role'],
+              'text': row['content'],
+              'timestamp': row['timestamp'],
+              'row_id': row['id'],
+              if (row['display_kind'] != null)
+                'display_kind': row['display_kind'],
+              if (row['display_metadata'] != null)
+                'display_metadata': row['display_metadata'],
+            },
+      ];
+
+      // Forma exacta de la sonda del Pixel: fila editorial REST sin dm →
+      // proyección pública → dm={subagent_ids:[…]}, tarjeta c/f/t=null.
+      final probe = projectHistoricalSubagentCompletions(
+        messagesNewestFirst: [
+          {
+            'id': 500618,
+            'role': 'user',
+            'content': marker,
+            'display_kind': 'async_delegation_complete',
+          },
+          for (final row in restRows().reversed) row,
+        ],
+      );
+      final probeRow = normalizeTranscriptMessageForDisplay(
+        probe.first,
+        retainMediaEvidence: true,
+        retainUserMentionNote: true,
+        retainProjectionState: true,
+      )!;
+      expect(probeRow['display_metadata'], {
+        'subagent_ids': ['sa-0-p0first'],
+      });
+      final probeCard = historicalSubagentCompletionOf(probeRow)!;
+      expect(probeCard.completedCount, isNull);
+      expect(probeCard.failedCount, isNull);
+      expect(probeCard.taskCount, isNull);
+
+      final producer = Object();
+      final gateway =
+          _DurableHistorySnapshotGateway(
+              historyRows,
+              historyLatency: const Duration(milliseconds: 30),
+            )
+            ..snapshot = _snapshot({
+              'session_id': 'runtime-subagent-p0',
+              'session_key': 'stored-chat',
+              'messages': historyRows(),
+              'inflight': {'assistant': '', 'streaming': true},
+              'running': true,
+              'status': 'working',
+            });
+      final chat = _chat(
+        'resume-subagent-p0',
+        gateway,
+        storedMessageLoader: (_, _) async => restRows(),
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      final screenRefresh = chat.changes.listen((event) {
+        if (event == ActiveChatEvent.done) {
+          unawaited(chat.loadMessages(passiveOnly: true));
+        }
+      });
+      addTearDown(screenRefresh.cancel);
+      await chat.loadMessages();
+      final turnOneDone = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'HECHO'},
+        40,
+        7,
+        producer,
+      );
+      await turnOneDone.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      store.add({
+        'id': 500618,
+        'role': 'user',
+        'content': marker,
+        'display_kind': 'async_delegation_complete',
+        'display_metadata': durableMetadata,
+        'timestamp': 1790294110.3,
+      });
+      gateway.emit('message.start', const {}, 41, 7, producer);
+      gateway.emit('message.delta', const {'text': 'LISTO'}, 42, 7, producer);
+      await Future<void>.delayed(Duration.zero);
+      store.add({
+        'id': 500621,
+        'role': 'assistant',
+        'content': 'LISTO',
+        'timestamp': 1790294114.3,
+      });
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'LISTO'},
+        43,
+        7,
+        producer,
+      );
+      await done.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      // Más refrescos/terminales no releen: la metadata ya es sustantiva.
+      await chat.loadMessages(passiveOnly: true);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      final cards = chat.messages
+          .map(historicalSubagentCompletionOf)
+          .whereType<SubagentCompletionCardData>()
+          .toList(growable: false);
+      expect(cards, hasLength(1));
+      expect(
+        cards.single.completedCount,
+        1,
+        reason: 'estado desconocido: dm solo con subagent_ids',
+      );
+      expect(cards.single.failedCount, 0);
+      expect(cards.single.taskCount, 1);
+      expect(cards.single.durationSeconds, 37.52);
+      expect(cards.single.subagentIds, ['sa-0-p0first']);
+      final row = chat.messages.singleWhere(
+        (m) => m['display_kind'] == 'async_delegation_complete',
+      );
+      expect((row['display_metadata'] as Map)['subagent_ids'], [
+        'sa-0-p0first',
+      ], reason: 'la fusión conserva subagent_ids');
+      expect(gateway.historyCalls, 1, reason: 'una sola lectura');
+    },
+  );
+
+  test('sonda del revisor: 404 del id provisional no prueba '
+      '«no entregado»', () async {
+    PreparedTurn ambiguous(PreparedTurnRetryBoundary boundary) => PreparedTurn(
+      connectionId: 'conn-rv-a5',
+      sessionId: 'mob-rv-a5',
+      clientTurnId: 'turn-rv-a5',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      text: 'primer mensaje',
+      attachments: const [],
+      model: 'hermes-agent',
+      profile: '',
+      state: PreparedTurnState.ambiguous,
+      retryBoundary: boundary,
+    );
+    final reads = <String>[];
+    final chat = _chat(
+      'rv-a5',
+      _SnapshotGateway(),
+      sessionId: 'mob-rv-a5',
+      storedMessageLoader: (sessionId, _) async {
+        reads.add(sessionId);
+        throw const CoreReadException(
+          CoreReadErrorKind.notFound,
+          statusCode: 404,
+        );
+      },
+    );
+    addTearDown(chat.dispose);
+    chat.markStoredSessionMissing();
+
+    // Process death: la clave creada no llegó al lote.
+    expect(
+      await chat.resolveAmbiguousRetryFromTranscript(
+        ambiguous(const PreparedTurnRetryBoundary.knownMissing()),
+      ),
+      AmbiguousRetryEvidence.unknown,
+    );
+    // Clave creada conocida, pero la lectura fue contra el id provisional.
+    expect(
+      await chat.resolveAmbiguousRetryFromTranscript(
+        ambiguous(
+          const PreparedTurnRetryBoundary.knownMissing().withCreatedSessionId(
+            'stored-rv-a5',
+          ),
+        ),
+      ),
+      AmbiguousRetryEvidence.unknown,
+    );
+    expect(reads, ['mob-rv-a5', 'mob-rv-a5']);
+  });
+
+  test(
+    'fila editorial sin metadata en el almacén hidrata session.history '
+    'como mucho una vez por fila',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const marker =
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_legacy]\n'
+          'A background fan-out unit you dispatched earlier has finished.';
+      final store = <Map<String, dynamic>>[
+        {'id': 10, 'role': 'user', 'content': 'hola', 'timestamp': 1.0},
+        {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': 2.0},
+        // Fila legada: el almacén tampoco tiene display_metadata.
+        {
+          'id': 12,
+          'role': 'user',
+          'content': marker,
+          'display_kind': 'async_delegation_complete',
+          'timestamp': 3.0,
+        },
+        {'id': 13, 'role': 'assistant', 'content': 'HECHO', 'timestamp': 4.0},
+      ];
+      List<Map<String, dynamic>> historyRows() => [
+        for (final row in store)
+          {
+            'role': row['role'],
+            'text': row['content'],
+            'row_id': row['id'],
+            if (row['display_kind'] != null)
+              'display_kind': row['display_kind'],
+          },
+      ];
+      final producer = Object();
+      final gateway = _DurableHistorySnapshotGateway(historyRows)
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-legacy-editorial',
+          'session_key': 'stored-chat',
+          'messages': historyRows(),
+          'inflight': {'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'resume-legacy-editorial',
+        gateway,
+        storedMessageLoader: (_, _) async => [
+          for (final row in store) Map<String, dynamic>.of(row),
+        ],
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      var seq = 40;
+      for (var turn = 0; turn < 3; turn++) {
+        final done = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+        if (turn > 0) {
+          store.addAll([
+            {
+              'id': 20 + turn * 2,
+              'role': 'user',
+              'content': 'turno $turn',
+              'timestamp': 10.0 + turn,
+            },
+            {
+              'id': 21 + turn * 2,
+              'role': 'assistant',
+              'content': 'R$turn',
+              'timestamp': 10.5 + turn,
+            },
+          ]);
+          gateway.emit('message.start', const {}, seq++, 7, producer);
+        }
+        gateway.emit(
+          'message.complete',
+          {'text': turn == 0 ? 'HECHO' : 'R$turn'},
+          seq++,
+          7,
+          producer,
+        );
+        await done.timeout(const Duration(seconds: 1));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        await chat.loadMessages(passiveOnly: true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        chat.messages.where(
+          (m) => m['display_kind'] == 'async_delegation_complete',
+        ),
+        hasLength(1),
+      );
+      expect(
+        gateway.historyCalls,
+        1,
+        reason:
+            'una fila sin metadata no puede releer session.history '
+            'en cada terminal/refresco',
+      );
+    },
+  );
+
+  test(
+    'un fallo transitorio de session.history se reintenta en el '
+    'siguiente terminal; una lectura completa sigue siendo la única',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const marker =
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_retry]\n'
+          'A background fan-out unit you dispatched earlier has finished.';
+      final store = <Map<String, dynamic>>[
+        {'id': 10, 'role': 'user', 'content': 'hola', 'timestamp': 1.0},
+        {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': 2.0},
+        {
+          'id': 12,
+          'role': 'user',
+          'content': marker,
+          'display_kind': 'async_delegation_complete',
+          'timestamp': 3.0,
+        },
+        {'id': 13, 'role': 'assistant', 'content': 'HECHO', 'timestamp': 4.0},
+      ];
+      List<Map<String, dynamic>> historyRows() => [
+        for (final row in store)
+          {
+            'role': row['role'],
+            'text': row['content'],
+            'row_id': row['id'],
+            if (row['display_kind'] != null)
+              'display_kind': row['display_kind'],
+          },
+      ];
+      final producer = Object();
+      final gateway = _DurableHistorySnapshotGateway(historyRows)
+        ..failNextHistoryReads = 1
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-retry-editorial',
+          'session_key': 'stored-chat',
+          'messages': historyRows(),
+          'inflight': {'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'resume-retry-editorial',
+        gateway,
+        storedMessageLoader: (_, _) async => [
+          for (final row in store) Map<String, dynamic>.of(row),
+        ],
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      var seq = 40;
+      final callsAfterTurn = <int>[];
+      for (var turn = 0; turn < 3; turn++) {
+        final done = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+        if (turn > 0) {
+          store.addAll([
+            {
+              'id': 20 + turn * 2,
+              'role': 'user',
+              'content': 'turno $turn',
+              'timestamp': 10.0 + turn,
+            },
+            {
+              'id': 21 + turn * 2,
+              'role': 'assistant',
+              'content': 'R$turn',
+              'timestamp': 10.5 + turn,
+            },
+          ]);
+          gateway.emit('message.start', const {}, seq++, 7, producer);
+        }
+        gateway.emit(
+          'message.complete',
+          {'text': turn == 0 ? 'HECHO' : 'R$turn'},
+          seq++,
+          7,
+          producer,
+        );
+        await done.timeout(const Duration(seconds: 1));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        await chat.loadMessages(passiveOnly: true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        callsAfterTurn.add(gateway.historyCalls);
+      }
+      // 1 lectura fallida + 1 completada; después ya no se relee.
+      expect(
+        gateway.historyCalls,
+        2,
+        reason:
+            'el fallo transitorio debe poder reintentarse (y solo una '
+            'lectura completada cuenta como tope): $callsAfterTurn',
+      );
+      expect(callsAfterTurn.last, callsAfterTurn[callsAfterTurn.length - 2]);
+    },
+  );
+
+  test(
     'message.start stale o de otro transporte no cruza el terminal causal',
     () async {
       for (final candidate in <(int, int, Object)>[
@@ -4110,47 +5028,44 @@ void main() {
     });
   });
 
-  test(
-    'REGRESSION_COMP_SESSION_ACTIVITY a manual /compress in flight surfaces '
-    'as compacting in sessionActivity, and clears when it settles',
-    () async {
-      final compressionGate = Completer<DesktopCompressionResult>();
-      final gateway = _NativeCompressionGateway()
-        ..snapshot = _snapshot({
-          'session_id': 'runtime-activity-manual',
-          'session_key': 'stored-chat',
-          'messages': const <Map<String, dynamic>>[],
-        })
-        ..compressionResult = _nativeCompressionResult()
-        ..nativeCompressionGate = compressionGate;
-      final chat = _chat('activity-manual', gateway);
-      addTearDown(chat.dispose);
-      await chat.loadMessages();
-      expect(chat.sessionActivity.compacting, isFalse);
-      expect(chat.sessionActivity.kind, SessionActivityKind.idle);
+  test('REGRESSION_COMP_SESSION_ACTIVITY a manual /compress in flight surfaces '
+      'as compacting in sessionActivity, and clears when it settles', () async {
+    final compressionGate = Completer<DesktopCompressionResult>();
+    final gateway = _NativeCompressionGateway()
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-activity-manual',
+        'session_key': 'stored-chat',
+        'messages': const <Map<String, dynamic>>[],
+      })
+      ..compressionResult = _nativeCompressionResult()
+      ..nativeCompressionGate = compressionGate;
+    final chat = _chat('activity-manual', gateway);
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+    expect(chat.sessionActivity.compacting, isFalse);
+    expect(chat.sessionActivity.kind, SessionActivityKind.idle);
 
-      final compression = chat.compressDesktopSession();
-      while (gateway.compressSessionCalls == 0) {
-        await Future<void>.delayed(Duration.zero);
-      }
+    final compression = chat.compressDesktopSession();
+    while (gateway.compressSessionCalls == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
 
-      // Manual /compress never opens a turn, so foregroundTurn stays false:
-      // the old `_desktopAutoCompacting`-only check could not see it at all.
-      expect(chat.isStreaming, isFalse);
-      expect(chat.desktopAutoCompacting, isFalse);
-      expect(chat.sessionActivity.foregroundTurn, isFalse);
-      expect(chat.sessionActivity.kind, SessionActivityKind.compacting);
-      expect(chat.sessionActivity.showsActivity, isTrue);
-      expect(chat.sessionActivity.active, isFalse);
+    // Manual /compress never opens a turn, so foregroundTurn stays false:
+    // the old `_desktopAutoCompacting`-only check could not see it at all.
+    expect(chat.isStreaming, isFalse);
+    expect(chat.desktopAutoCompacting, isFalse);
+    expect(chat.sessionActivity.foregroundTurn, isFalse);
+    expect(chat.sessionActivity.kind, SessionActivityKind.compacting);
+    expect(chat.sessionActivity.showsActivity, isTrue);
+    expect(chat.sessionActivity.active, isFalse);
 
-      compressionGate.complete(gateway.compressionResult);
-      await compression;
+    compressionGate.complete(gateway.compressionResult);
+    await compression;
 
-      expect(chat.desktopCompressionInFlight, isFalse);
-      expect(chat.sessionActivity.compacting, isFalse);
-      expect(chat.sessionActivity.kind, SessionActivityKind.idle);
-    },
-  );
+    expect(chat.desktopCompressionInFlight, isFalse);
+    expect(chat.sessionActivity.compacting, isFalse);
+    expect(chat.sessionActivity.kind, SessionActivityKind.idle);
+  });
 
   test(
     'resultado nativo de otro root falla antes de cambiar autoridad',
@@ -5257,4 +6172,98 @@ void main() {
     },
   );
 
+  test(
+    'un error RPC permanente de session.history no reintenta sin tope',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const marker =
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_retry]\n'
+          'A background fan-out unit you dispatched earlier has finished.';
+      final store = <Map<String, dynamic>>[
+        {'id': 10, 'role': 'user', 'content': 'hola', 'timestamp': 1.0},
+        {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': 2.0},
+        {
+          'id': 12,
+          'role': 'user',
+          'content': marker,
+          'display_kind': 'async_delegation_complete',
+          'timestamp': 3.0,
+        },
+        {'id': 13, 'role': 'assistant', 'content': 'HECHO', 'timestamp': 4.0},
+      ];
+      List<Map<String, dynamic>> historyRows() => [
+        for (final row in store)
+          {
+            'role': row['role'],
+            'text': row['content'],
+            'row_id': row['id'],
+            if (row['display_kind'] != null)
+              'display_kind': row['display_kind'],
+          },
+      ];
+      final producer = Object();
+      final gateway = _DurableHistorySnapshotGateway(historyRows)
+        ..historyAlwaysUnsupported = true
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-retry-editorial',
+          'session_key': 'stored-chat',
+          'messages': historyRows(),
+          'inflight': {'assistant': '', 'streaming': true},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat(
+        'resume-retry-editorial',
+        gateway,
+        storedMessageLoader: (_, _) async => [
+          for (final row in store) Map<String, dynamic>.of(row),
+        ],
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      var seq = 40;
+      final callsAfterTurn = <int>[];
+      for (var turn = 0; turn < 3; turn++) {
+        final done = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+        if (turn > 0) {
+          store.addAll([
+            {
+              'id': 20 + turn * 2,
+              'role': 'user',
+              'content': 'turno $turn',
+              'timestamp': 10.0 + turn,
+            },
+            {
+              'id': 21 + turn * 2,
+              'role': 'assistant',
+              'content': 'R$turn',
+              'timestamp': 10.5 + turn,
+            },
+          ]);
+          gateway.emit('message.start', const {}, seq++, 7, producer);
+        }
+        gateway.emit(
+          'message.complete',
+          {'text': turn == 0 ? 'HECHO' : 'R$turn'},
+          seq++,
+          7,
+          producer,
+        );
+        await done.timeout(const Duration(seconds: 1));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        await chat.loadMessages(passiveOnly: true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        callsAfterTurn.add(gateway.historyCalls);
+      }
+      for (var k = 0; k < 5; k++) {
+        await chat.loadMessages(passiveOnly: true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      // Un error permanente (-32601) consume el intento: una sola lectura
+      // para la fila editorial, por muchos turnos y refrescos que sigan.
+      expect(gateway.historyCalls, 1, reason: 'afterTurns=$callsAfterTurn');
+    },
+  );
 }

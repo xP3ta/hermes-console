@@ -52,15 +52,16 @@ class LocalInstanceControlScreen extends StatefulWidget {
       _LocalInstanceControlScreenState();
 }
 
-class _LocalInstanceControlScreenState
-    extends State<LocalInstanceControlScreen> with WidgetsBindingObserver {
+class _LocalInstanceControlScreenState extends State<LocalInstanceControlScreen>
+    with WidgetsBindingObserver {
   static const AppBridge _bridge = AndroidApps();
 
   late final LocalTermuxAgentProvider _termux;
 
   // ── Estado en vivo ────────────────────────────────────────────────────────
   bool _isRunning = false;
-  bool _installRunning = false; // hay instalación/reparación en curso → reanudar
+  bool _installRunning =
+      false; // hay instalación/reparación en curso → reanudar
   DateTime? _runningSince;
   Timer? _poll;
   bool _acting = false;
@@ -73,7 +74,6 @@ class _LocalInstanceControlScreenState
   // ventana que suspende los Timer, o dispositivo saturado descargando) no debe
   // marcar el agente como caído; exigimos varios seguidos.
   int _failedProbes = 0;
-
 
   // Estado del Mobile Bridge (sección dedicada): sondeo + reparación.
   _BridgeUi _bridgeUi = _BridgeUi.checking;
@@ -120,8 +120,7 @@ class _LocalInstanceControlScreenState
       _bridgeUi = switch (st.status) {
         BridgeStatus.connected => _BridgeUi.connected,
         BridgeStatus.needsToken ||
-        BridgeStatus.authFailed =>
-          _BridgeUi.unlinked,
+        BridgeStatus.authFailed => _BridgeUi.unlinked,
         _ => _BridgeUi.notDetected,
       };
     });
@@ -139,7 +138,9 @@ class _LocalInstanceControlScreenState
     try {
       ok = await mgr.tryProvision(widget.connection.id);
     } catch (e) {
-      debugPrint('[instance-control] excepción silenciada (fallback: ok = false): $e');
+      debugPrint(
+        '[instance-control] excepción silenciada (fallback: ok = false): $e',
+      );
       ok = false;
     }
     if (!mounted) return;
@@ -174,14 +175,16 @@ class _LocalInstanceControlScreenState
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
-            child: SelectableText(
-              log ??
-                  'Sin log todavía (~/.hermes/bridge.out vacío o Termux no '
-                      'respondió). Pulsa "Install & start" y vuelve a intentarlo.',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: colors.textPrimary,
+            child: SelectionArea(
+              child: Text(
+                log ??
+                    'Sin log todavía (~/.hermes/bridge.out vacío o Termux no '
+                        'respondió). Pulsa "Install & start" y vuelve a intentarlo.',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
           ),
@@ -205,8 +208,10 @@ class _LocalInstanceControlScreenState
         children: [
           SizedBox(
             width: 56,
-            child: Text(label,
-                style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+            ),
           ),
           Expanded(
             child: SelectableText(
@@ -250,7 +255,10 @@ class _LocalInstanceControlScreenState
       // El bridge tarda unos segundos en levantar y reenlazar el puerto.
       await Future.delayed(const Duration(seconds: 5));
     } catch (e) {
-      debugPrint('[instance-control] excepción silenciada (se ignora sin más): $e');}
+      debugPrint(
+        '[instance-control] excepción silenciada (se ignora sin más): $e',
+      );
+    }
     if (!mounted) return;
     // Con el bridge ya arrancado con el token actual, enlaza.
     final mgr = _bridgeManager;
@@ -258,7 +266,10 @@ class _LocalInstanceControlScreenState
       try {
         await mgr.tryProvision(widget.connection.id);
       } catch (e) {
-        debugPrint('[instance-control] excepción silenciada (se ignora sin más): $e');}
+        debugPrint(
+          '[instance-control] excepción silenciada (se ignora sin más): $e',
+        );
+      }
     }
     if (!mounted) return;
     await _probeBridge();
@@ -376,9 +387,7 @@ class _LocalInstanceControlScreenState
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
           str.licGatewayLogTitle,
           style: TextStyle(
@@ -388,9 +397,11 @@ class _LocalInstanceControlScreenState
           ),
         ),
         content: SingleChildScrollView(
-          child: SelectableText(
-            hasLog ? log : str.licGatewayLogUnavail,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          child: SelectionArea(
+            child: Text(
+              hasLog ? log : str.licGatewayLogUnavail,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
           ),
         ),
         actions: [
@@ -400,8 +411,10 @@ class _LocalInstanceControlScreenState
                 Clipboard.setData(ClipboardData(text: log));
                 HermesNotice.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(str.licLogCopied,
-                        style: const TextStyle(fontSize: 12)),
+                    content: Text(
+                      str.licLogCopied,
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     duration: const Duration(seconds: 2),
                   ),
                   kind: HermesNoticeKind.success,
@@ -457,9 +470,7 @@ class _LocalInstanceControlScreenState
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Scaffold(
-      appBar: HermesAppBar(
-        title: Text(widget.connection.label),
-      ),
+      appBar: HermesAppBar(title: Text(widget.connection.label)),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
         children: [
@@ -486,8 +497,8 @@ class _LocalInstanceControlScreenState
     final dotColor = _acting
         ? colors.accent
         : _isRunning
-            ? colors.success
-            : colors.error;
+        ? colors.success
+        : colors.error;
 
     return AccentCard(
       accent: _isRunning ? colors.success : colors.error,
@@ -514,8 +525,8 @@ class _LocalInstanceControlScreenState
                     _acting
                         ? str.licUpdating
                         : _isRunning
-                            ? str.licRunning
-                            : str.licStopped,
+                        ? str.licRunning
+                        : str.licStopped,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -726,32 +737,36 @@ class _LocalInstanceControlScreenState
 
   Widget _buildBridgeSection(HermesThemeColors colors) {
     final str = Strings.of(context);
-    final (IconData icon, Color dot, String title, String subtitle) =
-        switch (_bridgeUi) {
+    final (
+      IconData icon,
+      Color dot,
+      String title,
+      String subtitle,
+    ) = switch (_bridgeUi) {
       _BridgeUi.checking => (
-          Icons.sync,
-          colors.textSecondary,
-          str.licBridgeChecking,
-          '',
-        ),
+        Icons.sync,
+        colors.textSecondary,
+        str.licBridgeChecking,
+        '',
+      ),
       _BridgeUi.connected => (
-          Icons.link,
-          colors.success,
-          str.licBridgeConnected,
-          str.licBridgeConnectedHint,
-        ),
+        Icons.link,
+        colors.success,
+        str.licBridgeConnected,
+        str.licBridgeConnectedHint,
+      ),
       _BridgeUi.unlinked => (
-          Icons.link_off,
-          colors.warning,
-          str.licBridgeUnlinked,
-          str.licBridgeUnlinkedHint,
-        ),
+        Icons.link_off,
+        colors.warning,
+        str.licBridgeUnlinked,
+        str.licBridgeUnlinkedHint,
+      ),
       _BridgeUi.notDetected => (
-          Icons.power_off,
-          colors.textSecondary,
-          str.licBridgeNotDetected,
-          str.licBridgeNotDetectedHint,
-        ),
+        Icons.power_off,
+        colors.textSecondary,
+        str.licBridgeNotDetected,
+        str.licBridgeNotDetectedHint,
+      ),
     };
 
     final needsAction =
@@ -837,19 +852,28 @@ class _LocalInstanceControlScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(Strings.of(context).setDiagnostics,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1,
-                            color: colors.textSecondary,
-                          )),
+                      Text(
+                        Strings.of(context).setDiagnostics,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                          color: colors.textSecondary,
+                        ),
+                      ),
                       const SizedBox(height: 6),
-                      _diagRow('URL', _bridgeState!.url.isEmpty
-                          ? '(sin URL)'
-                          : _bridgeState!.url, colors),
-                      _diagRow('Token',
-                          _bridgeState!.hasToken ? 'sí' : 'no', colors),
+                      _diagRow(
+                        'URL',
+                        _bridgeState!.url.isEmpty
+                            ? '(sin URL)'
+                            : _bridgeState!.url,
+                        colors,
+                      ),
+                      _diagRow(
+                        'Token',
+                        _bridgeState!.hasToken ? 'sí' : 'no',
+                        colors,
+                      ),
                       if (_bridgeState!.errorDetail.isNotEmpty)
                         _diagRow('Causa', _bridgeState!.errorDetail, colors),
                       if (_bridgeMsg != null && _bridgeMsg!.isNotEmpty)
@@ -859,10 +883,15 @@ class _LocalInstanceControlScreenState
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
                           onPressed: _bridgeBusy ? null : _showBridgeLog,
-                          icon: Icon(Icons.article_outlined,
-                              size: 16, color: colors.accent),
-                          label: Text(Strings.of(context).bridgeViewLog,
-                              style: TextStyle(color: colors.accent)),
+                          icon: Icon(
+                            Icons.article_outlined,
+                            size: 16,
+                            color: colors.accent,
+                          ),
+                          label: Text(
+                            Strings.of(context).bridgeViewLog,
+                            style: TextStyle(color: colors.accent),
+                          ),
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 4),
                             minimumSize: const Size(0, 32),
@@ -889,7 +918,11 @@ class _LocalInstanceControlScreenState
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
                       onPressed: _bridgeBusy ? null : _retryLink,
-                      icon: Icon(Icons.cable, size: 16, color: colors.accentHover),
+                      icon: Icon(
+                        Icons.cable,
+                        size: 16,
+                        color: colors.accentHover,
+                      ),
                       label: Text(
                         str.licBridgeRetry,
                         style: TextStyle(color: colors.accentHover),
@@ -963,7 +996,11 @@ class _LocalInstanceControlScreenState
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right, size: 20, color: colors.textSecondary),
+                Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: colors.textSecondary,
+                ),
               ],
             ),
           ),
@@ -988,17 +1025,14 @@ class _LocalInstanceControlScreenState
               if (_logsExpanded && _logsContent == null) _fetchLogs();
             },
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Icon(
-                        _logsExpanded
-                            ? Icons.expand_less
-                            : Icons.expand_more,
+                        _logsExpanded ? Icons.expand_less : Icons.expand_more,
                         size: 18,
                         color: colors.textSecondary,
                       ),
@@ -1016,13 +1050,18 @@ class _LocalInstanceControlScreenState
                           onTap: _fetchingLogs ? null : _fetchLogs,
                           child: Row(
                             children: [
-                              Icon(Icons.refresh,
-                                  size: 14, color: colors.accent),
+                              Icon(
+                                Icons.refresh,
+                                size: 14,
+                                color: colors.accent,
+                              ),
                               const SizedBox(width: 4),
                               Text(
                                 str.licRefreshLogs,
                                 style: TextStyle(
-                                    fontSize: 11, color: colors.accent),
+                                  fontSize: 11,
+                                  color: colors.accent,
+                                ),
                               ),
                             ],
                           ),
@@ -1079,8 +1118,7 @@ class _LocalInstanceControlScreenState
           decoration: BoxDecoration(
             color: colors.surface,
             borderRadius: BorderRadius.circular(12),
-            border:
-                Border.all(color: colors.divider.withValues(alpha: 0.4)),
+            border: Border.all(color: colors.divider.withValues(alpha: 0.4)),
           ),
           child: Column(
             children: [
@@ -1102,8 +1140,7 @@ class _LocalInstanceControlScreenState
             width: 130,
             child: Text(
               label,
-              style:
-                  TextStyle(fontSize: 12, color: colors.textSecondary),
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
             ),
           ),
           Expanded(

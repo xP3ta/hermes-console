@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/widgets/home_prompt_composer.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -469,5 +471,156 @@ void main() {
     expect(find.text('Resultado nuevo'), findsOneWidget);
     expect(find.text('Resultado viejo'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  group('borrador del compositor de Inicio (chat nuevo)', () {
+    Future<ConnectionManager> homeManager() async {
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      await manager.saveConnection(
+        'QA',
+        '127.0.0.2',
+        8642,
+        'test-key',
+        kind: InstanceKind.vps,
+      );
+      final connection = manager.getConnections().single;
+      await manager.setActiveConnection(connection.id);
+      await manager.setActiveProfile(connection.id, 'coding');
+      return manager;
+    }
+
+    Widget home(ConnectionManager manager, {Key? key}) => MaterialApp(
+      locale: const Locale('es'),
+      theme: AppTheme.fromId('dark'),
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
+      home: HomeDashboardScreen(
+        key: key,
+        connManager: manager,
+        clientFactory: (_) => _MutableRecentHomeClient(const []),
+      ),
+    );
+
+    Finder composerField() => find.descendant(
+      of: find.byType(HomePromptComposer),
+      matching: find.byType(TextField),
+    );
+
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    testWidgets('sobrevive a paused/resumed y a recrear la pantalla', (
+      tester,
+    ) async {
+      final manager = await homeManager();
+      final connectionId = manager.getConnections().single.id;
+      await tester.pumpWidget(home(manager, key: const ValueKey('home-1')));
+      await settle(tester);
+      await tester.enterText(composerField(), 'borrador de inicio QA9343');
+      await tester.pump();
+
+      // HOME: la app pasa a segundo plano antes del debounce.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      final stored = await tester.runAsync(
+        () => ChatDraftStore(manager.prefs).load(
+          connectionId,
+          ChatDraftStore.newChatDraftSessionId,
+          profile: 'coding',
+        ),
+      );
+      expect(stored!.text, 'borrador de inicio QA9343');
+      // Otro perfil no ve el borrador.
+      final otherProfile = await tester.runAsync(
+        () => ChatDraftStore(manager.prefs).load(
+          connectionId,
+          ChatDraftStore.newChatDraftSessionId,
+          profile: 'default',
+        ),
+      );
+      expect(otherProfile!.text, isEmpty);
+      // No aparece como conversación recuperable.
+      final listed = await tester.runAsync(
+        () => ChatDraftStore(manager.prefs).listForConnection(connectionId),
+      );
+      expect(listed, isEmpty);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await settle(tester);
+      expect(find.text('borrador de inicio QA9343'), findsOneWidget);
+
+      // Proceso matado / pantalla recreada: se restaura desde el almacén.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(home(manager, key: const ValueKey('home-2')));
+      for (var i = 0; i < 10; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await settle(tester);
+        if (find.text('borrador de inicio QA9343').evaluate().isNotEmpty) {
+          break;
+        }
+      }
+      expect(find.text('borrador de inicio QA9343'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('vaciar el compositor (lo que hace enviar) borra el borrador', (
+      tester,
+    ) async {
+      final manager = await homeManager();
+      final connectionId = manager.getConnections().single.id;
+      await tester.runAsync(
+        () => ChatDraftStore(manager.prefs).save(
+          connectionId,
+          ChatDraftStore.newChatDraftSessionId,
+          'texto pendiente',
+          const [],
+          profile: 'coding',
+        ),
+      );
+      await tester.pumpWidget(home(manager));
+      for (var i = 0; i < 10; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await settle(tester);
+        if (find.text('texto pendiente').evaluate().isNotEmpty) break;
+      }
+      expect(find.text('texto pendiente'), findsOneWidget);
+      // HomePromptComposer._submit limpia el campo antes de navegar.
+      await tester.enterText(composerField(), '');
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      final stored = await tester.runAsync(
+        () => ChatDraftStore(manager.prefs).load(
+          connectionId,
+          ChatDraftStore.newChatDraftSessionId,
+          profile: 'coding',
+        ),
+      );
+      expect(stored!.text, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
   });
 }

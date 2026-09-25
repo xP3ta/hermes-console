@@ -505,10 +505,10 @@ class _PetdexDetailSheet extends StatelessWidget {
               child: Image.network(
                 pet.spritesheetUrl.toString(),
                 fit: BoxFit.contain,
-                // Preview acotado al cuadro de 220x180 dp (×3 de DPR): el
-                // spritesheet remoto se decodifica reducido en memoria.
+                // Preview acotado al cuadro de 220 dp de ancho (×3 de DPR): el
+                // spritesheet remoto se decodifica reducido en memoria. Solo un
+                // lado para conservar la proporción del sheet.
                 cacheWidth: 660,
-                cacheHeight: 540,
                 loadingBuilder: (context, child, progress) {
                   if (progress == null) return child;
                   return const SizedBox(

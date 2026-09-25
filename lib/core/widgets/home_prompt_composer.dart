@@ -22,6 +22,8 @@ class HomePromptComposer extends StatefulWidget {
     required this.onVoicePressed,
     required this.onSubmitted,
     this.enabled = true,
+    this.restoredText,
+    this.onTextChanged,
   });
 
   final String hintText;
@@ -35,6 +37,13 @@ class HomePromptComposer extends StatefulWidget {
   final ValueChanged<String> onSubmitted;
   final bool enabled;
 
+  /// Borrador persistido a restaurar. Llega de forma asíncrona: solo se
+  /// aplica mientras el usuario no haya escrito nada en este compositor.
+  final String? restoredText;
+
+  /// Cada cambio de texto (incluida la limpieza al enviar) para persistirlo.
+  final ValueChanged<String>? onTextChanged;
+
   @override
   State<HomePromptComposer> createState() => _HomePromptComposerState();
 }
@@ -43,20 +52,52 @@ class _HomePromptComposerState extends State<HomePromptComposer> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _hasText = false;
+  bool _userEdited = false;
+  String _lastReportedText = '';
 
   bool get _canSubmit => widget.enabled && _hasText;
 
   @override
   void initState() {
     super.initState();
+    _applyRestoredText(widget.restoredText);
     _focusNode.addListener(_handleFocusChanged);
     _controller.addListener(_handleTextChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant HomePromptComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.restoredText != oldWidget.restoredText) {
+      _applyRestoredText(widget.restoredText);
+    }
+  }
+
+  void _applyRestoredText(String? text) {
+    if (text == null ||
+        text.isEmpty ||
+        _userEdited ||
+        _controller.text.isNotEmpty) {
+      return;
+    }
+    _lastReportedText = text;
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _hasText = text.trim().isNotEmpty;
   }
 
   void _handleFocusChanged() => setState(() {});
 
   void _handleTextChanged() {
-    final hasText = _controller.text.trim().isNotEmpty;
+    final text = _controller.text;
+    if (text != _lastReportedText) {
+      _lastReportedText = text;
+      _userEdited = true;
+      widget.onTextChanged?.call(text);
+    }
+    final hasText = text.trim().isNotEmpty;
     // Solo cambia el chrome al alternar voz/envío. El campo gestiona sus
     // propias ediciones, incluida la limpieza programática tras enviar.
     if (hasText != _hasText) setState(() => _hasText = hasText);

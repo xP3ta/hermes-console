@@ -637,6 +637,101 @@ void main() {
       },
     );
 
+    test(
+      'el texto previo a una herramienta sobrevive al texto posterior',
+      () async {
+        final fixture = await _startChat();
+        addTearDown(fixture.dispose);
+
+        await _emitAndSettle(fixture, 'message.interim', const {
+          'text': 'Voy a revisar el archivo.',
+        });
+        await _emitAndSettle(fixture, 'tool.start', const {
+          'name': 'read_file',
+          'tool_id': 't1',
+        });
+        await _emitAndSettle(fixture, 'tool.complete', const {
+          'name': 'read_file',
+          'tool_id': 't1',
+        });
+        final resumed = fixture.chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.token,
+        );
+        fixture.gateway.emit('message.delta', const {'text': 'Resultado.'});
+        await resumed.timeout(const Duration(seconds: 1));
+
+        // Paridad con Desktop: el interim sellado no lo retira ninguna herramienta.
+        expect(_nonEmptyAssistantTexts(fixture.chat), [
+          'Voy a revisar el archivo.\n\nResultado.',
+        ]);
+
+        await _complete(fixture, const {'text': 'Resultado.'});
+        expect(_nonEmptyAssistantTexts(fixture.chat), [
+          'Voy a revisar el archivo.\n\nResultado.',
+        ]);
+      },
+    );
+
+    test(
+      'varios interims separados por herramientas se conservan todos',
+      () async {
+        final fixture = await _startChat();
+        addTearDown(fixture.dispose);
+
+        Future<void> delta(String text) async {
+          final shown = fixture.chat.changes.firstWhere(
+            (event) => event == ActiveChatEvent.token,
+          );
+          fixture.gateway.emit('message.delta', {'text': text});
+          await shown.timeout(const Duration(seconds: 1));
+        }
+
+        await _emitAndSettle(fixture, 'message.interim', const {
+          'text': 'Primero leo el archivo.',
+        });
+        await _emitAndSettle(fixture, 'tool.start', const {
+          'name': 'read_file',
+        });
+        await delta('Ahora lo edito.');
+        await _emitAndSettle(fixture, 'message.interim', const {
+          'text': 'Ahora lo edito.',
+        });
+        await _emitAndSettle(fixture, 'tool.start', const {'name': 'patch'});
+
+        expect(_nonEmptyAssistantTexts(fixture.chat), [
+          'Primero leo el archivo.\n\nAhora lo edito.',
+        ]);
+
+        await delta('Listo.');
+        await _complete(fixture, const {'text': 'Listo.'});
+
+        expect(_nonEmptyAssistantTexts(fixture.chat), [
+          'Primero leo el archivo.\n\nAhora lo edito.\n\nListo.',
+        ]);
+      },
+    );
+
+    test(
+      'sin herramienta de por medio el interim también se conserva',
+      () async {
+        final fixture = await _startChat();
+        addTearDown(fixture.dispose);
+
+        await _emitAndSettle(fixture, 'message.interim', const {
+          'text': 'Estoy revisando el proyecto.',
+        });
+        final resumed = fixture.chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.token,
+        );
+        fixture.gateway.emit('message.delta', const {'text': 'Todo bien.'});
+        await resumed.timeout(const Duration(seconds: 1));
+
+        expect(_nonEmptyAssistantTexts(fixture.chat), [
+          'Estoy revisando el proyecto.\n\nTodo bien.',
+        ]);
+      },
+    );
+
     test('response_previewed deduplica un final idéntico', () async {
       final fixture = await _startChat();
       addTearDown(fixture.dispose);

@@ -284,6 +284,59 @@ void main() {
     },
   );
 
+  test(
+    'checkStt tras la ruta nativa no deja el flag nativo colgado (#39)',
+    () async {
+      // #39: la voz funciona la primera vez y luego se vuelve poco fiable.
+      // `checkStt` recicla el motor server/hermesServer en cada llamada, pero
+      // dejaba `_sttNativeVoice` en true: la siguiente resolución creía que el
+      // motor vivo seguía siendo el nativo y devolvía un engine ya dispuesto.
+      final prefs = await SharedPreferences.getInstance();
+      final hermesVoice = VoiceService(
+        prefs,
+        SecureStorage(),
+        initialSettings: const VoiceSettings(
+          sttEngine: SttEngineKind.hermesServer,
+        ),
+      );
+      final engines = <_FakeStt>[];
+      hermesVoice.debugSttFactory = () {
+        final engine = _FakeStt();
+        engines.add(engine);
+        return engine;
+      };
+      expect(
+        hermesVoice.enableNativeVoice(
+          speak: (text) async => {'ok': true},
+          transcribe: (dataUrl, mimeType) async => {
+            'ok': true,
+            'transcript': 'primera',
+          },
+        ),
+        isTrue,
+      );
+
+      // Primera grabación: crea el motor de la ruta nativa.
+      await hermesVoice.startDictation(continuous: false).drain<void>();
+      expect(engines, hasLength(1));
+
+      // Un checkStt intermedio recicla el motor server.
+      await hermesVoice.checkStt();
+
+      // Segunda grabación: debe trabajar sobre un motor VIVO, nunca sobre uno
+      // ya dispuesto.
+      await hermesVoice.startDictation(continuous: false).drain<void>();
+      final live = engines.where((e) => e.disposeCount == 0).toList();
+      expect(
+        live,
+        isNotEmpty,
+        reason: 'la segunda grabación no puede usar un motor dispuesto',
+      );
+
+      await hermesVoice.dispose();
+    },
+  );
+
   test('rebind Hermes libera A solo después de disponer su motor', () async {
     final gate = Completer<void>();
     final engine = _FakeStt(disposeGate: gate);

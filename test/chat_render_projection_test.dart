@@ -26,19 +26,16 @@ Map<String, dynamic> _message(
 
 void main() {
   test('empty assistant tool-call row has no message bubble', () {
-    final normalized = normalizeTranscriptMessageForDisplay(
-      const {
-        'role': 'assistant',
-        'content': '',
-        'tool_calls': [
-          {
-            'id': 'call-1',
-            'function': {'name': 'shell', 'arguments': '{}'},
-          },
-        ],
-      },
-      retainAssistantToolCalls: true,
-    )!;
+    final normalized = normalizeTranscriptMessageForDisplay(const {
+      'role': 'assistant',
+      'content': '',
+      'tool_calls': [
+        {
+          'id': 'call-1',
+          'function': {'name': 'shell', 'arguments': '{}'},
+        },
+      ],
+    }, retainAssistantToolCalls: true)!;
     final projection = ChatRenderProjection.build([normalized]);
 
     expect(projection.units.whereType<ChatMessageUnitPlan>(), isEmpty);
@@ -283,23 +280,66 @@ void main() {
     },
   );
 
-  test('un personality_switch durable conserva su etiqueta y nunca es turno de usuario', () {
-    final normalized = normalizeTranscriptMessageForDisplay(<String, dynamic>{
-      'row_id': 9098,
-      'role': 'user',
-      'content': '[System: The user has changed the assistant\'s personality to concise.]',
-      'display_kind': 'personality_switch',
-    });
+  test(
+    'una corrección durable display_kind=steer no crea un segundo turno de usuario',
+    () {
+      // Regresión: la corrección en vuelo («Añadido mientras Hermes trabajaba»)
+      // se persiste como role=user con display_kind='steer'. Sin traducirla al
+      // flag estructural `_steer`, la fila durable volvía como turno real:
+      // duplicaba la burbuja ya colgada del turno padre y desplazaba todos los
+      // ordinales de usuario posteriores.
+      final prompt = normalizeTranscriptMessageForDisplay(<String, dynamic>{
+        'row_id': 4101,
+        'role': 'user',
+        'content': 'revisa esta sesión',
+      })!;
+      final correction = normalizeTranscriptMessageForDisplay(<String, dynamic>{
+        'row_id': 4102,
+        'role': 'user',
+        'content': 'y se duplica la burbuja',
+        'display_kind': 'steer',
+      })!;
 
-    expect(normalized, isNotNull);
-    expect(normalized!['display_kind'], 'personality_switch');
-    expect(isRealUserTurn(normalized), isFalse);
+      expect(correction['_steer'], isTrue);
+      expect(isRealUserTurn(correction), isFalse);
+      // El flag estructural sustituye a la etiqueta editorial: una corrección
+      // no es un envelope del runtime, es texto del usuario dentro del turno.
+      expect(effectiveUserDisplayKind(correction), isEmpty);
 
-    final projection = ChatRenderProjection.build([normalized]);
-    expect(projection.units.single, isA<ChatMessageUnitPlan>());
-    expect(projection.visibleUserCount, 0);
-    expect(projection.userOrdinalFor(normalized), isNull);
-  });
+      // Lista viva = más nuevo primero: la corrección precede a su prompt.
+      final projection = ChatRenderProjection.build([correction, prompt]);
+
+      // Una sola burbuja de usuario, con la corrección como suplemento.
+      expect(projection.visibleUserCount, 1);
+      expect(projection.userOrdinalFor(prompt), 0);
+      expect(projection.userOrdinalFor(correction), isNull);
+      final unit = projection.units.single;
+      expect(unit, isA<ChatUserTurnUnitPlan>());
+      expect((unit as ChatUserTurnUnitPlan).supplementMessageIndexes, [0]);
+    },
+  );
+
+  test(
+    'un personality_switch durable conserva su etiqueta y nunca es turno de usuario',
+    () {
+      final normalized = normalizeTranscriptMessageForDisplay(<String, dynamic>{
+        'row_id': 9098,
+        'role': 'user',
+        'content':
+            '[System: The user has changed the assistant\'s personality to concise.]',
+        'display_kind': 'personality_switch',
+      });
+
+      expect(normalized, isNotNull);
+      expect(normalized!['display_kind'], 'personality_switch');
+      expect(isRealUserTurn(normalized), isFalse);
+
+      final projection = ChatRenderProjection.build([normalized]);
+      expect(projection.units.single, isA<ChatMessageUnitPlan>());
+      expect(projection.visibleUserCount, 0);
+      expect(projection.userOrdinalFor(normalized), isNull);
+    },
+  );
 
   test(
     'un auto_continue etiquetado conserva la autoridad estructural del backend',
@@ -307,7 +347,8 @@ void main() {
       final normalized = normalizeTranscriptMessageForDisplay(<String, dynamic>{
         'row_id': 9099,
         'role': 'user',
-        'content': '[Continuing toward your standing goal]\nGoal: termina las tareas\n\nContinue working toward this goal.',
+        'content':
+            '[Continuing toward your standing goal]\nGoal: termina las tareas\n\nContinue working toward this goal.',
         'display_kind': 'auto_continue',
       });
 
@@ -639,7 +680,10 @@ void main() {
 
     expect(projection.units.whereType<ChatMessageUnitPlan>(), hasLength(1));
     expect(projection.units.whereType<ChatUserTurnUnitPlan>(), hasLength(1));
-    expect(projection.units.whereType<ChatToolActivityUnitPlan>(), hasLength(1));
+    expect(
+      projection.units.whereType<ChatToolActivityUnitPlan>(),
+      hasLength(1),
+    );
     expect(projection.assistantMessageIndexesNewestFirst, [0]);
   });
 

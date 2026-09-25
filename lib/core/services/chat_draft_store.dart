@@ -120,8 +120,16 @@ class ChatDraftStore {
     return utf8.decode(base64Url.decode(padded));
   }
 
+  /// Borrador del compositor de Inicio (chat nuevo sin sesión todavía).
+  /// Equivale a `NEW_SESSION_DRAFT_KEY='__new__'` de Hermes Desktop
+  /// (store/composer.ts), pero con alcance por conexión y perfil vía la clave
+  /// v3. Es una superficie dedicada: no se lista como conversación.
+  static const String newChatDraftSessionId = 'mob-home-new';
+
   static bool _isDedicatedSurfaceScope(String value) =>
-      value.startsWith('mob-bot-') || value.startsWith('mob-room-');
+      value.startsWith('mob-bot-') ||
+      value.startsWith('mob-room-') ||
+      value == newChatDraftSessionId;
 
   static bool _belongsToDedicatedSurface(String sessionId, String owner) =>
       _isDedicatedSurfaceScope(sessionId) || _isDedicatedSurfaceScope(owner);
@@ -667,7 +675,11 @@ class ChatDraftStore {
           if (key.startsWith(securePrefix)) {
             try {
               final sessionId = _unScope(key.substring(securePrefix.length));
-              return !_isDedicatedSurfaceScope(sessionId);
+              // El borrador de Inicio pertenece a este ámbito (conexión +
+              // perfil): «borrar datos locales» también lo retira. Bots y
+              // salas conservan su borrador dedicado.
+              return sessionId == newChatDraftSessionId ||
+                  !_isDedicatedSurfaceScope(sessionId);
             } catch (_) {
               return true;
             }

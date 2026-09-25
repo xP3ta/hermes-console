@@ -132,7 +132,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         _pickedAvatarDataUri == null
             ? 'image:remote'
             : 'image:picked:${_pickedAvatarDataUri.hashCode}',
-      _IdentityMode.face => _classic == null ? 'face:${_blobatar.wire}' : 'classic:${_classic!.shape}:${_classic!.colorHex}',
+      _IdentityMode.face =>
+        _classic == null
+            ? 'face:${_blobatar.wire}'
+            : 'classic:${_classic!.shape}:${_classic!.colorHex}',
     };
   }
 
@@ -189,7 +192,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     _blobatar = blobatar ?? BlobatarShapeWire.parse('blobatar');
     if (ClassicFaceIdentity.shapes.contains(widget.profile.botShape) &&
         ClassicFaceIdentity.colors.contains(widget.profile.botColorHex)) {
-      _classic = ClassicFaceIdentity(shape: widget.profile.botShape!, colorHex: widget.profile.botColorHex!);
+      _classic = ClassicFaceIdentity(
+        shape: widget.profile.botShape!,
+        colorHex: widget.profile.botColorHex!,
+      );
     }
     _needsLegacyFaceMigration = blobatar == null && _classic == null;
     _dormantColorHex =
@@ -366,10 +372,12 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     }
   }
 
-  BotVisualIdentity _faceIdentity() => _classic ?? ProceduralFaceIdentity(
-    shapeWire: _blobatar.wire,
-    dormantColorHex: _dormantColorHex,
-  );
+  BotVisualIdentity _faceIdentity() =>
+      _classic ??
+      ProceduralFaceIdentity(
+        shapeWire: _blobatar.wire,
+        dormantColorHex: _dormantColorHex,
+      );
 
   Future<void> _save() async {
     if (_saving || !_dirty) return;
@@ -613,12 +621,21 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                         ),
                       ),
                       if (_gateway is BotProfileGateway)
-                        ListTile(contentPadding: EdgeInsets.zero,
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
                           title: Text(Strings.of(context).botAdvanced),
                           trailing: const Icon(Icons.chevron_right),
-                          onTap: _saving ? null : () => Navigator.of(context).push<bool>(
-                            MaterialPageRoute(builder: (_) => BotProfileSettingsScreen(
-                              profile: _profileName, gateway: _gateway as BotProfileGateway)))),
+                          onTap: _saving
+                              ? null
+                              : () => Navigator.of(context).push<bool>(
+                                  MaterialPageRoute(
+                                    builder: (_) => BotProfileSettingsScreen(
+                                      profile: _profileName,
+                                      gateway: _gateway as BotProfileGateway,
+                                    ),
+                                  ),
+                                ),
+                        ),
                       _infoRow(
                         colors,
                         label: _text('Descripción', 'Description'),
@@ -906,7 +923,6 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
             width: 96,
             height: 96,
             cacheWidth: 288,
-            cacheHeight: 288,
             fit: BoxFit.contain,
             gaplessPlayback: true,
           ),
@@ -939,18 +955,21 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       width: 96,
       height: 96,
       cacheWidth: 288,
-      cacheHeight: 288,
       fit: BoxFit.cover,
       gaplessPlayback: true,
     ),
   );
 
   Widget _facePreview({required double size}) {
-    final visual = _classic != null ? HermesClassicFaceVisual.tryParse(
-      shape: _classic!.shape, colorHex: _classic!.colorHex)! : HermesBlobatarFaceVisual.tryParse(
-      shapeWire: _blobatar.wire,
-      profileName: _profileName,
-    )!;
+    final visual = _classic != null
+        ? HermesClassicFaceVisual.tryParse(
+            shape: _classic!.shape,
+            colorHex: _classic!.colorHex,
+          )!
+        : HermesBlobatarFaceVisual.tryParse(
+            shapeWire: _blobatar.wire,
+            profileName: _profileName,
+          )!;
     return HermesBotFace(
       visual: visual,
       size: size,
@@ -963,11 +982,14 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       if (_gateway is BotAvatarGenerationGateway)
-        BotAvatarGenerateButton(gateway: _gateway as BotAvatarGenerationGateway,
-          enabled: !_saving, onSelected: (avatar) => _changeIdentity(() {
+        BotAvatarGenerateButton(
+          gateway: _gateway as BotAvatarGenerationGateway,
+          enabled: !_saving,
+          onSelected: (avatar) => _changeIdentity(() {
             _pickedAvatar = avatar;
             _pickedAvatarDataUri = avatar.toDataUri();
-          })),
+          }),
+        ),
       Text(
         _text(
           'PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.',
@@ -992,10 +1014,17 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   Widget _buildFaceSection(HermesThemeColors colors) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      BotFaceOptions(name: _profileName, blob: _blobatar,
-        classic: _classic, enabled: !_saving,
-        onBlob: (value) => _changeIdentity(() { _classic = null; _blobatar = value; }),
-        onClassic: (value) => _changeIdentity(() => _classic = value)),
+      BotFaceOptions(
+        name: _profileName,
+        blob: _blobatar,
+        classic: _classic,
+        enabled: !_saving,
+        onBlob: (value) => _changeIdentity(() {
+          _classic = null;
+          _blobatar = value;
+        }),
+        onClassic: (value) => _changeIdentity(() => _classic = value),
+      ),
       HermesSectionHeader(_text('Silueta', 'Silhouette')),
       Wrap(
         spacing: 8,
@@ -1026,7 +1055,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
           borderRadius: BorderRadius.circular(12),
           onTap: () => _changeIdentity(() {
             _classic = null;
-                  _blobatar = _blobatar.withKind(kind);
+            _blobatar = _blobatar.withKind(kind);
           }),
           child: Container(
             width: 52,
@@ -1206,7 +1235,6 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                   return Image.memory(
                     avatar.bytes,
                     cacheWidth: 168,
-                    cacheHeight: 168,
                     fit: BoxFit.contain,
                     gaplessPlayback: true,
                   );

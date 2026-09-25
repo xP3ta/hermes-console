@@ -383,6 +383,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     required bool waitingForUser,
     required bool replayTruncated,
     required int processCount,
+    String? rosterStatus,
   }) {
     if (processCount < 0 || processCount > 999) return;
     if (!running) {
@@ -390,10 +391,16 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       return;
     }
     _nonBusyRosterStreak.remove(scope.durableKey);
+    // Un replay truncado pierde el detalle, pero una fila busy del roster ya
+    // prueba la fase general (trabajando/esperando), como el sidebar de
+    // Desktop. Sin roster busy, la fase queda `unknown`.
+    final rosterPhase = rosterStatusIsBusy(rosterStatus)
+        ? _phaseFromRoster(rosterStatus)
+        : null;
     _byDurable[scope.durableKey] = GlobalActivity(
       scope: scope,
       phase: replayTruncated
-          ? GlobalActivityPhase.unknown
+          ? rosterPhase ?? GlobalActivityPhase.unknown
           : waitingForUser
           ? GlobalActivityPhase.waitingForUser
           : processCount > 0

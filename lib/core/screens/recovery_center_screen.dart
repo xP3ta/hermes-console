@@ -456,15 +456,17 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
                     HermesPanel(
                       child: Padding(
                         padding: const EdgeInsets.all(14),
-                        child: SelectableText(
-                          diff == null || diff.diff.isEmpty
-                              ? strings.recoveryCenterNoDiff
-                              : _safeRemoteText(diff.diff, strings),
-                          style: TextStyle(
-                            color: colors.textPrimary,
-                            fontFamily: 'monospace',
-                            fontSize: 11.5,
-                            height: 1.45,
+                        child: SelectionArea(
+                          child: Text(
+                            diff == null || diff.diff.isEmpty
+                                ? strings.recoveryCenterNoDiff
+                                : _safeRemoteText(diff.diff, strings),
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontFamily: 'monospace',
+                              fontSize: 11.5,
+                              height: 1.45,
+                            ),
                           ),
                         ),
                       ),

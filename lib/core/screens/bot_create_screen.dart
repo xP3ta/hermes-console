@@ -197,7 +197,9 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     final epoch = ++_capabilityEpoch;
     final source = _catalogSource;
     try {
-      final result = await (gateway as BotProfileGateway).describeBotProfile(source);
+      final result = await (gateway as BotProfileGateway).describeBotProfile(
+        source,
+      );
       if (mounted && epoch == _capabilityEpoch && source == _catalogSource) {
         setState(() => _capabilities = result);
       }
@@ -205,22 +207,45 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   }
 
   Widget _capabilityOptions(String field, String wire, String title) {
-    final entries = (_capabilities?[field] as List? ?? const []).whereType<Map>()
-      .where((e) => e['name'] is String).toList();
-    return ExpansionTile(title: Text(title), tilePadding: EdgeInsets.zero,
-      children: [if (field == 'toolsets') Text(Strings.of(context).botToolsetsInherit),
-        for (final entry in entries) CheckboxListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(entry['label'] is String ? entry['label'] as String : entry['name'] as String),
-        value: _capabilityChanges[wire]?.contains(entry['name']) ?? entry['enabled'] != false,
-        onChanged: _busy ? null : (value) => setState(() {
-          final selected = _capabilityChanges[wire]?.toSet() ??
-            entries.where((e) => e['enabled'] != false).map((e) => e['name'] as String).toSet();
-          if (value == true) { selected.add(entry['name'] as String); }
-          else { selected.remove(entry['name']); }
-          _capabilityChanges[wire] = selected.toList()..sort();
-        }),
-      )]);
+    final entries = (_capabilities?[field] as List? ?? const [])
+        .whereType<Map>()
+        .where((e) => e['name'] is String)
+        .toList();
+    return ExpansionTile(
+      title: Text(title),
+      tilePadding: EdgeInsets.zero,
+      children: [
+        if (field == 'toolsets') Text(Strings.of(context).botToolsetsInherit),
+        for (final entry in entries)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              entry['label'] is String
+                  ? entry['label'] as String
+                  : entry['name'] as String,
+            ),
+            value:
+                _capabilityChanges[wire]?.contains(entry['name']) ??
+                entry['enabled'] != false,
+            onChanged: _busy
+                ? null
+                : (value) => setState(() {
+                    final selected =
+                        _capabilityChanges[wire]?.toSet() ??
+                        entries
+                            .where((e) => e['enabled'] != false)
+                            .map((e) => e['name'] as String)
+                            .toSet();
+                    if (value == true) {
+                      selected.add(entry['name'] as String);
+                    } else {
+                      selected.remove(entry['name']);
+                    }
+                    _capabilityChanges[wire] = selected.toList()..sort();
+                  }),
+          ),
+      ],
+    );
   }
 
   String get _slug => slugifyBotName(_nameCtrl.text);
@@ -465,10 +490,12 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     }
   }
 
-  BotVisualIdentity _faceIdentity() => _classic ?? ProceduralFaceIdentity(
-    shapeWire: _blobatar.wire,
-    dormantColorHex: _dormantColorHex,
-  );
+  BotVisualIdentity _faceIdentity() =>
+      _classic ??
+      ProceduralFaceIdentity(
+        shapeWire: _blobatar.wire,
+        dormantColorHex: _dormantColorHex,
+      );
 
   Future<BotVisualIdentity> _selectedIdentity() async {
     return switch (_identityMode) {
@@ -679,11 +706,14 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         }
       }
       if (_capabilityChanges.isNotEmpty && _gateway is BotProfileGateway) {
-        final result = await (_gateway as BotProfileGateway).configureBotProfile(slug, _capabilityChanges);
+        final result = await (_gateway as BotProfileGateway)
+            .configureBotProfile(slug, _capabilityChanges);
         final applied = result['applied'];
         if (applied is! Map ||
-            (_capabilityChanges.containsKey('enabled_toolsets') && applied['toolsets'] != true) ||
-            (_capabilityChanges.containsKey('enabled_mcp_servers') && applied['mcp_servers'] != true)) {
+            (_capabilityChanges.containsKey('enabled_toolsets') &&
+                applied['toolsets'] != true) ||
+            (_capabilityChanges.containsKey('enabled_mcp_servers') &&
+                applied['mcp_servers'] != true)) {
           throw StateError('Profile capabilities were not saved');
         }
         _capabilityChanges.clear();
@@ -987,9 +1017,17 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                             : _buildSkillsSection(copy, colors),
                       ),
                       if (_capabilities?['toolsets'] is List)
-                        _capabilityOptions('toolsets', 'enabled_toolsets', Strings.of(context).botTools),
+                        _capabilityOptions(
+                          'toolsets',
+                          'enabled_toolsets',
+                          Strings.of(context).botTools,
+                        ),
                       if (_capabilities?['mcp_servers'] is List)
-                        _capabilityOptions('mcp_servers', 'enabled_mcp_servers', Strings.of(context).botMcp),
+                        _capabilityOptions(
+                          'mcp_servers',
+                          'enabled_mcp_servers',
+                          Strings.of(context).botMcp,
+                        ),
                       BotSettingsRow(
                         rowKey: const ValueKey('bot-create-advanced'),
                         label: copy.advanced,
@@ -1055,7 +1093,9 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                                         setState(() => _shareAuth = value),
                             ),
                             Text(
-                              _cloneFrom != _freshClone ? Strings.of(context).botCloneCredentialsHint : copy.shareAuthHint,
+                              _cloneFrom != _freshClone
+                                  ? Strings.of(context).botCloneCredentialsHint
+                                  : copy.shareAuthHint,
                               style: TextStyle(
                                 color: colors.textDisabled,
                                 fontSize: 11.5,
@@ -1068,16 +1108,15 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                               value: _noSkills,
                               onChanged: _busy
                                   ? null
-                                  : (value) =>
-                                        setState(() {
-                                          _noSkills = value;
-                                          if (value) {
-                                            _cloneFrom = _freshClone;
-                                            _capabilities = null;
-                                            _capabilityChanges.clear();
-                                            unawaited(_loadCapabilities());
-                                          }
-                                        }),
+                                  : (value) => setState(() {
+                                      _noSkills = value;
+                                      if (value) {
+                                        _cloneFrom = _freshClone;
+                                        _capabilities = null;
+                                        _capabilityChanges.clear();
+                                        unawaited(_loadCapabilities());
+                                      }
+                                    }),
                             ),
                           ],
                         ),
@@ -1248,7 +1287,6 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
             width: 96,
             height: 96,
             cacheWidth: 288,
-            cacheHeight: 288,
             fit: BoxFit.contain,
             gaplessPlayback: true,
           ),
@@ -1273,7 +1311,6 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         width: 96,
         height: 96,
         cacheWidth: 288,
-        cacheHeight: 288,
         fit: BoxFit.cover,
         gaplessPlayback: true,
       ),
@@ -1282,11 +1319,15 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
 
   Widget _facePreview({required double size}) {
     final profileName = slugPlaceholder;
-    final visual = _classic != null ? HermesClassicFaceVisual.tryParse(
-      shape: _classic!.shape, colorHex: _classic!.colorHex)! : HermesBlobatarFaceVisual.tryParse(
-      shapeWire: _blobatar.wire,
-      profileName: profileName,
-    )!;
+    final visual = _classic != null
+        ? HermesClassicFaceVisual.tryParse(
+            shape: _classic!.shape,
+            colorHex: _classic!.colorHex,
+          )!
+        : HermesBlobatarFaceVisual.tryParse(
+            shapeWire: _blobatar.wire,
+            profileName: profileName,
+          )!;
     return HermesBotFace(
       visual: visual,
       size: size,
@@ -1299,10 +1340,13 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       if (_gateway is BotAvatarGenerationGateway)
-        BotAvatarGenerateButton(gateway: _gateway as BotAvatarGenerationGateway,
-          enabled: !_busy && !_identityLocked, onSelected: (avatar) => _changeIdentity(() {
+        BotAvatarGenerateButton(
+          gateway: _gateway as BotAvatarGenerationGateway,
+          enabled: !_busy && !_identityLocked,
+          onSelected: (avatar) => _changeIdentity(() {
             _pickedAvatar = avatar;
-          })),
+          }),
+        ),
       Text(
         _text(
           'PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.',
@@ -1327,10 +1371,17 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   Widget _buildFaceSection(HermesThemeColors colors) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      BotFaceOptions(name: slugPlaceholder, blob: _blobatar,
-        classic: _classic, enabled: !_busy,
-        onBlob: (value) => _changeIdentity(() { _classic = null; _blobatar = value; }),
-        onClassic: (value) => _changeIdentity(() => _classic = value)),
+      BotFaceOptions(
+        name: slugPlaceholder,
+        blob: _blobatar,
+        classic: _classic,
+        enabled: !_busy,
+        onBlob: (value) => _changeIdentity(() {
+          _classic = null;
+          _blobatar = value;
+        }),
+        onClassic: (value) => _changeIdentity(() => _classic = value),
+      ),
       HermesSectionHeader(_text('Silueta', 'Silhouette')),
       Wrap(
         spacing: 8,
@@ -1484,7 +1535,6 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                   return Image.memory(
                     avatar.bytes,
                     cacheWidth: 168,
-                    cacheHeight: 168,
                     fit: BoxFit.contain,
                     gaplessPlayback: true,
                   );

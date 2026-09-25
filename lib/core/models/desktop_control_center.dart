@@ -500,7 +500,9 @@ AgentCenterStatus _parseAgentCenterStatus(Object? raw) {
     'running' || 'active' => AgentCenterStatus.running,
     'thinking' => AgentCenterStatus.thinking,
     'tool' || 'using_tool' || 'using tool' => AgentCenterStatus.tool,
-    'completed' || 'finished' => AgentCenterStatus.completed,
+    // `process.list` del gateway conserva ~30 min las entradas terminadas con
+    // `status: "exited"`; Desktop las trata como terminadas (done/failed).
+    'completed' || 'finished' || 'exited' => AgentCenterStatus.completed,
     'failed' || 'error' => AgentCenterStatus.failed,
     'cancelled' || 'canceled' => AgentCenterStatus.cancelled,
     'stopped' => AgentCenterStatus.stopped,

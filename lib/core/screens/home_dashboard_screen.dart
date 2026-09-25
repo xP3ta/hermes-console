@@ -28,6 +28,7 @@ import '../services/session_archive.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/tui_gateway_client.dart';
+import '../services/shared_gateway_pool.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/assistant_operational_artifacts.dart';
@@ -119,6 +120,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   ActiveChatService? _listenedActiveChats;
   GlobalActivityAggregate? _listenedGlobalActivity;
   TuiGatewayClient? _ownedActivityClient;
+  SharedGatewayLease? _activityLease;
   StreamSubscription<TuiGatewayEvent>? _activityEventSubscription;
   Timer? _activityEventRefreshTimer;
   Timer? _activityReconnectTimer;
@@ -130,6 +132,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   String? _activityConnectionId;
   bool _foreground = true;
   bool _activityRebuildScheduled = false;
+
+  // Borrador del compositor de Inicio (chat nuevo sin sesión). Alcance:
+  // conexión + perfil activo, como el resto de borradores v3.
+  String? _homeDraftScope;
+  String? _homeDraftRestoredText;
+  String? _homeDraftPendingText;
+  ({String connectionId, String profile})? _homeDraftPendingTarget;
+  Timer? _homeDraftSaveTimer;
+  int _homeDraftEpoch = 0;
 
   ActiveChatService? get _activeChats =>
       widget.activeChatsOverride ??
@@ -146,6 +157,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   @override
   void dispose() {
+    _flushHomeDraft();
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
@@ -155,7 +167,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _activityStableTimer?.cancel();
     _activityStaleExpiryTimer?.cancel();
     unawaited(_activityEventSubscription?.cancel());
-    unawaited(_ownedActivityClient?.close());
+    _releaseActivityClient();
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
@@ -268,14 +280,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _lastActivityEventRefreshAt = null;
     unawaited(_activityEventSubscription?.cancel());
     _activityEventSubscription = null;
-    unawaited(_ownedActivityClient?.close());
-    _ownedActivityClient = null;
+    _releaseActivityClient();
     if (connection == null) return;
 
     if (widget.clientFactory == null &&
         (widget.activeSessionListLoader == null ||
             widget.eventStreamOverride == null)) {
-      _ownedActivityClient = TuiGatewayClient(connection);
+      final lease = SharedGatewayPool.instance.acquire(connection);
+      _activityLease = lease;
+      _ownedActivityClient = lease.client;
     }
     final stream = widget.eventStreamOverride ?? _ownedActivityClient?.events;
     _activityEventSubscription = stream?.listen(
@@ -283,7 +296,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       onError: (_) => _markActivityTransportStale(connection.id),
     );
     final client = _ownedActivityClient;
-    if (client != null) unawaited(_connectActivityClient(client, connection.id));
+    if (client != null) {
+      unawaited(_connectActivityClient(client, connection.id));
+    }
+  }
+
+  void _releaseActivityClient() {
+    _activityLease?.release();
+    _activityLease = null;
+    _ownedActivityClient = null;
   }
 
   Future<void> _connectActivityClient(
@@ -450,6 +471,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     _foreground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      // Android puede matar el proceso en segundo plano: vuelca ya.
+      _flushHomeDraft();
+    }
     if (!_foreground) {
       _activityEventRefreshTimer?.cancel();
       _activityEventRefreshTimer = null;
@@ -1243,26 +1271,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     SessionActivityKind activity, {
     int backgroundCount = 0,
   }) => switch (activity) {
-    SessionActivityKind.preparing || SessionActivityKind.generating =>
-      Strings.of(context).chaPipelineThinking,
-    SessionActivityKind.usingTools =>
-      Strings.of(context).chaPipelineExecuting,
-    SessionActivityKind.responding =>
-      Strings.of(context).chaPipelineStreaming,
-    SessionActivityKind.waitingForUser =>
-      Strings.of(context).homeActivityAwaitingApproval,
+    SessionActivityKind.preparing ||
+    SessionActivityKind.generating => Strings.of(context).chaPipelineThinking,
+    SessionActivityKind.usingTools => Strings.of(context).chaPipelineExecuting,
+    SessionActivityKind.responding => Strings.of(context).chaPipelineStreaming,
+    SessionActivityKind.waitingForUser => Strings.of(
+      context,
+    ).homeActivityAwaitingApproval,
     SessionActivityKind.compacting => Strings.of(context).slActivityCompacting,
     SessionActivityKind.delegated => Strings.of(context).slActivityDelegated,
-    SessionActivityKind.backgroundProcess => backgroundCount > 0
-        ? Strings.of(context).chaBackgroundActivityCount(backgroundCount)
-        : Strings.of(context).slActivityBackground,
+    SessionActivityKind.backgroundProcess =>
+      backgroundCount > 0
+          ? Strings.of(context).chaBackgroundActivityCount(backgroundCount)
+          : Strings.of(context).slActivityBackground,
     SessionActivityKind.idle => null,
   };
 
-  Future<void> _stopSession(
-    SavedConnection connection,
-    Session session,
-  ) async {
+  Future<void> _stopSession(SavedConnection connection, Session session) async {
     final activeChats = _activeChats;
     if (activeChats == null) {
       HermesNotice.of(context).showSnackBar(
@@ -1319,6 +1344,97 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         initialVoiceMode: initialVoiceMode,
       ),
     ).then((_) => _refreshStatus());
+  }
+
+  ({String connectionId, String profile})? _homeDraftTarget() {
+    final conn = _active;
+    if (conn == null) return null;
+    return (
+      connectionId: conn.id,
+      profile: Session.profileOwner(
+        widget.connManager.activeProfileFor(conn.id),
+      ),
+    );
+  }
+
+  /// Carga el borrador de Inicio cuando cambia conexión/perfil. Idempotente.
+  void _ensureHomeDraftLoaded() {
+    final target = _homeDraftTarget();
+    final scope = target == null
+        ? null
+        : '${target.connectionId}\u0000${target.profile}';
+    if (scope == _homeDraftScope) return;
+    _flushHomeDraft();
+    _homeDraftScope = scope;
+    _homeDraftRestoredText = null;
+    final epoch = ++_homeDraftEpoch;
+    if (target == null) return;
+    unawaited(() async {
+      try {
+        final draft = await ChatDraftStore(widget.connManager.prefs).load(
+          target.connectionId,
+          ChatDraftStore.newChatDraftSessionId,
+          profile: target.profile,
+        );
+        if (!mounted || epoch != _homeDraftEpoch) return;
+        if (draft.text.isEmpty) return;
+        setState(() => _homeDraftRestoredText = draft.text);
+      } catch (error) {
+        debugPrint(
+          '[home-dashboard] home draft load failed (${error.runtimeType})',
+        );
+      }
+    }());
+  }
+
+  void _onHomeDraftChanged(String text) {
+    final target = _homeDraftTarget();
+    if (_homeDraftScope == null || target == null) return;
+    // El destino se fija al escribir: un cambio de conexión/perfil posterior
+    // no puede volcar este texto en el borrador de otra autoridad.
+    _homeDraftPendingTarget = target;
+    _homeDraftPendingText = text;
+    _homeDraftSaveTimer?.cancel();
+    if (text.isEmpty) {
+      // Vaciar (o enviar) borra ya: no puede resucitar tras un kill.
+      _flushHomeDraft();
+      return;
+    }
+    _homeDraftSaveTimer = Timer(
+      const Duration(milliseconds: 400),
+      _flushHomeDraft,
+    );
+  }
+
+  void _flushHomeDraft() {
+    _homeDraftSaveTimer?.cancel();
+    _homeDraftSaveTimer = null;
+    final text = _homeDraftPendingText;
+    final target = _homeDraftPendingTarget;
+    if (text == null || target == null) return;
+    _homeDraftPendingText = null;
+    _homeDraftPendingTarget = null;
+    final store = ChatDraftStore(widget.connManager.prefs);
+    final Future<void> write = text.isEmpty
+        ? store.clear(
+            target.connectionId,
+            ChatDraftStore.newChatDraftSessionId,
+            profile: target.profile,
+          )
+        : store.save(
+            target.connectionId,
+            ChatDraftStore.newChatDraftSessionId,
+            text,
+            const [],
+            profile: target.profile,
+          );
+    unawaited(
+      write.catchError((Object error) {
+        debugPrint(
+          '[home-dashboard] home draft save failed (${error.runtimeType})',
+        );
+      }),
+    );
   }
 
   void _newChat({
@@ -1440,6 +1556,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   Widget _buildPromptStage({required bool enabled, required bool dimmed}) {
+    _ensureHomeDraftLoaded();
     final colors = Theme.of(context).hermes;
     final app = context.findAncestorStateOfType<HermesAppState>();
     final controller = app?.companion;
@@ -1453,6 +1570,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final composer = Opacity(
       opacity: dimmed ? 0.55 : 1,
       child: HomePromptComposer(
+        key: ValueKey('home-prompt-composer-${_homeDraftScope ?? ''}'),
+        restoredText: _homeDraftRestoredText,
+        onTextChanged: _onHomeDraftChanged,
         hintText: Strings.of(context).homeAskHermes,
         attachmentTooltip: Strings.of(context).chaAttachTooltip,
         dictationTooltip: Strings.of(context).chaVoiceDictationTooltip,
@@ -2543,100 +2663,95 @@ class _RecentSessionTile extends StatelessWidget {
         onTap: onTap,
         onLongPress: onManage,
         child: Container(
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: colors.divider.withValues(alpha: 0.55),
-                ),
-              ),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 13),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: ExcludeSemantics(
-                    child: AnimatedSize(
-                      duration: reduceMotion
-                          ? Duration.zero
-                          : const Duration(milliseconds: 180),
-                      curve: Curves.easeOutCubic,
-                      alignment: Alignment.topLeft,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              fontSize: 15,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                          AnimatedSwitcher(
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 160),
-                            switchInCurve: Curves.easeOut,
-                            switchOutCurve: Curves.easeIn,
-                            child: activityLabel != null
-                                ? Padding(
-                                    key: ValueKey('activity-$activityLabel'),
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: _ActivityLine(
-                                      key: ValueKey(
-                                        'home-activity-${session.id}',
-                                      ),
-                                      label: activityLabel!,
-                                      tone: activityTone,
-                                    ),
-                                  )
-                                : Padding(
-                                    key: ValueKey('preview-$visiblePreview'),
-                                    padding: const EdgeInsets.only(top: 3),
-                                    child: Text(
-                                      visiblePreview,
-                                      key: session.hasLocalDraft
-                                          ? ValueKey('home-draft-${session.id}')
-                                          : null,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12.5,
-                                        height: 1.2,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (onStop != null) ...[
-                  const SizedBox(width: 8),
-                  SessionRowStopControl(onStop: onStop!),
-                ],
-                const SizedBox(width: 12),
-                ExcludeSemantics(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      relativeTime,
-                      // WCAG AA: el tiempo es información real → textSecondary (≥4.5:1).
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.55)),
             ),
           ),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 13),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: ExcludeSemantics(
+                  child: AnimatedSize(
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    alignment: Alignment.topLeft,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 15,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        AnimatedSwitcher(
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 160),
+                          switchInCurve: Curves.easeOut,
+                          switchOutCurve: Curves.easeIn,
+                          child: activityLabel != null
+                              ? Padding(
+                                  key: ValueKey('activity-$activityLabel'),
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: _ActivityLine(
+                                    key: ValueKey(
+                                      'home-activity-${session.id}',
+                                    ),
+                                    label: activityLabel!,
+                                    tone: activityTone,
+                                  ),
+                                )
+                              : Padding(
+                                  key: ValueKey('preview-$visiblePreview'),
+                                  padding: const EdgeInsets.only(top: 3),
+                                  child: Text(
+                                    visiblePreview,
+                                    key: session.hasLocalDraft
+                                        ? ValueKey('home-draft-${session.id}')
+                                        : null,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      height: 1.2,
+                                      color: colors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (onStop != null) ...[
+                const SizedBox(width: 8),
+                SessionRowStopControl(onStop: onStop!),
+              ],
+              const SizedBox(width: 12),
+              ExcludeSemantics(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    relativeTime,
+                    // WCAG AA: el tiempo es información real → textSecondary (≥4.5:1).
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
     if (onManage == null) return tile;

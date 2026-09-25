@@ -832,6 +832,11 @@ class ServerSttEngine implements SttEngine {
     } catch (_) {}
     if (!stillExpected()) return;
     _recorder = null;
+    // ORDEN CRÍTICO: cerrar la sesión ANTES de cancelar la suscripción al
+    // WebSocket. Al revés, el cierre del socket queda sin nadie escuchando y
+    // el servidor lo ve como cierre anormal (1006): la siguiente grabación de
+    // la misma sesión devolvía transcripción vacía y sólo se recuperaba
+    // forzando el cierre de la app. Ver issue #39.
     try {
       await _session?.close();
     } catch (_) {}

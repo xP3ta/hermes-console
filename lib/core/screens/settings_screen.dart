@@ -6,6 +6,7 @@ import '../../l10n/app_localizations.dart';
 import 'dart:async';
 import 'dart:convert';
 
+import '../services/startup_destination.dart';
 import '../services/dock_preferences_store.dart';
 
 import 'package:http/http.dart' as http;
@@ -218,6 +219,7 @@ class SettingsScreen extends StatelessWidget {
                   _HeaderTitleField(),
                   _UseDockTile(),
                   _DockTile(),
+                  _StartupDestinationTile(),
                 ],
               ),
               _SectionHeader(Strings.of(context).setSecChat),
@@ -833,6 +835,49 @@ class _UseDockTile extends StatelessWidget {
           value: controller.value.useDock,
           onChanged: (value) => unawaited(controller.setUseDock(value)),
         ),
+      ),
+    );
+  }
+}
+
+class _StartupDestinationTile extends StatefulWidget {
+  @override
+  State<_StartupDestinationTile> createState() =>
+      _StartupDestinationTileState();
+}
+
+class _StartupDestinationTileState extends State<_StartupDestinationTile> {
+  StartupDestination? _destination;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final loaded = await StartupDestinationStore.load();
+    if (!mounted) return;
+    setState(() => _destination = loaded);
+  }
+
+  Future<void> _set(bool openBots) async {
+    final next = openBots ? StartupDestination.bots : StartupDestination.home;
+    setState(() => _destination = next);
+    await StartupDestinationStore.save(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    return Material(
+      type: MaterialType.transparency,
+      child: HermesSwitchTile(
+        controlKey: const ValueKey('settings-startup-bots'),
+        title: strings.settingsStartupBotsTitle,
+        subtitle: strings.settingsStartupBotsSubtitle,
+        value: _destination == StartupDestination.bots,
+        onChanged: _destination == null ? null : (v) => unawaited(_set(v)),
       ),
     );
   }

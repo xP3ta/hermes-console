@@ -68,16 +68,14 @@ class _FakeAudioPlayback implements GeneratedAudioPlayback {
 }
 
 void main() {
-  Widget host(
-    Widget child, {
-    Locale locale = const Locale('es'),
-  }) => MaterialApp(
-    locale: locale,
-    localizationsDelegates: Strings.localizationsDelegates,
-    supportedLocales: Strings.supportedLocales,
-    theme: AppTheme.hermesRedDark,
-    home: Scaffold(body: child),
-  );
+  Widget host(Widget child, {Locale locale = const Locale('es')}) =>
+      MaterialApp(
+        locale: locale,
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.hermesRedDark,
+        home: Scaffold(body: child),
+      );
 
   testWidgets('adjunto en subida muestra progreso y permite quitarlo', (
     tester,
@@ -163,9 +161,9 @@ void main() {
       ),
     );
     expect(
-      tester.widget<LinearProgressIndicator>(
-        find.byType(LinearProgressIndicator),
-      ).value,
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
       isNull,
     );
     expect(find.textContaining('Cargando contenido generado'), findsOneWidget);
@@ -218,41 +216,42 @@ void main() {
     expect(retries, 1);
   });
 
-  testWidgets('audio generado no reproduce solo y muestra duración y progreso', (
-    tester,
-  ) async {
-    final directory = Directory.systemTemp.createTempSync('generated-audio-');
-    addTearDown(() {
-      if (directory.existsSync()) directory.deleteSync(recursive: true);
-    });
-    final file = File('${directory.path}/resumen.mp3')..writeAsBytesSync([1]);
-    final playback = _FakeAudioPlayback();
+  testWidgets(
+    'audio generado no reproduce solo y muestra duración y progreso',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync('generated-audio-');
+      addTearDown(() {
+        if (directory.existsSync()) directory.deleteSync(recursive: true);
+      });
+      final file = File('${directory.path}/resumen.mp3')..writeAsBytesSync([1]);
+      final playback = _FakeAudioPlayback();
 
-    await tester.pumpWidget(
-      host(
-        GeneratedAudioPlayerCard(
-          file: file,
-          name: 'resumen.mp3',
-          mimeType: 'audio/mpeg',
-          sizeBytes: 1024,
-          playback: playback,
-          onShare: () {},
-          onSave: () {},
+      await tester.pumpWidget(
+        host(
+          GeneratedAudioPlayerCard(
+            file: file,
+            name: 'resumen.mp3',
+            mimeType: 'audio/mpeg',
+            sizeBytes: 1024,
+            playback: playback,
+            onShare: () {},
+            onSave: () {},
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(playback.playCalls, 0);
-    playback.durations.add(const Duration(minutes: 2));
-    playback.positions.add(const Duration(seconds: 30));
-    await tester.pump();
-    expect(find.text('0:30 / 2:00'), findsOneWidget);
+      expect(playback.playCalls, 0);
+      playback.durations.add(const Duration(minutes: 2));
+      playback.positions.add(const Duration(seconds: 30));
+      await tester.pump();
+      expect(find.text('0:30 / 2:00'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
-    await tester.pump();
-    expect(playback.playCalls, 1);
-    expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
-  });
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(playback.playCalls, 1);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+    },
+  );
 
   testWidgets('audio generado permite pausa, seek, compartir y guardar', (
     tester,
@@ -349,6 +348,126 @@ void main() {
     expect(removes, 1);
   });
 
+  testWidgets('miniatura pendiente o adjuntada no lleva badge de estado', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'attachment-card-no-badge-',
+    );
+    addTearDown(() {
+      if (directory.existsSync()) {
+        directory.deleteSync(recursive: true);
+      }
+    });
+    final image = File('${directory.path}/pixel.png');
+    image.writeAsBytesSync(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+
+    for (final state in [
+      AttachmentUploadState.pending,
+      AttachmentUploadState.attached,
+    ]) {
+      await tester.pumpWidget(
+        host(
+          AttachmentCard(
+            name: 'captura.png',
+            mimeType: 'image/png',
+            sizeLabel: '1 KB',
+            thumbnailFile: image,
+            showUploadState: true,
+            uploadState: state,
+            onRemove: () {},
+          ),
+        ),
+      );
+      expect(find.text('Pendiente'), findsNothing, reason: '$state');
+      expect(find.text('Adjuntado'), findsNothing, reason: '$state');
+      expect(find.byType(Image), findsOneWidget, reason: '$state');
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    }
+
+    // Uploading keeps its spinner overlay; error keeps its label and retry.
+    await tester.pumpWidget(
+      host(
+        AttachmentCard(
+          name: 'captura.png',
+          mimeType: 'image/png',
+          sizeLabel: '1 KB',
+          thumbnailFile: image,
+          showUploadState: true,
+          uploadState: AttachmentUploadState.uploading,
+        ),
+      ),
+    );
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await tester.pumpWidget(
+      host(
+        AttachmentCard(
+          name: 'captura.png',
+          mimeType: 'image/png',
+          sizeLabel: '1 KB',
+          thumbnailFile: image,
+          showUploadState: true,
+          uploadState: AttachmentUploadState.error,
+          onRetry: () {},
+        ),
+      ),
+    );
+    expect(find.text('Error al subir'), findsOneWidget);
+    expect(find.bySemanticsLabel('Reintentar adjunto'), findsOneWidget);
+  });
+
+  testWidgets('miniatura de imagen conserva la proporción al decodificar', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'attachment-card-thumb-ratio-',
+    );
+    addTearDown(() {
+      if (directory.existsSync()) {
+        directory.deleteSync(recursive: true);
+      }
+    });
+    final image = File('${directory.path}/pixel.png');
+    image.writeAsBytesSync(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+
+    await tester.pumpWidget(
+      host(
+        AttachmentCard(
+          name: 'captura.png',
+          mimeType: 'image/png',
+          sizeLabel: '1 KB',
+          thumbnailFile: image,
+        ),
+      ),
+    );
+
+    final rendered = tester.widget<Image>(find.byType(Image));
+    expect(rendered.fit, BoxFit.cover);
+    final provider = rendered.image;
+    expect(provider, isA<ResizeImage>());
+    final resize = provider as ResizeImage;
+    // Fixing both sides forces a 360x360 decode that squashes the bitmap
+    // before `cover` runs; one bound keeps the aspect ratio.
+    expect(
+      resize.width == null || resize.height == null,
+      isTrue,
+      reason: 'cacheWidth y cacheHeight juntos deforman la miniatura',
+    );
+    expect(resize.width ?? resize.height, isNotNull);
+    // Rebuilds during streaming must not blank the thumb while re-decoding.
+    expect(rendered.gaplessPlayback, isTrue);
+  });
+
   testWidgets('text summary pluralizes one line in English and Spanish', (
     tester,
   ) async {
@@ -434,7 +553,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final close = find.byIcon(Icons.close);
-    final viewer = find.byKey(const ValueKey('generated-image-viewer-safe-area'));
+    final viewer = find.byKey(
+      const ValueKey('generated-image-viewer-safe-area'),
+    );
     expect(tester.getRect(close).top, greaterThanOrEqualTo(28));
     expect(tester.getRect(viewer).bottom, lessThanOrEqualTo(752));
   });
@@ -469,7 +590,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    final viewer = find.byKey(const ValueKey('generated-video-viewer-safe-area'));
+    final viewer = find.byKey(
+      const ValueKey('generated-video-viewer-safe-area'),
+    );
     final playback = find.byIcon(Icons.play_arrow_rounded);
     expect(tester.getRect(viewer).bottom, lessThanOrEqualTo(752));
     expect(tester.getRect(playback).bottom, lessThanOrEqualTo(752));
@@ -530,7 +653,8 @@ void main() {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') {
-        copiedText = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        copiedText =
+            (call.arguments as Map<Object?, Object?>)['text'] as String?;
       }
       return null;
     });
@@ -565,9 +689,7 @@ void main() {
       );
       await tester.pump();
 
-      final scrollable = tester.state<ScrollableState>(
-        find.byType(Scrollable),
-      );
+      final scrollable = tester.state<ScrollableState>(find.byType(Scrollable));
       expect(scrollable.position.pixels, 0);
       expect(
         scrollable.position.maxScrollExtent,
@@ -704,10 +826,8 @@ void main() {
             onProgress(file.lengthSync(), file.lengthSync());
             return file;
           },
-          readyBuilder: (_, readyFile, _, _, _, _) => Image.file(
-            readyFile,
-            key: const ValueKey('auto-loaded-image'),
-          ),
+          readyBuilder: (_, readyFile, _, _, _, _) =>
+              Image.file(readyFile, key: const ValueKey('auto-loaded-image')),
         ),
       ),
     );
@@ -785,8 +905,8 @@ void main() {
       );
       await tester.pump();
       await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 50)),
-    );
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
       await tester.pumpAndSettle();
       expect(find.byKey(entry.$3), findsOneWidget);
       expect(find.text('Descargar'), findsNothing);
@@ -963,7 +1083,9 @@ void main() {
     expect(find.text('Reintentar'), findsOneWidget);
   });
 
-  testWidgets('failed MEDIA auto-load retries and becomes ready', (tester) async {
+  testWidgets('failed MEDIA auto-load retries and becomes ready', (
+    tester,
+  ) async {
     final directory = Directory.systemTemp.createTempSync('generated-retry-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final file = File('${directory.path}/retry.txt')
@@ -1020,14 +1142,18 @@ void main() {
     var disposedLoads = 0;
     var visibleLoads = 0;
 
-    unawaited(GeneratedMediaService.runAutoLoad(() async {
-      firstStarted.complete();
-      await firstRelease.future;
-    }));
-    unawaited(GeneratedMediaService.runAutoLoad(() async {
-      secondStarted.complete();
-      await secondRelease.future;
-    }));
+    unawaited(
+      GeneratedMediaService.runAutoLoad(() async {
+        firstStarted.complete();
+        await firstRelease.future;
+      }),
+    );
+    unawaited(
+      GeneratedMediaService.runAutoLoad(() async {
+        secondStarted.complete();
+        await secondRelease.future;
+      }),
+    );
     await Future.wait([firstStarted.future, secondStarted.future]);
     addTearDown(() {
       if (!firstRelease.isCompleted) firstRelease.complete();
@@ -1261,15 +1387,11 @@ void main() {
     final thumbnail = find.byKey(
       const ValueKey<String>('generated-pdf-thumbnail'),
     );
-    final caption = find.byKey(
-      const ValueKey<String>('generated-pdf-caption'),
-    );
+    final caption = find.byKey(const ValueKey<String>('generated-pdf-caption'));
     final card = find.byKey(
       const ValueKey<String>('generated-pdf-preview-card'),
     );
-    final actions = find.byKey(
-      const ValueKey<String>('generated-pdf-actions'),
-    );
+    final actions = find.byKey(const ValueKey<String>('generated-pdf-actions'));
     expect(thumbnail, findsOneWidget);
     expect(find.textContaining('3 páginas'), findsOneWidget);
     expect(tester.getRect(thumbnail).width, tester.getRect(caption).width);
@@ -1278,10 +1400,7 @@ void main() {
       lessThanOrEqualTo(tester.getRect(caption).top),
     );
     final thumbnailRect = tester.getRect(thumbnail);
-    expect(
-      thumbnailRect.width / thumbnailRect.height,
-      closeTo(1, 0.01),
-    );
+    expect(thumbnailRect.width / thumbnailRect.height, closeTo(1, 0.01));
     expect(tester.getRect(thumbnail).height, lessThanOrEqualTo(320));
     expect(tester.getRect(card).left, tester.getRect(actions).left);
 
@@ -1355,7 +1474,10 @@ void main() {
     expect(renderedPages, isNot(contains(2)));
     expect(find.byKey(const ValueKey('attachment-pdf-page-0')), findsOneWidget);
     expect(find.byType(InteractiveViewer), findsWidgets);
-    expect(tester.getRect(find.byType(ListView)).bottom, lessThanOrEqualTo(752));
+    expect(
+      tester.getRect(find.byType(ListView)).bottom,
+      lessThanOrEqualTo(752),
+    );
 
     await tester.drag(find.byType(ListView), const Offset(0, -1000));
     await tester.pump(const Duration(milliseconds: 500));

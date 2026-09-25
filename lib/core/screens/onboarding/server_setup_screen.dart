@@ -365,13 +365,15 @@ class _ArtifactCard extends StatelessWidget {
         border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
       ),
       child: SingleChildScrollView(
-        child: SelectableText(
-          text,
-          style: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 11.5,
-            height: 1.4,
-            color: colors.accentHover,
+        child: SelectionArea(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11.5,
+              height: 1.4,
+              color: colors.accentHover,
+            ),
           ),
         ),
       ),

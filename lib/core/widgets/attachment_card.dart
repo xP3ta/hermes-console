@@ -161,7 +161,13 @@ class AttachmentCard extends StatelessWidget {
         card,
         if (uploadState == AttachmentUploadState.uploading)
           Positioned.fill(child: _overlay(context, spinner: true)),
-        if (showUploadState && kind == AttachmentKind.image && _hasThumb)
+        // The resting states (pending / attached) are the default: an image
+        // thumb carries no text badge for them. Only a transition (uploading)
+        // or a failure (error, with its retry button) is labelled.
+        if (showUploadState &&
+            kind == AttachmentKind.image &&
+            _hasThumb &&
+            _showsImageStateBadge)
           _imageStateBadge(context),
         if (onRetry != null) _retryButton(context),
         if (onRemove != null) _removeButton(context),
@@ -172,20 +178,33 @@ class AttachmentCard extends StatelessWidget {
   bool get _hasThumb =>
       thumbnailFile != null || (thumbnailUrl?.isNotEmpty ?? false);
 
+  bool get _showsImageStateBadge =>
+      uploadState == AttachmentUploadState.uploading ||
+      uploadState == AttachmentUploadState.error;
+
+  /// Decode bound for the 120 dp thumb (3x). Only ONE side is fixed: giving
+  /// the decoder both `cacheWidth` and `cacheHeight` resizes the bitmap to
+  /// 360x360 without preserving its aspect ratio, so a portrait photo arrives
+  /// already squashed before `BoxFit.cover` crops it.
+  static const int _thumbDecodeWidth = 360;
+
   Widget _imageThumb(BuildContext context, AttachmentKind kind) {
     final colors = Theme.of(context).hermes;
+    // `gaplessPlayback`: a rebuild that swaps the provider (or the file's
+    // identity) keeps the previous frame on screen instead of flashing blank
+    // while the new decode lands — the "flicker" seen during streaming.
     final img = thumbnailFile != null
         ? Image.file(
             thumbnailFile!,
             fit: BoxFit.cover,
-            cacheWidth: 360,
-            cacheHeight: 360,
+            gaplessPlayback: true,
+            cacheWidth: _thumbDecodeWidth,
           )
         : Image.network(
             thumbnailUrl!,
             fit: BoxFit.cover,
-            cacheWidth: 360,
-            cacheHeight: 360,
+            gaplessPlayback: true,
+            cacheWidth: _thumbDecodeWidth,
             errorBuilder: (_, _, _) => _fileCard(context, kind),
           );
     return GestureDetector(
@@ -439,6 +458,10 @@ class GeneratedFileCard extends StatelessWidget {
   final VoidCallback? onShare;
   final VoidCallback? onSave;
 
+  /// `::preview{file="….html"}`: labelled as an HTML preview. Console has no
+  /// live sandboxed frame yet, so the card stays a downloadable file.
+  final bool htmlPreview;
+
   const GeneratedFileCard({
     super.key,
     required this.name,
@@ -452,6 +475,7 @@ class GeneratedFileCard extends StatelessWidget {
     this.onOpen,
     this.onShare,
     this.onSave,
+    this.htmlPreview = false,
   });
 
   @override
@@ -463,18 +487,22 @@ class GeneratedFileCard extends StatelessWidget {
         ? (receivedBytes / total).clamp(0.0, 1.0)
         : null;
     final sizeLabel = switch (status) {
-      GeneratedFileStatus.consent => total != null
-          ? _formatFileBytes(total)
-          : strings.commonDownload,
-      GeneratedFileStatus.downloading => determinate
-          ? '${_formatFileBytes(receivedBytes)} / ${_formatFileBytes(total)}'
-          : strings.genMediaLoading,
-      GeneratedFileStatus.ready => total != null
-          ? _formatFileBytes(total)
-          : _formatFileBytes(receivedBytes),
+      GeneratedFileStatus.consent =>
+        total != null ? _formatFileBytes(total) : strings.commonDownload,
+      GeneratedFileStatus.downloading =>
+        determinate
+            ? '${_formatFileBytes(receivedBytes)} / ${_formatFileBytes(total)}'
+            : strings.genMediaLoading,
+      GeneratedFileStatus.ready =>
+        total != null
+            ? _formatFileBytes(total)
+            : _formatFileBytes(receivedBytes),
       GeneratedFileStatus.error => errorLabel ?? strings.genMediaError,
       GeneratedFileStatus.offline => strings.genMediaOffline,
     };
+    final cardLabel = htmlPreview
+        ? '${strings.genMediaHtmlPreview} · $sizeLabel'
+        : sizeLabel;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
@@ -483,10 +511,14 @@ class GeneratedFileCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AttachmentCard(
-            key: const ValueKey<String>('generated-file-card'),
+            key: ValueKey<String>(
+              htmlPreview
+                  ? 'generated-html-preview-card'
+                  : 'generated-file-card',
+            ),
             name: name,
             mimeType: mimeType,
-            sizeLabel: sizeLabel,
+            sizeLabel: cardLabel,
             onTap: status == GeneratedFileStatus.ready ? onOpen : null,
           ),
           if (status == GeneratedFileStatus.downloading) ...[
@@ -503,7 +535,8 @@ class GeneratedFileCard extends StatelessWidget {
               icon: const Icon(Icons.download_rounded),
               label: Text(strings.commonDownload),
             )
-          else if (status == GeneratedFileStatus.downloading && onCancel != null)
+          else if (status == GeneratedFileStatus.downloading &&
+              onCancel != null)
             TextButton.icon(
               onPressed: onCancel,
               icon: const Icon(Icons.close_rounded),
@@ -601,17 +634,16 @@ Future<void> openGeneratedMediaExternally(
   final locator = GeneratedMediaService.cacheLocator(file);
   if (locator == null) throw const FormatException('invalid generated cache');
   final digest = (await sha256.bind(file.openRead()).first).toString();
-  await const MethodChannel('hermes/document_preview').invokeMethod<void>(
-    'openGeneratedFile',
-    {
-      'storageKey': digest,
-      'expectedSize': expectedSize,
-      'expectedSha256': digest,
-      'generatedConnectionKey': locator.connectionKey,
-      'generatedFileKey': locator.fileKey,
-      'mimeType': mimeType,
-    },
-  );
+  await const MethodChannel(
+    'hermes/document_preview',
+  ).invokeMethod<void>('openGeneratedFile', {
+    'storageKey': digest,
+    'expectedSize': expectedSize,
+    'expectedSha256': digest,
+    'generatedConnectionKey': locator.connectionKey,
+    'generatedFileKey': locator.fileKey,
+    'mimeType': mimeType,
+  });
 }
 
 class GeneratedMediaAttachmentCard extends StatefulWidget {
@@ -734,9 +766,11 @@ class _GeneratedMediaAttachmentCardState
         !renderObject.hasSize) {
       return false;
     }
-    final widgetRect = renderObject.localToGlobal(Offset.zero) & renderObject.size;
+    final widgetRect =
+        renderObject.localToGlobal(Offset.zero) & renderObject.size;
     final viewportObject = _scrollable?.context.findRenderObject();
-    final viewportRect = viewportObject is RenderBox &&
+    final viewportRect =
+        viewportObject is RenderBox &&
             viewportObject.attached &&
             viewportObject.hasSize
         ? viewportObject.localToGlobal(Offset.zero) & viewportObject.size
@@ -813,25 +847,28 @@ class _GeneratedMediaAttachmentCardState
       _text = null;
     });
     try {
-      Future<File> performLoad() => widget.load((received, total) {
-        if (!mounted || generation != _generation || _cancelled) return;
-        if (automatic &&
-            ((total != null && total > _autoLimit) ||
-                received > _autoLimit)) {
-          _autoLimitExceeded = true;
-        }
-        setState(() {
-          _receivedBytes = received;
-          if (total != null) _totalBytes = total;
-        });
-      }, () {
-        return _cancelled ||
-            cancellation?.isCancelled == true ||
-            !mounted ||
-            generation != _generation ||
-            (automatic &&
-                (!_visible || !_inForeground || _autoLimitExceeded));
-      });
+      Future<File> performLoad() => widget.load(
+        (received, total) {
+          if (!mounted || generation != _generation || _cancelled) return;
+          if (automatic &&
+              ((total != null && total > _autoLimit) ||
+                  received > _autoLimit)) {
+            _autoLimitExceeded = true;
+          }
+          setState(() {
+            _receivedBytes = received;
+            if (total != null) _totalBytes = total;
+          });
+        },
+        () {
+          return _cancelled ||
+              cancellation?.isCancelled == true ||
+              !mounted ||
+              generation != _generation ||
+              (automatic &&
+                  (!_visible || !_inForeground || _autoLimitExceeded));
+        },
+      );
       Future<File> performLoadWithRetry() async {
         try {
           return await performLoad();
@@ -912,11 +949,15 @@ class _GeneratedMediaAttachmentCardState
   }
 
   String? _readTextPreview(File file, int length) {
-    final declaredPdf = widget.reference.mimeType == 'application/pdf' ||
+    final declaredPdf =
+        widget.reference.mimeType == 'application/pdf' ||
         widget.reference.displayName.toLowerCase().endsWith('.pdf');
     if (widget.reference.kind != GeneratedMediaKind.file ||
         !GeneratedMediaService.allowsAutoLoad(widget.reference) ||
         declaredPdf ||
+        // An HTML preview is a page, not prose: keep the downloadable card
+        // instead of dumping its markup as a text preview.
+        widget.reference.htmlPreview ||
         length > GeneratedMediaService.maxAutoTextBytes) {
       return null;
     }
@@ -1064,7 +1105,8 @@ class _GeneratedMediaAttachmentCardState
   @override
   Widget build(BuildContext context) {
     final file = _file;
-    final mayOpen = file != null &&
+    final mayOpen =
+        file != null &&
         GeneratedMediaService.allowsAutoLoad(widget.reference) &&
         GeneratedMediaService.allowsExternalOpen(
           file,
@@ -1114,6 +1156,7 @@ class _GeneratedMediaAttachmentCardState
       receivedBytes: _receivedBytes,
       totalBytes: _totalBytes,
       errorLabel: _errorLabel,
+      htmlPreview: widget.reference.htmlPreview,
       onDownload: () => _start(automatic: false),
       onCancel: _cancel,
       onOpen: mayOpen ? _open : null,
@@ -1198,10 +1241,7 @@ class GeneratedTextPreviewCard extends StatelessWidget {
                       lines.length,
                       _formatFileBytes(sizeBytes),
                     ),
-                    style: TextStyle(
-                      color: colors.textSecondary,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 11),
                   ),
                 ],
               ),
@@ -1358,11 +1398,13 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
     }
   }
 
-  Future<({Uint8List bytes, int pageCount, double aspectRatio})?> _loadPreview() async {
+  Future<({Uint8List bytes, int pageCount, double aspectRatio})?>
+  _loadPreview() async {
     final locator = GeneratedMediaService.cacheLocator(widget.file);
     if (locator == null) return null;
     try {
-      final digest = (await sha256.bind(widget.file.openRead()).first).toString();
+      final digest = (await sha256.bind(widget.file.openRead()).first)
+          .toString();
       final response = await _channel
           .invokeMapMethod<String, dynamic>('renderPdfPage', {
             'storageKey': digest,
@@ -1386,11 +1428,7 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
       final aspectRatio = image.width / image.height;
       image.dispose();
       codec.dispose();
-      return (
-        bytes: bytes,
-        pageCount: pageCount,
-        aspectRatio: aspectRatio,
-      );
+      return (bytes: bytes, pageCount: pageCount, aspectRatio: aspectRatio);
     } catch (_) {
       return null;
     }
@@ -1402,9 +1440,7 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
     final colors = Theme.of(context).hermes;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: FutureBuilder<
-        ({Uint8List bytes, int pageCount, double aspectRatio})?
-      >(
+      child: FutureBuilder<({Uint8List bytes, int pageCount, double aspectRatio})?>(
         future: _preview,
         builder: (context, snapshot) {
           final preview = snapshot.data;
@@ -1545,9 +1581,8 @@ final class AudioplayersGeneratedAudioPlayback
   Stream<Duration> get positionChanges => _player.onPositionChanged;
 
   @override
-  Stream<bool> get playingChanges => _player.onPlayerStateChanged.map(
-    (state) => state == PlayerState.playing,
-  );
+  Stream<bool> get playingChanges =>
+      _player.onPlayerStateChanged.map((state) => state == PlayerState.playing);
 
   @override
   Future<void> play(File file) => _player.play(DeviceFileSource(file.path));

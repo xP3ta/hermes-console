@@ -723,67 +723,67 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         controllers: [queryCtrl],
         child: StatefulBuilder(
           builder: (sheetCtx, setSheet) => SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                s.kanbanFilterTitle,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: colors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                key: const ValueKey('kanban-search-field'),
-                controller: queryCtrl,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  labelText: s.kanbanSearch,
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: queryCtrl.text.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: s.kanbanClearFilters,
-                          onPressed: () {
-                            queryCtrl.clear();
-                            setState(() => _searchQuery = '');
-                            setSheet(() {});
-                          },
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                ),
-                onChanged: (value) {
-                  setState(() => _searchQuery = value);
-                  setSheet(() {});
-                },
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _filterChip(
-                    sheetCtx,
-                    key: 'all',
-                    label: s.kanbanFilterAll,
-                    selected: _taskFilter == null,
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  s.kanbanFilterTitle,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textPrimary,
                   ),
-                  for (final group in KanbanMobileGroup.values)
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  key: const ValueKey('kanban-search-field'),
+                  controller: queryCtrl,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    labelText: s.kanbanSearch,
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: queryCtrl.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: s.kanbanClearFilters,
+                            onPressed: () {
+                              queryCtrl.clear();
+                              setState(() => _searchQuery = '');
+                              setSheet(() {});
+                            },
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                  ),
+                  onChanged: (value) {
+                    setState(() => _searchQuery = value);
+                    setSheet(() {});
+                  },
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
                     _filterChip(
                       sheetCtx,
-                      key: group.name,
-                      label: _filterLabel(s, group),
-                      selected: _taskFilter == group,
+                      key: 'all',
+                      label: s.kanbanFilterAll,
+                      selected: _taskFilter == null,
                     ),
-                ],
-              ),
-            ],
+                    for (final group in KanbanMobileGroup.values)
+                      _filterChip(
+                        sheetCtx,
+                        key: group.name,
+                        label: _filterLabel(s, group),
+                        selected: _taskFilter == group,
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
         ),
       ),
     );
@@ -1030,9 +1030,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       itemBuilder: (context, index) {
         final group = groups[index];
         return Padding(
-          padding: EdgeInsets.only(
-            right: index == groups.length - 1 ? 0 : 12,
-          ),
+          padding: EdgeInsets.only(right: index == groups.length - 1 ? 0 : 12),
           child: _BoardColumn(
             colors: colors,
             group: group,
@@ -1086,7 +1084,10 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       return s.kanbanCardProgress(task.progressDone, task.progressTotal);
     }
     final ts =
-        task.completedAt ?? task.lastHeartbeatAt ?? task.startedAt ?? task.createdAt;
+        task.completedAt ??
+        task.lastHeartbeatAt ??
+        task.startedAt ??
+        task.createdAt;
     if (ts != null && ts > 0) {
       final lang = Localizations.localeOf(context).languageCode;
       final rel = relativeTime(ts.toDouble(), languageCode: lang);
@@ -1293,17 +1294,17 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       builder: (popoverContext) => DisposeControllersOnUnmount(
         controllers: [titleCtrl],
         child: StatefulBuilder(
-        builder: (popoverContext, setPopover) {
-          final colors = Theme.of(popoverContext).hermes;
-          final s = Strings.of(popoverContext);
-          void submit() {
-            final title = titleCtrl.text.trim();
-            if (title.isEmpty) return;
-            Navigator.of(popoverContext).pop();
-            _create(title, null, priority, _defaultAssignee());
-          }
+          builder: (popoverContext, setPopover) {
+            final colors = Theme.of(popoverContext).hermes;
+            final s = Strings.of(popoverContext);
+            void submit() {
+              final title = titleCtrl.text.trim();
+              if (title.isEmpty) return;
+              Navigator.of(popoverContext).pop();
+              _create(title, null, priority, _defaultAssignee());
+            }
 
-          return Padding(
+            return Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1373,9 +1374,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-          );
-        },
-      ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -1408,140 +1409,147 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       builder: (sheetCtx) => DisposeControllersOnUnmount(
         controllers: [titleCtrl, bodyCtrl],
         child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-        child: StatefulBuilder(
-          builder: (sheetCtx, setSheet) => SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  editing ? s.kanbanEditTask : s.kanbanNewTask,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: colors.textPrimary,
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          child: StatefulBuilder(
+            builder: (sheetCtx, setSheet) => SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    editing ? s.kanbanEditTask : s.kanbanNewTask,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: colors.textPrimary,
+                    ),
                   ),
-                ),
-                if (!editing) ...[
+                  if (!editing) ...[
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _taskTemplateChip(
+                          colors,
+                          Icons.bug_report_outlined,
+                          s.kanbanTplBugName,
+                          () {
+                            applyTemplate(
+                              s.kanbanTplBugName,
+                              s.kanbanTplBugBody,
+                            );
+                            setSheet(() {});
+                          },
+                        ),
+                        _taskTemplateChip(
+                          colors,
+                          Icons.auto_awesome_outlined,
+                          s.kanbanTplFeatureName,
+                          () {
+                            applyTemplate(
+                              s.kanbanTplFeatureName,
+                              s.kanbanTplFeatureBody,
+                            );
+                            setSheet(() {});
+                          },
+                        ),
+                        _taskTemplateChip(
+                          colors,
+                          Icons.search,
+                          s.kanbanTplResearchName,
+                          () {
+                            applyTemplate(s.kanbanTplResearchName, '');
+                            setSheet(() {});
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: titleCtrl,
+                    autofocus: !editing,
+                    decoration: InputDecoration(labelText: s.kanbanFieldTitle),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: bodyCtrl,
+                    maxLines: 4,
+                    minLines: 3,
+                    decoration: InputDecoration(labelText: s.kanbanFieldDesc),
+                  ),
                   const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _taskTemplateChip(
-                        colors,
-                        Icons.bug_report_outlined,
-                        s.kanbanTplBugName,
-                        () {
-                          applyTemplate(s.kanbanTplBugName, s.kanbanTplBugBody);
-                          setSheet(() {});
-                        },
-                      ),
-                      _taskTemplateChip(
-                        colors,
-                        Icons.auto_awesome_outlined,
-                        s.kanbanTplFeatureName,
-                        () {
-                          applyTemplate(
-                            s.kanbanTplFeatureName,
-                            s.kanbanTplFeatureBody,
-                          );
-                          setSheet(() {});
-                        },
-                      ),
-                      _taskTemplateChip(
-                        colors,
-                        Icons.search,
-                        s.kanbanTplResearchName,
-                        () {
-                          applyTemplate(s.kanbanTplResearchName, '');
-                          setSheet(() {});
-                        },
-                      ),
-                    ],
+                  _formSelector(
+                    colors: colors,
+                    label: s.kanbanFieldPriority,
+                    valueText: _priorityLabel(s, priority),
+                    onTap: () async {
+                      final v = await _pickOption(
+                        title: s.kanbanFieldPriority,
+                        current: priority,
+                        options: [
+                          (value: 'low', label: s.kanbanPriorityLow),
+                          (value: 'normal', label: s.kanbanPriorityNormal),
+                          (value: 'high', label: s.kanbanPriorityHigh),
+                        ],
+                      );
+                      if (v != null) setSheet(() => priority = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _formSelector(
+                    colors: colors,
+                    label: s.kanbanFieldAssignee,
+                    valueText: assignee.isEmpty
+                        ? s.kanbanAssigneeNone
+                        : assignee,
+                    valueColor: assignee.isEmpty
+                        ? colors.textSecondary
+                        : colors.accent,
+                    onTap: () async {
+                      final v = await _pickOption(
+                        title: s.kanbanFieldAssignee,
+                        current: assignee,
+                        options: [
+                          (value: '', label: s.kanbanAssigneeNone),
+                          for (final p in _profiles)
+                            (value: p.name, label: p.name),
+                        ],
+                      );
+                      if (v != null) setSheet(() => assignee = v);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _assigneeHint(colors, s, assignee.isNotEmpty),
+                  const SizedBox(height: 18),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.accent,
+                    ),
+                    onPressed: () {
+                      final title = titleCtrl.text.trim();
+                      if (title.isEmpty) return;
+                      Navigator.of(sheetCtx).pop();
+                      final body = bodyCtrl.text.trim().isEmpty
+                          ? null
+                          : bodyCtrl.text.trim();
+                      if (editing) {
+                        _update(existing.id, title, body, priority, assignee);
+                      } else {
+                        _create(title, body, priority, assignee);
+                      }
+                    },
+                    child: Text(
+                      editing ? s.kanbanSave : s.kanbanCreate,
+                      style: TextStyle(color: colors.onAccent),
+                    ),
                   ),
                 ],
-                const SizedBox(height: 14),
-                TextField(
-                  controller: titleCtrl,
-                  autofocus: !editing,
-                  decoration: InputDecoration(labelText: s.kanbanFieldTitle),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: bodyCtrl,
-                  maxLines: 4,
-                  minLines: 3,
-                  decoration: InputDecoration(labelText: s.kanbanFieldDesc),
-                ),
-                const SizedBox(height: 12),
-                _formSelector(
-                  colors: colors,
-                  label: s.kanbanFieldPriority,
-                  valueText: _priorityLabel(s, priority),
-                  onTap: () async {
-                    final v = await _pickOption(
-                      title: s.kanbanFieldPriority,
-                      current: priority,
-                      options: [
-                        (value: 'low', label: s.kanbanPriorityLow),
-                        (value: 'normal', label: s.kanbanPriorityNormal),
-                        (value: 'high', label: s.kanbanPriorityHigh),
-                      ],
-                    );
-                    if (v != null) setSheet(() => priority = v);
-                  },
-                ),
-                const SizedBox(height: 12),
-                _formSelector(
-                  colors: colors,
-                  label: s.kanbanFieldAssignee,
-                  valueText: assignee.isEmpty ? s.kanbanAssigneeNone : assignee,
-                  valueColor: assignee.isEmpty
-                      ? colors.textSecondary
-                      : colors.accent,
-                  onTap: () async {
-                    final v = await _pickOption(
-                      title: s.kanbanFieldAssignee,
-                      current: assignee,
-                      options: [
-                        (value: '', label: s.kanbanAssigneeNone),
-                        for (final p in _profiles)
-                          (value: p.name, label: p.name),
-                      ],
-                    );
-                    if (v != null) setSheet(() => assignee = v);
-                  },
-                ),
-                const SizedBox(height: 8),
-                _assigneeHint(colors, s, assignee.isNotEmpty),
-                const SizedBox(height: 18),
-                FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: colors.accent),
-                  onPressed: () {
-                    final title = titleCtrl.text.trim();
-                    if (title.isEmpty) return;
-                    Navigator.of(sheetCtx).pop();
-                    final body = bodyCtrl.text.trim().isEmpty
-                        ? null
-                        : bodyCtrl.text.trim();
-                    if (editing) {
-                      _update(existing.id, title, body, priority, assignee);
-                    } else {
-                      _create(title, body, priority, assignee);
-                    }
-                  },
-                  child: Text(
-                    editing ? s.kanbanSave : s.kanbanCreate,
-                    style: TextStyle(color: colors.onAccent),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -2020,15 +2028,17 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 420),
                   child: SingleChildScrollView(
-                    child: SelectableText(
-                      log.exists && log.content.isNotEmpty
-                          ? log.content
-                          : copy.noLog,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11.5,
-                        height: 1.35,
-                        color: colors.textSecondary,
+                    child: SelectionArea(
+                      child: Text(
+                        log.exists && log.content.isNotEmpty
+                            ? log.content
+                            : copy.noLog,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11.5,
+                          height: 1.35,
+                          color: colors.textSecondary,
+                        ),
                       ),
                     ),
                   ),
@@ -2684,7 +2694,10 @@ class _TaskRowTile extends StatelessWidget {
                     hasAssignee ? '@$assignee' : s.kanbanUnassigned,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: colors.textSecondary,
+                    ),
                   ),
                 ),
                 if (task.commentCount > 0) ...[
@@ -2696,7 +2709,10 @@ class _TaskRowTile extends StatelessWidget {
                   const SizedBox(width: 2),
                   Text(
                     '${task.commentCount}',
-                    style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: colors.textSecondary,
+                    ),
                   ),
                   const SizedBox(width: 8),
                 ],

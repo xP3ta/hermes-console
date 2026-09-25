@@ -25,6 +25,7 @@ import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
+import 'core/services/startup_destination.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
@@ -45,6 +46,8 @@ import 'core/services/font_size_service.dart';
 import 'core/services/home_widget_publisher.dart';
 import 'core/services/notifications/background_listener.dart';
 import 'core/services/notifications/notification_service.dart';
+import 'core/services/performance_trace.dart';
+import 'core/services/shared_gateway_pool.dart';
 import 'core/services/new_session_launch_coordinator.dart';
 import 'core/services/profile_pet_service.dart';
 import 'core/services/platform/native_appearance.dart';
@@ -217,6 +220,7 @@ Future<T?> pushNotificationOwnerRoute<T>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PerformanceTrace.qa.start();
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
   }
@@ -695,6 +699,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Cliente `pet.*` de la instancia activa para la mascota por perfil (uno
   /// por conexión; se cierra al cambiar de instancia o al destruir el estado).
   TuiGatewayClient? _companionPetGateway;
+  SharedGatewayLease? _companionPetLease;
   ProfilePetService? _companionPetSvc;
   String? _companionPetGatewayConnId;
 
@@ -722,8 +727,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     if (active == null) return null;
     if (_companionPetGatewayConnId != connId) {
-      unawaited(_companionPetGateway?.close());
-      _companionPetGateway = TuiGatewayClient(active);
+      _companionPetLease?.release();
+      final lease = SharedGatewayPool.instance.acquire(active);
+      _companionPetLease = lease;
+      _companionPetGateway = lease.client;
       _companionPetGatewayConnId = connId;
       _companionPetSvc = ProfilePetService(
         _companionPetGateway!,
@@ -1767,7 +1774,56 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     setState(() => _showSplash = false);
     _retryPendingNewSessionLaunch();
     unawaited(_openVoiceOwnerChatIfReady());
+    unawaited(_openConfiguredStartupDestination());
   }
+
+  /// Aplica la pantalla de arranque elegida por el usuario (issue #47).
+  ///
+  /// Se ejecuta una sola vez, al terminar el splash de un arranque en frío.
+  /// Cede el paso a cualquier navegación ya en curso —notificación, enlace de
+  /// emparejamiento, chat de voz—: quien llega por una notificación espera ir
+  /// a ESE destino, no al suyo por defecto.
+  Future<void> _openConfiguredStartupDestination() async {
+    if (_startupDestinationApplied) return;
+    _startupDestinationApplied = true;
+
+    final nav = _navigatorKey.currentState;
+    if (nav == null || nav.canPop()) return;
+
+    // El fence se abre ANTES de leer la preferencia: entre ese `await` y el
+    // push puede llegar una notificación o un enlace de emparejamiento, y esa
+    // navegación invalida la petición. Quien abre desde una notificación
+    // espera ESE destino, no el de arranque.
+    const intent = 'startup-destination';
+    final request = _appNavigationFence.begin(nav, intent: intent);
+
+    final destination = await StartupDestinationStore.load();
+    if (!mounted || destination == StartupDestination.home) return;
+    if (!_appNavigationFence.canCommit(request, nav, intent: intent)) return;
+    if (nav.canPop()) return;
+
+    final connections = widget.connManager.getConnections();
+    if (connections.isEmpty) return;
+    final activeId = widget.connManager.activeConnectionId.value;
+    final connection = connections.firstWhere(
+      (c) => c.id == activeId,
+      orElse: () => connections.first,
+    );
+
+    unawaited(
+      nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => MissionControlScreen(
+            connection: connection,
+            connManager: widget.connManager,
+            activeChats: activeChats,
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _startupDestinationApplied = false;
 
   void _markHomeInitialLoadComplete() {
     if (!mounted ||
@@ -2130,9 +2186,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (connections.isEmpty) {
       if (!_shareWaitingNoticeShown) {
         _shareWaitingNoticeShown = true;
-        HermesNotice.ofNavigator(nav)?.show(
-          message: Strings.of(nav.context).shareNeedsInstance,
-        );
+        HermesNotice.ofNavigator(
+          nav,
+        )?.show(message: Strings.of(nav.context).shareNeedsInstance);
       }
       return;
     }
@@ -2246,7 +2302,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _dismissInAppNotice();
     activeChats.activeIds.removeListener(_onActiveChatsChanged);
     companion.dispose();
-    unawaited(_companionPetGateway?.close());
+    _companionPetLease?.release();
+    _companionPetLease = null;
     companionPresence.dispose();
     themeId.dispose();
     themeProfiles.dispose();

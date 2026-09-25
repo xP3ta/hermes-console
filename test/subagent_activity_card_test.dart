@@ -567,8 +567,8 @@ void main() {
         ),
       );
 
-      expect(find.textContaining('Subagente 1'), findsOneWidget);
-      expect(find.text('completado'), findsOneWidget);
+      expect(find.textContaining('1 completado'), findsOneWidget);
+      expect(find.textContaining('Subagente 1'), findsNothing);
       expect(find.text('estado desconocido'), findsNothing);
       expect(find.textContaining(privateId), findsNothing);
       expect(find.textContaining('deleg_c0ffee12'), findsNothing);
@@ -576,7 +576,7 @@ void main() {
     },
   );
 
-  testWidgets('homogeneous failure attributes failed to every neutral row', (
+  testWidgets('homogeneous failure is summarized once without per-row repetition', (
     tester,
   ) async {
     final data = SubagentCompletionCardData(
@@ -604,7 +604,8 @@ void main() {
       ),
     );
 
-    expect(find.text('falló'), findsNWidgets(2));
+    expect(find.textContaining('2 fallaron'), findsOneWidget);
+    expect(find.text('falló'), findsNothing);
     expect(find.text('estado desconocido'), findsNothing);
     expect(find.textContaining('sa-private-failure'), findsNothing);
     expect(find.textContaining('deleg_failure1'), findsNothing);
@@ -651,12 +652,10 @@ void main() {
     expect(find.textContaining('00:00'), findsOneWidget);
     expect(
       find.text('No se conservaron los objetivos ni los modelos individuales.'),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.textContaining('Subagente 1'), findsOneWidget);
-    expect(find.textContaining('Subagente 2'), findsOneWidget);
-    expect(find.textContaining('Subagente 3'), findsOneWidget);
-    expect(find.textContaining('estado desconocido'), findsNWidgets(3));
+    expect(find.textContaining('Subagente 1'), findsNothing);
+    expect(find.textContaining('estado desconocido'), findsNothing);
     expect(find.text('Detener'), findsNothing);
     expect(find.textContaining(privateId), findsNothing);
     expect(find.textContaining('deleg_c0ffee12'), findsNothing);

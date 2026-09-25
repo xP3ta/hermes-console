@@ -360,13 +360,15 @@ class _GeneratedArtifactViewerState extends State<GeneratedArtifactViewer> {
         padding: const EdgeInsets.all(14),
         child: Semantics(
           label: strings.generatedArtifactSourceSemantics(record.title),
-          child: SelectableText(
-            visibleContent,
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontFamily: 'monospace',
-              fontSize: compact ? 11.5 : 12.5,
-              height: 1.5,
+          child: SelectionArea(
+            child: Text(
+              visibleContent,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontFamily: 'monospace',
+                fontSize: compact ? 11.5 : 12.5,
+                height: 1.5,
+              ),
             ),
           ),
         ),
@@ -427,9 +429,7 @@ class _GeneratedArtifactViewerState extends State<GeneratedArtifactViewer> {
   }
 
   void _message(String message) {
-    HermesNotice.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    HermesNotice.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 

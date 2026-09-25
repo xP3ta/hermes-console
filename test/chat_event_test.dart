@@ -34,6 +34,41 @@ void expectFailClosedToolCarrier(
 
 void main() {
   group('ChatEventInfo.classify', () {
+    test('carrier tool de megabytes permanece privado y no es aprobación', () {
+      const privateMarker = 'PRIVATE_HUGE_TOOL_OUTPUT';
+      final event = ChatEventInfo.classify({
+        'role': 'tool',
+        'content': '${'resultado ordinario ' * 120000}$privateMarker',
+      });
+
+      expectFailClosedToolCarrier(event, [
+        privateMarker,
+      ], reason: 'un log grande no puede filtrarse al timeline público');
+      expect(event.approvalPending, isFalse);
+    });
+
+    test(
+      'reconoce los cinco marcadores históricos sin distinguir mayúsculas',
+      () {
+        const markers = [
+          'AsKiNg ThE UsEr FoR ApPrOvAl',
+          'ApPrOvAl Is OnE-sHoT',
+          'PeNdInG_ApPrOvAl',
+          'AwAiTiNg_ApPrOvAl',
+          'WaItInG_fOr_ApPrOvAl',
+        ];
+        for (final marker in markers) {
+          final event = ChatEventInfo.classify({
+            'role': 'tool',
+            'content': '${'x' * 5000}$marker${'y' * 5000}',
+          });
+          expect(event.kind, ChatEventKind.approval, reason: marker);
+          expect(event.approvalPending, isTrue, reason: marker);
+          expect(event.text, isEmpty, reason: marker);
+        }
+      },
+    );
+
     test('pending_approval JSON NO se trata como texto de chat', () {
       final msg = {
         'role': 'assistant',

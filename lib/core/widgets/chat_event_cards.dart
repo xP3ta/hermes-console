@@ -68,6 +68,21 @@ class ChatEventInfo {
     'tool_call',
   };
 
+  // Los resultados de herramientas pueden contener megabytes de salida. La
+  // detección conserva las cinco frases históricas y su semántica sin distinguir
+  // mayúsculas, pero evita materializar una copia minúscula de cada payload.
+  static final RegExp _approvalMarkerRe = RegExp(
+    r'asking the user for approval'
+    r'|approval is one-shot'
+    r'|pending_approval'
+    r'|awaiting_approval'
+    r'|waiting_for_approval',
+    caseSensitive: false,
+  );
+
+  static bool _isApprovalToolResult(String content) =>
+      _approvalMarkerRe.hasMatch(content);
+
   /// Clasifica un mensaje `{role, content, ...}` del historial del servidor.
   ///
   /// Heurística conservadora para no romper respuestas normales del asistente:
@@ -102,13 +117,7 @@ class ChatEventInfo {
     // El content puede ser JSON puro, JSON + "\n\n[Tool loop warning: …]" o
     // texto plano. La señal de aprobación viene EMBEBIDA en el string de error.
     if (_toolRoles.contains(role)) {
-      final lower = textContent.toLowerCase();
-      final isApproval =
-          lower.contains('asking the user for approval') ||
-          lower.contains('approval is one-shot') ||
-          lower.contains('pending_approval') ||
-          lower.contains('awaiting_approval') ||
-          lower.contains('waiting_for_approval');
+      final isApproval = _isApprovalToolResult(textContent);
 
       if (isApproval) {
         return const ChatEventInfo._(

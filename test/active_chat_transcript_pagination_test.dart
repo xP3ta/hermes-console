@@ -485,7 +485,8 @@ ActiveChat _chat(
   CompressionRestoreStore? compressionRestoreStore,
   int transcriptPageSizeForTesting = 120,
 }) => ActiveChat(
-  compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
+  compressionRestoreStore:
+      compressionRestoreStore ?? testCompressionRestoreStore(),
   transcriptPageSizeForTesting: transcriptPageSizeForTesting,
   connection: _connection(id),
   sessionId: sessionId,
@@ -613,41 +614,34 @@ void main() {
     );
   }
 
-  test(
-    'complete native transcript can end on an exactly full page',
-    () async {
-      final rows = _rows(120);
-      final gateway = _HistoryGateway()
-        ..snapshot = const DesktopSessionSnapshot(
-          runtimeSessionId: 'runtime-exact-page',
-          storedSessionId: 'stored-chat',
-          created: false,
-          messagesProvided: false,
-          messageCount: 120,
-        )
-        ..loader = () async => SessionMessagesPage.fromRaw(
-          rawMessages: rows,
-          pagination: null,
-          paginationProvided: false,
-        );
-      final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
-      final chat = _chat(
-        'native-exact-page',
-        server.client(),
-        gateway: gateway,
+  test('complete native transcript can end on an exactly full page', () async {
+    final rows = _rows(120);
+    final gateway = _HistoryGateway()
+      ..snapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-exact-page',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: 120,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: rows,
+        pagination: null,
+        paginationProvided: false,
       );
-      addTearDown(chat.dispose);
+    final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+    final chat = _chat('native-exact-page', server.client(), gateway: gateway);
+    addTearDown(chat.dispose);
 
-      await chat.loadMessages(expectedMessageCount: 120);
+    await chat.loadMessages(expectedMessageCount: 120);
 
-      expect(chat.messages, hasLength(120));
-      expect(chat.hasEarlierMessages, isFalse);
-      expect(
-        server.requests.map((request) => request.queryParameters['offset']),
-        ['0', '120'],
-      );
-    },
-  );
+    expect(chat.messages, hasLength(120));
+    expect(chat.hasEarlierMessages, isFalse);
+    expect(
+      server.requests.map((request) => request.queryParameters['offset']),
+      ['0', '120'],
+    );
+  });
 
   test('exact-page lookahead retries a transient transport failure', () async {
     final rows = _rows(120);
@@ -1444,6 +1438,149 @@ void main() {
       hasLength(2),
     );
   });
+
+  test(
+    'resume of a long idle chat keeps the opening window paginated',
+    () async {
+      final server = _TranscriptServer(paginate: true)..rows.addAll(_rows(600));
+      final chat = _chat('bounded-idle-resume', server.client());
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 600);
+      expect(chat.messages, hasLength(120));
+      server.requests.clear();
+      final changes = <bool>[];
+      for (var invalidation = 0; invalidation < 5; invalidation++) {
+        changes.add(await chat.reconcileAfterResume());
+      }
+
+      expect(server.requests, hasLength(5));
+      expect(changes, everyElement(isFalse));
+      expect(
+        server.requests.map((uri) => uri.queryParameters['limit']),
+        everyElement('120'),
+      );
+      expect(
+        server.requests.map((uri) => uri.queryParameters['offset']),
+        everyElement('0'),
+      );
+      expect(
+        server.requests.map((uri) => uri.queryParameters['include_compacted']),
+        everyElement('true'),
+      );
+      expect(chat.messages, hasLength(120));
+      expect(chat.hasEarlierMessages, isTrue);
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(240));
+    },
+  );
+
+  test(
+    'idle resume failure preserves its paginated projection for retry',
+    () async {
+      final server = _TranscriptServer(paginate: true)..rows.addAll(_rows(600));
+      final chat = _chat('failed-idle-resume', server.client());
+      addTearDown(chat.dispose);
+      await chat.loadMessages(expectedMessageCount: 600);
+      final visible = List<Map<String, dynamic>>.of(chat.messages);
+      server.healthy = false;
+
+      expect(await chat.reconcileAfterResume(), isFalse);
+      expect(chat.messages, visible);
+      expect(chat.hasEarlierMessages, isTrue);
+
+      server.healthy = true;
+      server.rows.addAll(_rows(2, from: 601));
+      expect(await chat.reconcileAfterResume(), isTrue);
+      expect(chat.messages.first['content'], 'msg 602');
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
+
+  test('idle resume keeps compacted scrollback reachable and unique', () async {
+    final server = _CompactedTranscriptServer(
+      activeRows: _rows(120, from: 481),
+      compactedRows: [
+        for (final row in _rows(480))
+          {...row, 'active': false, 'compacted': true},
+      ],
+    );
+    final chat = _chat('compacted-idle-resume', server.client());
+    addTearDown(chat.dispose);
+    await chat.loadMessages(expectedMessageCount: 120);
+    await chat.loadEarlierMessages();
+    expect(chat.messages, hasLength(240));
+    server.requests.clear();
+
+    expect(await chat.reconcileAfterResume(), isFalse);
+    expect(chat.messages, hasLength(240));
+    expect(server.requests.single.queryParameters['limit'], '120');
+    while (chat.hasEarlierMessages) {
+      final addedRows = await chat.loadEarlierMessages();
+      // An exact multiple ends with an empty cursor-closing page.
+      if (!addedRows) expect(chat.hasEarlierMessages, isFalse);
+    }
+    expect(
+      chat.messages.map((row) => row['message_id']),
+      _rows(600).reversed.map((row) => row['message_id']),
+    );
+    expect(
+      server.requests.map((uri) => uri.queryParameters['include_compacted']),
+      everyElement('true'),
+    );
+  });
+
+  test(
+    'incomplete resume still obtains full terminal recovery evidence',
+    () async {
+      final server = _TranscriptServer(paginate: true)..rows.addAll(_rows(600));
+      final chat = _chat('incomplete-resume-coverage', server.client());
+      addTearDown(chat.dispose);
+      await chat.loadMessages(expectedMessageCount: 600);
+      chat.internalMessagesForTesting = [
+        {'role': 'assistant', 'content': '', '_pipeline': true},
+        ...chat.messages.skip(1),
+      ];
+      server.requests.clear();
+
+      expect(await chat.reconcileAfterResume(), isTrue);
+      expect(server.requests.map((uri) => uri.queryParameters['limit']), [
+        '500',
+        '500',
+      ]);
+      expect(server.requests.map((uri) => uri.queryParameters['offset']), [
+        '0',
+        '500',
+      ]);
+      expect(chat.messages, hasLength(600));
+      expect(chat.messages.first['content'], 'msg 600');
+      expect(chat.hasEarlierMessages, isFalse);
+    },
+  );
+
+  test(
+    'idle resume rejects a page crossing runtime authority rotation',
+    () async {
+      final server = _ControlledTranscriptServer();
+      final chat = _chat('rotated-idle-resume', server.client());
+      addTearDown(chat.dispose);
+      final opening = chat.loadMessages(expectedMessageCount: 600);
+      await server.waitForRequests(1);
+      server.completePage(0, _rows(120, from: 481));
+      await opening;
+      chat.adoptDesktopRuntimeForTesting('runtime-before');
+      final visible = List<Map<String, dynamic>>.of(chat.messages);
+
+      final refresh = chat.reconcileAfterResume();
+      await server.waitForRequests(2);
+      chat.adoptDesktopRuntimeForTesting('runtime-after');
+      server.completePage(1, _rows(120, from: 483));
+
+      expect(await refresh, isFalse);
+      expect(chat.messages, visible);
+      expect(chat.hasEarlierMessages, isTrue);
+    },
+  );
 
   test(
     'refresh durable completo retira cursor aunque la proyeccion no cambie',
