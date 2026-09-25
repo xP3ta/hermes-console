@@ -3230,6 +3230,219 @@ void main() {
   );
 
   testWidgets(
+    'ownership banner se cierra, deja composer vallado con línea compacta y reaparece en un conflicto nuevo',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final gateway = _UiRewindGateway()
+        ..submitError = const TuiGatewayRpcError(
+          'prompt.submit',
+          'private owner marker',
+          code: 4090,
+          data: {'reason': 'SESSION_NOT_OWNED'},
+        );
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-ownership-dismiss'),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      final composer = find.byType(TextField).last;
+      await tester.enterText(composer, 'BORRADOR_VALLADO');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward).last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+
+      final banner = find.byKey(
+        const ValueKey('chat-runtime-ownership-banner'),
+      );
+      final compact = find.byKey(
+        const ValueKey('chat-runtime-ownership-compact'),
+      );
+      final dismiss = find.byKey(
+        const ValueKey('chat-runtime-ownership-dismiss'),
+      );
+      expect(chat.conflictReadOnly, isTrue);
+      expect(banner, findsOneWidget);
+      expect(compact, findsNothing);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.descendant(of: dismiss, matching: find.byType(IconButton)),
+            )
+            .tooltip,
+        'Cerrar',
+      );
+      expect(tester.getSize(dismiss).width, greaterThanOrEqualTo(48));
+      expect(tester.getSize(dismiss).height, greaterThanOrEqualTo(48));
+      expect(find.bySemanticsLabel('Cerrar'), findsWidgets);
+
+      await tester.tap(dismiss);
+      await tester.pump();
+
+      expect(banner, findsNothing);
+      // El estado de solo lectura sigue a la vista y comprobable.
+      expect(compact, findsOneWidget);
+      expect(
+        find.descendant(
+          of: compact,
+          matching: find.byKey(const ValueKey('chat-runtime-ownership-check')),
+        ),
+        findsOneWidget,
+      );
+      // La valla no se debilita al cerrar el aviso.
+      expect(chat.conflictReadOnly, isTrue);
+      expect(chat.mutationsBlockedByOwnershipConflict, isTrue);
+      await tester.tap(find.byIcon(Icons.arrow_upward).last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(gateway.submissions, ['BORRADOR_VALLADO']);
+      expect(
+        tester.widget<TextField>(composer).controller?.text,
+        'BORRADOR_VALLADO',
+      );
+      expect(banner, findsNothing);
+
+      // Comprobar desde la línea compacta mantiene cerrado el mismo episodio.
+      await tester.tap(
+        find.byKey(const ValueKey('chat-runtime-ownership-check')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(chat.conflictReadOnly, isTrue);
+      expect(banner, findsNothing);
+      expect(compact, findsOneWidget);
+
+      gateway.submitError = null;
+      await tester.tap(find.byIcon(Icons.arrow_upward).last);
+      await tester.pump();
+      gateway.emit('message.complete', {'text': 'aceptado'});
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(chat.conflictReadOnly, isFalse);
+      expect(banner, findsNothing);
+      expect(compact, findsNothing);
+
+      // Un conflicto nuevo vuelve a mostrar el aviso completo.
+      gateway.submitError = const TuiGatewayRpcError(
+        'prompt.submit',
+        'private owner marker',
+        code: 4090,
+        data: {'reason': 'SESSION_NOT_OWNED'},
+      );
+      await tester.enterText(composer, 'SEGUNDO_CONFLICTO');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward).last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(chat.conflictReadOnly, isTrue);
+      expect(banner, findsOneWidget);
+      expect(compact, findsNothing);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'aviso de continuar en Desktop se cierra y reaparece con otra solicitud',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-desktop-continuation-dismiss'),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      final card = find.byKey(const ValueKey('desktop-continuation-required'));
+      final dismiss = find.byKey(
+        const ValueKey('desktop-continuation-dismiss'),
+      );
+
+      gateway.emit('vault.code.request', {'origin': 'https://x.example'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(chat.desktopContinuationRequired, isTrue);
+      expect(card, findsOneWidget);
+      expect(tester.getSize(dismiss).height, greaterThanOrEqualTo(48));
+
+      await tester.tap(dismiss);
+      await tester.pump();
+      expect(card, findsNothing);
+      // Cerrar no resuelve la solicitud pendiente.
+      expect(chat.desktopContinuationRequired, isTrue);
+      expect(chat.needsInput, isTrue);
+
+      gateway.emit('vault.code.expire');
+      await tester.pump();
+      expect(chat.desktopContinuationRequired, isFalse);
+      gateway.emit('vault.unlock.request');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(chat.desktopContinuationRequired, isTrue);
+      expect(card, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'error de refresco sobre transcript visible se cierra y reaparece en el siguiente fallo',
+    (tester) async {
+      var failLoads = false;
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-refresh-error-dismiss'),
+        messages: const [
+          {'role': 'assistant', 'content': 'HISTORIAL_VISIBLE'},
+        ],
+        messagesLoaded: true,
+        storedMessageLoader: (_, _) async {
+          if (failLoads) throw StateError('synthetic refresh failure');
+          return const [
+            {'role': 'assistant', 'content': 'HISTORIAL_VISIBLE'},
+          ];
+        },
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      final error = find.byKey(const ValueKey('chat-refresh-error'));
+      final dismiss = find.byKey(const ValueKey('chat-refresh-error-dismiss'));
+      expect(error, findsNothing);
+
+      Future<void> refresh() async {
+        await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.tap(
+          find.descendant(
+            of: find.byKey(const ValueKey('chat-control-sheet')),
+            matching: find.byIcon(Icons.refresh_rounded),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+      }
+
+      failLoads = true;
+      await refresh();
+      expect(error, findsOneWidget);
+      expect(find.text('HISTORIAL_VISIBLE'), findsOneWidget);
+      expect(tester.getSize(dismiss).height, greaterThanOrEqualTo(48));
+
+      await tester.tap(dismiss);
+      await tester.pump();
+      expect(error, findsNothing);
+      expect(find.text('HISTORIAL_VISIBLE'), findsOneWidget);
+
+      await refresh();
+      expect(error, findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'message.complete warning surfaces once without replacing final text',
     (tester) async {
       final gateway = _UiRewindGateway();
@@ -6935,6 +7148,90 @@ void main() {
       expect(find.bySemanticsLabel(notice), findsOneWidget);
       expect(find.text('mensaje visible 121'), findsOneWidget);
       semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'aviso de historial local truncado se cierra y reaparece si vuelve a truncarse',
+    (tester) async {
+      final connection = _conn();
+      final session = Session(
+        id: 'sess-local-truncated-dismiss',
+        title: 'Historial local acotado',
+        model: 'hermes-agent',
+        source: 'mobile-local',
+        messageCount: 1001,
+        isActive: false,
+        preview: '',
+        startedAt: 0,
+      );
+      await LocalTranscriptStore.saveFromNewestFirst(
+        connection.id,
+        session.id,
+        [
+          for (var index = 1001; index >= 1; index--)
+            {
+              'role': index.isOdd ? 'user' : 'assistant',
+              'content': 'mensaje visible $index',
+            },
+        ],
+      );
+      await LocalTranscriptStore.saveFromNewestFirst(
+        connection.id,
+        session.id,
+        [
+          for (var index = 121; index >= 1; index--)
+            {
+              'role': index.isOdd ? 'user' : 'assistant',
+              'content': 'mensaje visible $index',
+            },
+        ],
+      );
+      final chat = await pumpChat(
+        tester,
+        connection: connection,
+        session: session,
+        messagesLoaded: false,
+      );
+      await tester.pump();
+
+      final notice = find.byKey(
+        const ValueKey('local-transcript-truncation-notice'),
+      );
+      final dismiss = find.byKey(
+        const ValueKey('local-transcript-truncation-dismiss'),
+      );
+      expect(notice, findsOneWidget);
+      expect(tester.getSize(dismiss).width, greaterThanOrEqualTo(48));
+      expect(tester.getSize(dismiss).height, greaterThanOrEqualTo(48));
+      expect(
+        tester
+            .widget<IconButton>(
+              find.descendant(of: dismiss, matching: find.byType(IconButton)),
+            )
+            .tooltip,
+        'Cerrar',
+      );
+
+      await tester.tap(dismiss);
+      await tester.pump();
+      expect(notice, findsNothing);
+      // Cerrar el aviso no cambia la cobertura real del historial.
+      expect(chat.localTranscriptOlderHistoryTruncated, isTrue);
+
+      // Misma ocurrencia sigue cerrada; una nueva (tras quedar completo) no.
+      chat.recordLocalTranscriptCoverageForTesting(olderHistoryTruncated: true);
+      await tester.pump();
+      expect(notice, findsNothing);
+      chat.recordLocalTranscriptCoverageForTesting(
+        olderHistoryTruncated: false,
+      );
+      await tester.pump();
+      expect(notice, findsNothing);
+      chat.recordLocalTranscriptCoverageForTesting(olderHistoryTruncated: true);
+      await tester.pump();
+      expect(notice, findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -16988,6 +17285,58 @@ void main() {
       expect(banner, findsNothing);
       expect(find.byType(HermesNoticeCard), findsOneWidget);
       expect(find.textContaining('Respuesta REST conservada'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'banner de auth Dashboard se cierra y reaparece cuando vuelve a exigirse',
+    (tester) async {
+      final gateway = _UiRewindGateway()
+        ..connected = false
+        ..connectError = const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        );
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-auth-banner-dismiss'),
+        messages: const [
+          {'role': 'assistant', 'content': 'Respuesta REST conservada'},
+        ],
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      final banner = find.byKey(const ValueKey('chat-dashboard-auth-required'));
+      final dismiss = find.byKey(const ValueKey('chat-dashboard-auth-dismiss'));
+      expect(banner, findsOneWidget);
+      expect(tester.getSize(dismiss).width, greaterThanOrEqualTo(48));
+      expect(tester.getSize(dismiss).height, greaterThanOrEqualTo(48));
+
+      await tester.tap(dismiss);
+      await tester.pump();
+      expect(banner, findsNothing);
+      expect(chat.dashboardAuthRequired, isTrue);
+      expect(find.textContaining('Respuesta REST conservada'), findsOneWidget);
+
+      // Un warm-up correcto limpia la exigencia; otro que vuelve a pedir
+      // sesión es una ocurrencia nueva del aviso.
+      gateway.connectError = null;
+      await chat.warmDesktopGateway();
+      await tester.pump();
+      expect(chat.dashboardAuthRequired, isFalse);
+      expect(banner, findsNothing);
+
+      gateway
+        ..connected = false
+        ..connectError = const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        );
+      await chat.warmDesktopGateway();
+      await tester.pump();
+      expect(chat.dashboardAuthRequired, isTrue);
+      expect(banner, findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
       expect(tester.takeException(), isNull);
     },
   );

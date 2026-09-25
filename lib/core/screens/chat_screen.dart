@@ -1375,6 +1375,11 @@ class _ChatScreenState extends State<ChatScreen>
   // páginas anteriores al llegar al extremo del timeline.
   bool _coreReadCoverageNoticeDismissed = false;
 
+  // El error de refresco superpuesto sobre un transcript ya visible es solo
+  // informativo (el historial sigue ahí). Cerrarlo lo oculta hasta el
+  // siguiente fallo de carga, que vuelve a mostrarlo.
+  bool _refreshErrorNoticeDismissed = false;
+
   // The subagent-activity pill is a UI-layer cache on top of
   // `_chat.subagentActivities`: the service clears that list once work is
   // retired (see active_chat_service.dart's `_rememberRetiredSubagentTerminals`
@@ -6595,6 +6600,7 @@ class _ChatScreenState extends State<ChatScreen>
         setState(() {
           if (!isUnpersistedMobileChat) {
             _error = errStr;
+            _refreshErrorNoticeDismissed = false;
           }
         });
         if (!isUnpersistedMobileChat) {
@@ -6607,6 +6613,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
       setState(() {
         _error = errStr;
+        _refreshErrorNoticeDismissed = false;
       });
       return false;
     } finally {
@@ -10101,9 +10108,11 @@ class _ChatScreenState extends State<ChatScreen>
                       ),
                       child: Column(
                         children: [
-                          if (_chat.dashboardAuthRequired)
+                          if (_chat.dashboardAuthNoticeVisible)
                             _DesktopAuthRequiredBanner(
                               message: str.chaDesktopAuthRequiredBanner,
+                              onDismiss: () =>
+                                  setState(_chat.dismissDashboardAuthNotice),
                             ),
                           ValueListenableBuilder<ChatTransportStatus>(
                             valueListenable: _chat.transportStatusListenable,
@@ -10119,9 +10128,12 @@ class _ChatScreenState extends State<ChatScreen>
                                   recoveredLabel: str.chaConnectionRecovered,
                                 ),
                           ),
-                          if (_chat.localTranscriptOlderHistoryTruncated)
+                          if (_chat.localTranscriptTruncationNoticeVisible)
                             _LocalTranscriptTruncationNotice(
                               message: str.chaLocalTranscriptTruncated,
+                              onDismiss: () => setState(
+                                _chat.dismissLocalTranscriptTruncationNotice,
+                              ),
                             ),
                           // En flujo bajo la cabecera, como los avisos de
                           // arriba: ya no flota sobre el botón «cargar
@@ -10424,8 +10436,12 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 // Ownership conflicts keep the transcript and composer
                                 // mounted while fencing every mutation.
+                                // Cerrar el aviso solo lo compacta a una línea: el
+                                // estado de solo lectura sigue a la vista.
                                 if (_chat.conflictReadOnly)
-                                  _buildRuntimeOwnershipBanner(),
+                                  _chat.ownershipConflictNoticeVisible
+                                      ? _buildRuntimeOwnershipBanner()
+                                      : _buildRuntimeOwnershipCompactIndicator(),
                                 // Aprobación inline: aparece justo encima del composer cuando el
                                 // agente pide permiso (motor /v1/runs).
                                 if (_chat.pendingApproval != null)
@@ -10439,7 +10455,7 @@ class _ChatScreenState extends State<ChatScreen>
                                         >()
                                         ?.companion,
                                   ),
-                                if (_chat.desktopContinuationRequired)
+                                if (_chat.desktopContinuationNoticeVisible)
                                   Semantics(
                                     container: true,
                                     label: Strings.of(
@@ -10450,18 +10466,32 @@ class _ChatScreenState extends State<ChatScreen>
                                         'desktop-continuation-required',
                                       ),
                                       child: Padding(
-                                        padding: EdgeInsets.all(16),
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          4,
+                                          4,
+                                          4,
+                                        ),
                                         child: Row(
                                           children: [
-                                            Icon(
+                                            const Icon(
                                               Icons.desktop_windows_outlined,
                                             ),
-                                            SizedBox(width: 12),
+                                            const SizedBox(width: 12),
                                             Expanded(
                                               child: Text(
                                                 Strings.of(
                                                   context,
                                                 ).chatContinueOnDesktop,
+                                              ),
+                                            ),
+                                            _ChatNoticeDismissButton(
+                                              key: const ValueKey(
+                                                'desktop-continuation-dismiss',
+                                              ),
+                                              onPressed: () => setState(
+                                                _chat
+                                                    .dismissDesktopContinuationNotice,
                                               ),
                                             ),
                                           ],
@@ -12960,11 +12990,24 @@ class _ChatScreenState extends State<ChatScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            strings.chaRuntimeOwnershipTitle,
-            style: Theme.of(context).textTheme.titleSmall,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    strings.chaRuntimeOwnershipTitle,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+              ),
+              _ChatNoticeDismissButton(
+                key: const ValueKey('chat-runtime-ownership-dismiss'),
+                onPressed: () => setState(_chat.dismissOwnershipConflictNotice),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
           Text(
             strings.chaRuntimeOwnershipMessage,
             style: Theme.of(context).textTheme.bodySmall,
@@ -12982,6 +13025,50 @@ class _ChatScreenState extends State<ChatScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Resto visible del aviso de conflicto tras cerrarlo: una sola línea con el
+  /// título y «comprobar de nuevo», para que el composer vallado nunca quede
+  /// sin explicación. No reabre el aviso largo ni toca la valla.
+  Widget _buildRuntimeOwnershipCompactIndicator() {
+    final strings = Strings.of(context);
+    final checking = _chat.ownershipRecheckInFlight;
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      container: true,
+      label: strings.chaRuntimeOwnershipTitle,
+      child: Padding(
+        key: const ValueKey('chat-runtime-ownership-compact'),
+        padding: const EdgeInsets.fromLTRB(18, 2, 8, 0),
+        child: Row(
+          children: [
+            Icon(Icons.lock_outline_rounded, size: 16, color: colors.warning),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ExcludeSemantics(
+                child: Text(
+                  strings.chaRuntimeOwnershipTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+            ),
+            TextButton(
+              key: const ValueKey('chat-runtime-ownership-check'),
+              onPressed: checking || !_chat.ownershipRecheckAvailable
+                  ? null
+                  : _checkRuntimeOwnership,
+              child: Text(
+                checking
+                    ? strings.chaRuntimeOwnershipChecking
+                    : strings.chaRuntimeOwnershipCheck,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -13662,9 +13749,10 @@ class _ChatScreenState extends State<ChatScreen>
     );
     return ChatRefreshStatusOverlay(
       loading: _interactiveMessageRefreshPending,
-      errorMessage: _error == null
+      errorMessage: _error == null || _refreshErrorNoticeDismissed
           ? null
           : Strings.of(context).chaMessagesError,
+      onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
       errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
       child: transcript,
@@ -14386,16 +14474,20 @@ class _ChatNoticeSurface extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: iconColor),
+          // El envoltorio ya anuncia [message] como etiqueta del aviso; solo el
+          // cierre ([trailing]) queda como nodo accesible propio.
+          ExcludeSemantics(child: Icon(icon, size: 18, color: iconColor)),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              message,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 12.5,
-                height: 1.3,
-                fontWeight: FontWeight.w600,
+            child: ExcludeSemantics(
+              child: Text(
+                message,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 12.5,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),
@@ -14406,10 +14498,42 @@ class _ChatNoticeSurface extends StatelessWidget {
   }
 }
 
+/// Cierre común de los avisos en flujo del chat: X con tooltip «Cerrar»,
+/// área táctil de 48 dp y etiqueta accesible aunque el icono sea compacto.
+class _ChatNoticeDismissButton extends StatelessWidget {
+  const _ChatNoticeDismissButton({required this.onPressed, super.key});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = Strings.of(context).commonClose;
+    // Nodo propio: sin `container` su etiqueta se fundiría con la del aviso.
+    return Semantics(
+      container: true,
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: label,
+        icon: const Icon(Icons.close_rounded),
+        iconSize: 18,
+        color: Theme.of(context).hermes.textSecondary,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+      ),
+    );
+  }
+}
+
 class _DesktopAuthRequiredBanner extends StatelessWidget {
-  const _DesktopAuthRequiredBanner({required this.message});
+  const _DesktopAuthRequiredBanner({
+    required this.message,
+    required this.onDismiss,
+  });
 
   final String message;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -14419,11 +14543,13 @@ class _DesktopAuthRequiredBanner extends StatelessWidget {
       container: true,
       liveRegion: true,
       label: message,
-      child: ExcludeSemantics(
-        child: _ChatNoticeSurface(
-          icon: Icons.lock_outline_rounded,
-          iconColor: colors.warning,
-          message: message,
+      child: _ChatNoticeSurface(
+        icon: Icons.lock_outline_rounded,
+        iconColor: colors.warning,
+        message: message,
+        trailing: _ChatNoticeDismissButton(
+          key: const ValueKey('chat-dashboard-auth-dismiss'),
+          onPressed: onDismiss,
         ),
       ),
     );
@@ -14447,19 +14573,13 @@ class _CoreReadPartialCoverageNotice extends StatelessWidget {
       container: true,
       liveRegion: true,
       label: message,
-      child: ExcludeSemantics(
-        child: _ChatNoticeSurface(
-          icon: Icons.account_tree_outlined,
-          iconColor: colors.warning,
-          message: message,
-          trailing: IconButton(
-            key: const ValueKey('core-read-partial-coverage-dismiss'),
-            tooltip: Strings.of(context).commonClose,
-            onPressed: onDismiss,
-            icon: const Icon(Icons.close),
-            iconSize: 18,
-            color: colors.textSecondary,
-          ),
+      child: _ChatNoticeSurface(
+        icon: Icons.account_tree_outlined,
+        iconColor: colors.warning,
+        message: message,
+        trailing: _ChatNoticeDismissButton(
+          key: const ValueKey('core-read-partial-coverage-dismiss'),
+          onPressed: onDismiss,
         ),
       ),
     );
@@ -14467,9 +14587,13 @@ class _CoreReadPartialCoverageNotice extends StatelessWidget {
 }
 
 class _LocalTranscriptTruncationNotice extends StatelessWidget {
-  const _LocalTranscriptTruncationNotice({required this.message});
+  const _LocalTranscriptTruncationNotice({
+    required this.message,
+    required this.onDismiss,
+  });
 
   final String message;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -14479,11 +14603,13 @@ class _LocalTranscriptTruncationNotice extends StatelessWidget {
       container: true,
       liveRegion: true,
       label: message,
-      child: ExcludeSemantics(
-        child: _ChatNoticeSurface(
-          icon: Icons.history_toggle_off_rounded,
-          iconColor: colors.warning,
-          message: message,
+      child: _ChatNoticeSurface(
+        icon: Icons.history_toggle_off_rounded,
+        iconColor: colors.warning,
+        message: message,
+        trailing: _ChatNoticeDismissButton(
+          key: const ValueKey('local-transcript-truncation-dismiss'),
+          onPressed: onDismiss,
         ),
       ),
     );
@@ -20264,12 +20390,16 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     required this.errorMessage,
     required this.child,
     this.errorTopInset = 8,
+    this.onDismissError,
     super.key,
   });
 
   final bool loading;
   final String? errorMessage;
   final Widget child;
+
+  /// Con valor, el aviso de error muestra una X para cerrarlo.
+  final VoidCallback? onDismissError;
 
   /// Distancia del aviso de error al borde superior del transcript. El chat la
   /// sube para dejar libre el botón «cargar anteriores» cuando está a la vista.
@@ -20309,36 +20439,41 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
             child: Center(
               child: Semantics(
                 key: const ValueKey('chat-refresh-error'),
+                container: true,
                 liveRegion: true,
                 label: errorMessage,
-                child: ExcludeSemantics(
-                  // Misma superficie neutra que el resto de avisos: el error
-                  // lo lleva el glifo, no un relleno rojo con texto blanco.
-                  child: Material(
-                    color: colors.surface,
-                    elevation: 10,
-                    shadowColor: Colors.black.withValues(alpha: 0.45),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(
-                        color: colors.divider.withValues(alpha: 0.78),
-                      ),
+                // Misma superficie neutra que el resto de avisos: el error
+                // lo lleva el glifo, no un relleno rojo con texto blanco.
+                child: Material(
+                  color: colors.surface,
+                  elevation: 10,
+                  shadowColor: Colors.black.withValues(alpha: 0.45),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(
+                      color: colors.divider.withValues(alpha: 0.78),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      12,
+                      onDismissError == null ? 8 : 0,
+                      onDismissError == null ? 12 : 0,
+                      onDismissError == null ? 8 : 0,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ExcludeSemantics(
+                          child: Icon(
                             Icons.error_outline_rounded,
                             size: 16,
                             color: colors.error,
                           ),
-                          const SizedBox(width: 8),
-                          Flexible(
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: ExcludeSemantics(
                             child: Text(
                               errorMessage!,
                               style: TextStyle(
@@ -20348,8 +20483,13 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
                               ),
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                        if (onDismissError != null)
+                          _ChatNoticeDismissButton(
+                            key: const ValueKey('chat-refresh-error-dismiss'),
+                            onPressed: onDismissError!,
+                          ),
+                      ],
                     ),
                   ),
                 ),

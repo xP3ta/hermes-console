@@ -4133,8 +4133,24 @@ class ActiveChat {
   String? _desktopRuntimeSessionId;
   String? _retiringDesktopRuntimeSessionId;
   String? _desktopStoredSessionId;
-  _OwnershipMutationAdmission _ownershipMutationAdmission =
+  _OwnershipMutationAdmission _ownershipMutationAdmissionState =
       _OwnershipMutationAdmission.open;
+
+  /// Cada paso de `open` a cualquier estado vallado abre un episodio nuevo de
+  /// conflicto. Solo alimenta la presentación (qué aviso se descartó); la
+  /// valla de mutaciones sigue leyendo exclusivamente el estado de admisión.
+  _OwnershipMutationAdmission get _ownershipMutationAdmission =>
+      _ownershipMutationAdmissionState;
+  set _ownershipMutationAdmission(_OwnershipMutationAdmission next) {
+    if (_ownershipMutationAdmissionState == _OwnershipMutationAdmission.open &&
+        next != _OwnershipMutationAdmission.open) {
+      _ownershipConflictEpisode += 1;
+    }
+    _ownershipMutationAdmissionState = next;
+  }
+
+  int _ownershipConflictEpisode = 0;
+  int? _dismissedOwnershipConflictEpisode;
   String? _pendingManualOwnershipProbeClientTurnId;
   bool _runtimeReleaseInFlight = false;
   int _ownershipConflictGeneration = 0;
@@ -4349,6 +4365,23 @@ class ActiveChat {
 
   bool get conflictReadOnly =>
       _ownershipMutationAdmission != _OwnershipMutationAdmission.open;
+
+  /// Si el aviso completo de conflicto sigue abierto para este episodio.
+  /// Los `dismiss*Notice` de avisos son solo de presentación: no emiten
+  /// eventos (un `sessionInfo` dispararía lecturas pasivas); la pantalla que
+  /// los llama repinta con su propio `setState`.
+  /// Cerrarlo solo oculta la explicación larga: el composer sigue vallado y la
+  /// pantalla conserva una línea compacta mientras dure [conflictReadOnly].
+  bool get ownershipConflictNoticeVisible =>
+      conflictReadOnly &&
+      _dismissedOwnershipConflictEpisode != _ownershipConflictEpisode;
+
+  void dismissOwnershipConflictNotice() {
+    if (!conflictReadOnly) return;
+    if (_dismissedOwnershipConflictEpisode == _ownershipConflictEpisode) return;
+    _dismissedOwnershipConflictEpisode = _ownershipConflictEpisode;
+  }
+
   bool get ownershipRecheckInFlight =>
       _ownershipMutationAdmission == _OwnershipMutationAdmission.rechecking;
   bool get manualOwnershipProbeAvailable =>
@@ -6767,6 +6800,34 @@ class ActiveChat {
   bool get localTranscriptOlderHistoryTruncated =>
       _localTranscriptOlderHistoryTruncated;
 
+  /// Una nueva detección de historial local truncado (tras haber quedado
+  /// completo) vuelve a mostrar el aviso aunque se hubiera cerrado antes.
+  int _localTranscriptTruncationOccurrence = 0;
+  int? _dismissedLocalTranscriptTruncationOccurrence;
+  bool get localTranscriptTruncationNoticeVisible =>
+      _localTranscriptOlderHistoryTruncated &&
+      _dismissedLocalTranscriptTruncationOccurrence !=
+          _localTranscriptTruncationOccurrence;
+
+  @visibleForTesting
+  void recordLocalTranscriptCoverageForTesting({
+    required bool olderHistoryTruncated,
+  }) {
+    _recordLocalTranscriptCoverage(
+      LocalTranscriptSnapshot(
+        messages: const [],
+        olderHistoryTruncated: olderHistoryTruncated,
+      ),
+    );
+    _emit(ActiveChatEvent.messagesHydrated);
+  }
+
+  void dismissLocalTranscriptTruncationNotice() {
+    if (!localTranscriptTruncationNoticeVisible) return;
+    _dismissedLocalTranscriptTruncationOccurrence =
+        _localTranscriptTruncationOccurrence;
+  }
+
   /// Bookkeeping de la hidratación paginada del transcript. REST is the
   /// durable authority, so each request uses the Dashboard hard maximum and
   /// advances by the raw returned count until a short page proves the end.
@@ -7191,6 +7252,19 @@ class ActiveChat {
   Map<String, dynamic>? get pendingApproval => _pendingApproval;
   bool get desktopContinuationRequired => _desktopContinuationRequired;
 
+  /// Una solicitud de vault nueva vuelve a mostrar el aviso aunque la anterior
+  /// se hubiera cerrado; cerrar no resuelve ni descarta la solicitud.
+  int _desktopContinuationOccurrence = 0;
+  int? _dismissedDesktopContinuationOccurrence;
+  bool get desktopContinuationNoticeVisible =>
+      _desktopContinuationRequired &&
+      _dismissedDesktopContinuationOccurrence != _desktopContinuationOccurrence;
+
+  void dismissDesktopContinuationNotice() {
+    if (!desktopContinuationNoticeVisible) return;
+    _dismissedDesktopContinuationOccurrence = _desktopContinuationOccurrence;
+  }
+
   set pendingApproval(Map<String, dynamic>? value) {
     if (identical(_pendingApproval, value)) return;
     _pendingApproval = value;
@@ -7288,9 +7362,23 @@ class ActiveChat {
   /// permita reanudar el canal vivo. La UI observa esta señal no destructiva.
   bool get dashboardAuthRequired => _dashboardAuthRequired;
 
+  /// Cada vez que el Dashboard vuelve a exigir sesión es una aparición nueva
+  /// del aviso; cerrarlo no cambia el estado de autenticación.
+  int _dashboardAuthOccurrence = 0;
+  int? _dismissedDashboardAuthOccurrence;
+  bool get dashboardAuthNoticeVisible =>
+      _dashboardAuthRequired &&
+      _dismissedDashboardAuthOccurrence != _dashboardAuthOccurrence;
+
+  void dismissDashboardAuthNotice() {
+    if (!dashboardAuthNoticeVisible) return;
+    _dismissedDashboardAuthOccurrence = _dashboardAuthOccurrence;
+  }
+
   void _setDashboardAuthRequired(bool value, {required int attemptEpoch}) {
     if (attemptEpoch != _dashboardAuthAttemptEpoch) return;
     if (_dashboardAuthRequired == value) return;
+    if (value) _dashboardAuthOccurrence += 1;
     _dashboardAuthRequired = value;
     _emit(ActiveChatEvent.dashboardAuthChanged);
   }
@@ -10005,6 +10093,10 @@ class ActiveChat {
   }
 
   void _recordLocalTranscriptCoverage(LocalTranscriptSnapshot snapshot) {
+    if (snapshot.olderHistoryTruncated &&
+        !_localTranscriptOlderHistoryTruncated) {
+      _localTranscriptTruncationOccurrence += 1;
+    }
     _localTranscriptOlderHistoryTruncated = snapshot.olderHistoryTruncated;
     if (!snapshot.olderHistoryTruncated) {
       _markTranscriptComplete(visibleCount: snapshot.messages.length);
@@ -18437,6 +18529,7 @@ class ActiveChat {
       'vault.code.request',
     }.contains(event.type)) {
       // The mobile client deliberately stores no vault payload or secret origin.
+      if (!_desktopContinuationRequired) _desktopContinuationOccurrence += 1;
       _desktopContinuationRequired = true;
       _activityWatchdogTimer?.cancel();
       _activityWatchdogTimer = null;
