@@ -1976,6 +1976,302 @@ void main() {
     },
   );
 
+  group('probeNow tras cambio de red o resume', () {
+    Future<(TuiGatewayClient, List<Map<String, dynamic>>)> connectTo({
+      required String id,
+      required bool answerPings,
+      Duration probeNowRecentInbound = Duration.zero,
+      void Function(WebSocket socket)? onSocket,
+      DateTime Function()? now,
+    }) async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final received = <Map<String, dynamic>>[];
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        onSocket?.call(socket);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {
+              'type': 'gateway.ready',
+              'payload': {'replay_epoch': 'epoch-a', 'heartbeat': true},
+            },
+          }),
+        );
+        await for (final raw in socket) {
+          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          received.add(frame);
+          if (!answerPings || frame['method'] != 'gateway.ping') continue;
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'result': {'ok': true},
+              'id': frame['id'],
+            }),
+          );
+        }
+      });
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: id,
+          label: id,
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: String.fromCharCodes(const [113, 97]),
+          dashboardUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        dashboard: _TicketDashboardClient(),
+        // Heartbeat real de producción: sin probeNow el socket medio abierto
+        // sobreviviría 45 s.
+        heartbeatInterval: const Duration(seconds: 15),
+        heartbeatDeadline: const Duration(seconds: 45),
+        probeNowDeadline: const Duration(milliseconds: 80),
+        probeNowRecentInbound: probeNowRecentInbound,
+        now: now,
+      );
+      addTearDown(client.close);
+      return (client, received);
+    }
+
+    // Hermes (`tui_gateway/ws.py`) lee y despacha en serie: tras un RPC
+    // no-long el pong se retrasa, pero los eventos del turno siguen llegando.
+    test('pong retrasado con eventos entrantes: el socket sigue vivo y el '
+        'RPC en vuelo no falla', () async {
+      WebSocket? serverSocket;
+      final (client, _) = await connectTo(
+        id: 'conn-probe-busy-serial',
+        answerPings: false,
+        onSocket: (socket) => serverSocket = socket,
+      );
+      final errors = <Object>[];
+      final subscription = client.events.listen(
+        (_) {},
+        onError: (Object error) => errors.add(error),
+      );
+      addTearDown(subscription.cancel);
+      await client.connect();
+      final submitOutcome = Completer<Object?>();
+      unawaited(
+        client
+            .submitPrompt('rt', 'x')
+            .then<void>(
+              (_) => submitOutcome.complete(null),
+              onError: (Object error) {
+                if (!submitOutcome.isCompleted) {
+                  submitOutcome.complete(error);
+                }
+              },
+            ),
+      );
+      var seq = 1;
+      final ticker = Timer.periodic(const Duration(milliseconds: 15), (_) {
+        serverSocket?.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {
+              'type': 'message.delta',
+              'session_id': 'rt',
+              'seq': seq++,
+              'payload': {'text': '.'},
+            },
+          }),
+        );
+      });
+      addTearDown(ticker.cancel);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(await client.probeNow(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      ticker.cancel();
+
+      expect(client.isConnected, isTrue);
+      expect(errors, isEmpty);
+      expect(submitOutcome.isCompleted, isFalse, reason: 'sin _failPending');
+    });
+
+    test('tráfico entrante reciente: no se envía sonda', () async {
+      final (client, received) = await connectTo(
+        id: 'conn-probe-recent-inbound',
+        answerPings: false,
+        probeNowRecentInbound: const Duration(seconds: 3),
+      );
+      await client.connect();
+
+      // `gateway.ready` acaba de llegar: el socket está demostrado vivo.
+      expect(await client.probeNow(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      expect(client.isConnected, isTrue);
+      expect(
+        received.where((frame) => frame['method'] == 'gateway.ping'),
+        isEmpty,
+      );
+    });
+
+    test('la sonda coalescida no se comparte con una conexión nueva', () async {
+      final (client, received) = await connectTo(
+        id: 'conn-probe-generation',
+        answerPings: false,
+      );
+      await client.connect();
+      final stale = client.probeNow();
+      // Mismo turno síncrono: la conexión ya cambió de generación pero la
+      // sonda antigua aún no ha liberado `_probeNowFlight`.
+      final disconnected = client.disconnectIdle();
+      final reconnected = client.connect();
+
+      final fresh = client.probeNow();
+
+      expect(
+        identical(stale, fresh),
+        isFalse,
+        reason: 'el resultado de la sonda del socket anterior no vale aquí',
+      );
+      await disconnected;
+      await reconnected;
+      expect(await stale, isFalse);
+      expect(await client.probeNow(), isFalse);
+      expect(
+        received.where((frame) => frame['method'] == 'gateway.ping'),
+        hasLength(2),
+        reason: 'la conexión nueva recibe su propia sonda',
+      );
+    });
+
+    test(
+      'socket medio abierto: la sonda lo declara muerto enseguida',
+      () async {
+        final (client, received) = await connectTo(
+          id: 'conn-probe-blackhole',
+          answerPings: false,
+        );
+        final errors = <Object>[];
+        final subscription = client.events.listen(
+          (_) {},
+          onError: (Object error) => errors.add(error),
+        );
+        addTearDown(subscription.cancel);
+        await client.connect();
+        expect(client.isConnected, isTrue);
+
+        final first = client.probeNow();
+        final second = client.probeNow();
+        expect(identical(first, second), isTrue, reason: 'sondas coalescidas');
+        expect(await first, isFalse);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(client.isConnected, isFalse);
+        expect(errors, isNotEmpty);
+        expect(
+          received.where((frame) => frame['method'] == 'gateway.ping'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('resume tras >45 s sin frames: el tick del heartbeat no cuenta como '
+        'tráfico y probeNow declara muerto el socket', () async {
+      var clock = DateTime.utc(2026, 9, 25, 12);
+      final (client, received) = await connectTo(
+        id: 'conn-probe-after-resume',
+        answerPings: false,
+        probeNowRecentInbound: const Duration(seconds: 3),
+        now: () => clock,
+      );
+      final errors = <Object>[];
+      final subscription = client.events.listen(
+        (_) {},
+        onError: (Object error) => errors.add(error),
+      );
+      addTearDown(subscription.cancel);
+      await client.connect();
+      expect(client.isConnected, isTrue);
+
+      // El isolate estuvo suspendido 60 s: ningún frame real llegó. El primer
+      // tick vencido concede su gracia al heartbeat, pero no es tráfico.
+      clock = clock.add(const Duration(seconds: 60));
+      await client.debugHeartbeatTick();
+      expect(client.isConnected, isTrue, reason: 'gracia del heartbeat');
+
+      expect(await client.probeNow(), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(client.isConnected, isFalse);
+      expect(errors, isNotEmpty);
+      expect(
+        received.where((frame) => frame['method'] == 'gateway.ping'),
+        hasLength(2),
+        reason: 'ping del heartbeat + sonda real de probeNow',
+      );
+    });
+
+    test('el diagnóstico de cierre distingue heartbeat vencido de onDone', () async {
+      final logs = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) logs.add(message);
+      };
+      addTearDown(() => debugPrint = previousDebugPrint);
+      var clock = DateTime.utc(2026, 9, 25, 12);
+      final sockets = <WebSocket>[];
+      final (client, _) = await connectTo(
+        id: 'conn-close-reason',
+        answerPings: false,
+        now: () => clock,
+        onSocket: sockets.add,
+      );
+      final subscription = client.events.listen((_) {}, onError: (_) {});
+      addTearDown(subscription.cancel);
+      await client.connect();
+      // Ticks regulares de 20 s sin ningún frame entrante: el plazo de 45 s
+      // vence sin la gracia de resume.
+      for (var tick = 0; tick < 3; tick++) {
+        clock = clock.add(const Duration(seconds: 20));
+        await client.debugHeartbeatTick();
+      }
+      expect(client.isConnected, isFalse);
+      expect(
+        logs.where((line) => line.contains('reason=heartbeat_timeout')),
+        hasLength(1),
+      );
+
+      await client.connect();
+      expect(client.isConnected, isTrue);
+      await sockets.last.close(WebSocketStatus.goingAway, 'bye');
+      for (var i = 0; i < 50 && client.isConnected; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(client.isConnected, isFalse);
+      expect(
+        logs.where((line) => line.contains('reason=on_done')),
+        hasLength(1),
+      );
+      expect(logs.join('\n'), isNot(contains('bye')));
+    });
+
+    test('socket sano: la sonda responde y la conexión sigue', () async {
+      final (client, _) = await connectTo(
+        id: 'conn-probe-healthy',
+        answerPings: true,
+      );
+      await client.connect();
+      expect(await client.probeNow(), isTrue);
+      expect(client.isConnected, isTrue);
+    });
+
+    test('sin conexión la sonda es un no-op', () async {
+      final (client, received) = await connectTo(
+        id: 'conn-probe-disconnected',
+        answerPings: true,
+      );
+      expect(await client.probeNow(), isFalse);
+      expect(client.isConnected, isFalse);
+      expect(received, isEmpty);
+    });
+  });
+
   test(
     'una pausa del scheduler da margen al heartbeat antes de cortar',
     () async {
