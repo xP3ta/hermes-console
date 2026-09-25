@@ -68,6 +68,7 @@ import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
 import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
+import '../services/hermes_update_monitor.dart';
 import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
 import '../services/compaction_tracker.dart';
@@ -7706,6 +7707,12 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _restartGatewayFromChat() async {
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
+    if (HermesUpdateGuard.isActive(widget.connection.id)) {
+      HermesNotice.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(str.setUpdateAlreadyRunning)));
+      return;
+    }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
