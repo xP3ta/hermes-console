@@ -2228,23 +2228,35 @@ class _ChatScreenState extends State<ChatScreen>
     }
     _preparedTurn = loaded;
     var prepared = loaded;
-    if (liveDelivery == null &&
-        (prepared.state == PreparedTurnState.ambiguous ||
-            prepared.state == PreparedTurnState.accepted ||
-            prepared.state == PreparedTurnState.running)) {
-      prepared = await _chat.reconcileAmbiguousTurn(prepared, outbox);
-      if (!mounted) return;
+    // Mientras se reconcilia y se restaura la cola, el settle por transcript
+    // no puede liquidar este turno: al terminar, la restauración lo volvería
+    // a instalar ya borrado y dejaría la cola suspendida. Se programa una sola
+    // vez al final, sobre el estado ya restaurado.
+    _composerTurnRestoreInFlight = true;
+    try {
+      if (liveDelivery == null &&
+          (prepared.state == PreparedTurnState.ambiguous ||
+              prepared.state == PreparedTurnState.accepted ||
+              prepared.state == PreparedTurnState.running)) {
+        prepared = await _chat.reconcileAmbiguousTurn(prepared, outbox);
+        if (!mounted) return;
+      }
+      await _chat.restoreQueuedTurns(
+        recoveredQueued,
+        outbox,
+        scheduleDrain: prepared.state != PreparedTurnState.ambiguous,
+      );
+    } finally {
+      _composerTurnRestoreInFlight = false;
     }
-    await _chat.restoreQueuedTurns(
-      recoveredQueued,
-      outbox,
-      scheduleDrain: prepared.state != PreparedTurnState.ambiguous,
-    );
     if (!mounted) return;
     final reconciledDelivery = _chatBound ? _chat.activeTurnDelivery : null;
     if (reconciledDelivery != null) {
       _observeAttachmentDelivery(reconciledDelivery);
     }
+    // Otro dueño (descartar, un envío nuevo) pudo retirar o sustituir el turno
+    // durante la espera: nunca se reinstala uno que ya no es el vigente.
+    if (!identical(_preparedTurn, loaded)) return;
     _preparedTurn = prepared;
     // Sin `turn.status` el turno seguiría incierto para siempre: el transcript
     // durable puede demostrar que sí llegó (mismas reglas que la cola).
@@ -2336,6 +2348,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool _composerTurnSettleInFlight = false;
+  bool _composerTurnRestoreInFlight = false;
+  Timer? _composerTurnSettleRetryTimer;
 
   /// Resuelve como entregado el turno del composer cuya confirmación se
   /// perdió si el transcript durable lo demuestra. No toca el turno en vuelo,
@@ -2343,6 +2357,8 @@ class _ChatScreenState extends State<ChatScreen>
   void _scheduleComposerTurnTranscriptSettle() {
     final prepared = _preparedTurn;
     if (_composerTurnSettleInFlight ||
+        _composerTurnRestoreInFlight ||
+        _disposed ||
         prepared == null ||
         prepared.queued ||
         !const {
@@ -2367,7 +2383,22 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _settleComposerTurnFromTranscript(PreparedTurn prepared) async {
     if (!mounted || !identical(_preparedTurn, prepared)) return;
     final delivered = await _chat.composerTurnDeliveredPerTranscript(prepared);
-    if (!delivered || !mounted || !identical(_preparedTurn, prepared)) return;
+    if (!delivered) {
+      // El freno de 5 s descartó la comprobación sin leer el transcript: no es
+      // evidencia de nada. Reintenta una vez vencido el freno en vez de
+      // esperar a un evento que quizá no llegue.
+      final retryDelay = _chat.composerTurnSettleThrottleRemaining;
+      if (retryDelay != null && mounted && identical(_preparedTurn, prepared)) {
+        _composerTurnSettleRetryTimer?.cancel();
+        _composerTurnSettleRetryTimer = Timer(retryDelay, () {
+          _composerTurnSettleRetryTimer = null;
+          if (!mounted || _disposed) return;
+          _scheduleComposerTurnTranscriptSettle();
+        });
+      }
+      return;
+    }
+    if (!mounted || !identical(_preparedTurn, prepared)) return;
     try {
       await (await _outboxStore()).delete(prepared);
     } catch (error) {
@@ -4735,6 +4766,7 @@ class _ChatScreenState extends State<ChatScreen>
       schedules: activity.schedules,
       goal: activity.goal,
       processesStale: activity.stale,
+      subagentsStale: _chat.subagentLivenessStale,
       backgroundStartedAt: activity.startedAt,
       subagents: subagents,
       subagentGenericCount: math.max(
@@ -5689,6 +5721,8 @@ class _ChatScreenState extends State<ChatScreen>
     // defunct. El stream del agente NO se cancela aquí: el servicio lo mantiene
     // vivo en segundo plano (se suelta más abajo con _chatService.release).
     _disposed = true;
+    _composerTurnSettleRetryTimer?.cancel();
+    _composerTurnSettleRetryTimer = null;
     final modelConfirmationNavigator = _modelConfirmationNavigator;
     final modelConfirmationRoute = _modelConfirmationRoute;
     _modelConfirmationNavigator = null;
@@ -5846,8 +5880,42 @@ class _ChatScreenState extends State<ChatScreen>
       _loadActiveModel();
       if (_chatBound) {
         unawaited(_chat.warmDesktopGatewayForAutomaticBootstrap());
+        if (!wasInForeground) _relaunchViewerAttachOnResume();
       }
     }
+  }
+
+  Future<void>? _resumeViewerAttach;
+  int? _resumeViewerAttachGeneration;
+
+  /// Un corte con la app en segundo plano retira el runtime y nada volvía a
+  /// enlazarlo al reanudar: sin runtime no hay `process.list`/`subagent.list`
+  /// y la pastilla se apagaba con Hermes trabajando. Relanza una sola vez
+  /// (coalescido) el attach del visor y re-sincroniza el sondeo. Nunca durante
+  /// un turno vivo (la convergencia no adopta runtimes no probados) ni con la
+  /// recuperación cerrada por un error terminal.
+  void _relaunchViewerAttachOnResume() {
+    // Coalesce solo dentro de la misma generación: un paso intermedio por
+    // inactive invalida el attach en vuelo y debe poder relanzarse.
+    if ((_resumeViewerAttach != null &&
+            _resumeViewerAttachGeneration == _viewerAttachGeneration) ||
+        _disposed ||
+        !mounted ||
+        !_chatRouteVisible ||
+        !_appInForeground ||
+        !_chat.attachesDesktopRuntimeOnLoad ||
+        _chat.desktopRuntimeSessionId != null ||
+        _chat.isStreaming ||
+        _chat.desktopViewerRecoveryClosed) {
+      return;
+    }
+    late final Future<void> attach;
+    attach = _ensureDesktopRuntimeAndBootstrapContext().whenComplete(() {
+      if (identical(_resumeViewerAttach, attach)) _resumeViewerAttach = null;
+      if (!_disposed && mounted) _syncSubagentPolling();
+    });
+    _resumeViewerAttach = attach;
+    _resumeViewerAttachGeneration = _viewerAttachGeneration;
   }
 
   void _onScroll() {

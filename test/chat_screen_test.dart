@@ -2321,6 +2321,7 @@ void main() {
     Duration chatRouteTransition = const Duration(milliseconds: 350),
     bool registerActiveChatsTearDown = true,
     int transcriptPageSizeForTesting = 120,
+    int Function()? wallClockMs,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -2388,6 +2389,7 @@ void main() {
         turnIdempotencyCapability: turnIdempotencyCapability,
         disableForegroundKeepAlive: desktopGateway != null,
         transcriptPageSizeForTesting: transcriptPageSizeForTesting,
+        wallClockMsForTesting: wallClockMs,
       );
       chat.internalMessagesForTesting = List<Map<String, dynamic>>.from(
         messages,
@@ -15286,6 +15288,194 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'un messagesHydrated durante la restauración no resucita el turno '
+      'liquidado ni deja la cola suspendida',
+      (tester) async {
+        const prompt = 'turno del composer en carrera con la restauración';
+        final connection = _remoteConn('conn-composer-restore-race');
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final turn = PreparedTurn(
+          connectionId: connection.id,
+          sessionId: 'sess-test',
+          clientTurnId: 'client-restore-race',
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: prompt,
+          fullText: prompt,
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: 'default',
+          state: PreparedTurnState.ambiguous,
+          restoresComposer: false,
+          retryBoundary: PreparedTurnRetryBoundary.identity(rowId: 10),
+        );
+        final queued = PreparedTurn(
+          connectionId: connection.id,
+          sessionId: 'sess-test',
+          clientTurnId: 'queued-after-restore-race',
+          createdAtMs: now + 1,
+          updatedAtMs: now + 1,
+          queueOrder: 1,
+          text: 'encolado tras la carrera',
+          fullText: 'encolado tras la carrera',
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: 'default',
+          queued: true,
+          restoresComposer: false,
+        );
+        secureStore['chat_turn_outbox_v1'] = jsonEncode({
+          turn.storageId: turn.toJson(),
+          queued.storageId: queued.toJson(),
+        });
+        final ts = now / 1000;
+        final transcript = <Map<String, dynamic>>[
+          {'id': 10, 'role': 'user', 'content': 'antes', 'timestamp': ts - 60},
+          {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': ts - 59},
+          {'id': 12, 'role': 'user', 'content': prompt, 'timestamp': ts + 1},
+        ];
+        // `turn.status` queda pendiente: la restauración está a mitad.
+        final statusGate = Completer<DesktopTurnStatus>();
+        final gateway = _RecoverableSubmissionGateway()..statusGate = statusGate;
+        final chat = await pumpChat(
+          tester,
+          connection: connection,
+          desktopGateway: gateway,
+          initialStoredSessionId: 'sess-test',
+          turnIdempotencyCapability: () async => true,
+          storedMessageLoader: (_, _) async => transcript,
+        );
+        for (var frame = 0; frame < 40 && gateway.statusCalls == 0; frame++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        expect(gateway.statusCalls, 1);
+
+        // Llega una hidratación mientras la restauración espera.
+        chat.debugEmitMessagesHydrated();
+        for (var frame = 0; frame < 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        // Hermes no conoce el turno (`known:false`): sigue ambiguo para la
+        // restauración, que suspende la cola; solo el transcript lo prueba.
+        statusGate.complete(
+          const DesktopTurnStatus(
+            known: false,
+            clientTurnId: 'client-restore-race',
+          ),
+        );
+        for (var frame = 0; frame < 60 && gateway.submissions.isEmpty; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+
+        expect(
+          (await TurnOutboxStore().loadAllForChat(
+            connection.id,
+            'sess-test',
+            profile: 'default',
+          )).where((turn) => !turn.queued),
+          isEmpty,
+        );
+        expect(
+          gateway.submissions,
+          ['encolado tras la carrera'],
+          reason: 'la cola restaurada se reanuda tras liquidar el turno',
+        );
+        gateway.emitComplete();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'si el freno de 5 s descarta la comprobación, se reintenta sola',
+      (tester) async {
+        const prompt = 'turno del composer comprobado tras el freno';
+        final connection = _remoteConn('conn-composer-throttle-retry');
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final turn = PreparedTurn(
+          connectionId: connection.id,
+          sessionId: 'sess-test',
+          clientTurnId: 'client-throttle-retry',
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: prompt,
+          fullText: prompt,
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: 'default',
+          state: PreparedTurnState.ambiguous,
+          restoresComposer: false,
+          retryBoundary: PreparedTurnRetryBoundary.identity(rowId: 10),
+        );
+        secureStore['chat_turn_outbox_v1'] = jsonEncode({
+          turn.storageId: turn.toJson(),
+        });
+        final ts = now / 1000;
+        final transcript = <Map<String, dynamic>>[
+          {'id': 10, 'role': 'user', 'content': 'antes', 'timestamp': ts - 60},
+          {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': ts - 59},
+        ];
+        var loads = 0;
+        var clock = now;
+        final gateway = _SubmissionGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: connection,
+          desktopGateway: gateway,
+          wallClockMs: () => clock,
+          storedMessageLoader: (_, _) async {
+            loads++;
+            return List<Map<String, dynamic>>.of(transcript);
+          },
+        );
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        final loadsAfterRestore = loads;
+        expect(loadsAfterRestore, greaterThan(0));
+
+        // El turno persiste justo después; la hidratación que lo anuncia cae
+        // dentro del freno y no llega ningún evento más.
+        transcript.add({
+          'id': 12,
+          'role': 'user',
+          'content': prompt,
+          'timestamp': ts + 1,
+        });
+        chat.debugEmitMessagesHydrated();
+        for (var frame = 0; frame < 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(
+          (await TurnOutboxStore().loadAllForChat(
+            connection.id,
+            'sess-test',
+            profile: 'default',
+          )),
+          hasLength(1),
+          reason: 'el freno descartó la comprobación',
+        );
+
+        // El freno se mide en reloj de pared: avanzan juntos reloj y timers.
+        for (var frame = 0; frame < 30; frame++) {
+          clock += 200;
+          await tester.pump(const Duration(milliseconds: 200));
+        }
+
+        expect(
+          await TurnOutboxStore().loadAllForChat(
+            connection.id,
+            'sess-test',
+            profile: 'default',
+          ),
+          isEmpty,
+        );
+        expect(gateway.submissions, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('sin evidencia en el transcript sigue pendiente', (
       tester,

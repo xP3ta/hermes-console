@@ -1356,6 +1356,11 @@ class TuiGatewayClient
   Future<bool>? _exclusiveSubmitCapabilityProbe;
   int _heartbeatSequence = 0;
   DateTime _lastInboundAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Último frame REAL recibido del socket. A diferencia de [_lastInboundAt],
+  /// el heartbeat nunca lo adelanta al reanudar el isolate: solo así
+  /// [probeNow] distingue un socket vivo de uno medio abierto tras un resume.
+  DateTime _lastFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _lastHeartbeatTickAt;
   Timer? _heartbeatTimer;
   String? _watchdogRuntimeId;
@@ -1579,6 +1584,7 @@ class TuiGatewayClient
       );
       if (parsed == null) return;
       _lastInboundAt = _now();
+      _lastFrameAt = _lastInboundAt;
       if (parsed is JsonRpcNotificationFrame) return;
       if (parsed is JsonRpcServerRequestFrame) {
         _deliverServerRequest(parsed, generation, channel);
@@ -2019,6 +2025,19 @@ class TuiGatewayClient
     _replayEpoch = epoch;
   }
 
+  static const _heartbeatTimeoutMessage =
+      'Hermes Desktop WebSocket heartbeat timed out';
+  static const _probeTimeoutMessage = 'Hermes Desktop WebSocket probe timed out';
+
+  /// Motivo estable y no privado del cierre: nunca imprime el mensaje remoto.
+  String _socketCloseReason(Object error) {
+    if (error is StateError) {
+      if (error.message == _heartbeatTimeoutMessage) return 'heartbeat_timeout';
+      if (error.message == _probeTimeoutMessage) return 'probe_timeout';
+    }
+    return 'error:${_safeFailureKind(error)}';
+  }
+
   void _handleSocketError(
     int generation,
     WebSocketChannel channel,
@@ -2048,6 +2067,12 @@ class TuiGatewayClient
     // owner del teardown. Evita dos cancel/close concurrentes sobre un upgrade
     // rechazado.
     if (!wasConnected) return;
+    // Diagnóstico sin datos privados: distingue un plazo de heartbeat/sonda
+    // vencido de un error del socket (bucles de reconexión en turnos largos).
+    debugPrint(
+      '[tui-gateway] WebSocket closed '
+      '(reason=${_socketCloseReason(error)}, generation=$generation)',
+    );
     _connected = false;
     _stopHeartbeat();
     _retireWatchdogRuntime();
@@ -2103,6 +2128,13 @@ class TuiGatewayClient
           'Connection lost before gateway.ready',
           failureKind: TuiGatewayRpcFailureKind.connectionLost,
         ),
+      );
+    }
+    if (wasConnected) {
+      debugPrint(
+        '[tui-gateway] WebSocket closed '
+        '(reason=on_done, closeCode=${channel.closeCode ?? 'none'}, '
+        'generation=$generation)',
       );
     }
     _connected = false;
@@ -2170,7 +2202,7 @@ class TuiGatewayClient
       _handleSocketError(
         generation,
         channel,
-        StateError('Hermes Desktop WebSocket heartbeat timed out'),
+        StateError(_heartbeatTimeoutMessage),
       );
       return;
     }
@@ -2218,7 +2250,7 @@ class TuiGatewayClient
     if (_closed || !_connected || channel == null) {
       return Future<bool>.value(false);
     }
-    if (_now().difference(_lastInboundAt) < _probeNowRecentInbound) {
+    if (_now().difference(_lastFrameAt) < _probeNowRecentInbound) {
       return Future<bool>.value(true);
     }
     final generation = _socketGeneration;
@@ -2245,11 +2277,11 @@ class TuiGatewayClient
       if (error.failureKind == TuiGatewayRpcFailureKind.timeout) {
         // Cualquier frame posterior al inicio de la sonda prueba que el
         // socket vive: el pong solo espera tras un RPC serial lento.
-        if (_lastInboundAt.isAfter(probeStartedAt)) return true;
+        if (_lastFrameAt.isAfter(probeStartedAt)) return true;
         _handleSocketError(
           generation,
           channel,
-          StateError('Hermes Desktop WebSocket probe timed out'),
+          StateError(_probeTimeoutMessage),
         );
       }
       return false;

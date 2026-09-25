@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
+import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -53,6 +54,8 @@ class _AdaptiveGateway
   final processStopRuntimeIds = <String>[];
   int listCalls = 0;
   int processCalls = 0;
+  int resumeExistingCalls = 0;
+  Completer<void>? resumeExistingGate;
   int controlCalls = 0;
 
   void resetCounts() {
@@ -86,13 +89,22 @@ class _AdaptiveGateway
     String profile = '',
     bool omitMessages = false,
     bool deferHistory = false,
-  }) async => DesktopSessionSnapshot(
-    runtimeSessionId: 'runtime-adaptive',
-    storedSessionId: storedSessionId,
-    created: false,
-    running: resumedSessionRunning,
-    status: resumedSessionRunning ? 'working' : 'idle',
-  );
+  }) async {
+    resumeExistingCalls += 1;
+    final gate = resumeExistingGate;
+    if (gate != null) await gate.future;
+    return DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-adaptive',
+      storedSessionId: storedSessionId,
+      created: false,
+      running: resumedSessionRunning,
+      status: resumedSessionRunning ? 'working' : 'idle',
+    );
+  }
+
+  /// Corte de transporte del socket de Desktop (el servicio retira el runtime).
+  void dropTransport([Object error = const _SocketLikeDrop()]) =>
+      _events.addError(error);
 
   @override
   Future<DesktopSessionSnapshot> createForFirstSubmit({
@@ -203,6 +215,10 @@ class _AdaptiveGateway
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _SocketLikeDrop implements Exception {
+  const _SocketLikeDrop();
+}
+
 class _Fixture {
   const _Fixture({
     required this.gateway,
@@ -241,6 +257,8 @@ Future<_Fixture> _mountChat(
   required bool changeEventsAvailable,
   List<DesktopSubagentSnapshot> subagents = const [],
   bool failReads = false,
+  bool attachDesktopRuntimeOnLoad = false,
+  bool resumedSessionRunning = true,
 }) async {
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
@@ -249,9 +267,10 @@ Future<_Fixture> _mountChat(
     changeEventsAvailable: changeEventsAvailable,
   )
     ..subagents = subagents
-    ..failReads = failReads;
+    ..failReads = failReads
+    ..resumedSessionRunning = resumedSessionRunning;
   final activeChats = ActiveChatService(
-    attachDesktopRuntimeOnLoad: false,
+    attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
     compressionRestoreStore: testCompressionRestoreStore(),
   );
   final chat = activeChats.attach(
@@ -265,7 +284,7 @@ Future<_Fixture> _mountChat(
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,
-    attachDesktopRuntimeOnLoad: false,
+    attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
     allowUnownedDesktopSnapshotForTesting: true,
     disableForegroundKeepAlive: true,
   );
@@ -649,6 +668,153 @@ void main() {
         find.text('Could not stop everything: 1 background task remains'),
         findsWidgets,
       );
+
+      await _disposeFixture(tester, fixture);
+    },
+  );
+
+  Future<void> background(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+  }
+
+  Future<void> resume(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+  }
+
+  testWidgets(
+    'F3 resume relaunches the viewer attach once after a background transport loss',
+    (tester) async {
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        attachDesktopRuntimeOnLoad: true,
+        resumedSessionRunning: false,
+      );
+      expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive');
+      expect(fixture.chat.isStreaming, isFalse);
+
+      await background(tester);
+      fixture.gateway.dropTransport();
+      await tester.pump();
+      expect(fixture.chat.desktopRuntimeSessionId, isNull);
+      expect(fixture.chat.desktopViewerRecoveryClosed, isFalse);
+
+      fixture.gateway
+        ..resetCounts()
+        ..resumeExistingCalls = 0
+        ..resumeExistingGate = Completer<void>();
+      await resume(tester);
+      await tester.pump();
+      // A repeated `resumed` without leaving the foreground coalesces.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(fixture.gateway.resumeExistingCalls, 1);
+      // Bouncing through `inactive` invalidates the in-flight attach, so the
+      // next return relaunches exactly one fresh attach instead of none.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(fixture.gateway.resumeExistingCalls, 2);
+      expect(fixture.gateway.listCalls, 0);
+      expect(fixture.gateway.processCalls, 0);
+
+      fixture.gateway.resumeExistingGate!.complete();
+      fixture.gateway.resumeExistingGate = null;
+      for (var i = 0; i < 6; i += 1) {
+        await tester.pump();
+      }
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive');
+      expect(fixture.gateway.resumeExistingCalls, 2);
+      expect(fixture.gateway.listCalls, greaterThanOrEqualTo(1));
+      expect(fixture.gateway.processCalls, greaterThanOrEqualTo(1));
+
+      await _disposeFixture(tester, fixture);
+    },
+  );
+
+  testWidgets(
+    'F3 resume does not relaunch the viewer attach when recovery is closed',
+    (tester) async {
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        attachDesktopRuntimeOnLoad: true,
+        resumedSessionRunning: false,
+      );
+      expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive');
+
+      await background(tester);
+      fixture.gateway.dropTransport(
+        const TuiGatewayRpcError(
+          'transport',
+          'malformed frame',
+          origin: CompressionFailureOrigin.malformed,
+        ),
+      );
+      await tester.pump();
+      expect(fixture.chat.desktopRuntimeSessionId, isNull);
+      expect(fixture.chat.desktopViewerRecoveryClosed, isTrue);
+
+      fixture.gateway
+        ..resetCounts()
+        ..resumeExistingCalls = 0;
+      await resume(tester);
+      await tester.pump(const Duration(seconds: 5));
+      expect(fixture.gateway.resumeExistingCalls, 0);
+      expect(fixture.chat.desktopRuntimeSessionId, isNull);
+      expect(fixture.gateway.listCalls, 0);
+      expect(fixture.gateway.processCalls, 0);
+
+      await _disposeFixture(tester, fixture);
+    },
+  );
+
+  testWidgets(
+    'F3 resume does not relaunch the viewer attach during a live turn',
+    (tester) async {
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        attachDesktopRuntimeOnLoad: true,
+        resumedSessionRunning: false,
+      );
+      expect(
+        await fixture.chat.send(
+          fullText: 'Keep streaming while the app is in the background',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      fixture.gateway.emit('message.start');
+      await tester.pump();
+      expect(fixture.chat.isStreaming, isTrue);
+
+      // The service's own turn recovery owns the reattach of a live turn; hold
+      // it in flight so any extra session.resume can only come from resume.
+      fixture.gateway.resumeExistingGate = Completer<void>();
+      await background(tester);
+      fixture.gateway.dropTransport();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      expect(fixture.chat.desktopRuntimeSessionId, isNull);
+      expect(fixture.chat.isStreaming, isTrue);
+
+      final serviceRecoveryCalls = fixture.gateway.resumeExistingCalls;
+      await resume(tester);
+      await tester.pump();
+      await tester.pump();
+      expect(fixture.gateway.resumeExistingCalls, serviceRecoveryCalls);
+      fixture.gateway.resumeExistingGate!.complete();
+      fixture.gateway.resumeExistingGate = null;
 
       await _disposeFixture(tester, fixture);
     },

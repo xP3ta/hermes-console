@@ -1982,6 +1982,7 @@ void main() {
       required bool answerPings,
       Duration probeNowRecentInbound = Duration.zero,
       void Function(WebSocket socket)? onSocket,
+      DateTime Function()? now,
     }) async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(server.close);
@@ -2028,6 +2029,7 @@ void main() {
         heartbeatDeadline: const Duration(seconds: 45),
         probeNowDeadline: const Duration(milliseconds: 80),
         probeNowRecentInbound: probeNowRecentInbound,
+        now: now,
       );
       addTearDown(client.close);
       return (client, received);
@@ -2169,6 +2171,85 @@ void main() {
         );
       },
     );
+
+    test('resume tras >45 s sin frames: el tick del heartbeat no cuenta como '
+        'tráfico y probeNow declara muerto el socket', () async {
+      var clock = DateTime.utc(2026, 9, 25, 12);
+      final (client, received) = await connectTo(
+        id: 'conn-probe-after-resume',
+        answerPings: false,
+        probeNowRecentInbound: const Duration(seconds: 3),
+        now: () => clock,
+      );
+      final errors = <Object>[];
+      final subscription = client.events.listen(
+        (_) {},
+        onError: (Object error) => errors.add(error),
+      );
+      addTearDown(subscription.cancel);
+      await client.connect();
+      expect(client.isConnected, isTrue);
+
+      // El isolate estuvo suspendido 60 s: ningún frame real llegó. El primer
+      // tick vencido concede su gracia al heartbeat, pero no es tráfico.
+      clock = clock.add(const Duration(seconds: 60));
+      await client.debugHeartbeatTick();
+      expect(client.isConnected, isTrue, reason: 'gracia del heartbeat');
+
+      expect(await client.probeNow(), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(client.isConnected, isFalse);
+      expect(errors, isNotEmpty);
+      expect(
+        received.where((frame) => frame['method'] == 'gateway.ping'),
+        hasLength(2),
+        reason: 'ping del heartbeat + sonda real de probeNow',
+      );
+    });
+
+    test('el diagnóstico de cierre distingue heartbeat vencido de onDone', () async {
+      final logs = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) logs.add(message);
+      };
+      addTearDown(() => debugPrint = previousDebugPrint);
+      var clock = DateTime.utc(2026, 9, 25, 12);
+      final sockets = <WebSocket>[];
+      final (client, _) = await connectTo(
+        id: 'conn-close-reason',
+        answerPings: false,
+        now: () => clock,
+        onSocket: sockets.add,
+      );
+      final subscription = client.events.listen((_) {}, onError: (_) {});
+      addTearDown(subscription.cancel);
+      await client.connect();
+      // Ticks regulares de 20 s sin ningún frame entrante: el plazo de 45 s
+      // vence sin la gracia de resume.
+      for (var tick = 0; tick < 3; tick++) {
+        clock = clock.add(const Duration(seconds: 20));
+        await client.debugHeartbeatTick();
+      }
+      expect(client.isConnected, isFalse);
+      expect(
+        logs.where((line) => line.contains('reason=heartbeat_timeout')),
+        hasLength(1),
+      );
+
+      await client.connect();
+      expect(client.isConnected, isTrue);
+      await sockets.last.close(WebSocketStatus.goingAway, 'bye');
+      for (var i = 0; i < 50 && client.isConnected; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(client.isConnected, isFalse);
+      expect(
+        logs.where((line) => line.contains('reason=on_done')),
+        hasLength(1),
+      );
+      expect(logs.join('\n'), isNot(contains('bye')));
+    });
 
     test('socket sano: la sonda responde y la conexión sigue', () async {
       final (client, _) = await connectTo(

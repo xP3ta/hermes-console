@@ -3956,6 +3956,10 @@ enum _SubagentPresentationState {
   foregroundCurrent,
 }
 
+/// Por qué se retira el runtime Desktop enlazado. Solo la pérdida del
+/// transporte conserva la actividad vista como «último estado conocido».
+enum _RuntimeRetirement { explicit, transportLoss, adoption }
+
 class ActiveChat {
   static const int _maxInitialBackfillPages = 64;
   static const int _authoritativeTranscriptPageSize = 500;
@@ -4264,6 +4268,22 @@ class ActiveChat {
   int _backgroundProcessMutationGeneration = 0;
   bool _backgroundProcessesStale = false;
   bool _backgroundProcessLiveRosterConfirmed = false;
+
+  /// Los procesos visibles son el último roster de un runtime perdido por
+  /// transporte: se pintan como desfasados y el primer `process.list` con
+  /// fence (o la evidencia durable, o el tope de edad) los liquida.
+  bool _backgroundProcessesRetainedFromTransport = false;
+
+  /// Recuento agregado (sin detalle privado) de subagentes vivos del último
+  /// roster conocido, conservado a través de un corte/rotación de runtime
+  /// hasta que un `subagent.list` con fence, la evidencia durable o el tope de
+  /// edad lo retiren. Nunca da autoridad de control.
+  int _retainedSubagentLiveCount = 0;
+  Timer? _retainedActivityExpiryTimer;
+
+  /// Filas editoriales de finalización ya presentes al conservar la actividad:
+  /// solo las posteriores son evidencia de que ese trabajo terminó.
+  final Set<String> _retainedActivityKnownCompletionRows = {};
   DateTime? _backgroundProcessesObservedAt;
   Future<void>? _backgroundProcessRefreshFlight;
   bool _backgroundProcessRefreshRequested = false;
@@ -4668,6 +4688,10 @@ class ActiveChat {
   int _rosterRuntimeAbsenceStreak = 0;
   int? _viewerTurnConvergenceEpoch;
 
+  /// El reattach automático en curso se lanzó durante la convergencia del
+  /// visor (solo lee; nunca adopta runtime).
+  bool _desktopAutomaticReattachForConvergence = false;
+
   /// Equivalente a `sawAssistantPayload` de Desktop: prueba de que el runtime
   /// llegó a arrancar este turno. Recién enviado, el backend informa la sesión
   /// como inactiva mientras el stream local ya espera su primer frame, y
@@ -4749,7 +4773,135 @@ class ActiveChat {
             )
             .length ??
         0;
-    return count.clamp(0, 6);
+    return math.max(count, _retainedSubagentLiveCount).clamp(0, 6);
+  }
+
+  /// El recuento de subagentes vivos es el último conocido de un runtime
+  /// perdido: la UI lo marca como «último estado conocido».
+  bool get subagentLivenessStale => _retainedSubagentLiveCount > 0;
+
+  /// La actividad visible incluye estado conservado tras perder el runtime:
+  /// la UI debe decir «último estado conocido», nunca fingir que es en vivo.
+  bool get _transportRetainedActivityVisible =>
+      (_backgroundProcessesRetainedFromTransport &&
+          _backgroundProcesses.isNotEmpty) ||
+      _retainedSubagentLiveCount > 0;
+
+  static String? _editorialCompletionRowKey(Map<String, dynamic> message) {
+    final kind = message['display_kind'];
+    if (message['role'] != 'user' ||
+        (kind != 'async_delegation_complete' && kind != 'process_complete')) {
+      return null;
+    }
+    final identity = _transcriptMessageIdentity(message);
+    if (identity != null && identity.isDurable) {
+      return '$kind:${identity.messageId ?? ''}:${identity.rowId ?? ''}';
+    }
+    return '$kind:${message['timestamp']}:${message['content'].hashCode}';
+  }
+
+  void _armRetainedActivityExpiry() {
+    if (_retainedActivityExpiryTimer != null || _disposed) return;
+    _retainedActivityExpiryTimer = Timer(_retainedActivityMaxAge, () {
+      _retainedActivityExpiryTimer = null;
+      if (_disposed) return;
+      // Sin sesión viva no hay forma de volver a listar (process.list y
+      // subagent.list exigen runtime vivo): pasado el tope, no se sigue
+      // ensenando un estado que ya no se puede confirmar.
+      if (_clearTransportRetainedActivity()) {
+        _emit(ActiveChatEvent.subagentActivity);
+      }
+    });
+  }
+
+  /// Conserva como desfasado lo último visto del runtime que se retira por
+  /// transporte (o se rota dentro del mismo linaje): los procesos y el
+  /// recuento de subagentes vivos siguen en la pastilla con «último estado
+  /// conocido» en vez de desaparecer mientras Hermes sigue trabajando.
+  void _retainTransportActivity({required int subagentLiveCount}) {
+    final retainsProcesses = _backgroundProcesses.isNotEmpty;
+    final retainsSubagents = subagentLiveCount > _retainedSubagentLiveCount;
+    if (!retainsProcesses && !retainsSubagents) return;
+    if (!_transportRetainedActivityVisible) {
+      _retainedActivityKnownCompletionRows
+        ..clear()
+        ..addAll(_messages.map(_editorialCompletionRowKey).nonNulls);
+    }
+    if (retainsProcesses) {
+      _backgroundProcessesRetainedFromTransport = true;
+      _backgroundProcessesStale = true;
+    }
+    if (retainsSubagents) _retainedSubagentLiveCount = subagentLiveCount;
+    _armRetainedActivityExpiry();
+  }
+
+  bool _clearRetainedSubagentLiveness() {
+    if (_retainedSubagentLiveCount == 0) return false;
+    _retainedSubagentLiveCount = 0;
+    _cancelRetainedActivityExpiryIfSettled();
+    return true;
+  }
+
+  void _cancelRetainedActivityExpiryIfSettled() {
+    if (_transportRetainedActivityVisible) return;
+    _retainedActivityExpiryTimer?.cancel();
+    _retainedActivityExpiryTimer = null;
+    _retainedActivityKnownCompletionRows.clear();
+  }
+
+  bool _clearTransportRetainedActivity() {
+    var changed = _clearRetainedSubagentLiveness();
+    if (_backgroundProcessesRetainedFromTransport) {
+      _backgroundProcessesRetainedFromTransport = false;
+      if (_backgroundProcesses.isNotEmpty) {
+        _backgroundProcesses = const [];
+        _backgroundProcessAbsenceStreaks.clear();
+        _backgroundProcessMutationGeneration += 1;
+        changed = true;
+      }
+      _backgroundProcessesStale = false;
+    }
+    _cancelRetainedActivityExpiryIfSettled();
+    return changed;
+  }
+
+  /// Una fila durable `process_complete`/`async_delegation_complete` nueva
+  /// (posterior a la conservación) prueba que ese trabajo terminó aunque ya no
+  /// haya sesión viva que listar.
+  bool _settleTransportRetainedActivityFromTranscript() {
+    if (!_transportRetainedActivityVisible) return false;
+    var processCompletions = 0;
+    var delegatedCompletions = 0;
+    for (final message in _messages) {
+      final key = _editorialCompletionRowKey(message);
+      if (key == null || _retainedActivityKnownCompletionRows.contains(key)) {
+        continue;
+      }
+      if (message['display_kind'] == 'process_complete') {
+        processCompletions += 1;
+      } else {
+        final metadata = message['display_metadata'];
+        final ids = metadata is Map ? metadata['subagent_ids'] : null;
+        delegatedCompletions += ids is List && ids.isNotEmpty ? ids.length : 1;
+      }
+    }
+    var changed = false;
+    if (_backgroundProcessesRetainedFromTransport &&
+        processCompletions > 0 &&
+        processCompletions >= _backgroundProcesses.length) {
+      _backgroundProcessesRetainedFromTransport = false;
+      _backgroundProcesses = const [];
+      _backgroundProcessAbsenceStreaks.clear();
+      _backgroundProcessMutationGeneration += 1;
+      _backgroundProcessesStale = false;
+      changed = true;
+    }
+    if (_retainedSubagentLiveCount > 0 &&
+        delegatedCompletions >= _retainedSubagentLiveCount) {
+      changed = _clearRetainedSubagentLiveness() || changed;
+    }
+    _cancelRetainedActivityExpiryIfSettled();
+    return changed;
   }
 
   void _cancelPassiveActivityExpiry() {
@@ -4974,6 +5126,40 @@ class ActiveChat {
       finalOutput: assistantContent.isEmpty ? null : assistantContent,
       finalOutputNarratable: false,
     );
+    _relaunchViewerReattachAfterConvergence();
+  }
+
+  /// Un visor que convergió sin adoptar runtime (no se adopta uno no probado a
+  /// mitad de turno) se queda sin `process.list`/`subagent.list` aunque el
+  /// trabajo delegado siga vivo. Con el turno ya terminal, relanza el reattach
+  /// normal (ligado al roster, que sí adopta) para que el sondeo adaptativo
+  /// recupere procesos y subagentes. Respeta la recuperación cerrada.
+  void _relaunchViewerReattachAfterConvergence() {
+    final gateway = _desktopGateway;
+    if (_disposed ||
+        gateway == null ||
+        isStreaming ||
+        !_runTerminal ||
+        _desktopRuntimeSessionId != null ||
+        (_releaseRequested && !_changes.hasListener)) {
+      return;
+    }
+    if (_desktopAutomaticReattach != null) {
+      // A normal attempt is already running: coalesce.
+      if (!_desktopAutomaticReattachForConvergence) return;
+      // The convergence-era attempt cannot adopt; supersede it.
+      _desktopAutomaticReattachGeneration += 1;
+      _desktopAutomaticReattach = null;
+    }
+    _scheduleAutomaticDesktopReattach(gateway);
+  }
+
+  /// La recuperación del visor quedó cerrada por un error terminal (sesión
+  /// inexistente, identidad rechazada…): nadie debe relanzar el attach.
+  bool get desktopViewerRecoveryClosed {
+    final gateway = _desktopGateway;
+    return _desktopStoredSessionKnownMissing ||
+        (gateway != null && _closedViewerRecoveryBlocks(gateway));
   }
 
   /// Live manual `/compress` of this process (locks the composer).
@@ -5402,6 +5588,11 @@ class ActiveChat {
 
     try {
       await cancel();
+      // Stop is an explicit end of what this surface shows: stale rows kept
+      // from a runtime lost to transport cannot be verified, so they go.
+      if (_clearTransportRetainedActivity() && !_disposed) {
+        _emit(ActiveChatEvent.subagentActivity);
+      }
       if (!verifiesBackgroundWork) {
         return const SessionStopResult(
           remainingSubagents: 0,
@@ -5632,7 +5823,10 @@ class ActiveChat {
       // (ver SessionActivity.compacting).
       compacting: desktopCompactionVisible,
       observedAt: _backgroundProcessesObservedAt ?? _desktopTurnStartedAt,
-      stale: _backgroundProcessesStale || _sessionControlStale,
+      stale:
+          _backgroundProcessesStale ||
+          _sessionControlStale ||
+          _retainedSubagentLiveCount > 0,
     );
   }
 
@@ -5778,6 +5972,9 @@ class ActiveChat {
       }
     }
 
+    // A fenced list on a live runtime is authority over rows retained from a
+    // runtime lost to transport: absence there needs no second confirmation.
+    final retainedAuthority = _backgroundProcessesRetainedFromTransport;
     final next = <SessionActivityProcess>[];
     for (final row in activeRows.values) {
       final current = currentById[row.opaqueId];
@@ -5806,7 +6003,7 @@ class ActiveChat {
       }
       final absenceStreak =
           (_backgroundProcessAbsenceStreaks[current.id] ?? 0) + 1;
-      if (absenceStreak < 2) {
+      if (absenceStreak < 2 && !retainedAuthority) {
         _backgroundProcessAbsenceStreaks[current.id] = absenceStreak;
         next.add(current);
       } else {
@@ -5825,6 +6022,8 @@ class ActiveChat {
     _backgroundProcessesObservedAt = now;
     _backgroundProcessesStale = false;
     _backgroundProcessLiveRosterConfirmed = true;
+    _backgroundProcessesRetainedFromTransport = false;
+    _cancelRetainedActivityExpiryIfSettled();
     if (!changed && !staleChanged) return;
     _backgroundProcesses = List.unmodifiable(next);
     _backgroundProcessMutationGeneration += 1;
@@ -5999,7 +6198,9 @@ class ActiveChat {
     // authority over what is still live for this runtime. Record that, since
     // it is the only evidence presentation may settle a row on.
     _subagentLiveRosterConfirmed = true;
+    final retainedCleared = _clearRetainedSubagentLiveness();
     if (canProvePresentation ||
+        retainedCleared ||
         ((hadControlAuthority || rosterChanged) && rows.isEmpty)) {
       _emit(ActiveChatEvent.subagentActivity);
     }
@@ -6960,6 +7161,10 @@ class ActiveChat {
   final List<Duration> _desktopRecoveryBackoff;
   final double Function() _desktopRecoveryRandom;
   final Duration _compressionRestoreProbeInterval;
+
+  /// Tope de vida de la actividad conservada como «último estado conocido»
+  /// tras perder el runtime por transporte (ver [_retainTransportActivity]).
+  final Duration _retainedActivityMaxAge;
   _StopTransitionCoordinator? _stopTransition;
 
   /// Epoch del último Stop que alcanzó estado terminal. Sobrevive al
@@ -7098,6 +7303,8 @@ class ActiveChat {
     Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
     Duration compressionRestoreProbeInterval = const Duration(seconds: 5),
     @visibleForTesting
+    Duration retainedActivityMaxAge = const Duration(minutes: 10),
+    @visibleForTesting
     List<Duration> backgroundStopRecheckDelays = const [
       Duration.zero,
       Duration(milliseconds: 1500),
@@ -7152,6 +7359,9 @@ class ActiveChat {
        _desktopRecoveryBackoff = _normalizeDesktopRecoveryBackoff(
          desktopRecoveryBackoff,
        ),
+       _retainedActivityMaxAge = retainedActivityMaxAge > Duration.zero
+           ? retainedActivityMaxAge
+           : const Duration(minutes: 10),
        _desktopRecoveryRandom =
            desktopRecoveryRandom ?? math.Random().nextDouble,
        _turnIdempotencyCapability =
@@ -7759,7 +7969,7 @@ class ActiveChat {
         : _storedSessionProfile;
     final didAdopt = _desktopRuntimeNeedsAdoption(runtimeId, serverSessionId);
     if (didAdopt) {
-      _retireDesktopRuntime();
+      _retireDesktopRuntime(reason: _RuntimeRetirement.adoption);
       _desktopRuntimeSessionId = runtimeId;
       _retiringDesktopRuntimeSessionId = null;
       if (!_viewerTurnConvergenceIsCurrent) {
@@ -7828,7 +8038,9 @@ class ActiveChat {
     return true;
   }
 
-  void _retireDesktopRuntime() {
+  void _retireDesktopRuntime({
+    _RuntimeRetirement reason = _RuntimeRetirement.explicit,
+  }) {
     // A retired runtime no longer streams the terminal status of a pending
     // /compress: stop locking and fall back to the read-only restore probe.
     _handOffLiveCompressionToRestore();
@@ -7877,11 +8089,27 @@ class ActiveChat {
     _subagentPublicEligibleKeys.clear();
     _backgroundProcessListRequestGeneration += 1;
     _backgroundProcessMutationGeneration += 1;
-    _backgroundProcesses = const [];
     _backgroundProcessAbsenceStreaks.clear();
-    _backgroundProcessesStale = false;
     _backgroundProcessLiveRosterConfirmed = false;
-    _backgroundProcessesObservedAt = null;
+    final keepsRetained = switch (reason) {
+      // Losing the socket does not end server-side work: keep the last roster
+      // as stale until a fenced list, durable completion or the max age.
+      _RuntimeRetirement.transportLoss => true,
+      // Adopting the recovered runtime keeps what the loss already retained;
+      // replacing a still-bound runtime clears as before.
+      _RuntimeRetirement.adoption =>
+        retiredRuntimeId == null && _transportRetainedActivityVisible,
+      _RuntimeRetirement.explicit => false,
+    };
+    if (reason == _RuntimeRetirement.transportLoss) {
+      _retainTransportActivity(subagentLiveCount: safeActiveSubagentCount);
+    }
+    if (!keepsRetained) {
+      _clearTransportRetainedActivity();
+      _backgroundProcesses = const [];
+      _backgroundProcessesStale = false;
+      _backgroundProcessesObservedAt = null;
+    }
     if (_subagentForegroundPresentationLeased) {
       _subagentForegroundPresentationGeneration += 1;
       _subagentPresentationState =
@@ -15177,6 +15405,7 @@ class ActiveChat {
   /// transcript vacío), fila posterior a la creación y mismo perfil. Ante
   /// cualquier duda devuelve false; nunca reenvía nada.
   Future<bool> composerTurnDeliveredPerTranscript(PreparedTurn turn) async {
+    _composerDeliverySettleThrottledUntilMs = null;
     bool eligible() =>
         !_disposed &&
         !isStreaming &&
@@ -15210,6 +15439,8 @@ class ActiveChat {
     final lastMs = _lastComposerDeliverySettleMs;
     if (lastMs != null &&
         nowMs - lastMs < _queuedDeliverySettleMinInterval.inMilliseconds) {
+      _composerDeliverySettleThrottledUntilMs =
+          lastMs + _queuedDeliverySettleMinInterval.inMilliseconds;
       return false;
     }
     _lastComposerDeliverySettleMs = nowMs;
@@ -15248,6 +15479,17 @@ class ActiveChat {
   }
 
   int? _lastComposerDeliverySettleMs;
+  int? _composerDeliverySettleThrottledUntilMs;
+
+  /// Si la última [composerTurnDeliveredPerTranscript] devolvió `false` solo
+  /// porque el freno de 5 s la descartó (sin leer el transcript), el tiempo
+  /// que falta para que un reintento sí compruebe. `null` en otro caso.
+  Duration? get composerTurnSettleThrottleRemaining {
+    final until = _composerDeliverySettleThrottledUntilMs;
+    if (until == null) return null;
+    final remaining = until - _wallClockMs();
+    return Duration(milliseconds: remaining <= 0 ? 1 : remaining);
+  }
 
   /// Reanuda el drenado de la cola que `restoreQueuedTurns(scheduleDrain:
   /// false)` dejó suspendido mientras el turno del composer era ambiguo, una
@@ -16349,7 +16591,7 @@ class ActiveChat {
         final disconnectedRuntimeId = _desktopRuntimeSessionId;
         _expireInteractivePromptsForRuntime(disconnectedRuntimeId);
         _usingDesktopGateway = false;
-        _retireDesktopRuntime();
+        _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
         if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
         if (interruptedActiveTurn && clientSubmittedTurn) {
           _scheduleDesktopTurnRecovery(gateway, _turnEpoch, error);
@@ -16385,6 +16627,7 @@ class ActiveChat {
       }
     });
     _desktopAutomaticReattach = recovery;
+    _desktopAutomaticReattachForConvergence = _viewerTurnConvergenceIsCurrent;
     unawaited(recovery);
   }
 
@@ -18805,6 +19048,9 @@ class ActiveChat {
       );
 
   void _reconcileSubagentsFromTranscript() {
+    if (_settleTransportRetainedActivityFromTranscript()) {
+      _emit(ActiveChatEvent.subagentActivity);
+    }
     final historicalMessages = projectHistoricalSubagentCompletions(
       messagesNewestFirst: _messages,
     );
@@ -18922,6 +19168,8 @@ class ActiveChat {
     // Runtime rotation always clears mutable incarnation state. A narrowly
     // verified reconnect candidate may later restore only its public goal when
     // the same opaque child identity advances monotonically in the new alias.
+    // The privacy-safe live count survives through the transport-loss
+    // retention (_retainTransportActivity), not through this rebase.
     _rememberRetiredSubagentTerminals(current);
     _rememberSubagentHistoricalEvidence(current);
     _subagentActivities = SubagentActivityState.empty(recoveredScope);
@@ -22620,6 +22868,7 @@ class ActiveChat {
     // Reclama el terminal después de resolver la metadata: mientras esa
     // persistencia está pendiente puede llegar un replay necesario del mismo
     // borde. A partir de aquí, el primer cierre ganado silencia duplicados.
+    final convergedViewerTurn = _viewerTurnConvergenceIsCurrent;
     _runTerminal = true;
     _viewerTurnConvergenceEpoch = null;
     _settleLiveUsersAlreadyRepresentedByDurableTail();
@@ -22679,6 +22928,7 @@ class ActiveChat {
     _finalizeAcceptedTurnDelivery();
     state = ChatPipelineState.completed;
     traceActive = false;
+    if (convergedViewerTurn) _relaunchViewerReattachAfterConvergence();
     // Terminal callbacks may drain only an active lease (or one explicitly
     // resumed after Stop) and only queue entries with durable local ownership.
     // The terminal gate makes this edge single-shot for the turn epoch.
@@ -25357,6 +25607,8 @@ class ActiveChat {
   void dispose() {
     if (_disposed) return;
     suspendSubagentForegroundPresentation();
+    _retainedActivityExpiryTimer?.cancel();
+    _retainedActivityExpiryTimer = null;
     _autoCompactionStaleTimer?.cancel();
     _autoCompactionStaleTimer = null;
     _restoredCompressionProbeTimer?.cancel();
@@ -26231,6 +26483,7 @@ class ActiveChatService {
     @visibleForTesting Future<bool> Function()? turnIdempotencyCapability,
     @visibleForTesting bool disableForegroundKeepAlive = false,
     @visibleForTesting int transcriptPageSizeForTesting = 500,
+    @visibleForTesting int Function()? wallClockMsForTesting,
   }) {
     final owner = Session.profileOwner(
       sessionProfile ?? sessionSnapshot?.profile,
@@ -26323,6 +26576,7 @@ class ActiveChatService {
           allowUnownedDesktopSnapshotForTesting,
       turnIdempotencyCapability: turnIdempotencyCapability,
       transcriptPageSizeForTesting: transcriptPageSizeForTesting,
+      wallClockMs: wallClockMsForTesting,
       initialObservedFirstTokenLatencyMs: _cachedObservedFirstTokenLatencyMs(
         connection.id,
         sessionId,
