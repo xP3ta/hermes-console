@@ -15169,6 +15169,102 @@ class ActiveChat {
     return ambiguousTurnTranscriptEvidence(turn, chronological);
   }
 
+  /// Equivalente de [_settleDeliveredQueuedTurns] para el turno del composer
+  /// (no encolado) cuya confirmación se perdió. Sin `turn.status` en el
+  /// servidor quedaba «enviado, sin confirmar» para siempre. Devuelve true
+  /// solo si el transcript durable demuestra la entrega con las mismas reglas
+  /// que la cola: nunca el turno en vuelo, frontera fiable (identidad o
+  /// transcript vacío), fila posterior a la creación y mismo perfil. Ante
+  /// cualquier duda devuelve false; nunca reenvía nada.
+  Future<bool> composerTurnDeliveredPerTranscript(PreparedTurn turn) async {
+    bool eligible() =>
+        !_disposed &&
+        !isStreaming &&
+        !_preparedTurnDrainInFlight &&
+        !mutationsBlockedByOwnershipConflict &&
+        // El transcript leído es el de `serverSessionId`: un turno de otra
+        // sesión (rebind/compresión) jamás puede probarse con él.
+        turn.sessionId == serverSessionId &&
+        _activeTurnDelivery?.current.clientTurnId != turn.clientTurnId;
+    if (!eligible() ||
+        turn.queued ||
+        !const {
+          PreparedTurnState.ambiguous,
+          PreparedTurnState.accepted,
+          PreparedTurnState.running,
+        }.contains(turn.state)) {
+      return false;
+    }
+    final boundaryKind = turn.retryBoundary?.kind;
+    if (boundaryKind != PreparedTurnRetryBoundaryKind.identity &&
+        boundaryKind != PreparedTurnRetryBoundaryKind.empty) {
+      return false;
+    }
+    final profile = _storedSessionProfile;
+    if (Session.profileOwner(turn.profile) != Session.profileOwner(profile)) {
+      return false;
+    }
+    // Mismo freno que la cola: `messagesHydrated` llega en ráfagas y cada
+    // comprobación descarga el transcript completo.
+    final nowMs = _wallClockMs();
+    final lastMs = _lastComposerDeliverySettleMs;
+    if (lastMs != null &&
+        nowMs - lastMs < _queuedDeliverySettleMinInterval.inMilliseconds) {
+      return false;
+    }
+    _lastComposerDeliverySettleMs = nowMs;
+    final requestedSessionId = serverSessionId;
+    final turnEpoch = _turnEpoch;
+    final List<Map<String, dynamic>> chronological;
+    try {
+      chronological = await _loadStoredMessages(profile);
+    } catch (_) {
+      return false;
+    }
+    if (!eligible() ||
+        turnEpoch != _turnEpoch ||
+        requestedSessionId != serverSessionId ||
+        profile != _storedSessionProfile) {
+      return false;
+    }
+    // `unknown` ya calculado sobre este mismo historial: no cambia hasta que
+    // el transcript crezca.
+    if (_queuedDeliveryUnknownAt[turn.clientTurnId] == chronological.length) {
+      return false;
+    }
+    final delivered =
+        ambiguousTurnTranscriptEvidence(
+          turn,
+          chronological,
+          requireRowAfterTurnCreation: true,
+        ) ==
+        AmbiguousRetryEvidence.delivered;
+    if (delivered) {
+      _queuedDeliveryUnknownAt.remove(turn.clientTurnId);
+    } else {
+      _queuedDeliveryUnknownAt[turn.clientTurnId] = chronological.length;
+    }
+    return delivered;
+  }
+
+  int? _lastComposerDeliverySettleMs;
+
+  /// Reanuda el drenado de la cola que `restoreQueuedTurns(scheduleDrain:
+  /// false)` dejó suspendido mientras el turno del composer era ambiguo, una
+  /// vez que ese turno se ha resuelto. No levanta suspensiones con otro dueño:
+  /// conflicto de propiedad, Stop (park/admisión congelada) o dispose.
+  void resumeQueueDrainAfterComposerTurnResolved() {
+    if (_disposed ||
+        !_queueDrainSuspended ||
+        mutationsBlockedByOwnershipConflict ||
+        _queueAdmissionFrozen ||
+        _queueLease == QueueLease.parked) {
+      return;
+    }
+    _queueDrainSuspended = false;
+    if (!isStreaming) Timer.run(_drainQueue);
+  }
+
   /// Resuelve una entrega ambigua únicamente mediante el contrato negociado.
   /// `known:false`, capability ausente o cualquier violación dejan el turno
   /// ambiguo; este método nunca llama submit ni cambia de transporte.
@@ -15212,6 +15308,7 @@ class ActiveChat {
       if (!isCurrent()) return turn;
       await gateway.connect();
       if (!isCurrent()) return turn;
+      final recoveryApprovalGeneration = _approvalGeneration;
       final binding = await _resumeDesktopSessionForRecovery(
         gateway,
         turn.sessionId,
@@ -15265,18 +15362,35 @@ class ActiveChat {
           store: store,
         );
         state = ChatPipelineState.waiting;
+        _restorePendingApproval(
+          binding,
+          expectedGeneration: recoveryApprovalGeneration,
+          liveSnapshotAbsenceClears: true,
+        );
         _emit(ActiveChatEvent.connected);
         _armActivityWatchdog();
       }
       return resolved;
-    } on TuiGatewayRpcError {
-      if (isCurrent()) _turnIdempotencyInvalid = true;
+    } on TuiGatewayRpcError catch (error) {
+      // `_failPending` convierte cortes y timeouts en TuiGatewayRpcError: esos
+      // son red, no contradicen la capability. Solo method-not-found o una
+      // respuesta de turn.status mal formada demuestran incompatibilidad.
+      if (isCurrent() && _turnStatusContradictsCapability(error)) {
+        _turnIdempotencyInvalid = true;
+      }
       return turn;
     } catch (_) {
       // Corte de red/socket: no contradice la capability y tampoco demuestra
       // que el turno sea desconocido. Conserva ambiguous sin automatismos.
       return turn;
     }
+  }
+
+  static bool _turnStatusContradictsCapability(TuiGatewayRpcError error) {
+    if (error.failureKind != null) return false;
+    if (error.code == -32601) return true;
+    // DesktopTurnStatus.fromJson lanza sin código ante eco/payload inválido.
+    return error.code == null && error.method == 'turn.status';
   }
 
   /// Selecciona el canal oficial de Desktop cuando está disponible. El fallback
@@ -16723,6 +16837,7 @@ class ActiveChat {
           debugPrint('[active-chat] ticket ok');
           debugPrint('[active-chat] connected');
           debugPrint('[active-chat] resume start');
+          final recoveryApprovalGeneration = _approvalGeneration;
           final binding = await _desktopRecoveryOperationBeforeDeadline(
             _resumeDesktopSessionForRecovery(
               gateway,
@@ -16758,6 +16873,13 @@ class ActiveChat {
               );
               _usingDesktopGateway = true;
               state = ChatPipelineState.waiting;
+              // La tarjeta previa al corte ya no tiene request vivo en este
+              // socket: el snapshot de la reanudación es la autoridad.
+              _restorePendingApproval(
+                binding,
+                expectedGeneration: recoveryApprovalGeneration,
+                liveSnapshotAbsenceClears: true,
+              );
               _armActivityWatchdog();
               _emit(ActiveChatEvent.waiting);
               return;
@@ -16806,6 +16928,11 @@ class ActiveChat {
               );
               _usingDesktopGateway = true;
               state = ChatPipelineState.executing;
+              _restorePendingApproval(
+                binding,
+                expectedGeneration: recoveryApprovalGeneration,
+                liveSnapshotAbsenceClears: true,
+              );
               _armActivityWatchdog();
               _emit(ActiveChatEvent.toolProgress);
               return;
@@ -18540,11 +18667,24 @@ class ActiveChat {
     return true;
   }
 
+  /// [liveSnapshotAbsenceClears]: solo para reanudaciones de recuperación.
+  /// Hermes no envía `pending_approval: null`: `_live_session_payload`
+  /// (server.py) omite la clave cuando no hay aprobación y `_resume_response`
+  /// (sesión no viva) nunca la incluye. Un snapshot con `running: true` solo
+  /// sale de `_live_session_payload` (o de una ventana lazy sin agente propio,
+  /// que tampoco tiene aprobaciones), así que ahí la ausencia sí demuestra
+  /// «sin aprobación pendiente». Con `running: false` la ausencia no prueba
+  /// nada y la tarjeta queda a cargo de la ruta `resolved: 0`.
   void _restorePendingApproval(
     DesktopSessionSnapshot snapshot, {
     int? expectedGeneration,
+    bool liveSnapshotAbsenceClears = false,
   }) {
-    if (!snapshot.pendingApprovalProvided ||
+    final absenceProvesNone =
+        liveSnapshotAbsenceClears &&
+        !snapshot.pendingApprovalProvided &&
+        snapshot.running;
+    if ((!snapshot.pendingApprovalProvided && !absenceProvesNone) ||
         snapshot.runtimeSessionId != _desktopRuntimeSessionId ||
         (expectedGeneration != null &&
             expectedGeneration != _approvalGeneration)) {
@@ -18560,6 +18700,54 @@ class ActiveChat {
       return;
     }
     _handleApprovalRequest(Map<String, dynamic>.unmodifiable(pending));
+  }
+
+  /// Request ids cuyo `resolved: 0` ya disparó una relectura del snapshot.
+  /// Un solo intento por petición: con YOLO/«siempre» un snapshot que siguiera
+  /// anunciando la misma petición caducada cerraría el bucle
+  /// respond → 0 → resume → auto-respond → 0.
+  final Set<String> _approvalSnapshotRefreshedRequestIds = <String>{};
+
+  /// Relee el snapshot de la sesión (sin mensajes) para restaurar la
+  /// aprobación pendiente real tras un `resolved: 0`. Usa la reanudación de
+  /// recuperación, que no ancla el runtime legacy de eventos, y solo con un
+  /// turno vivo: la sesión viva se reutiliza en el servidor y no queda ningún
+  /// runtime huérfano. Fail-closed: cualquier cambio de autoridad, snapshot
+  /// sin turno vivo o error deja el estado tal cual.
+  Future<void> _refreshPendingApprovalFromSnapshot(
+    String staleRequestId,
+  ) async {
+    if (!_approvalSnapshotRefreshedRequestIds.add(staleRequestId)) return;
+    final desktop = _desktopGateway;
+    if (desktop is! HermesDesktopRecoverySessionLifecycleGateway) return;
+    final recovery = desktop as HermesDesktopRecoverySessionLifecycleGateway;
+    final bindEpoch = _desktopBindEpoch;
+    final sessionEpoch = _desktopSessionEpoch;
+    final runtimeId = _desktopRuntimeSessionId;
+    final approvalGeneration = _approvalGeneration;
+    if (runtimeId == null || !isStreaming) return;
+    try {
+      final snapshot = await recovery.resumeExistingForRecovery(
+        serverSessionId,
+        profile: _storedSessionProfile,
+      );
+      if (_disposed ||
+          bindEpoch != _desktopBindEpoch ||
+          sessionEpoch != _desktopSessionEpoch ||
+          runtimeId != _desktopRuntimeSessionId ||
+          !snapshot.running ||
+          _approvalRequestId(snapshot.pendingApproval) == staleRequestId) {
+        return;
+      }
+      _restorePendingApproval(
+        snapshot,
+        expectedGeneration: approvalGeneration,
+        liveSnapshotAbsenceClears: true,
+      );
+    } on Object {
+      // Sin snapshot la tarjeta ya se retiró; un approval.request posterior
+      // la volverá a mostrar.
+    }
   }
 
   void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
@@ -21439,7 +21627,15 @@ class ActiveChat {
           _desktopRuntimeSessionId == runtimeId &&
           _desktopBindEpoch == requestBindEpoch &&
           _desktopSessionEpoch == requestSessionEpoch;
-      if (!authorityStillCurrent || resolved <= 0 || !requestStillCurrent()) {
+      if (!authorityStillCurrent || !requestStillCurrent()) return;
+      if (resolved <= 0) {
+        // Hermes ya no tiene esta petición (resuelta en otra superficie o
+        // caducada durante un corte): la tarjeta quedaría muerta. Se retira
+        // y el snapshot decide si hay otra aprobación pendiente.
+        _cancelApprovalNotification(approval, terminal: false);
+        pendingApproval = null;
+        _emit(ActiveChatEvent.toolProgress);
+        unawaited(_refreshPendingApprovalFromSnapshot(approvalId));
         return;
       }
       if (runId != null) {
@@ -22850,6 +23046,27 @@ class ActiveChat {
   void requestImmediateTransportRecovery() {
     if (_disposed || _desktopRecoveryWake.isCompleted) return;
     _desktopRecoveryWake.complete();
+  }
+
+  /// Acortar el backoff no basta con un socket medio abierto en la red
+  /// antigua: se comprueba ya y, si no responde, corre la ruta de error.
+  /// Solo para señales de red/plataforma (cambio de red, vuelta a primer
+  /// plano): `sessions.changed` o Reintentar no demuestran nada del socket y
+  /// una sonda ahí podría cortar un socket sano con un submit en vuelo.
+  void probeTransportNow() {
+    if (_disposed) return;
+    final gateway = _desktopGateway;
+    if (gateway == null ||
+        !gateway.isConnected ||
+        gateway is! HermesDesktopTransportProbeGateway) {
+      return;
+    }
+    unawaited(
+      (gateway as HermesDesktopTransportProbeGateway).probeNow().then<void>(
+        (_) {},
+        onError: (_, _) {},
+      ),
+    );
   }
 
   Future<bool> _waitForDesktopRecoveryDelay(
@@ -26240,16 +26457,24 @@ class ActiveChatService {
     _refreshActiveIds();
   }
 
+  /// Señal de red de la plataforma (`onAvailable`): sondea el socket actual
+  /// y acorta el backoff de cada chat.
   void requestImmediateTransportRecovery() {
     for (final chat in _chats.values) {
+      chat.probeTransportNow();
       chat.requestImmediateTransportRecovery();
     }
   }
 
   /// Reconciliación global al volver de 2º plano: re-sincroniza cualquier chat
   /// cuyo stream pudiera haberse cortado mientras la app estaba suspendida.
+  /// Es la única reconciliación que sondea el socket (resume del ciclo de
+  /// vida); la de un solo chat (`sessions.changed`, Reintentar) no.
   Future<void> reconcileAfterResume() async {
     final chats = _chats.values.toList(growable: false);
+    for (final chat in chats) {
+      chat.probeTransportNow();
+    }
     final reserved = <ActiveChat>{};
     for (final chat in chats) {
       chat._reserveResumeReconciliation();

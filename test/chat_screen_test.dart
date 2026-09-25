@@ -15121,6 +15121,192 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  group('turno del composer ya entregado sin turn.status', () {
+    Future<(String, _SubmissionGateway)> openWith(
+      WidgetTester tester, {
+      required String connectionId,
+      required bool transcriptHasTurn,
+      PreparedTurnState state = PreparedTurnState.ambiguous,
+      bool restoresComposer = true,
+      PreparedTurn? queuedAfter,
+    }) async {
+      const prompt = 'turno del composer cuyo ACK se perdió';
+      final connection = _remoteConn(connectionId);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final turn = PreparedTurn(
+        connectionId: connection.id,
+        sessionId: 'sess-test',
+        clientTurnId: 'client-$connectionId',
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: prompt,
+        fullText: prompt,
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: 'default',
+        state: state,
+        restoresComposer: restoresComposer,
+        retryBoundary: PreparedTurnRetryBoundary.identity(rowId: 10),
+      );
+      secureStore['chat_turn_outbox_v1'] = jsonEncode({
+        turn.storageId: turn.toJson(),
+        if (queuedAfter != null) queuedAfter.storageId: queuedAfter.toJson(),
+      });
+      if (restoresComposer) {
+        secureStore[ChatDraftStore.keyForTesting(
+          connection.id,
+          'sess-test',
+          profile: 'default',
+        )] = jsonEncode({
+          'savedAt': now,
+          'text': prompt,
+          'preparedTurnClientTurnId': turn.clientTurnId,
+          'attachments': const <Object>[],
+        });
+      }
+      final ts = now / 1000;
+      final transcript = <Map<String, dynamic>>[
+        {'id': 10, 'role': 'user', 'content': 'antes', 'timestamp': ts - 60},
+        {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': ts - 59},
+        if (transcriptHasTurn)
+          {'id': 12, 'role': 'user', 'content': prompt, 'timestamp': ts + 1},
+      ];
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        connection: connection,
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => transcript,
+      );
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      return (connection.id, gateway);
+    }
+
+    testWidgets(
+      'el transcript demuestra la entrega: se resuelve sin reenviar',
+      (tester) async {
+        final (connectionId, gateway) = await openWith(
+          tester,
+          connectionId: 'conn-composer-delivered',
+          transcriptHasTurn: true,
+        );
+        expect(
+          await TurnOutboxStore().loadAllForChat(
+            connectionId,
+            'sess-test',
+            profile: 'default',
+          ),
+          isEmpty,
+        );
+        expect(
+          tester
+              .widget<TextField>(find.byType(TextField).last)
+              .controller
+              ?.text,
+          isEmpty,
+          reason: 'un turno entregado no devuelve el borrador al composer',
+        );
+        expect(gateway.submissions, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('turno oculto entregado deja de bloquear envíos posteriores', (
+      tester,
+    ) async {
+      final (connectionId, gateway) = await openWith(
+        tester,
+        connectionId: 'conn-composer-hidden-delivered',
+        transcriptHasTurn: true,
+        state: PreparedTurnState.accepted,
+        restoresComposer: false,
+      );
+      expect(
+        await TurnOutboxStore().loadAllForChat(
+          connectionId,
+          'sess-test',
+          profile: 'default',
+        ),
+        isEmpty,
+      );
+      expect(gateway.submissions, isEmpty);
+      await tester.enterText(find.byType(TextField).last, 'siguiente');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(gateway.submissions, ['siguiente']);
+      gateway.emitComplete();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('resolverlo reanuda la cola restaurada tras él', (
+      tester,
+    ) async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final queued = PreparedTurn(
+        connectionId: 'conn-composer-queue-resume',
+        sessionId: 'sess-test',
+        clientTurnId: 'queued-after-composer',
+        createdAtMs: now + 1,
+        updatedAtMs: now + 1,
+        queueOrder: 1,
+        text: 'turno encolado detrás',
+        fullText: 'turno encolado detrás',
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: 'default',
+        queued: true,
+        restoresComposer: false,
+      );
+      final (connectionId, gateway) = await openWith(
+        tester,
+        connectionId: 'conn-composer-queue-resume',
+        transcriptHasTurn: true,
+        queuedAfter: queued,
+      );
+      for (var frame = 0; frame < 40 && gateway.submissions.isEmpty; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(
+        (await TurnOutboxStore().loadAllForChat(
+          connectionId,
+          'sess-test',
+          profile: 'default',
+        )).where((turn) => !turn.queued),
+        isEmpty,
+      );
+      expect(gateway.submissions, ['turno encolado detrás']);
+      gateway.emitComplete();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('sin evidencia en el transcript sigue pendiente', (
+      tester,
+    ) async {
+      final (connectionId, gateway) = await openWith(
+        tester,
+        connectionId: 'conn-composer-unproven',
+        transcriptHasTurn: false,
+      );
+      final retained = await TurnOutboxStore().loadAllForChat(
+        connectionId,
+        'sess-test',
+        profile: 'default',
+      );
+      expect(retained.single.state, PreparedTurnState.ambiguous);
+      expect(gateway.submissions, isEmpty);
+      await tester.pump(const Duration(seconds: 9));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets(
     'submit vivo limpia el input y no permite doble envío o steering',
     (tester) async {

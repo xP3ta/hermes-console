@@ -222,6 +222,8 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.queued,
     super.pendingClarify,
     super.pendingClarifyProvided,
+    super.pendingApproval,
+    super.pendingApprovalProvided,
     super.todoState,
     super.running,
     super.status,
@@ -249,6 +251,8 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       queued: snapshot.queued,
       pendingClarify: snapshot.pendingClarify,
       pendingClarifyProvided: snapshot.pendingClarifyProvided,
+      pendingApproval: snapshot.pendingApproval,
+      pendingApprovalProvided: snapshot.pendingApprovalProvided,
       todoState: snapshot.todoState,
       running: snapshot.running,
       status: snapshot.status,
@@ -1100,6 +1104,15 @@ class DesktopTurnStatus {
   }
 }
 
+/// Extensión opcional: comprobación inmediata del socket actual tras un cambio
+/// de red o al volver de segundo plano. Un socket medio abierto en la red
+/// antigua no espera al plazo completo del heartbeat.
+abstract class HermesDesktopTransportProbeGateway {
+  /// Devuelve true si el socket respondió; false si no había conexión o la
+  /// sonda la declaró muerta (y ya se lanzó la ruta normal de error).
+  Future<bool> probeNow();
+}
+
 /// Extensión opcional. La interfaz base permanece intacta para instalaciones y
 /// fakes heredados; solo se usa tras una capability positiva autenticada.
 abstract class HermesDesktopIdempotentGateway {
@@ -1264,6 +1277,7 @@ class TuiGatewayClient
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopLifecycleGateway,
         HermesDesktopIdempotentGateway,
+        HermesDesktopTransportProbeGateway,
         HermesDesktopQueuedPromptGateway,
         HermesDesktopRewindResolverGateway,
         HermesDesktopRewindGateway,
@@ -1377,6 +1391,8 @@ class TuiGatewayClient
     DesktopGatewayCapabilityCache? capabilityCache,
     Duration heartbeatInterval = const Duration(seconds: 15),
     Duration heartbeatDeadline = const Duration(seconds: 45),
+    Duration probeNowDeadline = const Duration(seconds: 5),
+    Duration probeNowRecentInbound = const Duration(seconds: 3),
     Duration? fanoutInactivityDeadline,
     DateTime Function()? now,
   }) : _dashboard = dashboard ?? DashboardClient.lazy(_connection),
@@ -1384,6 +1400,8 @@ class TuiGatewayClient
        _capabilityCache = capabilityCache ?? DesktopGatewayCapabilityCache(),
        _heartbeatInterval = heartbeatInterval,
        _heartbeatDeadline = heartbeatDeadline,
+       _probeNowDeadline = probeNowDeadline,
+       _probeNowRecentInbound = probeNowRecentInbound,
        _fanoutInactivityDeadline =
            fanoutInactivityDeadline ??
            (heartbeatInterval > Duration.zero
@@ -2171,6 +2189,73 @@ class TuiGatewayClient
       await _probeSilentFanout(generation, channel, now);
     } catch (error, stackTrace) {
       _handleSocketError(generation, channel, error, stackTrace);
+    }
+  }
+
+  Future<bool>? _probeNowFlight;
+  int _probeNowFlightGeneration = -1;
+  final Duration _probeNowDeadline;
+
+  /// Un frame recibido hace menos de esto ya prueba que el socket vive.
+  final Duration _probeNowRecentInbound;
+
+  /// Sonda puntual del socket vigente (cambio de red / resume). Cualquier
+  /// respuesta, incluso un error JSON-RPC, prueba que el socket vive. Sin
+  /// respuesta en ~5 s *y sin ningún frame entrante desde que empezó* se usa
+  /// la misma ruta que un heartbeat vencido, así que la reconexión normal
+  /// arranca sin esperar los 45 s. Hermes procesa los RPC en serie
+  /// (`tui_gateway/ws.py`): un `prompt.submit` o `approval.respond` lento
+  /// retrasa el pong aunque los eventos sigan llegando, y cortar entonces
+  /// dejaría ambiguo un submit sano. Coalescida por conexión; no-op si no hay
+  /// conexión o hubo tráfico reciente. No toca el heartbeat.
+  @override
+  Future<bool> probeNow() {
+    final existing = _probeNowFlight;
+    if (existing != null && _probeNowFlightGeneration == _socketGeneration) {
+      return existing;
+    }
+    final channel = _channel;
+    if (_closed || !_connected || channel == null) {
+      return Future<bool>.value(false);
+    }
+    if (_now().difference(_lastInboundAt) < _probeNowRecentInbound) {
+      return Future<bool>.value(true);
+    }
+    final generation = _socketGeneration;
+    late final Future<bool> flight;
+    flight = _probeNowOnce(generation, channel).whenComplete(() {
+      if (identical(_probeNowFlight, flight)) _probeNowFlight = null;
+    });
+    _probeNowFlight = flight;
+    _probeNowFlightGeneration = generation;
+    return flight;
+  }
+
+  Future<bool> _probeNowOnce(int generation, WebSocketChannel channel) async {
+    final probeStartedAt = _now();
+    try {
+      await _requestConnected(
+        'gateway.ping',
+        const <String, dynamic>{},
+        timeout: _probeNowDeadline,
+      );
+      return true;
+    } on TuiGatewayRpcError catch (error) {
+      if (error.failureKind == null) return true;
+      if (error.failureKind == TuiGatewayRpcFailureKind.timeout) {
+        // Cualquier frame posterior al inicio de la sonda prueba que el
+        // socket vive: el pong solo espera tras un RPC serial lento.
+        if (_lastInboundAt.isAfter(probeStartedAt)) return true;
+        _handleSocketError(
+          generation,
+          channel,
+          StateError('Hermes Desktop WebSocket probe timed out'),
+        );
+      }
+      return false;
+    } catch (error, stackTrace) {
+      _handleSocketError(generation, channel, error, stackTrace);
+      return false;
     }
   }
 
