@@ -1397,6 +1397,8 @@ class TuiGatewayClient
   @override
   bool get isConnected => _connected;
 
+  bool get isClosed => _closed;
+
   Uri _webSocketUri(DashboardWebSocketAuth auth) {
     final base = Uri.parse(_connection.effectiveDashboardUrl);
     return base.replace(
@@ -1519,7 +1521,9 @@ class TuiGatewayClient
     int generation,
     WebSocketChannel channel,
   ) {
-    if (generation != _socketGeneration || !identical(_channel, channel)) return;
+    if (generation != _socketGeneration || !identical(_channel, channel)) {
+      return;
+    }
     try {
       final advertisement = _requestConnected(
         'client.capabilities',
@@ -1527,10 +1531,7 @@ class TuiGatewayClient
         timeout: const Duration(seconds: 10),
       );
       unawaited(
-        advertisement.then<void>(
-          (_) {},
-          onError: (Object _, StackTrace _) {},
-        ),
+        advertisement.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
       );
     } catch (_) {
       // Capability discovery is optional and must not own transport readiness.
@@ -3265,7 +3266,9 @@ class TuiGatewayClient
     try {
       return await listProfiles();
     } on TuiGatewayRpcError catch (error) {
-      if (error.code != -32601 && error.code != 404 && error.code != 405) rethrow;
+      if (error.code != -32601 && error.code != 404 && error.code != 405) {
+        rethrow;
+      }
       return _dashboard.getProfiles();
     }
   }
@@ -3308,7 +3311,12 @@ class TuiGatewayClient
             .map((raw) => AgentProfile.fromJson(Map<String, dynamic>.from(raw)))
             .where((profile) => profile.name.trim().isNotEmpty),
       );
-      BotMentionRoster.shared.replace(_connection.id, _connection.label, profiles, expectedGeneration: rosterGeneration);
+      BotMentionRoster.shared.replace(
+        _connection.id,
+        _connection.label,
+        profiles,
+        expectedGeneration: rosterGeneration,
+      );
       return profiles;
     } on FormatException {
       throw const TuiGatewayRpcError(
@@ -3337,7 +3345,9 @@ class TuiGatewayClient
     bool shareAuth = true,
   }) async {
     const method = 'profiles.create';
-    if (_connection.readOnly) { throw const TuiGatewayRpcError(method, 'Connection is read only'); }
+    if (_connection.readOnly) {
+      throw const TuiGatewayRpcError(method, 'Connection is read only');
+    }
     final profile = name.trim();
     final source = cloneFrom?.trim();
     final selectedModel = model.trim();
@@ -3465,8 +3475,11 @@ class TuiGatewayClient
     final botMeta = <String, dynamic>{};
     final remove = <String>{};
     if (title != null) {
-      if (safeTitle!.isEmpty) { remove.add('title'); }
-      else { botMeta['title'] = safeTitle; }
+      if (safeTitle!.isEmpty) {
+        remove.add('title');
+      } else {
+        botMeta['title'] = safeTitle;
+      }
     }
     if (shape != null) botMeta['shape'] = safeShape;
     if (colorHex != null) botMeta['color'] = safeColor;
@@ -3480,33 +3493,55 @@ class TuiGatewayClient
     if (identity != null) botMeta.addAll(identity.toBotModeMetadata());
     try {
       await patchBotMetadata(owner, botMeta, remove: remove);
-    } on TuiGatewayRpcError { rethrow; }
-    catch (_) { throw const TuiGatewayRpcError(method, 'Hermes did not persist the bot identity'); }
-
+    } on TuiGatewayRpcError {
+      rethrow;
+    } catch (_) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes did not persist the bot identity',
+      );
+    }
   }
 
   @override
-  Future<Map<String, dynamic>> roomLinkRequest(String method, Map<String, dynamic> params) async {
-    const allowed = {'groups.capabilities', 'groups.peer.invite', 'groups.peer.register', 'groups.peer.revoke'};
-    if (!allowed.contains(method) || (_connection.readOnly && method != 'groups.capabilities')) {
+  Future<Map<String, dynamic>> roomLinkRequest(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    const allowed = {
+      'groups.capabilities',
+      'groups.peer.invite',
+      'groups.peer.register',
+      'groups.peer.revoke',
+    };
+    if (!allowed.contains(method) ||
+        (_connection.readOnly && method != 'groups.capabilities')) {
       throw TuiGatewayRpcError(method, 'Room linking unavailable');
     }
     await connect();
     return _request(method, params);
   }
 
-  late final BotProfileClient _botProfiles = BotProfileClient((method, params) async {
+  late final BotProfileClient _botProfiles = BotProfileClient((
+    method,
+    params,
+  ) async {
     if (_connection.readOnly) {
-      throw const TuiGatewayRpcError('profiles.configure', 'Connection is read only');
+      throw const TuiGatewayRpcError(
+        'profiles.configure',
+        'Connection is read only',
+      );
     }
     await connect();
     return _request(method, params);
   });
 
   @override
-  Future<void> patchBotMetadata(String profile, Map<String, dynamic> patch,
-      {Set<String> remove = const {}}) =>
-      _botProfiles.patchBotMetadata(profile, patch, remove: remove);
+  Future<void> patchBotMetadata(
+    String profile,
+    Map<String, dynamic> patch, {
+    Set<String> remove = const {},
+  }) => _botProfiles.patchBotMetadata(profile, patch, remove: remove);
 
   @override
   Future<Map<String, dynamic>> describeBotProfile(String profile) =>
@@ -3514,8 +3549,9 @@ class TuiGatewayClient
 
   @override
   Future<Map<String, dynamic>> configureBotProfile(
-      String profile, Map<String, dynamic> changes) =>
-      _botProfiles.configureBotProfile(profile, changes);
+    String profile,
+    Map<String, dynamic> changes,
+  ) => _botProfiles.configureBotProfile(profile, changes);
 
   @override
   Future<bool> canGenerateBotAvatar() => _botProfiles.canGenerateBotAvatar();
@@ -5471,7 +5507,11 @@ class TuiGatewayClient
   @override
   Future<void> sendGoalAction(String runtimeSessionId, String action) async {
     if (!action.startsWith('goal.')) {
-      throw ArgumentError.value(action, 'action', 'not a supported goal action');
+      throw ArgumentError.value(
+        action,
+        'action',
+        'not a supported goal action',
+      );
     }
     await sendSessionControlAction(runtimeSessionId, action);
   }
@@ -5578,22 +5618,27 @@ class TuiGatewayClient
   }) async {
     try {
       final page = await sessionHistory(sessionId: runtimeSessionId);
-      final durableUsers = page.messages.where((message) {
-        final displayKind = message['display_kind']?.toString().trim() ?? '';
-        final rowId = message['row_id'];
-        return message['role'] == 'user' &&
-            displayKind.isEmpty &&
-            rowId is int &&
-            rowId > 0;
-      }).toList(growable: false);
+      final durableUsers = page.messages
+          .where((message) {
+            final displayKind =
+                message['display_kind']?.toString().trim() ?? '';
+            final rowId = message['row_id'];
+            return message['role'] == 'user' &&
+                displayKind.isEmpty &&
+                rowId is int &&
+                rowId > 0;
+          })
+          .toList(growable: false);
       final wanted = sourceText.trim();
       if (wanted.isEmpty) return null;
-      final matches = durableUsers.where((message) {
-        final durableText = (message['text'] ?? message['content'] ?? '')
-            .toString()
-            .trim();
-        return durableText == wanted;
-      }).toList(growable: false);
+      final matches = durableUsers
+          .where((message) {
+            final durableText = (message['text'] ?? message['content'] ?? '')
+                .toString()
+                .trim();
+            return durableText == wanted;
+          })
+          .toList(growable: false);
       if (matches.length == 1) return matches.single['row_id'] as int;
       if (matches.length > 1 &&
           expectedOrdinal >= durableUsers.length - 1 &&

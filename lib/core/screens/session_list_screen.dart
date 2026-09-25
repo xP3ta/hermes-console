@@ -22,6 +22,7 @@ import '../services/session_archive.dart';
 import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../services/tui_gateway_client.dart';
+import '../services/shared_gateway_pool.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
@@ -132,6 +133,8 @@ class SessionListScreen extends StatefulWidget {
   final ActiveChatService? activeChatsOverride;
   final GlobalActivityAggregate? globalActivityOverride;
   final Future<DesktopActiveSessionList> Function()? activeSessionListLoader;
+  final Future<AgentCenterSnapshot> Function(String runtimeSessionId)?
+  agentCenterSnapshotLoader;
   final Future<void> Function()? eventReconnectOverride;
   final double Function()? eventReconnectRandomOverride;
   const SessionListScreen({
@@ -143,6 +146,7 @@ class SessionListScreen extends StatefulWidget {
     @visibleForTesting this.activeChatsOverride,
     @visibleForTesting this.globalActivityOverride,
     @visibleForTesting this.activeSessionListLoader,
+    @visibleForTesting this.agentCenterSnapshotLoader,
     @visibleForTesting this.eventReconnectOverride,
     @visibleForTesting this.eventReconnectRandomOverride,
     super.key,
@@ -158,6 +162,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   late final SessionRepository? _repository;
   late final bool _ownsRepository;
   TuiGatewayClient? _ownedActivityClient;
+  SharedGatewayLease? _activityLease;
   StreamSubscription<TuiGatewayEvent>? _eventSubscription;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   StreamSubscription<ChatDraftChange>? _draftSubscription;
@@ -249,12 +254,11 @@ class _SessionListScreenState extends State<SessionListScreen>
     _eventReconnectBackoff = GatewayReconnectBackoff(
       random: widget.eventReconnectRandomOverride,
     );
-    _sessionSafetyTimer = Timer.periodic(
-      sessionLibrarySafetyRefreshInterval,
-      (_) {
-        if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
-      },
-    );
+    _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
+      _,
+    ) {
+      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
+    });
     _activeChats = widget.activeChatsOverride;
     _globalActivity = widget.globalActivityOverride;
     _client =
@@ -275,8 +279,9 @@ class _SessionListScreenState extends State<SessionListScreen>
               )
             : null);
     if (widget.clientOverride == null) {
-      final activityClient = TuiGatewayClient(widget.connection);
-      _ownedActivityClient = activityClient;
+      final lease = SharedGatewayPool.instance.acquire(widget.connection);
+      _activityLease = lease;
+      _ownedActivityClient = lease.client;
     }
     _startEventUpdates();
     unawaited(_refreshRemoteActivity());
@@ -424,7 +429,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     WidgetsBinding.instance.removeObserver(this);
     _libraryScrollController.dispose();
     if (_ownsRepository) _repository?.close();
-    unawaited(_ownedActivityClient?.close());
+    _activityLease?.release();
+    _activityLease = null;
+    _ownedActivityClient = null;
     _client.close();
     _noActiveChats.dispose();
     super.dispose();
@@ -565,20 +572,33 @@ class _SessionListScreenState extends State<SessionListScreen>
       _staleExpiryTimer?.cancel();
       _staleExpiryTimer = null;
       final client = _ownedActivityClient;
-      if (client != null && !roster.hasMalformedRows) {
+      final processLoader =
+          widget.agentCenterSnapshotLoader ??
+          (client == null
+              ? null
+              : (String runtimeSessionId) => client.agentCenterSnapshot(
+                  runtimeSessionId: runtimeSessionId,
+                ));
+      // Solo una fila busy del roster prueba un turno vivo (igual que el
+      // sidebar de Desktop). Una fila idle —turno terminado, sin lease— se
+      // sigue consultando, pero solo puede crear actividad si process.list
+      // prueba procesos en segundo plano vivos (el «punto hueco» de Desktop,
+      // `$backgroundRunningSessionIds`); nunca resucita como «trabajando».
+      if (processLoader != null && !roster.hasMalformedRows) {
         for (final row in roster.sessions) {
           final durable = row.storedSessionId;
           if (durable == null) continue;
           unawaited(
             _refreshProcessContinuity(
               aggregate: aggregate,
-              client: client,
+              loadSnapshot: processLoader,
+              rosterStatus: row.status,
               scope: GlobalActivityScope(
                 connectionId: widget.connection.id,
                 profile: profile,
                 durableSessionId: durable,
                 runtimeSessionId: row.runtimeSessionId,
-                replayEpoch: client.currentReplayEpoch,
+                replayEpoch: client?.currentReplayEpoch ?? 'current',
               ),
             ),
           );
@@ -586,7 +606,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       } else if (_recoveringTransport && !roster.hasMalformedRows) {
         for (final row in roster.sessions) {
           final durable = row.storedSessionId;
-          if (durable == null) continue;
+          if (durable == null || !rosterStatusIsBusy(row.status)) continue;
           aggregate.applyRecoverySnapshot(
             scope: GlobalActivityScope(
               connectionId: widget.connection.id,
@@ -599,6 +619,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             waitingForUser: row.status?.trim().toLowerCase() == 'waiting',
             replayTruncated: true,
             processCount: 0,
+            rosterStatus: row.status,
           );
         }
       }
@@ -612,14 +633,17 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   Future<void> _refreshProcessContinuity({
     required GlobalActivityAggregate aggregate,
-    required TuiGatewayClient client,
+    required Future<AgentCenterSnapshot> Function(String runtimeSessionId)
+    loadSnapshot,
+    required String? rosterStatus,
     required GlobalActivityScope scope,
   }) async {
+    final rosterBusy = rosterStatusIsBusy(rosterStatus);
     try {
-      final snapshot = await client.agentCenterSnapshot(
-        runtimeSessionId: scope.runtimeSessionId,
-      );
+      final snapshot = await loadSnapshot(scope.runtimeSessionId);
       if (!mounted || !snapshot.processesFullyParsed) {
+        // Una fila idle no tenía nada que conservar: no se marca stale.
+        if (!rosterBusy) return;
         aggregate.markTransportStale(scope.connectionId, scope.profile);
         return;
       }
@@ -632,6 +656,20 @@ class _SessionListScreenState extends State<SessionListScreen>
       final activeProcessCount = snapshot.processes
           .where((process) => !terminal.contains(process.status))
           .length;
+      if (!rosterBusy) {
+        // Turno terminado: solo los procesos vivos justifican el indicador
+        // (fase backgroundWork, nunca «trabajando»). process.list es la
+        // autoridad, así que crea/renueva la fila aunque no haya recuperación.
+        if (activeProcessCount <= 0) return;
+        aggregate.applyRecoverySnapshot(
+          scope: scope,
+          running: true,
+          waitingForUser: false,
+          replayTruncated: false,
+          processCount: activeProcessCount,
+        );
+        return;
+      }
       if (_recoveringTransport) {
         final current = aggregate.activityFor(
           scope.connectionId,
@@ -644,6 +682,7 @@ class _SessionListScreenState extends State<SessionListScreen>
           waitingForUser: current?.requiresAction == true,
           replayTruncated: true,
           processCount: activeProcessCount,
+          rosterStatus: rosterStatus,
         );
       } else {
         aggregate.applyProcessList(
@@ -653,6 +692,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       }
     } catch (_) {
       // Optional/legacy process.list cannot erase the last proven state.
+      if (!rosterBusy) return;
       aggregate.markTransportStale(scope.connectionId, scope.profile);
     }
   }
@@ -1940,8 +1980,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     final archived = _isArchived(session);
     final pinned = _isPinned(session);
     final localActivity = _localChatForSession(session)?.sessionActivity;
-    final streamActive =
-        localActivity?.active == true ||
+    final globalActive =
         (_globalActivity?.isActive(
               widget.connection.id,
               Session.profileOwner(session.profile),
@@ -1954,6 +1993,7 @@ class _SessionListScreenState extends State<SessionListScreen>
               session.logicalId,
             ) ??
             false);
+    final streamActive = localActivity?.active == true || globalActive;
     return Dismissible(
       key: ValueKey('${session.id}-$archived'),
       direction: DismissDirection.horizontal,
@@ -1981,7 +2021,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         title: _titleFor(session),
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
-        activity: _globalForSession(session),
+        activity: globalActive ? _globalForSession(session) : null,
         localActivity: localActivity,
         // Una compactación enciende la fila (punto + "Compactando") pero no
         // ofrece "Detener": no es un turno que se pueda parar.
@@ -2818,9 +2858,10 @@ String _sessionActivityLabel(Strings strings, SessionActivity activity) =>
       SessionActivityKind.waitingForUser => strings.slActivityWaiting,
       SessionActivityKind.compacting => strings.slActivityCompacting,
       SessionActivityKind.delegated => strings.slActivityDelegated,
-      SessionActivityKind.backgroundProcess => activity.backgroundItemCount > 0
-          ? strings.chaBackgroundActivityCount(activity.backgroundItemCount)
-          : strings.slActivityBackground,
+      SessionActivityKind.backgroundProcess =>
+        activity.backgroundItemCount > 0
+            ? strings.chaBackgroundActivityCount(activity.backgroundItemCount)
+            : strings.slActivityBackground,
       SessionActivityKind.idle => strings.slActivityUnknown,
     };
 
@@ -2834,11 +2875,14 @@ String _globalActivityLabel(Strings strings, GlobalActivity activity) {
     GlobalActivityPhase.compacting => strings.slActivityCompacting,
     GlobalActivityPhase.waitingForUser => strings.slActivityWaiting,
     GlobalActivityPhase.completing => strings.slActivityCompleting,
+    // Sin detalle probado nunca se afirma «trabajando»: solo el último estado
+    // conocido. Las fases terminales no llegan aquí (la fila no es activa).
     GlobalActivityPhase.completed ||
     GlobalActivityPhase.interrupted ||
     GlobalActivityPhase.failed ||
-    GlobalActivityPhase.unknown => strings.slActivityUnknown,
+    GlobalActivityPhase.unknown => null,
   };
+  if (phase == null) return strings.slActivityStale;
   return activity.stale ? '$phase · ${strings.slActivityStale}' : phase;
 }
 

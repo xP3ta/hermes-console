@@ -3125,7 +3125,9 @@ void main() {
       final done = chat.changes.firstWhere(
         (event) => event == ActiveChatEvent.done,
       );
-      gateway.emit('message.complete', const {'text': 'seguimiento programado'});
+      gateway.emit('message.complete', const {
+        'text': 'seguimiento programado',
+      });
       await done.timeout(const Duration(seconds: 1));
       expect(chat.sessionActivity.active, isFalse);
 
@@ -3149,7 +3151,11 @@ void main() {
       gateway.emit('todo.updated', const {
         'revision': 4,
         'todos': [
-          {'id': 'task-1', 'content': 'Esperar el despliegue', 'status': 'pending'},
+          {
+            'id': 'task-1',
+            'content': 'Esperar el despliegue',
+            'status': 'pending',
+          },
         ],
       });
       await Future<void>.delayed(Duration.zero);
@@ -3865,7 +3871,8 @@ void main() {
         expect(transcript, const [
           (
             role: 'assistant',
-            content: 'Voy a revisar los archivos.\n\nResumen final del proyecto.',
+            content:
+                'Voy a revisar los archivos.\n\nResumen final del proyecto.',
           ),
           (role: 'user', content: 'Revisa el proyecto'),
         ]);
@@ -5298,66 +5305,58 @@ void main() {
       },
     );
 
-    test(
-      'an unreadable compression restore store fails open and never keeps a '
-      'released chat alive',
-      () async {
-        // A keystore that cannot be read (the default in the test VM, or a
-        // device whose keystore read fails) used to fail closed into a
-        // permanent "compactando". Fail-open: nothing is shown, and
-        // release() disposes the chat so the next attach() gets a fresh one
-        // (`SessionActivity.compacting` never counts toward `active`).
-        final service = ActiveChatService(
-          compressionRestoreStore: CompressionRestoreStore(
-            storage: _UnreadableFenceStorage(),
-          ),
-        );
-        addTearDown(service.dispose);
-        final connection = _conn(id: 'compacting-release-conn');
-        ActiveChat attach() => service.attach(
-          connection: connection,
-          sessionId: 'compacting-release-session',
-          logicalSessionId: 'compacting-release-root',
-          sessionTitle: 'Compacting',
-          sessionProfile: 'default',
-          api: ApiClient(
-            baseUrl: 'http://hermes.local:8642',
-            apiKey: 'k',
-            httpClient: MockClient(
-              (_) async => http.Response('not found', 404),
-            ),
-          ),
-          storedMessageLoader: (_, _) async => <Map<String, dynamic>>[],
-          disableForegroundKeepAlive: true,
-        );
-        final first = attach();
-        await Future<void>.delayed(Duration.zero);
+    test('an unreadable compression restore store fails open and never keeps a '
+        'released chat alive', () async {
+      // A keystore that cannot be read (the default in the test VM, or a
+      // device whose keystore read fails) used to fail closed into a
+      // permanent "compactando". Fail-open: nothing is shown, and
+      // release() disposes the chat so the next attach() gets a fresh one
+      // (`SessionActivity.compacting` never counts toward `active`).
+      final service = ActiveChatService(
+        compressionRestoreStore: CompressionRestoreStore(
+          storage: _UnreadableFenceStorage(),
+        ),
+      );
+      addTearDown(service.dispose);
+      final connection = _conn(id: 'compacting-release-conn');
+      ActiveChat attach() => service.attach(
+        connection: connection,
+        sessionId: 'compacting-release-session',
+        logicalSessionId: 'compacting-release-root',
+        sessionTitle: 'Compacting',
+        sessionProfile: 'default',
+        api: ApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          apiKey: 'k',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
+        storedMessageLoader: (_, _) async => <Map<String, dynamic>>[],
+        disableForegroundKeepAlive: true,
+      );
+      final first = attach();
+      await Future<void>.delayed(Duration.zero);
 
-        expect(first.desktopCompressionInFlight, isFalse);
-        expect(first.sessionActivity.compacting, isFalse);
-        expect(first.sessionActivity.active, isFalse);
-        expect(
-          service.isActive(
-            connection.id,
-            'compacting-release-session',
-            profile: 'default',
-          ),
-          isFalse,
-        );
-
-        service.release(
+      expect(first.desktopCompressionInFlight, isFalse);
+      expect(first.sessionActivity.compacting, isFalse);
+      expect(first.sessionActivity.active, isFalse);
+      expect(
+        service.isActive(
           connection.id,
           'compacting-release-session',
           profile: 'default',
-        );
-        expect(
-          service.of(connection.id, 'compacting-release-session'),
-          isNull,
-        );
-        final second = attach();
-        expect(second, isNot(same(first)));
-      },
-    );
+        ),
+        isFalse,
+      );
+
+      service.release(
+        connection.id,
+        'compacting-release-session',
+        profile: 'default',
+      );
+      expect(service.of(connection.id, 'compacting-release-session'), isNull);
+      final second = attach();
+      expect(second, isNot(same(first)));
+    });
   });
 
   test('redacta errores de socket persistidos antes de proyectarlos en chat', () {

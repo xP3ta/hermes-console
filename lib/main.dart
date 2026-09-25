@@ -46,6 +46,8 @@ import 'core/services/font_size_service.dart';
 import 'core/services/home_widget_publisher.dart';
 import 'core/services/notifications/background_listener.dart';
 import 'core/services/notifications/notification_service.dart';
+import 'core/services/performance_trace.dart';
+import 'core/services/shared_gateway_pool.dart';
 import 'core/services/new_session_launch_coordinator.dart';
 import 'core/services/profile_pet_service.dart';
 import 'core/services/platform/native_appearance.dart';
@@ -218,6 +220,7 @@ Future<T?> pushNotificationOwnerRoute<T>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PerformanceTrace.qa.start();
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
   }
@@ -696,6 +699,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Cliente `pet.*` de la instancia activa para la mascota por perfil (uno
   /// por conexión; se cierra al cambiar de instancia o al destruir el estado).
   TuiGatewayClient? _companionPetGateway;
+  SharedGatewayLease? _companionPetLease;
   ProfilePetService? _companionPetSvc;
   String? _companionPetGatewayConnId;
 
@@ -723,8 +727,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     if (active == null) return null;
     if (_companionPetGatewayConnId != connId) {
-      unawaited(_companionPetGateway?.close());
-      _companionPetGateway = TuiGatewayClient(active);
+      _companionPetLease?.release();
+      final lease = SharedGatewayPool.instance.acquire(active);
+      _companionPetLease = lease;
+      _companionPetGateway = lease.client;
       _companionPetGatewayConnId = connId;
       _companionPetSvc = ProfilePetService(
         _companionPetGateway!,
@@ -2296,7 +2302,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _dismissInAppNotice();
     activeChats.activeIds.removeListener(_onActiveChatsChanged);
     companion.dispose();
-    unawaited(_companionPetGateway?.close());
+    _companionPetLease?.release();
+    _companionPetLease = null;
     companionPresence.dispose();
     themeId.dispose();
     themeProfiles.dispose();

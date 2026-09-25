@@ -145,6 +145,27 @@ void main() {
     });
   });
 
+  group('classifyChatError — sessionTooLarge (context_overflow)', () {
+    test('mensaje real del backend → sessionTooLarge, no model', () {
+      expect(
+        classifyChatError(
+          "Context compression could not bring this session under the "
+          "model's context window (~247,480 tokens vs 128,000). The provider "
+          'call was not sent. Start a new session with /new; this session is '
+          'too large to compress further.',
+        ),
+        ChatErrorKind.sessionTooLarge,
+      );
+    });
+
+    test('código tipado context_overflow → sessionTooLarge', () {
+      expect(
+        classifyChatError('context_overflow'),
+        ChatErrorKind.sessionTooLarge,
+      );
+    });
+  });
+
   group('classifyChatError — unknown fallback', () {
     test('mensaje genérico sin señales → unknown', () {
       expect(classifyChatError('Something went wrong'), ChatErrorKind.unknown);

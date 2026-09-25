@@ -7,9 +7,11 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 
@@ -345,9 +347,9 @@ void main() {
       );
       final publications = <List<Map<String, dynamic>>>[];
       final subscription = chat.changes.listen((_) {
-        publications.add(List<Map<String, dynamic>>.of(
-          chat.internalMessagesForTesting,
-        ));
+        publications.add(
+          List<Map<String, dynamic>>.of(chat.internalMessagesForTesting),
+        );
       });
       addTearDown(subscription.cancel);
 
@@ -364,7 +366,10 @@ void main() {
           .toList(growable: false);
       expect(optimisticTargets, hasLength(1));
       expect(identical(optimisticTargets.single, target), isTrue);
-      expect(optimisticTargets.single, containsPair('content', 'pregunta corregida'));
+      expect(
+        optimisticTargets.single,
+        containsPair('content', 'pregunta corregida'),
+      );
       expect(optimisticTargets.single, containsPair('timestamp', 1712345678));
       expect(optimisticTargets.single, containsPair('_desktopRowId', 73));
       expect(
@@ -408,9 +413,9 @@ void main() {
       );
       expect(targetIndex, greaterThanOrEqualTo(0));
       expect(
-        chronological.skip(targetIndex + 1).any(
-          (message) => message['content'] == 'respuesta regenerada',
-        ),
+        chronological
+            .skip(targetIndex + 1)
+            .any((message) => message['content'] == 'respuesta regenerada'),
         isTrue,
       );
       expect(
@@ -575,69 +580,92 @@ void main() {
     expect(gateway.durableRewinds.last.rowId, 222);
   });
 
-  test('stale durable target resumes history and retries the real edit', () async {
-    final initialResume = DesktopSessionSnapshot(
-      runtimeSessionId: 'runtime-1',
-      storedSessionId: 'sess-rewrite',
-      created: false,
-    );
-    final refreshedResume = DesktopSessionSnapshot.fromJson(
-      const {
-        'session_id': 'runtime-2',
-        'stored_session_id': 'sess-rewrite',
-        'messages': [
-          {'role': 'user', 'content': 'pregunta anterior', 'row_id': 41},
-          {'role': 'assistant', 'content': 'respuesta anterior', 'row_id': 42},
-          {'role': 'user', 'content': 'turno insertado', 'row_id': 99},
-          {'role': 'assistant', 'content': 'respuesta insertada', 'row_id': 100},
-          {'role': 'user', 'content': 'pregunta original', 'row_id': 173},
-          {'role': 'assistant', 'content': 'respuesta original', 'row_id': 174},
+  test(
+    'stale durable target resumes history and retries the real edit',
+    () async {
+      final initialResume = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-1',
+        storedSessionId: 'sess-rewrite',
+        created: false,
+      );
+      final refreshedResume = DesktopSessionSnapshot.fromJson(
+        const {
+          'session_id': 'runtime-2',
+          'stored_session_id': 'sess-rewrite',
+          'messages': [
+            {'role': 'user', 'content': 'pregunta anterior', 'row_id': 41},
+            {
+              'role': 'assistant',
+              'content': 'respuesta anterior',
+              'row_id': 42,
+            },
+            {'role': 'user', 'content': 'turno insertado', 'row_id': 99},
+            {
+              'role': 'assistant',
+              'content': 'respuesta insertada',
+              'row_id': 100,
+            },
+            {'role': 'user', 'content': 'pregunta original', 'row_id': 173},
+            {
+              'role': 'assistant',
+              'content': 'respuesta original',
+              'row_id': 174,
+            },
+          ],
+          'message_count': 6,
+        },
+        requestedStoredSessionId: 'sess-rewrite',
+        created: false,
+        method: 'session.resume',
+      );
+      final gateway = _RewriteGateway(
+        resumeSnapshots: [initialResume, refreshedResume],
+        durableOutcomes: const [
+          TuiGatewayRpcError(
+            'prompt.submit',
+            'target user message is no longer in session history',
+            code: 4018,
+          ),
+          null,
         ],
-        'message_count': 6,
-      },
-      requestedStoredSessionId: 'sess-rewrite',
-      created: false,
-      method: 'session.resume',
-    );
-    final gateway = _RewriteGateway(
-      resumeSnapshots: [initialResume, refreshedResume],
-      durableOutcomes: const [
-        TuiGatewayRpcError(
-          'prompt.submit',
-          'target user message is no longer in session history',
-          code: 4018,
-        ),
-        null,
-      ],
-    );
-    final attached = _attach(gateway);
-    addTearDown(attached.service.dispose);
-    final chat = attached.chat;
-    chat.internalMessagesForTesting = [
-      {'role': 'assistant', 'content': 'respuesta original', '_desktopRowId': 74},
-      {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
-      {'role': 'assistant', 'content': 'respuesta anterior', '_desktopRowId': 42},
-      {'role': 'user', 'content': 'pregunta anterior', '_desktopRowId': 41},
-    ];
-    chat.state = ChatPipelineState.completed;
-    expect(
-      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
-      isTrue,
-    );
+      );
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      chat.internalMessagesForTesting = [
+        {
+          'role': 'assistant',
+          'content': 'respuesta original',
+          '_desktopRowId': 74,
+        },
+        {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 73},
+        {
+          'role': 'assistant',
+          'content': 'respuesta anterior',
+          '_desktopRowId': 42,
+        },
+        {'role': 'user', 'content': 'pregunta anterior', '_desktopRowId': 41},
+      ];
+      chat.state = ChatPipelineState.completed;
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isTrue,
+      );
 
-    await chat.rewrite(
-      userOrdinal: 1,
-      text: 'pregunta corregida',
-      model: 'hermes-agent',
-    );
+      await chat.rewrite(
+        userOrdinal: 1,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
 
-    expect(gateway.resumeExistingCalls, 2);
-    expect(gateway.durableRewinds, hasLength(2));
-    expect(gateway.durableRewinds.first.rowId, 73);
-    expect(gateway.durableRewinds.last.rowId, 173);
-    expect(gateway.durableRewinds.last.ordinal, 2);
-    expect(gateway.plainPrompts, isEmpty);
-  });
+      expect(gateway.resumeExistingCalls, 2);
+      expect(gateway.durableRewinds, hasLength(2));
+      expect(gateway.durableRewinds.first.rowId, 73);
+      expect(gateway.durableRewinds.last.rowId, 173);
+      expect(gateway.durableRewinds.last.ordinal, 2);
+      expect(gateway.plainPrompts, isEmpty);
+    },
+  );
 
   test(
     'REGRESSION_EDIT_COMPRESSED_AWAY a target compressed away is not retried',
@@ -875,4 +903,146 @@ void main() {
     expect(chat.queueParked, isFalse);
     expect(chat.queuedMessages, ['pendiente']);
   });
+
+  test(
+    'editar durante streaming sella como cancelado el subagente del turno viejo',
+    () async {
+      final gateway = _RewriteGateway(resolvedRowId: 73);
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      chat.acquireSubagentForegroundPresentation();
+
+      expect(
+        await chat.send(
+          fullText: 'pregunta original',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-old-turn',
+        'delegation_id': 'deleg_old',
+        'goal': 'trabajo del turno viejo',
+        'status': 'running',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.subagentActivities, hasLength(1));
+      expect(chat.subagentActivities.single.isTerminal, isFalse);
+      await chat.rewrite(
+        userOrdinal: 0,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
+
+      // The edited turn is now live; the old child must not still read as
+      // running. It was interrupted together with its parent turn.
+      expect(chat.isStreaming, isTrue);
+      final old = chat.subagentActivities
+          .where((activity) => activity.subagentId == 'sa-old-turn')
+          .toList(growable: false);
+      expect(old, hasLength(1));
+      expect(old.single.phase, SubagentActivityPhase.cancelled);
+      expect(chat.activeSubagentCount, 0);
+
+      // A late live update of the OLD child must not resurrect it.
+      gateway.emit('subagent.thinking', const {
+        'subagent_id': 'sa-old-turn',
+        'delegation_id': 'deleg_old',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        chat.subagentActivities
+            .where((activity) => activity.subagentId == 'sa-old-turn')
+            .single
+            .phase,
+        SubagentActivityPhase.cancelled,
+      );
+      expect(chat.activeSubagentCount, 0);
+
+      // Late batch completion for the OLD delegation must not reopen it, and
+      // must not create a duplicate row.
+      gateway.emit('subagent.complete', const {
+        'subagent_id': 'sa-old-turn',
+        'delegation_id': 'deleg_old',
+        'status': 'completed',
+        'summary': 'llegó tarde',
+      });
+      await Future<void>.delayed(Duration.zero);
+      final afterLate = chat.subagentActivities
+          .where((activity) => activity.subagentId == 'sa-old-turn')
+          .toList(growable: false);
+      expect(afterLate, hasLength(1));
+      expect(afterLate.single.isTerminal, isTrue);
+      expect(chat.activeSubagentCount, 0);
+      expect(chat.isStreaming, isTrue);
+    },
+  );
+
+  test(
+    'edición fallida durante streaming deja traza y subagente sellados',
+    () async {
+      final gateway = _RewriteGateway(
+        resolvedRowId: 73,
+        durableError: const TuiGatewayRpcError(
+          'prompt.submit',
+          'transport rejected rewind',
+          code: 4007,
+        ),
+      );
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      chat.acquireSubagentForegroundPresentation();
+      expect(
+        await chat.send(
+          fullText: 'pregunta original',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-old-turn',
+        'delegation_id': 'deleg_old',
+        'goal': 'trabajo del turno viejo',
+        'status': 'running',
+      });
+      await Future<void>.delayed(Duration.zero);
+      chat.trace.add(
+        ChatTraceEvent(
+          id: 'delegate_task',
+          label: 'delegate_task',
+          status: 'running',
+        ),
+      );
+      expect(chat.trace, hasLength(1));
+      final userRow = _userRow(
+        chat.internalMessagesForTesting,
+        'pregunta original',
+      );
+      userRow['_desktopRowId'] = 73;
+
+      await chat.rewrite(
+        userOrdinal: 0,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
+
+      expect(chat.isStreaming, isFalse);
+      expect(chat.state, ChatPipelineState.cancelled);
+      // `_send` clears the trace list for the new turn before the RPC, so the
+      // old turn's trace never survives an edit; only the subagent row does.
+      expect(
+        chat.trace.where((event) => !event.isDone && !event.isFailed),
+        isEmpty,
+      );
+      final old = chat.subagentActivities
+          .where((activity) => activity.subagentId == 'sa-old-turn')
+          .toList(growable: false);
+      expect(old, hasLength(1));
+      expect(old.single.phase, SubagentActivityPhase.cancelled);
+    },
+  );
 }

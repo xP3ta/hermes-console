@@ -391,6 +391,67 @@ void main() {
     },
   );
 
+  test(
+    'batch with one interrupted and one completed child is not a global failure',
+    () {
+      // Core `_async_delegation_display_metadata` counts `interrupted` as
+      // neither completed nor failed: {task_count: 2, completed_count: 1,
+      // failed_count: 0}. Mixed aggregates must stay neutral per child.
+      final messagesNewestFirst = <Map<String, dynamic>>[
+        {
+          'message_id': 'mixed-completion',
+          'role': 'user',
+          'display_kind': 'async_delegation_complete',
+          'display_metadata': jsonEncode({
+            'delegation_id': 'deleg_mixed',
+            'task_count': 2,
+            'completed_count': 1,
+            'failed_count': 0,
+          }),
+          'content': '[ASYNC DELEGATION BATCH COMPLETE — deleg_mixed]',
+        },
+        {
+          'message_id': 'mixed-result',
+          'role': 'tool',
+          'tool_call_id': 'call-mixed',
+          'tool_name': 'delegate_task',
+          'content': jsonEncode({
+            'status': 'dispatched',
+            'delegation_id': 'deleg_mixed',
+            'subagent_ids': ['sa-mixed-one', 'sa-mixed-two'],
+          }),
+        },
+        {
+          'message_id': 'mixed-assistant',
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'call-mixed',
+              'function': {'name': 'delegate_task', 'arguments': '{}'},
+            },
+          ],
+        },
+        {'message_id': 'mixed-user', 'role': 'user', 'content': 'Haz dos.'},
+      ];
+
+      final projection = projectSubagentsFromTranscript(
+        messagesNewestFirst: messagesNewestFirst,
+        scope: scope,
+      );
+
+      expect(projection.state?.activities, hasLength(2));
+      expect(
+        projection.state?.activities.map((activity) => activity.phase),
+        isNot(contains(SubagentActivityPhase.failed)),
+      );
+      expect(
+        projection.state?.activities.map((activity) => activity.phase),
+        everyElement(SubagentActivityPhase.unknown),
+      );
+    },
+  );
+
   test('partial batch failure never attributes the failure to every child', () {
     final messagesNewestFirst = <Map<String, dynamic>>[
       {

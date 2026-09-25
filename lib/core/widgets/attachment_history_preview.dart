@@ -39,10 +39,25 @@ class AttachmentHistoryCard extends StatefulWidget {
 
   @override
   State<AttachmentHistoryCard> createState() => _AttachmentHistoryCardState();
+
+  @visibleForTesting
+  static void clearVerifiedCacheForTesting() =>
+      _AttachmentHistoryCardState._verifiedFiles.clear();
 }
 
 class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
+  /// Verified files, by reference marker. The transcript list is unkeyed, so
+  /// a new turn (or any row shift) remounts the bubble with a fresh State; a
+  /// fresh State that re-ran the fs + SHA-256 check would paint the bare file
+  /// card until the Future settled — the thumb "flicker" right after sending
+  /// an image. A remount reads the cached File and paints the thumb on its
+  /// first frame instead. Only successful verifications are cached (a null
+  /// result may become available later); bounded, oldest evicted first.
+  static final Map<String, File> _verifiedFiles = <String, File>{};
+  static const int _verifiedFilesLimit = 64;
+
   late Future<File?> _resolvedFile;
+  File? _syncFile;
 
   @override
   void initState() {
@@ -59,12 +74,37 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     }
   }
 
-  Future<File?> _resolve() =>
+  Future<File?> _resolve() {
+    final marker = widget.reference.toMarker();
+    var cached = widget.resolver == null ? _verifiedFiles[marker] : null;
+    if (cached != null && !cached.existsSync()) {
+      _verifiedFiles.remove(marker);
+      cached = null;
+    }
+    _syncFile = cached;
+    if (cached != null) return Future<File?>.value(cached);
+    return _verify().then((file) {
+      if (file != null && widget.resolver == null) _remember(marker, file);
+      return file;
+    });
+  }
+
+  /// The full path + size + SHA-256 check. Opening always re-runs it: the
+  /// cache only shortcuts what is painted, never what is handed to a viewer.
+  Future<File?> _verify() =>
       widget.resolver?.call(widget.reference) ??
       AttachmentUploader.resolveHistoryReference(widget.reference);
 
+  static void _remember(String marker, File file) {
+    _verifiedFiles.remove(marker);
+    _verifiedFiles[marker] = file;
+    while (_verifiedFiles.length > _verifiedFilesLimit) {
+      _verifiedFiles.remove(_verifiedFiles.keys.first);
+    }
+  }
+
   Future<void> _open() async {
-    final file = await _resolve();
+    final file = await _verify();
     if (!mounted) return;
     if (file == null) {
       HermesNotice.of(context).showSnackBar(
@@ -95,6 +135,7 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
   Widget build(BuildContext context) {
     return FutureBuilder<File?>(
       future: _resolvedFile,
+      initialData: _syncFile,
       builder: (context, snapshot) {
         final file = snapshot.data;
         final available = file != null;

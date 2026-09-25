@@ -8,6 +8,7 @@ import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import '../utils/byte_bounded_lru_cache.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart';
 import 'chat_screen.dart';
@@ -30,13 +31,27 @@ class ProjectsCenterScreen extends StatefulWidget {
     super.key,
   });
 
+  /// Conexiones con árbol de proyectos cacheado en memoria (proceso).
+  @visibleForTesting
+  static int get memoryCacheLengthForTesting =>
+      _ProjectsCenterScreenState._memoryCache.length;
+
   @override
   State<ProjectsCenterScreen> createState() => _ProjectsCenterScreenState();
 }
 
 class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   static const int _cacheLimit = 8;
-  static final Map<String, ProjectTreeSnapshot> _memoryCache = {};
+  // Nombres/rutas de proyectos de una autoridad concreta: se vacía con los
+  // cambios de autoridad igual que las cachés de render del chat.
+  static final Map<String, ProjectTreeSnapshot> _memoryCache =
+      _createMemoryCache();
+
+  static Map<String, ProjectTreeSnapshot> _createMemoryCache() {
+    final cache = <String, ProjectTreeSnapshot>{};
+    PrivateRenderCaches.register(cache.clear);
+    return cache;
+  }
 
   ProjectTreeSnapshot? _snapshot;
   Object? _failure;

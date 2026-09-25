@@ -30,6 +30,7 @@ import 'local_transcript_store.dart';
 import 'mission_bot_chat_store.dart';
 import 'secure_storage.dart';
 import 'turn_outbox_store.dart';
+import '../utils/byte_bounded_lru_cache.dart';
 
 // Re-export for convenience
 export '../models/capability_matrix.dart';
@@ -284,6 +285,7 @@ class ConnectionManager {
       await prefs.setString(_activeProfileKey(connId), normalized);
     }
     if (changed) {
+      PrivateRenderCaches.clearAll();
       final revision = _activeProfileRevisionNotifierFor(connId);
       revision.value += 1;
     }
@@ -958,6 +960,7 @@ class ConnectionManager {
     }
     await _secure.clearAllConnectionSecrets();
     _apiKeyCache.clear();
+    PrivateRenderCaches.clearAll();
     // Invalida clientes ya hidratados: pueden conservar tokens/cookies aunque
     // el Keystore se haya vaciado correctamente.
     for (final id in connectionIds) {
@@ -1044,6 +1047,7 @@ class ConnectionManager {
   Future<void> deleteConnection(String id) async {
     BotMentionRoster.shared.remove(id);
     _publishConnectionWillChange(id);
+    PrivateRenderCaches.clearAll();
     // Cada authority local se limpia de forma independiente: un plugin dañado
     // no puede impedir que los demás stores olviden la conexión.
     Future<void> bestEffortCleanup(Future<void> Function() cleanup) async {

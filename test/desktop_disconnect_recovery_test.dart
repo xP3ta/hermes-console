@@ -534,9 +534,7 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   }
 
   @override
-  bool consumeRosterBoundViewerAttachment(
-    DesktopRosterBoundRecovery recovery,
-  ) {
+  bool consumeRosterBoundViewerAttachment(DesktopRosterBoundRecovery recovery) {
     viewerAttachmentCommits += 1;
     return _consumeRosterBoundRecovery(recovery);
   }
@@ -1279,10 +1277,7 @@ class _CountingRealLifecycleGateway
 }
 
 class _TicketTransportOnceGateway extends _ActivityLifecycleRecoverableGateway {
-  _TicketTransportOnceGateway(
-    this.dashboard, {
-    this.ticketFailureAttempts = 1,
-  });
+  _TicketTransportOnceGateway(this.dashboard, {this.ticketFailureAttempts = 1});
 
   final DashboardClient dashboard;
   final int ticketFailureAttempts;
@@ -1696,7 +1691,8 @@ ActiveChat _productionAttachChat(
     }
   }
   return ActiveChat(
-    compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
+    compressionRestoreStore:
+        compressionRestoreStore ?? testCompressionRestoreStore(),
     connection: _connection(id),
     sessionId: 'session-$id',
     sessionTitle: id,
@@ -2283,159 +2279,149 @@ void main() {
     timeout: const Timeout(Duration(seconds: 15)),
   );
 
-  test(
-    'real idle socket loss after the server reaped the runtime settles '
-    'connected without adopting a new runtime',
-    () async {
-      // Android Doze/app freezing drops an idle Bot Chat socket (1006) and
-      // Hermes Agent reaps the orphaned idle runtime after its grace window.
-      // On reconnect the durable session is dormant: absent from the roster.
-      const storedSessionId = 'session-reaped-idle';
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final sockets = <WebSocket>{};
-      final methodsBySocket = <List<String>>[];
-      var advertisedRuntimeId = '';
-      server.listen((request) async {
-        final socket = await WebSocketTransformer.upgrade(request);
-        final methods = <String>[];
-        methodsBySocket.add(methods);
-        sockets.add(socket);
-        socket.done.whenComplete(() => sockets.remove(socket));
-        socket.add(
-          jsonEncode({
-            'jsonrpc': '2.0',
-            'method': 'event',
-            'params': {
-              'type': 'gateway.ready',
-              'payload': {'replay_epoch': 'epoch-${methodsBySocket.length}'},
-            },
-          }),
-        );
-        await for (final raw in socket) {
-          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
-          final method = frame['method']?.toString() ?? '';
-          methods.add(method);
-          final result = switch (method) {
-            'gateway.capabilities' => <String, dynamic>{
-              'per_session_exclusive_submit': true,
-            },
-            'session.active_list' => <String, dynamic>{
-              'sessions': [
-                if (advertisedRuntimeId.isNotEmpty)
-                  {
-                    'id': advertisedRuntimeId,
-                    'session_key': storedSessionId,
-                    'status': 'idle',
-                  },
-              ],
-            },
-            'session.resume' => <String, dynamic>{
-              'session_id': advertisedRuntimeId.isEmpty
-                  ? 'runtime-cold-open'
-                  : advertisedRuntimeId,
-              'stored_session_id': storedSessionId,
-              'created': false,
-              'messages': <dynamic>[],
-              'running': false,
-              'status': 'idle',
-            },
-            _ => <String, dynamic>{},
-          };
-          if (socket.readyState != WebSocket.open) break;
-          try {
-            socket.add(
-              jsonEncode({
-                'jsonrpc': '2.0',
-                'id': frame['id'],
-                'result': result,
-              }),
-            );
-          } on StateError {
-            break;
-          }
-        }
-      });
-      Future<void> dropSockets() async {
-        for (final socket in sockets.toList(growable: false)) {
-          await socket.close(WebSocketStatus.goingAway, 'client gone');
+  test('real idle socket loss after the server reaped the runtime settles '
+      'connected without adopting a new runtime', () async {
+    // Android Doze/app freezing drops an idle Bot Chat socket (1006) and
+    // Hermes Agent reaps the orphaned idle runtime after its grace window.
+    // On reconnect the durable session is dormant: absent from the roster.
+    const storedSessionId = 'session-reaped-idle';
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final sockets = <WebSocket>{};
+    final methodsBySocket = <List<String>>[];
+    var advertisedRuntimeId = '';
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      final methods = <String>[];
+      methodsBySocket.add(methods);
+      sockets.add(socket);
+      socket.done.whenComplete(() => sockets.remove(socket));
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {
+            'type': 'gateway.ready',
+            'payload': {'replay_epoch': 'epoch-${methodsBySocket.length}'},
+          },
+        }),
+      );
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        final method = frame['method']?.toString() ?? '';
+        methods.add(method);
+        final result = switch (method) {
+          'gateway.capabilities' => <String, dynamic>{
+            'per_session_exclusive_submit': true,
+          },
+          'session.active_list' => <String, dynamic>{
+            'sessions': [
+              if (advertisedRuntimeId.isNotEmpty)
+                {
+                  'id': advertisedRuntimeId,
+                  'session_key': storedSessionId,
+                  'status': 'idle',
+                },
+            ],
+          },
+          'session.resume' => <String, dynamic>{
+            'session_id': advertisedRuntimeId.isEmpty
+                ? 'runtime-cold-open'
+                : advertisedRuntimeId,
+            'stored_session_id': storedSessionId,
+            'created': false,
+            'messages': <dynamic>[],
+            'running': false,
+            'status': 'idle',
+          },
+          _ => <String, dynamic>{},
+        };
+        if (socket.readyState != WebSocket.open) break;
+        try {
+          socket.add(
+            jsonEncode({'jsonrpc': '2.0', 'id': frame['id'], 'result': result}),
+          );
+        } on StateError {
+          break;
         }
       }
+    });
+    Future<void> dropSockets() async {
+      for (final socket in sockets.toList(growable: false)) {
+        await socket.close(WebSocketStatus.goingAway, 'client gone');
+      }
+    }
 
-      final gateway = TuiGatewayClient(
-        SavedConnection(
-          id: 'real-reaped-idle',
-          label: 'Real reaped idle',
-          host: '127.0.0.1',
-          port: 8642,
-          apiKey: String.fromCharCodes(const [113, 97]),
-          dashboardUrl: 'http://127.0.0.1:${server.port}',
-        ),
-        dashboard: _StaticTicketDashboardClient(),
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: _connection('real-reaped-idle'),
-        sessionId: storedSessionId,
-        sessionTitle: 'Bot Chat',
-        notifications: null,
-        onTerminal: () {},
-        api: ApiClient(
-          baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'test-key',
-          httpClient: MockClient((_) async => http.Response('not found', 404)),
-        ),
-        desktopGateway: gateway,
-        attachDesktopRuntimeOnLoad: true,
-        storedMessageLoader: (_, _) async => const [
-          {
-            'message_id': 'reaped-idle-history',
-            'role': 'assistant',
-            'content': 'durable history',
-          },
-        ],
-        desktopRecoveryBackoff: const [Duration.zero],
-      );
-      addTearDown(() async {
-        chat.dispose();
-        await gateway.close();
-        await server.close(force: true);
-      });
+    final gateway = TuiGatewayClient(
+      SavedConnection(
+        id: 'real-reaped-idle',
+        label: 'Real reaped idle',
+        host: '127.0.0.1',
+        port: 8642,
+        apiKey: String.fromCharCodes(const [113, 97]),
+        dashboardUrl: 'http://127.0.0.1:${server.port}',
+      ),
+      dashboard: _StaticTicketDashboardClient(),
+    );
+    final chat = ActiveChat(
+      compressionRestoreStore: testCompressionRestoreStore(),
+      connection: _connection('real-reaped-idle'),
+      sessionId: storedSessionId,
+      sessionTitle: 'Bot Chat',
+      notifications: null,
+      onTerminal: () {},
+      api: ApiClient(
+        baseUrl: 'http://127.0.0.1:1',
+        apiKey: 'test-key',
+        httpClient: MockClient((_) async => http.Response('not found', 404)),
+      ),
+      desktopGateway: gateway,
+      attachDesktopRuntimeOnLoad: true,
+      storedMessageLoader: (_, _) async => const [
+        {
+          'message_id': 'reaped-idle-history',
+          'role': 'assistant',
+          'content': 'durable history',
+        },
+      ],
+      desktopRecoveryBackoff: const [Duration.zero],
+    );
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+      await server.close(force: true);
+    });
 
-      await chat.loadMessages(profile: 'owner-profile');
-      await _waitUntil(
-        () => chat.desktopRuntimeSessionId == 'runtime-cold-open',
-      );
+    await chat.loadMessages(profile: 'owner-profile');
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-cold-open');
 
-      await dropSockets();
-      await _waitUntil(
-        () =>
-            methodsBySocket.length == 2 &&
-            methodsBySocket[1].contains('session.active_list'),
-      );
-      await _waitUntil(
-        () => chat.transportStatus.state == ChatTransportState.connected,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+    await dropSockets();
+    await _waitUntil(
+      () =>
+          methodsBySocket.length == 2 &&
+          methodsBySocket[1].contains('session.active_list'),
+    );
+    await _waitUntil(
+      () => chat.transportStatus.state == ChatTransportState.connected,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      // A dormant durable session has no live runtime to rejoin. Recovery must
-      // not strand the chat in "Reconnecting…" nor cold-resume on its own.
-      expect(chat.transportStatus.state, ChatTransportState.connected);
-      expect(chat.desktopRuntimeSessionId, isNull);
-      expect(methodsBySocket[1], isNot(contains('session.resume')));
-      expect(methodsBySocket[1], isNot(contains('session.create')));
-      expect(methodsBySocket[1], isNot(contains('prompt.submit')));
+    // A dormant durable session has no live runtime to rejoin. Recovery must
+    // not strand the chat in "Reconnecting…" nor cold-resume on its own.
+    expect(chat.transportStatus.state, ChatTransportState.connected);
+    expect(chat.desktopRuntimeSessionId, isNull);
+    expect(methodsBySocket[1], isNot(contains('session.resume')));
+    expect(methodsBySocket[1], isNot(contains('session.create')));
+    expect(methodsBySocket[1], isNot(contains('prompt.submit')));
 
-      // Recovery stays open: once another surface revives the runtime, the next
-      // socket loss rejoins it through the unchanged roster-bound proof.
-      advertisedRuntimeId = 'runtime-revived-elsewhere';
-      await dropSockets();
-      await _waitUntil(
-        () => chat.desktopRuntimeSessionId == 'runtime-revived-elsewhere',
-      );
-      expect(chat.transportStatus.state, ChatTransportState.connected);
-    },
-    timeout: const Timeout(Duration(seconds: 15)),
-  );
+    // Recovery stays open: once another surface revives the runtime, the next
+    // socket loss rejoins it through the unchanged roster-bound proof.
+    advertisedRuntimeId = 'runtime-revived-elsewhere';
+    await dropSockets();
+    await _waitUntil(
+      () => chat.desktopRuntimeSessionId == 'runtime-revived-elsewhere',
+    );
+    expect(chat.transportStatus.state, ChatTransportState.connected);
+  }, timeout: const Timeout(Duration(seconds: 15)));
 
   test('real socket-refused upgrade retries viewer only', () async {
     final reservation = await ServerSocket.bind(
@@ -2903,15 +2889,15 @@ void main() {
       addTearDown(dashboard.close);
       final api = _RestFallbackApiClient();
       const id = 'ws-ticket-online-wake';
-      final gateway = _TicketTransportOnceGateway(
-        dashboard,
-        ticketFailureAttempts: 2,
-      )..recoveryAdvertisedRuntimeSessionId = 'runtime-ws-ticket-online-wake'
-        ..recoverySnapshot = const DesktopSessionSnapshot(
-          runtimeSessionId: 'runtime-ws-ticket-online-wake',
-          storedSessionId: 'session-ws-ticket-online-wake',
-          created: false,
-        );
+      final gateway =
+          _TicketTransportOnceGateway(dashboard, ticketFailureAttempts: 2)
+            ..recoveryAdvertisedRuntimeSessionId =
+                'runtime-ws-ticket-online-wake'
+            ..recoverySnapshot = const DesktopSessionSnapshot(
+              runtimeSessionId: 'runtime-ws-ticket-online-wake',
+              storedSessionId: 'session-ws-ticket-online-wake',
+              created: false,
+            );
       final chat = _productionAttachChat(
         id,
         gateway,
@@ -2935,16 +2921,14 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
       chat.requestImmediateTransportRecovery();
       await _waitUntil(
-        () =>
-            chat.desktopRuntimeSessionId == 'runtime-ws-ticket-online-wake',
+        () => chat.desktopRuntimeSessionId == 'runtime-ws-ticket-online-wake',
       );
 
       expect(gateway.ticketConnectAttempts, 3);
-      expect(
-        chat.desktopRuntimeSessionId,
-        'runtime-ws-ticket-online-wake',
-      );
-      expect(gateway.resumeExistingStoredIds, ['session-ws-ticket-online-wake']);
+      expect(chat.desktopRuntimeSessionId, 'runtime-ws-ticket-online-wake');
+      expect(gateway.resumeExistingStoredIds, [
+        'session-ws-ticket-online-wake',
+      ]);
       expect(gateway.viewerAttachmentCommits, 1);
       _expectNoViewerAttachmentMutations(gateway, api);
     },
@@ -4214,114 +4198,110 @@ void main() {
   );
 
   for (final resumedStatus in const <String?>['completed', null]) {
-    test(
-      'non-idempotent long outage adopts durable final after '
-      '${resumedStatus ?? 'plain idle'} resume without takeover',
-      () async {
-        const storedId = 'session-nonidem-long-outage';
-        const prompt = 'sleep 70 then answer';
-        const finalAnswer = 'durable final after long outage';
-        final gateway = _NonIdempotentLifecycleGateway(storedId)
-          ..recoverySnapshot = DesktopSessionSnapshot(
-            runtimeSessionId: 'runtime-lightweight-viewer',
-            storedSessionId: storedId,
-            created: false,
-            running: false,
-            status: resumedStatus,
-          );
-        var durableReads = 0;
-        final chat = _recoverableChat(
-          'nonidem-long-outage-${resumedStatus ?? 'plain'}',
-          gateway,
-          desktopRecoveryBackoff: const [
-            Duration.zero,
-            Duration(milliseconds: 1),
-            Duration(milliseconds: 2),
-            Duration(milliseconds: 4),
-            Duration(milliseconds: 8),
-            Duration(milliseconds: 15),
-          ],
-          desktopRecoveryRandom: () => 1.0,
-          storedMessageLoader: (_, _) async {
-            durableReads += 1;
-            if (!gateway.networkAvailable) {
-              throw const SocketException('durable transcript unavailable');
-            }
-            return const [
-              {
-                'message_id': 'nonidem-outage-user',
-                'role': 'user',
-                'content': prompt,
-              },
-              {
-                'message_id': 'nonidem-outage-final',
-                'role': 'assistant',
-                'content': finalAnswer,
-              },
-            ];
-          },
+    test('non-idempotent long outage adopts durable final after '
+        '${resumedStatus ?? 'plain idle'} resume without takeover', () async {
+      const storedId = 'session-nonidem-long-outage';
+      const prompt = 'sleep 70 then answer';
+      const finalAnswer = 'durable final after long outage';
+      final gateway = _NonIdempotentLifecycleGateway(storedId)
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-lightweight-viewer',
+          storedSessionId: storedId,
+          created: false,
+          running: false,
+          status: resumedStatus,
         );
-        addTearDown(chat.dispose);
+      var durableReads = 0;
+      final chat = _recoverableChat(
+        'nonidem-long-outage-${resumedStatus ?? 'plain'}',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+          Duration(milliseconds: 2),
+          Duration(milliseconds: 4),
+          Duration(milliseconds: 8),
+          Duration(milliseconds: 15),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          durableReads += 1;
+          if (!gateway.networkAvailable) {
+            throw const SocketException('durable transcript unavailable');
+          }
+          return const [
+            {
+              'message_id': 'nonidem-outage-user',
+              'role': 'user',
+              'content': prompt,
+            },
+            {
+              'message_id': 'nonidem-outage-final',
+              'role': 'assistant',
+              'content': finalAnswer,
+            },
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
 
-        await chat.send(
-          fullText: prompt,
-          model: 'hermes-agent',
-          history: const [],
-        );
-        expect(gateway, isNot(isA<HermesDesktopIdempotentGateway>()));
-        expect(gateway.submitCalls, 1);
-        final createsBeforeOutage = gateway.createForFirstSubmitCalls;
-        final resumesBeforeOutage = gateway.resumeExistingCalls;
-        final resumeIdsBeforeOutage = gateway.resumeExistingStoredIds.length;
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      expect(gateway, isNot(isA<HermesDesktopIdempotentGateway>()));
+      expect(gateway.submitCalls, 1);
+      final createsBeforeOutage = gateway.createForFirstSubmitCalls;
+      final resumesBeforeOutage = gateway.resumeExistingCalls;
+      final resumeIdsBeforeOutage = gateway.resumeExistingStoredIds.length;
 
-        gateway.networkAvailable = false;
-        gateway.drop();
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(gateway.connectCalls, greaterThanOrEqualTo(8));
-        expect(durableReads, 1);
+      gateway.networkAvailable = false;
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(gateway.connectCalls, greaterThanOrEqualTo(8));
+      expect(durableReads, 1);
 
-        gateway
-          ..networkAvailable = true
-          ..restoredFailuresRemaining = 1;
-        chat.requestImmediateTransportRecovery();
-        await _waitUntil(() => chat.state == ChatPipelineState.completed);
+      gateway
+        ..networkAvailable = true
+        ..restoredFailuresRemaining = 1;
+      chat.requestImmediateTransportRecovery();
+      await _waitUntil(() => chat.state == ChatPipelineState.completed);
 
-        expect(gateway.rosterResumeCalls, 1);
-        expect(gateway.resumeExistingCalls, resumesBeforeOutage + 1);
-        expect(chat.state, ChatPipelineState.completed);
-        expect(chat.assistantContent, finalAnswer);
-        expect(
-          chat.messages.where((message) => message['content'] == finalAnswer),
-          hasLength(1),
-        );
-        expect(
-          chat.messages.where((message) => message['content'] == prompt),
-          hasLength(1),
-        );
-        expect(
-          gateway.resumeExistingStoredIds.skip(resumeIdsBeforeOutage),
-          [storedId],
-        );
-        expect(gateway.submitCalls, 1);
-        expect(gateway.createForFirstSubmitCalls, createsBeforeOutage);
-        expect(gateway.recoveryCommits, 0);
-        expect(chat.desktopRuntimeSessionId, isNull);
+      expect(gateway.rosterResumeCalls, 1);
+      expect(gateway.resumeExistingCalls, resumesBeforeOutage + 1);
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.assistantContent, finalAnswer);
+      expect(
+        chat.messages.where((message) => message['content'] == finalAnswer),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.where((message) => message['content'] == prompt),
+        hasLength(1),
+      );
+      expect(gateway.resumeExistingStoredIds.skip(resumeIdsBeforeOutage), [
+        storedId,
+      ]);
+      expect(gateway.submitCalls, 1);
+      expect(gateway.createForFirstSubmitCalls, createsBeforeOutage);
+      expect(gateway.recoveryCommits, 0);
+      expect(chat.desktopRuntimeSessionId, isNull);
 
-        final connects = gateway.connectCalls;
-        final resumes = gateway.resumeExistingCalls;
-        chat.requestImmediateTransportRecovery();
-        await chat.reconcileAfterResume();
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-        expect(gateway.connectCalls, connects);
-        expect(gateway.resumeExistingCalls, resumes);
-        expect(chat.state, ChatPipelineState.completed);
-        expect(
-          chat.messages.where((message) => message['content'] == finalAnswer),
-          hasLength(1),
-        );
-        expect(gateway.submitCalls, 1);
-      },
-    );
+      final connects = gateway.connectCalls;
+      final resumes = gateway.resumeExistingCalls;
+      chat.requestImmediateTransportRecovery();
+      await chat.reconcileAfterResume();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(gateway.connectCalls, connects);
+      expect(gateway.resumeExistingCalls, resumes);
+      expect(chat.state, ChatPipelineState.completed);
+      expect(
+        chat.messages.where((message) => message['content'] == finalAnswer),
+        hasLength(1),
+      );
+      expect(gateway.submitCalls, 1);
+    });
   }
 
   test(
@@ -4371,16 +4351,16 @@ void main() {
       chat.requestImmediateTransportRecovery();
 
       await _waitUntil(
-        () => chat.desktopRuntimeSessionId == 'runtime-nonidem-running-recovered',
+        () =>
+            chat.desktopRuntimeSessionId == 'runtime-nonidem-running-recovered',
       );
       expect(chat.state, ChatPipelineState.streaming);
       expect(chat.assistantContent, 'partial after reconnect');
       expect(gateway.rosterResumeCalls, 1);
       expect(gateway.recoveryCommits, 1);
-      expect(
-        gateway.resumeExistingStoredIds.skip(resumeIdsBeforeOutage),
-        [storedId],
-      );
+      expect(gateway.resumeExistingStoredIds.skip(resumeIdsBeforeOutage), [
+        storedId,
+      ]);
       expect(gateway.submitCalls, 1);
       expect(gateway.createForFirstSubmitCalls, createsBeforeOutage);
     },
@@ -8602,10 +8582,7 @@ void main() {
       final chat = _recoverableChat(
         'coverage-foreground-wake',
         gateway,
-        desktopRecoveryBackoff: const [
-          Duration.zero,
-          Duration(hours: 1),
-        ],
+        desktopRecoveryBackoff: const [Duration.zero, Duration(hours: 1)],
         desktopRecoveryRandom: () => 1.0,
         storedMessageLoader: (_, _) async => const [
           {

@@ -17,6 +17,130 @@ enum PreparedTurnState {
 
 enum PreparedTurnTransport { desktop, rest, bridgeLocal, unknown }
 
+/// Qué había en el transcript durable visible JUSTO antes de enviar el turno.
+/// Solo guarda identidades opacas (nunca texto) y decide un retry tras un
+/// fallo de transporte pre-ACK: la frontera calculada en el momento del retry
+/// puede haber adoptado ya la fila del propio turno y provocar doble envío.
+enum PreparedTurnRetryBoundaryKind {
+  /// Último user durable visible, por identidad exacta.
+  identity,
+
+  /// Transcript completo sin ningún user durable previo.
+  empty,
+
+  /// La sesión no existía en el servidor: este turno iba a crearla.
+  knownMissing,
+
+  /// No se pudo demostrar la frontera; el retry falla cerrado.
+  unknown,
+}
+
+class PreparedTurnRetryBoundary {
+  const PreparedTurnRetryBoundary._(
+    this.kind, {
+    this.messageId,
+    this.rowId,
+    this.createdSessionId,
+  });
+
+  const PreparedTurnRetryBoundary.empty()
+    : this._(PreparedTurnRetryBoundaryKind.empty);
+
+  const PreparedTurnRetryBoundary.knownMissing()
+    : this._(PreparedTurnRetryBoundaryKind.knownMissing);
+
+  const PreparedTurnRetryBoundary.unknown()
+    : this._(PreparedTurnRetryBoundaryKind.unknown);
+
+  /// Devuelve [PreparedTurnRetryBoundary.unknown] si no hay coordenada válida.
+  factory PreparedTurnRetryBoundary.identity({String? messageId, int? rowId}) {
+    final validMessageId =
+        messageId != null && messageId.isNotEmpty && messageId.length <= 180
+        ? messageId
+        : null;
+    final validRowId = rowId != null && rowId > 0 ? rowId : null;
+    if (validMessageId == null && validRowId == null) {
+      return const PreparedTurnRetryBoundary.unknown();
+    }
+    return PreparedTurnRetryBoundary._(
+      PreparedTurnRetryBoundaryKind.identity,
+      messageId: validMessageId,
+      rowId: validRowId,
+    );
+  }
+
+  final PreparedTurnRetryBoundaryKind kind;
+  final String? messageId;
+  final int? rowId;
+
+  /// Solo para [PreparedTurnRetryBoundaryKind.knownMissing]: clave durable que
+  /// devolvió `session.create` para ESTE turno, persistida en cuanto se conoce
+  /// (antes de `prompt.submit`). Un 404 solo demuestra «no entregado» si la
+  /// lectura se hizo contra exactamente esta clave; sin ella (process death
+  /// antes del bind, lote antiguo, lectura con el id provisional `mob-…`) el
+  /// retry falla cerrado.
+  final String? createdSessionId;
+
+  static String? _validSessionKey(String? value) =>
+      value != null &&
+          value.isNotEmpty &&
+          value.length <= 256 &&
+          value == value.trim()
+      ? value
+      : null;
+
+  /// Copia con la clave creada. Solo aplica a `knownMissing` y nunca
+  /// sobrescribe una clave ya fijada con otra distinta.
+  PreparedTurnRetryBoundary withCreatedSessionId(String sessionId) {
+    final key = _validSessionKey(sessionId);
+    if (kind != PreparedTurnRetryBoundaryKind.knownMissing || key == null) {
+      return this;
+    }
+    if (createdSessionId != null) return this;
+    return PreparedTurnRetryBoundary._(kind, createdSessionId: key);
+  }
+
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    if (messageId != null) 'message_id': messageId,
+    if (rowId != null) 'row_id': rowId,
+    if (createdSessionId != null) 'created_session_id': createdSessionId,
+  };
+
+  /// Un valor malformado nunca invalida el lote entero: se degrada a
+  /// `unknown` (retry fail-closed) en vez de perder la outbox.
+  static PreparedTurnRetryBoundary? fromJson(Object? raw) {
+    if (raw == null) return null;
+    if (raw is! Map) return const PreparedTurnRetryBoundary.unknown();
+    final kind = PreparedTurnRetryBoundaryKind.values
+        .where((value) => value.name == raw['kind'])
+        .firstOrNull;
+    switch (kind) {
+      case PreparedTurnRetryBoundaryKind.identity:
+        final messageId = raw['message_id'];
+        final rowId = raw['row_id'];
+        return PreparedTurnRetryBoundary.identity(
+          messageId: messageId is String ? messageId : null,
+          rowId: rowId is int ? rowId : null,
+        );
+      case PreparedTurnRetryBoundaryKind.empty:
+        return const PreparedTurnRetryBoundary.empty();
+      case PreparedTurnRetryBoundaryKind.knownMissing:
+        final created = raw['created_session_id'];
+        final key = created is String ? _validSessionKey(created) : null;
+        return key == null
+            ? const PreparedTurnRetryBoundary.knownMissing()
+            : PreparedTurnRetryBoundary._(
+                PreparedTurnRetryBoundaryKind.knownMissing,
+                createdSessionId: key,
+              );
+      case PreparedTurnRetryBoundaryKind.unknown:
+      case null:
+        return const PreparedTurnRetryBoundary.unknown();
+    }
+  }
+}
+
 /// Lote local recuperable de un único envío. Todo el JSON se guarda cifrado;
 /// IDs, texto, nombres y rutas nunca deben copiarse a logs/diagnósticos.
 class PreparedTurn {
@@ -44,6 +168,10 @@ class PreparedTurn {
   final bool restoresComposer;
   final bool queued;
 
+  /// Frontera durable capturada al enviar. `null` = lote anterior a 1.2.13
+  /// (sin frontera persistida).
+  final PreparedTurnRetryBoundary? retryBoundary;
+
   const PreparedTurn({
     required this.connectionId,
     required this.sessionId,
@@ -63,6 +191,7 @@ class PreparedTurn {
     this.state = PreparedTurnState.prepared,
     this.restoresComposer = true,
     this.queued = false,
+    this.retryBoundary,
   }) : fullText = fullText ?? text;
 
   String get storageId =>
@@ -116,6 +245,7 @@ class PreparedTurn {
     PreparedTurnState? state,
     bool? restoresComposer,
     bool? queued,
+    PreparedTurnRetryBoundary? retryBoundary,
   }) => PreparedTurn(
     connectionId: connectionId,
     sessionId: sessionId,
@@ -135,6 +265,7 @@ class PreparedTurn {
     state: state ?? this.state,
     restoresComposer: restoresComposer ?? this.restoresComposer,
     queued: queued ?? this.queued,
+    retryBoundary: retryBoundary ?? this.retryBoundary,
   );
 
   Map<String, dynamic> toJson() => {
@@ -158,6 +289,7 @@ class PreparedTurn {
     'state': state.name,
     'restores_composer': restoresComposer,
     'queued': queued,
+    if (retryBoundary != null) 'retry_boundary': retryBoundary!.toJson(),
   };
 
   factory PreparedTurn.fromJson(Map<String, dynamic> json) {
@@ -262,6 +394,7 @@ class PreparedTurn {
       queued: persistedSchema != 1 && persistedSchema != 2
           ? json['queued'] as bool? ?? false
           : false,
+      retryBoundary: PreparedTurnRetryBoundary.fromJson(json['retry_boundary']),
     );
   }
 }

@@ -25,7 +25,10 @@ void main() {
                 child: SelectionArea(
                   child: Text(
                     log,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11.5,
+                    ),
                   ),
                 ),
               ),
@@ -38,8 +41,11 @@ void main() {
 
     final scrollable = find.byType(Scrollable).first;
     final position = tester.state<ScrollableState>(scrollable).position;
-    expect(position.maxScrollExtent, greaterThan(0),
-        reason: 'el log debe desbordar el viewport');
+    expect(
+      position.maxScrollExtent,
+      greaterThan(0),
+      reason: 'el log debe desbordar el viewport',
+    );
 
     final gesture = await tester.startGesture(
       tester.getCenter(find.byType(SingleChildScrollView)),

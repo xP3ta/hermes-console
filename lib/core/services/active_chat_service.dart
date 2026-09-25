@@ -247,6 +247,9 @@ bool activeChatPassiveActivityRequestStillCurrent({
 
 enum DesktopPassiveActivityState { idle, busy, unknown }
 
+/// Evidencia durable sobre un turno `ambiguous` antes de un retry manual.
+enum AmbiguousRetryEvidence { notDelivered, delivered, unknown }
+
 /// Bounded display-safe summary of durable passive work.
 ///
 /// Opaque tool-call identities stay private to [ActiveChat]. The UI receives
@@ -891,6 +894,89 @@ List<Map<String, dynamic>> _normalizedNewestFirst(
       .reversed
       .toList(growable: true),
 );
+
+/// REST 8642 (`_message_response`) no expone `display_metadata`; el
+/// Dashboard y `session.history` sí. Una lectura sin metadata de una fila
+/// editorial (`async_delegation_complete`/`process_complete`) hereda la
+/// metadata que ya tenía la misma fila durable visible, emparejada solo por
+/// identidad exacta (message_id/row id), nunca por texto. Así un refresco
+/// posterior no degrada la tarjeta a "estado desconocido" (QA 9341).
+/// Campos durables que solo escribe el runtime al cerrar un lote de
+/// delegación. La proyección pública inyecta `subagent_ids` (y la fila puede
+/// traer `delegation_id`) sin conteos: eso NO cuenta como metadata presente.
+const _substantiveDelegationMetadataKeys = <String>[
+  'task_count',
+  'completed_count',
+  'failed_count',
+  'duration_seconds',
+];
+
+/// Si la fila editorial ya tiene la metadata durable que pinta su tarjeta.
+/// `async_delegation_complete` exige algún campo sustantivo (conteos o
+/// duración); `process_complete` basta con metadata no vacía.
+bool _editorialDisplayMetadataPresent(Map<String, dynamic> message) {
+  final metadata = message['display_metadata'];
+  if (metadata is! Map || metadata.isEmpty) return false;
+  if (message['display_kind'] != 'async_delegation_complete') return true;
+  return _substantiveDelegationMetadataKeys.any((key) => metadata[key] != null);
+}
+
+List<Map<String, dynamic>> _carryDurableEditorialDisplayMetadata(
+  List<Map<String, dynamic>> incomingNewestFirst,
+  List<Map<String, dynamic>> previousNewestFirst,
+) {
+  bool isEditorial(Map<String, dynamic> message) {
+    final kind = message['display_kind'];
+    return message['role'] == 'user' &&
+        (kind == 'async_delegation_complete' || kind == 'process_complete');
+  }
+
+  bool hasMetadata(Map<String, dynamic> message) =>
+      _editorialDisplayMetadataPresent(message);
+
+  final donors = <(TranscriptMessageIdentity, Map<String, dynamic>)>[];
+  for (final message in previousNewestFirst) {
+    if (!isEditorial(message) || !hasMetadata(message)) continue;
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null || !identity.isDurable) continue;
+    donors.add((identity, message));
+  }
+  if (donors.isEmpty) return incomingNewestFirst;
+  List<Map<String, dynamic>>? result;
+  for (var index = 0; index < incomingNewestFirst.length; index++) {
+    final message = incomingNewestFirst[index];
+    if (!isEditorial(message) || hasMetadata(message)) continue;
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null || !identity.isDurable) continue;
+    final matches = donors
+        .where(
+          (donor) =>
+              donor.$1.matches(identity) &&
+              donor.$2['display_kind'] == message['display_kind'],
+        )
+        .toList(growable: false);
+    if (matches.length != 1) continue;
+    // La metadata durable se fusiona por encima de la parcial (p. ej. los
+    // `subagent_ids` que inyecta la proyección pública) sin perderla.
+    final partial = message['display_metadata'];
+    final durable = matches.single.$2['display_metadata'] as Map;
+    final upgraded = normalizeTranscriptMessageForDisplay(
+      <String, dynamic>{
+        ...message,
+        'display_metadata': <String, dynamic>{
+          if (partial is Map) ...Map<String, dynamic>.from(partial),
+          ...Map<String, dynamic>.from(durable),
+        },
+      },
+      retainMediaEvidence: true,
+      retainUserMentionNote: true,
+    );
+    if (upgraded == null) continue;
+    (result ??= List<Map<String, dynamic>>.of(incomingNewestFirst))[index] =
+        upgraded;
+  }
+  return result ?? incomingNewestFirst;
+}
 
 const _generatedImagesMetadataKey = '_generatedImages';
 
@@ -2507,6 +2593,37 @@ class ActiveTurnDelivery {
     );
   }
 
+  /// Fija la frontera durable previa al envío. Se persiste con la primera
+  /// escritura de transporte ([beginTransport]) y sobrevive a process death;
+  /// nunca se reescribe una vez iniciado el transporte.
+  void stageRetryBoundary(PreparedTurnRetryBoundary boundary) {
+    if (_discarded || _transportStarted || _acknowledged) return;
+    _current = _current.copyWith(retryBoundary: boundary);
+  }
+
+  /// Anota la clave durable que `session.create` devolvió para este turno.
+  /// Antes de [beginTransport] viaja con su primera escritura; si el
+  /// transporte ya empezó se persiste aparte. Un fallo de guardado solo deja
+  /// la frontera sin clave, que el retry trata como `unknown` (fail-closed).
+  Future<void> recordCreatedSession(String storedSessionId) =>
+      _serializeMutation(() async {
+        final boundary = _current.retryBoundary;
+        if (_discarded || _acknowledged || boundary == null) return;
+        final next = boundary.withCreatedSessionId(storedSessionId);
+        if (identical(next, boundary)) return;
+        final updated = _current.copyWith(retryBoundary: next);
+        if (!_transportStarted) {
+          _current = updated;
+          return;
+        }
+        try {
+          await _store.save(updated);
+          _current = updated;
+        } catch (_) {
+          // Sin clave persistida el 404 nunca prueba «no entregado».
+        }
+      });
+
   Future<bool> beginTransport(PreparedTurnTransport transport) =>
       _serializeMutation(() async {
         if (_discarded) return false;
@@ -2934,8 +3051,7 @@ final class SessionStopResult {
   final int remainingSubagents;
   final int remainingProcesses;
 
-  int get remainingBackgroundTasks =>
-      remainingSubagents + remainingProcesses;
+  int get remainingBackgroundTasks => remainingSubagents + remainingProcesses;
   bool get allBackgroundWorkStopped => remainingBackgroundTasks == 0;
 }
 
@@ -3259,6 +3375,58 @@ final class _SessionMessagesPageReadContext {
   final bool earlierMessagesAvailable;
 }
 
+/// Identidad de una lectura REST de apertura. Compartir el transporte no
+/// comparte autoridad: cada consumidor comprueba su propio contexto al aplicar.
+final class _StoredMessagesRestRequestKey {
+  const _StoredMessagesRestRequestKey({
+    required this.connectionId,
+    required this.logicalSessionId,
+    required this.storedSessionId,
+    required this.profile,
+    required this.order,
+    required this.includeCompacted,
+    required this.limit,
+    required this.offset,
+    required this.loadEpoch,
+  });
+
+  final String connectionId;
+  final String logicalSessionId;
+  final String storedSessionId;
+  final String profile;
+  final String order;
+  final bool includeCompacted;
+  final int limit;
+  final int offset;
+  final int loadEpoch;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _StoredMessagesRestRequestKey &&
+      connectionId == other.connectionId &&
+      logicalSessionId == other.logicalSessionId &&
+      storedSessionId == other.storedSessionId &&
+      profile == other.profile &&
+      order == other.order &&
+      includeCompacted == other.includeCompacted &&
+      limit == other.limit &&
+      offset == other.offset &&
+      loadEpoch == other.loadEpoch;
+
+  @override
+  int get hashCode => Object.hash(
+    connectionId,
+    logicalSessionId,
+    storedSessionId,
+    profile,
+    order,
+    includeCompacted,
+    limit,
+    offset,
+    loadEpoch,
+  );
+}
+
 final class _SessionMessagesPageProjection {
   const _SessionMessagesPageProjection._({
     required this.disposition,
@@ -3388,7 +3556,6 @@ typedef _RefreshedTranscriptGraft = ({
   bool retainsExistingRows,
   List<TranscriptMessageIdentity> unconfirmedRetainedIdentities,
 });
-
 
 final class _SubagentReconnectAlias {
   const _SubagentReconnectAlias({
@@ -3825,6 +3992,8 @@ class ActiveChat {
   int? _observedFirstTokenLatencyMs;
 
   late ApiClient _api;
+  final Map<_StoredMessagesRestRequestKey, Future<SessionMessagesPage>>
+  _storedMessagesRestFlights = {};
   final StoredSessionMessageLoader? _storedMessageLoader;
   final bool _attachDesktopRuntimeOnLoad;
   final bool _allowUnownedDesktopSnapshotForTesting;
@@ -3890,6 +4059,16 @@ class ActiveChat {
   bool _activeTurnStartedFromKnownMissing = false;
   TranscriptMessageIdentity? _activeTurnTranscriptBoundaryIdentity;
   String? _activeTurnTranscriptBoundarySessionId;
+
+  /// Frontera de CADENA: último user durable anterior a los turnos locales de
+  /// este cliente que siguen sin reconciliar (vallas terminales sin identidad,
+  /// p. ej. suprimidas por `compacting`), o `knownMissing` si la sesión nació
+  /// con el primero de ellos. Solo la usa el binding de vallas sin identidad;
+  /// la frontera de tombstone ([_activeTurnTranscriptBoundaryIdentity]) no
+  /// cambia. `null` = frontera no demostrada.
+  TranscriptMessageIdentity? _activeTurnFenceChainBoundaryIdentity;
+  bool _activeTurnFenceChainStartedFromKnownMissing = false;
+  List<String> _activeTurnFenceChainProjectionIds = const [];
   String? _activeTurnTranscriptBoundaryProfile;
   bool _passiveTurnBoundaryFresh = false;
   int _desktopInterimSerial = 0;
@@ -3929,6 +4108,15 @@ class ActiveChat {
   int? _desktopCompactionChunkCount;
   int _desktopCompactedEdgeCount = 0;
   bool _suppressTerminalHydrationAfterCompaction = false;
+
+  /// Turno durante el que llegó `compacting`. Como `compactedTurnRef` de
+  /// Hermes Desktop (use-message-stream/index.ts:878-887), solo el terminal
+  /// de ESE turno se salta la hidratación; los turnos siguientes hidratan.
+  int? _compactionSuppressedTurnEpoch;
+
+  bool _compactionSuppressesTerminalHydration(int completingEpoch) =>
+      _suppressTerminalHydrationAfterCompaction &&
+      _compactionSuppressedTurnEpoch == completingEpoch;
   String? _desktopCompactionLineageId;
   SessionConfigScope? _sessionConfigScope;
   SessionConfigReducerState _sessionConfigState =
@@ -4213,8 +4401,8 @@ class ActiveChat {
       _offerStaleResumedSessionStop =
           startedAt != null &&
           DateTime.fromMillisecondsSinceEpoch(
-            _wallClockMs(),
-          ).difference(startedAt) >=
+                _wallClockMs(),
+              ).difference(startedAt) >=
               _staleResumedTurnWindow;
     }
   }
@@ -4276,8 +4464,7 @@ class ActiveChat {
   int get adaptiveSubagentRepairRevision => _adaptiveSubagentRepairRevision;
   int get adaptiveProcessRepairRevision => _adaptiveProcessRepairRevision;
   int get adaptiveControlRepairRevision => _adaptiveControlRepairRevision;
-  int get adaptiveSnapshotFailureRevision =>
-      _adaptiveSnapshotFailureRevision;
+  int get adaptiveSnapshotFailureRevision => _adaptiveSnapshotFailureRevision;
 
   void _signalAdaptiveRefresh({
     bool full = false,
@@ -5978,6 +6165,64 @@ class ActiveChat {
       TranscriptPublicationCoordinator();
   List<Map<String, dynamic>>? _publicMessagesSnapshot;
   List<Map<String, dynamic>>? _publicMessagesSources;
+
+  // Huella superficial de las filas internas que produjeron
+  // [_publicMessagesSnapshot]: identidad de cada fila más sus pares
+  // clave/valor por identidad. La proyección pública (vetos de privacidad,
+  // subagentes y normalización editorial) cuesta decenas de milisegundos en
+  // una sesión larga y ChatScreen la lee varias veces por frame; recalcularla
+  // sin cambios en la entrada era la mayor fuente de jank al abrir chats
+  // largos. Comparar la huella es O(filas×claves) sin tocar el contenido, y
+  // detecta cualquier mutación in-place de claves de primer nivel (donde
+  // viven todos los clasificadores privados), venga de donde venga.
+  List<Object?>? _publicMessagesFingerprint;
+  int _publicMessagesPrivacyGeneration = -1;
+  bool? _publicMessagesStreaming;
+
+  List<Object?> _publicMessagesFingerprintOf(List<Map<String, dynamic>> rows) {
+    // Solo primer nivel: identidad de fila, claves y valores por identidad
+    // (más longitud de listas/mapas). Nunca recorre contenido anidado, así
+    // que su coste no depende de trazas, payloads ni bytes adjuntos. Las
+    // mutaciones profundas in situ solo ocurren durante el streaming, y en
+    // streaming esta caché no se usa (ver [messages]).
+    final out = <Object?>[rows.length];
+    for (final row in rows) {
+      out
+        ..add(row)
+        ..add(row.length);
+      row.forEach((key, value) {
+        out
+          ..add(key)
+          ..add(value);
+        if (value is List) out.add(value.length);
+        if (value is Map) out.add(value.length);
+      });
+    }
+    return out;
+  }
+
+  bool _publicMessagesInputsUnchanged(bool streaming) {
+    final previous = _publicMessagesFingerprint;
+    if (previous == null ||
+        _publicMessagesSnapshot == null ||
+        _publicMessagesStreaming != streaming ||
+        _publicMessagesPrivacyGeneration != _transcriptPublication.generation) {
+      return false;
+    }
+    final current = _publicMessagesFingerprintOf(_messages);
+    if (current.length != previous.length) return false;
+    for (var index = 0; index < current.length; index++) {
+      final a = current[index];
+      final b = previous[index];
+      if (identical(a, b)) continue;
+      // Enteros/bools pueden no ser idénticos entre boxings; compara valor
+      // solo para esos tipos inmutables.
+      if ((a is num || a is bool) && a == b) continue;
+      return false;
+    }
+    return true;
+  }
+
   final HashMap<Map<String, dynamic>, Map<String, dynamic>>
   _publicMessageByInternalIdentity =
       HashMap<Map<String, dynamic>, Map<String, dynamic>>.identity();
@@ -5986,12 +6231,25 @@ class ActiveChat {
   /// observable through the production ActiveChat API. Stable internal rows
   /// retain their public map identity while their presentation is unchanged.
   List<Map<String, dynamic>> get messages {
+    final streaming = isStreaming;
+    // En streaming las filas vivas mutan en profundidad a cada delta: se
+    // proyecta siempre (comportamiento previo). En reposo, la huella
+    // superficial evita recalcular una proyección idéntica en cada lectura.
+    if (!streaming && _publicMessagesInputsUnchanged(streaming)) {
+      return _publicMessagesSnapshot!;
+    }
+    final fingerprint = streaming
+        ? null
+        : _publicMessagesFingerprintOf(_messages);
     final displaySources = _applyDurablePrivateTranscriptVetoes(_messages);
     final projected = _projectTranscriptForDisplay(
       displaySources,
-      retainEmptyAssistant: isStreaming,
+      retainEmptyAssistant: streaming,
       retainedBySource: _publicMessageByInternalIdentity,
     );
+    _publicMessagesFingerprint = fingerprint;
+    _publicMessagesPrivacyGeneration = _transcriptPublication.generation;
+    _publicMessagesStreaming = streaming;
     final previous = _publicMessagesSnapshot;
     final previousSources = _publicMessagesSources;
     if (previous != null &&
@@ -6606,9 +6864,7 @@ class ActiveChat {
     ChatTransportState.connected,
   );
   final ValueNotifier<ChatTransportStatus> _transportStatusListenable =
-      ValueNotifier(
-        const ChatTransportStatus(ChatTransportState.connected),
-      );
+      ValueNotifier(const ChatTransportStatus(ChatTransportState.connected));
 
   ChatTransportStatus get transportStatus => _transportStatus;
   ValueListenable<ChatTransportStatus> get transportStatusListenable =>
@@ -7701,7 +7957,9 @@ class ActiveChat {
     String profile = '',
     VoidCallback? onMessagesPublished,
     bool passiveOnly = false,
+    bool observePassiveActivity = true,
     bool Function()? stillOwningVisible,
+    bool Function()? stillCurrentRead,
   }) async {
     final loadEpoch = ++_messageLoadEpoch;
     final coldOpen = !messagesLoaded;
@@ -7711,7 +7969,10 @@ class ActiveChat {
     bool viewerAuthorized() =>
         passiveOnly || (stillOwningVisible?.call() ?? true);
     bool loadStillAuthorized() =>
-        !_disposed && loadEpoch == _messageLoadEpoch && viewerAuthorized();
+        !_disposed &&
+        loadEpoch == _messageLoadEpoch &&
+        viewerAuthorized() &&
+        (stillCurrentRead?.call() ?? true);
     _ensureLocalAssistantErrorIdentities();
     final previousMessagesNewestFirst = List<Map<String, dynamic>>.unmodifiable(
       _messages.map(
@@ -8596,7 +8857,10 @@ class ActiveChat {
         transition.action == _SessionMessagesPageAction.stale) {
       return;
     }
-    _observeDurableTail(page.messages, passiveObservation: passiveOnly);
+    _observeDurableTail(
+      page.messages,
+      passiveObservation: passiveOnly && observePassiveActivity,
+    );
     if (transition.action == _SessionMessagesPageAction.throwExpectedCount) {
       throw StateError(
         'Hermes returned an empty transcript for a non-empty session',
@@ -8629,6 +8893,9 @@ class ActiveChat {
     _mergeSteerRecords();
     _reconcileSubagentsFromTranscript();
     messagesLoaded = true;
+    // REST 8642 no trae display_metadata: igual que tras el terminal, una
+    // fila editorial nueva se hidrata (una sola vez) desde session.history.
+    unawaited(_hydrateEditorialDisplayMetadataFromDurableHistory());
     await _backfillInitialConversationWindow(
       refreshedPageHadVisibleConversation:
           _visibleConversationMessageCountIn(normalized) > 0,
@@ -8700,6 +8967,7 @@ class ActiveChat {
       limit: context.requestedLimit,
       offset: context.requestedOffset,
       runtimeSessionId: runtimeSessionId,
+      readContext: context,
       allowNativeHistory:
           allowNativeHistory &&
           context.consumer != _SessionMessagesPageConsumer.loadEarlier,
@@ -8722,6 +8990,7 @@ class ActiveChat {
           profile: context.profile,
           limit: 1,
           offset: context.requestedLimit,
+          readContext: context,
           allowNativeHistory: false,
         );
         final lookaheadProvesEnd =
@@ -8758,6 +9027,7 @@ class ActiveChat {
     int? limit,
     int offset = 0,
     String? runtimeSessionId,
+    _SessionMessagesPageReadContext? readContext,
     bool allowNativeHistory = true,
   }) async {
     final injected = _storedMessageLoader;
@@ -8802,11 +9072,12 @@ class ActiveChat {
           return nativePage;
         }
         try {
-          final canonicalPage = await _api.getMessagesPage(
+          final canonicalPage = await _getStoredMessagesRestPage(
             storedSessionId,
             profile: profile,
             limit: requestedLimit,
             offset: offset,
+            readContext: readContext,
           );
           final canonicalPageIsUsable =
               canonicalPage.messagesFullyParsed &&
@@ -8819,7 +9090,8 @@ class ActiveChat {
                   ));
           if (canonicalPageIsUsable) {
             final canonicalLimit = canonicalPage.limit;
-            final canonicalHasEarlier = canonicalPage.hasEarlier ??
+            final canonicalHasEarlier =
+                canonicalPage.hasEarlier ??
                 (canonicalPage.paginationProvided &&
                     canonicalLimit != null &&
                     canonicalPage.returned >= canonicalLimit);
@@ -8834,12 +9106,81 @@ class ActiveChat {
         return nativePage;
       }
     }
-    return _api.getMessagesPage(
+    return _getStoredMessagesRestPage(
       storedSessionId,
       profile: profile,
       limit: limit ?? _transcriptPageSize,
       offset: offset,
+      readContext: readContext,
     );
+  }
+
+  Future<SessionMessagesPage> _getStoredMessagesRestPage(
+    String storedSessionId, {
+    required String profile,
+    required int limit,
+    required int offset,
+    _SessionMessagesPageReadContext? readContext,
+  }) {
+    // A resume-progress event can schedule hydration before the cold-open
+    // prefetch returns. Only those opening readers may join that prefetch;
+    // scrollback and recovery/stop proof always obtain their own response.
+    // Each consumer still checks its own coverage fence before publishing.
+    final openingRead =
+        readContext?.consumer ==
+            _SessionMessagesPageConsumer.lifecyclePrefetch ||
+        readContext?.consumer ==
+            _SessionMessagesPageConsumer.resumeProgressRetry ||
+        readContext?.consumer ==
+            _SessionMessagesPageConsumer.scheduledHydration;
+    if (readContext == null || !openingRead) {
+      return _api.getMessagesPage(
+        storedSessionId,
+        profile: profile,
+        limit: limit,
+        offset: offset,
+      );
+    }
+    final key = _StoredMessagesRestRequestKey(
+      connectionId: connection.id,
+      logicalSessionId: logicalSessionId,
+      storedSessionId: storedSessionId,
+      profile: profile.trim(),
+      order: 'latest',
+      includeCompacted: true,
+      limit: limit,
+      offset: offset,
+      loadEpoch: readContext.loadEpoch,
+    );
+    final existing = _storedMessagesRestFlights[key];
+    if (existing != null) return existing;
+
+    // Do not coalesce independent hydration/refresh reads after opening.
+    if (readContext.consumer !=
+        _SessionMessagesPageConsumer.lifecyclePrefetch) {
+      return _api.getMessagesPage(
+        storedSessionId,
+        profile: profile,
+        limit: limit,
+        offset: offset,
+      );
+    }
+
+    late final Future<SessionMessagesPage> flight;
+    flight = _api
+        .getMessagesPage(
+          storedSessionId,
+          profile: profile,
+          limit: limit,
+          offset: offset,
+        )
+        .whenComplete(() {
+          if (identical(_storedMessagesRestFlights[key], flight)) {
+            _storedMessagesRestFlights.remove(key);
+          }
+        });
+    _storedMessagesRestFlights[key] = flight;
+    return flight;
   }
 
   _SessionMessagesPageTransitionResult _consumeSessionMessagesPageEvidence(
@@ -9456,28 +9797,69 @@ class ActiveChat {
     required bool transcriptComplete,
   }) {
     final projectionIndices = <int>[userIndex];
-    var newestTurnIndex = userIndex;
+    // Un turno sintético del runtime (fin de delegación async / proceso)
+    // arranca con una fila editorial `role=user` que no es turno real, sin
+    // eco del usuario (`_notif_submit` → message.start). Desde el cliente es
+    // la continuación del mismo cierre: la proyección local de ambos turnos
+    // cuelga del mismo user. Cada segmento se evalúa por separado y todos
+    // deben estar cerrados; el texto comparado es el del último segmento.
+    final segmentStarts = <int>[userIndex];
     for (var index = userIndex - 1; index >= 0; index--) {
       final message = newestFirst[index];
       if (isRealUserTurn(message)) break;
       projectionIndices.add(index);
-      newestTurnIndex = index;
+      if (message['role'] == 'user' &&
+          _isRuntimeEventEditorialKind(effectiveUserDisplayKind(message))) {
+        segmentStarts.add(index);
+      }
     }
-    final chronological = newestFirst
-        .sublist(newestTurnIndex, userIndex + 1)
-        .reversed
-        .toList(growable: false);
-    final authority = _terminalAuthority(
-      chronological,
-      1,
-      sourceTranscriptComplete: transcriptComplete,
-    );
+    final newestTurnIndex = projectionIndices.last;
+    var complete = true;
+    String? assistantText;
+    for (var segment = 0; segment < segmentStarts.length; segment++) {
+      final start = segmentStarts[segment];
+      final end = segment + 1 < segmentStarts.length
+          ? segmentStarts[segment + 1] + 1
+          : newestTurnIndex;
+      final chronological = newestFirst
+          .sublist(end, start + 1)
+          .reversed
+          .toList(growable: true);
+      if (segment > 0) {
+        // La fila editorial abre su turno: para la tabla de terminalidad
+        // cuenta como el user del segmento (solo rol + identidad durable).
+        final editorial = chronological.first;
+        chronological.first = <String, dynamic>{
+          'role': 'user',
+          'content': '',
+          for (final key in const [
+            '_desktopMessageId',
+            'message_id',
+            'id',
+            '_desktopRowId',
+            'row_id',
+            '_row_id',
+          ])
+            if (editorial.containsKey(key)) key: editorial[key],
+        };
+      }
+      final authority = _terminalAuthority(
+        chronological,
+        1,
+        sourceTranscriptComplete: transcriptComplete,
+      );
+      if (!authority.isAuthoritative) complete = false;
+      assistantText = authority.assistantText;
+    }
     return (
-      complete: authority.isAuthoritative,
+      complete: complete,
       projectionIndices: projectionIndices,
-      assistantText: authority.assistantText,
+      assistantText: assistantText,
     );
   }
+
+  static bool _isRuntimeEventEditorialKind(String? kind) =>
+      kind == 'async_delegation_complete' || kind == 'process_complete';
 
   List<_TerminalProjectionFence> _terminalProjectionFences(
     List<Map<String, dynamic>> newestFirst,
@@ -9875,6 +10257,66 @@ class ActiveChat {
   /// descartaría el prefijo recuperado con [loadEarlierMessages]. Solo adopta
   /// cobertura solapada o disjunta cuando sus IDs permiten demostrar y podar
   /// el prefijo; ante filas históricas sin identidad falla cerrado.
+  /// A turn that created its own stored session (known-missing boundary, no
+  /// predecessor) marks its terminal fence before any durable row exists, so
+  /// the fence carries no user identity, no anchor and absolute ordinal 0 and
+  /// can never be covered by itself. When the boundary proof already credits
+  /// the fence's live user to the refreshed tail, bind the fence to the oldest
+  /// durable user of that tail (the session provably began with this turn) so
+  /// the usual terminal-evidence check decides coverage. Without this the
+  /// live pair survives next to its durable copy (QA 9340).
+  _TerminalProjectionFence _bindKnownMissingFirstTurnFence(
+    _TerminalProjectionFence fence,
+    List<Map<String, dynamic>> previous,
+    List<Map<String, dynamic>> refreshedNewestFirst,
+    Set<int> representedLiveUserIndexes, {
+    required bool refreshedTranscriptComplete,
+  }) {
+    if (fence.userMessageId != null ||
+        fence.userRowId != null ||
+        fence.anchorMessageId != null ||
+        fence.anchorRowId != null ||
+        representedLiveUserIndexes.isEmpty ||
+        !_activeTurnStartedFromKnownMissing ||
+        _activeTurnTranscriptBoundaryIdentity != null ||
+        !_activeTurnTranscriptBoundaryScopeIsCurrent()) {
+      return fence;
+    }
+    final liveUserIndex = previous.indexWhere(
+      (message) =>
+          isRealUserTurn(message) &&
+          message[_terminalProjectionIdKey] == fence.projectionId,
+    );
+    if (!representedLiveUserIndexes.contains(liveUserIndex)) return fence;
+    // Only a complete page, or a tail holding a single user, proves that its
+    // oldest user is the session's first one rather than a truncated middle.
+    if (!refreshedTranscriptComplete &&
+        refreshedNewestFirst.where(isRealUserTurn).length != 1) {
+      return fence;
+    }
+    for (var index = refreshedNewestFirst.length - 1; index >= 0; index--) {
+      final candidate = refreshedNewestFirst[index];
+      if (!isRealUserTurn(candidate) ||
+          _isLiveTranscriptProjection(candidate)) {
+        continue;
+      }
+      final messageId = canonicalTranscriptMessageId(candidate);
+      final rowId = canonicalTranscriptRowId(candidate);
+      if (messageId == null && rowId == null) return fence;
+      return _TerminalProjectionFence(
+        projectionId: fence.projectionId,
+        userMessageId: messageId,
+        userRowId: rowId,
+        anchorMessageId: null,
+        anchorRowId: null,
+        ordinalAfterAnchor: null,
+        absoluteUserOrdinal: null,
+        localAssistantText: fence.localAssistantText,
+      );
+    }
+    return fence;
+  }
+
   _RefreshedTranscriptGraft _graftRefreshedTail(
     List<Map<String, dynamic>> refreshedNewestFirst,
     List<Map<String, dynamic>> previous, {
@@ -9883,6 +10325,10 @@ class ActiveChat {
     bool enforceTerminalFences = true,
     bool preservePartialExactTailCoverage = false,
   }) {
+    refreshedNewestFirst = _carryDurableEditorialDisplayMetadata(
+      refreshedNewestFirst,
+      previous,
+    );
     final representedLiveUserIndexes = <int>{
       ..._liveUserProjectionIndexesRepresentedByRefreshedTail(
         refreshedNewestFirst,
@@ -9902,10 +10348,31 @@ class ActiveChat {
         ...requiredTerminalFences,
         ..._terminalReconciliationFences(previous),
       ]) {
-        if (seen.add(fence.projectionId)) terminalFences.add(fence);
+        if (seen.add(fence.projectionId)) {
+          terminalFences.add(
+            _bindKnownMissingFirstTurnFence(
+              fence,
+              previous,
+              refreshedNewestFirst,
+              representedLiveUserIndexes,
+              refreshedTranscriptComplete: refreshedTranscriptComplete,
+            ),
+          );
+        }
       }
     }
     if (terminalFences.isNotEmpty) {
+      final chained = _bindFenceChain(
+        terminalFences,
+        previous,
+        refreshedNewestFirst,
+        refreshedTranscriptComplete: refreshedTranscriptComplete,
+      );
+      if (!identical(chained, terminalFences)) {
+        terminalFences
+          ..clear()
+          ..addAll(chained);
+      }
       if (!_terminalFencesAreCovered(
         refreshedNewestFirst,
         terminalFences,
@@ -10196,14 +10663,15 @@ class ActiveChat {
           canPartitionPrevious &&
           _allTranscriptRowsHaveDurableIds(durablePrevious)) {
         final refreshedIdentities = _transcriptIdentities(refreshedNewestFirst);
-        final unconfirmedRetainedIdentities = _transcriptIdentities(
-          durablePrevious,
-        ).where(
-          (identity) => !_identityCollectionContains(
-            refreshedIdentities,
-            identity,
-          ),
-        ).toList(growable: false);
+        final unconfirmedRetainedIdentities =
+            _transcriptIdentities(durablePrevious)
+                .where(
+                  (identity) => !_identityCollectionContains(
+                    refreshedIdentities,
+                    identity,
+                  ),
+                )
+                .toList(growable: false);
         return (
           messages: withRetainedLocal(
             _mergeOlderTranscriptPage(refreshedNewestFirst, durablePrevious),
@@ -10687,9 +11155,7 @@ class ActiveChat {
   /// Consume una página REST anterior. Una petición en vuelo por chat; un fallo
   /// no es fatal y el siguiente gesto puede reintentarlo.
   Future<bool> _loadEarlierMessagesPage() async {
-    if (_disposed ||
-        !_earlierMessagesAvailable ||
-        _earlierMessagesInFlight) {
+    if (_disposed || !_earlierMessagesAvailable || _earlierMessagesInFlight) {
       return false;
     }
     _earlierMessagesInFlight = true;
@@ -11756,6 +12222,11 @@ class ActiveChat {
         turnEpoch,
         allowExistingTranscript: !serverSessionScopeChanged,
       );
+      delivery?.stageRetryBoundary(
+        serverSessionScopeChanged
+            ? const PreparedTurnRetryBoundary.unknown()
+            : _captureRetryBoundary(),
+      );
       state = ChatPipelineState.connecting;
     } finally {
       if (identical(_queueAdmissionToken, queueAdmissionToken)) {
@@ -12109,10 +12580,7 @@ class ActiveChat {
     );
   }
 
-  ({
-    List<Map<String, dynamic>> messages,
-    Map<String, dynamic> target,
-  })
+  ({List<Map<String, dynamic>> messages, Map<String, dynamic> target})
   _reuseMessageForOptimisticRewrite({
     required List<Map<String, dynamic>> chronological,
     required int targetIndex,
@@ -12273,6 +12741,12 @@ class ActiveChat {
           deferConfirmation: true,
           markUserCancelled: false,
         );
+        // `_cancelCurrent` recorta el transcript, pero no toca la traza ni
+        // los subagentes del turno interrumpido: seguirían en `running`
+        // hasta que llegase el batch tardío, ya con el turno editado vivo.
+        // Séllalos como interrumpidos/cancelados igual que hace la
+        // recuperación durable (`_sealRecoveredLiveActivity`).
+        _sealRecoveredLiveActivity(completed: false);
         reservation.transcriptRevision = _transcriptRevision;
         reservation.turnEpoch = _turnEpoch;
         if (runtimeId != null && gateway != null) {
@@ -12364,7 +12838,8 @@ class ActiveChat {
             int userOrdinal,
             int rowId,
             int? fallbackOrdinal,
-          })? retryPlan;
+          })?
+          retryPlan;
           try {
             retryPlan = await _resyncStaleRewriteTarget(
               gateway: gateway,
@@ -12381,8 +12856,10 @@ class ActiveChat {
                 .where((message) => message['_pipeline'] != true)
                 .map((message) => Map<String, dynamic>.from(message))
                 .toList(growable: false);
-            final refreshedChronological =
-                retryPlan.messagesNewestFirst.reversed.toList(growable: false);
+            final refreshedChronological = retryPlan
+                .messagesNewestFirst
+                .reversed
+                .toList(growable: false);
             _desktopStoredSessionId = retryPlan.snapshot.storedSessionId;
             _desktopStoredSessionKnownMissing = false;
             _adoptDesktopRuntime(
@@ -14455,6 +14932,152 @@ class ActiveChat {
     return authoritativeRuntimeId;
   }
 
+  /// clientTurnId privado de la burbuja de error más reciente, si el fallo
+  /// ocurrió con una entrega de outbox activa. `null` para burbujas legadas.
+  String? get latestFailedTurnClientTurnId {
+    for (final message in _messages) {
+      if (message['role'] != 'assistant_error') continue;
+      final id = message['_clientTurnId'];
+      return id is String && id.isNotEmpty ? id : null;
+    }
+    return null;
+  }
+
+  /// Frontera durable del transcript visible justo antes de enviar: identidad
+  /// exacta del último user durable, o prueba de que no había ninguno. Las
+  /// proyecciones locales de intentos fallidos no son durables y se saltan: si
+  /// alguna llegó al servidor aparecerá como user extra y el retry dará
+  /// `unknown`, nunca un reenvío.
+  PreparedTurnRetryBoundary _captureRetryBoundary() {
+    if (!messagesLoaded) return const PreparedTurnRetryBoundary.unknown();
+    for (final message in _messages) {
+      if (!isRealUserTurn(message)) continue;
+      if (message['_localTranscriptPairId'] is String ||
+          _isLiveTranscriptProjection(message)) {
+        continue;
+      }
+      if (!transcriptIdentityAliasesAreConsistent(message)) {
+        return const PreparedTurnRetryBoundary.unknown();
+      }
+      final identity = _transcriptMessageIdentity(message);
+      if (identity == null ||
+          _uniqueTranscriptIdentityMatch(identity, _messages) == null) {
+        return const PreparedTurnRetryBoundary.unknown();
+      }
+      return PreparedTurnRetryBoundary.identity(
+        messageId: identity.messageId,
+        rowId: identity.rowId,
+      );
+    }
+    final hasDurableRows = _messages.any(_hasDurableTranscriptIdentity);
+    if (_desktopStoredSessionKnownMissing && !hasDurableRows) {
+      return const PreparedTurnRetryBoundary.knownMissing();
+    }
+    if (_transcriptIsComplete && !_earlierMessagesAvailable) {
+      return const PreparedTurnRetryBoundary.empty();
+    }
+    return const PreparedTurnRetryBoundary.unknown();
+  }
+
+  /// Decide, sin reenviar nada, si un turno `ambiguous` del composer llegó a
+  /// persistirse. La frontera es la capturada Y PERSISTIDA al enviar
+  /// ([PreparedTurn.retryBoundary]); calcularla en el momento del retry
+  /// permitía que un refresco que ya adoptó la fila del propio turno la
+  /// convirtiera en frontera → 0 users nuevos → doble envío. Solo una fila de
+  /// usuario posterior a esa frontera puede ser el turno. Sin filas nuevas el
+  /// servidor no guarda el turno (prompt.submit persiste la fila de usuario
+  /// antes de ejecutar) y el retry manual puede reenviarlo con el mismo
+  /// clientTurnId, como hace Desktop. Si el turno iba a crear la sesión, un
+  /// 404 de su historial también prueba que no llegó. Cualquier otra
+  /// evidencia incompleta devuelve [AmbiguousRetryEvidence.unknown].
+  ///
+  /// Límite conocido (igual que Desktop): si el socket murió con la petición
+  /// aún dentro del servidor, la lectura puede preceder a su commit.
+  Future<AmbiguousRetryEvidence> resolveAmbiguousRetryFromTranscript(
+    PreparedTurn turn,
+  ) async {
+    if (_disposed ||
+        isStreaming ||
+        turn.state != PreparedTurnState.ambiguous ||
+        _activeTurnDelivery?.acknowledged == true) {
+      return AmbiguousRetryEvidence.unknown;
+    }
+    final boundary = turn.retryBoundary;
+    if (boundary == null ||
+        boundary.kind == PreparedTurnRetryBoundaryKind.unknown) {
+      return AmbiguousRetryEvidence.unknown;
+    }
+    final requestedSessionId = serverSessionId;
+    final requestedProfile = _storedSessionProfile;
+    final turnEpoch = _turnEpoch;
+    bool stillCurrent() =>
+        !_disposed &&
+        !isStreaming &&
+        turnEpoch == _turnEpoch &&
+        requestedSessionId == serverSessionId &&
+        requestedProfile == _storedSessionProfile;
+    final List<Map<String, dynamic>> chronological;
+    try {
+      chronological = await _loadStoredMessages(requestedProfile);
+    } on CoreReadException catch (error) {
+      if (!stillCurrent()) return AmbiguousRetryEvidence.unknown;
+      // La fila de sesión se crea en el mismo prompt.submit que persiste el
+      // user. Un 404 solo prueba que el turno no llegó si la lectura fue
+      // contra la clave EXACTA que session.create devolvió para este turno
+      // (persistida en el lote). Tras process death el chat vuelve al id
+      // provisional `mob-…`, cuyo 404 es inevitable aunque la sesión creada
+      // sí tenga el turno: eso, o no conocer la clave, es `unknown` (A5).
+      final createdKey = boundary.createdSessionId;
+      if (boundary.kind == PreparedTurnRetryBoundaryKind.knownMissing &&
+          error.kind == CoreReadErrorKind.notFound &&
+          createdKey != null &&
+          requestedSessionId == createdKey) {
+        return AmbiguousRetryEvidence.notDelivered;
+      }
+      return AmbiguousRetryEvidence.unknown;
+    } catch (_) {
+      return AmbiguousRetryEvidence.unknown;
+    }
+    if (!stillCurrent()) return AmbiguousRetryEvidence.unknown;
+    var start = 0;
+    if (boundary.kind == PreparedTurnRetryBoundaryKind.identity) {
+      final expected = TranscriptMessageIdentity(
+        messageId: boundary.messageId,
+        rowId: boundary.rowId,
+      );
+      final unique = _uniqueTranscriptIdentityMatch(expected, chronological);
+      if (unique == null) return AmbiguousRetryEvidence.unknown;
+      final index = chronological.indexWhere((message) {
+        final identity = transcriptIdentityAliasesAreConsistent(message)
+            ? _transcriptMessageIdentity(message)
+            : null;
+        return identity != null && identity.matches(unique);
+      });
+      if (index < 0) return AmbiguousRetryEvidence.unknown;
+      start = index + 1;
+    }
+    final candidates = <String>{
+      turn.text.trim(),
+      turn.fullText.trim(),
+      stripBotMentionNote(turn.desktopText ?? '').trim(),
+    }..remove('');
+    var newUsers = 0;
+    var matching = 0;
+    for (final message in chronological.skip(start)) {
+      if (!isRealUserTurn(message)) continue;
+      newUsers++;
+      final content = stripBotMentionNote(
+        (message['content'] ?? '').toString(),
+      ).trim();
+      if (candidates.contains(content)) matching++;
+    }
+    if (newUsers == 0) return AmbiguousRetryEvidence.notDelivered;
+    if (newUsers == 1 && matching == 1) {
+      return AmbiguousRetryEvidence.delivered;
+    }
+    return AmbiguousRetryEvidence.unknown;
+  }
+
   /// Resuelve una entrega ambigua únicamente mediante el contrato negociado.
   /// `known:false`, capability ausente o cualquier violación dejan el turno
   /// ambiguo; este método nunca llama submit ni cambia de transporte.
@@ -14770,12 +15393,28 @@ class ActiveChat {
           _createdDraftSessionId ??= binding.storedSessionId;
         }
         if (binding.created) {
+          // A5: la clave creada tiene que sobrevivir a process death ANTES de
+          // prompt.submit; sin ella un 404 del id provisional no prueba nada.
+          final createdKey = binding.storedSessionId;
+          final creatingDelivery = _activeTurnDelivery;
+          if (createdKey.isNotEmpty && creatingDelivery != null) {
+            await creatingDelivery.recordCreatedSession(createdKey);
+          }
           _stagedFirstSubmitConfig = const DesktopSessionCreateConfig();
           if (_activeTurnTranscriptBoundaryEpoch == turnEpoch &&
               _activeTurnTranscriptBoundaryIdentity == null &&
               !history.any(isRealUserTurn)) {
             // Creation with no seeded user proves this turn owns the first row.
             _activeTurnStartedFromKnownMissing = true;
+            // The boundary was captured against the provisional draft id. The
+            // created durable session is that same draft, so re-scope the
+            // boundary; otherwise the scope check fails once serverSessionId
+            // switches and the live first pair is never settled against its
+            // durable rows (QA 9340: duplicated first turn).
+            if (_activeTurnTranscriptBoundarySessionId == draftSource &&
+                binding.storedSessionId.isNotEmpty) {
+              _activeTurnTranscriptBoundarySessionId = binding.storedSessionId;
+            }
           }
         }
         _desktopStoredSessionId = binding.storedSessionId;
@@ -17557,6 +18196,7 @@ class ActiveChat {
       _desktopCompactedEdgeCount += 1;
       _settleLiveCompressionFromStatus();
       _clearDesktopCompactingIndicator();
+      _clearCompactionHydrationSuppression();
       _emit(ActiveChatEvent.sessionInfo);
       return;
     }
@@ -17564,6 +18204,7 @@ class ActiveChat {
       // `ready` es la señal de reposo del gateway: ninguna compactación sigue.
       _settleLiveCompressionFromStatus();
       _clearDesktopCompactingIndicator();
+      _clearCompactionHydrationSuppression();
       return;
     }
     if (kind == 'compressing') {
@@ -17594,6 +18235,7 @@ class ActiveChat {
     _armAutoCompactionStaleTimer();
     _noteDesktopCompactionChunks(payload);
     _suppressTerminalHydrationAfterCompaction = true;
+    _compactionSuppressedTurnEpoch = _turnEpoch;
     // Cualquier snapshot iniciado antes del evento ya es potencialmente
     // obsoleto y no puede reemplazar la proyección viva.
     _messageLoadEpoch += 1;
@@ -17665,6 +18307,23 @@ class ActiveChat {
       if (_disposed) return;
       _clearDesktopCompactingIndicator();
     });
+  }
+
+  /// `compacted`/`ready`: Hermes Desktop borra la sesión de
+  /// `compactedTurnRef` y, si está activa y ociosa, hidrata UNA vez desde el
+  /// almacén (gateway-event/status.ts:45-61). Mid-turn, el terminal del turno
+  /// decide.
+  void _clearCompactionHydrationSuppression() {
+    final wasSuppressed = _suppressTerminalHydrationAfterCompaction;
+    _suppressTerminalHydrationAfterCompaction = false;
+    _compactionSuppressedTurnEpoch = null;
+    if (!wasSuppressed || isStreaming || _disposed) return;
+    unawaited(
+      loadMessages(
+        profile: _storedSessionProfile,
+        passiveOnly: true,
+      ).catchError((_) {}),
+    );
   }
 
   void _clearDesktopCompactingIndicator() {
@@ -17871,7 +18530,11 @@ class ActiveChat {
       messagesNewestFirst: _messages,
     );
     final historicalChanged = !identical(historicalMessages, _messages);
-    if (historicalChanged) _messages = historicalMessages;
+    // La proyección devuelve una lista inmutable; `_messages` se muta en sitio
+    // (p. ej. el placeholder de un turno externo posterior).
+    if (historicalChanged) {
+      _messages = List<Map<String, dynamic>>.of(historicalMessages);
+    }
 
     if (_messages.isEmpty) {
       if (historicalChanged) {
@@ -18615,8 +19278,7 @@ class ActiveChat {
         _messages.first['_desktopReplaceInterimOnDelta'] != true) {
       return;
     }
-    final preserve =
-        _messages.first['_desktopPreserveInterimOnDelta'] == true;
+    final preserve = _messages.first['_desktopPreserveInterimOnDelta'] == true;
     final current = (_messages.first['content'] as String?) ?? '';
     // Desktop sella el interim como burbuja propia y las herramientas no lo
     // retiran: el texto posterior se acumula detrás, nunca lo sustituye.
@@ -21317,7 +21979,7 @@ class ActiveChat {
   }) {
     if (!_isCurrentEpoch(completingEpoch) ||
         messageLoadEpoch != _messageLoadEpoch ||
-        _suppressTerminalHydrationAfterCompaction) {
+        _compactionSuppressesTerminalHydration(completingEpoch)) {
       return false;
     }
     final expectedUsers = _messages.where(isRealUserTurn).length;
@@ -21334,7 +21996,10 @@ class ActiveChat {
     _captureArtifactMaps(transcript, logicalSessionId: logicalSessionId);
     final fencedTranscript = _carryNewestTerminalFence(
       _messages,
-      _normalizedNewestFirst(transcript),
+      _carryDurableEditorialDisplayMetadata(
+        _normalizedNewestFirst(transcript),
+        _messages,
+      ),
       candidateTranscriptComplete: true,
     );
     _messages = _applyCancelledTurnTombstonesForDisplay(
@@ -21345,8 +22010,122 @@ class ActiveChat {
     _mergeSteerRecords();
     _reconcileSubagentsFromTranscript();
     gate.transcriptApplied = true;
+    unawaited(_hydrateEditorialDisplayMetadataFromDurableHistory());
     return true;
   }
+
+  /// Hermes Desktop renderiza `async_delegation_complete` desde el
+  /// `display_metadata` DURABLE que devuelve su hidratación del almacén
+  /// (`hydrateStoredSessionTranscript` → `/api/sessions/{id}/messages`,
+  /// hydration.ts:223/340). El REST 8642 que usa el terminal de Console
+  /// (`_message_response`, api_server.py:2784) no incluye esa columna, así
+  /// que tras adoptar un transcript con filas editoriales sin metadata se lee
+  /// una vez el historial durable del runtime (`session.history`, que sí la
+  /// proyecta) y se mejora la fila por identidad exacta, nunca por texto.
+  Future<void> _hydrateEditorialDisplayMetadataFromDurableHistory() async {
+    final gateway = _desktopGateway;
+    final runtime = _desktopRuntimeSessionId;
+    if (_disposed ||
+        gateway == null ||
+        gateway is! HermesDesktopSessionHistoryGateway ||
+        !gateway.isConnected ||
+        runtime == null) {
+      return;
+    }
+    final storedSessionId = serverSessionId;
+    final profile = _storedSessionProfile;
+    // Cada fila editorial sin metadata dispara como mucho UNA lectura de
+    // `session.history` por sesión/perfil: si el almacén tampoco la tiene
+    // (filas legadas, process_complete sin metadata) no se repite en cada
+    // terminal. La lectura devuelve el transcript completo con ancestros.
+    final pending = <String>[];
+    for (final message in _messages) {
+      if (!_editorialRowLacksDisplayMetadata(message)) continue;
+      final identity = _transcriptMessageIdentity(message);
+      if (identity == null) continue;
+      final key = _editorialMetadataAttemptKey(
+        storedSessionId,
+        profile,
+        identity,
+      );
+      if (!_editorialMetadataHydrationAttempts.contains(key)) {
+        pending.add(key);
+      }
+    }
+    if (pending.isEmpty) return;
+    for (final key in pending) {
+      _editorialMetadataHydrationAttempts.add(key);
+    }
+    while (_editorialMetadataHydrationAttempts.length >
+        _maxEditorialMetadataHydrationAttempts) {
+      _editorialMetadataHydrationAttempts.remove(
+        _editorialMetadataHydrationAttempts.first,
+      );
+    }
+    _editorialMetadataHydrationReads += 1;
+    final SessionMessagesPage page;
+    try {
+      page = await (gateway as HermesDesktopSessionHistoryGateway)
+          .sessionHistory(sessionId: runtime, profile: profile);
+    } catch (error) {
+      // Solo un fallo de transporte (conexión perdida/timeout) deja la
+      // lectura sin completar: se retira la marca y el siguiente terminal
+      // reintenta. Un error RPC del servidor (-32601, formato, permisos) es
+      // permanente y consume el intento, para no releer en cada refresco.
+      if (error is TimeoutException ||
+          (error is TuiGatewayRpcError && error.failureKind != null)) {
+        pending.forEach(_editorialMetadataHydrationAttempts.remove);
+      }
+      return;
+    }
+    // Sin valla por `_messageLoadEpoch`: la pantalla lanza un refresco REST
+    // pasivo en cada `done` que invalidaba esta lectura (el RPC tarda más)
+    // y dejaba la tarjeta en "estado desconocido" hasta el siguiente turno.
+    // La mejora solo añade metadata a la fila ACTUAL con la misma identidad
+    // durable y display_kind, así que no puede publicar un estado obsoleto.
+    if (_disposed ||
+        storedSessionId != serverSessionId ||
+        profile != _storedSessionProfile ||
+        runtime != _desktopRuntimeSessionId ||
+        !page.messagesFullyParsed) {
+      return;
+    }
+    final upgraded = _carryDurableEditorialDisplayMetadata(
+      _messages,
+      _normalizedNewestFirst(page.messages),
+    );
+    if (identical(upgraded, _messages)) return;
+    _messages = upgraded;
+    _reconcileSubagentsFromTranscript();
+    _emit(ActiveChatEvent.messagesHydrated);
+  }
+
+  static bool _editorialRowLacksDisplayMetadata(Map<String, dynamic> message) {
+    final kind = message['display_kind'];
+    return message['role'] == 'user' &&
+        (kind == 'async_delegation_complete' || kind == 'process_complete') &&
+        !_editorialDisplayMetadataPresent(message);
+  }
+
+  static String _editorialMetadataAttemptKey(
+    String storedSessionId,
+    String profile,
+    TranscriptMessageIdentity identity,
+  ) => jsonEncode([
+    storedSessionId,
+    profile,
+    identity.messageId,
+    identity.rowId,
+  ]);
+
+  static const _maxEditorialMetadataHydrationAttempts = 256;
+  final LinkedHashSet<String> _editorialMetadataHydrationAttempts =
+      LinkedHashSet<String>();
+  int _editorialMetadataHydrationReads = 0;
+
+  @visibleForTesting
+  int get editorialMetadataHydrationReadsForTesting =>
+      _editorialMetadataHydrationReads;
 
   /// Cierre exitoso del turno: fija el texto final, refresca el historial real
   /// (con sus tool events para agrupar) y notifica si procede.
@@ -21797,7 +22576,7 @@ class ActiveChat {
         socketGeneration == _desktopTerminalTransportGeneration &&
         identical(producerChannel, _desktopTerminalProducerChannel);
     if (!stillCurrent()) return false;
-    if (_suppressTerminalHydrationAfterCompaction) {
+    if (_compactionSuppressesTerminalHydration(completingEpoch)) {
       // Tras una compactación el stream/snapshot de Desktop es la fuente viva.
       // El endpoint REST puede seguir apuntando al tip anterior durante unos
       // instantes y no debe borrar la conversación recién rotada.
@@ -21997,10 +22776,12 @@ class ActiveChat {
     final liveAssistant = _messages[0];
     final processComplete = _messages[1];
     if (liveAssistant['role'] != 'assistant' ||
-        _hasDurableTranscriptIdentity(liveAssistant) ||
-        processComplete['display_kind'] != 'process_complete' ||
-        !transcriptIdentityAliasesAreConsistent(processComplete)) {
+        _hasDurableTranscriptIdentity(liveAssistant)) {
       return false;
+    }
+    if (processComplete['display_kind'] != 'process_complete' ||
+        !transcriptIdentityAliasesAreConsistent(processComplete)) {
+      return _completedRuntimeEventTurnCoversLiveAssistant(chronological);
     }
     final anchor = _transcriptMessageIdentity(processComplete);
     if (anchor == null) return false;
@@ -22014,6 +22795,63 @@ class ActiveChat {
     if (resolved.kind != _TranscriptIdentityResolutionKind.unique) return false;
     return newestFirst
         .take(resolved.index)
+        .any(
+          (message) =>
+              message['role'] == 'assistant' &&
+              _hasDurableTranscriptIdentity(message) &&
+              (message['content'] ?? '').toString().trim().isNotEmpty,
+        );
+  }
+
+  /// Un turno sintético del runtime (fin de delegación async o de proceso)
+  /// arranca con `message.start` sin eco del usuario: la fila editorial
+  /// `role=user` solo existe en el transcript durable. Tras la última fila
+  /// durable visible (ancla por identidad) debe haber exactamente una fila
+  /// editorial de ese tipo, ningún turno real de usuario y un assistant
+  /// durable con texto posterior a ella. Sin esa prueba el terminal vivo nunca
+  /// adoptaba el transcript y la tarjeta de subagentes faltaba hasta un cold
+  /// reload (QA 9341).
+  bool _completedRuntimeEventTurnCoversLiveAssistant(
+    List<Map<String, dynamic>> chronological,
+  ) {
+    Map<String, dynamic>? anchorMessage;
+    for (final message in _messages.skip(1)) {
+      if (_isLiveTranscriptProjection(message)) return false;
+      anchorMessage = message;
+      break;
+    }
+    if (anchorMessage == null ||
+        !transcriptIdentityAliasesAreConsistent(anchorMessage)) {
+      return false;
+    }
+    final anchor = _transcriptMessageIdentity(anchorMessage);
+    if (anchor == null) return false;
+    final newestFirst = chronological.reversed.toList(growable: false);
+    final resolved = _resolveTranscriptIdentity(
+      newestFirst,
+      messageId: anchor.messageId,
+      rowId: anchor.rowId,
+      accepts: (message) => message['role'] == anchorMessage!['role'],
+    );
+    if (resolved.kind != _TranscriptIdentityResolutionKind.unique) return false;
+    final successors = newestFirst.take(resolved.index).toList(growable: false);
+    var editorialIndex = -1;
+    for (var index = 0; index < successors.length; index++) {
+      final message = successors[index];
+      if (isRealUserTurn(message)) return false;
+      if (message['role'] != 'user') continue;
+      final kind = effectiveUserDisplayKind(message);
+      if (kind != 'async_delegation_complete' && kind != 'process_complete') {
+        return false;
+      }
+      if (editorialIndex >= 0 || !_hasDurableTranscriptIdentity(message)) {
+        return false;
+      }
+      editorialIndex = index;
+    }
+    if (editorialIndex < 0) return false;
+    return successors
+        .take(editorialIndex)
         .any(
           (message) =>
               message['role'] == 'assistant' &&
@@ -22112,6 +22950,9 @@ class ActiveChat {
     _finalizeAcceptedTurnDelivery();
     traceActive = false;
     _cancelling = false;
+    // Identidad privada del intento (nunca se publica): el retry de la
+    // burbuja resuelve su outbox por clientTurnId, no por texto.
+    final failedClientTurnId = _activeTurnDelivery?.current.clientTurnId;
     if (!hasPartial &&
         _messages.isNotEmpty &&
         _messages[0]['role'] == 'assistant') {
@@ -22123,6 +22964,7 @@ class ActiveChat {
         '_prompt': lastPrompt,
         ...failureMetadata,
         '_localTranscriptProjectionId': projectionId,
+        '_clientTurnId': ?failedClientTurnId,
       };
     } else if (hasPartial &&
         _messages.isNotEmpty &&
@@ -22141,6 +22983,7 @@ class ActiveChat {
         '_prompt': lastPrompt,
         ...failureMetadata,
         '_localTranscriptProjectionId': projectionId,
+        '_clientTurnId': ?failedClientTurnId,
       });
     }
     // Avisa del problema si la app está en 2º plano (no molesta en primer plano).
@@ -22356,13 +23199,32 @@ class ActiveChat {
     int turnEpoch, {
     bool allowExistingTranscript = true,
   }) {
+    final priorScopeCurrent =
+        _activeTurnTranscriptBoundarySessionId == serverSessionId &&
+        _activeTurnTranscriptBoundaryProfile == _storedSessionProfile;
+    final priorChainIdentity = priorScopeCurrent
+        ? (_activeTurnFenceChainBoundaryIdentity ??
+              _activeTurnTranscriptBoundaryIdentity)
+        : null;
+    final priorChainKnownMissing =
+        priorScopeCurrent &&
+        priorChainIdentity == null &&
+        (_activeTurnFenceChainStartedFromKnownMissing ||
+            _activeTurnStartedFromKnownMissing);
     _passiveTurnBoundaryFresh = false;
     _activeTurnTranscriptBoundaryEpoch = turnEpoch;
     _activeTurnStartedFromKnownMissing = false;
     _activeTurnTranscriptBoundaryIdentity = null;
     _activeTurnTranscriptBoundarySessionId = serverSessionId;
     _activeTurnTranscriptBoundaryProfile = _storedSessionProfile;
+    _activeTurnFenceChainBoundaryIdentity = null;
+    _activeTurnFenceChainStartedFromKnownMissing = false;
+    _activeTurnFenceChainProjectionIds = const [];
     if (!allowExistingTranscript) return;
+    _captureFenceChainBoundary(
+      priorChainIdentity: priorChainIdentity,
+      priorChainKnownMissing: priorChainKnownMissing,
+    );
     for (final message in _messages) {
       if (!isRealUserTurn(message)) continue;
       // El primer user visible ES la frontera. Si aún es una proyección local
@@ -22396,6 +23258,161 @@ class ActiveChat {
       _activeTurnTranscriptBoundaryEpoch == _turnEpoch &&
       _activeTurnTranscriptBoundarySessionId == serverSessionId &&
       _activeTurnTranscriptBoundaryProfile == _storedSessionProfile;
+
+  /// Los users visibles más recientes que son proyecciones de turnos de este
+  /// cliente aún no reconciliados (vallas terminales sin identidad) heredan la
+  /// frontera con la que se enviaron: la del turno anterior de la cadena. Solo
+  /// se hereda si esa frontera sigue siendo el primer user durable visible (o
+  /// no hay ninguno y la cadena empezó con la sesión inexistente). Cualquier
+  /// otra forma (queued, proyección sin valla, alias inconsistente) deja la
+  /// cadena sin frontera y el binding falla cerrado.
+  void _captureFenceChainBoundary({
+    required TranscriptMessageIdentity? priorChainIdentity,
+    required bool priorChainKnownMissing,
+  }) {
+    if (priorChainIdentity == null && !priorChainKnownMissing) return;
+    final chain = <String>[];
+    for (final message in _messages) {
+      if (!isRealUserTurn(message)) continue;
+      if (_isLiveTranscriptProjection(message)) {
+        final projectionId = message[_terminalProjectionIdKey];
+        if (projectionId is! String ||
+            message['_desktopAcceptedQueued'] == true ||
+            _hasDurableTranscriptIdentity(message)) {
+          return;
+        }
+        chain.add(projectionId);
+        continue;
+      }
+      if (chain.isEmpty || priorChainIdentity == null) return;
+      if (!transcriptIdentityAliasesAreConsistent(message)) return;
+      final identity = _transcriptMessageIdentity(message);
+      if (identity == null ||
+          !priorChainIdentity.matches(identity) ||
+          _uniqueTranscriptIdentityMatch(identity, _messages) == null) {
+        return;
+      }
+      _activeTurnFenceChainBoundaryIdentity = priorChainIdentity;
+      _activeTurnFenceChainProjectionIds = List.unmodifiable(chain.reversed);
+      return;
+    }
+    if (chain.isEmpty || !priorChainKnownMissing) return;
+    _activeTurnFenceChainStartedFromKnownMissing = true;
+    _activeTurnFenceChainProjectionIds = List.unmodifiable(chain.reversed);
+  }
+
+  /// Generalización de [_bindKnownMissingFirstTurnFence] a cualquier turno
+  /// con frontera de cadena conocida: los turnos locales sin reconciliar de la
+  /// cadena más el actual (N users live, del más antiguo al más nuevo) se atan
+  /// por posición a los N users durables posteriores a la frontera en el tail
+  /// refrescado, solo si hay exactamente N y cada par coincide en contenido
+  /// (el texto confirma, nunca identifica). Después decide la evidencia
+  /// terminal habitual. Si algo no cuadra devuelve las vallas intactas.
+  List<_TerminalProjectionFence> _bindFenceChain(
+    List<_TerminalProjectionFence> fences,
+    List<Map<String, dynamic>> previous,
+    List<Map<String, dynamic>> refreshedNewestFirst, {
+    required bool refreshedTranscriptComplete,
+  }) {
+    final chainIdentity = _activeTurnFenceChainBoundaryIdentity;
+    if (_activeTurnFenceChainProjectionIds.isEmpty ||
+        (chainIdentity == null &&
+            !_activeTurnFenceChainStartedFromKnownMissing) ||
+        !_activeTurnTranscriptBoundaryScopeIsCurrent()) {
+      return fences;
+    }
+    // Users live (más antiguo primero): cadena heredada + turno actual.
+    final liveUsers = <Map<String, dynamic>>[];
+    Map<String, dynamic>? durableAfterLive;
+    for (final message in previous) {
+      if (!isRealUserTurn(message)) continue;
+      if (!_isLiveTranscriptProjection(message)) {
+        durableAfterLive = message;
+        break;
+      }
+      liveUsers.add(message);
+    }
+    final liveOldestFirst = liveUsers.reversed.toList(growable: false);
+    final liveIds = [
+      for (final message in liveOldestFirst) message[_terminalProjectionIdKey],
+    ];
+    final chainIds = _activeTurnFenceChainProjectionIds;
+    if (liveIds.length != chainIds.length + 1 ||
+        liveIds.any((id) => id is! String)) {
+      return fences;
+    }
+    for (var index = 0; index < chainIds.length; index++) {
+      if (liveIds[index] != chainIds[index]) return fences;
+    }
+    if (chainIdentity != null) {
+      final identity = durableAfterLive == null
+          ? null
+          : _transcriptMessageIdentity(durableAfterLive);
+      if (identity == null || !chainIdentity.matches(identity)) return fences;
+    } else if (durableAfterLive != null) {
+      return fences;
+    }
+    var boundaryExclusive = refreshedNewestFirst.length;
+    if (chainIdentity != null) {
+      final unique = _uniqueTranscriptIdentityMatch(
+        chainIdentity,
+        refreshedNewestFirst,
+      );
+      if (unique == null) return fences;
+      boundaryExclusive = refreshedNewestFirst.indexWhere((row) {
+        final identity = transcriptIdentityAliasesAreConsistent(row)
+            ? _transcriptMessageIdentity(row)
+            : null;
+        return identity != null && identity.matches(unique);
+      });
+      if (boundaryExclusive < 0) return fences;
+    }
+    final durableOldestFirst = <Map<String, dynamic>>[];
+    for (var index = boundaryExclusive - 1; index >= 0; index--) {
+      final row = refreshedNewestFirst[index];
+      if (!isRealUserTurn(row)) continue;
+      if (_isLiveTranscriptProjection(row) ||
+          !transcriptIdentityAliasesAreConsistent(row) ||
+          (canonicalTranscriptMessageId(row) == null &&
+              canonicalTranscriptRowId(row) == null)) {
+        return fences;
+      }
+      durableOldestFirst.add(row);
+    }
+    if (durableOldestFirst.length != liveOldestFirst.length) return fences;
+    final bound = <String, _TerminalProjectionFence>{};
+    for (var index = 0; index < liveOldestFirst.length; index++) {
+      final live = liveOldestFirst[index];
+      final durable = durableOldestFirst[index];
+      if (durable['content']?.toString().trim() !=
+          live['content']?.toString().trim()) {
+        return fences;
+      }
+      final projectionId = liveIds[index] as String;
+      final fence = fences
+          .where((candidate) => candidate.projectionId == projectionId)
+          .firstOrNull;
+      if (fence == null) continue;
+      if (fence.userMessageId != null ||
+          fence.userRowId != null ||
+          fence.anchorMessageId != null ||
+          fence.anchorRowId != null) {
+        return fences;
+      }
+      bound[projectionId] = _TerminalProjectionFence(
+        projectionId: projectionId,
+        userMessageId: canonicalTranscriptMessageId(durable),
+        userRowId: canonicalTranscriptRowId(durable),
+        anchorMessageId: null,
+        anchorRowId: null,
+        ordinalAfterAnchor: null,
+        absoluteUserOrdinal: null,
+        localAssistantText: fence.localAssistantText,
+      );
+    }
+    if (bound.isEmpty) return fences;
+    return [for (final fence in fences) bound[fence.projectionId] ?? fence];
+  }
 
   /// Una identidad que no estaba visible antes del submit todavía puede ser
   /// un predecessor acreditado si una página completa la enlaza de forma
@@ -22833,9 +23850,8 @@ class ActiveChat {
         const {4001, 4009, 5032}.contains(error.code);
   }
 
-  Duration _remainingStopBudget(_StopTransitionCoordinator stop) => Duration(
-    milliseconds: math.max(0, stop.deadlineMs - _wallClockMs()),
-  );
+  Duration _remainingStopBudget(_StopTransitionCoordinator stop) =>
+      Duration(milliseconds: math.max(0, stop.deadlineMs - _wallClockMs()));
 
   Future<T?> _stopOperationBeforeDeadline<T>(
     _StopTransitionCoordinator stop,
@@ -22850,7 +23866,9 @@ class ActiveChat {
         : _desktopRecoveryAttemptTimeout;
     final deadline = Completer<T?>();
     final timer = Timer(timeout, () {
-      deadline.completeError(TimeoutException('Stop operation timed out', timeout));
+      deadline.completeError(
+        TimeoutException('Stop operation timed out', timeout),
+      );
     });
     try {
       return await Future.any<T?>([
@@ -23570,6 +24588,59 @@ class ActiveChat {
           expectedUsers,
         );
 
+    // Ordinary resume/invalidation is a viewport refresh, not terminal
+    // recovery. Reuse the opening page/coverage reducer so a long idle chat
+    // does not download and project its entire history on every event. Keep
+    // the complete-transcript path below for incomplete/error projections.
+    if (messagesLoaded &&
+        connection.kind != InstanceKind.localhost &&
+        !replacesIncompleteProjection &&
+        !endsInToolInvocationWithoutFinal) {
+      final previousMessages = List<Map<String, dynamic>>.of(_messages);
+      final refreshEpoch = _messageLoadEpoch + 1;
+      final storedId = serverSessionId;
+      // A prehydrated chat may not have bound its default owner yet. Bind it
+      // before capturing authority, as loadMessages would do synchronously.
+      final profile = _bindSessionProfile(_storedSessionProfile);
+      final turnEpoch = _turnEpoch;
+      final bindEpoch = _desktopBindEpoch;
+      final sessionEpoch = _desktopSessionEpoch;
+      final socketGeneration = _desktopTerminalTransportGeneration;
+      final producerChannel = _desktopTerminalProducerChannel;
+      bool stillCurrent() =>
+          !_disposed &&
+          refreshEpoch == _messageLoadEpoch &&
+          storedId == serverSessionId &&
+          profile == _storedSessionProfile &&
+          turnEpoch == _turnEpoch &&
+          bindEpoch == _desktopBindEpoch &&
+          sessionEpoch == _desktopSessionEpoch &&
+          socketGeneration == _desktopTerminalTransportGeneration &&
+          identical(producerChannel, _desktopTerminalProducerChannel) &&
+          !isStreaming;
+      try {
+        await loadMessages(
+          profile: profile,
+          passiveOnly: true,
+          // Durable invalidation is not evidence that a remote turn is busy.
+          observePassiveActivity: false,
+          stillCurrentRead: stillCurrent,
+        );
+        if (!stillCurrent()) return false;
+        final changed = !_sameTranscriptProjection(previousMessages, _messages);
+        // Coverage can change without changing bubbles (e.g. a final legacy
+        // page retires the cursor). Publish that change as the old path did.
+        _emit(ActiveChatEvent.messagesHydrated);
+        return changed;
+      } catch (error) {
+        debugPrint(
+          '[active-chat] resume reconciliation unavailable '
+          '(${error.runtimeType})',
+        );
+        return false;
+      }
+    }
+
     // Cerrar/reabrir durante una herramienta puede dejar la proyección local
     // terminada en `tool` justo antes de que Hermes publique el assistant
     // final. Una lectura REST aislada solo ve ese corte y no vuelve a enlazar
@@ -23866,6 +24937,7 @@ class ActiveChat {
     _restoredCompressionProbeTimer = null;
     _disposed = true;
     _messageLoadEpoch++;
+    _storedMessagesRestFlights.clear();
     final stop = _stopTransition;
     if (stop != null && !stop.isFinal) {
       stop.state = _StopTransitionState.superseded;

@@ -516,6 +516,7 @@
   "chaErrLocalColdStart": "Local model loading",
   "chaErrFirstTokenTimeout": "Model not responding",
   "chaErrSearchToolUnavailable": "Web search not configured",
+  "chaErrSessionTooLarge": "Session too large",
   "chaErrUnknown": "Error",
   "chaErrHintConnection": "Check the instance, network or Tailscale and try again.",
   "chaErrHintModel": "Check the key/credentials or the active model.",
@@ -523,6 +524,7 @@
   "chaErrHintLocalColdStart": "The local model hasn't produced its first token yet. Wait a few seconds or switch to a lighter model.",
   "chaErrHintFirstTokenTimeout": "The server connected but didn't start generating within 90 s. The model may be loading or the server is overloaded. Try again in a moment.",
   "chaErrHintSearchToolUnavailable": "This provider/model doesn't have an active web search tool, so it can't look up current news or real-time information. Configure a search tool in the gateway settings.",
+  "chaErrHintSessionTooLarge": "This conversation no longer fits the model’s context window and can’t be compacted further. Continue in a new session; this one stays saved for reference.",
   "chaCopied": "Copied",
   "chaSelectText": "Select text",
   "chaBackgroundWorkTitle": "Background work",
@@ -630,6 +632,7 @@
   "genMediaIncomplete": "The file download was incomplete",
   "genMediaOffline": "Offline — reconnect to load this file",
   "genMediaLoad": "Load generated media",
+  "genMediaHtmlPreview": "HTML preview",
   "genMediaLoadFrom": "Load generated media from {domain}",
   "genMediaTextSummary": "{lineCount, plural, =1{1 line} other{{lineCount} lines}} · {size}",
   "@genMediaTextSummary": {

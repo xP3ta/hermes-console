@@ -232,4 +232,35 @@ void main() {
     expect(find.byType(HermesBotFace), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'an uploaded avatar decodes with one bound so it is not squashed',
+    (tester) async {
+      final cache = MissionProfileAvatarCache(loader: (_) async => _avatar());
+      await cache.load('manager');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.fromId('dark'),
+          home: Scaffold(
+            body: MissionProfileAvatar(
+              profileName: 'manager',
+              hasAvatar: true,
+              cache: cache,
+              size: 40,
+            ),
+          ),
+        ),
+      );
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.fit, BoxFit.cover);
+      final provider = image.image;
+      expect(provider, isA<ResizeImage>());
+      final resize = provider as ResizeImage;
+      // cacheWidth+cacheHeight together resize without keeping the aspect
+      // ratio; a non-square upload is distorted before `cover` crops it.
+      expect(resize.width == null || resize.height == null, isTrue);
+      expect(resize.width ?? resize.height, 120);
+    },
+  );
 }
