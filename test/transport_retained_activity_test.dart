@@ -667,6 +667,63 @@ void main() {
     },
   );
 
+  test(
+    'P2-1 una compactación que clona la cola con ids nuevos no liquida lo '
+    'conservado',
+    () async {
+      final server = _PagedTranscriptServer()
+        ..rows.addAll([
+          for (var id = 1; id <= 10; id++)
+            _row(id, kind: id == 8 ? 'process_complete' : null),
+        ]);
+      final gateway = _RetainingGateway()..processes = const [_runningProcess];
+      final chat = _chat(gateway, httpClient: server.client());
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true);
+      expect(chat.desktopRuntimeSessionId, _runtimeId);
+      await chat.refreshBackgroundProcessesForTesting();
+      gateway.reaped = true;
+      gateway.drop();
+      await _waitUntil(() => gateway.rosterResumeCalls >= 1);
+      expect(chat.backgroundProcesses, hasLength(1));
+
+      // Hermes compacts during the cut: `_clone_message_rows` re-inserts the
+      // protected tail (rows 7..10, including the completion row already seen
+      // when retaining) with NEW, higher SQLite ids but the ORIGINAL
+      // timestamps, and the display read prefers the newest copy.
+      final tail = [
+        for (var id = 7; id <= 10; id++)
+          {
+            ..._row(id, kind: id == 8 ? 'process_complete' : null),
+            'id': id + 40,
+            'message_id': 'msg-${id + 40}',
+          },
+      ];
+      server.rows
+        ..removeRange(6, 10)
+        ..addAll(tail);
+      await chat.loadMessages();
+      expect(
+        chat.messages.any(
+          (m) => m['display_kind'] == 'process_complete' && m['id'] == 48,
+        ),
+        isTrue,
+      );
+      expect(
+        chat.backgroundProcesses.map((p) => p.id),
+        ['proc-build'],
+        reason: 'a compaction clone is not a new completion',
+      );
+      expect(chat.sessionActivity.stale, isTrue);
+
+      // A genuinely later completion (newer id AND newer timestamp) settles.
+      server.rows.add(_row(60, kind: 'process_complete'));
+      await chat.loadMessages();
+      expect(chat.backgroundProcesses, isEmpty);
+    },
+  );
+
   test('P2-4 conservar algo nuevo rearma el tope de edad', () async {
     const maxAge = Duration(milliseconds: 1000);
     final gateway = _RetainingGateway()

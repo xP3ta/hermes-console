@@ -4832,19 +4832,24 @@ class ActiveChat {
   }
 
   /// Una fila durable es posterior a la conservación solo si lo prueba su
-  /// coordenada ordenable: `row_id` SQLite o, sin él, el `timestamp`. Sin marca
-  /// comparable falla cerrado (lo liquidan el fence o el tope de edad).
+  /// `timestamp`. El `row_id` no ordena por sí solo: al compactar, Hermes clona
+  /// la cola protegida con ids nuevos y el `timestamp` original, así que una
+  /// finalización ya vista vuelve con un id mayor. Con ambas coordenadas se
+  /// exigen las dos; con solo el id falla cerrado. Sin marca comparable, lo
+  /// liquidan el fence o el tope de edad.
   bool _durableRowNewerThanRetainedWatermark(Map<String, dynamic> message) {
     final identity = _transcriptMessageIdentity(message);
     if (identity == null || !identity.isDurable) return false;
-    final rowId = identity.rowId;
-    final rowWatermark = _retainedActivityRowWatermark;
-    if (rowId != null && rowWatermark != null) return rowId > rowWatermark;
     final timestamp = _durableRowTimestamp(message);
     final timestampWatermark = _retainedActivityTimestampWatermark;
-    return timestamp != null &&
-        timestampWatermark != null &&
-        timestamp > timestampWatermark;
+    if (timestamp == null ||
+        timestampWatermark == null ||
+        timestamp <= timestampWatermark) {
+      return false;
+    }
+    final rowId = identity.rowId;
+    final rowWatermark = _retainedActivityRowWatermark;
+    return rowId == null || rowWatermark == null || rowId > rowWatermark;
   }
 
   /// (Re)arma el tope de edad. Se llama cada vez que se conserva algo nuevo:
