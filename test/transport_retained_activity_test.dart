@@ -6,6 +6,8 @@
 // siguen limpiando.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
@@ -211,6 +213,8 @@ ActiveChat _chat(
   _RetainingGateway gateway, {
   StoredSessionMessageLoader? storedMessageLoader,
   Duration retainedActivityMaxAge = const Duration(minutes: 10),
+  http.Client? httpClient,
+  int transcriptPageSizeForTesting = 500,
 }) => ActiveChat(
   compressionRestoreStore: testCompressionRestoreStore(),
   connection: SavedConnection(
@@ -230,8 +234,10 @@ ActiveChat _chat(
   api: ApiClient(
     baseUrl: 'http://127.0.0.1:1',
     apiKey: 'test-key',
-    httpClient: MockClient((_) async => http.Response('not found', 404)),
+    httpClient:
+        httpClient ?? MockClient((_) async => http.Response('not found', 404)),
   ),
+  transcriptPageSizeForTesting: transcriptPageSizeForTesting,
   desktopGateway: gateway,
   attachDesktopRuntimeOnLoad: true,
   allowUnownedDesktopSnapshotForTesting: true,
@@ -239,6 +245,52 @@ ActiveChat _chat(
   desktopRecoveryBackoff: const [Duration.zero],
   retainedActivityMaxAge: retainedActivityMaxAge,
 );
+
+/// `/api/sessions/{id}/messages` con la semántica `order=latest` de Hermes
+/// (hermes_cli/web_routers/sessions.py): `offset` cuenta hacia atrás desde el
+/// mensaje más reciente, la página llega en orden cronológico y cada fila
+/// lleva su `id` SQLite y su `timestamp`.
+class _PagedTranscriptServer {
+  final List<Map<String, dynamic>> rows = [];
+  final List<Uri> requests = [];
+
+  http.Client client() => MockClient((request) async {
+    requests.add(request.url);
+    final limit = int.parse(request.url.queryParameters['limit'] ?? '120');
+    final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
+    final end = math.max(0, rows.length - offset);
+    final start = math.max(0, end - limit);
+    final page = rows.sublist(start, end);
+    return http.Response(
+      jsonEncode({
+        'object': 'list',
+        'session_id': _storedId,
+        'data': page,
+        'pagination': {
+          'limit': limit,
+          'offset': offset,
+          'order': 'latest',
+          'returned': page.length,
+        },
+      }),
+      200,
+      headers: {'content-type': 'application/json'},
+    );
+  });
+}
+
+Map<String, dynamic> _row(int id, {String? kind}) => {
+  'id': id,
+  'message_id': 'msg-$id',
+  'role': kind != null || id.isOdd ? 'user' : 'assistant',
+  'content': kind == 'process_complete'
+      ? '[IMPORTANT: Background process proc_old$id exited (exit code 0).]'
+      : 'msg $id',
+  'timestamp': 1000.0 + id,
+  'display_kind': ?kind,
+  if (kind == 'process_complete')
+    'display_metadata': {'display_text': 'old build $id finished'},
+};
 
 Future<void> _waitUntil(bool Function() predicate) async {
   final deadline = DateTime.now().add(const Duration(seconds: 2));
@@ -330,20 +382,45 @@ void main() {
     },
   );
 
-  test('F1 Stop sí limpia lo conservado tras un corte', () async {
-    final gateway = _RetainingGateway()..processes = const [_runningProcess];
-    final chat = await _boundWithLiveWork(gateway);
-    addTearDown(chat.dispose);
-    gateway.reaped = true;
-    gateway.drop();
-    await _waitUntil(() => gateway.rosterResumeCalls >= 1);
-    expect(chat.backgroundProcesses, hasLength(1));
+  test(
+    'P2-2 Stop sin runtime vivo no afirma haber parado lo conservado',
+    () async {
+      final gateway = _RetainingGateway()
+        ..processes = const [_runningProcess]
+        ..subagents = const [
+          DesktopSubagentSnapshot(subagentId: 'child-1', status: 'running'),
+        ];
+      final chat = await _boundWithLiveWork(gateway);
+      addTearDown(chat.dispose);
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'child-1',
+        'status': 'running',
+        'event_id': 'e1',
+        'event_revision': 1,
+      });
+      await Future<void>.delayed(Duration.zero);
+      gateway.reaped = true;
+      gateway.drop();
+      await _waitUntil(() => gateway.rosterResumeCalls >= 1);
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(chat.backgroundProcesses, hasLength(1));
+      expect(chat.safeActiveSubagentCount, 1);
+      expect(chat.canStopSessionWork, isTrue);
 
-    await chat.stopSessionWork();
+      final result = await chat.stopSessionWork();
 
-    expect(chat.backgroundProcesses, isEmpty);
-    expect(chat.sessionActivity.active, isFalse);
-  });
+      // No runtime: no kill/interrupt was sent, so nothing is claimed stopped
+      // and the existing «could not stop everything» warning must show.
+      expect(result.allBackgroundWorkStopped, isFalse);
+      expect(result.remainingProcesses, 1);
+      expect(result.remainingSubagents, 1);
+      expect(result.remainingBackgroundTasks, 2);
+      // The retained rows stay as «último estado conocido».
+      expect(chat.backgroundProcesses.map((p) => p.id), ['proc-build']);
+      expect(chat.safeActiveSubagentCount, 1);
+      expect(chat.sessionActivity.stale, isTrue);
+    },
+  );
 
   test(
     'F1/F4 el recuento de subagentes sobrevive al corte y a la rotación hasta '
@@ -504,4 +581,158 @@ void main() {
       expect(chat.sessionActivity.active, isFalse);
     },
   );
+
+  test('P2-1 cargar una página antigua con un process_complete histórico no '
+      'liquida lo conservado', () async {
+    final server = _PagedTranscriptServer()
+      ..rows.addAll([
+        for (var id = 1; id <= 300; id++)
+          _row(id, kind: id == 100 ? 'process_complete' : null),
+      ]);
+    final gateway = _RetainingGateway()..processes = const [_runningProcess];
+    final chat = _chat(
+      gateway,
+      httpClient: server.client(),
+      transcriptPageSizeForTesting: 120,
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+    expect(chat.messages, hasLength(120));
+    expect(chat.hasEarlierMessages, isTrue);
+    await chat.ensureDesktopRuntime(acquireForExplicitAction: true);
+    expect(chat.desktopRuntimeSessionId, _runtimeId);
+    await chat.refreshBackgroundProcessesForTesting();
+    expect(chat.backgroundProcesses, hasLength(1));
+
+    gateway.reaped = true;
+    gateway.drop();
+    await _waitUntil(() => gateway.rosterResumeCalls >= 1);
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.desktopRuntimeSessionId, isNull);
+    expect(chat.backgroundProcesses, hasLength(1));
+
+    // Scroll back: the older page carries a completion row from long before
+    // the cut (row 100 < every row seen when retaining).
+    // (The first earlier-load re-reads the tail at offset 0; the second is the
+    // genuinely older page, offset 120, rows 61..180.)
+    expect(await chat.loadEarlierMessages(), isTrue);
+    expect(chat.backgroundProcesses, hasLength(1));
+    expect(await chat.loadEarlierMessages(), isTrue);
+    expect(server.requests.last.queryParameters['offset'], '120');
+    expect(
+      chat.messages.any((m) => m['display_kind'] == 'process_complete'),
+      isTrue,
+    );
+
+    expect(chat.backgroundProcesses.map((p) => p.id), [
+      'proc-build',
+    ], reason: 'history is not evidence that the retained work ended');
+    expect(chat.sessionActivity.stale, isTrue);
+
+    // A strictly newer durable completion row still settles it.
+    server.rows.add(_row(301, kind: 'process_complete'));
+    await chat.loadMessages();
+    expect(chat.backgroundProcesses, isEmpty);
+    expect(chat.sessionActivity.active, isFalse);
+  });
+
+  test(
+    'P2-1 una recarga de cola que solo trae completions viejas (por debajo de '
+    'la marca durable) no liquida lo conservado',
+    () async {
+      final server = _PagedTranscriptServer()
+        ..rows.addAll([for (var id = 1; id <= 10; id++) _row(id)]);
+      final gateway = _RetainingGateway()..processes = const [_runningProcess];
+      final chat = _chat(gateway, httpClient: server.client());
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true);
+      expect(chat.desktopRuntimeSessionId, _runtimeId);
+      await chat.refreshBackgroundProcessesForTesting();
+      gateway.reaped = true;
+      gateway.drop();
+      await _waitUntil(() => gateway.rosterResumeCalls >= 1);
+      expect(chat.backgroundProcesses, hasLength(1));
+
+      // The authoritative reload now exposes an old completion row (row 4)
+      // the client had not seen before: it predates the retention watermark.
+      server.rows[3] = _row(4, kind: 'process_complete');
+      await chat.loadMessages();
+      expect(
+        chat.messages.any((m) => m['display_kind'] == 'process_complete'),
+        isTrue,
+      );
+      expect(chat.backgroundProcesses.map((p) => p.id), ['proc-build']);
+      expect(chat.sessionActivity.stale, isTrue);
+    },
+  );
+
+  test('P2-4 conservar algo nuevo rearma el tope de edad', () async {
+    const maxAge = Duration(milliseconds: 1000);
+    final gateway = _RetainingGateway()
+      ..subagents = const [
+        DesktopSubagentSnapshot(subagentId: 'child-1', status: 'running'),
+      ];
+    final chat = _chat(gateway, retainedActivityMaxAge: maxAge)
+      ..messagesLoaded = true;
+    addTearDown(chat.dispose);
+    expect(
+      await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+      isTrue,
+    );
+    await _endTurn(chat, gateway);
+    await chat.refreshSubagentsForTesting();
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'child-1',
+      'status': 'running',
+      'event_id': 'e1',
+      'event_revision': 1,
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.safeActiveSubagentCount, 1);
+
+    // Cut 1: the subagent count is retained; the rotated runtime's
+    // subagent.list has not answered, so it stays retained (timer armed).
+    final firstCut = DateTime.now();
+    gateway.liveRuntimeId = 'runtime-retained-2';
+    gateway.subagents = const [];
+    final listGate = gateway.subagentListGate = Completer<void>();
+    addTearDown(() {
+      if (!listGate.isCompleted) listGate.complete();
+    });
+    gateway.drop();
+    await _waitUntil(
+      () => chat.desktopRuntimeSessionId == 'runtime-retained-2',
+    );
+    expect(chat.subagentLivenessStale, isTrue);
+
+    // The live runtime confirms a new process: live, not retained.
+    gateway.processes = const [_runningProcess];
+    await chat.refreshBackgroundProcessesForTesting();
+    expect(chat.backgroundProcesses, hasLength(1));
+    expect(chat.backgroundProcessesStale, isFalse);
+
+    // Cut 2, well after cut 1: that live process is retained now.
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    gateway.reaped = true;
+    gateway.drop();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == null);
+    expect(chat.backgroundProcesses, hasLength(1));
+
+    // Past cut 1's deadline but within cut 2's: still shown as stale.
+    final pastFirstDeadline = firstCut
+        .add(maxAge + const Duration(milliseconds: 250))
+        .difference(DateTime.now());
+    if (pastFirstDeadline > Duration.zero) {
+      await Future<void>.delayed(pastFirstDeadline);
+    }
+    expect(chat.backgroundProcesses.map((p) => p.id), [
+      'proc-build',
+    ], reason: 'the max age counts from the latest retention');
+    expect(chat.sessionActivity.stale, isTrue);
+
+    // It still expires, bounded from cut 2.
+    await _waitUntil(() => chat.backgroundProcesses.isEmpty);
+    expect(chat.subagentLivenessStale, isFalse);
+  });
 }

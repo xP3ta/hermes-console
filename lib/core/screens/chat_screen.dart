@@ -4765,7 +4765,7 @@ class _ChatScreenState extends State<ChatScreen>
       processes: activity.processes,
       schedules: activity.schedules,
       goal: activity.goal,
-      processesStale: activity.stale,
+      processesStale: _chat.backgroundProcessesStale,
       subagentsStale: _chat.subagentLivenessStale,
       backgroundStartedAt: activity.startedAt,
       subagents: subagents,

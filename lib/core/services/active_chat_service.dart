@@ -4281,9 +4281,12 @@ class ActiveChat {
   int _retainedSubagentLiveCount = 0;
   Timer? _retainedActivityExpiryTimer;
 
-  /// Filas editoriales de finalización ya presentes al conservar la actividad:
-  /// solo las posteriores son evidencia de que ese trabajo terminó.
-  final Set<String> _retainedActivityKnownCompletionRows = {};
+  /// Marca durable del transcript al conservar la actividad: la mayor fila
+  /// SQLite (`id`/`row_id`) y el mayor `timestamp` de filas durables vistos.
+  /// Solo una fila de finalización estrictamente más nueva prueba que ese
+  /// trabajo terminó; una página antigua cargada después nunca lo hace.
+  int? _retainedActivityRowWatermark;
+  double? _retainedActivityTimestampWatermark;
   DateTime? _backgroundProcessesObservedAt;
   Future<void>? _backgroundProcessRefreshFlight;
   bool _backgroundProcessRefreshRequested = false;
@@ -4780,6 +4783,12 @@ class ActiveChat {
   /// perdido: la UI lo marca como «último estado conocido».
   bool get subagentLivenessStale => _retainedSubagentLiveCount > 0;
 
+  /// Solo el roster de procesos (y el control de sesión que lo acompaña) está
+  /// desfasado. Nunca mezcla el recuento de subagentes conservado: unos
+  /// procesos confirmados por un `process.list` con fence son en vivo.
+  bool get backgroundProcessesStale =>
+      _backgroundProcessesStale || _sessionControlStale;
+
   /// La actividad visible incluye estado conservado tras perder el runtime:
   /// la UI debe decir «último estado conocido», nunca fingir que es en vivo.
   bool get _transportRetainedActivityVisible =>
@@ -4787,21 +4796,62 @@ class ActiveChat {
           _backgroundProcesses.isNotEmpty) ||
       _retainedSubagentLiveCount > 0;
 
-  static String? _editorialCompletionRowKey(Map<String, dynamic> message) {
+  static bool _isEditorialCompletionRow(Map<String, dynamic> message) {
     final kind = message['display_kind'];
-    if (message['role'] != 'user' ||
-        (kind != 'async_delegation_complete' && kind != 'process_complete')) {
-      return null;
-    }
-    final identity = _transcriptMessageIdentity(message);
-    if (identity != null && identity.isDurable) {
-      return '$kind:${identity.messageId ?? ''}:${identity.rowId ?? ''}';
-    }
-    return '$kind:${message['timestamp']}:${message['content'].hashCode}';
+    return message['role'] == 'user' &&
+        (kind == 'async_delegation_complete' || kind == 'process_complete');
   }
 
+  static double? _durableRowTimestamp(Map<String, dynamic> message) {
+    final value = message['timestamp'];
+    return value is num && value.isFinite && value >= 0
+        ? value.toDouble()
+        : null;
+  }
+
+  /// Fija la marca durable con lo que el transcript ya contiene. Solo cuentan
+  /// filas con identidad durable: las optimistas locales no son del servidor.
+  void _captureRetainedActivityWatermark() {
+    int? maxRowId;
+    double? maxTimestamp;
+    for (final message in _messages) {
+      final identity = _transcriptMessageIdentity(message);
+      if (identity == null || !identity.isDurable) continue;
+      final rowId = identity.rowId;
+      if (rowId != null && (maxRowId == null || rowId > maxRowId)) {
+        maxRowId = rowId;
+      }
+      final timestamp = _durableRowTimestamp(message);
+      if (timestamp != null &&
+          (maxTimestamp == null || timestamp > maxTimestamp)) {
+        maxTimestamp = timestamp;
+      }
+    }
+    _retainedActivityRowWatermark = maxRowId;
+    _retainedActivityTimestampWatermark = maxTimestamp;
+  }
+
+  /// Una fila durable es posterior a la conservación solo si lo prueba su
+  /// coordenada ordenable: `row_id` SQLite o, sin él, el `timestamp`. Sin marca
+  /// comparable falla cerrado (lo liquidan el fence o el tope de edad).
+  bool _durableRowNewerThanRetainedWatermark(Map<String, dynamic> message) {
+    final identity = _transcriptMessageIdentity(message);
+    if (identity == null || !identity.isDurable) return false;
+    final rowId = identity.rowId;
+    final rowWatermark = _retainedActivityRowWatermark;
+    if (rowId != null && rowWatermark != null) return rowId > rowWatermark;
+    final timestamp = _durableRowTimestamp(message);
+    final timestampWatermark = _retainedActivityTimestampWatermark;
+    return timestamp != null &&
+        timestampWatermark != null &&
+        timestamp > timestampWatermark;
+  }
+
+  /// (Re)arma el tope de edad. Se llama cada vez que se conserva algo nuevo:
+  /// el tope cuenta desde lo último conservado, no desde el primer corte.
   void _armRetainedActivityExpiry() {
-    if (_retainedActivityExpiryTimer != null || _disposed) return;
+    if (_disposed) return;
+    _retainedActivityExpiryTimer?.cancel();
     _retainedActivityExpiryTimer = Timer(_retainedActivityMaxAge, () {
       _retainedActivityExpiryTimer = null;
       if (_disposed) return;
@@ -4819,13 +4869,15 @@ class ActiveChat {
   /// recuento de subagentes vivos siguen en la pastilla con «último estado
   /// conocido» en vez de desaparecer mientras Hermes sigue trabajando.
   void _retainTransportActivity({required int subagentLiveCount}) {
-    final retainsProcesses = _backgroundProcesses.isNotEmpty;
+    // Solo lo confirmado en vivo es nuevo: volver a conservar filas que ya
+    // eran desfasadas no reinicia el tope de edad.
+    final retainsProcesses =
+        _backgroundProcesses.isNotEmpty &&
+        !_backgroundProcessesRetainedFromTransport;
     final retainsSubagents = subagentLiveCount > _retainedSubagentLiveCount;
     if (!retainsProcesses && !retainsSubagents) return;
     if (!_transportRetainedActivityVisible) {
-      _retainedActivityKnownCompletionRows
-        ..clear()
-        ..addAll(_messages.map(_editorialCompletionRowKey).nonNulls);
+      _captureRetainedActivityWatermark();
     }
     if (retainsProcesses) {
       _backgroundProcessesRetainedFromTransport = true;
@@ -4846,7 +4898,8 @@ class ActiveChat {
     if (_transportRetainedActivityVisible) return;
     _retainedActivityExpiryTimer?.cancel();
     _retainedActivityExpiryTimer = null;
-    _retainedActivityKnownCompletionRows.clear();
+    _retainedActivityRowWatermark = null;
+    _retainedActivityTimestampWatermark = null;
   }
 
   bool _clearTransportRetainedActivity() {
@@ -4865,16 +4918,23 @@ class ActiveChat {
     return changed;
   }
 
-  /// Una fila durable `process_complete`/`async_delegation_complete` nueva
-  /// (posterior a la conservación) prueba que ese trabajo terminó aunque ya no
-  /// haya sesión viva que listar.
+  /// Una fila durable `process_complete`/`async_delegation_complete` más nueva
+  /// que la marca tomada al conservar prueba que ese trabajo terminó aunque ya
+  /// no haya sesión viva que listar.
   bool _settleTransportRetainedActivityFromTranscript() {
     if (!_transportRetainedActivityVisible) return false;
+    if (_retainedActivityRowWatermark == null &&
+        _retainedActivityTimestampWatermark == null) {
+      // Al conservar no había transcript durable: la primera cola cargada
+      // fija la marca (lo que ya trae es pasado) y solo lo posterior liquida.
+      _captureRetainedActivityWatermark();
+      return false;
+    }
     var processCompletions = 0;
     var delegatedCompletions = 0;
     for (final message in _messages) {
-      final key = _editorialCompletionRowKey(message);
-      if (key == null || _retainedActivityKnownCompletionRows.contains(key)) {
+      if (!_isEditorialCompletionRow(message) ||
+          !_durableRowNewerThanRetainedWatermark(message)) {
         continue;
       }
       if (message['display_kind'] == 'process_complete') {
@@ -5580,6 +5640,18 @@ class ActiveChat {
       remainingSubagents: subagentIds.length,
       remainingProcesses: processIds.length,
     );
+    // Sin runtime vivo no se puede pedir ni verificar nada al servidor: lo
+    // conservado tras un corte sigue siendo el último estado conocido.
+    final retainedUnverifiable =
+        !verifiesBackgroundWork && _transportRetainedActivityVisible;
+    final retainedRemaining = retainedUnverifiable
+        ? SessionStopResult(
+            remainingSubagents: _retainedSubagentLiveCount,
+            remainingProcesses: _backgroundProcessesRetainedFromTransport
+                ? _backgroundProcesses.length
+                : 0,
+          )
+        : null;
     if (verifiesBackgroundWork) {
       _backgroundStopVerificationInFlight = true;
       _backgroundStopRemainingTasks = null;
@@ -5588,10 +5660,10 @@ class ActiveChat {
 
     try {
       await cancel();
-      // Stop is an explicit end of what this surface shows: stale rows kept
-      // from a runtime lost to transport cannot be verified, so they go.
-      if (_clearTransportRetainedActivity() && !_disposed) {
-        _emit(ActiveChatEvent.subagentActivity);
+      if (retainedRemaining != null) {
+        // Nada se paró: no se borra lo conservado y se devuelve lo que queda
+        // para que la UI avise en vez de dar por parado el trabajo.
+        return retainedRemaining;
       }
       if (!verifiesBackgroundWork) {
         return const SessionStopResult(
@@ -11609,7 +11681,7 @@ class ActiveChat {
         );
         _messages = projected;
         _mergeSteerRecords();
-        _reconcileSubagentsFromTranscript();
+        _reconcileSubagentsFromTranscript(settlesRetainedActivity: false);
         _emit(ActiveChatEvent.earlierMessagesLoaded);
         return true;
       }
@@ -11634,7 +11706,7 @@ class ActiveChat {
       if (changed) _messages = projectedMerged;
       if (changed || page.messages.isNotEmpty) {
         _mergeSteerRecords();
-        _reconcileSubagentsFromTranscript();
+        _reconcileSubagentsFromTranscript(settlesRetainedActivity: false);
         _emit(ActiveChatEvent.earlierMessagesLoaded);
         return true;
       }
@@ -19047,8 +19119,13 @@ class ActiveChat {
         turnEpoch: _turnEpoch,
       );
 
-  void _reconcileSubagentsFromTranscript() {
-    if (_settleTransportRetainedActivityFromTranscript()) {
+  void _reconcileSubagentsFromTranscript({
+    bool settlesRetainedActivity = true,
+  }) {
+    // Una página antigua solo añade pasado: nunca es evidencia de que el
+    // trabajo conservado tras un corte haya terminado.
+    if (settlesRetainedActivity &&
+        _settleTransportRetainedActivityFromTranscript()) {
       _emit(ActiveChatEvent.subagentActivity);
     }
     final historicalMessages = projectHistoricalSubagentCompletions(

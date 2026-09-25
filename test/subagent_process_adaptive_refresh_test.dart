@@ -129,11 +129,15 @@ class _AdaptiveGateway
     created: false,
   );
 
+  /// Retiene la respuesta de `subagent.list` (el roster aún no contestó).
+  Completer<void>? listGate;
+
   @override
   Future<List<DesktopSubagentSnapshot>> listSubagents(
     String runtimeSessionId,
   ) async {
     listCalls += 1;
+    await listGate?.future;
     if (failReads) throw StateError('subagent snapshot failed');
     return subagents;
   }
@@ -686,6 +690,104 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
   }
+
+  testWidgets(
+    'P2-3 live-confirmed processes are not marked stale by a retained '
+    'subagent count',
+    (tester) async {
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        attachDesktopRuntimeOnLoad: true,
+        resumedSessionRunning: false,
+        subagents: const [
+          DesktopSubagentSnapshot(subagentId: 'child-1', status: 'running'),
+        ],
+      );
+      // The delegating turn ends first; its child keeps running afterwards.
+      expect(
+        await fixture.chat.send(
+          fullText: 'Delegate and finish',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      fixture.gateway.emit('message.start');
+      fixture.gateway.emit('message.complete', const {'text': 'Delegated.'});
+      await tester.pump();
+      fixture.gateway.emit('subagent.start', const {
+        'subagent_id': 'child-1',
+        'event_id': 'e1',
+        'event_revision': 1,
+        'status': 'running',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(fixture.chat.safeActiveSubagentCount, 1);
+      expect(fixture.chat.isStreaming, isFalse);
+
+      // Background cut: the subagent count is retained as last known state.
+      await background(tester);
+      fixture.gateway.dropTransport();
+      await tester.pump();
+      expect(fixture.chat.desktopRuntimeSessionId, isNull);
+      expect(fixture.chat.subagentLivenessStale, isTrue);
+
+      // Resume reattaches; subagent.list has not answered yet, but the fenced
+      // process.list on the live runtime confirms a running process.
+      final listGate = fixture.gateway.listGate = Completer<void>();
+      fixture.gateway
+        ..subagents = const []
+        ..processSnapshot = const AgentCenterSnapshot(
+          snapshots: [],
+          processes: [
+            BackgroundProcessEntry(
+              opaqueId: 'process-live',
+              status: AgentCenterStatus.running,
+              uptimeSeconds: 5,
+              command: 'sleep 200',
+            ),
+          ],
+        );
+      await resume(tester);
+      for (var i = 0; i < 6; i += 1) {
+        await tester.pump();
+      }
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive');
+      expect(fixture.chat.backgroundProcesses.map((p) => p.id), [
+        'process-live',
+      ]);
+      expect(fixture.chat.subagentLivenessStale, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('activity-pill')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final backgroundSection = find.byKey(
+        const ValueKey('activity-background-section'),
+      );
+      expect(backgroundSection, findsOneWidget);
+      expect(
+        find.descendant(
+          of: backgroundSection,
+          matching: find.text('Last known state'),
+        ),
+        findsNothing,
+        reason: 'the processes were just confirmed live by process.list',
+      );
+      // The subagent section keeps its own honest stale mark.
+      expect(
+        find.byKey(const ValueKey('activity-subagents-stale')),
+        findsOneWidget,
+      );
+
+      listGate.complete();
+      fixture.gateway.listGate = null;
+      await tester.pump(const Duration(milliseconds: 500));
+      await _disposeFixture(tester, fixture);
+    },
+  );
 
   testWidgets(
     'F3 resume relaunches the viewer attach once after a background transport loss',
