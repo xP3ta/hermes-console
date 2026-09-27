@@ -1,0 +1,76 @@
+{
+  "method": "groups.state",
+  "params": {
+    "room_id": "room-devs",
+    "include_disbanded": false
+  },
+  "result": {
+    "room": {
+      "room_id": "room-devs",
+      "name": "Console Devs",
+      "members": [
+        {
+          "member_id": "member-astra",
+          "profile": "astra",
+          "handle": "astra",
+          "display_name": "Astra",
+          "target": {
+            "kind": "local",
+            "profile": "astra"
+          }
+        },
+        {
+          "member_id": "member-radar",
+          "profile": "radar",
+          "handle": "radar",
+          "target": {
+            "kind": "local",
+            "profile": "radar"
+          }
+        }
+      ],
+      "authority_gateway_id": "gw-home-1",
+      "authority_epoch": 2,
+      "revision": 5,
+      "created_at": 1790000000.0,
+      "updated_at": 1790000500.0,
+      "latest_seq": 8
+    },
+    "driver_status": {
+      "running": true,
+      "working": true,
+      "blocked": false,
+      "counts": {
+        "running": 1,
+        "settled": 1,
+        "indeterminate": 1
+      },
+      "pending_actions": [
+        {
+          "kind": "retry",
+          "task_id": "task-radar-1"
+        },
+        {
+          "kind": "approval",
+          "task_id": "task-astra-2",
+          "execution_generation": 1,
+          "run_id": "run-77",
+          "session_id": "20260925_101500_abcd12",
+          "request_id": "apr-1",
+          "approval": {
+            "request_id": "apr-1",
+            "command": "git push origin main",
+            "description": "dangerous command",
+            "choices": [
+              "once",
+              "deny"
+            ]
+          },
+          "member_id": "member-astra"
+        }
+      ],
+      "peer_routes": []
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

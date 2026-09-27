@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/hermes_widget_control_description"
-    android:initialKeyguardLayout="@layout/new_session_widget_large"
-    android:initialLayout="@layout/new_session_widget_large"
+    android:description="@string/botw_quick_ask_description"
+    android:initialKeyguardLayout="@layout/botw_preview_quick_ask"
+    android:initialLayout="@layout/botw_preview_quick_ask"
     android:minWidth="250dp"
     android:minHeight="40dp"
-    android:minResizeWidth="250dp"
-    android:previewLayout="@layout/new_session_widget_large"
+    android:minResizeWidth="110dp"
+    android:previewImage="@drawable/botw_preview_image"
+    android:previewLayout="@layout/botw_preview_quick_ask"
     android:resizeMode="horizontal"
     android:targetCellWidth="4"
     android:targetCellHeight="1"
     android:updatePeriodMillis="0"
-    android:widgetCategory="home_screen" />
+    android:widgetCategory="home_screen|keyguard" />

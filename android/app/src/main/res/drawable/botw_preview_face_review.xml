@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sample procedural Bot face for widget-picker previews only. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path android:fillColor="#FF4FB3A9" android:pathData="M24,3L42.2,13.5L42.2,34.5L24,45L5.8,34.5L5.8,13.5Z" />
+    <path android:fillColor="#FF7FD3CA" android:fillAlpha="0.45" android:pathData="M15,12a4,3 0,1 0,8 0a4,3 0,1 0,-8 0z" />
+    <path android:fillColor="#FF1B1712" android:pathData="M14,23a3,3 0,1 0,6 0a3,3 0,1 0,-6 0z" />
+    <path android:fillColor="#FF1B1712" android:pathData="M28,23a3,3 0,1 0,6 0a3,3 0,1 0,-6 0z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M16,22a1,1 0,1 0,2 0a1,1 0,1 0,-2 0z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M30,22a1,1 0,1 0,2 0a1,1 0,1 0,-2 0z" />
+</vector>

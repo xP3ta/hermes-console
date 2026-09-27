@@ -1,0 +1,169 @@
+{
+  "method": "profiles.list",
+  "params": {
+    "include_sessions": true
+  },
+  "result": {
+    "bot_mode_protocol": true,
+    "profiles": [
+      {
+        "name": "default",
+        "path": "/home/u/.hermes",
+        "is_default": true,
+        "model": "gpt-5.5",
+        "provider": "openai",
+        "display_name": "Hermes",
+        "skill_count": 12,
+        "last_session": {
+          "id": "20260925_090000_aaaa11",
+          "title": "Plan",
+          "preview": "ok",
+          "started_at": 1790000000.0,
+          "last_active": 1790000050.0,
+          "message_count": 4
+        },
+        "canonical_session": {
+          "id": "20260801_100000_root01",
+          "resolved_id": "20260920_100000_tip001",
+          "root_title": "Bot Chat",
+          "title": "Bot Chat",
+          "preview": "Deployed the fix to staging.",
+          "started_at": 1785000000.0,
+          "last_active": 1790000060.0,
+          "message_count": 212
+        },
+        "ui_meta_revisions": {
+          "hermes-bots": 7,
+          "hermes-bots-groups": 31
+        },
+        "ui_meta": {
+          "hermes-bots": {
+            "title": "Hermes",
+            "shape": "blob",
+            "color": "#6c5ce7",
+            "pinned": true,
+            "sectionId": "sec-core",
+            "sectionName": "Core",
+            "chat": "20260816_221957_b72bb4"
+          },
+          "hermes-bots-groups": {
+            "version": 3,
+            "updatedAt": 1790000600000,
+            "rooms": {
+              "id:room-desktop-1": {
+                "name": "Hermes Console · Equipo",
+                "roomId": "room-desktop-1",
+                "revision": 12,
+                "omitted": 40,
+                "holdDetection": true,
+                "members": [
+                  {
+                    "name": "astra"
+                  },
+                  {
+                    "name": "radar"
+                  }
+                ],
+                "log": [
+                  {
+                    "id": "m1",
+                    "from": {
+                      "kind": "user",
+                      "name": "You"
+                    },
+                    "text": "Status?",
+                    "at": 1790000500000,
+                    "thread": "t-1"
+                  },
+                  {
+                    "id": "m2",
+                    "from": {
+                      "kind": "member",
+                      "name": "astra",
+                      "source": "Local"
+                    },
+                    "text": "All green. @user ready to merge?",
+                    "at": 1790000560000,
+                    "thread": "t-1"
+                  }
+                ]
+              },
+              "id:room-devs": {
+                "name": "Console Devs",
+                "roomId": "room-devs",
+                "revision": 3,
+                "log": [
+                  {
+                    "from": {
+                      "kind": "user",
+                      "name": "You"
+                    },
+                    "text": "hosted twin",
+                    "at": 1790000100000
+                  }
+                ]
+              },
+              "name:Old room": {
+                "name": "Old room",
+                "revision": 1,
+                "log": [
+                  {
+                    "from": {
+                      "kind": "user",
+                      "name": "You"
+                    },
+                    "text": "gone",
+                    "at": 1
+                  }
+                ]
+              }
+            },
+            "deleted": {
+              "name:Old room": 4
+            }
+          }
+        },
+        "has_avatar": false
+      },
+      {
+        "name": "astra",
+        "path": "/home/u/.hermes/profiles/astra",
+        "model": "claude-opus-5",
+        "provider": "anthropic",
+        "canonical_session": {
+          "id": "20260901_120000_astra1",
+          "resolved_id": "20260901_120000_astra1",
+          "title": "Bot Chat",
+          "preview": "Reviewing the diff now.",
+          "last_active": 1790000100.0,
+          "message_count": 30
+        },
+        "worker_session": {
+          "id": "20260925_101000_wrk001",
+          "source": "kanban",
+          "title": "Refactor gateway pool",
+          "last_active": 1790000580.0
+        },
+        "ui_meta": {
+          "hermes-bots": {
+            "hidden": false,
+            "sectionId": "sec-core",
+            "sectionName": "Core"
+          }
+        }
+      },
+      {
+        "name": "radar",
+        "path": "/home/u/.hermes/profiles/radar",
+        "model": "gpt-5.5-mini",
+        "provider": "openai",
+        "ui_meta": {
+          "hermes-bots": {
+            "hidden": true
+          }
+        }
+      }
+    ]
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

@@ -67,6 +67,8 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
+import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
@@ -14532,60 +14534,59 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Reintentar no reenvía si el servidor sí persistió el turno',
-    (tester) async {
-      const prompt = 'QA offline: responde CUATRO';
-      final connection = _remoteConn('conn-qa9341-offline-persisted');
-      final gateway = _SubmissionGateway()
-        ..submitError = const TuiGatewayRpcError(
-          'gateway.transport',
-          'Hermes Desktop connection lost',
-          failureKind: TuiGatewayRpcFailureKind.connectionLost,
-        );
-      var durable = <Map<String, dynamic>>[
-        {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
-        {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
-      ];
-      final chat = await pumpChat(
-        tester,
-        connection: connection,
-        desktopGateway: gateway,
-        messages: [for (final message in durable.reversed) Map.of(message)],
-        storedMessageLoader: (_, _) async => [
-          for (final message in durable) Map.of(message),
-        ],
+  testWidgets('Reintentar no reenvía si el servidor sí persistió el turno', (
+    tester,
+  ) async {
+    const prompt = 'QA offline: responde CUATRO';
+    final connection = _remoteConn('conn-qa9341-offline-persisted');
+    final gateway = _SubmissionGateway()
+      ..submitError = const TuiGatewayRpcError(
+        'gateway.transport',
+        'Hermes Desktop connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
       );
-      await tester.enterText(find.byType(TextField), prompt);
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 800));
-      expect(gateway.submissions, [prompt]);
-      expect(find.text('↺ reintentar'), findsOneWidget);
+    var durable = <Map<String, dynamic>>[
+      {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
+      {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
+    ];
+    final chat = await pumpChat(
+      tester,
+      connection: connection,
+      desktopGateway: gateway,
+      messages: [for (final message in durable.reversed) Map.of(message)],
+      storedMessageLoader: (_, _) async => [
+        for (final message in durable) Map.of(message),
+      ],
+    );
+    await tester.enterText(find.byType(TextField), prompt);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(gateway.submissions, [prompt]);
+    expect(find.text('↺ reintentar'), findsOneWidget);
 
-      // El ACK se perdió pero el servidor sí ejecutó el turno.
-      durable = [
-        ...durable,
-        {'role': 'user', 'content': prompt, 'message_id': 'u-2'},
-        {'role': 'assistant', 'content': 'CUATRO', 'message_id': 'a-2'},
-      ];
-      gateway.submitError = null;
-      await tester.tap(find.text('↺ reintentar'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 800));
+    // El ACK se perdió pero el servidor sí ejecutó el turno.
+    durable = [
+      ...durable,
+      {'role': 'user', 'content': prompt, 'message_id': 'u-2'},
+      {'role': 'assistant', 'content': 'CUATRO', 'message_id': 'a-2'},
+    ];
+    gateway.submitError = null;
+    await tester.tap(find.text('↺ reintentar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
 
-      expect(gateway.submissions, [prompt]);
-      expect(
-        chat.messages
-            .where((m) => m['role'] == 'user' && m['content'] == prompt)
-            .length,
-        1,
-      );
-      expect(find.text('CUATRO'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(gateway.submissions, [prompt]);
+    expect(
+      chat.messages
+          .where((m) => m['role'] == 'user' && m['content'] == prompt)
+          .length,
+      1,
+    );
+    expect(find.text('CUATRO'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'Reintentar sin evidencia durable legible no reenvía ni borra el error',
@@ -14692,180 +14693,173 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Reintentar el primer mensaje de un chat nuevo (sesión 404) '
-    'reenvía exactamente una vez',
-    (tester) async {
-      const prompt = 'primer mensaje sin red';
-      final connection = _remoteConn('conn-qa9343-first');
-      const provisional = Session(
-        id: 'mob-qa9343-first',
-        title: 'New',
-        model: 'hermes-agent',
-        source: 'mobile',
-        messageCount: 0,
-        isActive: true,
-        preview: '',
-        profile: 'default',
-        startedAt: 1,
+  testWidgets('Reintentar el primer mensaje de un chat nuevo (sesión 404) '
+      'reenvía exactamente una vez', (tester) async {
+    const prompt = 'primer mensaje sin red';
+    final connection = _remoteConn('conn-qa9343-first');
+    const provisional = Session(
+      id: 'mob-qa9343-first',
+      title: 'New',
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 0,
+      isActive: true,
+      preview: '',
+      profile: 'default',
+      startedAt: 1,
+    );
+    final gateway = _SubmissionGateway()
+      ..submitError = const TuiGatewayRpcError(
+        'gateway.transport',
+        'Hermes Desktop connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
       );
-      final gateway = _SubmissionGateway()
-        ..submitError = const TuiGatewayRpcError(
-          'gateway.transport',
-          'Hermes Desktop connection lost',
-          failureKind: TuiGatewayRpcFailureKind.connectionLost,
-        );
-      var historyReads = 0;
-      final chat = await pumpChat(
-        tester,
-        connection: connection,
-        session: provisional,
-        desktopGateway: gateway,
-        storedMessageLoader: (_, _) async {
-          historyReads++;
-          // El gateway crea la fila de sesión en el mismo prompt.submit.
-          throw const CoreReadException(
-            CoreReadErrorKind.notFound,
-            statusCode: 404,
-          );
-        },
-      );
-      chat.markStoredSessionMissing();
-      await tester.enterText(find.byType(TextField), prompt);
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 800));
-      expect(gateway.submissions, [prompt]);
-      expect(find.text('↺ reintentar'), findsOneWidget);
-
-      gateway.submitError = null;
-      await tester.tap(find.text('↺ reintentar'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 800));
-
-      expect(historyReads, greaterThanOrEqualTo(1));
-      expect(gateway.submissions, [
-        prompt,
-        prompt,
-      ], reason: 'el botón no puede quedarse muerto');
-      expect(chat.messages.where((m) => m['content'] == prompt), hasLength(1));
-      gateway.emitComplete('ok');
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'process death tras fallar el primer mensaje de un chat nuevo '
-    'no reenvía el prompt',
-    (tester) async {
-      const prompt = 'primer mensaje antes del kill';
-      final connection = _remoteConn('conn-qa9344-a5');
-      const provisional = Session(
-        id: 'mob-qa9344-a5',
-        title: 'New',
-        model: 'hermes-agent',
-        source: 'mobile',
-        messageCount: 0,
-        isActive: true,
-        preview: '',
-        profile: 'default',
-        startedAt: 1,
-      );
-      // session.create devuelve `stored-submission-test`; prompt.submit
-      // persiste la fila y el socket muere antes del ACK.
-      final gateway = _SubmissionGateway()
-        ..submitError = const TuiGatewayRpcError(
-          'gateway.transport',
-          'Hermes Desktop connection lost',
-          failureKind: TuiGatewayRpcFailureKind.connectionLost,
-        );
-      final reads = <String>[];
-      Future<List<Map<String, dynamic>>> loader(String id, String _) async {
-        reads.add(id);
-        if (id == 'stored-submission-test') {
-          return [
-            {'role': 'user', 'content': prompt, 'message_id': 'u-1'},
-          ];
-        }
-        // El id provisional nunca existe en el servidor.
+    var historyReads = 0;
+    final chat = await pumpChat(
+      tester,
+      connection: connection,
+      session: provisional,
+      desktopGateway: gateway,
+      storedMessageLoader: (_, _) async {
+        historyReads++;
+        // El gateway crea la fila de sesión en el mismo prompt.submit.
         throw const CoreReadException(
           CoreReadErrorKind.notFound,
           statusCode: 404,
         );
-      }
+      },
+    );
+    chat.markStoredSessionMissing();
+    await tester.enterText(find.byType(TextField), prompt);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(gateway.submissions, [prompt]);
+    expect(find.text('↺ reintentar'), findsOneWidget);
 
-      final firstChat = await pumpChat(
-        tester,
-        connection: connection,
-        session: provisional,
-        desktopGateway: gateway,
-        storedMessageLoader: loader,
+    gateway.submitError = null;
+    await tester.tap(find.text('↺ reintentar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+
+    expect(historyReads, greaterThanOrEqualTo(1));
+    expect(gateway.submissions, [
+      prompt,
+      prompt,
+    ], reason: 'el botón no puede quedarse muerto');
+    expect(chat.messages.where((m) => m['content'] == prompt), hasLength(1));
+    gateway.emitComplete('ok');
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('process death tras fallar el primer mensaje de un chat nuevo '
+      'no reenvía el prompt', (tester) async {
+    const prompt = 'primer mensaje antes del kill';
+    final connection = _remoteConn('conn-qa9344-a5');
+    const provisional = Session(
+      id: 'mob-qa9344-a5',
+      title: 'New',
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 0,
+      isActive: true,
+      preview: '',
+      profile: 'default',
+      startedAt: 1,
+    );
+    // session.create devuelve `stored-submission-test`; prompt.submit
+    // persiste la fila y el socket muere antes del ACK.
+    final gateway = _SubmissionGateway()
+      ..submitError = const TuiGatewayRpcError(
+        'gateway.transport',
+        'Hermes Desktop connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
       );
-      firstChat.markStoredSessionMissing();
-      await tester.enterText(find.byType(TextField), prompt);
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('send')));
+    final reads = <String>[];
+    Future<List<Map<String, dynamic>>> loader(String id, String _) async {
+      reads.add(id);
+      if (id == 'stored-submission-test') {
+        return [
+          {'role': 'user', 'content': prompt, 'message_id': 'u-1'},
+        ];
+      }
+      // El id provisional nunca existe en el servidor.
+      throw const CoreReadException(
+        CoreReadErrorKind.notFound,
+        statusCode: 404,
+      );
+    }
+
+    final firstChat = await pumpChat(
+      tester,
+      connection: connection,
+      session: provisional,
+      desktopGateway: gateway,
+      storedMessageLoader: loader,
+    );
+    firstChat.markStoredSessionMissing();
+    await tester.enterText(find.byType(TextField), prompt);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(gateway.submissions, [prompt]);
+
+    // Android mata el proceso: solo sobreviven los stores persistidos.
+    final backendAtProcessDeath = Map<String, String>.from(secureStore);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 20));
+    secureStore = backendAtProcessDeath;
+    LocalConversationCleanupFence.resetForTesting();
+    TurnOutboxStore.resetSerializationForTesting();
+
+    gateway.submitError = null;
+    final restartedChat = await pumpChat(
+      tester,
+      connection: connection,
+      session: provisional,
+      desktopGateway: gateway,
+      storedMessageLoader: loader,
+    );
+    restartedChat.markStoredSessionMissing();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      prompt,
+    );
+    // El usuario pulsa Enviar sobre el compositor restaurado y, si aparece,
+    // también Reintentar.
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    if (find.text('↺ reintentar').evaluate().isNotEmpty) {
+      await tester.tap(find.text('↺ reintentar'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 800));
-      expect(gateway.submissions, [prompt]);
+    }
 
-      // Android mata el proceso: solo sobreviven los stores persistidos.
-      final backendAtProcessDeath = Map<String, String>.from(secureStore);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(milliseconds: 20));
-      secureStore = backendAtProcessDeath;
-      LocalConversationCleanupFence.resetForTesting();
-      TurnOutboxStore.resetSerializationForTesting();
-
-      gateway.submitError = null;
-      final restartedChat = await pumpChat(
-        tester,
-        connection: connection,
-        session: provisional,
-        desktopGateway: gateway,
-        storedMessageLoader: loader,
-      );
-      restartedChat.markStoredSessionMissing();
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(
-        tester.widget<TextField>(find.byType(TextField)).controller?.text,
-        prompt,
-      );
-      // El usuario pulsa Enviar sobre el compositor restaurado y, si aparece,
-      // también Reintentar.
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 800));
-      if (find.text('↺ reintentar').evaluate().isNotEmpty) {
-        await tester.tap(find.text('↺ reintentar'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 800));
-      }
-
-      expect(gateway.submissions, [prompt], reason: 'doble envío tras kill');
-      // El error sigue visible y el texto no se pierde.
-      expect(
-        find.textContaining('No se pudo confirmar si este turno llegó'),
-        findsOneWidget,
-      );
-      expect(
-        tester.widget<TextField>(find.byType(TextField)).controller?.text,
-        prompt,
-      );
-      // La clave creada quedó persistida junto a retry_boundary.
-      final stored =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
-              as Map<String, dynamic>;
-      final boundary =
-          (stored.values.single as Map<String, dynamic>)['retry_boundary']
-              as Map<String, dynamic>;
-      expect(boundary['kind'], 'knownMissing');
-      expect(boundary['created_session_id'], 'stored-submission-test');
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(gateway.submissions, [prompt], reason: 'doble envío tras kill');
+    // El error sigue visible y el texto no se pierde.
+    expect(
+      find.textContaining('No se pudo confirmar si este turno llegó'),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      prompt,
+    );
+    // La clave creada quedó persistida junto a retry_boundary.
+    final stored =
+        jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map<String, dynamic>;
+    final boundary =
+        (stored.values.single as Map<String, dynamic>)['retry_boundary']
+            as Map<String, dynamic>;
+    expect(boundary['kind'], 'knownMissing');
+    expect(boundary['created_session_id'], 'stored-submission-test');
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('Reintentar reconcilia un fallo durable sin reenviar el prompt', (
     tester,
@@ -25437,7 +25431,16 @@ void main() {
 
     expect(tester.widget<AppBar>(find.byType(AppBar)).centerTitle, isFalse);
     expect(find.byKey(const ValueKey('bot-chat-header')), findsOneWidget);
-    expect(find.text('Infra Bot'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('bot-chat-header')),
+        matching: find.text('Infra Bot'),
+      ),
+      findsOneWidget,
+    );
+    // Spec 070 S2: the empty chat is attributed to the bot, never "Hermes".
+    expect(find.text('Infra Bot'), findsNWidgets(2));
+    expect(find.text('HERMES CONSOLE'), findsNothing);
     expect(
       find.byKey(const ValueKey('bot-chat-header-subtitle')),
       findsOneWidget,
@@ -25469,6 +25472,100 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Bot Chat replies wear the bot face, never the Hermes avatar', (
+    tester,
+  ) async {
+    final avatarLoads = <String>[];
+    final avatarCache = MissionProfileAvatarCache(
+      loader: (profile) async {
+        avatarLoads.add(profile);
+        return _testProfileAvatar();
+      },
+    );
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-face'),
+      session: const Session(
+        id: 'mob-bot-astra',
+        lineageRootId: 'stored-bot-face',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode-canonical',
+        messageCount: 2,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'console-lead',
+      ),
+      messages: const [
+        {'role': 'user', 'content': 'Preséntate'},
+        {'role': 'assistant', 'content': 'Soy Astra, líder técnica.'},
+      ],
+      missionBotProfile: const AgentProfile(
+        name: 'console-lead',
+        botModeUiMeta: {'title': 'Astra', 'shape': 'blobatar'},
+      ),
+      missionAvatarCache: avatarCache,
+    );
+    await tester.pump();
+
+    expect(find.text('Soy Astra, líder técnica.'), findsOneWidget);
+    final face = find.byKey(
+      const ValueKey('assistant-header-bot-face-console-lead'),
+    );
+    expect(face, findsOneWidget);
+    // Same procedural face as the header, not the companion/raster Hermes.
+    expect(
+      find.descendant(of: face, matching: find.byType(HermesBotFace)),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('assistant-header-companion')),
+      findsNothing,
+    );
+    expect(avatarLoads, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Bot Chat shows the bot model and a "Message <Bot>" hint', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-hint'),
+      session: const Session(
+        id: 'mob-bot-infra',
+        lineageRootId: 'stored-bot-hint',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode-canonical',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'infra',
+      ),
+      missionBotProfile: const AgentProfile(
+        name: 'infra',
+        model: 'gpt-5.5',
+        botModeUiMeta: {'title': 'Infra Bot'},
+      ),
+    );
+    await tester.pump();
+
+    // Spec 070 S2: face + name + model, and the composer speaks to the bot.
+    expect(find.text('@infra · gpt-5.5'), findsOneWidget);
+    final field = tester.widget<TextField>(
+      find.descendant(
+        of: find.byType(ConsoleComposer),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(field.decoration?.hintText, 'Mensaje a Infra Bot');
+    expect(find.text('Pregunta a Hermes…'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Bot Chat header falls back to the session profile name', (
     tester,
   ) async {
@@ -25489,7 +25586,13 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('bot-chat-header')), findsOneWidget);
-    expect(find.text('qa'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('bot-chat-header')),
+        matching: find.text('qa'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('@qa'), findsOneWidget);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);

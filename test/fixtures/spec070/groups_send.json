@@ -1,0 +1,34 @@
+{
+  "method": "groups.send",
+  "params": {
+    "room_id": "room-devs",
+    "event_id": "client-evt-1",
+    "payload": {
+      "text": "Ship it",
+      "thread_id": "thread-1"
+    }
+  },
+  "result": {
+    "accepted": true,
+    "client_event_id": "client-evt-1",
+    "driver_started": true,
+    "event": {
+      "room_id": "room-devs",
+      "seq": 9,
+      "event_id": "user:<sha256(client-evt-1)>",
+      "kind": "message.user",
+      "actor": {
+        "kind": "user",
+        "id": "desktop"
+      },
+      "authority_epoch": 2,
+      "payload": {
+        "text": "Ship it",
+        "thread_id": "thread-1"
+      },
+      "created_at": 1790000400.0,
+      "idempotent": false
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

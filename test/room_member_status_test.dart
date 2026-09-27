@@ -106,12 +106,14 @@ void main() {
     MissionAgent? agent,
     HostedGroupEvent? message,
     DateTime? now,
+    RoomDriverStatus? driver,
   }) => BotLiveStatus.derive(
     member: members.first,
     events: events,
     agent: agent,
     addressedMessage: message,
     now: now ?? statusNow,
+    driverStatus: driver,
   );
   test(
     'no data is unknown; a known idle profile is idle, not gateway-online',
@@ -129,9 +131,10 @@ void main() {
     },
   );
   test('recent message / start / settled / old activity', () {
+    // Spec 070: a recent write is not liveness; only live signals are.
     expect(
       derive([statusEvent(2, 'message.member')]).presence,
-      RoomPresence.active,
+      RoomPresence.idle,
     );
     expect(
       derive([statusEvent(2, 'turn.started')]).presence,
@@ -142,7 +145,7 @@ void main() {
         statusEvent(2, 'turn.started'),
         statusEvent(3, 'turn.settled'),
       ]).presence,
-      RoomPresence.active,
+      RoomPresence.idle,
     );
     expect(
       derive([statusEvent(2, 'message.member', at: 909)]).presence,
@@ -168,15 +171,42 @@ void main() {
     );
     expect(
       derive([start, statusEvent(3, 'room.stop_requested')]).presence,
-      RoomPresence.active,
+      RoomPresence.idle,
     );
+  });
+  test('room driver_status is authoritative for working and approvals', () {
+    final start = statusEvent(2, 'turn.started', at: 500);
+    const idle = RoomDriverStatus(running: true, working: false, blocked: false);
+    const working = RoomDriverStatus(running: true, working: true, blocked: false);
+    // An old open turn counts while the server says the driver works…
+    expect(derive([start], driver: working).presence, RoomPresence.working);
+    // …and a fresh one does not when the driver is idle.
+    expect(
+      derive([statusEvent(2, 'turn.started')], driver: idle).presence,
+      RoomPresence.idle,
+    );
+    final approval = RoomDriverStatus.tryParse({
+      'running': true,
+      'working': true,
+      'blocked': false,
+      'pending_actions': [
+        {
+          'kind': 'approval',
+          'task_id': 't',
+          'member_id': members.first.memberId,
+          'execution_generation': 0,
+          'request_id': 'r',
+        },
+      ],
+    });
+    expect(derive([], driver: approval).presence, RoomPresence.needsYou);
   });
   test('needs-you uses the exact user token and clears on user answer', () {
     final question = statusEvent(2, 'message.member', text: '@USER choose');
     expect(derive([question]).presence, RoomPresence.needsYou);
     expect(
       derive([question, statusEvent(3, 'message.user')]).presence,
-      RoomPresence.active,
+      RoomPresence.idle,
     );
     expect(
       derive([
@@ -187,7 +217,7 @@ void main() {
     );
     expect(
       derive([statusEvent(2, 'message.member', text: '@user-other')]).presence,
-      RoomPresence.active,
+      RoomPresence.idle,
     );
     expect(
       derive(
@@ -236,7 +266,15 @@ void main() {
             ),
           ),
         ).presence,
-        RoomPresence.active,
+        RoomPresence.idle,
+        reason: 'a recent Bot Chat write is not liveness (spec 070)',
+      );
+      expect(
+        derive(
+          [],
+          agent: statusAgent(status: MissionAgentStatus.responding),
+        ).presence,
+        RoomPresence.working,
       );
     },
   );

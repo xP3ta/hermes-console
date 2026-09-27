@@ -1,5 +1,18 @@
+export '../widgets/chat/chat_markdown_body.dart'
+    show
+        buildAssistantAnswerBlocks,
+        isAllowedMarkdownLinkScheme,
+        prepareAssistantAnswerStructure,
+        validateRemoteChatImageRedirect,
+        validateRemoteChatImageTransport;
+export '../widgets/chat/chat_message_selection_area.dart';
+
 import '../models/bot_mention.dart';
 import '../widgets/chat_mention_palette.dart';
+import '../widgets/chat/chat_markdown_body.dart';
+import '../widgets/chat/chat_message_frame.dart';
+import '../widgets/chat/console_composer.dart';
+import '../widgets/chat/chat_message_selection_area.dart';
 // Chat screen with real-time streaming via REST API.
 // Uses REST endpoints: POST /api/sessions/{id}/chat and
 // GET /api/sessions/{id}/messages.
@@ -8,7 +21,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
@@ -33,7 +45,6 @@ import 'package:flutter/rendering.dart'
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:highlight/highlight.dart' show highlight, Node;
 import 'package:image_picker/image_picker.dart';
 import 'package:image_picker_android/image_picker_android.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
@@ -128,9 +139,7 @@ import '../utils/assistant_content.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/assistant_suggestions.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
-import '../utils/semantic_markdown.dart';
 import '../utils/streaming_normalizer.dart';
-import '../utils/transport_privacy.dart';
 import 'activity_screen.dart';
 import 'cron_screen.dart';
 import 'extensions_center_screen.dart';
@@ -154,7 +163,6 @@ import '../widgets/callout_card.dart';
 import '../widgets/chat_event_cards.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../widgets/hermes_drawer.dart';
-import '../widgets/hermes_file_tree.dart';
 import '../widgets/hermes_bot_face.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_suggestions.dart';
@@ -164,6 +172,8 @@ import '../widgets/hermes_spark_mascot.dart';
 import '../widgets/interactive_prompt_card.dart';
 import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
+import '../bots/ui/bot_identity.dart';
+import '../bots/ui/roster/living_bot_face.dart';
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
 import '../widgets/activity_panel.dart';
@@ -177,7 +187,6 @@ import '../widgets/session_artifacts_sheet.dart';
 import '../widgets/session_context_usage.dart';
 import '../widgets/voice_disclosure_dialog.dart';
 import '../widgets/voice_stage.dart';
-import 'image_viewer_screen.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 
@@ -1168,7 +1177,7 @@ class ChatScreen extends StatefulWidget {
   /// Entradas de la caché estática de resaltado de bloques de código.
   @visibleForTesting
   static int get codeHighlightCacheLengthForTesting =>
-      _CodeBlockWrapperState._highlightCache.length;
+      chatCodeHighlightCacheLength();
 
   @visibleForTesting
   static ({int entries, int bytes})
@@ -2080,6 +2089,20 @@ class _ChatScreenState extends State<ChatScreen>
   }.contains(widget.session.source.trim().toLowerCase());
 
   bool get _allowsDedicatedVoiceLaunch => !_isBotChatSurface;
+
+  /// Bot Chat replies are attributed to the bot, never "Hermes" (spec 070 S2).
+  String? get _botDisplayName {
+    if (!_isBotChatSurface) return null;
+    final profile = widget.missionBotProfile;
+    final name =
+        profile?.botTitle ??
+        (profile != null && profile.name.isNotEmpty
+            ? profile.name
+            : Session.profileOwner(widget.session.profile));
+    return name.trim().isEmpty ? null : name.trim();
+  }
+
+  String get _assistantName => _botDisplayName ?? _agentName;
 
   Set<String> get _draftRecoveryAliases {
     if (!_isBotChatSurface) return <String>{};
@@ -9881,7 +9904,7 @@ class _ChatScreenState extends State<ChatScreen>
     // este State: así la dependencia de `viewInsets` (que cambia en cada
     // frame de la animación del IME) vive en un elemento hoja y el Scaffold
     // —misma instancia de widget— no se vuelve a construir por ello.
-    return _KeyboardInsetWatcher(
+    final scaffold = _KeyboardInsetWatcher(
       onBottomInset: _onKeyboardBottomInset,
       child: Scaffold(
         drawerEnableOpenDragGesture: true,
@@ -10527,6 +10550,11 @@ class _ChatScreenState extends State<ChatScreen>
                 ],
               ),
       ),
+    );
+    return _BotChatIdentity(
+      profile: botSurface ? widget.missionBotProfile : null,
+      avatarCache: botSurface ? widget.missionAvatarCache : null,
+      child: scaffold,
     );
   }
 
@@ -12780,188 +12808,43 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Widget _buildComposerDictationAction(
-    HermesThemeColors colors, {
+  ConsoleComposerDictation _composerDictation({
     required bool dictationInteractive,
-  }) {
-    if (_isRecording) {
-      if (_transcribing) {
-        return Semantics(
-          key: const ValueKey('recording'),
-          liveRegion: true,
-          label: Strings.of(context).chaVoiceTranscribingLabel,
-          child: SizedBox.square(
-            key: const ValueKey('dictation-transcribing'),
-            dimension: 48,
-            child: Center(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant.withValues(alpha: 0.9),
-                  shape: BoxShape.circle,
-                ),
-                child: SizedBox.square(
-                  dimension: 36,
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-      return Semantics(
-        key: const ValueKey('recording'),
-        button: true,
-        label: Strings.of(context).chaStopDictationTooltip,
-        child: SizedBox.square(
-          key: const ValueKey('dictation-stop'),
-          dimension: 48,
-          child: Center(
-            child: HermesTactileAction(
-              icon: Icons.stop_rounded,
-              iconSize: 17,
-              semanticLabel: Strings.of(context).chaStopDictationTooltip,
-              onPressed: _stopDictation,
-              backgroundColor: colors.surfaceVariant.withValues(alpha: 0.9),
-              foregroundColor: colors.textPrimary,
-              size: 36,
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (dictationInteractive) {
-      return HermesTactileAction(
-        key: const ValueKey('mic'),
-        icon: Icons.mic_none_rounded,
-        onPressed: _startDictation,
-        semanticLabel: _textController.text.trim().isEmpty
-            ? Strings.of(context).chaVoiceDictationTooltip
-            : Strings.of(context).chaContinueDictationTooltip,
-        backgroundColor: Colors.transparent,
-        foregroundColor: colors.textPrimary,
-        size: 44,
-        iconSize: 25,
-        visual: HermesTactileActionVisual.quiet,
-      );
-    }
-
-    return const SizedBox.shrink(key: ValueKey('no-mic'));
-  }
-
-  Widget _buildDictationCancelAction(HermesThemeColors colors) {
-    return SizedBox.square(
-      key: const ValueKey('dictation-cancel'),
-      dimension: 48,
-      child: HermesTactileAction(
-        icon: Icons.close_rounded,
-        iconSize: 30,
-        semanticLabel: Strings.of(context).chaCancel,
-        onPressed: _dictationSendInFlight ? null : _cancelDictation,
-        backgroundColor: Colors.transparent,
-        foregroundColor: colors.textPrimary,
-        size: 44,
-        visual: HermesTactileActionVisual.quiet,
-      ),
-    );
-  }
-
-  Widget _buildDictationSendAction(HermesThemeColors colors) {
-    final enabled =
+  }) => ConsoleComposerDictation(
+    recording: _isRecording,
+    transcribing: _transcribing,
+    interactive: dictationInteractive,
+    level: _voice?.micLevel,
+    cancelEnabled: !_dictationSendInFlight,
+    sendEnabled:
         !_dictationSendInFlight &&
         (_dictationBase.trim().isNotEmpty ||
-            _dictationPartial.trim().isNotEmpty);
-    return SizedBox.square(
-      key: const ValueKey('dictation-send'),
-      dimension: 48,
-      child: Center(
-        child: HermesTactileAction(
-          icon: Icons.arrow_upward_rounded,
-          iconSize: 23,
-          semanticLabel: Strings.of(context).chaSendTooltip,
-          onPressed: enabled ? _sendDictation : null,
-          backgroundColor: enabled
-              ? Colors.white
-              : colors.surfaceVariant.withValues(alpha: 0.72),
-          foregroundColor: enabled ? Colors.black : colors.textDisabled,
-          enabled: enabled,
-          size: 42,
-        ),
-      ),
-    );
-  }
+            _dictationPartial.trim().isNotEmpty),
+    onStart: _startDictation,
+    onStop: _stopDictation,
+    onCancel: _cancelDictation,
+    onSend: _sendDictation,
+  );
 
-  Widget _buildComposerPrimaryAction(HermesThemeColors colors) {
-    final showStop = _chat.canStopSessionWork && _nothingToSend;
-    return AnimatedSwitcher(
-      key: const ValueKey('composer-primary-action-switcher'),
-      duration: _reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 220),
-      transitionBuilder: (child, animation) => AnimatedBuilder(
-        animation: animation,
-        child: FadeTransition(opacity: animation, child: child),
-        builder: (context, child) => Transform.scale(
-          scale: animation.value,
-          transformHitTests: false,
-          child: IgnorePointer(
-            ignoring: animation.status == AnimationStatus.reverse,
-            child: child,
-          ),
-        ),
-      ),
-      child:
-          (kVoiceRuntimeEnabled &&
-              _allowsDedicatedVoiceLaunch &&
-              _nothingToSend &&
-              !showStop &&
-              !_composerSubmissionInFlight &&
-              !_compressingSession &&
-              !_isRecording)
-          ? KeyedSubtree(
-              key: const ValueKey('voice'),
-              child: HermesTactileAction(
-                icon: Icons.graphic_eq_rounded,
-                semanticLabel: Strings.of(context).chaVoiceModeTooltip,
-                onPressed: widget.connection.readOnly ? null : _enterVoiceMode,
-                backgroundColor: colors.secondary,
-                foregroundColor: colors.onAccent,
-                enabled: !widget.connection.readOnly,
-                size: 42,
-                iconSize: 23,
-              ),
-            )
-          : KeyedSubtree(
-              key: ValueKey(showStop ? 'stop' : 'send'),
-              child: _SendButton(
-                // Sin lanzadera mientras compacta: la barra de compactación
-                // sobre el compositor es la única señal viva.
-                busy:
-                    !showStop &&
-                    !_compressingSession &&
-                    (_composerSubmissionInFlight || _attachmentSubmitting),
-                mode: showStop ? _SendMode.stop : _SendMode.send,
-                enabled: showStop
-                    ? _chat.gatewayConnected
-                    : !_interactiveMessageRefreshPending &&
-                          !_composerSubmissionInFlight &&
-                          !_attachmentSubmitting &&
-                          !_compressingSession &&
-                          !_attachmentMutationInFlight &&
-                          !_nothingToSend,
-                onSend: _sendMessage,
-                onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
-                    ? () => _sendMessage(queueOnly: true)
-                    : null,
-                onStop: _cancelStream,
-              ),
-            ),
+  Widget? _composerVoiceModeAction(HermesThemeColors colors, bool showStop) {
+    if (!(kVoiceRuntimeEnabled &&
+        _allowsDedicatedVoiceLaunch &&
+        _nothingToSend &&
+        !showStop &&
+        !_composerSubmissionInFlight &&
+        !_compressingSession &&
+        !_isRecording)) {
+      return null;
+    }
+    return HermesTactileAction(
+      icon: Icons.graphic_eq_rounded,
+      semanticLabel: Strings.of(context).chaVoiceModeTooltip,
+      onPressed: widget.connection.readOnly ? null : _enterVoiceMode,
+      backgroundColor: colors.secondary,
+      foregroundColor: colors.onAccent,
+      enabled: !widget.connection.readOnly,
+      size: 42,
+      iconSize: 23,
     );
   }
 
@@ -13157,222 +13040,64 @@ class _ChatScreenState extends State<ChatScreen>
                 connectionId: widget.connection.id,
                 profile: _effectiveSessionProfile,
               ));
-    // Composer premium (referencia live-chat): contenedor con borde sutil,
-    // campo sin marco y fila inferior de acciones con send cuadrado ámbar.
-    //
-    // La lectura de `viewInsets`/orientación vive en un `Builder` propio: así
-    // solo este subárbol se reconstruye con cada frame de la animación del
-    // teclado, en vez de suscribir el State completo (y con él el transcript)
-    // a `MediaQuery.of`.
-    return Builder(
-      builder: (imeContext) {
-        // En horizontal el IME ocupa más de media pantalla. El composer normal
-        // (campo de hasta cuatro líneas + fila de acciones + SafeArea) puede
-        // quedar más alto que el viewport restante y provocar un RenderFlex
-        // overflow.
-        final compactIme =
-            MediaQuery.viewInsetsOf(imeContext).bottom > 0 &&
-            MediaQuery.orientationOf(imeContext) == Orientation.landscape;
-        return Container(
-          key: const ValueKey('chat-composer-host'),
-          padding: compactIme
-              ? const EdgeInsets.fromLTRB(12, 2, 12, 3)
-              : const EdgeInsets.fromLTRB(14, 4, 14, 10),
-          color: colors.background,
-          child: SafeArea(
-            bottom: !compactIme,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                HermesComposerSurface(
-                  focused: _textFocusNode.hasFocus,
-                  unfocusedHorizontalInset: 12,
-                  padding: compactIme
-                      ? const EdgeInsets.symmetric(horizontal: 4)
-                      : EdgeInsets.zero,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_pendingAttachments.isNotEmpty)
-                        _AttachmentPreviewStrip(
-                          key: const ValueKey('composer-attachment-preview'),
-                          attachments: _pendingAttachments,
-                          onRemove: (localId) =>
-                              unawaited(_removePendingAttachment(localId)),
-                          onRetry: (localId) =>
-                              unawaited(_retryPendingAttachment(localId)),
-                        ),
-                      Row(
-                        key: const ValueKey('composer-input-row'),
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (!_isRecording)
-                            AttachmentSourceMenuButton(
-                              key: const ValueKey('composer-add'),
-                              semanticLabel: Strings.of(
-                                context,
-                              ).chaAttachTooltip,
-                              onSelected: (source) =>
-                                  unawaited(_selectAttachmentSource(source)),
-                              enabled: attachmentInteractive,
-                            ),
-                          if (_isRecording) _buildDictationCancelAction(colors),
-                          Expanded(
-                            child: SizedBox(
-                              height: _isRecording
-                                  ? _dictationComposerHeight
-                                  : null,
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  ExcludeSemantics(
-                                    excluding: _isRecording,
-                                    child: CallbackShortcuts(
-                                      bindings: {
-                                        const SingleActivator(
-                                          LogicalKeyboardKey.enter,
-                                          control: true,
-                                        ): _composerKeyboardSubmit,
-                                        const SingleActivator(
-                                          LogicalKeyboardKey.enter,
-                                          meta: true,
-                                        ): _composerKeyboardSubmit,
-                                      },
-                                      child: TextField(
-                                        controller: _textController,
-                                        focusNode: _textFocusNode,
-                                        style: _isRecording
-                                            ? const TextStyle(
-                                                color: Colors.transparent,
-                                              )
-                                            : null,
-                                        cursorColor: _isRecording
-                                            ? Colors.transparent
-                                            : null,
-                                        decoration: InputDecoration(
-                                          hintText: _attachmentSubmitting
-                                              ? Strings.of(
-                                                  context,
-                                                ).chaUploadingAttachment
-                                              : _pendingAttachments.isNotEmpty
-                                              ? Strings.of(
-                                                  context,
-                                                ).chaHintSystem
-                                              : Strings.of(context).chaHintUser,
-                                          hintStyle: TextStyle(
-                                            color: _isRecording
-                                                ? Colors.transparent
-                                                : colors.textSecondary,
-                                            fontSize: 14,
-                                          ),
-                                          filled: false,
-                                          border: InputBorder.none,
-                                          enabledBorder: InputBorder.none,
-                                          focusedBorder: InputBorder.none,
-                                          disabledBorder: InputBorder.none,
-                                          contentPadding: EdgeInsets.fromLTRB(
-                                            4,
-                                            compactIme ? 10 : 12,
-                                            4,
-                                            _isRecording
-                                                ? _dictationWaveHeight + 8
-                                                : (compactIme ? 10 : 12),
-                                          ),
-                                          isDense: true,
-                                        ),
-                                        minLines: 1,
-                                        maxLines: compactIme ? 2 : 4,
-                                        textCapitalization:
-                                            TextCapitalization.sentences,
-                                        keyboardType: TextInputType.multiline,
-                                        contentInsertionConfiguration:
-                                            ContentInsertionConfiguration(
-                                              allowedMimeTypes: const [
-                                                'image/png',
-                                                'image/jpeg',
-                                                'image/gif',
-                                                'image/webp',
-                                              ],
-                                              onContentInserted: (content) =>
-                                                  unawaited(
-                                                    _insertKeyboardContent(
-                                                      content,
-                                                    ),
-                                                  ),
-                                            ),
-                                        textInputAction:
-                                            TextInputAction.newline,
-                                        // A retained invocation may keep focus without
-                                        // authorizing edits or a second submission.
-                                        readOnly: _compressingSession,
-                                        // El usuario puede preparar texto y abrir el
-                                        // teclado mientras el transcript interactivo
-                                        // termina de publicar. El envío se mantiene
-                                        // bloqueado abajo hasta entonces; adjuntar y
-                                        // dictar siguen cerrados porque mezclarían el
-                                        // lote en vuelo.
-                                        enabled:
-                                            !_attachmentSubmitting &&
-                                            (!_compressingSession ||
-                                                _compressionDraftFocusRetained),
-                                      ),
-                                    ),
-                                  ),
-                                  if (_isRecording && _voice != null)
-                                    SizedBox(
-                                      key: const ValueKey(
-                                        'dictation-recording-area',
-                                      ),
-                                      height: _dictationComposerHeight,
-                                      child: Center(
-                                        child: IgnorePointer(
-                                          child: _DictationVisualizer(
-                                            key: const ValueKey(
-                                              'dictation-visualizer',
-                                            ),
-                                            level: _voice!.micLevel,
-                                            color: colors.textSecondary,
-                                            mutedColor: colors.textDisabled,
-                                            transcribing: _transcribing,
-                                            listeningLabel: Strings.of(
-                                              context,
-                                            ).chaVoiceListeningLabel,
-                                            transcribingLabel: Strings.of(
-                                              context,
-                                            ).chaVoiceTranscribingLabel,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          _buildComposerDictationAction(
-                            colors,
-                            dictationInteractive: dictationInteractive,
-                          ),
-                          if (_isRecording) _buildDictationSendAction(colors),
-                          if (!_isRecording) ...[
-                            const SizedBox(width: 2),
-                            SizedBox.square(
-                              dimension: 48,
-                              child: Center(
-                                child: _buildComposerPrimaryAction(colors),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                )._withComposerPalette(floatingPalette),
-                _buildFloatingStatusPill(colors),
-              ],
-            ),
-          ),
-        );
-      },
+    final showStop = _chat.canStopSessionWork && _nothingToSend;
+    // Composer premium compartido (ConsoleComposer): contenedor con borde
+    // sutil, campo sin marco y fila de acciones con send cuadrado.
+    return ConsoleComposer(
+      controller: _textController,
+      focusNode: _textFocusNode,
+      palette: floatingPalette,
+      reduceMotion: _reduceMotion,
+      attachments: _pendingAttachments,
+      onRemoveAttachment: (localId) =>
+          unawaited(_removePendingAttachment(localId)),
+      onRetryAttachment: (localId) =>
+          unawaited(_retryPendingAttachment(localId)),
+      onAttach: (source) => unawaited(_selectAttachmentSource(source)),
+      attachEnabled: attachmentInteractive,
+      dictation: _composerDictation(dictationInteractive: dictationInteractive),
+      hintText: _attachmentSubmitting
+          ? Strings.of(context).chaUploadingAttachment
+          : _pendingAttachments.isNotEmpty
+          ? Strings.of(context).chaHintSystem
+          : _botDisplayName != null
+          ? Strings.of(context).botChatComposerHint(_botDisplayName!)
+          : Strings.of(context).chaHintUser,
+      onKeyboardSubmit: _composerKeyboardSubmit,
+      onContentInserted: (content) =>
+          unawaited(_insertKeyboardContent(content)),
+      // A retained invocation may keep focus without authorizing edits or a
+      // second submission.
+      fieldReadOnly: _compressingSession,
+      // El usuario puede preparar texto y abrir el teclado mientras el
+      // transcript interactivo termina de publicar. El envío se mantiene
+      // bloqueado hasta entonces; adjuntar y dictar siguen cerrados porque
+      // mezclarían el lote en vuelo.
+      fieldEnabled:
+          !_attachmentSubmitting &&
+          (!_compressingSession || _compressionDraftFocusRetained),
+      voiceModeAction: _composerVoiceModeAction(colors, showStop),
+      showStop: showStop,
+      // Sin lanzadera mientras compacta: la barra de compactación sobre el
+      // compositor es la única señal viva.
+      busy:
+          !showStop &&
+          !_compressingSession &&
+          (_composerSubmissionInFlight || _attachmentSubmitting),
+      stopEnabled: _chat.gatewayConnected,
+      sendEnabled:
+          !_interactiveMessageRefreshPending &&
+          !_composerSubmissionInFlight &&
+          !_attachmentSubmitting &&
+          !_compressingSession &&
+          !_attachmentMutationInFlight &&
+          !_nothingToSend,
+      onSend: (_, _) => _sendMessage(),
+      onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
+          ? () => _sendMessage(queueOnly: true)
+          : null,
+      onStop: _cancelStream,
+      footer: _buildFloatingStatusPill(colors),
     );
   }
 
@@ -13582,7 +13307,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (_messages.isEmpty) {
       return KeyedSubtree(
         key: const ValueKey('chat-empty-state'),
-        child: _EmptyChatState(model: _activeModelLabel, agentName: _agentName),
+        child: _EmptyChatState(
+          model: _activeModelLabel,
+          agentName: _assistantName,
+        ),
       );
     }
 
@@ -13875,7 +13603,9 @@ class _ChatScreenState extends State<ChatScreen>
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
-          children: [_AssistantLiveHeader(agentName: _agentName, mood: mood)],
+          children: [
+            _AssistantLiveHeader(agentName: _assistantName, mood: mood),
+          ],
         );
       },
     );
@@ -14132,7 +13862,7 @@ class _ChatScreenState extends State<ChatScreen>
         linkCache: _linkCache,
         fetchLinkPreview: _fetchLinkPreview,
         firstUrl: _firstUrl,
-        agentName: _agentName,
+        agentName: _assistantName,
         slice: displaySlice,
         terminalProjection: terminalProjection,
         technicalDetails: operationalProjection.technicalDetails,
@@ -14161,7 +13891,7 @@ class _ChatScreenState extends State<ChatScreen>
       readAloudStopBehavior:
           _voice?.settings.readAloudStopBehavior ??
           ReadAloudStopBehavior.pauseAndResume,
-      agentName: _agentName,
+      agentName: _assistantName,
       isStreaming: isStreaming,
       companionMood: isStreaming || isPipeline ? _liveCompanionMood() : null,
       waitingForUser: (isStreaming || isPipeline) && _turnWaitsForUser,
@@ -14238,7 +13968,7 @@ class _ChatScreenState extends State<ChatScreen>
         linkCache: _linkCache,
         fetchLinkPreview: _fetchLinkPreview,
         firstUrl: _firstUrl,
-        agentName: _agentName,
+        agentName: _assistantName,
         technicalDetails: projection.technicalDetails,
         onRegenerate: _isLatestAssistant(frame.metadata)
             ? _regenerateLastResponse
@@ -14257,7 +13987,7 @@ class _ChatScreenState extends State<ChatScreen>
       readAloudStopBehavior:
           _voice?.settings.readAloudStopBehavior ??
           ReadAloudStopBehavior.pauseAndResume,
-      agentName: _agentName,
+      agentName: _assistantName,
       isStreaming: frame.isStreaming,
       companionMood: frame.isStreaming ? _liveCompanionMood() : null,
       waitingForUser: frame.isStreaming && _turnWaitsForUser,
@@ -14764,6 +14494,11 @@ enum _BotChatHeaderAction { model, controls }
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven
 /// en el overflow, siguiendo el patrón del plugin oficial Hermes Bot Mode.
+String? _modelLabel(AgentProfile? profile) {
+  final model = profile?.model.trim() ?? '';
+  return model.isEmpty ? null : model;
+}
+
 class _BotChatAppBarTitle extends StatelessWidget {
   final AgentProfile? profile;
   final String fallbackName;
@@ -14799,16 +14534,32 @@ class _BotChatAppBarTitle extends StatelessWidget {
       padding: const EdgeInsetsDirectional.only(start: 4, end: 4),
       child: Row(
         children: [
-          MissionProfileAvatar(
-            key: ValueKey('bot-chat-avatar-$name'),
-            profileName: name,
-            hasAvatar: profile?.hasAvatar ?? false,
-            cache: avatarCache,
-            size: 30,
-            shape: profile?.botShape,
-            colorHex: profile?.botColorHex,
-            imageKind: profile?.botImageKind,
-          ),
+          profile == null
+              ? MissionProfileAvatar(
+                  key: ValueKey('bot-chat-avatar-$name'),
+                  profileName: name,
+                  hasAvatar: false,
+                  cache: avatarCache,
+                  size: 32,
+                )
+              // The same living face as the roster: it breathes, blinks and
+              // looks around; it reads a line while the bot works.
+              : LivingBotFace(
+                  key: ValueKey('bot-chat-avatar-$name'),
+                  profileName: profile.name,
+                  profile: profile,
+                  avatarCache: avatarCache,
+                  signal: switch (activity) {
+                    ChatActivityKind.thinking => BotFaceSignal.thinking,
+                    ChatActivityKind.usingTools => BotFaceSignal.working,
+                    ChatActivityKind.responding => BotFaceSignal.speaking,
+                    ChatActivityKind.awaitingApproval =>
+                      BotFaceSignal.attention,
+                    null => BotFaceSignal.idle,
+                  },
+                  size: 32,
+                  entrance: false,
+                ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -14828,7 +14579,7 @@ class _BotChatAppBarTitle extends StatelessWidget {
                 Text(
                   [
                     if (displayName != name || statusLabel == null) '@$name',
-                    ?statusLabel,
+                    ?statusLabel ?? _modelLabel(profile),
                   ].join(' · '),
                   key: const ValueKey('bot-chat-header-subtitle'),
                   maxLines: 1,
@@ -14843,76 +14594,6 @@ class _BotChatAppBarTitle extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-extension _ComposerPalettePlacement on Widget {
-  Widget _withComposerPalette(Widget? palette) =>
-      _ComposerPaletteOverlay(palette: palette, child: this);
-}
-
-class _ComposerPaletteOverlay extends StatefulWidget {
-  final Widget child;
-  final Widget? palette;
-
-  const _ComposerPaletteOverlay({required this.child, required this.palette});
-
-  @override
-  State<_ComposerPaletteOverlay> createState() =>
-      _ComposerPaletteOverlayState();
-}
-
-class _ComposerPaletteOverlayState extends State<_ComposerPaletteOverlay> {
-  final _controller = OverlayPortalController();
-  final _link = LayerLink();
-  final _targetKey = GlobalKey();
-
-  @override
-  void initState() {
-    super.initState();
-    // Mantener el portal montado evita un frame intermedio al abrir la paleta y,
-    // sobre todo, no reemplaza el TextField que conserva el ownership del IME.
-    _controller.show();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final targetRenderObject = _targetKey.currentContext?.findRenderObject();
-    final targetTop =
-        targetRenderObject is RenderBox &&
-            targetRenderObject.hasSize &&
-            targetRenderObject.attached
-        ? targetRenderObject.localToGlobal(Offset.zero).dy
-        : MediaQuery.sizeOf(context).height;
-    final paletteMaxHeight = math.max(0.0, targetTop - 8);
-    return LayoutBuilder(
-      builder: (context, constraints) => OverlayPortal(
-        controller: _controller,
-        overlayChildBuilder: (context) => Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: CompositedTransformFollower(
-            link: _link,
-            showWhenUnlinked: false,
-            targetAnchor: Alignment.topCenter,
-            followerAnchor: Alignment.bottomCenter,
-            child: SizedBox(
-              width: constraints.maxWidth,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: paletteMaxHeight),
-                child: widget.palette ?? const SizedBox.shrink(),
-              ),
-            ),
-          ),
-        ),
-        child: CompositedTransformTarget(
-          key: _targetKey,
-          link: _link,
-          child: widget.child,
-        ),
       ),
     );
   }
@@ -15110,111 +14791,6 @@ class _SlashPalette extends StatelessWidget {
                 ),
               );
             },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Compact strip shown above the input bar when a file is staged.
-/// Shows a thumbnail for images or a document icon for other files.
-/// Reflects the real per-item state; remove and retry never affect siblings.
-class _AttachmentPreviewStrip extends StatelessWidget {
-  final List<AttachmentDraft> attachments;
-  final ValueChanged<String>? onRemove;
-  final ValueChanged<String>? onRetry;
-
-  const _AttachmentPreviewStrip({
-    required this.attachments,
-    required this.onRemove,
-    required this.onRetry,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // A horizontal scroll view shrink-wraps to its content, and the composer
-    // column centres its children: one or two thumbs ended up floating in the
-    // middle of the input. Take the full width and pin the row to the start
-    // edge (RTL-aware) so attachments stack from the leading side.
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var index = 0; index < attachments.length; index++) ...[
-                if (index > 0) const SizedBox(width: 10),
-                Builder(
-                  builder: (context) {
-                    final attachment = attachments[index];
-                    final hasLocalImage =
-                        attachment.isImage &&
-                        attachment.localPath.isNotEmpty &&
-                        File(attachment.localPath).existsSync();
-                    final previewable =
-                        hasLocalImage &&
-                        (attachment.uploadState ==
-                                AttachmentUploadState.pending ||
-                            attachment.uploadState ==
-                                AttachmentUploadState.error);
-                    final changing =
-                        attachment.uploadState ==
-                        AttachmentUploadState.uploading;
-                    final openPreview = previewable
-                        ? () => showImageViewer(
-                            context,
-                            File(attachment.localPath),
-                          )
-                        : null;
-                    return Semantics(
-                      container: changing || previewable,
-                      explicitChildNodes: changing || previewable,
-                      liveRegion:
-                          changing ||
-                          attachment.uploadState == AttachmentUploadState.error,
-                      label: changing
-                          ? Strings.of(
-                              context,
-                            ).chaAttachmentUploadInProgress(attachment.name)
-                          : previewable
-                          ? Strings.of(
-                              context,
-                            ).chaPreviewAttachment(attachment.name)
-                          : null,
-                      button: previewable,
-                      onTap: openPreview,
-                      child: AttachmentCard(
-                        key: ValueKey('attachment-card-${attachment.localId}'),
-                        name: attachment.name,
-                        mimeType: attachment.mimeType,
-                        sizeLabel: attachment.formattedSize,
-                        thumbnailFile: hasLocalImage
-                            ? File(attachment.localPath)
-                            : null,
-                        showUploadState: true,
-                        uploadState: attachment.uploadState,
-                        onTap: openPreview,
-                        onRetry:
-                            attachment.uploadState ==
-                                    AttachmentUploadState.error &&
-                                attachment.localId.isNotEmpty &&
-                                onRetry != null
-                            ? () => onRetry!(attachment.localId)
-                            : null,
-                        onRemove: attachment.localId.isEmpty || onRemove == null
-                            ? null
-                            : () => onRemove!(attachment.localId),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ],
           ),
         ),
       ),
@@ -15715,97 +15291,6 @@ class _AssistantMessageWithMark extends StatelessWidget {
 /// Modo del botón principal del composer.
 /// - [send]: envío normal (idle).
 /// - [stop]: el agente responde; el borrador del turno siguiente no sustituye Stop.
-enum _SendMode { send, stop }
-
-class _SendButton extends StatefulWidget {
-  final _SendMode mode;
-
-  /// A-017 (spec 028): con el campo vacío la flecha se pinta atenuada y no
-  /// responde — antes lucía activa (ámbar + glow) pero el tap no hacía nada.
-  final bool enabled;
-  final bool busy;
-  final VoidCallback onSend;
-  final VoidCallback? onQueue;
-  final VoidCallback onStop;
-
-  const _SendButton({
-    required this.mode,
-    required this.onSend,
-    required this.onStop,
-    this.onQueue,
-    this.enabled = true,
-    this.busy = false,
-  });
-
-  @override
-  State<_SendButton> createState() => _SendButtonState();
-}
-
-class _SendButtonState extends State<_SendButton> {
-  void _handleTap() {
-    if (!widget.enabled) return;
-    HapticFeedback.lightImpact();
-    if (widget.mode == _SendMode.stop) {
-      widget.onStop();
-    } else {
-      widget.onSend();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final isStop = widget.mode == _SendMode.stop;
-    final s = Strings.of(context);
-    final tooltip = widget.busy
-        ? s.chaUploadingAttachment
-        : switch (widget.mode) {
-            _SendMode.send => s.chaSendTooltip,
-            _SendMode.stop => s.chaStopTooltip,
-          };
-    final icon = switch (widget.mode) {
-      _SendMode.send => Icons.arrow_upward,
-      _SendMode.stop => Icons.stop_rounded,
-    };
-    final bg = !widget.enabled ? colors.surfaceVariant : colors.accent;
-    final fg = !widget.enabled ? colors.textDisabled : colors.onAccent;
-    if (widget.busy) {
-      return Semantics(
-        label: tooltip,
-        liveRegion: true,
-        child: SizedBox.square(
-          dimension: 42,
-          child: Padding(
-            padding: const EdgeInsets.all(11),
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: colors.textSecondary,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final onQueue = widget.onQueue;
-    return HermesTactileAction(
-      icon: icon,
-      iconSize: isStop ? 21 : 19,
-      semanticLabel: tooltip,
-      onPressed: widget.enabled ? _handleTap : null,
-      onLongPress: isStop || !widget.enabled || onQueue == null
-          ? null
-          : () {
-              HapticFeedback.lightImpact();
-              onQueue();
-            },
-      backgroundColor: bg,
-      foregroundColor: fg,
-      enabled: widget.enabled,
-      size: 42,
-    );
-  }
-}
-
 class _LiveAssistantFrame {
   final int turnSerial;
   final String content;
@@ -15993,71 +15478,6 @@ class _MessageBubble extends StatelessWidget {
             compact: compact,
             performanceProbe: performanceProbe,
           );
-  }
-}
-
-/// Frontera estable de selección para un único mensaje terminado.
-///
-/// `MarkdownBody(selectable: true)` convierte cada bloque en un `EditableText`.
-/// En una lista invertida Android intenta entonces hacer `bringIntoView` al
-/// mostrar el menú y desplaza el mensaje bajo el dedo. Una región por mensaje
-/// mantiene el Markdown como `Text.rich`, permite selección parcial y no toca el
-/// scroll. Al deshabilitar la región se limpia la selección de forma explícita;
-/// durante el desmontaje se deja que Flutter retire primero el Overlay y se
-/// conserva una limpieza final defensiva en [dispose].
-@visibleForTesting
-class ChatMessageSelectionArea extends StatefulWidget {
-  final Widget child;
-  final bool enabled;
-  final Object? selectionIdentity;
-
-  const ChatMessageSelectionArea({
-    super.key,
-    required this.child,
-    this.enabled = true,
-    this.selectionIdentity,
-  });
-
-  @override
-  State<ChatMessageSelectionArea> createState() =>
-      _ChatMessageSelectionAreaState();
-}
-
-class _ChatMessageSelectionAreaState extends State<ChatMessageSelectionArea> {
-  final GlobalKey<SelectionAreaState> _selectionAreaKey =
-      GlobalKey<SelectionAreaState>();
-
-  void _clearSelection() {
-    final area = _selectionAreaKey.currentState;
-    if (area == null) return;
-    final region = area.selectableRegion;
-    region.hideToolbar();
-    region.clearSelection();
-  }
-
-  @override
-  void didUpdateWidget(ChatMessageSelectionArea oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if ((oldWidget.enabled && !widget.enabled) ||
-        oldWidget.selectionIdentity != widget.selectionIdentity) {
-      _clearSelection();
-    }
-  }
-
-  @override
-  void dispose() {
-    _clearSelection();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.enabled) return widget.child;
-    return SelectionArea(
-      key: _selectionAreaKey,
-      magnifierConfiguration: TextMagnifierConfiguration.disabled,
-      child: widget.child,
-    );
   }
 }
 
@@ -16532,39 +15952,6 @@ class _TimelineSystemEventRow extends StatelessWidget {
   }
 }
 
-/// Esquemas permitidos para un enlace del markdown del chat. Pura (sin I/O)
-/// para poder testearla: bloquea `intent://`, `file://`, `tel:` inyectado,
-/// etc. — el `href` puede venir de un modelo remoto, no es de confiar sin
-/// filtrar. Público para test unitario (`test/chat_markdown_link_test.dart`).
-bool isAllowedMarkdownLinkScheme(String? href) {
-  const allowedSchemes = {'http', 'https', 'mailto'};
-  final uri = href == null ? null : Uri.tryParse(href);
-  return uri != null && allowedSchemes.contains(uri.scheme);
-}
-
-/// Abre un enlace tocado dentro del markdown del chat (usuario o agente),
-/// validando el esquema con [isAllowedMarkdownLinkScheme] antes de lanzarlo.
-Future<void> _openMarkdownLink(BuildContext context, String? href) async {
-  if (!isAllowedMarkdownLinkScheme(href)) {
-    debugPrint('Enlace de markdown bloqueado (esquema no permitido): $href');
-    if (context.mounted) {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(Strings.of(context).chaLinkSchemeBlocked),
-          duration: const Duration(seconds: 2),
-        ),
-        kind: HermesNoticeKind.warning,
-      );
-    }
-    return;
-  }
-  try {
-    await launchUrl(Uri.parse(href!), mode: LaunchMode.externalApplication);
-  } catch (e) {
-    debugPrint('No se pudo abrir el enlace de markdown ($href): $e');
-  }
-}
-
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -16718,7 +16105,7 @@ class _UserMessage extends StatelessWidget {
                               // colapsaría en espacios → texto "todo junto").
                               softLineBreak: true,
                               onTapLink: (text, href, title) =>
-                                  _openMarkdownLink(context, href),
+                                  openChatMarkdownLink(context, href),
                               styleSheet: _userSheet(theme, colors),
                             ),
                           if (supplements.isNotEmpty) ...[
@@ -16853,378 +16240,10 @@ class _UserMessage extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                  if (timestamp != null) _MessageTimestamp(timestamp),
+                  if (timestamp != null) ChatMessageTimestamp(timestamp),
                 ],
               ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Construye la respuesta del asistente respetando la estructura que escribió el
-/// modelo. La ruta compartida por el chat y [AssistantMarkdownView] solo aplica
-/// reparaciones sintácticas conservadoras; no inventa títulos, callouts ni chips
-/// inline a partir de prosa corriente.
-///
-/// [markdown] recibe el texto normalizado para un MarkdownBody. [callout] se
-/// conserva en la firma por compatibilidad con los hosts existentes, pero los
-/// callouts solo podrán volver a la ruta normal con una sintaxis explícita.
-List<Widget> buildAssistantAnswerBlocks(
-  String answer, {
-  required bool isStreaming,
-  bool structured = false,
-  required Widget Function(String data) markdown,
-  required Widget Function(CalloutContentBlock block) callout,
-  void Function(String? href)? onLinkTap,
-}) {
-  // Conserva la estructura escrita por el modelo. Solo normalizamos comandos
-  // inequívocos y encabezados Markdown pegados (`##Título`), sin convertir
-  // prosa corta, etiquetas con `:` ni líneas sueltas en títulos o listas.
-  final enhanced = structured
-      ? answer
-      : prepareAssistantAnswerStructure(answer);
-  final blocks = enhanced.trim().isEmpty
-      ? const <ContentBlock>[]
-      : <ContentBlock>[MarkdownContentBlock(enhanced)];
-  final widgets = <Widget>[];
-  for (var i = 0; i < blocks.length; i++) {
-    final b = blocks[i];
-    if (widgets.isNotEmpty) widgets.add(const SizedBox(height: 4));
-    if (b is MarkdownContentBlock) {
-      // El streaming (cierre de vallas/backticks a medias) solo aplica al
-      // último bloque, que es el que sigue creciendo.
-      final streamingTail = isStreaming && i == blocks.length - 1;
-      // Escapa primero los globs de rutas: sus asteriscos son literales y no
-      // deben participar en el balanceo visual de énfasis Markdown. Las rutas
-      // normales permanecen como texto; solo el backtick explícito crea código.
-      final escaped = escapePathGlobs(b.text);
-      // Durante el streaming se normalizan también los bloques cerrados para
-      // que un delimitador huérfano como `**` no llegue como texto visible. El
-      // bloque terminal se pinta tal cual llegó del servidor.
-      final data = normalizeStreamingMarkdown(
-        escaped,
-        isStreaming: streamingTail,
-      );
-      // Las tablas GFM completas se pintan con un render propio (limpio, con
-      // columnas dimensionadas y scroll horizontal) en vez del MarkdownBody, que
-      // las descuadra. El bloque en streaming NO se trocea: una tabla a medias
-      // parpadearía al llegar las filas, así que cae al Markdown hasta cerrar.
-      if (streamingTail) {
-        widgets.add(markdown(data));
-      } else {
-        var firstSeg = true;
-        for (final seg in splitAnswerTables(data)) {
-          if (!firstSeg) widgets.add(const SizedBox(height: 4));
-          firstSeg = false;
-          if (seg is TableSegment) {
-            widgets.add(MarkdownTable(rows: seg.rows, onLinkTap: onLinkTap));
-          } else if (seg is MarkdownSegment) {
-            widgets.add(markdown(seg.text));
-          }
-        }
-      }
-    } else if (b is CalloutContentBlock) {
-      widgets.add(callout(b));
-    }
-  }
-  return widgets;
-}
-
-/// Primera fase pura del render del asistente. Separarla permite ejecutarla una
-/// sola vez antes de dividir una respuesta larga en hijos virtualizados; la
-/// ruta habitual sigue llamándola desde [buildAssistantAnswerBlocks].
-@visibleForTesting
-String prepareAssistantAnswerStructure(String answer) =>
-    enhanceCommandBlocks(tidyAssistantMarkdown(flattenInlineHtml(answer)));
-
-@visibleForTesting
-void validateRemoteChatImageTransport(Uri uri) {
-  TransportPrivacy.requireAllowed(uri.toString());
-}
-
-@visibleForTesting
-Uri validateRemoteChatImageRedirect(Uri current, String location) {
-  final target = current.resolve(location);
-  validateRemoteChatImageTransport(target);
-  if (target.origin != current.origin) {
-    throw ArgumentError.value(
-      target,
-      'location',
-      'Redirect cross-origin no permitido',
-    );
-  }
-  return target;
-}
-
-/// Imagen incrustada en una respuesta del agente. Las imágenes remotas
-/// (`http`/`https`) NO se cargan solas — cargarlas automáticamente sería un
-/// beacon de IP hacia el host que las sirve, disparado por texto que puede
-/// venir de un modelo remoto. Se muestra un placeholder con el dominio y
-/// solo se pide la imagen cuando el usuario la toca. Las URIs locales
-/// (`data:`/`file:`, si las hubiera) se cargan igual que antes.
-class _GatedChatImage extends StatefulWidget {
-  final Uri uri;
-  final double? width;
-  final double? height;
-  final HermesThemeColors colors;
-
-  const _GatedChatImage({
-    required this.uri,
-    required this.colors,
-    this.width,
-    this.height,
-  });
-
-  @override
-  State<_GatedChatImage> createState() => _GatedChatImageState();
-}
-
-class _GatedChatImageState extends State<_GatedChatImage> {
-  bool _loadRequested = false;
-  bool _loading = false;
-  Uint8List? _bytes;
-  Object? _loadError;
-  final Object _heroTag = Object();
-
-  static const int _maxRemoteImageBytes = 20 * 1024 * 1024;
-
-  bool get _isRemote =>
-      widget.uri.scheme == 'http' || widget.uri.scheme == 'https';
-
-  Future<void> _loadRemoteImage() async {
-    if (_loading) return;
-    setState(() {
-      _loadRequested = true;
-      _loading = true;
-      _loadError = null;
-    });
-    try {
-      final client = http.Client();
-      try {
-        var current = widget.uri;
-        http.StreamedResponse? response;
-        for (var redirects = 0; redirects <= 5; redirects++) {
-          validateRemoteChatImageTransport(current);
-          final request = http.Request('GET', current)..followRedirects = false;
-          final candidate = await client
-              .send(request)
-              .timeout(const Duration(seconds: 15));
-          if (!candidate.isRedirect) {
-            response = candidate;
-            break;
-          }
-          final location = candidate.headers['location'];
-          await candidate.stream.listen((_) {}).cancel();
-          if (location == null || location.trim().isEmpty || redirects == 5) {
-            throw const HttpException('Redirect de imagen no permitido');
-          }
-          current = validateRemoteChatImageRedirect(current, location);
-        }
-        if (response == null) {
-          throw const HttpException('Demasiados redirects de imagen');
-        }
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw HttpException('HTTP ${response.statusCode}');
-        }
-        final type = (response.headers['content-type'] ?? '').toLowerCase();
-        if (!type.startsWith('image/')) {
-          throw const FormatException('The server did not return an image');
-        }
-        final declared = response.contentLength;
-        if (declared != null && declared > _maxRemoteImageBytes) {
-          throw const FormatException('Imagen demasiado grande');
-        }
-        final builder = BytesBuilder(copy: false);
-        await for (final chunk in response.stream.timeout(
-          const Duration(seconds: 15),
-        )) {
-          if (builder.length + chunk.length > _maxRemoteImageBytes) {
-            throw const FormatException('Imagen demasiado grande');
-          }
-          builder.add(chunk);
-        }
-        final bytes = builder.takeBytes();
-        if (!_hasSupportedImageMagic(bytes)) {
-          throw const FormatException('Formato de imagen no permitido');
-        }
-        if (!mounted) return;
-        setState(() => _bytes = bytes);
-      } finally {
-        client.close();
-      }
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _loadError = error);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  static bool _hasSupportedImageMagic(Uint8List bytes) {
-    if (bytes.length >= 8 &&
-        bytes[0] == 0x89 &&
-        bytes[1] == 0x50 &&
-        bytes[2] == 0x4e &&
-        bytes[3] == 0x47 &&
-        bytes[4] == 0x0d &&
-        bytes[5] == 0x0a &&
-        bytes[6] == 0x1a &&
-        bytes[7] == 0x0a) {
-      return true;
-    }
-    if (bytes.length >= 3 &&
-        bytes[0] == 0xff &&
-        bytes[1] == 0xd8 &&
-        bytes[2] == 0xff) {
-      return true;
-    }
-    return bytes.length >= 12 &&
-        bytes[0] == 0x52 &&
-        bytes[1] == 0x49 &&
-        bytes[2] == 0x46 &&
-        bytes[3] == 0x46 &&
-        bytes[8] == 0x57 &&
-        bytes[9] == 0x45 &&
-        bytes[10] == 0x42 &&
-        bytes[11] == 0x50;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = widget.colors;
-    if (_isRemote && !_loadRequested) {
-      final host = widget.uri.host.isNotEmpty
-          ? widget.uri.host
-          : widget.uri.toString();
-      final domain = host.length > 28 ? '${host.substring(0, 28)}…' : host;
-      // A-115 (spec 028): la tarjeta "tocar para cargar" expone que es
-      // accionable y de dónde viene la imagen (antes TalkBack solo leía el
-      // dominio suelto).
-      return Semantics(
-        button: true,
-        label: Strings.of(context).chaLoadImageFrom(domain),
-        child: GestureDetector(
-          onTap: _loadRemoteImage,
-          child: Container(
-            width: widget.width,
-            height: widget.height ?? 80,
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.image_outlined,
-                  color: colors.textDisabled,
-                  size: 26,
-                ),
-                const SizedBox(height: 4),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    domain,
-                    textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis,
-                    // A-112 (spec 028): texto informativo en textSecondary
-                    // (textDisabled no llega a 4.5:1).
-                    style: TextStyle(fontSize: 10, color: colors.textSecondary),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    if (_isRemote && (_loading || _loadError != null)) {
-      return GestureDetector(
-        onTap: _loading ? null : _loadRemoteImage,
-        child: Container(
-          width: widget.width,
-          height: widget.height ?? 80,
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-          ),
-          child: Center(
-            child: _loading
-                ? const SizedBox.square(
-                    dimension: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    Icons.refresh_rounded,
-                    color: colors.textSecondary,
-                    size: 28,
-                  ),
-          ),
-        ),
-      );
-    }
-    // A-115 (spec 028): anuncia imagen + acción de ampliar para TalkBack.
-    final imgLabel = widget.uri.host.isNotEmpty
-        ? Strings.of(context).chatImageFromHostTapToEnlarge(widget.uri.host)
-        : Strings.of(context).chatImageTapToEnlarge;
-    return Semantics(
-      image: true,
-      button: true,
-      label: imgLabel,
-      child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ImageViewerScreen(
-              imageUrl: widget.uri.toString(),
-              imageBytes: _bytes,
-              heroTag: _heroTag,
-            ),
-            fullscreenDialog: true,
-          ),
-        ),
-        child: Hero(
-          tag: _heroTag,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: _bytes != null
-                ? Image.memory(
-                    _bytes!,
-                    width: widget.width,
-                    height: widget.height,
-                    fit: BoxFit.cover,
-                    cacheWidth: 1600,
-                  )
-                : Image.network(
-                    widget.uri.toString(),
-                    width: widget.width,
-                    height: widget.height,
-                    fit: BoxFit.cover,
-                    cacheWidth: 1600,
-                    errorBuilder: (context, error, _) => Container(
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: colors.surfaceVariant,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: colors.divider.withValues(alpha: 0.55),
-                        ),
-                      ),
-                      child: Center(
-                        child: Icon(
-                          Icons.broken_image_outlined,
-                          color: colors.textDisabled,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-                  ),
-          ),
         ),
       ),
     );
@@ -17332,6 +16351,32 @@ class _AssistantHeaderCompanion extends StatelessWidget {
   }
 }
 
+const double _botMessageFaceSize = 34;
+
+/// Bot Chat identity for descendants (assistant message headers): the bot
+/// whose chat this is. Absent in normal chats.
+class _BotChatIdentity extends InheritedWidget {
+  const _BotChatIdentity({
+    required this.profile,
+    required this.avatarCache,
+    required super.child,
+  });
+
+  final AgentProfile? profile;
+  final MissionProfileAvatarCache? avatarCache;
+
+  static _BotChatIdentity? maybeOf(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_BotChatIdentity>();
+    return scope?.profile == null ? null : scope;
+  }
+
+  @override
+  bool updateShouldNotify(_BotChatIdentity oldWidget) =>
+      !identical(profile, oldWidget.profile) ||
+      avatarCache != oldWidget.avatarCache;
+}
+
 /// Cabecera de un mensaje del asistente: la mascota (o la inicial, sin
 /// presencia) + título en acento + la segunda línea que pase el llamador.
 class _AssistantAvatarHeader extends StatelessWidget {
@@ -17351,12 +16396,47 @@ class _AssistantAvatarHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget header(Widget? mascot) => MessageAvatarHeader(
+    Widget header(Widget? mascot) => ChatMessageHeader(
       name: name,
-      mascot: mascot,
+      avatar: mascot,
       subtitle: subtitle,
       actions: actions,
     );
+    // Bot Chat: every assistant message wears the bot's own face (same as
+    // the header and the roster), never the Hermes companion.
+    final bot = _BotChatIdentity.maybeOf(context);
+    if (bot != null) {
+      final profile = bot.profile!;
+      return ChatMessageHeader(
+        name: name,
+        nameColor: botIdentityColor(profile, avatarCache: bot.avatarCache),
+        // Only the live turn moves; history keeps a static face so a long
+        // Bot Chat never runs one ticker per message.
+        avatar: animate
+            ? LivingBotFace(
+                key: ValueKey('assistant-header-bot-face-${profile.name}'),
+                profileName: profile.name,
+                profile: profile,
+                avatarCache: bot.avatarCache,
+                signal: BotFaceSignal.speaking,
+                size: _botMessageFaceSize,
+                entrance: false,
+                expressiveness: 1.2,
+              )
+            : MissionProfileAvatar(
+                key: ValueKey('assistant-header-bot-face-${profile.name}'),
+                profileName: profile.name,
+                hasAvatar: profile.botPaintsPhoto,
+                cache: bot.avatarCache,
+                size: _botMessageFaceSize,
+                shape: profile.botFaceShape,
+                colorHex: profile.botColorHex,
+                imageKind: profile.botImageKind,
+              ),
+        subtitle: subtitle,
+        actions: actions,
+      );
+    }
     final app = context.findAncestorStateOfType<HermesAppState>();
     if (app == null) return header(null);
     final companion = app.companion;
@@ -17462,9 +16542,6 @@ class _AssistantMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.hermes;
-
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
 
@@ -17564,23 +16641,7 @@ class _AssistantMessage extends StatelessWidget {
 
     // Un bloque de Markdown de la respuesta, con la presentación de siempre.
     // El [data] ya viene normalizado por [buildAssistantAnswerBlocks].
-    MarkdownBody markdownWidget(String data) => MarkdownBody(
-      data: data,
-      selectable: false,
-      // CommonMark conserva los párrafos (líneas en blanco) y trata un salto
-      // simple como espacio. Mostrar cada salto interno del modelo partía
-      // frases después de paréntesis y hacía la respuesta demasiado estrecha.
-      softLineBreak: false,
-      onTapLink: (text, href, title) => _openMarkdownLink(context, href),
-      sizedImageBuilder: (config) => _GatedChatImage(
-        uri: config.uri,
-        width: config.width,
-        height: config.height,
-        colors: colors,
-      ),
-      styleSheet: _assistantSheet(context, data),
-      builders: {'pre': _PreCodeBuilder()},
-    );
+    Widget markdownWidget(String data) => ChatMarkdownBlock(data: data);
 
     /// Reparte un segmento vivo en prefijo estable cacheable + cola mutable.
     /// Solo la cola se reconstruye en cada frame; el prefijo conserva el mismo
@@ -17633,7 +16694,7 @@ class _AssistantMessage extends StatelessWidget {
             case _ProjectedAssistantTable(:final rows):
               yield MarkdownTable(
                 rows: rows,
-                onLinkTap: (href) => _openMarkdownLink(context, href),
+                onLinkTap: (href) => openChatMarkdownLink(context, href),
               );
             case _ProjectedAssistantImage(:final basename):
               final ref = _StructuredGeneratedImage.textPath(basename);
@@ -17678,7 +16739,7 @@ class _AssistantMessage extends StatelessWidget {
                 title: block.title,
                 body: block.body,
               ),
-              onLinkTap: (href) => _openMarkdownLink(context, href),
+              onLinkTap: (href) => openChatMarkdownLink(context, href),
             );
         }
         for (final ref in structuredFooterImages) {
@@ -17725,7 +16786,7 @@ class _AssistantMessage extends StatelessWidget {
               title: block.title,
               body: block.body,
             ),
-            onLinkTap: (href) => _openMarkdownLink(context, href),
+            onLinkTap: (href) => openChatMarkdownLink(context, href),
           );
         }
       }
@@ -17738,238 +16799,101 @@ class _AssistantMessage extends StatelessWidget {
     // La copia completa vive en la cabecera y la selección parcial en la región
     // exterior. El Markdown permanece como texto normal: ningún párrafo crea un
     // EditableText que pueda mover el scroll al mostrar sus tiradores.
-    return ChatMessageSelectionArea(
-      enabled: !isStreaming,
-      selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 12,
-          right: 16,
-          top: showHeader ? (compact ? 5 : 11) : 0,
-          bottom: showFooter ? (compact ? 1 : 3) : 0,
+    List<Widget> headerActions() => [
+      if (onSpeak != null && readAloudMessageKey != null) ...[
+        const SizedBox(width: 6),
+        ReadAloudButton(
+          messageKey: readAloudMessageKey!,
+          state: readAloud,
+          stopBehavior: readAloudStopBehavior,
+          onPressed: onSpeak,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (showHeader)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: showTrace
-                    ? ThinkingTraceCard(
-                        key: const ValueKey('assistant-activity-trace'),
-                        events: activityEvents,
-                        active: isStreaming || metadata['_pipeline'] == true,
-                        liveInPill: true,
-                        headline: Strings.of(context).chatActivityThinking,
-                        activeMood: headerMood,
-                        waitingForUser: activityActive && waitingForUser,
-                        stopped: stopped,
-                        duration: _assistantActivityDuration(metadata),
-                        headerBuilder: (context, summary, details) => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _AssistantAvatarHeader(
-                              name: agentName,
-                              mood: headerMood,
-                              animate: headerAnimated,
-                              subtitle: summary,
-                              actions: [
-                                if (onSpeak != null &&
-                                    readAloudMessageKey != null) ...[
-                                  const SizedBox(width: 6),
-                                  ReadAloudButton(
-                                    messageKey: readAloudMessageKey!,
-                                    state: readAloud,
-                                    stopBehavior: readAloudStopBehavior,
-                                    onPressed: onSpeak,
-                                  ),
-                                ],
-                                Semantics(
-                                  button: true,
-                                  label: Strings.of(context).chaCopyMessage,
-                                  excludeSemantics: true,
-                                  child: Tooltip(
-                                    message: Strings.of(context).chaCopyMessage,
-                                    child: InkWell(
-                                      onTap: () {
-                                        Clipboard.setData(
-                                          ClipboardData(
-                                            text: markdownToClipboardText(
-                                              GeneratedMediaService.stripDirectives(
-                                                answer,
-                                              ),
-                                            ),
-                                          ),
-                                        );
-                                        HermesNotice.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              Strings.of(context).chaCopied,
-                                            ),
-                                            duration: Duration(seconds: 1),
-                                          ),
-                                          kind: HermesNoticeKind.success,
-                                        );
-                                      },
-                                      borderRadius: BorderRadius.circular(24),
-                                      child: SizedBox(
-                                        width: 48,
-                                        height: 48,
-                                        child: Center(
-                                          child: Icon(
-                                            Icons.copy_rounded,
-                                            size: 16,
-                                            color: colors.textSecondary,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (onRegenerate != null)
-                                  Semantics(
-                                    button: true,
-                                    label: Strings.of(context).chaRegenerate,
-                                    excludeSemantics: true,
-                                    child: Tooltip(
-                                      message: Strings.of(
-                                        context,
-                                      ).chaRegenerate,
-                                      child: InkWell(
-                                        onTap: onRegenerate,
-                                        borderRadius: BorderRadius.circular(24),
-                                        child: SizedBox(
-                                          width: 48,
-                                          height: 48,
-                                          child: Center(
-                                            child: Icon(
-                                              Icons.refresh_rounded,
-                                              size: 18,
-                                              color: colors.textSecondary,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            details,
-                          ],
-                        ),
-                      )
-                    : _AssistantAvatarHeader(
-                        name: agentName,
-                        mood: headerMood,
-                        animate: headerAnimated,
-                        actions: [
-                          if (onSpeak != null &&
-                              readAloudMessageKey != null) ...[
-                            const SizedBox(width: 6),
-                            ReadAloudButton(
-                              messageKey: readAloudMessageKey!,
-                              state: readAloud,
-                              stopBehavior: readAloudStopBehavior,
-                              onPressed: onSpeak,
-                            ),
-                          ],
-                          Semantics(
-                            button: true,
-                            label: Strings.of(context).chaCopyMessage,
-                            excludeSemantics: true,
-                            child: Tooltip(
-                              message: Strings.of(context).chaCopyMessage,
-                              child: InkWell(
-                                onTap: () {
-                                  Clipboard.setData(
-                                    ClipboardData(
-                                      text: markdownToClipboardText(
-                                        GeneratedMediaService.stripDirectives(
-                                          answer,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                  HermesNotice.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        Strings.of(context).chaCopied,
-                                      ),
-                                      duration: Duration(seconds: 1),
-                                    ),
-                                    kind: HermesNoticeKind.success,
-                                  );
-                                },
-                                borderRadius: BorderRadius.circular(24),
-                                child: SizedBox(
-                                  width: 48,
-                                  height: 48,
-                                  child: Center(
-                                    child: Icon(
-                                      Icons.copy_rounded,
-                                      size: 16,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (onRegenerate != null)
-                            Semantics(
-                              button: true,
-                              label: Strings.of(context).chaRegenerate,
-                              excludeSemantics: true,
-                              child: Tooltip(
-                                message: Strings.of(context).chaRegenerate,
-                                child: InkWell(
-                                  onTap: onRegenerate,
-                                  borderRadius: BorderRadius.circular(24),
-                                  child: SizedBox(
-                                    width: 48,
-                                    height: 48,
-                                    child: Center(
-                                      child: Icon(
-                                        Icons.refresh_rounded,
-                                        size: 18,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-              ),
-            if (showHeader && metaLines.isNotEmpty)
-              _MetaBlock(lines: metaLines, onDark: false),
-            if (answer.isNotEmpty) ...answerWidgets(),
-            if (showFooter && technicalDetails.isNotEmpty)
-              _AssistantTechnicalDetails(details: technicalDetails),
-            if (showFooter && suggestionProjection.hasSuggestions)
-              HermesSuggestions(
-                suggestions: suggestionProjection.suggestions,
-                onSelected: onSuggestionSelected!,
-              ),
-            if (showFooter && metadata['show_link_preview'] == true)
-              Builder(
-                builder: (ctx) {
-                  final first = firstUrl(
-                    GeneratedMediaService.stripDirectives(answer),
-                  );
-                  if (first == null) return const SizedBox.shrink();
-                  return _LinkPreviewLoader(
-                    url: first,
-                    linkCache: linkCache,
-                    fetchLinkPreview: fetchLinkPreview,
-                  );
-                },
-              ),
-            if (showFooter && timestamp != null) _MessageTimestamp(timestamp),
-          ],
+      ],
+      ChatCopyMessageButton(
+        text: () => markdownToClipboardText(
+          GeneratedMediaService.stripDirectives(answer),
         ),
       ),
+      if (onRegenerate != null)
+        ChatMessageActionButton(
+          icon: Icons.refresh_rounded,
+          label: Strings.of(context).chaRegenerate,
+          onPressed: onRegenerate,
+        ),
+    ];
+
+    // La copia completa vive en la cabecera y la selección parcial en la región
+    // exterior. El Markdown permanece como texto normal: ningún párrafo crea un
+    // EditableText que pueda mover el scroll al mostrar sus tiradores.
+    return ChatMessageFrame(
+      selectable: !isStreaming,
+      selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
+      padding: EdgeInsets.only(
+        left: 12,
+        right: 16,
+        top: showHeader ? (compact ? 5 : 11) : 0,
+        bottom: showFooter ? (compact ? 1 : 3) : 0,
+      ),
+      time: showFooter ? timestamp : null,
+      header: !showHeader
+          ? null
+          : showTrace
+          ? ThinkingTraceCard(
+              key: const ValueKey('assistant-activity-trace'),
+              events: activityEvents,
+              active: isStreaming || metadata['_pipeline'] == true,
+              liveInPill: true,
+              headline: Strings.of(context).chatActivityThinking,
+              activeMood: headerMood,
+              waitingForUser: activityActive && waitingForUser,
+              stopped: stopped,
+              duration: _assistantActivityDuration(metadata),
+              headerBuilder: (context, summary, details) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _AssistantAvatarHeader(
+                    name: agentName,
+                    mood: headerMood,
+                    animate: headerAnimated,
+                    subtitle: summary,
+                    actions: headerActions(),
+                  ),
+                  details,
+                ],
+              ),
+            )
+          : _AssistantAvatarHeader(
+              name: agentName,
+              mood: headerMood,
+              animate: headerAnimated,
+              actions: headerActions(),
+            ),
+      children: [
+        if (showHeader && metaLines.isNotEmpty)
+          _MetaBlock(lines: metaLines, onDark: false),
+        if (answer.isNotEmpty) ...answerWidgets(),
+        if (showFooter && technicalDetails.isNotEmpty)
+          _AssistantTechnicalDetails(details: technicalDetails),
+        if (showFooter && suggestionProjection.hasSuggestions)
+          HermesSuggestions(
+            suggestions: suggestionProjection.suggestions,
+            onSelected: onSuggestionSelected!,
+          ),
+        if (showFooter && metadata['show_link_preview'] == true)
+          Builder(
+            builder: (ctx) {
+              final first = firstUrl(
+                GeneratedMediaService.stripDirectives(answer),
+              );
+              if (first == null) return const SizedBox.shrink();
+              return _LinkPreviewLoader(
+                url: first,
+                linkCache: linkCache,
+                fetchLinkPreview: fetchLinkPreview,
+              );
+            },
+          ),
+      ],
     );
   }
 }
@@ -18365,422 +17289,16 @@ String _formatGeneratedFileBytes(int bytes) {
   return '${mib.toStringAsFixed(mib < 10 ? 1 : 0)} MB';
 }
 
-/// Intercepts fenced code blocks so they render inside [_CodeBlockWrapper]
-/// (horizontal scroll + copy button). The default `codeblockDecoration`
-/// container is still applied by flutter_markdown around the returned widget.
-/// Bloque verbatim que el modelo envolvió en ``` pero que es prosa (no código).
-/// Se muestra legible y proporcional, con un fondo/borde sutiles para seguir
-/// señalando que es un bloque, sin la dureza monoespaciada de un code block.
-class _PlainTextBlock extends StatelessWidget {
-  final String text;
-  const _PlainTextBlock({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.hermes;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.4)),
-      ),
-      child: Text(
-        text,
-        style: theme.textTheme.bodyMedium?.copyWith(
-          color: colors.textPrimary,
-          height: 1.5,
-        ),
-      ),
-    );
-  }
-}
-
-class _PreCodeBuilder extends MarkdownElementBuilder {
-  // Como registramos un builder para `pre`, flutter_markdown enruta el texto
-  // interno del code block a ESTE builder vía visitText. El contenido ya lo
-  // extraemos del elemento en visitElementAfter, así que aquí devolvemos un
-  // widget vacío: si devolviéramos null, el texto se filtraría como inline y
-  // dispararía el assert `_inlines.isEmpty` (pantalla rota con código).
-  @override
-  Widget visitText(md.Text text, TextStyle? preferredStyle) =>
-      const SizedBox.shrink();
-
-  @override
-  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
-    var code = element.textContent;
-    if (code.endsWith('\n')) code = code.substring(0, code.length - 1);
-    final lang = _languageOf(element);
-    final normalizedLanguage = (lang ?? '').toLowerCase();
-    if (normalizedLanguage == 'tree' || normalizedLanguage == 'filetree') {
-      final nodes = parseHermesFileTree(code);
-      if (nodes != null) return HermesFileTree(nodes: nodes);
-    }
-    // Vallas sin lenguaje / "text" cuyo contenido NO parece código (un resumen,
-    // una nota, una lista que el modelo metió en ```): se muestran como texto
-    // legible en vez de caja monoespaciada estilo "log".
-    if (_isPlainProse(code, lang)) {
-      return _PlainTextBlock(text: code);
-    }
-    return _CodeBlockWrapper(code: code, lang: lang);
-  }
-
-  /// Heurística conservadora: solo es "prosa" si NO hay lenguaje real y el
-  /// contenido no presenta señales de código/log/tabla (llaves, indentación,
-  /// columnas alineadas, prompts de shell, tags…). Ante la duda → código.
-  static bool _isPlainProse(String code, String? lang) {
-    final l = (lang ?? '').toLowerCase();
-    // `markdown`/`md` incluidos: un modelo que envuelve PROSA en ```markdown no
-    // debe verse como caja de código. Si el contenido tiene señales de código
-    // reales (abajo) se mantiene como bloque; aquí solo lo habilitamos.
-    const texty = {'', 'text', 'txt', 'plain', 'plaintext', 'markdown', 'md'};
-    if (!texty.contains(l)) return false;
-    if (code.trim().isEmpty) return false;
-    final codeSignals = RegExp(
-      r'[{};]|=>|=&|\|\||&&|</?[a-zA-Z]|^\s*[#$>]\s',
-      multiLine: true,
-    );
-    for (final line in code.split('\n')) {
-      if (codeSignals.hasMatch(line)) return false;
-      if (RegExp(r'^\s{2,}\S').hasMatch(line)) return false; // indentación
-      if (RegExp(r'\S {2,}\S').hasMatch(line.trimRight())) {
-        return false; // columnas alineadas (tablas ascii / logs)
-      }
-      if (line.split('|').length > 2) return false; // tabla con pipes
-    }
-    return true;
-  }
-
-  /// Infiere el lenguaje del bloque a partir de la clase `language-xxx` que
-  /// flutter_markdown pone en el `<code>` hijo del `<pre>` (```python, etc.).
-  static String? _languageOf(md.Element pre) {
-    final children = pre.children;
-    if (children == null) return null;
-    for (final child in children) {
-      if (child is md.Element && child.tag == 'code') {
-        final cls = child.attributes['class'];
-        if (cls != null && cls.startsWith('language-')) {
-          return cls.substring('language-'.length);
-        }
-      }
-    }
-    return null;
-  }
-}
-
-class _CodeBlockWrapper extends StatefulWidget {
-  final String code;
-
-  /// Lenguaje inferido del bloque (p. ej. `python`, `bash`), o null.
-  final String? lang;
-
-  const _CodeBlockWrapper({required this.code, this.lang});
-
-  @override
-  State<_CodeBlockWrapper> createState() => _CodeBlockWrapperState();
-}
-
-class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
-  static const int _maxSyntaxHighlightChars = 16000;
-  static const int _maxHighlightCacheEntries = 32;
-  // Claves y spans son código de conversaciones privadas: se vacía con los
-  // cambios de autoridad (borrar conexión, revocar keys, cambiar perfil).
-  static final LinkedHashMap<(String, String), List<TextSpan>?>
-  _highlightCache = _createHighlightCache();
-
-  static LinkedHashMap<(String, String), List<TextSpan>?>
-  _createHighlightCache() {
-    // ignore: prefer_collection_literals
-    final cache = LinkedHashMap<(String, String), List<TextSpan>?>();
-    PrivateRenderCaches.register(cache.clear);
-    return cache;
-  }
-
-  bool _copied = false;
-  Timer? _resetTimer;
-
-  void _copy() {
-    Clipboard.setData(ClipboardData(text: widget.code));
-    HapticFeedback.selectionClick();
-    _resetTimer?.cancel();
-    setState(() => _copied = true);
-    _resetTimer = Timer(const Duration(milliseconds: 800), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _resetTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final spans = _highlightSpans();
-    // Texto resaltado (tema oscuro) o plano: el plano conserva el look ámbar
-    // actual; si el resaltado falla, NUNCA se rompe el render.
-    final TextStyle baseStyle = TextStyle(
-      // Monoespaciado: el código/comando se lee como en una terminal y, sobre
-      // todo, las columnas (logs, tablas ascii) quedan alineadas.
-      fontFamily: 'monospace',
-      fontSize: 13,
-      height: 1.45,
-      color: spans == null
-          ? colors.textPrimary.withValues(alpha: 0.92)
-          : const Color(0xFFE6E6E6),
-    );
-    final Widget codeText = spans == null
-        ? Text(widget.code, style: baseStyle)
-        : Text.rich(TextSpan(style: baseStyle, children: spans));
-
-    final bool highlighted = spans != null;
-    // Fondo del cuerpo: editor oscuro cuando hay resaltado real; si no, hereda
-    // el surfaceVariant del marco sin teñir el texto con el acento del tema.
-    final Color bodyColor = highlighted
-        ? const Color(0xFF1E1E1E)
-        : colors.surfaceVariant;
-
-    final Widget body = ColoredBox(
-      color: bodyColor,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        child: codeText,
-      ),
-    );
-
-    // Cabecera: etiqueta del lenguaje + botón copiar (estilo editor/terminal).
-    final Widget header = Container(
-      padding: const EdgeInsets.fromLTRB(12, 0, 0, 0),
-      color: highlighted
-          ? const Color(0xFF161616)
-          : colors.surfaceVariant.withValues(alpha: 0.6),
-      child: Row(
-        children: [
-          Text(
-            _languageLabel,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 11,
-              letterSpacing: 0.5,
-              color: colors.textSecondary,
-            ),
-          ),
-          const Spacer(),
-          Tooltip(
-            message: Strings.of(context).chaCodeCopyTooltip,
-            child: GestureDetector(
-              onTap: _copy,
-              behavior: HitTestBehavior.opaque,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 150),
-                        transitionBuilder: (child, anim) =>
-                            ScaleTransition(scale: anim, child: child),
-                        child: Icon(
-                          _copied ? Icons.check : Icons.content_copy,
-                          key: ValueKey<bool>(_copied),
-                          size: 14,
-                          color: _copied ? colors.accent : colors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _copied
-                            ? Strings.of(context).chaCodeCopied
-                            : Strings.of(context).chaCodeCopy,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _copied ? colors.accent : colors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [header, body],
-      ),
-    );
-  }
-
-  /// Etiqueta legible del lenguaje para la cabecera. Sin lenguaje declarado
-  /// muestra "texto" (no inventa nada).
-  String get _languageLabel {
-    final raw = widget.lang?.trim();
-    if (raw == null || raw.isEmpty) return 'texto';
-    return raw.toLowerCase();
-  }
-
-  // ── Syntax highlighting (paquete `highlight`) ──────────────────────────────
-  //
-  // Alias de lenguajes markdown comunes → ids registrados en `highlight`.
-  static const Map<String, String> _langAliases = {
-    'sh': 'bash',
-    'shell': 'bash',
-    'zsh': 'bash',
-    'console': 'bash',
-    'js': 'javascript',
-    'ts': 'typescript',
-    'py': 'python',
-    'yml': 'yaml',
-    'html': 'xml',
-    'c++': 'cpp',
-    'rs': 'rust',
-    'kt': 'kotlin',
-  };
-
-  /// Devuelve los spans coloreados del código, o null si no hay lenguaje
-  /// inferible o el parser falla (se cae a texto plano sin romper el render).
-  List<TextSpan>? _highlightSpans() {
-    final raw = widget.lang;
-    if (raw == null) return null;
-    final lang =
-        _langAliases[raw.toLowerCase().trim()] ?? raw.toLowerCase().trim();
-    if (lang.isEmpty) return null;
-    // highlight.parse es síncrono. En un bloque enorme el color no compensa
-    // bloquear el hilo UI; se conserva el código completo como texto mono.
-    if (widget.code.length > _maxSyntaxHighlightChars) return null;
-    final key = (lang, widget.code);
-    if (_highlightCache.containsKey(key)) {
-      final cached = _highlightCache.remove(key);
-      _highlightCache[key] = cached;
-      return cached;
-    }
-    List<TextSpan>? spans;
-    try {
-      final result = highlight.parse(widget.code, language: lang);
-      final nodes = result.nodes;
-      if (nodes != null && nodes.isNotEmpty) spans = _spansForNodes(nodes);
-    } catch (_) {}
-    _highlightCache[key] = spans;
-    while (_highlightCache.length > _maxHighlightCacheEntries) {
-      _highlightCache.remove(_highlightCache.keys.first);
-    }
-    return spans;
-  }
-
-  List<TextSpan> _spansForNodes(List<Node> nodes) {
-    final out = <TextSpan>[];
-    for (final n in nodes) {
-      final color = _classColor(n.className);
-      final style = color == null ? null : TextStyle(color: color);
-      final children = n.children;
-      if (n.value != null) {
-        out.add(TextSpan(text: n.value, style: style));
-      } else if (children != null && children.isNotEmpty) {
-        out.add(TextSpan(style: style, children: _spansForNodes(children)));
-      }
-    }
-    return out;
-  }
-
-  /// Mapea la clase hljs a un color del tema oscuro simple.
-  static Color? _classColor(String? cls) {
-    switch (cls) {
-      case 'keyword':
-      case 'built_in':
-      case 'literal':
-      case 'type':
-      case 'meta':
-      case 'meta-keyword':
-      case 'selector-tag':
-        return const Color(0xFFE8821C); // ámbar (keywords)
-      case 'string':
-      case 'regexp':
-      case 'symbol':
-      case 'template-string':
-      case 'addition':
-      case 'attr':
-      case 'attribute':
-        return const Color(0xFF6BBF59); // verde (strings)
-      case 'comment':
-      case 'quote':
-      case 'deletion':
-        return const Color(0xFF7A7A7A); // gris (comentarios)
-      case 'number':
-        return const Color(0xFFB5CEA8); // verde suave (números)
-      case 'title':
-      case 'function':
-      case 'section':
-        return const Color(0xFFDCB67A); // ámbar suave (nombres/funciones)
-      default:
-        return null; // hereda el blanco base
-    }
-  }
-}
-
 List<String> _buildMetaLines(bool verbose, Map<String, dynamic> metadata) {
   if (!verbose) return const [];
   final role = metadata['role']?.toString().trim();
   return ['role: ${role == null || role.isEmpty ? 'unknown' : role}'];
 }
 
-String? _formatMessageTimestamp(Map<String, dynamic> metadata) {
-  final raw =
-      metadata['created_at'] ?? metadata['timestamp'] ?? metadata['createdAt'];
-  if (raw == null) return null;
-
-  final double? value;
-  if (raw is num) {
-    value = raw.toDouble();
-  } else if (raw is String) {
-    value = double.tryParse(raw);
-  } else {
-    value = null;
-  }
-  if (value == null || value <= 0) return null;
-
-  // The Gateway sends Unix timestamps in seconds (float), like
-  // Session.started_at. Values >= 1e12 can only be milliseconds, so
-  // accept both defensively.
-  final milliseconds = value < 1e12 ? (value * 1000).round() : value.round();
-  final dt = DateTime.fromMillisecondsSinceEpoch(milliseconds);
-  return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-}
-
-class _MessageTimestamp extends StatelessWidget {
-  final String value;
-
-  const _MessageTimestamp(this.value);
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Padding(
-      padding: const EdgeInsets.only(top: 3, left: 4, right: 4),
-      child: Text(
-        value,
-        // A-202 (spec 028): timestamps en mono (§8/§3); A-112: textSecondary
-        // para que el texto informativo llegue a 4.5:1.
-        style: TextStyle(
-          fontSize: 10,
-          fontFamily: 'monospace',
-          color: colors.textSecondary,
-        ),
-      ),
+String? _formatMessageTimestamp(Map<String, dynamic> metadata) =>
+    formatChatMessageTime(
+      metadata['created_at'] ?? metadata['timestamp'] ?? metadata['createdAt'],
     );
-  }
-}
 
 class _LinkPreviewData {
   final String title;
@@ -19943,16 +18461,10 @@ class AssistantMarkdownView extends StatelessWidget {
         : buildAssistantAnswerBlocks(
             split.answer,
             isStreaming: isStreaming,
-            markdown: (d) => MarkdownBody(
-              data: d,
-              selectable: false,
-              softLineBreak: false,
-              styleSheet: _assistantSheet(context, d),
-              builders: {'pre': _PreCodeBuilder()},
-            ),
+            markdown: (d) => ChatMarkdownBlock(data: d),
             callout: (b) =>
                 CalloutCard(kind: b.kind, title: b.title, body: b.body),
-            onLinkTap: (href) => _openMarkdownLink(context, href),
+            onLinkTap: (href) => openChatMarkdownLink(context, href),
           );
 
     if (blocks.isEmpty && !operationalProjection.hasTechnicalDetails) {
@@ -19979,360 +18491,6 @@ class AssistantMarkdownView extends StatelessWidget {
       ),
     );
   }
-}
-
-// flutter_markdown constrains the marker to listIndent (padding is separate).
-// Measure the rendered ordinals, including CommonMark's implicit increments,
-// rather than guessing a fixed gutter or suppressing wrapping/clipping.
-double _assistantListIndent(
-  BuildContext context,
-  String data,
-  TextStyle style,
-) {
-  var width = 16.0;
-  final painter = TextPainter(
-    textDirection: Directionality.of(context),
-    textScaler: MediaQuery.textScalerOf(context),
-  );
-  void measure(String marker) {
-    painter.text = TextSpan(text: marker, style: style);
-    painter.layout();
-    width = math.max(width, painter.width.ceilToDouble());
-  }
-
-  void visit(md.Node node) {
-    if (node is! md.Element) return;
-    if (node.tag == 'ol') {
-      var ordinal = int.tryParse(node.attributes['start'] ?? '') ?? 1;
-      for (final child in node.children ?? const <md.Node>[]) {
-        if (child is md.Element && child.tag == 'li') {
-          measure('${ordinal++}.');
-        }
-      }
-    }
-    for (final child in node.children ?? const <md.Node>[]) {
-      visit(child);
-    }
-  }
-
-  try {
-    measure('•');
-    for (final node in md.Document(
-      extensionSet: md.ExtensionSet.gitHubFlavored,
-    ).parseLines(data.split('\n'))) {
-      visit(node);
-    }
-    return width;
-  } finally {
-    painter.dispose();
-  }
-}
-
-MarkdownStyleSheet _assistantSheet(BuildContext context, String data) {
-  final theme = Theme.of(context);
-  final colors = theme.hermes;
-  final listBullet = (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
-    fontSize: 15,
-    height: 1.5,
-    color: colors.textPrimary,
-  );
-  return MarkdownStyleSheet(
-    p: theme.textTheme.bodyMedium?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 15,
-      height: 1.5,
-    ),
-    blockSpacing: 10,
-    pPadding: const EdgeInsets.only(bottom: 2),
-    code: TextStyle(
-      backgroundColor: Colors.transparent,
-      fontFamily: 'monospace',
-      fontSize: 13,
-      color: colors.textPrimary.withValues(alpha: 0.92),
-    ),
-    codeblockDecoration: BoxDecoration(
-      color: colors.surfaceVariant,
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-    ),
-    // El padding interno lo gestiona _CodeBlockWrapper (necesita que la
-    // cabecera de lenguaje quede a ras del borde); aquí lo anulamos.
-    codeblockPadding: EdgeInsets.zero,
-    // Enlaces en el color de contraste del tema (como en el resto de la app).
-    a: TextStyle(
-      color: colors.secondary,
-      decoration: TextDecoration.underline,
-      decorationColor: colors.secondary.withValues(alpha: 0.5),
-    ),
-    // Jerarquía compacta para móvil: los encabezados deben ordenar la respuesta
-    // sin convertirse en carteles ni romper la densidad del chat.
-    h1: theme.textTheme.titleLarge?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 18,
-      height: 1.32,
-      fontWeight: FontWeight.w700,
-    ),
-    h2: theme.textTheme.titleMedium?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 16.5,
-      height: 1.35,
-      fontWeight: FontWeight.w700,
-    ),
-    h3: theme.textTheme.bodyLarge?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 15.5,
-      height: 1.4,
-      fontWeight: FontWeight.w600,
-    ),
-    h4: theme.textTheme.bodyLarge?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 15,
-      height: 1.45,
-      fontWeight: FontWeight.w600,
-    ),
-    h5: theme.textTheme.bodyMedium?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 15,
-      height: 1.45,
-      fontWeight: FontWeight.w600,
-    ),
-    h6: theme.textTheme.bodyMedium?.copyWith(
-      color: colors.textPrimary,
-      fontSize: 15,
-      height: 1.45,
-      fontWeight: FontWeight.w600,
-    ),
-    h1Padding: const EdgeInsets.only(top: 11, bottom: 3),
-    h2Padding: const EdgeInsets.only(top: 10, bottom: 3),
-    h3Padding: const EdgeInsets.only(top: 8, bottom: 2),
-    h4Padding: const EdgeInsets.only(top: 8, bottom: 2),
-    h5Padding: const EdgeInsets.only(top: 7, bottom: 2),
-    h6Padding: const EdgeInsets.only(top: 7, bottom: 2),
-    blockquote: TextStyle(
-      color: colors.textSecondary,
-      fontStyle: FontStyle.italic,
-    ),
-    blockquoteDecoration: BoxDecoration(
-      border: Border(
-        left: BorderSide(
-          color: colors.divider.withValues(alpha: 0.65),
-          width: 2,
-        ),
-      ),
-    ),
-    blockquotePadding: const EdgeInsets.fromLTRB(10, 2, 0, 2),
-    listIndent: _assistantListIndent(context, data, listBullet),
-    listBulletPadding: const EdgeInsets.only(right: 6),
-    listBullet: listBullet,
-    // Tablas legibles: bordes sutiles, cabecera marcada y celdas con aire.
-    tableHead: theme.textTheme.bodyMedium?.copyWith(
-      color: colors.textPrimary,
-      fontWeight: FontWeight.w700,
-    ),
-    tableBody: theme.textTheme.bodyMedium?.copyWith(color: colors.textPrimary),
-    tableBorder: TableBorder.all(
-      color: colors.divider.withValues(alpha: 0.45),
-      width: 1,
-    ),
-    // Ajusta cada columna a su contenido en vez de comprimirlas por igual; con
-    // anchos intrínsecos flutter_markdown envuelve la tabla en scroll
-    // horizontal, así una tabla ancha se desplaza en lugar de partir el texto
-    // letra a letra en pantallas estrechas.
-    tableColumnWidth: const IntrinsicColumnWidth(),
-    tableCellsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-    tableCellsDecoration: BoxDecoration(
-      color: colors.surfaceVariant.withValues(alpha: 0.25),
-    ),
-    // El énfasis hereda tamaño y color del bloque. Así una palabra en negrita
-    // dentro de un heading no fragmenta visualmente el título.
-    em: const TextStyle(fontStyle: FontStyle.italic),
-    strong: const TextStyle(fontWeight: FontWeight.w700),
-  );
-}
-
-const double _dictationComposerHeight = 48;
-const double _dictationWaveHeight = 28;
-
-/// Visualizador compacto del dictado. La onda ocupa una franja reservada bajo
-/// los parciales visibles en el campo. No graba ni procesa audio; solo observa
-/// [VoiceService.micLevel].
-class _DictationVisualizer extends StatefulWidget {
-  const _DictationVisualizer({
-    required this.level,
-    required this.color,
-    required this.mutedColor,
-    required this.transcribing,
-    required this.listeningLabel,
-    required this.transcribingLabel,
-    super.key,
-  });
-
-  final ValueListenable<double> level;
-  final Color color;
-  final Color mutedColor;
-  final bool transcribing;
-  final String listeningLabel;
-  final String transcribingLabel;
-
-  @override
-  State<_DictationVisualizer> createState() => _DictationVisualizerState();
-}
-
-class _DictationVisualizerState extends State<_DictationVisualizer>
-    with WidgetsBindingObserver {
-  static const _barCount = 48;
-  static const _frameInterval = Duration(microseconds: 33334);
-  final ValueNotifier<List<double>> _samples = ValueNotifier(
-    List<double>.filled(_barCount, 0),
-  );
-  Timer? _sampleTimer;
-  bool _tickerModeEnabled = true;
-  bool _appActive = true;
-
-  bool get _shouldSampleLevel =>
-      !widget.transcribing && _tickerModeEnabled && _appActive;
-
-  @visibleForTesting
-  bool get debugClockActive => _sampleTimer?.isActive ?? false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _tickerModeEnabled = TickerMode.valuesOf(context).enabled;
-    _syncSampleClock();
-  }
-
-  @override
-  void didUpdateWidget(_DictationVisualizer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.transcribing != widget.transcribing) {
-      _syncSampleClock();
-    }
-  }
-
-  void _syncSampleClock() {
-    _sampleTimer?.cancel();
-    _sampleTimer = null;
-    if (!_shouldSampleLevel) return;
-    _sampleTimer = Timer.periodic(_frameInterval, (_) {
-      if (!_shouldSampleLevel) {
-        _syncSampleClock();
-        return;
-      }
-      final raw = widget.level.value.clamp(0.0, 1.0).toDouble();
-      // Solo amplifica la representación visual: no modifica el PCM ni lo que
-      // recibe el motor STT. El pequeño noise gate mantiene el silencio plano.
-      final sample = ((raw - 0.018) / 0.42).clamp(0.0, 1.0).toDouble();
-      final history = _samples.value;
-      _samples.value = <double>[...history.skip(1), sample];
-    });
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    final active = state == AppLifecycleState.resumed;
-    if (_appActive == active) return;
-    _appActive = active;
-    _syncSampleClock();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _sampleTimer?.cancel();
-    _samples.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final label = widget.transcribing
-        ? widget.transcribingLabel
-        : widget.listeningLabel;
-    return Semantics(
-      key: const ValueKey('dictation-status-semantics'),
-      liveRegion: true,
-      label: label,
-      excludeSemantics: true,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5),
-        child: SizedBox(
-          key: const ValueKey('dictation-wave-history'),
-          width: double.infinity,
-          height: _dictationWaveHeight,
-          child: SizedBox(
-            key: const ValueKey('dictation-bars'),
-            child: RepaintBoundary(
-              child: CustomPaint(
-                key: const ValueKey('dictation-bars-paint'),
-                painter: _DictationBarsPainter(
-                  samples: _samples,
-                  color: widget.color,
-                  mutedColor: widget.mutedColor,
-                  transcribing: widget.transcribing,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DictationBarsPainter extends CustomPainter {
-  const _DictationBarsPainter({
-    required this.samples,
-    required this.color,
-    required this.mutedColor,
-    required this.transcribing,
-  }) : super(repaint: samples);
-
-  final ValueListenable<List<double>> samples;
-  final Color color;
-  final Color mutedColor;
-  final bool transcribing;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final history = samples.value;
-    if (history.isEmpty || size.isEmpty) return;
-    final barCount = history.length;
-    final slotWidth = size.width / barCount;
-    final barWidth = math.min(3.2, math.max(1.7, slotWidth * 0.52));
-    final paint = Paint();
-    for (var index = 0; index < barCount; index++) {
-      final sample = history[index].clamp(0.0, 1.0).toDouble();
-      final barHeight = 3.2 + sample * (_dictationWaveHeight - 3.2);
-      final recency = index / math.max(1, barCount - 1);
-      paint.color = transcribing
-          ? mutedColor.withValues(alpha: 0.32)
-          : color.withValues(alpha: 0.5 + recency * 0.4);
-      final rect = Rect.fromLTWH(
-        slotWidth * (index + 0.5) - barWidth / 2,
-        (_dictationWaveHeight - barHeight) / 2,
-        barWidth,
-        barHeight,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(rect, const Radius.circular(8)),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DictationBarsPainter oldDelegate) =>
-      !identical(oldDelegate.samples, samples) ||
-      oldDelegate.color != color ||
-      oldDelegate.mutedColor != mutedColor ||
-      oldDelegate.transcribing != transcribing;
 }
 
 /// Tira fina bajo el AppBar del chat que indica el perfil de agente activo.

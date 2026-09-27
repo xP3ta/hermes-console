@@ -1,3 +1,4 @@
+import '../bots/data/room_log_cursor.dart';
 import 'bot_mention_roster.dart';
 import 'dart:async';
 import 'dart:math';
@@ -8,6 +9,7 @@ import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import 'connection_manager.dart';
 import 'kanban_client.dart';
+import 'shared_gateway_pool.dart';
 import 'tui_gateway_client.dart';
 
 typedef MissionProfilesLoader = Future<List<AgentProfile>> Function();
@@ -95,6 +97,21 @@ abstract interface class MissionHostedGroupsGateway {
   Future<HostedGroupRoom> retry(
     String roomId, {
     required String taskId,
+    required int generation,
+  });
+}
+
+/// Optional incremental surface (spec 070 T203/T204): `groups.state` with the
+/// server `driver_status`, and `groups.log` windows by `since_seq` so a
+/// refresh reads only the delta instead of the whole transcript.
+abstract interface class MissionHostedGroupsIncrementalGateway {
+  Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})>
+  stateWithDriver(String roomId, {required int generation});
+
+  Future<HostedGroupLogPage> logSince(
+    String roomId, {
+    required int sinceSeq,
+    required int limit,
     required int generation,
   });
 }
@@ -203,7 +220,9 @@ final class _CallbackMissionHostedGroupsGateway
 }
 
 final class _TuiMissionHostedGroupsGateway
-    implements MissionHostedGroupsGateway {
+    implements
+        MissionHostedGroupsGateway,
+        MissionHostedGroupsIncrementalGateway {
   final TuiGatewayClient client;
 
   const _TuiMissionHostedGroupsGateway(this.client);
@@ -225,6 +244,22 @@ final class _TuiMissionHostedGroupsGateway
   @override
   Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
       client.groupLogComplete(roomId, generation: generation);
+  @override
+  Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})>
+  stateWithDriver(String roomId, {required int generation}) =>
+      client.groupStateWithDriver(roomId, generation: generation);
+  @override
+  Future<HostedGroupLogPage> logSince(
+    String roomId, {
+    required int sinceSeq,
+    required int limit,
+    required int generation,
+  }) => client.groupLog(
+    roomId,
+    sinceSeq: sinceSeq,
+    limit: limit,
+    generation: generation,
+  );
   @override
   Future<HostedGroupRoom> create({
     required String name,
@@ -417,6 +452,8 @@ final class MissionControlRepository
   final MissionHostedGroupsGateway? hostedGroupsGateway;
   final void Function()? onClose;
   bool _closed = false;
+  final Map<String, RoomLogCursor> _logCursors = {};
+  int? _logCursorGeneration;
 
   MissionControlRepository({
     required this.profilesLoader,
@@ -436,7 +473,10 @@ final class MissionControlRepository
       connectionId: connection.id,
     );
     final kanban = KanbanClient(connection, dashboardClient: dashboard);
-    final desktop = TuiGatewayClient(connection, dashboard: dashboard);
+    // One pooled Desktop socket per connection, shared with every Bot Mode
+    // surface (spec 070 T202); released (close frame) with the last lease.
+    final lease = SharedGatewayPool.instance.acquire(connection);
+    final desktop = lease.client;
     return MissionControlRepository(
       profilesLoader: () async {
         final rosterGeneration = BotMentionRoster.shared.generation(connection.id);
@@ -459,7 +499,7 @@ final class MissionControlRepository
       profileAvatarLoader: desktop.profileAvatar,
       hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
       onClose: () {
-        unawaited(desktop.close());
+        lease.release();
         kanban.close();
         gateway.close();
       },
@@ -527,26 +567,78 @@ final class MissionControlRepository
     final listed = await gateway.list(generation: capabilities.generation);
     final states = <HostedGroupRoom>[];
     final logs = <HostedGroupLogPage>[];
+    final driverStatuses = <String, RoomDriverStatus>{};
+    final listedIds = {for (final room in listed) room.roomId};
+    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
     for (final listedRoom in listed) {
-      final state = await gateway.state(
+      final read = await _readRoom(
+        gateway,
         listedRoom.roomId,
         generation: capabilities.generation,
       );
+      final state = read.room;
       if (state.roomId != listedRoom.roomId ||
           state.revision < listedRoom.revision) {
         throw const FormatException('incoherent hosted room state');
       }
-      final log = await gateway.log(
-        state.roomId,
-        generation: capabilities.generation,
-      );
       states.add(state);
-      logs.add(log);
+      logs.add(read.log);
+      if (read.driverStatus case final status?) {
+        driverStatuses[state.roomId] = status;
+      }
     }
     return HostedGroupsSnapshot(
       capabilities: capabilities,
       rooms: List.unmodifiable(states),
       logs: List.unmodifiable(logs),
+      driverStatuses: Map.unmodifiable(driverStatuses),
+    );
+  }
+
+  /// `groups.state` (+driver status) and the room log. Incremental gateways
+  /// read only `since_seq = cursor`; legacy ones re-read the full log.
+  Future<
+    ({HostedGroupRoom room, HostedGroupLogPage log, RoomDriverStatus? driverStatus})
+  >
+  _readRoom(
+    MissionHostedGroupsGateway gateway,
+    String roomId, {
+    required int generation,
+  }) async {
+    if (gateway is! MissionHostedGroupsIncrementalGateway) {
+      final state = await gateway.state(roomId, generation: generation);
+      final log = await gateway.log(roomId, generation: generation);
+      return (room: state, log: log, driverStatus: null);
+    }
+    final incremental = gateway as MissionHostedGroupsIncrementalGateway;
+    final state = await incremental.stateWithDriver(
+      roomId,
+      generation: generation,
+    );
+    final delta = await _cursorFor(incremental, roomId, generation).pull();
+    return (room: state.room, log: delta.log, driverStatus: state.driverStatus);
+  }
+
+  RoomLogCursor _cursorFor(
+    MissionHostedGroupsIncrementalGateway gateway,
+    String roomId,
+    int generation,
+  ) {
+    if (_logCursorGeneration != generation) {
+      _logCursors.clear();
+      _logCursorGeneration = generation;
+    }
+    return _logCursors.putIfAbsent(
+      roomId,
+      () => RoomLogCursor(
+        roomId: roomId,
+        load: ({required sinceSeq, required limit}) => gateway.logSince(
+          roomId,
+          sinceSeq: sinceSeq,
+          limit: limit,
+          generation: generation,
+        ),
+      ),
     );
   }
 
@@ -581,13 +673,13 @@ final class MissionControlRepository
     required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.state, generation);
-    final current = await gateway.state(room.roomId, generation: generation);
-    final log = await gateway.log(room.roomId, generation: generation);
+    final read = await _readRoom(gateway, room.roomId, generation: generation);
     return _verifiedWorkspaceReadback(
       previous: room,
-      current: current,
-      log: log,
+      current: read.room,
+      log: read.log,
       generation: generation,
+      driverStatus: read.driverStatus,
     );
   }
 
@@ -678,6 +770,7 @@ final class MissionControlRepository
     required HostedGroupRoom current,
     required HostedGroupLogPage log,
     required int generation,
+    RoomDriverStatus? driverStatus,
   }) {
     if (current.roomId != previous.roomId ||
         current.revision < previous.revision ||
@@ -691,6 +784,7 @@ final class MissionControlRepository
       room: current,
       log: log,
       capabilityGeneration: generation,
+      driverStatus: driverStatus,
     );
   }
 
@@ -724,6 +818,7 @@ final class MissionControlRepository
   void close() {
     if (_closed) return;
     _closed = true;
+    _logCursors.clear();
     onClose?.call();
   }
 }

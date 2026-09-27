@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
@@ -12,21 +10,35 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../models/agent_profile.dart';
 import '../models/bot_mode_v13.dart';
-import '../models/bot_sections.dart';
 import '../models/room_mirror.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/room_mirror_avatar.dart';
 import '../models/hosted_groups.dart';
 import '../models/room_member_status.dart';
-import '../models/room_summary.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
+import '../services/dock_preferences_store.dart';
+import '../bots/data/desktop_projection_rooms.dart';
+import '../bots/state/attention.dart';
+import '../bots/ui/room/room_dictation.dart';
+import '../bots/ui/room/room_gateway.dart';
+import '../bots/ui/room/room_launcher.dart';
+import '../bots/ui/room/room_prefs.dart';
+import '../bots/ui/room/room_screen.dart';
+import '../bots/state/bot_presence.dart';
+import '../bots/state/bot_roster_meta.dart';
+import '../bots/ui/profile/bot_profile_screen.dart';
+import '../bots/ui/roster/bots_roster_view.dart';
+import '../bots/ui/roster/projection_room_sheet.dart';
+import '../bots/ui/roster/roster_actions.dart';
+import '../bots/ui/roster/roster_model.dart';
+import '../bots/state/bot_chat_target.dart';
+import '../services/shared_gateway_pool.dart';
 import '../services/mission_control_repository.dart';
-import '../services/mission_bot_activity_store.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/mission_organization_store.dart';
 import '../services/notifications/notification_service.dart';
@@ -35,18 +47,15 @@ import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_premium_ui.dart';
-import '../widgets/hermes_ui.dart';
 import '../widgets/dock.dart';
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/chat_surface_coordinator.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/room_avatar_stack.dart';
-import '../widgets/room_team_row.dart';
-import '../widgets/room_member_status.dart';
-import '../widgets/room_summary_pill.dart';
 import '../widgets/remote_bot_roster.dart';
 import 'bot_create_screen.dart';
+import 'bot_profile_settings_screen.dart';
 import 'bot_sections_editor.dart';
 import '../services/bot_profile_client.dart';
 import '../services/bot_section_service.dart';
@@ -90,30 +99,17 @@ ChatScreen buildBotChatDestination({
   missionAvatarCache: avatarCache,
 );
 
+/// Canonical Bot Chat target (spec 070 T206). Desktop's invariant: the only
+/// identity is the profile's session titled exactly "Bot Chat", reported as
+/// `canonical_session` (or found by `session.list {title}`). Legacy
+/// `ui_meta['hermes-bots'].chat` pins and Console-local pins are ignored.
 @visibleForTesting
 ({String? sessionId, String source, bool valid}) resolveBotChatTarget(
   AgentProfile profile, {
-  String? localCompatibilityPin,
+  AgentProfileSessionSummary? titleLookup,
 }) {
-  final canonical = profile.canonicalBotChatSessionId;
-  if (canonical != null) {
-    return (sessionId: canonical, source: 'bot-mode-canonical', valid: true);
-  }
-  if (profile.hasInvalidBotChatPin) {
-    return (sessionId: null, source: 'mobile-bot', valid: false);
-  }
-  final official = profile.botChatSessionId;
-  if (official != null) {
-    return (sessionId: official, source: 'bot-mode', valid: true);
-  }
-  if (localCompatibilityPin != null) {
-    return (
-      sessionId: localCompatibilityPin,
-      source: 'bot-mode-local',
-      valid: true,
-    );
-  }
-  return (sessionId: null, source: 'mobile-bot', valid: true);
+  final target = BotChatTarget.resolve(profile, titleLookup: titleLookup);
+  return (sessionId: target.sessionId, source: target.chatSource, valid: true);
 }
 
 final class MissionControlOpenTarget {
@@ -145,8 +141,10 @@ class MissionControlScreen extends StatefulWidget {
   final MissionOrganizationStoreContract? organizationStore;
   @visibleForTesting
   final MissionBotChatStore? botChatStore;
+
+  /// Bot Chat registry lookup override (tests); defaults to the gateway.
+  final BotChatTitleLookup? botChatTitleLookup;
   @visibleForTesting
-  final MissionBotActivityStore? botActivityStore;
   @visibleForTesting
   final ActiveChatService? activeChats;
   final MissionControlOpenTarget? initialOpenTarget;
@@ -159,6 +157,9 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
   final BotProfileGateway? botProfileGateway;
+
+  /// Per-bot model catalog/reasoning (tests); defaults to the gateway.
+  final BotModelGateway? botModelGateway;
   @visibleForTesting
   final Future<List<ModelProvider>> Function(String profile)?
   modelOptionsLoader;
@@ -169,7 +170,7 @@ class MissionControlScreen extends StatefulWidget {
     this.dataSource,
     this.organizationStore,
     this.botChatStore,
-    this.botActivityStore,
+    this.botChatTitleLookup,
     this.activeChats,
     this.initialOpenTarget,
     this.botChatOpenObserver,
@@ -177,6 +178,7 @@ class MissionControlScreen extends StatefulWidget {
     this.botCreateGateway,
     this.profileAssetsGateway,
     this.botProfileGateway,
+    this.botModelGateway,
     this.modelOptionsLoader,
     super.key,
   });
@@ -193,8 +195,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   late final MissionProfileAvatarCache? _profileAvatarCache;
   late final MissionOrganizationStoreContract _organizationStore;
   late final MissionBotChatStore _botChatStore;
-  late final MissionBotActivityStore _botActivityStore;
-  TuiGatewayClient? _ownedProfileAssetsGateway;
+  SharedGatewayLease? _profileAssetsLease;
   late final HermesDesktopProfileAssetsGateway _profileAssetsGateway;
   MissionBackendSnapshot? _snapshot;
   List<MissionOrganization> _organizations = const [];
@@ -212,7 +213,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Duration _kanbanReconnectDelay = const Duration(seconds: 3);
   int _kanbanEventCursor = 0;
   int _loadGeneration = 0;
-  bool _botActivityInitialized = false;
   bool _lifecyclePaused = false;
   bool _disposed = false;
   bool _initialOpenDispatched = false;
@@ -250,19 +250,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         MissionOrganizationStore(widget.connManager.prefs);
     _botChatStore =
         widget.botChatStore ?? MissionBotChatStore(widget.connManager.prefs);
-    _botActivityStore =
-        widget.botActivityStore ??
-        MissionBotActivityStore(widget.connManager.prefs);
     final injectedAssets = widget.profileAssetsGateway;
     if (injectedAssets != null) {
       _profileAssetsGateway = injectedAssets;
     } else {
-      final gateway = TuiGatewayClient(widget.connection);
-      _ownedProfileAssetsGateway = gateway;
-      _profileAssetsGateway = gateway;
+      final lease = SharedGatewayPool.instance.acquire(widget.connection);
+      _profileAssetsLease = lease;
+      _profileAssetsGateway = lease.client;
     }
     _organizations = _organizationStore.load(widget.connection.id);
     WidgetsBinding.instance.addObserver(this);
+    _scheduleRosterRefresh();
     unawaited(_load());
   }
 
@@ -284,6 +282,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void dispose() {
     _disposed = true;
+    _rosterTimer?.cancel();
+    _rosterSearchOpen.dispose();
     _statusRevision.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _activeChats?.activeIds.removeListener(_onActiveIdsChanged);
@@ -293,7 +293,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     unawaited(_kanbanSubscription?.cancel());
     _kanbanSubscription = null;
     _profileAvatarCache?.clear();
-    unawaited(_ownedProfileAssetsGateway?.close());
+    _profileAssetsLease?.release();
     if (widget.dataSource == null) _dataSource.close();
     _surfaceCoordinator.dispose();
     super.dispose();
@@ -322,6 +322,24 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   final _statusRevision = ValueNotifier<int>(0);
 
+  /// Header search toggle of the Bots roster.
+  final _rosterSearchOpen = ValueNotifier<bool>(false);
+
+  /// Roster refresh while visible (spec 070 plan: roster every 30 s).
+  static const rosterRefreshInterval = Duration(seconds: 30);
+  Timer? _rosterTimer;
+
+  void _scheduleRosterRefresh() {
+    _rosterTimer?.cancel();
+    _rosterTimer = Timer.periodic(rosterRefreshInterval, (_) {
+      if (_disposed || !mounted || _lifecyclePaused) return;
+      if (_destination != _MissionDestination.bots) return;
+      if (ModalRoute.of(context)?.isCurrent == false) return;
+      if (_loading || _refreshing) return;
+      unawaited(_load(refresh: true));
+    });
+  }
+
   Future<void> _load({bool refresh = false}) async {
     final generation = ++_loadGeneration;
     if (mounted) {
@@ -338,8 +356,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       final incoming = await _dataSource.load();
       if (!mounted || generation != _loadGeneration) return;
       final snapshot = _retainLastGoodSources(incoming);
-      await _initializeBotActivity(snapshot);
-      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _snapshot = snapshot;
         _loading = false;
@@ -360,36 +376,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
-  Future<void> _initializeBotActivity(MissionBackendSnapshot snapshot) async {
-    final profiles = snapshot.profiles.map((profile) => profile.name).toSet();
-    try {
-      if (!_botActivityInitialized) {
-        _botActivityInitialized = true;
-        final existing = _botActivityStore.watermarks(widget.connection.id);
-        if (existing.isEmpty) {
-          final agents = _projection(snapshot).agents;
-          await Future.wait(
-            agents.map((agent) {
-              final activityAtMs = _missionBotActivityMs(agent);
-              if (activityAtMs <= 0) return Future<void>.value();
-              return _botActivityStore.markRead(
-                connectionId: widget.connection.id,
-                profile: agent.profile.name,
-                activityAtMs: activityAtMs,
-              );
-            }),
-          );
-        }
-      }
-      await _botActivityStore.prune(widget.connection.id, profiles);
-    } catch (error) {
-      debugPrint(
-        'Mission Control: could not initialize Bot activity watermarks: '
-        '$error',
-      );
-    }
-  }
-
   void _scheduleInitialOpen(MissionBackendSnapshot snapshot) {
     final target = widget.initialOpenTarget;
     if (target == null || _initialOpenDispatched) return;
@@ -402,8 +388,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   Future<void> _openInitialTarget(
     MissionControlOpenTarget target,
-    MissionBackendSnapshot snapshot,
-  ) async {
+    MissionBackendSnapshot snapshot, {
+    bool switchToWork = true,
+  }) async {
     switch (target.surface) {
       case MissionControlOwnedSurface.bot:
         final profile = target.profile;
@@ -425,7 +412,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         if (index == -1) return;
         final capabilities = snapshot.hostedGroups.capabilities;
         final enabled = !widget.connection.readOnly;
-        setState(() => _destination = _MissionDestination.work);
+        if (switchToWork) {
+          setState(() => _destination = _MissionDestination.work);
+        }
         if (!mounted) return;
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
@@ -1034,11 +1023,19 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (widget.connection.readOnly) return;
     final copy = MissionControlCopy.of(context);
     try {
-      await _profileAssetsGateway.saveProfileBotMeta(
-        profile: agent.profile.name,
-        hidden: hidden,
-        pinned: pinned,
-      );
+      // ui_meta['hermes-bots'] read-modify-write, Desktop keys (T208).
+      final gateway = _botProfileGateway;
+      if (gateway != null) {
+        final writer = BotRosterMetaWriter(gateway);
+        if (pinned != null) await writer.setPinned(agent.profile.name, pinned);
+        if (hidden != null) await writer.setHidden(agent.profile.name, hidden);
+      } else {
+        await _profileAssetsGateway.saveProfileBotMeta(
+          profile: agent.profile.name,
+          hidden: hidden,
+          pinned: pinned,
+        );
+      }
       if (!mounted) return;
       await _load(refresh: true);
     } catch (error) {
@@ -1063,8 +1060,18 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final gateway = _botProfileGateway;
     if (gateway == null || widget.connection.readOnly || _sectionBusy) return;
     setState(() => _sectionBusy = true);
-    final service = BotSectionService(widget.connection.id, gateway);
-    final result = await service.apply(widget.connection.id, changes);
+    // Sections live in ui_meta (sectionId/sectionName) like Desktop's
+    // user-sections.ts; every write drops the legacy `chat` pointer.
+    final writer = BotRosterMetaWriter(gateway);
+    final failed = <String, BotSectionChange>{};
+    for (final entry in changes.entries) {
+      try {
+        await writer.setSection(entry.key, id: entry.value.id, name: entry.value.name);
+      } catch (_) {
+        failed[entry.key] = entry.value;
+      }
+    }
+    final result = (failed: failed);
     if (!mounted) return;
     setState(() => _sectionBusy = false);
     await _load(refresh: true);
@@ -1106,8 +1113,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (changes != null && mounted) await _applySections(changes);
   }
 
-  Future<void> _sectionMenu(BotSectionGroup group) async {
-    if (_sectionBusy || widget.connection.readOnly || group.id == null) return;
+  Future<void> _sectionMenu(String sectionId, String sectionName) async {
+    if (_sectionBusy || widget.connection.readOnly) return;
     final action = await showHermesFloatingSurface<String>(context: context,
       builder: (context) {
         final s = Strings.of(context);
@@ -1121,17 +1128,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (action == null || !mounted) return;
     final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
     if (action == 'rename') {
-      final name = await botSectionNameDialog(context, initial: group.name ?? '');
+      final name = await botSectionNameDialog(context, initial: sectionName);
       if (name == null || !mounted) return;
-      await _applySections(BotSectionService.members(profiles, group.id!,
-        BotSectionChange(group.id, name)));
+      await _applySections(BotSectionService.members(profiles, sectionId,
+        BotSectionChange(sectionId, name)));
     } else {
       final undo = <String, BotSectionChange>{
         for (final profile in profiles)
-          if (profile.botSectionId == group.id)
-            profile.name: BotSectionChange(group.id, profile.botSectionName ?? group.name),
+          if (profile.botSectionId == sectionId)
+            profile.name: BotSectionChange(sectionId, profile.botSectionName ?? sectionName),
       };
-      await _applySections(BotSectionService.members(profiles, group.id!,
+      await _applySections(BotSectionService.members(profiles, sectionId,
         const BotSectionChange(null, null)), deletion: true, undo: undo);
     }
   }
@@ -1140,15 +1147,15 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     SavedConnection connection,
     AgentProfile profile,
   ) async {
-    TuiGatewayClient? client;
+    SharedGatewayLease? lease;
     try {
       final loader = widget.remoteBotLoader;
       if (loader != null) {
         profile = (await loader(connection))
             .singleWhere((candidate) => candidate.name == profile.name);
       } else {
-        client = TuiGatewayClient(connection);
-        profile = (await client.listProfiles(includeSessions: true))
+        lease = SharedGatewayPool.instance.acquire(connection);
+        profile = (await lease.client.listProfiles(includeSessions: true))
             .singleWhere((candidate) => candidate.name == profile.name);
       }
     } catch (_) {
@@ -1160,7 +1167,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
       return;
     } finally {
-      await client?.close();
+      lease?.release();
     }
     if (!mounted) return;
     final target = resolveBotChatTarget(profile);
@@ -1253,22 +1260,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
-  Future<void> _markBotRead(MissionAgent agent) async {
-    try {
-      await _botActivityStore.markRead(
-        connectionId: widget.connection.id,
-        profile: agent.profile.name,
-        activityAtMs: _missionBotActivityMs(agent),
-      );
-      if (mounted) setState(() {});
-    } catch (error) {
-      debugPrint(
-        'Mission Control: could not persist Bot read watermark for '
-        '${agent.profile.name}: $error',
-      );
-    }
-  }
-
   Future<void> _editOrganization([MissionOrganization? existing]) async {
     if (widget.connection.readOnly) return;
     final result = await showHermesFloatingSurface<_OrganizationDraft>(
@@ -1330,66 +1321,44 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   /// Opens the agent's canonical Bot Chat, writable like any other chat.
   Future<void> _openChat(MissionAgent agent) async {
-    final canonicalPin = agent.profile.canonicalBotChatSessionId;
-    final officialMetadata = agent.profile.botModeUiMeta.containsKey('chat');
-    if (canonicalPin == null && agent.profile.hasInvalidBotChatPin) {
-      debugPrint(
-        'Mission Control: Bot Chat unavailable for ${agent.profile.name} '
-        '(malformed compatibility pin: '
-        'chat=${agent.profile.botModeUiMeta['chat']}, '
-        'invalidMetadata=${agent.profile.hasInvalidBotModeMetadata})',
-      );
-      _showBotChatPinUnavailable();
-      return;
+    // Console-local pins are a retired compatibility tier: retire them
+    // best-effort so no later build can resurrect a stale pointer.
+    if (!widget.connection.readOnly) {
+      try {
+        await _botChatStore.clear(
+          connectionId: widget.connection.id,
+          profile: agent.profile.name,
+        );
+      } catch (error) {
+        debugPrint(
+          'Mission Control: could not retire the local Bot Chat pin '
+          'for ${agent.profile.name}: $error',
+        );
+      }
     }
-    String? localPin;
-    var localPinClearFailed = false;
-    final retireLocalPin = officialMetadata || canonicalPin != null;
-    if (retireLocalPin) {
-      if (!widget.connection.readOnly) {
+    AgentProfileSessionSummary? titleRow;
+    if (agent.profile.canonicalBotChatSessionId == null) {
+      final lookup =
+          widget.botChatTitleLookup ??
+          (_profileAssetsGateway is BotChatTitleLookup
+              ? _profileAssetsGateway as BotChatTitleLookup
+              : null);
+      if (lookup != null) {
         try {
-          await _botChatStore.clear(
-            connectionId: widget.connection.id,
-            profile: agent.profile.name,
-          );
+          titleRow = await lookup.findBotChatByTitle(agent.profile.name);
         } catch (error) {
+          // Fail closed: creating now could fork an existing canonical row.
           debugPrint(
-            'Mission Control: could not retire the stale local Bot Chat pin '
-            'for ${agent.profile.name}: $error',
+            'Mission Control: Bot Chat registry lookup failed for '
+            '${agent.profile.name}: $error',
           );
-          localPinClearFailed = true;
+          _showBotChatPinUnavailable();
+          return;
         }
       }
-    } else {
-      final lookup = await _botChatStore.lookup(
-        widget.connection.id,
-        agent.profile.name,
-        migrateLegacy: !widget.connection.readOnly,
-      );
-      if (lookup.state == MissionBotChatPinState.corrupt ||
-          lookup.state == MissionBotChatPinState.unavailable) {
-        debugPrint(
-          'Mission Control: local Bot Chat pin for ${agent.profile.name} '
-          'is ${lookup.state.name}',
-        );
-        _showBotChatPinUnavailable();
-        return;
-      }
-      localPin = lookup.sessionId;
-    }
-    if (localPinClearFailed && canonicalPin == null) {
-      _showBotChatPinUnavailable();
-      return;
     }
     if (!mounted) return;
-    final target = resolveBotChatTarget(
-      agent.profile,
-      localCompatibilityPin: localPin,
-    );
-    if (!target.valid) {
-      _showBotChatPinUnavailable();
-      return;
-    }
+    final target = resolveBotChatTarget(agent.profile, titleLookup: titleRow);
     final pinnedId = target.sessionId;
     final source = target.source;
     final session = Session(
@@ -1407,8 +1376,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       profile: agent.profile.name,
       isDefaultProfile: agent.profile.isDefault,
     );
-    await _markBotRead(agent);
-    if (!mounted) return;
     final observer = widget.botChatOpenObserver;
     if (observer != null) {
       observer(session);
@@ -1438,171 +1405,280 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
-  void _openAgent(MissionAgent agent) {
-    _surfaceCoordinator.setRouteActive(false);
-    unawaited(
-      showHermesFloatingSurface<void>(
-        context: context,
-        surfaceKey: const ValueKey('mission-agent-detail'),
-        maxWidth: 560,
-        maxHeightFactor: 0.9,
-        // Sin alto fijo: la ficha se mide por su contenido (su `ListView` va
-        // en `shrinkWrap`) y solo llega al 90 % de la pantalla cuando de
-        // verdad hace falta. El 72 % fijo anterior dejaba la hoja siempre del
-        // mismo tamaño, así que un bot sin descripción ni tareas salía con
-        // media ventana vacía debajo de los botones.
-        builder: (sheetContext) => ValueListenableBuilder<int>(
-          valueListenable: _statusRevision,
-          builder: (sheetContext, _, _) {
-            final current =
-                _roomAgents()
-                    .where((a) => a.profile.name == agent.profile.name)
-                    .firstOrNull ??
-                agent;
-            return SafeArea(
-              top: false,
-              child: _AgentDetail(
-                agent: current,
-                live: BotLiveStatus.forAgent(
-                  agent: current,
-                  now: DateTime.now(),
-                  rooms: _snapshot?.hostedGroups ?? HostedGroupsSnapshot.empty,
-                ),
-                assignedTasks: [
-                  for (final column
-                      in _snapshot?.board?.columns ?? const <KanbanColumn>[])
-                    for (final task in column.tasks)
-                      if (task.assignee?.trim() == agent.profile.name) task,
-                ],
-                copy: MissionControlCopy.of(sheetContext),
-                avatarCache: _profileAvatarCache,
-                onChat: () {
-                  Navigator.pop(sheetContext);
-                  _openChat(agent);
-                },
-                onEditProfile: widget.connection.readOnly
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        _openProfileEditor(agent.profile);
-                      },
-                onRoutines: () {
-                  Navigator.pop(sheetContext);
-                  _openRoutines(profile: agent.profile.name);
-                },
-                onTasks: () {
-                  Navigator.pop(sheetContext);
-                  _openTasks(assignee: agent.profile.name);
-                },
-                onMemory: () {
-                  Navigator.pop(sheetContext);
-                  _openMemory(profile: agent.profile.name);
-                },
-                onSkills: () {
-                  Navigator.pop(sheetContext);
-                  _openSkills(profile: agent.profile.name);
-                },
-                onSoul: () {
-                  Navigator.pop(sheetContext);
-                  _openSoul();
-                },
-                onTogglePinned: widget.connection.readOnly
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        unawaited(
-                          _saveBotRosterMeta(
-                            agent,
-                            pinned: !agent.profile.botPinned,
-                          ),
-                        );
-                      },
-                onToggleHidden: widget.connection.readOnly
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        unawaited(
-                          _saveBotRosterMeta(
-                            agent,
-                            hidden: !agent.profile.botHidden,
-                          ),
-                        );
-                      },
-              ),
-            );
-          },
-        ),
-      ).whenComplete(() {
-        if (mounted) _surfaceCoordinator.setRouteActive(true);
-      }),
+  MissionAgent _currentAgent(MissionAgent agent) =>
+      _roomAgents()
+          .where((a) => a.profile.name == agent.profile.name)
+          .firstOrNull ??
+      agent;
+
+  BotModelGateway? get _botModelGateway =>
+      widget.botModelGateway ??
+      (_profileAssetsGateway is BotModelGateway
+          ? _profileAssetsGateway as BotModelGateway
+          : null);
+
+  /// Live **Now** items of a bot (spec 070 S4), server evidence only:
+  /// fresh worker session, the bot's live chats, and hosted rooms where its
+  /// seat works or needs the user. Stop is offered where the server allows
+  /// it (`session.interrupt` via the live chat, `groups.stop`).
+  BotProfileData _profileData(MissionAgent original) {
+    final agent = _currentAgent(original);
+    final profile = agent.profile;
+    final snapshot = _snapshot;
+    final groups = snapshot?.hostedGroups ?? HostedGroupsSnapshot.empty;
+    final now = DateTime.now();
+    final strings = Strings.of(context);
+    final items = <BotNowItem>[];
+    final worker = profile.workerSession;
+    if (worker != null &&
+        BotPresence.workerIsFresh(worker, now) &&
+        worker.title.trim().isNotEmpty) {
+      items.add(BotNowItem(label: strings.botProfileWorkingOn(worker.title.trim())));
+    }
+    final service = _activeChats;
+    if (service != null) {
+      for (final chat in _resolveActiveChats(service)) {
+        if (Session.profileOwner(chat.sessionProfile) != profile.name) continue;
+        final phase = _missionPhase(chat);
+        final label = switch (phase) {
+          MissionLivePhase.thinking => strings.botProfileLiveThinking,
+          MissionLivePhase.working => strings.botProfileLiveWorking,
+          MissionLivePhase.responding => strings.botProfileLiveReplying,
+          MissionLivePhase.approvalRequired => strings.botProfileLiveApproval,
+          _ => null,
+        };
+        if (label == null) continue;
+        items.add(
+          BotNowItem(
+            label: label,
+            detail: chat.sessionTitle,
+            attention: phase == MissionLivePhase.approvalRequired,
+            onStop: widget.connection.readOnly
+                ? null
+                : () async {
+                    await chat.stopSessionWork();
+                  },
+          ),
+        );
+      }
+    }
+    final attention = AttentionSummary.fromSnapshot(groups);
+    final canStop =
+        !widget.connection.readOnly &&
+        (groups.capabilities?.supports(GroupMethod.stop) ?? false);
+    var roomCount = 0;
+    for (final room in groups.rooms) {
+      if (room.disbanded) continue;
+      final seats = {
+        for (final member in room.members)
+          if (member.owner.connectionId == room.authorityGatewayId &&
+              member.owner.profile == profile.name)
+            member.memberId,
+      };
+      if (seats.isEmpty) continue;
+      roomCount++;
+      final needs = (attention.room(room.roomId)?.items ?? const [])
+          .any((item) => seats.contains(item.memberId));
+      final seatWorking = BotRoomSeat.forProfile(profile.name, groups).any(
+        (seat) => seat.roomId == room.roomId && seat.running,
+      );
+      if (needs) {
+        items.add(
+          BotNowItem(
+            label: strings.botProfileNeedsYouInRoom(room.name),
+            attention: true,
+          ),
+        );
+      } else if (seatWorking) {
+        items.add(
+          BotNowItem(
+            label: strings.botProfileWorkingInRoom(room.name),
+            onStop: canStop
+                ? () async {
+                    await _mutateHostedGroup(
+                      room,
+                      (source, current, generation) => source.stopHostedGroup(
+                        current,
+                        generation: generation,
+                      ),
+                    );
+                  }
+                : null,
+          ),
+        );
+      }
+    }
+    final live = BotLiveStatus.forAgent(agent: agent, now: now, rooms: groups);
+    return BotProfileData(
+      profile: profile,
+      signal: BotRosterEntry.from(
+        agent: agent,
+        live: live,
+        hasAttention: attention.forProfile(profile.name, groups).isNotEmpty,
+        now: now,
+      ).signal,
+      now: items,
+      roomCount: roomCount,
+      taskCount: [
+        for (final column in snapshot?.board?.columns ?? const <KanbanColumn>[])
+          for (final task in column.tasks)
+            if (task.assignee?.trim() == profile.name) task,
+      ].length,
     );
   }
 
-  /// Hoja compacta de acciones rápidas de una tarjeta de bot (mantener
-  /// pulsado o tocar el ⋯): fijar/dejar de fijar, ocultar/mostrar y accesos
-  /// directos a abrir el chat o la ficha completa (`_openAgent`). El swipe
-  /// se descartó en el diseño más reciente (compite con los gestos
-  /// horizontales de Android y no se descubre); esta hoja es su sustituto.
-  Future<void> _openBotQuickActions(MissionAgent agent) async {
+  /// Bot profile (spec 070 S4) as a full route.
+  Future<void> _openBotProfile(MissionAgent agent) async {
+    final name = agent.profile.name;
+    final readOnly = widget.connection.readOnly;
+    final gateway = _botProfileGateway;
+    final strings = Strings.of(context);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BotProfileScreen(
+          key: ValueKey('bot-profile-$name'),
+          data: () => _profileData(agent),
+          refresh: _statusRevision,
+          avatarCache: _profileAvatarCache,
+          modelGateway: _botModelGateway,
+          profileGateway: gateway,
+          readOnly: readOnly,
+          machineLabel: widget.connection.label,
+          onChat: () => unawaited(_openChat(_currentAgent(agent))),
+          onRooms: () => unawaited(_manageBotRooms(_currentAgent(agent))),
+          onRoutines: () => _openRoutines(profile: name),
+          onSoul: gateway == null || readOnly
+              ? _openSoul
+              : () => _openAdvancedSettings(name),
+          onSkills: () => _openSkills(profile: name),
+          onMemory: () => _openMemory(profile: name),
+          onTasks: () => unawaited(_openTasks(assignee: name)),
+          onEditIdentity: readOnly
+              ? null
+              : () => unawaited(_openProfileEditor(_currentAgent(agent).profile)),
+          onChanged: () => unawaited(_load(refresh: true)),
+          moreActions: [
+            BotProfileAction(
+              key: const ValueKey('bot-profile-recent'),
+              icon: Icons.history,
+              label: strings.botRecentSession,
+              onTap: () => unawaited(_openRecentSession(_currentAgent(agent))),
+            ),
+            if (!readOnly && gateway != null) ...[
+              BotProfileAction(
+                key: const ValueKey('bot-profile-advanced'),
+                icon: Icons.tune,
+                label: strings.botAdvanced,
+                onTap: () => _openAdvancedSettings(name),
+              ),
+              BotProfileAction(
+                key: const ValueKey('bot-profile-duplicate'),
+                icon: Icons.copy_outlined,
+                label: strings.botDuplicate,
+                onTap: () => unawaited(_duplicateBot(_currentAgent(agent))),
+              ),
+            ],
+            if (!readOnly && !agent.profile.isDefault && name != 'default')
+              BotProfileAction(
+                key: const ValueKey('bot-profile-delete'),
+                icon: Icons.delete_outline,
+                label: strings.prfDeleteTitle,
+                onTap: () => unawaited(_deleteBot(name)),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) await _load(refresh: true);
+  }
+
+  void _openAdvancedSettings(String profile) {
+    final gateway = _botProfileGateway;
+    if (gateway == null) return;
+    unawaited(
+      Navigator.of(context)
+          .push<bool>(
+            MaterialPageRoute(
+              builder: (_) =>
+                  BotProfileSettingsScreen(profile: profile, gateway: gateway),
+            ),
+          )
+          .then((saved) {
+            if (saved == true && mounted) unawaited(_load(refresh: true));
+          }),
+    );
+  }
+
+  Future<void> _deleteBot(String profile) async {
+    if (widget.connection.readOnly || profile == 'default') return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProfilesScreen(
+          connection: widget.connection,
+          connManager: widget.connManager,
+          initialDeleteProfile: profile,
+        ),
+      ),
+    );
+    if (mounted) await _load(refresh: true);
+  }
+
+  /// Long-press actions on a roster row (spec 070 T402): pin, section,
+  /// hide and open profile, written to `ui_meta` like Desktop.
+  Future<void> _openRosterActions(BotRosterEntry entry) async {
     _surfaceCoordinator.setRouteActive(false);
     final action =
-        await showHermesFloatingSurface<_BotQuickAction>(
+        await showHermesFloatingSurface<RosterBotAction>(
           context: context,
-          surfaceKey: ValueKey(
-            'mission-bot-quick-actions-${agent.profile.name}',
-          ),
+          surfaceKey: ValueKey('roster-bot-actions-${entry.profile.name}'),
           maxWidth: 420,
-          maxHeightFactor: 0.5,
-          builder: (sheetContext) => ValueListenableBuilder<int>(
-            valueListenable: _statusRevision,
-            builder: (sheetContext, _, _) {
-              final current =
-                  _roomAgents()
-                      .where((a) => a.profile.name == agent.profile.name)
-                      .firstOrNull ??
-                  agent;
-              return _BotQuickActionsSheet(
-                agent: current,
-                live: BotLiveStatus.forAgent(
-                  agent: current,
-                  now: DateTime.now(),
-                  rooms: _snapshot?.hostedGroups ?? HostedGroupsSnapshot.empty,
-                ),
-                copy: MissionControlCopy.of(sheetContext),
-                avatarCache: _profileAvatarCache,
-                canMutate: !widget.connection.readOnly,
-                canManage: _botProfileGateway != null,
-              );
-            },
+          maxHeightFactor: 0.6,
+          builder: (_) => RosterBotActionsSheet(
+            entry: entry,
+            avatarCache: _profileAvatarCache,
+            canMutate: !widget.connection.readOnly,
+            canSection: _botProfileGateway != null,
           ),
         ).whenComplete(() {
           if (mounted) _surfaceCoordinator.setRouteActive(true);
         });
     if (!mounted || action == null) return;
+    final agent = _currentAgent(entry.agent);
     switch (action) {
-      case _BotQuickAction.togglePinned:
-        unawaited(_saveBotRosterMeta(agent, pinned: !agent.profile.botPinned));
-      case _BotQuickAction.toggleHidden:
-        unawaited(_saveBotRosterMeta(agent, hidden: !agent.profile.botHidden));
-      case _BotQuickAction.openChat:
-        unawaited(_openChat(agent));
-      case _BotQuickAction.groups:
-        await _manageBotRooms(agent);
-      case _BotQuickAction.details:
-        _openAgent(agent);
-      case _BotQuickAction.section:
+      case RosterBotAction.chat:
+        await _openChat(agent);
+      case RosterBotAction.togglePin:
+        await _saveBotRosterMeta(agent, pinned: !agent.profile.botPinned);
+      case RosterBotAction.toggleHidden:
+        await _saveBotRosterMeta(agent, hidden: !agent.profile.botHidden);
+      case RosterBotAction.section:
         await _moveBotToSection(agent.profile);
-      case _BotQuickAction.recent:
-        await _openRecentSession(agent);
-      case _BotQuickAction.duplicate:
-        await _duplicateBot(agent);
-      case _BotQuickAction.delete:
-        if (widget.connection.readOnly || agent.profile.isDefault || agent.profile.name == 'default') return;
-        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfilesScreen(
-          connection: widget.connection, connManager: widget.connManager,
-          initialDeleteProfile: agent.profile.name)));
-        if (mounted) await _load(refresh: true);
+      case RosterBotAction.profile:
+        await _openBotProfile(agent);
     }
+  }
+
+  Future<void> _openRosterRoom(RoomRosterEntry entry) async {
+    final snapshot = _snapshot;
+    if (snapshot == null) return;
+    final roomId = entry.hostedRoomId;
+    if (roomId != null) {
+      await _openInitialTarget(
+        MissionControlOpenTarget.room(sessionId: '', roomId: roomId),
+        snapshot,
+        switchToWork: false,
+      );
+      return;
+    }
+    final projection = entry.projection;
+    if (projection == null) return;
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: ValueKey('roster-projection-${entry.publicKey}'),
+      maxWidth: 560,
+      maxHeightFactor: 0.86,
+      builder: (_) => ProjectionRoomSheet(room: projection),
+    );
   }
 
   Future<void> _manageBotRooms([MissionAgent? agent]) async {
@@ -1649,7 +1725,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (snapshot == null) return;
     for (final agent in _projection(snapshot).agents) {
       if (agent.profile.name == profileName) {
-        _openAgent(agent);
+        unawaited(_openBotProfile(agent));
         return;
       }
     }
@@ -1746,11 +1822,13 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       if (selected == null || !mounted) return;
       target = selected;
     }
-    TuiGatewayClient? remote;
+    SharedGatewayLease? remoteLease;
     try {
       var profiles = snapshot.profiles;
+      TuiGatewayClient? remote;
       if (target.id != widget.connection.id) {
-        remote = TuiGatewayClient(target);
+        remoteLease = SharedGatewayPool.instance.acquire(target);
+        remote = remoteLease.client;
         profiles = await remote.listProfiles();
       }
       if (!mounted) return;
@@ -1793,7 +1871,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           kind: HermesNoticeKind.error,
         );
       }
-    } finally { await remote?.close(); }
+    } finally { remoteLease?.release(); }
   }
 
   Future<void> _showWorkspaceSelector() async {
@@ -1829,11 +1907,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     setState(() => _destination = _MissionDestination.work);
   }
 
-  /// Cuántas salas oficiales vivas se ven en el destino "Trabajo".
-  int _visibleRoomCount(MissionBackendSnapshot snapshot) {
-    return snapshot.hostedGroups.rooms.where((room) => !room.disbanded).length;
-  }
-
   MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
     final source = _dataSource;
     return source is MissionHostedGroupsDataSource
@@ -1859,7 +1932,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final result = <_RoomPeerCandidate>[];
     for (final connection in widget.connManager.getConnections()) {
       if (connection.id == widget.connection.id || connection.readOnly) continue;
-      final client = TuiGatewayClient(connection);
+      final lease = SharedGatewayPool.instance.acquire(connection);
+      final client = lease.client;
       try {
         for (final profile in await client.listProfiles(includeSessions: false)) {
           final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
@@ -1871,7 +1945,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           }
         }
       } catch (_) { /* Unavailable connections never become selectable peers. */ }
-      finally { await client.close(); }
+      finally { lease.release(); }
     }
     return result;
   }
@@ -1881,7 +1955,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (home is! BotRoomLinkGateway || widget.connection.readOnly) return;
     final failed = <_RoomPeerCandidate>[];
     for (final peer in peers) {
-      final client = TuiGatewayClient(peer.connection);
+      final lease = SharedGatewayPool.instance.acquire(peer.connection);
+      final client = lease.client;
       try {
         if (!widget.connManager.getConnections().any((c) => c.id == peer.connection.id &&
             !c.readOnly && c.gatewayUrl == peer.connection.gatewayUrl && c.apiKey == peer.connection.apiKey)) {
@@ -1893,7 +1968,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           room: room, memberId: member.memberId, profile: peer.profile.name,
           target: client.roomLinkRequest, expectedCatalog: peer.catalog);
       } catch (_) { failed.add(peer); }
-      finally { await client.close(); }
+      finally { lease.release(); }
     }
     if (mounted && failed.isNotEmpty) {
       final s = Strings.of(context);
@@ -2112,24 +2187,26 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _selectedOrganization?.name ?? copy.allAgents,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
                           copy.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Theme.of(context).hermes.textSecondary,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w500,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
                           ),
                         ),
+                        if (_selectedOrganization case final organization?)
+                          Text(
+                            organization.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Theme.of(context).hermes.textSecondary,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -2140,29 +2217,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             ),
           ),
         ),
-        actions: [
-          if (_refreshing)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: copy.refresh,
-              onPressed: () => _load(refresh: true),
-              icon: const Icon(Icons.refresh_rounded),
-              style: IconButton.styleFrom(
-                backgroundColor: Theme.of(
-                  context,
-                ).hermes.surfaceVariant.withValues(alpha: 0.44),
-                minimumSize: const Size.square(48),
-                shape: const CircleBorder(),
-              ),
-            ),
-        ],
+        actions: _headerActions(copy),
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
@@ -2208,6 +2263,160 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         },
       ),
     );
+  }
+
+  /// Header actions (spec 070 S1): round search and round "New" button
+  /// (New bot / New room + roster management) — no floating action button,
+  /// so nothing competes with the dock. With the dock switched off, a round
+  /// Work button keeps the second destination reachable.
+  List<Widget> _headerActions(MissionControlCopy copy) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final round = IconButton.styleFrom(
+      backgroundColor: colors.surfaceVariant.withValues(alpha: 0.44),
+      minimumSize: const Size.square(48),
+      shape: const CircleBorder(),
+    );
+    final bots = _destination == _MissionDestination.bots;
+    return [
+      if (_refreshing)
+        const Padding(
+          padding: EdgeInsets.all(14),
+          child: SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ListenableBuilder(
+        listenable: DockPreferencesController.instance.listenable,
+        builder: (context, _) =>
+            DockPreferencesController.instance.value.useDock || !bots
+            ? const SizedBox.shrink()
+            : Padding(
+                padding: const EdgeInsetsDirectional.only(end: 6),
+                child: IconButton(
+                  key: const ValueKey('mission-goto-work'),
+                  tooltip: copy.work,
+                  style: round,
+                  icon: const Icon(Icons.groups_2_outlined, size: 21),
+                  onPressed: () =>
+                      setState(() => _destination = _MissionDestination.work),
+                ),
+              ),
+      ),
+      if (bots)
+        ValueListenableBuilder<bool>(
+          valueListenable: _rosterSearchOpen,
+          builder: (context, open, _) => Padding(
+            padding: const EdgeInsetsDirectional.only(end: 6),
+            child: IconButton(
+              key: const ValueKey('roster-search'),
+              tooltip: strings.rosterSearch,
+              style: round,
+              icon: Icon(
+                open ? Icons.close_rounded : Icons.search_rounded,
+                size: 21,
+              ),
+              onPressed: () => _rosterSearchOpen.value = !open,
+            ),
+          ),
+        ),
+      Padding(
+        padding: const EdgeInsetsDirectional.only(end: 10),
+        child: IconButton(
+          key: const ValueKey('mission-create-agent'),
+          tooltip: strings.rosterNew,
+          style: round,
+          icon: const Icon(Icons.add_rounded, size: 22),
+          onPressed: _hasNewMenu ? () => unawaited(_showNewMenu()) : null,
+        ),
+      ),
+    ];
+  }
+
+  bool get _canCreateBot =>
+      !widget.connection.readOnly &&
+      _snapshot?.profilesCapability == MissionCapabilityState.available;
+
+  bool get _canManageSections =>
+      !widget.connection.readOnly && _botProfileGateway != null;
+
+  bool get _hasNewMenu =>
+      _canCreateBot || _canCreateHostedRoom || _canManageSections ||
+      _snapshot != null;
+
+  Future<void> _showNewMenu() async {
+    final strings = Strings.of(context);
+    final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
+    final sections = <String, String>{};
+    for (final profile in profiles) {
+      final id = profile.botSectionId;
+      final name = profile.botSectionName;
+      if (id != null && name != null) sections.putIfAbsent(id, () => name);
+    }
+    final choice = await showHermesFloatingSurface<String>(
+      context: context,
+      surfaceKey: const ValueKey('mission-create-chooser'),
+      maxWidth: 420,
+      builder: (sheetContext) => ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          if (_canCreateBot)
+            ListTile(
+              key: const ValueKey('mission-create-chooser-bot'),
+              leading: const Icon(Icons.smart_toy_outlined),
+              title: Text(strings.missionCreateBotLabel),
+              onTap: () => Navigator.pop(sheetContext, 'bot'),
+            ),
+          if (_canCreateHostedRoom)
+            ListTile(
+              key: const ValueKey('mission-create-chooser-room'),
+              leading: const Icon(Icons.groups_2_outlined),
+              title: Text(strings.missionCreateRoomLabel),
+              onTap: () => Navigator.pop(sheetContext, 'room'),
+            ),
+          if (_canManageSections) ...[
+            const Divider(height: 1),
+            ListTile(
+              key: const ValueKey('mission-create-chooser-section'),
+              leading: const Icon(Icons.create_new_folder_outlined),
+              title: Text(strings.botSectionNew),
+              onTap: () => Navigator.pop(sheetContext, 'section'),
+            ),
+            for (final entry in sections.entries)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(entry.value),
+                trailing: const Icon(Icons.more_horiz),
+                onTap: () =>
+                    Navigator.pop(sheetContext, 'section:${entry.key}'),
+              ),
+          ],
+          ListTile(
+            leading: const Icon(Icons.forum_outlined),
+            title: Text(strings.botManageRooms),
+            onTap: () => Navigator.pop(sheetContext, 'rooms'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case 'bot':
+        await _createAgentFromMission();
+      case 'room':
+        await _createHostedRoom();
+      case 'section':
+        await _moveBotToSection();
+      case 'rooms':
+        await _manageBotRooms();
+      default:
+        if (choice.startsWith('section:')) {
+          final id = choice.substring(8);
+          await _sectionMenu(id, sections[id] ?? '');
+        }
+    }
   }
 
   /// Qué sabe hacer cada elemento del catálogo del dock DESDE Mission
@@ -2363,36 +2572,29 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 projection: projection,
                 copy: copy,
                 avatarCache: _profileAvatarCache,
-                activityStore: _botActivityStore,
-                onOpenDetail: _openAgent,
-                onQuickActions: _openBotQuickActions,
-                otherConnections: widget.connManager.getConnections().where((c) => c.id != widget.connection.id).toList(),
+                searchOpen: _rosterSearchOpen,
+                onOpenChat: (agent) => unawaited(_openChat(agent)),
+                onBotActions: (entry) => unawaited(_openRosterActions(entry)),
+                onOpenRoom: (entry) => unawaited(_openRosterRoom(entry)),
+                otherConnections: widget.connManager
+                    .getConnections()
+                    .where((c) => c.id != widget.connection.id)
+                    .toList(),
                 remoteBotLoader: widget.remoteBotLoader,
                 onRemoteOpen: _openRemoteBot,
                 onRemoteDetails: _remoteBotDetails,
-                onManageRooms: () => _manageBotRooms(),
-                onNewSection: !widget.connection.readOnly && _botProfileGateway != null ? _moveBotToSection : null,
-                onSectionMenu: !widget.connection.readOnly && _botProfileGateway != null ? _sectionMenu : null,
+                onSectionMenu: _canManageSections ? _sectionMenu : null,
                 onAttention:
                     projection.approvals.isNotEmpty ||
                         projection.blockedCount > 0
                     ? _openAttentionOverview
                     : null,
-                onCreateAgent:
-                    widget.connection.readOnly ||
-                        snapshot.profilesCapability !=
-                            MissionCapabilityState.available
-                    ? null
-                    : _createAgentFromMission,
-                onCreateHostedRoom: _canCreateHostedRoom
-                    ? _createHostedRoom
-                    : null,
-                roomCount: _visibleRoomCount(snapshot),
-                onOpenWork: _destination == _MissionDestination.bots
-                    ? () => setState(
-                        () => _destination = _MissionDestination.work,
-                      )
-                    : null,
+                attentionSummary: copy.attentionSummary(
+                  projection.approvals.length,
+                  projection.blockedCount,
+                ),
+                onCreateAgent: _canCreateBot ? _createAgentFromMission : null,
+                onRefresh: () => _load(refresh: true),
               ),
               _RoomsTab(
                 identityFor: (room) => _snapshot?.roomIdentity(room),
@@ -3130,6 +3332,9 @@ class _WorkspaceSheet extends StatelessWidget {
   }
 }
 
+/// Bots roster (spec 070 S1) over [BotsRosterView]: server-sourced rows for
+/// bots (presence, canonical preview/time, `ui_meta` pins/sections/hidden)
+/// and rooms (hosted `groups.*` plus read-only Desktop projection).
 class _BotsTab extends StatefulWidget {
   final SharedPreferences prefs;
   final String connectionId;
@@ -3137,36 +3342,19 @@ class _BotsTab extends StatefulWidget {
   final MissionProjection projection;
   final MissionControlCopy copy;
   final MissionProfileAvatarCache? avatarCache;
-  final MissionBotActivityStore activityStore;
-  final ValueChanged<MissionAgent> onOpenDetail;
-  final ValueChanged<MissionAgent> onQuickActions;
+  final ValueNotifier<bool> searchOpen;
+  final ValueChanged<MissionAgent> onOpenChat;
+  final ValueChanged<BotRosterEntry> onBotActions;
+  final ValueChanged<RoomRosterEntry> onOpenRoom;
   final List<SavedConnection> otherConnections;
   final RemoteBotLoader? remoteBotLoader;
   final void Function(SavedConnection, AgentProfile) onRemoteOpen;
   final void Function(SavedConnection, AgentProfile) onRemoteDetails;
-  final VoidCallback? onManageRooms;
-  final VoidCallback? onNewSection;
-  final ValueChanged<BotSectionGroup>? onSectionMenu;
+  final void Function(String sectionId, String name)? onSectionMenu;
   final VoidCallback? onAttention;
+  final String? attentionSummary;
   final VoidCallback? onCreateAgent;
-
-  /// Sin esto, "crear sala" solo era alcanzable desde la bandeja del dock
-  /// flotante (`_botDockCreateOrbits`) — con el dock apagado (interruptor
-  /// global de Ajustes), la cabecera de esta pestaña seguía ofreciendo
-  /// únicamente "Nuevo agente", así que crear una sala se volvía imposible
-  /// sin el dock (bug confirmado, pedido explícito del usuario). Null
-  /// cuando la capacidad no está disponible, igual que `onCreateAgent`.
-  final VoidCallback? onCreateHostedRoom;
-
-  /// Cuántas salas hay ahora en el destino "Trabajo" y cómo ir allí. Ver
-  /// [_MissionDestinationPill]: el dock es opcional y configurable, así que
-  /// el cambio de destino necesita una afordancia propia de la pantalla.
-  final int roomCount;
-
-  /// Null cuando este destino no es el activo: el `IndexedStack` construye
-  /// las dos pestañas a la vez, y una pestaña oculta no debe ofrecer (ni
-  /// duplicar en el árbol) la navegación de la que sí se ve.
-  final VoidCallback? onOpenWork;
+  final Future<void> Function() onRefresh;
 
   const _BotsTab({
     required this.prefs,
@@ -3175,21 +3363,19 @@ class _BotsTab extends StatefulWidget {
     required this.projection,
     required this.copy,
     required this.avatarCache,
-    required this.activityStore,
-    required this.onOpenDetail,
-    required this.onQuickActions,
+    required this.searchOpen,
+    required this.onOpenChat,
+    required this.onBotActions,
+    required this.onOpenRoom,
     required this.otherConnections,
-    this.remoteBotLoader,
     required this.onRemoteOpen,
     required this.onRemoteDetails,
-    this.onManageRooms,
-    this.onNewSection,
+    required this.onRefresh,
+    this.remoteBotLoader,
     this.onSectionMenu,
-    required this.onAttention,
-    required this.onCreateAgent,
-    required this.onCreateHostedRoom,
-    required this.roomCount,
-    required this.onOpenWork,
+    this.onAttention,
+    this.attentionSummary,
+    this.onCreateAgent,
   });
 
   @override
@@ -3197,601 +3383,94 @@ class _BotsTab extends StatefulWidget {
 }
 
 class _BotsTabState extends State<_BotsTab> {
-  final TextEditingController _searchController = TextEditingController();
-  String _query = '';
-  bool _showHidden = false;
+  (HostedGroupsSnapshot, AttentionSummary)? _attentionCache;
 
-  String get _foldKey =>
-      'mission.bot-section-folds.v1.${Uri.encodeComponent(widget.connectionId)}';
-
-  Set<String> get _folded =>
-      (widget.prefs.getStringList(_foldKey) ?? const <String>[]).toSet();
-
-  void _toggleSection(String key) {
-    final folded = _folded;
-    if (!folded.remove(key)) folded.add(key);
-    setState(() {
-      unawaited(
-        widget.prefs
-            .setStringList(_foldKey, folded.take(256).toList())
-            .catchError((Object _) => false),
-      );
-    });
+  AttentionSummary get _attention {
+    final groups = widget.snapshot.hostedGroups;
+    final cached = _attentionCache;
+    if (cached != null && identical(cached.$1, groups)) return cached.$2;
+    final summary = AttentionSummary.fromSnapshot(groups);
+    _attentionCache = (groups, summary);
+    return summary;
   }
 
-  List<Widget> _sectionRows(
-    BuildContext context,
-    List<BotSectionGroup> groups,
-  ) {
-    final colors = Theme.of(context).hermes;
-    final folded = _folded;
+  List<BotRosterEntry> _bots() {
+    final groups = widget.snapshot.hostedGroups;
+    final attention = _attention;
+    final now = DateTime.now();
     return [
-      for (final group in groups) ...[
-        Builder(
-          builder: (context) {
-            final key = group.id == null ? 'unassigned' : 'section:${group.id}';
-            final collapsed = folded.contains(key);
-            return Semantics(
-              expanded: !collapsed,
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  key: ValueKey('mission-bot-section-$key'),
-                  onTap: () => _toggleSection(key),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Row(
-                      children: [
-                        Icon(
-                          collapsed ? Icons.chevron_right : Icons.expand_more,
-                          size: 18,
-                          color: colors.textSecondary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            group.name ??
-                                Strings.of(context).missionBotsUnassigned,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${group.agents.length}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colors.textSecondary,
-                          ),
-                        ),
-                        if (group.id != null && widget.onSectionMenu != null)
-                          IconButton(tooltip: Strings.of(context).botSectionRename,
-                            icon: const Icon(Icons.more_horiz, size: 18),
-                            onPressed: () => widget.onSectionMenu!(group)),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
+      for (final agent in widget.projection.agents)
+        BotRosterEntry.from(
+          agent: agent,
+          live: BotLiveStatus.forAgent(agent: agent, now: now, rooms: groups),
+          hasAttention: attention
+              .forProfile(agent.profile.name, groups)
+              .isNotEmpty,
+          now: now,
         ),
-        if (!folded.contains(
-          group.id == null ? 'unassigned' : 'section:${group.id}',
-        ))
-          ..._botRows(context, group.agents, showPinBadge: true),
-        Divider(height: 1, color: colors.divider.withValues(alpha: 0.5)),
-      ],
     ];
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  /// Botón "+" de la cabecera: mismas dos opciones que la bandeja de
-  /// creación del dock (`_botDockCreateOrbits`), para que crear una sala
-  /// nunca dependa solo de que el dock flotante esté encendido. Si alguna
-  /// opción no está disponible ahora mismo (permisos, capacidad), su fila
-  /// simplemente no se pinta en vez de aparecer deshabilitada.
-  Future<void> _showSectionList() async {
-    final groups = groupBotSections(widget.projection.agents, widget.projection.agents).where((g) => g.id != null).toList();
-    final group = await showHermesFloatingSurface<BotSectionGroup>(context: context,
-      builder: (context) => ListView(shrinkWrap: true, children: [
-        for (final group in groups) ListTile(title: Text(group.name ?? ''),
-          onTap: () => Navigator.pop(context, group)),
-      ]));
-    if (mounted && group != null) widget.onSectionMenu?.call(group);
-  }
-
-  Future<void> _showCreateChooser(BuildContext context) async {
-    final onCreateAgent = widget.onCreateAgent;
-    final onCreateHostedRoom = widget.onCreateHostedRoom;
-    final strings = Strings.of(context);
-    if (onCreateAgent == null && onCreateHostedRoom == null) return;
-    await showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('mission-create-chooser'),
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (onCreateAgent != null)
-              ListTile(
-                key: const ValueKey('mission-create-chooser-bot'),
-                leading: const Icon(Icons.smart_toy_outlined),
-                title: Text(strings.missionCreateBotLabel),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  onCreateAgent();
-                },
-              ),
-            if (widget.onSectionMenu != null && widget.projection.agents.any((a) => a.profile.botSectionId != null))
-              ListTile(leading: const Icon(Icons.folder_outlined), title: Text(strings.botSectionsManage),
-                onTap: () { Navigator.pop(sheetContext); _showSectionList(); }),
-            if (widget.onManageRooms != null)
-            ListTile(leading: const Icon(Icons.forum_outlined), title: Text(strings.botManageRooms),
-              onTap: () { Navigator.pop(sheetContext); widget.onManageRooms!(); }),
-          if (widget.onNewSection != null)
-              ListTile(leading: const Icon(Icons.create_new_folder_outlined),
-                title: Text(strings.botSectionNew), onTap: () {
-                  Navigator.pop(sheetContext); widget.onNewSection!();
-                }),
-            if (onCreateHostedRoom != null)
-              ListTile(
-                key: const ValueKey('mission-create-chooser-room'),
-                leading: const Icon(Icons.groups_2_outlined),
-                title: Text(strings.missionCreateRoomLabel),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  onCreateHostedRoom();
-                },
-              ),
-          ],
-        ),
-      ),
+  List<RoomRosterEntry> _rooms() {
+    final snapshot = widget.snapshot;
+    final hosted = snapshot.hostedGroups;
+    final defaults = snapshot.profiles.where(
+      (p) => p.isDefault || p.name == 'default',
+    );
+    return RoomRosterEntry.build(
+      hosted: hosted,
+      attention: _attention,
+      projection: defaults.isEmpty
+          ? DesktopProjectionRooms.empty
+          : DesktopProjectionRooms.parse(
+              defaults.first.groupsProjection,
+              hostedRoomIds: {for (final r in hosted.rooms) r.roomId},
+            ),
+      localProfiles: {for (final p in snapshot.profiles) p.name: p},
     );
   }
-
-  /// Preview del Bot Chat pineado usando solo el snapshot ya cargado. Los pins
-  /// locales viven en secure storage; resolverlos por fila añadiría lecturas
-  /// asíncronas al scroll, así que solo se proyecta el pin oficial de Desktop.
-  Session? _pinnedBotChat(MissionAgent agent) {
-    final pin = agent.profile.botChatSessionId;
-    if (pin == null) return null;
-    for (final session in widget.snapshot.sessions) {
-      if (session.id == pin || session.logicalId == pin) return session;
-    }
-    return null;
-  }
-
-  /// Actividad del bot como en Bot Mode de Desktop (`activityOf`): el máximo
-  /// entre el sello `created` publicado en `ui_meta` (un bot recién creado
-  /// encabeza la lista) y su último mensaje. Los empates se resuelven por
-  /// nombre para que el orden sea estable entre refrescos.
-  /// "needs you": el bot espera al usuario (aprobación viva publicada por el
-  /// gateway vía ActiveChatService, o tarea Kanban bloqueada). Si el gateway
-  /// no expone ninguna de las dos señales, el badge simplemente no aparece —
-  /// degradación silenciosa, nunca un falso positivo.
-  BotLiveStatus _liveStatus(MissionAgent agent) => BotLiveStatus.forAgent(
-    agent: agent,
-    now: DateTime.now(),
-    rooms: widget.snapshot.hostedGroups,
-  );
-  bool _needsYou(MissionAgent agent) =>
-      _liveStatus(agent).presence == RoomPresence.needsYou;
-
-  bool _activeNow(MissionAgent agent) => const {
-    RoomPresence.working,
-    RoomPresence.active,
-  }.contains(_liveStatus(agent).presence);
-
-  bool _matches(MissionAgent agent) {
-    final query = _foldBotSearch(_query);
-    if (query.isEmpty) return true;
-    return [
-      agent.profile.name,
-      agent.profile.botTitle,
-      agent.profile.botGroup,
-      agent.profile.description,
-      agent.model,
-      agent.provider,
-    ].whereType<String>().any((value) => _foldBotSearch(value).contains(query));
-  }
-
-  /// [showPinBadge] controla el indicador de fijado junto al nombre: se omite
-  /// dentro de la propia sección "Fijados" y, fuera de ella, es gris apagado
-  /// con secciones (Activos ahora / Otros bots) o acento sin ellas (búsqueda
-  /// activa), según la especificación del mockup más reciente.
-  List<Widget> _botRows(
-    BuildContext context,
-    List<MissionAgent> agents, {
-    required bool showPinBadge,
-  }) {
-    final colors = Theme.of(context).hermes;
-    final widgets = <Widget>[];
-    for (var index = 0; index < agents.length; index++) {
-      final agent = agents[index];
-      final activityAtMs = _missionBotActivityMs(agent);
-      widgets.add(
-        _BotRow(
-          key: ValueKey('mission-bot-row-${agent.profile.name}'),
-          agent: agent,
-          live: _liveStatus(agent),
-          pinnedChat: _pinnedBotChat(agent),
-          needsYou: _needsYou(agent),
-          unread: widget.activityStore.isUnread(
-            widget.connectionId,
-            agent.profile.name,
-            activityAtMs,
-          ),
-          copy: widget.copy,
-          avatarCache: widget.avatarCache,
-          onOpen: () => widget.onOpenDetail(agent),
-          onQuickActions: () => widget.onQuickActions(agent),
-          pinBadgeColor: !showPinBadge || !agent.profile.botPinned
-              ? null
-              : (_query.trim().isEmpty
-                    ? colors.textDisabled
-                    : colors.accentText),
-        ),
-      );
-      if (index != agents.length - 1) {
-        widgets.add(
-          Divider(
-            height: 1,
-            indent: 58,
-            color: Theme.of(context).hermes.divider.withValues(alpha: 0.5),
-          ),
-        );
-      }
-    }
-    return widgets;
-  }
-
-  /// Fila horizontal con scroll lateral para "Fijados": avatares de 64px con
-  /// anillo de estado y nombre debajo, en vez de la lista vertical que usan
-  /// el resto de secciones. Especificación confirmada con el usuario tras
-  /// una ronda de mockups contradictorios (ver PR #29): la primera versión
-  /// de este parche probó una sección vertical y no era la acordada.
-  Widget _pinnedStrip(BuildContext context, List<MissionAgent> agents) =>
-      SizedBox(
-        height: 88 + MediaQuery.textScalerOf(context).scale(25),
-        child: ListView.separated(
-          key: const ValueKey('mission-pinned-strip'),
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          clipBehavior: Clip.none,
-          itemCount: agents.length,
-          separatorBuilder: (_, _) => const SizedBox(width: 18),
-          itemBuilder: (context, index) {
-            final agent = agents[index];
-            final activityAtMs = _missionBotActivityMs(agent);
-            return _PinnedBotTile(
-              key: ValueKey('mission-pinned-tile-${agent.profile.name}'),
-              agent: agent,
-              needsYou: _needsYou(agent),
-              live: _liveStatus(agent),
-              unread: widget.activityStore.isUnread(
-                widget.connectionId,
-                agent.profile.name,
-                activityAtMs,
-              ),
-              avatarCache: widget.avatarCache,
-              onOpen: () => widget.onOpenDetail(agent),
-              onQuickActions: () => widget.onQuickActions(agent),
-            );
-          },
-        ),
-      );
 
   @override
   Widget build(BuildContext context) {
     final copy = widget.copy;
-    final allAgents = [...widget.projection.agents]
-      ..sort((left, right) {
-        final byPinned = (right.profile.botPinned ? 1 : 0).compareTo(
-          left.profile.botPinned ? 1 : 0,
-        );
-        if (byPinned != 0) return byPinned;
-        final byActivity = _missionBotActivityMs(
-          right,
-        ).compareTo(_missionBotActivityMs(left));
-        return byActivity != 0
-            ? byActivity
-            : left.profile.name.compareTo(right.profile.name);
-      });
-    final hiddenCount = allAgents
-        .where((agent) => agent.profile.botHidden)
-        .length;
-    final agents = allAgents
-        .where((agent) => _showHidden || !agent.profile.botHidden)
-        .where(_matches)
-        .toList(growable: false);
-    final searching = _query.trim().isNotEmpty;
-    // Fuera de búsqueda los bots fijados se agrupan en su propia sección
-    // ("Fijados"), estén activos o en reposo, así que no aparecen también en
-    // "Activos ahora" u "Otros bots". Con búsqueda activa no hay secciones:
-    // el pin vuelve a leerse como badge en línea (ver _botRows).
-    final pinned = searching
-        ? const <MissionAgent>[]
-        : agents
-              .where((agent) => agent.profile.botPinned)
-              .toList(growable: false);
-    final unpinned = searching
-        ? agents
-        : agents.where((agent) => !agent.profile.botPinned);
-    final active = searching
-        ? const <MissionAgent>[]
-        : unpinned.where(_activeNow).toList(growable: false);
-    final resting = searching
-        ? agents
-        : unpinned.where((agent) => !_activeNow(agent)).toList(growable: false);
-    final hasSections =
-        !searching &&
-        agents.any(
-          (agent) =>
-              agent.profile.botSectionId != null &&
-              agent.profile.botSectionName != null,
-        );
-    return ListView(
-      key: const ValueKey('mission-bots'),
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-      children: [
-        if (widget.onOpenWork != null) ...[
-          _MissionDestinationPill(
-            controlKey: const ValueKey('mission-goto-work'),
-            icon: Icons.groups_2_outlined,
-            label: widget.copy.work,
-            detail: widget.copy.roomCount(widget.roomCount),
-            onTap: widget.onOpenWork!,
-          ),
-          const SizedBox(height: 14),
-        ],
-        if (widget.projection.approvals.isNotEmpty ||
-            widget.projection.blockedCount > 0) ...[
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              key: const ValueKey('mission-attention'),
-              onTap: widget.onAttention,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).hermes.warning.withValues(alpha: 0.07),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Theme.of(
-                      context,
-                    ).hermes.warning.withValues(alpha: 0.24),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.notifications_active_outlined,
-                      size: 18,
-                      color: Theme.of(context).hermes.warning,
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            copy.needsYou,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            copy.attentionSummary(
-                              widget.projection.approvals.length,
-                              widget.projection.blockedCount,
-                            ),
-                            style: TextStyle(
-                              color: Theme.of(context).hermes.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (widget.onAttention != null)
-                      const Icon(Icons.chevron_right_rounded),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 22),
-        ],
-        _LoungeSectionHeader(
-          title: copy.bots,
-          subtitle: copy.botCount(allAgents.length),
-          actionKey: const ValueKey('mission-create-agent'),
-          actionLabel: Strings.of(context).missionCreateLabel,
-          actionIcon: Icons.add_rounded,
-          onAction:
-              widget.onCreateAgent == null && widget.onCreateHostedRoom == null
-              ? null
-              : () => unawaited(_showCreateChooser(context)),
-        ),
-        const SizedBox(height: 14),
-        if (widget.snapshot.profilesCapability ==
-            MissionCapabilityState.unsupported)
-          _MessageCard(text: copy.profilesUnavailable)
-        else if (allAgents.isEmpty)
-          _LoungeEmptyState(
-            icon: Icons.smart_toy_outlined,
-            message: copy.noBots,
-            actionLabel: copy.newAgent,
-            onAction: widget.onCreateAgent,
-          )
-        else ...[
-          HermesSearchField(
-            key: const ValueKey('mission-bot-search'),
-            controller: _searchController,
-            hintText: copy.searchAgents,
-            clearTooltip: copy.clearSearch,
-            onChanged: (value) => setState(() => _query = value),
-          ),
-          if (hiddenCount > 0 || widget.otherConnections.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: TextButton.icon(
-                key: const ValueKey('mission-show-hidden'),
-                onPressed: () => setState(() => _showHidden = !_showHidden),
-                icon: Icon(
-                  _showHidden
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
-                  size: 17,
-                ),
-                label: Text(
-                  _showHidden
-                      ? copy.hideHiddenBots
-                      : hiddenCount == 0 ? Strings.of(context).botShowHidden : copy.showHiddenBots(hiddenCount),
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(context).hermes.textSecondary,
-                  minimumSize: const Size(48, 48),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 14),
-          if (agents.isEmpty)
-            _MessageCard(text: copy.noMatchingAgents)
-          else ...[
-            if (pinned.isNotEmpty) ...[
-              _BotSectionLabel(
-                key: const ValueKey('mission-pinned'),
-                title: copy.pinnedBots,
-                count: pinned.length,
-                icon: Icons.push_pin_rounded,
-              ),
-              const SizedBox(height: 9),
-              _pinnedStrip(context, pinned),
-              if (active.isNotEmpty || resting.isNotEmpty)
-                const SizedBox(height: 18),
-            ],
-            if (active.isNotEmpty) ...[
-              _BotSectionLabel(
-                key: const ValueKey('mission-active-now'),
-                title: copy.activeNow,
-                count: active.length,
-              ),
-              const SizedBox(height: 4),
-              ..._botRows(context, active, showPinBadge: true),
-              if (resting.isNotEmpty) const SizedBox(height: 18),
-            ],
-            if (resting.isNotEmpty) ...[
-              _BotSectionLabel(
-                title: _query.trim().isNotEmpty
-                    ? copy.searchResults
-                    : active.isNotEmpty || pinned.isNotEmpty
-                    ? copy.otherBots
-                    : copy.allBots,
-                count: resting.length,
-              ),
-              const SizedBox(height: 4),
-              if (hasSections)
-                ..._sectionRows(context, groupBotSections(resting, agents))
-              else
-                ..._botRows(context, resting, showPinBadge: true),
-            ],
-          ],
-        ],
-        if (widget.otherConnections.isNotEmpty)
-          RemoteBotRoster(connections: widget.otherConnections, prefs: widget.prefs, query: _query,
-            showHidden: _showHidden, refreshedAt: widget.snapshot.loadedAt,
-            onOpen: widget.onRemoteOpen, onDetails: widget.onRemoteDetails,
-            loader: widget.remoteBotLoader),
+    final unsupported =
+        widget.snapshot.profilesCapability ==
+        MissionCapabilityState.unsupported;
+    return BotsRosterView(
+      bots: unsupported ? const [] : _bots(),
+      rooms: _rooms(),
+      avatarCache: widget.avatarCache,
+      searchOpen: widget.searchOpen,
+      prefs: widget.prefs,
+      connectionId: widget.connectionId,
+      onOpenBot: (entry) => widget.onOpenChat(entry.agent),
+      onBotActions: widget.onBotActions,
+      onOpenRoom: widget.onOpenRoom,
+      onSectionMenu: widget.onSectionMenu,
+      onAttention: widget.onAttention,
+      attentionSummary: widget.attentionSummary,
+      onRefresh: widget.onRefresh,
+      header: [
+        if (unsupported) _MessageCard(text: copy.profilesUnavailable),
       ],
-    );
-  }
-}
-
-int _missionBotActivityMs(MissionAgent agent) {
-  final created = agent.profile.botModeUiMeta['created'];
-  final createdMs = created is num && created > 0 ? created.toInt() : 0;
-  final lastMs = agent.lastActivityAt?.millisecondsSinceEpoch ?? 0;
-  return createdMs > lastMs ? createdMs : lastMs;
-}
-
-// Compiladas una sola vez: con búsqueda activa `_matches` pliega hasta seis
-// campos por bot en cada build de la pestaña, y la pestaña se reconstruye con
-// cada refresco de Mission Control.
-final RegExp _foldSearchA = RegExp(r'[áàäâãå]');
-final RegExp _foldSearchE = RegExp(r'[éèëê]');
-final RegExp _foldSearchI = RegExp(r'[íìïî]');
-final RegExp _foldSearchO = RegExp(r'[óòöôõ]');
-final RegExp _foldSearchU = RegExp(r'[úùüû]');
-final RegExp _foldSearchSpaces = RegExp(r'\s+');
-
-String _foldBotSearch(String value) => value
-    .trim()
-    .toLowerCase()
-    .replaceAll(_foldSearchA, 'a')
-    .replaceAll(_foldSearchE, 'e')
-    .replaceAll(_foldSearchI, 'i')
-    .replaceAll(_foldSearchO, 'o')
-    .replaceAll(_foldSearchU, 'u')
-    .replaceAll('ñ', 'n')
-    .replaceAll(_foldSearchSpaces, ' ');
-
-class _BotSectionLabel extends StatelessWidget {
-  final String title;
-  final int count;
-  final IconData? icon;
-
-  const _BotSectionLabel({
-    required this.title,
-    required this.count,
-    this.icon,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Row(
-      children: [
-        if (icon != null) ...[
-          Icon(icon, size: 13, color: colors.accentText),
-          const SizedBox(width: 6),
-        ],
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
+      emptyState: _LoungeEmptyState(
+        icon: Icons.smart_toy_outlined,
+        message: copy.noBots,
+        actionLabel: copy.newAgent,
+        onAction: widget.onCreateAgent,
+      ),
+      footer: [
+        if (widget.otherConnections.isNotEmpty)
+          RemoteBotRoster(
+            connections: widget.otherConnections,
+            prefs: widget.prefs,
+            query: '',
+            showHidden: false,
+            refreshedAt: widget.snapshot.loadedAt,
+            onOpen: widget.onRemoteOpen,
+            onDetails: widget.onRemoteDetails,
+            loader: widget.remoteBotLoader,
           ),
-        ),
-        Text(
-          '$count',
-          style: TextStyle(
-            color: colors.textDisabled,
-            fontSize: 12,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
       ],
     );
   }
@@ -4331,6 +4010,11 @@ class _HostedRoomsSection extends StatelessWidget {
   );
 }
 
+/// Hosted room workspace: delegates to the spec 070 [RoomScreen] (group
+/// layout, round panel, approvals, activity, shared composer). Mission
+/// Control keeps owning the authority checks for mutations (`onSend`,
+/// `onRename`, `onStop`, `onDisband`) and the incremental room read
+/// (`onRead`: `groups.state` + driver status + `RoomLogCursor`).
 class _HostedRoomWorkspace extends StatefulWidget {
   final RoomMirrorIdentity? Function(HostedGroupRoom) identityFor;
   final _RoomDraftScope draftScope;
@@ -4343,14 +4027,12 @@ class _HostedRoomWorkspace extends StatefulWidget {
   final MissionControlCopy copy;
   final MissionProfileAvatarCache? avatarCache;
 
-  // Perfiles LOCALES a esta conexión, por nombre, con el mismo criterio que
-  // `_HostedRoomCard.localProfiles`: un miembro que coincide aquí es uno de
-  // tus propios bots y puede pintar su avatar real y abrir su ficha. Los que
-  // no coinciden son miembros de otra conexión (sala federada) y de ellos la
-  // app no tiene ficha ninguna.
+  /// Local profiles of this connection by name: a member owned by the
+  /// room's authority that matches one is one of your own Bots (real face,
+  /// profile link). Federated members never resolve here.
   final Map<String, AgentProfile> localProfiles;
 
-  /// Ver `_RoomsTab.onOpenMember`.
+  /// See `_RoomsTab.onOpenMember`.
   final ValueChanged<String> onOpenMember;
   final bool canSend;
   final bool canRename;
@@ -4383,7 +4065,6 @@ class _HostedRoomWorkspace extends StatefulWidget {
     required this.canRename,
     required this.canStop,
     required this.canDisband,
-
     required this.onSend,
     required this.onRename,
     required this.onStop,
@@ -4394,1774 +4075,120 @@ class _HostedRoomWorkspace extends StatefulWidget {
   State<_HostedRoomWorkspace> createState() => _HostedRoomWorkspaceState();
 }
 
-class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace>
-    with WidgetsBindingObserver {
-  Timer? _refreshTimer;
-  bool _refreshingRoom = false;
-  DateTime? _presenceRefreshedAt;
-  Map<String, MissionAgent> _presenceAgents = const {};
-  final Map<(String, String?), BotLiveStatus> _statusCache = {};
-  DateTime _presenceNow = DateTime.now();
-  bool _paused = false;
-  String? _roomError;
-
-  void _scheduleRoomRefresh() {
-    _refreshTimer?.cancel();
-    if (!mounted || _paused || widget.onRead == null) return;
-    _refreshTimer = Timer(const Duration(seconds: 3), _refreshRoom);
-  }
+class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
+  SavedConnection? _connection;
+  VoiceRoomDictation? _dictation;
+  RoomLocalPrefs? _prefs;
+  bool _resolved = false;
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _paused = state != AppLifecycleState.resumed;
-    if (_paused) {
-      _refreshTimer?.cancel();
-      _flushRoomDraft();
-    } else {
-      _scheduleRoomRefresh();
-    }
-  }
-
-  Future<void> _refreshRoom() async {
-    if (!mounted || _paused) return;
-    if (_sending ||
-        _refreshingRoom ||
-        ModalRoute.of(context)?.isCurrent != true) {
-      _scheduleRoomRefresh();
-      return;
-    }
-    final read = widget.onRead;
-    if (read == null) return;
-    _refreshingRoom = true;
-    final previous = _room;
-    try {
-      final now = DateTime.now();
-      _presenceRefreshedAt ??= now;
-      if (now.difference(_presenceRefreshedAt!).inSeconds >= 30) {
-        _presenceRefreshedAt = now;
-        await widget.refreshPresence();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_resolved) return;
+    _resolved = true;
+    // The room route lives under the app Navigator, not under Mission
+    // Control: resolve the connection and voice engine from the app.
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app != null) {
+      for (final connection in app.connManager.getConnections()) {
+        if (connection.id == widget.draftScope.connectionId) {
+          _connection = connection;
+          break;
+        }
       }
-      final result = await read(previous);
-      if (!mounted || _paused || _sending || !identical(previous, _room)) {
-        return;
+      _prefs = SharedPreferencesRoomPrefs(app.connManager.prefs);
+      final connection = _connection;
+      if (connection != null && !connection.readOnly && widget.canSend) {
+        _dictation = VoiceRoomDictation(
+          voice: app.voice,
+          connection: connection,
+          profile: widget.draftScope.profile,
+        );
       }
-      if (result.room.roomId != previous.roomId ||
-          result.room.authorityGatewayId != previous.authorityGatewayId ||
-          result.room.authorityEpoch != previous.authorityEpoch ||
-          result.room.revision < previous.revision ||
-          result.log == null ||
-          result.log!.latestSeq < (_log?.latestSeq ?? 0)) {
-        throw const FormatException('Room refresh authority changed');
-      }
-      setState(() {
-        _room = result.room;
-        _log = result.log;
-        _roomError = null;
-      });
-    } catch (_) {
-      if (mounted && !_paused) {
-        setState(() => _roomError = widget.copy.roomRefreshFailed);
-      }
-    } finally {
-      _refreshingRoom = false;
-      _scheduleRoomRefresh();
     }
-  }
-
-  Timer? _draftTimer;
-  bool _draftDirty = false;
-  bool _restoringRoomDraft = false;
-  late final String _draftSessionId;
-
-  Future<void> _restoreRoomDraft() async {
-    try {
-      final scope = widget.draftScope;
-      final draft = await scope.store.load(
-        scope.connectionId,
-        _draftSessionId,
-        profile: scope.profile,
-      );
-      if (!mounted || _draftDirty) return;
-      _restoringRoomDraft = true;
-      _threadId = draft.replyThreadId;
-      _composer.text = draft.text;
-      _restoringRoomDraft = false;
-    } catch (_) {
-      // Never replace an unreadable encrypted draft with an empty snapshot.
-    }
-  }
-
-  void _scheduleRoomDraft() {
-    if (_restoringRoomDraft) return;
-    _draftDirty = true;
-    _draftTimer?.cancel();
-    _draftTimer = Timer(const Duration(milliseconds: 350), _flushRoomDraft);
-  }
-
-  void _flushRoomDraft() {
-    _draftTimer?.cancel();
-    if (!_draftDirty) return;
-    final scope = widget.draftScope;
-    unawaited(
-      scope.store
-          .save(
-            scope.connectionId,
-            _draftSessionId,
-            _composer.text,
-            const [],
-            profile: scope.profile,
-            replyThreadId: _threadId,
-            preparedTurnClientTurnId: _pendingAttempt?.clientEventId,
-          )
-          .then<void>((_) {}, onError: (Object _) {}),
-    );
-  }
-
-  final TextEditingController _composer = TextEditingController();
-  final FocusNode _composerFocus = FocusNode();
-  late HostedGroupRoom _room;
-  HostedGroupLogPage? _log;
-  String? _threadId;
-  bool _sending = false;
-  HostedGroupSendAttempt? _pendingAttempt;
-  String? _pendingText;
-  String? _pendingThreadId;
-
-  // El backend real ya resuelve @menciones del texto plano del mensaje
-  // (`resolve_mentions` en el gateway, confirmado leyendo el código del
-  // servidor) — @all/@everyone incluidos. Esto es solo el autocompletado:
-  // pura UX de cliente sobre algo que el protocolo ya entiende, no un
-  // invento de Console.
-  String? _mentionQuery;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _scheduleRoomRefresh();
-    _room = widget.room;
-    _draftSessionId =
-        'mob-room-${base64Url.encode(utf8.encode(jsonEncode([_room.authorityGatewayId, _room.roomId])))}';
-    _composer.addListener(_scheduleRoomDraft);
-    unawaited(_restoreRoomDraft());
-    _log = widget.log;
-    _composer.addListener(_retireChangedAttempt);
-    _composer.addListener(_updateMentionQuery);
-    _composer.addListener(_onComposerEmptinessChange);
-    _composerFocus.addListener(_onComposerFocusChange);
-  }
-
-  void _onComposerFocusChange() => setState(() {});
-
-  /// El botón de envío se atenúa con el campo vacío, así que la transición
-  /// vacío ↔ con texto tiene que repintar. `_updateMentionQuery` solo
-  /// reconstruye cuando cambia la mención en curso, que no es lo mismo.
-  void _onComposerEmptinessChange() {
-    setState(() {});
-  }
-
-  void _retireChangedAttempt() {
-    if (_pendingAttempt != null && _composer.text.trim() != _pendingText) {
-      _pendingAttempt = null;
-      _pendingText = null;
-      _pendingThreadId = null;
-    }
-  }
-
-  void _updateMentionQuery() {
-    final text = _composer.text;
-    final cursor = _composer.selection.baseOffset;
-    if (cursor < 0 || cursor > text.length) {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
-      return;
-    }
-    final upToCursor = text.substring(0, cursor);
-    final at = upToCursor.lastIndexOf('@');
-    if (at == -1 || (at > 0 && !RegExp(r'\s').hasMatch(upToCursor[at - 1]))) {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
-      return;
-    }
-    final fragment = upToCursor.substring(at + 1);
-    // Un espacio cierra la mención en curso — coincide con cómo el propio
-    // servidor extrae handles del texto (`@([A-Za-z0-9][A-Za-z0-9._:-]*)`).
-    if (fragment.contains(RegExp(r'\s'))) {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
-      return;
-    }
-    setState(() => _mentionQuery = fragment);
-  }
-
-  List<HostedGroupMember> _mentionMatches() {
-    final query = _mentionQuery;
-    if (query == null) return const [];
-    final lower = query.toLowerCase();
-    return _room.members
-        .where((member) => member.handle.toLowerCase().startsWith(lower))
-        .toList(growable: false);
-  }
-
-  void _applyMention(String handle) {
-    final text = _composer.text;
-    final cursor = _composer.selection.baseOffset;
-    if (cursor < 0 || cursor > text.length) return;
-    final upToCursor = text.substring(0, cursor);
-    final at = upToCursor.lastIndexOf('@');
-    if (at == -1) return;
-    final replaced =
-        '${text.substring(0, at)}@$handle ${text.substring(cursor)}';
-    final newOffset = at + handle.length + 2;
-    _composer.value = TextEditingValue(
-      text: replaced,
-      selection: TextSelection.collapsed(offset: newOffset),
-    );
-    setState(() => _mentionQuery = null);
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _refreshTimer?.cancel();
-    _flushRoomDraft();
-    _composer.removeListener(_scheduleRoomDraft);
-    _composer.removeListener(_retireChangedAttempt);
-    _composer.removeListener(_updateMentionQuery);
-    _composer.removeListener(_onComposerEmptinessChange);
-    _composer.dispose();
-    _composerFocus.removeListener(_onComposerFocusChange);
-    _composerFocus.dispose();
+    _dictation?.dispose();
     super.dispose();
   }
 
-  Future<void> _send() async {
-    final text = _composer.text.trim();
-    if (text.isEmpty || _sending || !widget.canSend) return;
-    if (_pendingAttempt == null ||
-        _pendingText != text ||
-        _pendingThreadId != _threadId) {
-      _pendingAttempt = HostedGroupSendAttempt.forClientEvent(
-        const Uuid().v4(),
-        threadId: _threadId,
-      );
-      _pendingText = text;
-      _pendingThreadId = _threadId;
-    }
-    final attempt = _pendingAttempt!;
-    _flushRoomDraft();
-    final draftScope = widget.draftScope;
-    final submittedThread = _threadId;
-    setState(() => _sending = true);
-    try {
-      final result = await widget.onSend(text, attempt);
-      try {
-        await draftScope.store.clear(
-          draftScope.connectionId,
-          _draftSessionId,
-          profile: draftScope.profile,
-          onlyPreparedTurnClientTurnId: attempt.clientEventId,
-        );
-      } catch (_) {
-        // A storage failure must not turn an acknowledged send into a retry.
-      }
-      if (!mounted) return;
-      setState(() {
-        _room = result.room;
-        _log = result.log;
-        _sending = false;
-        _roomError = null;
-        _pendingAttempt = null;
-        _pendingText = null;
-        _pendingThreadId = null;
-        if (_composer.text.trim() == text && _threadId == submittedThread) {
-          _composer.clear();
-          _threadId = null;
-          _flushRoomDraft();
-        }
-      });
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _sending = false;
-          _roomError = widget.copy.hostedActionFailed;
-        });
-      }
-    }
-  }
-
-  Future<String?> _promptName() async {
-    var value = _room.name;
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(widget.copy.renameSharedRoom),
-        content: TextFormField(
-          initialValue: value,
-          autofocus: true,
-          maxLength: 200,
-          onChanged: (next) => value = next,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(widget.copy.cancel),
-          ),
-          TextButton(
-            onPressed: () {
-              final name = value.trim();
-              if (name.isNotEmpty) Navigator.pop(dialogContext, name);
-            },
-            child: Text(widget.copy.save),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<bool> _confirm(String title) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(title),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(widget.copy.cancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(widget.copy.confirm),
-            ),
-          ],
-        ),
-      ) ??
-      false;
-
-  Future<void> _rename() async {
-    final name = await _promptName();
-    if (name == null || !mounted) return;
-    try {
-      final result = await widget.onRename(name);
-      if (mounted) {
-        setState(() {
-          _room = result.room;
-          _log = result.log;
-        });
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _stop() async {
-    if (!await _confirm(widget.copy.stopSharedRoom) || !mounted) {
-      return;
-    }
-    try {
-      final result = await widget.onStop();
-      if (mounted) {
-        setState(() {
-          _room = result.room;
-          _log = result.log;
-        });
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _disband() async {
-    if (!await _confirm(widget.copy.disbandSharedRoom) || !mounted) {
-      return;
-    }
-    try {
-      final result = await widget.onDisband();
-      if (!mounted || !result.room.disbanded) return;
-      Navigator.of(context).pop();
-    } catch (_) {}
-  }
-
-  RoomMemberStatus _status(
-    HostedGroupMember member, {
-    HostedGroupEvent? message,
-  }) => _statusCache.putIfAbsent(
-    (member.memberId, message?.eventId),
-    () => BotLiveStatus.derive(
-      member: member,
-      events: _log?.events ?? const [],
-      now: _presenceNow,
-      agent: member.owner.connectionId == _room.authorityGatewayId
-          ? _presenceAgents[member.owner.profile]
-          : null,
-      addressedMessage: message,
-    ),
-  );
-
-  Widget _buildRecipients() {
-    final members = resolveRoomRecipients(_composer.text, _room.members);
-    final strings = Strings.of(context);
-    final all = members.length == _room.members.length;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 340;
-        final label = compact
-            ? all
-                  ? strings.roomEveryone
-                  : strings.roomRecipientsShort(
-                      members.length,
-                      _room.members.length,
-                    )
-            : all
-            ? strings.roomRecipientsAll(members.length)
-            : strings.roomRecipientsSome(members.length, _room.members.length);
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Container(
-              height: 36,
-              margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              color: Theme.of(
-                context,
-              ).hermes.surfaceVariant.withValues(alpha: .65),
-              key: const ValueKey('room-recipients-preview'),
-              child: Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).hermes.textSecondary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        for (final member in members)
-                          Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: RoomStatusAvatar(
-                              showDetailsOnTap: true,
-                              member: member,
-                              status: _status(member),
-                              profile: _hostedRoomMemberProfile(
-                                member,
-                                _room,
-                                widget.localProfiles,
-                              ),
-                              avatarCache: widget.avatarCache,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// Pending recipients live where their replies will arrive. Real replies
-  /// replace their placeholder; terminal silence leaves only a muted line.
-  Widget _buildPendingTurns(HostedGroupEvent? message) {
-    if (message == null) return const SizedBox.shrink();
-    final strings = Strings.of(context);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final member in resolveRoomRecipients(
-          message.publicText ?? '',
-          _room.members,
-        ))
-          Builder(
-            builder: (context) {
-              final status = _status(member, message: message);
-              final response = status.response!;
-              if (response == RoomResponse.responded) {
-                return const SizedBox.shrink();
-              }
-              final pending = response == RoomResponse.pending;
-              return Padding(
-                key: ValueKey(
-                  'room-turn-${message.eventId}-${member.memberId}',
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 5,
-                ),
-                child: AnimatedSwitcher(
-                  duration: Duration(
-                    milliseconds: MediaQuery.disableAnimationsOf(context)
-                        ? 0
-                        : 200,
-                  ),
-                  child: pending
-                      ? Row(
-                          key: ValueKey(
-                            'room-response-${message.eventId}-${member.memberId}-${response.name}',
-                          ),
-                          children: [
-                            RoomStatusAvatar(
-                              member: member,
-                              status: status,
-                              profile: _hostedRoomMemberProfile(
-                                member,
-                                _room,
-                                widget.localProfiles,
-                              ),
-                              avatarCache: widget.avatarCache,
-                              size: 28,
-                            ),
-                            const SizedBox(width: 9),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '@${member.handle}',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  BotStatusLine(
-                                    status: status,
-                                    text:
-                                        status.presence ==
-                                                RoomPresence.working ||
-                                            status.presence ==
-                                                RoomPresence.needsYou
-                                        ? null
-                                        : strings.roomResponsePending,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        )
-                      : Align(
-                          key: ValueKey(
-                            'room-response-${message.eventId}-${member.memberId}-${response.name}',
-                          ),
-                          alignment: AlignmentDirectional.centerStart,
-                          child: Text(
-                            response == RoomResponse.passed
-                                ? strings.roomMemberPassed(member.handle)
-                                : strings.roomMemberNoResponse(member.handle),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Theme.of(context).hermes.textDisabled,
-                            ),
-                          ),
-                        ),
-                ),
-              );
-            },
-          ),
-      ],
-    );
-  }
-
-  /// Sugerencias de `@mención` flotando sobre el composer, con el mismo
-  /// lenguaje que la paleta de comandos del chat (`_SlashPalette`): tarjeta
-  /// redondeada sobre `surfaceVariant`, borde de divisor y sombra. Antes eran
-  /// `ActionChip`s de Material a pelo con un icono `@` genérico — no se
-  /// parecían a nada más de la app y no decían a quién estabas mencionando.
-  /// Ahora cada sugerencia lleva la misma cara que ese miembro tiene en el
-  /// transcript y en la tira de equipo.
-  Widget _buildMentionPalette(HermesThemeColors colors) {
-    final matches = _mentionMatches();
-    final broadcasts = _mentionQuery == null
-        ? const <String>[]
-        : ['everyone', 'all']
-              .where(
-                (handle) => handle.startsWith(_mentionQuery!.toLowerCase()),
-              )
-              .toList();
-    if (matches.isEmpty && broadcasts.isEmpty) return const SizedBox.shrink();
-    return Container(
-      key: const ValueKey('mission-hosted-mention-suggestions'),
-      margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant,
-        borderRadius: BorderRadius.circular(18),
-
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.28),
-            blurRadius: 22,
-            offset: const Offset(0, 9),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(17),
-        child: Material(
-          color: Colors.transparent,
-          child: SizedBox(
-            height: 52,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              children: [
-                for (final handle in broadcasts)
-                  TextButton.icon(
-                    key: ValueKey('mission-hosted-mention-$handle'),
-                    onPressed: () => _applyMention(handle),
-                    icon: const Icon(Icons.groups_outlined, size: 16),
-                    label: Text('@$handle'),
-                  ),
-                for (final member in matches)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 2,
-                      vertical: 6,
-                    ),
-                    child: InkWell(
-                      key: ValueKey('mission-hosted-mention-${member.handle}'),
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => _applyMention(member.handle),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(6, 4, 12, 4),
-                        child: Row(
-                          children: [
-                            RoomStatusAvatar(
-                              member: member,
-                              status: _status(member),
-                              profile: _hostedRoomMemberProfile(
-                                member,
-                                _room,
-                                widget.localProfiles,
-                              ),
-                              avatarCache: widget.avatarCache,
-                              size: 24,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '@${member.handle}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: colors.textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Aviso de que el próximo envío va a un hilo concreto. Antes, tras tocar
-  /// "Responder en hilo", el único indicio era que cambiaba el texto de
-  /// sugerencia del campo, y no había ninguna forma de salir del hilo salvo
-  /// enviar el mensaje. Esto lo hace visible y reversible.
-  Widget _buildThreadBanner(HermesThemeColors colors) {
-    if (_threadId == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: Container(
-          key: const ValueKey('mission-hosted-thread-banner'),
-          padding: const EdgeInsetsDirectional.fromSTEB(10, 4, 4, 4),
-          decoration: BoxDecoration(
-            color: colors.accent.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: colors.accent.withValues(alpha: 0.28)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.reply_rounded, size: 14, color: colors.accentText),
-              const SizedBox(width: 6),
-              Text(
-                widget.copy.replyingInThread,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: colors.accentText,
-                ),
-              ),
-              const SizedBox(width: 2),
-              Semantics(
-                button: true,
-                label: widget.copy.stopReplyingInThread,
-                excludeSemantics: true,
-                child: Tooltip(
-                  message: widget.copy.stopReplyingInThread,
-                  child: InkWell(
-                    key: const ValueKey('mission-hosted-thread-cancel'),
-                    customBorder: const CircleBorder(),
-                    onTap: () => setState(() {
-                      _threadId = null;
-                      _pendingAttempt = null;
-                      _pendingText = null;
-                      _pendingThreadId = null;
-                    }),
-                    child: Padding(
-                      padding: const EdgeInsets.all(5),
-                      child: Icon(
-                        Icons.close_rounded,
-                        size: 14,
-                        color: colors.accentText,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Composer de la sala, con la misma huella que el de `ChatScreen`: la misma
-  /// cápsula flotante (`HermesComposerSurface`), el mismo relleno del host
-  /// (`14/4/14/10` sobre el fondo de la pantalla), el mismo inset horizontal
-  /// que se cierra al enfocar, el mismo `contentPadding` del campo y el mismo
-  /// botón primario (flecha arriba de 42 dp en una caja táctil de 48).
-  ///
-  /// Sin botón de adjuntos a propósito: el evento de una sala compartida solo
-  /// admite `text` y `thread_id` (validación del gateway, replicada en
-  /// `HostedGroupEvent.fromJson`), así que un "+" ahí sería un botón muerto.
-  /// La sala vacía lo dice una vez en voz baja en vez de fingirlo.
-  Widget _buildComposerHost(HermesThemeColors colors) {
-    // En horizontal el IME ocupa más de media pantalla, y un composer de
-    // varias líneas más su safe area puede no caber en lo que queda. Mismo
-    // tratamiento compacto que `ChatScreen`.
-    return Builder(
-      builder: (imeContext) {
-        final compactIme =
-            MediaQuery.viewInsetsOf(imeContext).bottom > 0 &&
-            MediaQuery.orientationOf(imeContext) == Orientation.landscape;
-        final hasText = _composer.text.trim().isNotEmpty;
-        return Container(
-          padding: compactIme
-              ? const EdgeInsets.fromLTRB(12, 2, 12, 3)
-              : const EdgeInsets.fromLTRB(14, 4, 14, 10),
-          color: colors.background,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (hasText) _buildRecipients(),
-              _buildMentionPalette(colors),
-              _buildThreadBanner(colors),
-              HermesComposerSurface(
-                focused: _composerFocus.hasFocus,
-                unfocusedHorizontalInset: 12,
-                // Sin botón de adjuntos a la izquierda, el campo necesita su
-                // propio margen dentro de la cápsula: 12 aquí + 4 del
-                // `contentPadding` dejan el texto a 16 dp del borde.
-                padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 0, 0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        key: const ValueKey('mission-hosted-composer'),
-                        controller: _composer,
-                        focusNode: _composerFocus,
-                        minLines: 1,
-                        maxLines: compactIme ? 2 : 4,
-                        textCapitalization: TextCapitalization.sentences,
-                        keyboardType: TextInputType.multiline,
-                        textInputAction: TextInputAction.newline,
-                        decoration: InputDecoration(
-                          // El estado de hilo ya lo dice la tira de arriba, y
-                          // además se puede deshacer desde ahí. Antes el
-                          // único indicio era que este texto de sugerencia se
-                          // reescribía a "Responder en hilo", que como
-                          // marcador de posición leía raro y era además la
-                          // única señal. Decirlo en los dos sitios sería
-                          // ruido: el campo mantiene su etiqueta.
-                          hintText: widget.copy.sendSharedMessage,
-                          hintStyle: TextStyle(
-                            color: colors.textSecondary,
-                            fontSize: 14,
-                          ),
-                          filled: false,
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          disabledBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.fromLTRB(
-                            4,
-                            compactIme ? 10 : 12,
-                            4,
-                            compactIme ? 10 : 12,
-                          ),
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    SizedBox.square(
-                      dimension: 48,
-                      child: Center(
-                        child: _sending
-                            ? SizedBox.square(
-                                key: const ValueKey(
-                                  'mission-hosted-composer-sending',
-                                ),
-                                dimension: 42,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(11),
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
-                              )
-                            : HermesTactileAction(
-                                key: const ValueKey(
-                                  'mission-hosted-composer-send',
-                                ),
-                                // Misma flecha que el chat real, no el avión
-                                // de papel genérico de Material.
-                                icon: Icons.arrow_upward,
-                                semanticLabel: widget.copy.sendSharedMessage,
-                                // Con el campo vacío la flecha se pinta
-                                // atenuada y no responde, en vez de lucir
-                                // activa sobre un tap que no hacía nada
-                                // (mismo criterio que `_SendButton`).
-                                onPressed: hasText ? _send : null,
-                                enabled: hasText,
-                                size: 42,
-                                iconSize: 19,
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  AgentProfile? _profileFor(HostedGroupMember member) =>
+      member.owner.connectionId == widget.room.authorityGatewayId
+      ? widget.localProfiles[member.owner.profile]
+      : null;
 
   @override
   Widget build(BuildContext context) {
-    _presenceNow = DateTime.now();
-    _presenceAgents = {
-      for (final agent in widget.agents()) agent.profile.name: agent,
-    };
-    _statusCache.clear();
-    final events =
-        _log?.events
-            .where((event) => event.publicText != null)
-            .toList(growable: false) ??
-        const <HostedGroupEvent>[];
-
-    final latestSend = events.where((e) => e.kind == 'message.user').lastOrNull;
-    final management = <String>[
-      if (widget.canRename) 'rename',
-      if (widget.canStop) 'stop',
-      if (widget.canDisband) 'disband',
-    ];
-    final colors = Theme.of(context).hermes;
-    final identity = widget.identityFor(_room);
-    return Scaffold(
+    final connection = _connection;
+    final read = widget.onRead;
+    final identity = widget.identityFor(widget.room);
+    final scope = widget.draftScope;
+    final writable = connection != null && !connection.readOnly;
+    return RoomScreen(
       key: const ValueKey('mission-hosted-room-workspace'),
-      appBar: HermesAppBar(
-        title: identity?.image == null
-            ? Text(identity?.name ?? _room.name)
-            : Row(
-                children: [
-                  RoomMirrorAvatar(
-                    image: identity!.image!,
-                    size: 32,
-                    fallback: const Icon(Icons.groups_outlined, size: 32),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      identity.name ?? _room.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-        // Misma cabecera plana que `ChatScreen`: sin línea ni sombra de
-        // elevación cuando el transcript pasa por debajo, para que la sala se
-        // funda con la conversación en vez de cortarla con un borde.
-        scrolledUnderElevation: 0,
-        actions: [
-          if (widget.onRead != null)
-            IconButton(
-              key: const ValueKey('mission-hosted-room-refresh'),
-              tooltip: widget.copy.refresh,
-              onPressed: _refreshRoom,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          if (management.isNotEmpty)
-            PopupMenuButton<String>(
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              onSelected: (value) {
-                if (value == 'rename') unawaited(_rename());
-                if (value == 'stop') unawaited(_stop());
-                if (value == 'disband') unawaited(_disband());
-              },
-              itemBuilder: (_) => [
-                if (widget.canRename)
-                  PopupMenuItem(
-                    value: 'rename',
-                    child: Text(widget.copy.renameSharedRoom),
-                  ),
-                if (widget.canStop)
-                  PopupMenuItem(
-                    value: 'stop',
-                    child: Text(widget.copy.stopSharedRoomAction),
-                  ),
-                if (widget.canDisband)
-                  PopupMenuItem(
-                    value: 'disband',
-                    child: Text(widget.copy.disbandSharedRoomAction),
-                  ),
-              ],
-            ),
-        ],
+      room: widget.room,
+      log: widget.log,
+      gateway: CallbackRoomGateway(
+        onRead:
+            read ?? (_) => Future.error(StateError('room refresh unavailable')),
+        onSend: widget.onSend,
+        onRename: widget.onRename,
+        onStop: widget.onStop,
+        onDisband: widget.onDisband,
+        onApprove: writable
+            ? (action, choice) => pooledRoomApprove(
+                connection,
+                roomId: widget.room.roomId,
+                action: action,
+                choice: choice,
+              )
+            : null,
       ),
-      body: SafeArea(
-        // El alto disponible de verdad (ya descontados AppBar, safe area y el
-        // IME) es lo que decide cuánto puede ocupar el equipo desplegado.
-        // Leerlo aquí, en vez de estimarlo con `MediaQuery`, es lo que permite
-        // que la tira de equipo NO sea un hijo flexible de esta columna.
-        //
-        // Por qué importa: un `Flexible(flex: 1)` junto al `Expanded(flex: 1)`
-        // del transcript se reparte el hueco libre al 50 %, y el `Flexible`
-        // solo usa lo que necesita. Con el equipo plegado (una cabecera de
-        // ~68 dp) los ~250 dp de su mitad que no usaba no volvían al
-        // transcript: `RenderFlex` los deja como espacio sobrante *al final*
-        // de la columna, es decir, un vacío negro DEBAJO del composer. Medido
-        // en un viewport de 360×800: 258 dp. Era el "no se puede ver así"
-        // reportado en dispositivo real (el `MainAxisSize.min` anterior no lo
-        // arregló: movió el vacío de dentro de la sección a debajo del
-        // composer). Con la tira fuera del reparto flexible, el `Expanded` del
-        // transcript absorbe todo el hueco y el composer queda pegado abajo,
-        // como en `ChatScreen`.
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final available = constraints.hasBoundedHeight
-                ? constraints.maxHeight
-                : double.infinity;
-            // Techo de la tira de equipo: ni más del 45 % del alto
-            // disponible, ni tanto que el composer no quepa debajo. Por debajo
-            // de lo que mide su propia cabecera no se pinta media cabecera
-            // recortada: se retira entera (solo pasa en horizontal con el
-            // teclado abierto, donde el cuerpo se queda en <130 dp).
-            final summaryVisible = available > 360;
-            final summaryCompact =
-                MediaQuery.viewInsetsOf(context).bottom > 0 ||
-                _composer.text.trim().isNotEmpty;
-            final summaryHeight = summaryCompact
-                ? math.max(
-                    44.0,
-                    MediaQuery.textScalerOf(context).scale(12) * 1.5 + 20,
-                  )
-                : math.min(300.0, available * .38);
-            final activityReserve = summaryVisible ? summaryHeight + 8 : 0.0;
-            final composerReserve = _composer.text.trim().isNotEmpty
-                ? 200.0
-                : 96.0;
-            final rawCeiling = available.isFinite
-                ? math.min(
-                    available * 0.45,
-                    math.max(
-                      0.0,
-                      available - composerReserve - activityReserve,
-                    ),
-                  )
-                : double.infinity;
-            final teamCeiling = rawCeiling < 56 ? 0.0 : rawCeiling;
-            return Column(
-              children: [
-                // Antes esto era un `ExpansionTile` "Ver miembros" con un
-                // `ListTile` por miembro: icono genérico de persona y
-                // `@handle`, sin avatar, sin nombre, sin estado y sin nada que
-                // tocar. Es literalmente el "entro en la sala, voy al equipo y
-                // no sale nada" reportado en dispositivo real.
-                //
-                // El scroll no es decorativo: es lo que hace que esta tira no
-                // pueda desbordar NUNCA, con cualquier viewport y cualquier
-                // escala de texto. La sección es una `Column` de alto natural;
-                // acotarla con `maxHeight` a secas la haría desbordar en
-                // cuanto el techo bajara de su contenido (una `Column` no se
-                // recorta sola), y era justo lo que pasaba en horizontal con
-                // el teclado abierto. Plegada (el caso normal) el contenido
-                // cabe de sobra y no hay desplazamiento ninguno.
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: teamCeiling),
-                  child: SingleChildScrollView(
-                    child: _HostedRoomTeamSection(
-                      key: const ValueKey('mission-hosted-members'),
-                      room: _room,
-                      copy: widget.copy,
-                      avatarCache: widget.avatarCache,
-                      localProfiles: widget.localProfiles,
-                      onOpenMember: widget.onOpenMember,
-                      statuses: {
-                        for (final m in _room.members) m.memberId: _status(m),
-                      },
-                    ),
-                  ),
-                ),
-                if (summaryVisible)
-                  RoomSummaryPill(
-                    summary: deriveRoomSummary(
-                      events: _log?.events ?? const [],
-                      members: _room.members,
-                      statuses: {
-                        for (final m in _room.members) m.memberId: _status(m),
-                      },
-                      board: widget.board(),
-                      localGatewayId: _room.authorityGatewayId,
-                      now: _presenceNow,
-                    ),
-                    localGatewayId: _room.authorityGatewayId,
-                    profiles: widget.localProfiles,
-                    avatarCache: widget.avatarCache,
-                    maxHeight: summaryHeight,
-                    compact: summaryCompact,
-                  ),
-                if (widget.canSend) ...[
-                  // Antes aquí había un título de sección "Conversación" en
-                  // `titleMedium` negrita. Ningún chat real rotula su propio
-                  // transcript: leía como una pantalla de ajustes y además
-                  // robaba ~44 dp al hilo. La frontera entre la identidad de
-                  // la sala y la conversación la marca la línea de la tira de
-                  // equipo, igual que la cabecera de `ChatScreen`.
-                  Expanded(
-                    child: events.isEmpty
-                        ? _HostedRoomEmptyTranscript(
-                            roomName: _room.name,
-                            copy: widget.copy,
-                          )
-                        : ListView.builder(
-                            // Reversed: a short conversation hugs the composer
-                            // like every real chat, instead of leaving the
-                            // empty remainder dangling below the last message.
-                            // `index` stays the original chronological
-                            // position (what keys and tests already address) —
-                            // only the visual order flips.
-                            reverse: true,
-                            // Mismo aire que `ChatScreen` deja bajo la última
-                            // respuesta: con 4 dp el cierre del texto quedaba
-                            // pegado al composer.
-                            padding: const EdgeInsets.only(bottom: 12),
-                            itemCount: events.length + 1,
-                            itemBuilder: (context, reversedPosition) {
-                              if (reversedPosition == 0) {
-                                return _buildPendingTurns(latestSend);
-                              }
-                              final index = events.length - reversedPosition;
-                              final event = events[index];
-                              final bubble = _HostedRoomMessage(
-                                key: ValueKey('mission-hosted-message-$index'),
-                                event: event,
-                                room: _room,
-                                localProfiles: widget.localProfiles,
-                                avatarCache: widget.avatarCache,
-
-                                reply: event.threadId == null
-                                    ? null
-                                    : _HostedRoomThreadAction(
-                                        key: ValueKey(
-                                          'mission-hosted-reply-$index',
-                                        ),
-                                        label: widget.copy.replyInThread,
-                                        active:
-                                            _threadId != null &&
-                                            _threadId == event.threadId,
-                                        onPressed: () => setState(() {
-                                          _threadId = event.threadId;
-                                          _pendingAttempt = null;
-                                          _pendingText = null;
-                                          _pendingThreadId = null;
-                                        }),
-                                      ),
-                              );
-                              return event.kind == 'message.user' &&
-                                      event != latestSend
-                                  ? Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        bubble,
-                                        _buildPendingTurns(event),
-                                      ],
-                                    )
-                                  : bubble;
-                            },
-                          ),
-                  ),
-                  if (_roomError != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Text(
-                        _roomError!,
-                        key: const ValueKey('mission-hosted-room-error'),
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: math.max(
-                        0,
-                        available - teamCeiling - activityReserve,
-                      ),
-                    ),
-                    child: SingleChildScrollView(
-                      reverse: true,
-                      child: _buildComposerHost(colors),
-                    ),
-                  ),
-                ] else
-                  // Antes esta rama no existía: la sala se quedaba en blanco
-                  // bajo el desplegable de miembros, sin conversación ni
-                  // composer y sin decir por qué — "si entro en una sala no
-                  // hace nada", confirmado en dispositivo real.
-                  Expanded(
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Text(
-                          _RoomsAreaCopy.of(context).cannotSendInRoom,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: colors.textSecondary),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
+      capabilities: RoomCapabilities(
+        canSend: widget.canSend,
+        canRename: widget.canRename,
+        canStop: widget.canStop,
+        canDisband: widget.canDisband,
+        // `groups.approve` is checked against live capabilities on the
+        // pooled socket; the server matches the exact `request_id`.
+        canApprove: writable && widget.canSend,
+        // `groups.retry` stays retired in Console until upstream binds it
+        // to revision/log position (docs/hosted_identity_transition_matrix).
+        canRetry: false,
       ),
-    );
-  }
-}
-
-/// Sala sin mensajes todavía. Antes era un `Text` centrado a pelo con el
-/// estilo por defecto, que en una pantalla por lo demás vacía leía como un
-/// error de carga. Mismo esqueleto que `_EmptyChatState` del chat real:
-/// identidad en acento, línea de invitación en secundario.
-///
-/// Es también el único sitio donde se dice que la sala es solo de texto: el
-/// protocolo no tiene campo de adjunto, y decirlo una vez aquí es más honesto
-/// que un botón "+" que no puede funcionar o un aviso permanente sobre el
-/// composer.
-class _HostedRoomEmptyTranscript extends StatelessWidget {
-  final String roomName;
-  final MissionControlCopy copy;
-
-  const _HostedRoomEmptyTranscript({
-    required this.roomName,
-    required this.copy,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    // Con el equipo desplegado y el teclado abierto al transcript le pueden
-    // quedar <100 dp (medido: 92 en 360×640 con 300 px de IME y 14 miembros
-    // abiertos). Un `Column` suelto ahí desbordaba; el scroll se lo come sin
-    // recortar texto y, cuando sobra alto, sigue centrado igual.
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              roomName,
-              maxLines: 2,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w500,
-                color: colors.accent,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              copy.noRoomMessages,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: colors.textSecondary,
-                letterSpacing: 0.3,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              copy.roomTextOnly,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.4,
-                color: colors.textDisabled,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// "Responder en hilo" bajo un mensaje. Antes era un `TextButton.icon` con los
-/// valores por defecto de Material: ~48 dp de alto y 64 dp de ancho mínimo
-/// debajo de CADA mensaje con hilo, lo que convertía el transcript en una
-/// lista de botones. Ahora es una acción discreta de 34 dp que además marca
-/// cuál es el hilo activo, para que la tira de "Respondiendo en el hilo" del
-/// composer tenga a qué mensaje referirse.
-class _HostedRoomThreadAction extends StatelessWidget {
-  final String label;
-  final bool active;
-  final VoidCallback onPressed;
-
-  const _HostedRoomThreadAction({
-    required this.label,
-    required this.active,
-    required this.onPressed,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final foreground = active ? colors.accentText : colors.textSecondary;
-    return Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: Semantics(
-        button: true,
-        selected: active,
-        label: label,
-        excludeSemantics: true,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(17),
-            onTap: onPressed,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 34),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.reply_rounded, size: 14, color: foreground),
-                    const SizedBox(width: 5),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: foreground,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Only members owned by this room's authority can resolve to local profiles.
-AgentProfile? _hostedRoomMemberProfile(
-  HostedGroupMember member,
-  HostedGroupRoom room,
-  Map<String, AgentProfile> localProfiles,
-) => member.owner.connectionId == room.authorityGatewayId
-    ? localProfiles[member.owner.profile]
-    : null;
-
-/// Room-scoped presentation using the same spacing and colors as ChatScreen.
-class _HostedRoomMessage extends StatelessWidget {
-  final HostedGroupEvent event;
-  final HostedGroupRoom room;
-  final Map<String, AgentProfile> localProfiles;
-  final MissionProfileAvatarCache? avatarCache;
-  final Widget? reply;
-
-  const _HostedRoomMessage({
-    super.key,
-    required this.event,
-    required this.room,
-    required this.localProfiles,
-    required this.avatarCache,
-    required this.reply,
-  });
-
-  HostedGroupMember? get _member {
-    final actor = event.actor;
-    for (final member in room.members) {
-      if (member.memberId == actor.id) return member;
-    }
-    // Profile names alone are not identities in federated rooms.
-    for (final member in room.members) {
-      if (member.owner.connectionId == actor.connectionId &&
-          member.owner.profile == actor.profile) {
-        return member;
-      }
-    }
-    return null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.hermes;
-    final isUser = event.actor.kind == 'user';
-    final member = isUser ? null : _member;
-    final name =
-        member?.displayName ?? member?.handle ?? event.actor.publicLabel;
-    final body = SelectableText(
-      event.publicText!,
-      style: theme.textTheme.bodyMedium?.copyWith(
-        color: colors.textPrimary,
-        fontSize: isUser ? null : 15,
-        height: isUser ? 1.4 : 1.5,
-      ),
-    );
-    return Padding(
-      padding: isUser
-          ? const EdgeInsets.only(left: 56, right: 12, top: 11, bottom: 3)
-          : const EdgeInsets.only(left: 12, right: 16, top: 11, bottom: 3),
-      child: Column(
-        crossAxisAlignment: isUser
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
-        children: [
-          if (isUser)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: body,
-            )
-          else ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  RoomMemberAvatar(
-                    profileName: member?.handle ?? name,
-                    profile: member == null
-                        ? null
-                        : _hostedRoomMemberProfile(member, room, localProfiles),
-                    avatarCache: avatarCache,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      '>_ ${name.toUpperCase()}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: colors.accent,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            body,
-          ],
-          ?reply,
-        ],
-      ),
-    );
-  }
-}
-
-/// Sección "Equipo" de una sala compartida: cabecera plegada con la pila de
-/// avatares de la sala y, al desplegarla, una fila real por miembro.
-///
-/// Las salas compartidas no tienen coordinador (eso es cosa de las salas
-/// locales), así que aquí no hay rol ni anillo de manager: inventarse uno por
-/// el orden de la lista sería mentir. Un miembro que resuelve a un perfil
-/// local de esta conexión abre su ficha; uno federado (sin perfil local) no
-/// lleva a ningún sitio y lo dice en su subtítulo en vez de fingir destino.
-class _HostedRoomTeamSection extends StatefulWidget {
-  final Map<String, RoomMemberStatus> statuses;
-  final HostedGroupRoom room;
-  final MissionControlCopy copy;
-  final MissionProfileAvatarCache? avatarCache;
-  final Map<String, AgentProfile> localProfiles;
-  final ValueChanged<String> onOpenMember;
-
-  const _HostedRoomTeamSection({
-    required this.room,
-    required this.statuses,
-    required this.copy,
-    required this.avatarCache,
-    required this.localProfiles,
-    required this.onOpenMember,
-    super.key,
-  });
-
-  @override
-  State<_HostedRoomTeamSection> createState() => _HostedRoomTeamSectionState();
-}
-
-class _HostedRoomTeamSectionState extends State<_HostedRoomTeamSection> {
-  /// El modelo admite hasta 128 miembros por sala. La caché de avatares
-  /// guarda 64 entradas y resuelve 4 a la vez
-  /// (`MissionProfileAvatarCache.maxEntries`/`maxConcurrent`), así que pintar
-  /// las 128 filas de golpe dentro de esta columna no cabría en pantalla y
-  /// además pediría más avatares de los que la caché retiene. Una docena es
-  /// lo que entra de verdad en el desplegable; el resto se ve en su propia
-  /// pantalla, con lista perezosa.
-  static const int _inlineLimit = 12;
-
-  bool _expanded = false;
-
-  List<RoomAvatarOfficialMember> get _members =>
-      sortedOfficialRoomAvatarMembers([
-        for (final member in widget.room.members)
-          RoomAvatarOfficialMember(
-            owner: member.owner,
-            // Cadena de respaldo exacta para la que se añadió `display_name`
-            // al modelo: el nombre publicado por el servidor si lo hay, y si
-            // no el handle, que siempre existe.
-            displayName: member.displayName ?? member.handle,
-            handle: member.handle,
-            profile: _hostedRoomMemberProfile(
-              member,
-              widget.room,
-              widget.localProfiles,
-            ),
-          ),
-      ]);
-
-  /// Miembros de los que el servidor sí publica `display_name`.
-  Set<AvatarOwner> get _namedOwners => {
-    for (final member in widget.room.members)
-      if (member.displayName != null) member.owner,
-  };
-
-  Widget _row(RoomAvatarOfficialMember member, Set<AvatarOwner> named) {
-    final profile = member.profile;
-    final extra = _RoomsAreaCopy.of(context);
-    final original = widget.room.members.firstWhere(
-      (m) => m.owner == member.owner,
-    );
-    final status = widget.statuses[original.memberId]!;
-    return RoomTeamRow(
-      key: ValueKey(
-        'mission-hosted-member-'
-        '${member.owner.connectionId}-${member.owner.profile}',
-      ),
-      profileName: member.handle,
-      handle: member.handle,
-      displayName: member.displayName,
-      profile: profile,
+      profileFor: _profileFor,
       avatarCache: widget.avatarCache,
-      roleLabel: null,
-      avatar: RoomStatusAvatar(
-        member: original,
-        profile: profile,
-        avatarCache: widget.avatarCache,
-        status: status,
-        size: 38,
+      prefs: _prefs ?? MemoryRoomPrefs(),
+      drafts: ChatDraftRoomStore(
+        store: scope.store,
+        connectionId: scope.connectionId,
+        profile: scope.profile,
+        sessionId:
+            'mob-room-${base64Url.encode(utf8.encode(jsonEncode([widget.room.authorityGatewayId, widget.room.roomId])))}',
       ),
-      activityLine: BotStatusLine(status: status),
-      activityLabel: botStatusText(Strings.of(context), status),
-      subtitle: profile == null ? extra.federatedMember : null,
-      // Un miembro federado del que el servidor sí publica nombre no está
-      // "no disponible", solo es de otra conexión. El tratamiento apagado se
-      // reserva a quien no tiene ni perfil local ni nombre publicado: de ese
-      // no hay literalmente nada que mostrar más allá de su handle.
-      unavailable: profile == null && !named.contains(member.owner),
-      onTap: profile == null
+      uploader: writable ? DashboardRoomAttachmentUploader(connection) : null,
+      attachmentActions: connection == null
           ? null
-          : () => widget.onOpenMember(member.owner.profile),
-    );
-  }
-
-  void _openAllMembers(
-    List<RoomAvatarOfficialMember> members,
-    Set<AvatarOwner> named,
-  ) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          key: const ValueKey('mission-hosted-members-screen'),
-          appBar: HermesAppBar(title: Text(widget.copy.roomTeam)),
-          body: SafeArea(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: members.length,
-              itemBuilder: (_, index) => _row(members[index], named),
+          : DashboardRoomAttachmentActions(
+              connection: connection,
+              profile: scope.profile,
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final members = _members;
-    final named = _namedOwners;
-    final inline = members.take(_inlineLimit).toList(growable: false);
-    final extra = _RoomsAreaCopy.of(context);
-    return Column(
-      // `Column`'s default `mainAxisSize` is `max`: wrapped in the outer
-      // `Flexible`, it was claiming its whole loose allocation (roughly half
-      // the screen) even collapsed, when its only child is a ~68dp header —
-      // the empty void reported live on device between the team header and
-      // "Conversación". `min` sizes it to its actual children instead.
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (widget.statuses.values.any(
-          (s) => s.presence == RoomPresence.working,
-        ))
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-            child: InkWell(
-              onTap: () => showDialog<void>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  content: SizedBox(
-                    width: 360,
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: widget.room.members.length,
-                      separatorBuilder: (_, _) =>
-                          const Divider(height: 12, thickness: .5),
-                      itemBuilder: (context, i) {
-                        final m = widget.room.members[i];
-                        return Text(
-                          '@${m.handle} · ${botStatusText(Strings.of(context), widget.statuses[m.memberId]!)}',
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-              child: HermesShimmerText(
-                widget.room.members
-                            .where(
-                              (m) =>
-                                  widget.statuses[m.memberId]!.presence ==
-                                  RoomPresence.working,
-                            )
-                            .length ==
-                        1
-                    ? botStatusText(
-                        Strings.of(context),
-                        widget.statuses.values.firstWhere(
-                          (s) => s.presence == RoomPresence.working,
-                        ),
-                      )
-                    : Strings.of(context).roomMembersWorking(
-                        widget.room.members
-                            .where(
-                              (m) =>
-                                  widget.statuses[m.memberId]!.presence ==
-                                  RoomPresence.working,
-                            )
-                            .map((m) => m.handle)
-                            .join(', '),
-                      ),
-                style: TextStyle(fontSize: 11, color: colors.textSecondary),
-              ),
+      dictation: _dictation,
+      displayName: identity?.name,
+      roomAvatar: identity?.image == null
+          ? null
+          : RoomMirrorAvatar(
+              image: identity!.image!,
+              size: 28,
+              fallback: const Icon(Icons.groups_outlined, size: 28),
             ),
-          ),
-        Semantics(
-          container: true,
-          button: true,
-          label: [
-            widget.copy.roomTeam,
-            widget.copy.roomMemberCount(widget.room.members.length),
-          ].join(', '),
-          excludeSemantics: true,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              key: const ValueKey('mission-hosted-members-header'),
-              onTap: () => setState(() => _expanded = !_expanded),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height:
-                              40 +
-                              MediaQuery.textScalerOf(context).scale(10) * 1.4,
-                          child: ListView(
-                            key: const ValueKey('room-live-members'),
-                            scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                            children: [
-                              for (final m in widget.room.members)
-                                RoomStatusMember(
-                                  member: m,
-                                  status: widget.statuses[m.memberId]!,
-                                  profile: _hostedRoomMemberProfile(
-                                    m,
-                                    widget.room,
-                                    widget.localProfiles,
-                                  ),
-                                  avatarCache: widget.avatarCache,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: 95,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.copy.roomTeam,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15.5,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              widget.copy.roomMemberCount(
-                                widget.room.members.length,
-                              ),
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(
-                        _expanded
-                            ? Icons.expand_less_rounded
-                            : Icons.expand_more_rounded,
-                        color: colors.textSecondary,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (_expanded)
-          // Sin techo propio: el cuerpo de la sala ya acota esta sección y la
-          // hace desplazable (ver el `ConstrainedBox` + `SingleChildScrollView`
-          // de `_HostedRoomWorkspaceState.build`). Antes el techo se estimaba
-          // con `MediaQuery` al 38 % de la pantalla, que no es lo mismo que el
-          // alto que de verdad le queda a esta columna.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: Column(
-              children: [
-                for (final member in inline) _row(member, named),
-                if (members.length > inline.length)
-                  _RoomsCardAction(
-                    key: const ValueKey('mission-hosted-members-all'),
-                    label: extra.allMembers(members.length),
-                    onTap: () => _openAllMembers(members, named),
-                  ),
-              ],
-            ),
-          ),
-        // Frontera entre la identidad de la sala y la conversación: la misma
-        // línea de pelo que separa la cabecera del transcript en el chat real,
-        // en lugar del título de sección "Conversación" que había antes. Hace
-        // que esta tira lea como cromo de la pantalla y no como la primera
-        // fila de la lista de mensajes.
-        Divider(
-          height: 1,
-          thickness: 1,
-          color: colors.divider.withValues(alpha: 0.55),
-        ),
-      ],
-    );
-  }
-}
-
-/// Fila de acción dentro de una tarjeta de sección (salto a una lista
-/// completa). Misma altura mínima y mismo relleno que las filas de contenido.
-class _RoomsCardAction extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-
-  const _RoomsCardAction({required this.label, required this.onTap, super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      color: colors.accentText,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: colors.textSecondary,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      onOpenMember: (member) {
+        if (_profileFor(member) != null) {
+          widget.onOpenMember(member.owner.profile);
+        }
+      },
     );
   }
 }
@@ -6851,78 +4878,6 @@ class _BoardSection extends StatelessWidget {
   }
 }
 
-class _LoungeSectionHeader extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final Key actionKey;
-  final String actionLabel;
-  final IconData actionIcon;
-  final VoidCallback? onAction;
-
-  const _LoungeSectionHeader({
-    required this.title,
-    required this.subtitle,
-    required this.actionKey,
-    required this.actionLabel,
-    required this.actionIcon,
-    required this.onAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final compactAction = MediaQuery.textScalerOf(context).scale(1) > 1.5;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
-                ),
-              ),
-              const SizedBox(height: 1),
-              Text(
-                subtitle,
-                style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-              ),
-            ],
-          ),
-        ),
-        if (onAction != null && compactAction)
-          Tooltip(
-            message: actionLabel,
-            child: IconButton(
-              key: actionKey,
-              onPressed: onAction,
-              icon: Icon(actionIcon, size: 21),
-              style: IconButton.styleFrom(
-                foregroundColor: colors.accentText,
-                backgroundColor: colors.surfaceVariant.withValues(alpha: 0.5),
-                minimumSize: const Size.square(48),
-                shape: const CircleBorder(),
-              ),
-            ),
-          ),
-        if (onAction != null && !compactAction)
-          TextButton.icon(
-            key: actionKey,
-            onPressed: onAction,
-            icon: Icon(actionIcon, size: 19),
-            label: Text(actionLabel),
-          ),
-      ],
-    );
-  }
-}
-
 class _LoungeEmptyState extends StatelessWidget {
   final IconData icon;
   final String message;
@@ -6984,316 +4939,6 @@ class _LoungeEmptyState extends StatelessWidget {
 /// rápidas (fijar, ocultar, abrir chat, ver detalles). Cuando el snapshot ya
 /// contiene la sesión pineada oficialmente, la fila muestra su preview y hora
 /// como en Bot Mode.
-class _BotRow extends StatelessWidget {
-  final MissionAgent agent;
-  final BotLiveStatus live;
-  final Session? pinnedChat;
-  final bool needsYou;
-  final bool unread;
-  final MissionControlCopy copy;
-  final MissionProfileAvatarCache? avatarCache;
-  final VoidCallback onOpen;
-  final VoidCallback onQuickActions;
-
-  /// Color del indicador de fijado junto al nombre, o `null` para no
-  /// mostrarlo. Se omite dentro de la sección "Fijados" (la propia sección
-  /// ya lo dice) y cambia de gris apagado a acento cuando no hay secciones
-  /// (resultados de búsqueda), para que se lea como estado sin depender del
-  /// agrupado.
-  final Color? pinBadgeColor;
-
-  const _BotRow({
-    required this.agent,
-    required this.live,
-    required this.copy,
-    required this.avatarCache,
-    required this.onOpen,
-    required this.onQuickActions,
-    this.pinnedChat,
-    this.needsYou = false,
-    this.unread = false,
-    this.pinBadgeColor,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final profile = agent.profile;
-    final displayName = profile.botTitle ?? profile.name;
-    final preview = pinnedChat?.preview.trim() ?? '';
-    return Semantics(
-      container: true,
-      explicitChildNodes: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          key: ValueKey('mission-bot-${profile.name}'),
-          onTap: onOpen,
-          onLongPress: onQuickActions,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsetsDirectional.fromSTEB(4, 10, 0, 10),
-            child: Row(
-              children: [
-                BotStatusAvatar(
-                  identity: profile.name,
-                  label: displayName,
-                  profile: profile,
-                  status: live,
-                  avatarCache: avatarCache,
-                  size: 44,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              displayName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 15.5,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: -0.1,
-                              ),
-                            ),
-                          ),
-                          if (needsYou) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              key: ValueKey(
-                                'mission-bot-needs-you-${profile.name}',
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colors.warning.withValues(alpha: 0.14),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: colors.warning.withValues(alpha: 0.4),
-                                ),
-                              ),
-                              child: Text(
-                                copy.botNeedsYou,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  color: colors.warning,
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                          if (pinBadgeColor != null) ...[
-                            const SizedBox(width: 7),
-                            Icon(
-                              Icons.push_pin_rounded,
-                              size: 13,
-                              color: pinBadgeColor,
-                            ),
-                          ],
-                          if (profile.botHidden) ...[
-                            const SizedBox(width: 7),
-                            Icon(
-                              Icons.visibility_off_outlined,
-                              size: 14,
-                              color: colors.textDisabled,
-                            ),
-                          ],
-                          if (unread) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              key: ValueKey(
-                                'mission-bot-unread-${profile.name}',
-                              ),
-                              width: 7,
-                              height: 7,
-                              decoration: BoxDecoration(
-                                color: colors.accentText,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      BotStatusLine(
-                        status: live,
-                        interactive: false,
-                        text:
-                            preview.isNotEmpty &&
-                                live.presence == RoomPresence.idle
-                            ? '${botStatusText(Strings.of(context), live)} · $preview'
-                            : null,
-                      ),
-                    ],
-                  ),
-                ),
-                if (preview.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsetsDirectional.only(start: 8),
-                    child: Text(
-                      _clock(
-                        DateTime.fromMillisecondsSinceEpoch(
-                          (pinnedChat!.lastActivityAt * 1000).toInt(),
-                        ),
-                      ),
-                      style: TextStyle(
-                        color: colors.textDisabled,
-                        fontSize: 11,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                IconButton(
-                  key: ValueKey('mission-bot-details-${profile.name}'),
-                  tooltip: copy.botDetails,
-                  onPressed: onQuickActions,
-                  icon: const Icon(Icons.more_horiz_rounded, size: 21),
-                  color: colors.textSecondary,
-                  constraints: const BoxConstraints(
-                    minWidth: 48,
-                    minHeight: 48,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Columna de 72px de una fila "Fijados": avatar de 64px con anillo de
-/// estado (verde si activo, rojo si error, sin anillo si inactivo) y nombre
-/// debajo. Mismas acciones que [_BotRow] (tap abre el detalle, mantener
-/// pulsado abre la hoja de acciones rápidas): solo cambia la presentación.
-class _PinnedBotTile extends StatelessWidget {
-  final MissionAgent agent;
-  final BotLiveStatus live;
-  final bool needsYou;
-  final bool unread;
-  final MissionProfileAvatarCache? avatarCache;
-  final VoidCallback onOpen;
-  final VoidCallback onQuickActions;
-
-  const _PinnedBotTile({
-    required this.agent,
-    required this.live,
-    required this.needsYou,
-    required this.unread,
-    required this.avatarCache,
-    required this.onOpen,
-    required this.onQuickActions,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final profile = agent.profile;
-    final displayName = profile.botTitle ?? profile.name;
-    return Semantics(
-      container: true,
-      button: true,
-      label: displayName,
-      child: InkWell(
-        onTap: onOpen,
-        onLongPress: onQuickActions,
-        borderRadius: BorderRadius.circular(16),
-        child: SizedBox(
-          width: 72,
-          child: Column(
-            children: [
-              SizedBox(
-                width: 64,
-                height: 64,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    BotStatusAvatar(
-                      identity: profile.name,
-                      label: displayName,
-                      profile: profile,
-                      avatarCache: avatarCache,
-                      status: live,
-                      size: 64,
-                    ),
-                    if (needsYou)
-                      PositionedDirectional(
-                        top: -4,
-                        end: -4,
-                        child: Container(
-                          width: 22,
-                          height: 22,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: colors.warning,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: colors.surface, width: 3),
-                          ),
-                          child: const Text(
-                            '!',
-                            style: TextStyle(
-                              // Texto oscuro fijo sobre el ámbar del badge,
-                              // como en el mockup: no depende del tema.
-                              color: Color(0xFF1A1200),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w900,
-                              height: 1,
-                            ),
-                          ),
-                        ),
-                      )
-                    else if (unread)
-                      PositionedDirectional(
-                        top: -2,
-                        end: -2,
-                        child: Container(
-                          width: 16,
-                          height: 16,
-                          decoration: BoxDecoration(
-                            color: colors.accent,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: colors.surface, width: 3),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 9),
-              Text(
-                displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: needsYou || unread
-                      ? colors.textPrimary
-                      : colors.textSecondary,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.1,
-                ),
-              ),
-              BotStatusLine(status: live, interactive: false),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _OrganizationDraft {
   final String name;
   final Set<String> profileNames;
@@ -7452,626 +5097,6 @@ class _OrganizationEditorState extends State<_OrganizationEditor> {
   }
 }
 
-enum _BotQuickAction { togglePinned, toggleHidden, openChat, details, section, recent, duplicate, delete, groups }
-
-/// Hoja de acciones rápidas de una tarjeta de bot: mantener pulsada la fila
-/// o tocar su ⋯ abre esto en vez de saltar directo a la ficha completa
-/// (`_AgentDetail`), que sigue accesible como "Detalles del bot". Sustituye
-/// al swipe explorado en rondas de diseño anteriores.
-class _BotQuickActionsSheet extends StatelessWidget {
-  final MissionAgent agent;
-  final BotLiveStatus live;
-  final MissionControlCopy copy;
-  final MissionProfileAvatarCache? avatarCache;
-  final bool canMutate;
-  final bool canManage;
-
-  const _BotQuickActionsSheet({
-    required this.agent,
-    required this.live,
-    required this.copy,
-    required this.avatarCache,
-    required this.canMutate,
-    this.canManage = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final profile = agent.profile;
-    return SafeArea(
-      top: false,
-      child: ListView(
-        key: const ValueKey('mission-bot-quick-actions'),
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: Row(
-              children: [
-                BotStatusAvatar(
-                  identity: profile.name,
-                  label: profile.botTitle ?? profile.name,
-                  profile: profile,
-                  status: live,
-                  avatarCache: avatarCache,
-                  size: 40,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        profile.botTitle ?? profile.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        '@${profile.name}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.textSecondary,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                      BotStatusLine(status: live),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Divider(height: 1, color: colors.divider.withValues(alpha: 0.5)),
-          const SizedBox(height: 4),
-          if (canMutate)
-            _BotQuickActionItem(
-              key: const ValueKey('bot-quick-toggle-pinned'),
-              icon: profile.botPinned
-                  ? Icons.push_pin_outlined
-                  : Icons.push_pin_rounded,
-              label: profile.botPinned ? copy.unpinBot : copy.pinBot,
-              primary: true,
-              onTap: () => Navigator.pop(context, _BotQuickAction.togglePinned),
-            ),
-          if (canMutate)
-            _BotQuickActionItem(
-              key: const ValueKey('bot-quick-toggle-hidden'),
-              icon: profile.botHidden
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
-              label: profile.botHidden ? copy.showBot : copy.hideBot,
-              onTap: () => Navigator.pop(context, _BotQuickAction.toggleHidden),
-            ),
-          _BotQuickActionItem(
-            key: const ValueKey('bot-quick-open-chat'),
-            icon: Icons.chat_bubble_outline,
-            label: copy.openChat,
-            onTap: () => Navigator.pop(context, _BotQuickAction.openChat),
-          ),
-          _BotQuickActionItem(icon: Icons.forum_outlined,
-            label: Strings.of(context).botManageRooms,
-            onTap: () => Navigator.pop(context, _BotQuickAction.groups)),
-          _BotQuickActionItem(icon: Icons.history,
-            label: Strings.of(context).botRecentSession,
-            onTap: () => Navigator.pop(context, _BotQuickAction.recent)),
-          if (canMutate && canManage) ...[
-            _BotQuickActionItem(icon: Icons.folder_outlined,
-              label: Strings.of(context).botSectionMove,
-              onTap: () => Navigator.pop(context, _BotQuickAction.section)),
-            _BotQuickActionItem(icon: Icons.copy_outlined,
-              label: Strings.of(context).botDuplicate,
-              onTap: () => Navigator.pop(context, _BotQuickAction.duplicate)),
-          ],
-          if (canMutate && !profile.isDefault && profile.name != 'default')
-            _BotQuickActionItem(icon: Icons.delete_outline,
-              label: Strings.of(context).prfDeleteTitle,
-              onTap: () => Navigator.pop(context, _BotQuickAction.delete)),
-          _BotQuickActionItem(
-            key: const ValueKey('bot-quick-details'),
-            icon: Icons.info_outline,
-            label: copy.botDetails,
-            onTap: () => Navigator.pop(context, _BotQuickAction.details),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _BotQuickActionItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool primary;
-
-  const _BotQuickActionItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.primary = false,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final color = primary ? colors.accentText : colors.textPrimary;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: SizedBox(
-            height: 52,
-            child: Row(
-              children: [
-                Icon(icon, size: 22, color: primary ? colors.accent : color),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Ficha única del bot: toda acción cuelga del bot (chat primario, edición del
-/// profile, rutinas, tareas y contexto de memoria/skills/SOUL), siguiendo la
-/// organización del plugin oficial Hermes Bot Mode.
-class _AgentDetail extends StatelessWidget {
-  final MissionAgent agent;
-  final BotLiveStatus live;
-  final List<KanbanTask> assignedTasks;
-  final MissionControlCopy copy;
-  final MissionProfileAvatarCache? avatarCache;
-  final VoidCallback onChat;
-  final VoidCallback? onEditProfile;
-  final VoidCallback onRoutines;
-  final VoidCallback onTasks;
-  final VoidCallback onMemory;
-  final VoidCallback onSkills;
-  final VoidCallback onSoul;
-  final VoidCallback? onTogglePinned;
-  final VoidCallback? onToggleHidden;
-
-  const _AgentDetail({
-    required this.agent,
-    required this.live,
-    required this.assignedTasks,
-    required this.copy,
-    required this.avatarCache,
-    required this.onChat,
-    required this.onEditProfile,
-    required this.onRoutines,
-    required this.onTasks,
-    required this.onMemory,
-    required this.onSkills,
-    required this.onSoul,
-    required this.onTogglePinned,
-    required this.onToggleHidden,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final profile = agent.profile;
-    final model = [
-      agent.provider,
-      agent.model,
-    ].whereType<String>().where((value) => value.isNotEmpty).join(' · ');
-    final session = agent.currentSession;
-    return ListView(
-      // `shrinkWrap`: la hoja se ajusta al contenido (ver `_openAgent`) y
-      // sigue haciendo scroll cuando el contenido supera el alto máximo.
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 24),
-      children: [
-        Center(
-          child: Container(
-            width: 42,
-            height: 4,
-            decoration: BoxDecoration(
-              color: colors.divider,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        // 1. Identidad. Una sola línea de jerarquía: nombre visible, handle y
-        // el estado como pill (antes era texto de color suelto, que se leía
-        // como una frase más dentro del muro de texto).
-        Row(
-          children: [
-            BotStatusAvatar(
-              identity: profile.name,
-              label: profile.botTitle ?? profile.name,
-              profile: profile,
-              status: live,
-              avatarCache: avatarCache,
-              size: 52,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    profile.botTitle ?? profile.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 1),
-                  // El `@handle` sustituye a la fila "Profile · nombre": es el
-                  // mismo dato, en el sitio donde ya se lee como identidad.
-                  Text(
-                    '@${profile.name}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.textSecondary,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                  const SizedBox(height: 7),
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: BotStatusLine(status: live),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        if (profile.description.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          Text(
-            profile.description,
-            maxLines: 4,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontSize: 13.5,
-              height: 1.35,
-            ),
-          ),
-        ],
-        // 2. Acción principal, arriba: antes quedaba enterrada debajo de las
-        // filas de datos y del bloque de tokens.
-        const SizedBox(height: 16),
-        HermesPrimaryButton(
-          key: const ValueKey('bot-detail-chat'),
-          label: copy.openChat,
-          icon: Icons.chat_bubble_outline,
-          onTap: onChat,
-        ),
-        // 3. Contexto técnico: dos líneas tenues de una sola línea cada una,
-        // en vez de la columna de etiquetas de 90 px ("Profile", "Modelo",
-        // "Sesiones recientes") que convertía la ficha en un muro de texto.
-        const SizedBox(height: 14),
-        _BotDetailMetaLine(
-          icon: Icons.memory_rounded,
-          text: model.isEmpty ? copy.modelUnavailable : model,
-        ),
-        if (session != null)
-          _BotDetailMetaLine(
-            icon: Icons.history_rounded,
-            text: session.displayTitle,
-          ),
-        // 4. Trabajo asignado, si hay: agrupado bajo su propio encabezado en
-        // vez de mezclado con las filas de datos del bot.
-        if (assignedTasks.isNotEmpty) ...[
-          HermesSectionHeader(copy.assignedTasks(assignedTasks.length)),
-          HermesGroup(
-            children: [
-              for (final task in assignedTasks)
-                _BotDetailTaskLine(title: task.title, status: task.status),
-            ],
-          ),
-        ],
-        // 5. Acciones, agrupadas por lo que hacen (no en una parrilla de 8
-        // botones iguales): lo que configura al bot en un grupo, y lo que solo
-        // afecta a cómo se ve en la lista de Bots en otro.
-        const SizedBox(height: 16),
-        HermesGroup(
-          children: [
-            _BotDetailActionRow(
-              key: const ValueKey('bot-detail-edit-profile'),
-              icon: Icons.tune,
-              label: copy.editProfile,
-              onTap: onEditProfile,
-            ),
-            _BotDetailActionRow(
-              key: const ValueKey('bot-detail-routines'),
-              icon: Icons.schedule_outlined,
-              label: copy.routines,
-              onTap: onRoutines,
-            ),
-            _BotDetailActionRow(
-              key: const ValueKey('bot-detail-tasks'),
-              icon: Icons.view_kanban_outlined,
-              label: copy.tasks,
-              trailing: assignedTasks.isEmpty
-                  ? null
-                  : '${assignedTasks.length}',
-              onTap: onTasks,
-            ),
-            _BotDetailActionRow(
-              key: const ValueKey('bot-detail-memory'),
-              icon: Icons.psychology_outlined,
-              label: copy.memory,
-              onTap: onMemory,
-            ),
-            _BotDetailActionRow(
-              key: const ValueKey('bot-detail-skills'),
-              icon: Icons.extension_outlined,
-              label: copy.skills,
-              onTap: onSkills,
-            ),
-            _BotDetailActionRow(
-              key: const ValueKey('bot-detail-soul'),
-              icon: Icons.auto_awesome_outlined,
-              label: copy.soul,
-              onTap: onSoul,
-            ),
-          ],
-        ),
-        if (onTogglePinned != null || onToggleHidden != null) ...[
-          const SizedBox(height: 10),
-          HermesGroup(
-            children: [
-              if (onTogglePinned != null)
-                _BotDetailActionRow(
-                  key: const ValueKey('bot-detail-toggle-pinned'),
-                  icon: profile.botPinned
-                      ? Icons.push_pin_outlined
-                      : Icons.push_pin_rounded,
-                  label: profile.botPinned ? copy.unpinBot : copy.pinBot,
-                  showChevron: false,
-                  onTap: onTogglePinned,
-                ),
-              if (onToggleHidden != null)
-                _BotDetailActionRow(
-                  key: const ValueKey('bot-detail-toggle-hidden'),
-                  icon: profile.botHidden
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
-                  label: profile.botHidden ? copy.showBot : copy.hideBot,
-                  showChevron: false,
-                  onTap: onToggleHidden,
-                ),
-            ],
-          ),
-        ],
-        // 6. Uso: una sola línea tenue al final. El desglose input/output/
-        // caché/reasoning ya no ocupa media ficha con cifras en grande — sigue
-        // disponible manteniendo pulsado (tooltip), que es donde importa.
-        const SizedBox(height: 16),
-        _BotUsageFooter(usage: agent.usage, copy: copy),
-      ],
-    );
-  }
-}
-
-/// Línea tenue de contexto (modelo, última sesión) dentro de la ficha del bot.
-class _BotDetailMetaLine extends StatelessWidget {
-  final IconData icon;
-  final String text;
-
-  const _BotDetailMetaLine({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Icon(icon, size: 15, color: colors.textDisabled),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Fila de acción de la ficha del bot, para usar dentro de un [HermesGroup].
-///
-/// `onTap` nulo = acción no disponible en esta conexión (instancia en modo
-/// consulta): la fila sigue visible pero apagada, como antes hacía el botón
-/// deshabilitado, para no cambiar en silencio lo que el usuario ve según los
-/// permisos.
-class _BotDetailActionRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String? trailing;
-  final bool showChevron;
-  final VoidCallback? onTap;
-
-  const _BotDetailActionRow({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.trailing,
-    this.showChevron = true,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final enabled = onTap != null;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: enabled ? colors.textSecondary : colors.textDisabled,
-            ),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w600,
-                  color: enabled ? colors.textPrimary : colors.textDisabled,
-                ),
-              ),
-            ),
-            if (trailing != null) ...[
-              const SizedBox(width: 8),
-              Text(
-                trailing!,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: colors.textSecondary,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-            if (showChevron) ...[
-              const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: colors.textDisabled,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Tarea asignada dentro de la ficha del bot: título + estado tenue, sin la
-/// columna de etiquetas que usaba la versión anterior.
-class _BotDetailTaskLine extends StatelessWidget {
-  final String title;
-  final String status;
-
-  const _BotDetailTaskLine({required this.title, required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w500,
-                color: colors.textPrimary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            status,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: colors.textDisabled, fontSize: 11.5),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Pie de uso de la ficha del bot: total de tokens y coste en UNA línea
-/// tenue. El desglose por tipo (input/output/caché/reasoning) vive en el
-/// tooltip, no en la ficha: ocupaba media pantalla con cifras en grande que
-/// competían con las acciones del bot.
-class _BotUsageFooter extends StatelessWidget {
-  final MissionUsage usage;
-  final MissionControlCopy copy;
-
-  const _BotUsageFooter({required this.usage, required this.copy});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final cost = usage.actualCostUsd ?? usage.estimatedCostUsd;
-    final total = usage.totalTokens;
-    final breakdown = [
-      if (usage.inputTokens != null)
-        '${copy.input} ${_compact(usage.inputTokens!)}',
-      if (usage.outputTokens != null)
-        '${copy.output} ${_compact(usage.outputTokens!)}',
-      if (usage.cacheReadTokens != null)
-        '${copy.cached} ${_compact(usage.cacheReadTokens!)}',
-      if (usage.reasoningTokens != null)
-        '${copy.reasoning} ${_compact(usage.reasoningTokens!)}',
-    ];
-    final parts = [
-      if (total != null) '${_compact(total)} ${copy.tokens}',
-      if (cost != null)
-        '\$${cost.toStringAsFixed(4)}${usage.costCoverage == MissionCostCoverage.partial ? ' · ${copy.partialCost}' : ''}',
-    ];
-    final line = parts.isEmpty
-        ? (breakdown.isEmpty ? copy.tokensUnavailable : breakdown.join(' · '))
-        : parts.join(' · ');
-    final text = Text(
-      line,
-      key: const ValueKey('bot-detail-usage'),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(color: colors.textDisabled, fontSize: 11.5),
-    );
-    return breakdown.isEmpty
-        ? text
-        : Tooltip(message: breakdown.join(' · '), child: text);
-  }
-}
-
 class _MessageCard extends StatelessWidget {
   final String text;
 
@@ -8149,13 +5174,4 @@ class _CenteredState extends StatelessWidget {
   }
 }
 
-String _compact(int value) {
-  if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(1)}M';
-  if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}K';
-  return '$value';
-}
 
-String _clock(DateTime time) {
-  final local = time.toLocal();
-  return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-}

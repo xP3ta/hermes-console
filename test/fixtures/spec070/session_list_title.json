@@ -1,0 +1,22 @@
+{
+  "method": "session.list",
+  "params": {
+    "title": "Bot Chat",
+    "include_hidden": true,
+    "profile": "radar"
+  },
+  "result": {
+    "sessions": [
+      {
+        "id": "20260902_080000_radar1",
+        "resolved_id": "20260910_080000_radar2",
+        "title": "Bot Chat",
+        "preview": "Scan done",
+        "started_at": 1786000000.0,
+        "message_count": 9,
+        "source": "tui"
+      }
+    ]
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

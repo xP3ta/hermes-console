@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models/agent_profile.dart';
+import '../models/desktop_model_catalog.dart';
 
 typedef BotProfileRpc =
     Future<Map<String, dynamic>> Function(
@@ -22,6 +23,18 @@ abstract interface class BotProfileGateway {
   Future<String> duplicateBotProfile(String profile);
 }
 
+/// Per-bot model catalog and reasoning (spec 070 S4). Profile-scoped
+/// gateway calls, exactly as Desktop's Bot editor: `model.options {profile}`
+/// lists the bot's providers; the model itself is written with
+/// `profiles.configure {model, provider}`; reasoning is the profile's
+/// `agent.reasoning_effort` via `config.get/set {key: reasoning, profile,
+/// scope: global}` (no session: never touches a live chat's override).
+abstract interface class BotModelGateway {
+  Future<DesktopModelCatalog> botModelOptions(String profile);
+  Future<String?> botReasoning(String profile);
+  Future<void> setBotReasoning(String profile, String effort);
+}
+
 abstract interface class BotAvatarGenerationGateway {
   Future<bool> canGenerateBotAvatar();
   Future<AgentProfileAvatar> generateBotAvatar(String prompt);
@@ -34,7 +47,7 @@ final class BotDuplicateIncomplete implements Exception {
 
 /// All mutations use the owning connection's RPC, never a cached roster.
 final class BotProfileClient
-    implements BotProfileGateway, BotAvatarGenerationGateway {
+    implements BotProfileGateway, BotAvatarGenerationGateway, BotModelGateway {
   final BotProfileRpc request;
   final _pendingCopies =
       <String, ({String name, Map<String, dynamic> patch})>{};
@@ -163,6 +176,59 @@ final class BotProfileClient
       }
     }
     return length;
+  }
+
+  @override
+  Future<DesktopModelCatalog> botModelOptions(String profile) async {
+    validateProfile(profile);
+    final result = await request('model.options', {
+      'profile': profile,
+      'explicit_only': true,
+      'include_unconfigured': false,
+    });
+    if (result['providers'] is! List) {
+      throw const FormatException('Invalid model catalog');
+    }
+    return DesktopModelCatalog.fromJson(result);
+  }
+
+  static const reasoningEfforts = {
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+    'ultra',
+  };
+
+  @override
+  Future<String?> botReasoning(String profile) async {
+    validateProfile(profile);
+    final result = await request('config.get', {
+      'key': 'reasoning',
+      'profile': profile,
+    });
+    final value = result['value'];
+    return value is String && reasoningEfforts.contains(value) ? value : null;
+  }
+
+  @override
+  Future<void> setBotReasoning(String profile, String effort) async {
+    validateProfile(profile);
+    if (!reasoningEfforts.contains(effort)) {
+      throw const FormatException('Unsupported reasoning effort');
+    }
+    final result = await request('config.set', {
+      'key': 'reasoning',
+      'value': effort,
+      'profile': profile,
+      'scope': 'global',
+    });
+    if (result['value'] != effort) {
+      throw StateError('Reasoning was not applied');
+    }
   }
 
   @override
