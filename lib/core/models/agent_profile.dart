@@ -170,6 +170,11 @@ class AgentProfile {
   final bool hasAlias;
   final RoomMirror roomMirror;
 
+  /// Raw `ui_meta['hermes-bots-groups']` of the default profile (Desktop's
+  /// read-only room projection); `null` elsewhere. Parsed on demand by
+  /// `DesktopProjectionRooms.parse` so hosted rooms can be excluded.
+  final Object? groupsProjection;
+
   const AgentProfile({
     required this.name,
     this.path = '',
@@ -197,6 +202,7 @@ class AgentProfile {
     this.distributionSource,
     this.hasAlias = false,
     this.roomMirror = RoomMirror.empty,
+    this.groupsProjection,
   });
 
   bool get isDistribution =>
@@ -259,6 +265,41 @@ class AgentProfile {
       return null;
     }
     return value;
+  }
+
+  /// Shape wire for the living procedural face. Desktop stores a bare
+  /// Blobatar silhouette (`sun`, `cloud`, `boxy`…) for some bots; it means
+  /// that silhouette with the name-derived face (`blobatar::<kind>`), not a
+  /// random blob.
+  String? get botFaceShape {
+    final shape = botShape;
+    if (shape == null) return null;
+    const bareKinds = {
+      'round',
+      'organic',
+      'boxy',
+      'capsule',
+      'nub',
+      'cloud',
+      'droplet',
+      'hexagon',
+      'sun',
+      'triangle',
+    };
+    return bareKinds.contains(shape) ? 'blobatar::$shape' : shape;
+  }
+
+  /// Whether Bot Mode paints this profile's raster avatar. Only an explicit
+  /// photo (`imageKind: photo`), or an image with no face metadata at all,
+  /// is a real picture. A PNG next to shape metadata is Desktop's backfill
+  /// of the procedural face: Console paints the living Blobatar instead of
+  /// a frozen screenshot of it.
+  bool get botPaintsPhoto {
+    if (!hasAvatar) return false;
+    final kind = botImageKind;
+    if (kind == 'photo') return true;
+    if (kind == 'shape') return false;
+    return botShape == null;
   }
 
   String? get botImageKind {
@@ -365,6 +406,9 @@ class AgentProfile {
       roomMirror: json['name'] == 'default' && json['ui_meta'] is Map
           ? RoomMirror.parse((json['ui_meta'] as Map)['hermes-bots-groups'])
           : RoomMirror.empty,
+      groupsProjection: json['name'] == 'default' && json['ui_meta'] is Map
+          ? (json['ui_meta'] as Map)['hermes-bots-groups']
+          : null,
     );
   }
 }

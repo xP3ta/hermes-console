@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="botw_bots_name">Hermes · Bots</string>
+    <string name="botw_bots_description">Your Bots at a glance: who works, who needs you</string>
+    <string name="botw_needs_you_name">Hermes · Needs you</string>
+    <string name="botw_needs_you_description">Pending approvals with Approve and Deny</string>
+    <string name="botw_room_name">Hermes · Room</string>
+    <string name="botw_room_description">The most active room: round, last message and Stop</string>
+    <string name="botw_quick_ask_name">Hermes · Quick ask</string>
+    <string name="botw_quick_ask_description">Ask a Bot or dictate in one tap</string>
+    <string name="botw_status_name">Hermes · Status</string>
+    <string name="botw_status_description">Connection and how many Bots are working</string>
+    <string name="botw_bots_title">Bots</string>
+    <string name="botw_needs_you_title">Needs you</string>
+    <string name="botw_all_clear">All clear</string>
+    <string name="botw_empty_setup">Open Hermes to connect</string>
+    <string name="botw_no_bots">No Bots yet</string>
+    <string name="botw_no_rooms">No active room</string>
+    <string name="botw_approve">Approve</string>
+    <string name="botw_deny">Deny</string>
+    <string name="botw_open">Open</string>
+    <string name="botw_stop">Stop all</string>
+    <string name="botw_working">working…</string>
+    <string name="botw_room_working">Working…</string>
+    <string name="botw_state_working">Working</string>
+    <string name="botw_state_replied">Replied</string>
+    <string name="botw_state_needs_you">Needs you</string>
+    <string name="botw_state_queued">Queued</string>
+    <string name="botw_ask">Ask %1$s…</string>
+    <string name="botw_dictate">Dictate</string>
+    <string name="botw_offline">Offline</string>
+    <string name="botw_all_idle">All Bots idle</string>
+    <string name="botw_working_count">%1$d working</string>
+    <string name="botw_needs_you_count">%1$d need you</string>
+    <string name="botw_preview_working">builder · Fixing the login test</string>
+    <string name="botw_preview_approval">wants to run “gh pr ready 51”</string>
+    <string name="botw_preview_room_name">Design Review</string>
+    <string name="botw_preview_room_line">review: Looks good. One nit on naming, then it is ready to merge.</string>
+    <string name="botw_preview_ask">Ask builder…</string>
+    <string name="botw_preview_status">Home server</string>
+    <string name="botw_preview_status_line">2 working</string>
+    <string name="botw_preview_working_count">2 working</string>
+    <string name="botw_preview_approval_2">scout wants to edit 3 files in lib/auth</string>
+</resources>

@@ -1,0 +1,11 @@
+{
+  "method": "groups.stop",
+  "params": {
+    "room_id": "room-devs",
+    "cancel_id": "cancel-1"
+  },
+  "result": {
+    "cancelled": 1
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

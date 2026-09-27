@@ -1,0 +1,20 @@
+{
+  "method": "groups.log",
+  "params": {
+    "room_id": "room-devs",
+    "since_seq": 8,
+    "limit": 100,
+    "include_disbanded": false
+  },
+  "result": {
+    "events": [],
+    "cursor": 8,
+    "latest_seq": 8,
+    "has_more": false,
+    "authority": {
+      "gateway_id": "gw-home-1",
+      "epoch": 2
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

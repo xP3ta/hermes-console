@@ -29,6 +29,9 @@
          aprobaciones, ejecuciones y transiciones Cron/Kanban descubiertas por
          la escucha opt-in, además de los controles de Voz/Read Aloud. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16 Live Updates: a room/Bot at work may be promoted to the
+         status-bar chip and lock screen (ProgressStyle, spec 070). -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- dataSync mantiene SSH/SFTP y el fallback de escucha en API <=34.
          remoteMessaging mantiene la escucha persistente en API >=35. -->
@@ -61,6 +64,7 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         tools:node="remove" />
     <application
+        android:name=".HermesApplication"
         android:label="Hermes Console"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -184,9 +188,18 @@
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
             android:exported="false" />
+        <!-- Approve / Deny / Stop / Reply from rich notifications and Bot Mode
+             widgets. Not exported: only our own PendingIntents reach it. It
+             stores the tap and wakes Flutter, which performs the server call. -->
+        <receiver
+            android:name=".HermesNotificationActionReceiver"
+            android:exported="false" />
+        <!-- Bot Mode widget family (spec 070 Phase 7). The first three keep
+             the legacy receiver names so placed widgets migrate in place:
+             dashboard → Bots, compact → Status, controls → Quick ask. -->
         <receiver
             android:name=".NewSessionWidgetProvider"
-            android:label="@string/hermes_widget_dashboard_name"
+            android:label="@string/botw_bots_name"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -196,19 +209,30 @@
                 android:resource="@xml/new_session_widget_info" />
         </receiver>
         <receiver
-            android:name=".HermesCompactWidgetProvider"
-            android:label="@string/hermes_widget_compact_name"
+            android:name=".HermesNeedsYouWidgetProvider"
+            android:label="@string/botw_needs_you_name"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/hermes_widget_compact_info" />
+                android:resource="@xml/botw_needs_you_info" />
+        </receiver>
+        <receiver
+            android:name=".HermesRoomWidgetProvider"
+            android:label="@string/botw_room_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/botw_room_info" />
         </receiver>
         <receiver
             android:name=".HermesControlWidgetProvider"
-            android:label="@string/hermes_widget_control_name"
+            android:label="@string/botw_quick_ask_name"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -216,6 +240,17 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/hermes_widget_control_info" />
+        </receiver>
+        <receiver
+            android:name=".HermesCompactWidgetProvider"
+            android:label="@string/botw_status_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hermes_widget_compact_info" />
         </receiver>
     </application>
     <queries>

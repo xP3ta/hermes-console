@@ -973,7 +973,9 @@
   "genMediaOffline": "Sin conexión — vuelve a conectarte para cargar este archivo",
   "genMediaLoad": "Cargar contenido generado",
   "genMediaHtmlPreview": "Vista previa HTML",
-  "@genMediaHtmlPreview": {"description": "Etiqueta de la tarjeta de un ::preview{file=\"….html\"}; se descarga como fichero, sin iframe."},
+  "@genMediaHtmlPreview": {
+    "description": "Etiqueta de la tarjeta de un ::preview{file=\"….html\"}; se descarga como fichero, sin iframe."
+  },
   "genMediaLoadFrom": "Cargar contenido generado desde {domain}",
   "genMediaTextSummary": "{lineCount, plural, =1{1 línea} other{{lineCount} líneas}} · {size}",
   "@genMediaTextSummary": {
@@ -7802,5 +7804,459 @@
     }
   },
   "settingsStartupBotsTitle": "Abrir Bots al iniciar",
-  "settingsStartupBotsSubtitle": "Arranca la app en modo Bots en vez de Inicio. Las notificaciones siguen abriendo su pantalla."
+  "settingsStartupBotsSubtitle": "Arranca la app en modo Bots en vez de Inicio. Las notificaciones siguen abriendo su pantalla.",
+  "roomViewAvailability": "{available} de {total} disponibles",
+  "@roomViewAvailability": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundLabel": "Ronda {round}",
+  "@roomRoundLabel": {
+    "placeholders": {
+      "round": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundWorking": "{count} trabajando",
+  "@roomRoundWorking": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundQueued": "{count} en cola",
+  "@roomRoundQueued": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundNeedsYou": "{count, plural, =1{1 te necesita} other{{count} te necesitan}}",
+  "@roomRoundNeedsYou": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundFailed": "{count, plural, =1{1 falló} other{{count} fallaron}}",
+  "@roomRoundFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundDone": "terminada",
+  "roomStopAll": "Parar todo",
+  "roomRoundExpand": "Ver el estado de cada miembro",
+  "roomStateWorking": "Trabajando",
+  "roomStateNeedsYou": "Te necesita",
+  "roomStateQueued": "En cola",
+  "roomStatePassed": "Pasó",
+  "roomStateReplied": "Respondió",
+  "roomStateFailed": "Falló",
+  "roomStateStopped": "Detenido",
+  "roomStateNoReply": "Sin respuesta",
+  "roomRowWorking": "Respondiendo a tu mensaje · {elapsed}",
+  "@roomRowWorking": {
+    "placeholders": {
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "roomRowQueued": "Siguiente en la ronda",
+  "roomRowPassed": "No tenía nada que añadir",
+  "roomRowReplied": "Respondió en esta ronda",
+  "roomRowFailed": "No pudo responder",
+  "roomRowStopped": "Turno cancelado",
+  "roomRowNoReply": "No respondió en esta ronda",
+  "roomRowNeedsYou": "Quiere ejecutar {command}",
+  "@roomRowNeedsYou": {
+    "placeholders": {
+      "command": {
+        "type": "String"
+      }
+    }
+  },
+  "roomRowApproval": "Espera tu aprobación",
+  "roomStatusMemberWorking": "{name} está trabajando…",
+  "@roomStatusMemberWorking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStatusWorking": "La sala está trabajando…",
+  "roomStatusNeedsApproval": "Necesita tu aprobación",
+  "roomStatusBlocked": "Bloqueada — reintentar",
+  "roomStatusRoundFinished": "Ronda {round} terminada · {ago}",
+  "@roomStatusRoundFinished": {
+    "placeholders": {
+      "round": {
+        "type": "int"
+      },
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStatusLastActivity": "Última actividad {ago}",
+  "@roomStatusLastActivity": {
+    "placeholders": {
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "roomAgoNow": "ahora mismo",
+  "roomAgoMinutes": "hace {count} min",
+  "@roomAgoMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomAgoHours": "hace {count} h",
+  "@roomAgoHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomAgoDays": "hace {count} d",
+  "@roomAgoDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomToday": "Hoy",
+  "roomYesterday": "Ayer",
+  "roomNewSinceYouLeft": "Nuevo desde que saliste",
+  "roomPassesOne": "{name} pasó · Actividad ›",
+  "@roomPassesOne": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomPassesMany": "{count} pasaron · Actividad ›",
+  "@roomPassesMany": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomThreadReplies": "{count, plural, =1{1 respuesta} other{{count} respuestas}}",
+  "@roomThreadReplies": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomThreadLastBy": "· última de @{name}",
+  "@roomThreadLastBy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomReplyInThread": "Responder en hilo",
+  "roomReplyTo": "Responder a @{handle}",
+  "@roomReplyTo": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomReplyingInThread": "Respondiendo en el hilo",
+  "roomLeaveThread": "Salir del hilo",
+  "roomApprovalWants": "quiere ejecutar",
+  "roomApprovalOnce": "Una vez",
+  "roomApprovalSession": "Esta sesión",
+  "roomApprovalAlways": "Siempre",
+  "roomApprovalDeny": "Denegar",
+  "roomRetryTitle": "{name} no pudo responder",
+  "@roomRetryTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomRetryAction": "Reintentar",
+  "roomActionFailed": "Hermes rechazó la acción. Inténtalo de nuevo.",
+  "roomActivityTitle": "Actividad",
+  "roomActivityEmpty": "Aún no hay pases, fallos ni reintentos.",
+  "roomActivityPassedLine": "{name} pasó",
+  "@roomActivityPassedLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityFailedLine": "{name} falló",
+  "@roomActivityFailedLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityCancelledLine": "Turno de {name} cancelado",
+  "@roomActivityCancelledLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityDeferredLine": "{name} espera para reintentar",
+  "@roomActivityDeferredLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityStopLine": "Sala detenida",
+  "roomMenuMembers": "Miembros",
+  "roomMenuMembersSubtitle": "{count} · solo lectura",
+  "@roomMenuMembersSubtitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomMenuThreads": "Hilos",
+  "roomMenuFiles": "Archivos de la sala",
+  "roomMenuActivity": "Actividad",
+  "roomMenuActivitySubtitle": "pases, fallos, reintentos",
+  "roomMenuNotifications": "Notificaciones",
+  "roomMenuSettings": "Ajustes",
+  "roomMenuSettingsSubtitle": "nombre, foto",
+  "roomMenuDisband": "Disolver sala",
+  "roomMenuStop": "Parar la sala",
+  "roomNotifyAll": "Todas",
+  "roomNotifyMentions": "Menciones",
+  "roomNotifyMuted": "Silenciada",
+  "roomNotifyNote": "Se guarda en este dispositivo: Hermes aún no tiene un ajuste compartido con Desktop. Las aprobaciones siempre avisan.",
+  "roomMembersReadOnlyNote": "Hermes aún no permite añadir o quitar miembros desde los clientes.",
+  "roomMemberAvailable": "Disponible",
+  "roomMemberUnavailable": "No disponible",
+  "roomMemberFederated": "En otra conexión",
+  "roomSettingsName": "Nombre",
+  "roomSettingsPicture": "Foto",
+  "roomSettingsPictureReadOnly": "Se cambia en Hermes Desktop",
+  "roomRename": "Renombrar",
+  "roomSave": "Guardar",
+  "roomCancel": "Cancelar",
+  "roomStopConfirmTitle": "¿Parar todo el trabajo de la sala?",
+  "roomStopConfirmBody": "Se cancelan los turnos en cola y en curso de todos los miembros.",
+  "roomStopConfirm": "Parar",
+  "roomDisbandConfirmTitle": "¿Disolver esta sala?",
+  "roomDisbandConfirmBody": "La sala desaparece para todos, Desktop incluido, y sus miembros dejan de trabajar en ella.",
+  "roomDisbandConfirm": "Disolver",
+  "roomThreadsEmpty": "Aún no hay hilos con respuestas.",
+  "roomFilesEmpty": "No se han compartido archivos en esta sala.",
+  "roomThreadTitle": "Hilo",
+  "roomAttachCrossGateway": "Los adjuntos solo funcionan si todos los miembros están en este Hermes; algunos están en otra conexión.",
+  "roomAttachUnavailable": "Esta conexión no puede subir archivos al servidor.",
+  "roomAttachFailed": "No se pudo subir {name}",
+  "@roomAttachFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomFileDownload": "Descargar",
+  "roomFileOpen": "Abrir",
+  "roomFileShare": "Compartir",
+  "roomFileSaved": "Archivo guardado",
+  "roomFileFailed": "No se pudo obtener el archivo",
+  "roomComposerHint": "Mensaje",
+  "roomDesktopReadOnly": "Sala de Desktop · solo lectura",
+  "roomDesktopReadOnlyBody": "Hermes Desktop dirige esta sala por su cuenta; aquí ves sus últimos mensajes.",
+  "roomDesktopOmitted": "{count, plural, =1{1 mensaje anterior no se muestra} other{{count} mensajes anteriores no se muestran}}",
+  "@roomDesktopOmitted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomEmpty": "Aún no hay mensajes. Saluda y @menciona a un bot.",
+  "roomRefreshFailed": "No se pudo actualizar la sala.",
+  "roomYou": "Tú",
+  "roomMoreActions": "Más acciones",
+  "roomCannotSend": "Esta conexión no puede escribir en la sala.",
+  "rosterTitle": "Bots",
+  "rosterFilterAll": "Todo",
+  "rosterFilterBots": "Bots",
+  "rosterFilterRooms": "Salas",
+  "rosterNeedsYou": "Te necesitan",
+  "rosterRecent": "Recientes",
+  "rosterNeedsYouBadge": "Te necesita",
+  "rosterWorkingOn": "Trabajando · {title}",
+  "@rosterWorkingOn": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "rosterWorking": "Trabajando…",
+  "rosterThinking": "Pensando…",
+  "rosterSpeaking": "Respondiendo…",
+  "rosterYouSaid": "Tú: {text}",
+  "@rosterYouSaid": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "rosterMemberSaid": "{handle}: {text}",
+  "@rosterMemberSaid": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      },
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "rosterDesktopLabel": "Desktop",
+  "rosterDesktopReadOnly": "Esta sala se ejecuta en Hermes Desktop. Console la muestra en solo lectura hasta que Desktop la aloje en el servidor.",
+  "rosterSearch": "Buscar",
+  "rosterSearchHint": "Buscar bots y salas",
+  "rosterNew": "Nuevo",
+  "rosterEmpty": "Aún no hay nada aquí",
+  "rosterNoMatches": "Sin resultados",
+  "rosterOpenProfile": "Abrir ficha",
+  "rosterNoPreview": "Sin mensajes todavía",
+  "rosterRoomMembers": "{count, plural, =1{1 miembro} other{{count} miembros}}",
+  "@rosterRoomMembers": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "botChatComposerHint": "Mensaje a {name}",
+  "@botChatComposerHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "botProfileTitle": "Ficha del bot",
+  "botProfileChat": "Chat",
+  "botProfileRooms": "Salas · {count}",
+  "@botProfileRooms": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "botProfileRoutines": "Rutinas",
+  "botProfileNow": "Ahora",
+  "botProfileIdle": "Ahora mismo no está trabajando",
+  "botProfileWorkingOn": "Trabajando en «{title}»",
+  "@botProfileWorkingOn": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "botProfileWorkingInRoom": "Trabajando en «{room}»",
+  "@botProfileWorkingInRoom": {
+    "placeholders": {
+      "room": {
+        "type": "String"
+      }
+    }
+  },
+  "botProfileNeedsYouInRoom": "Te necesita en «{room}»",
+  "@botProfileNeedsYouInRoom": {
+    "placeholders": {
+      "room": {
+        "type": "String"
+      }
+    }
+  },
+  "botProfileLiveThinking": "Pensando en su chat",
+  "botProfileLiveWorking": "Usando herramientas en su chat",
+  "botProfileLiveReplying": "Respondiendo en su chat",
+  "botProfileLiveApproval": "Esperando tu aprobación",
+  "botProfileStop": "Parar",
+  "botProfileStopFailed": "No se pudo parar. Inténtalo de nuevo.",
+  "botProfileModelSection": "Modelo",
+  "botProfileModel": "Modelo",
+  "botProfileReasoning": "Razonamiento",
+  "botProfileReasoningDefault": "Por defecto",
+  "botProfileModelUnavailable": "Las opciones de modelo no están disponibles en este servidor",
+  "botProfileModelSaved": "Modelo actualizado",
+  "botProfileReasoningSaved": "Razonamiento actualizado",
+  "botProfileProfileSection": "Perfil",
+  "botProfileSoul": "Personalidad (SOUL)",
+  "botProfileSkills": "Skills y herramientas",
+  "botProfileMemory": "Memoria",
+  "botProfileMachine": "Máquina",
+  "botProfileEditIdentity": "Editar nombre y cara",
+  "botProfileTasks": "Tareas",
+  "reasoningEffortNone": "Desactivado",
+  "reasoningEffortMinimal": "Mínimo",
+  "reasoningEffortLow": "Bajo",
+  "reasoningEffortMedium": "Medio",
+  "reasoningEffortHigh": "Alto",
+  "reasoningEffortXhigh": "Muy alto",
+  "reasoningEffortMax": "Máximo",
+  "reasoningEffortUltra": "Ultra",
+  "rosterHideHidden": "Ocultar bots ocultos",
+  "rosterShowHidden": "{count, plural, =1{Mostrar 1 bot oculto} other{Mostrar {count} bots ocultos}}",
+  "@rosterShowHidden": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "rosterPin": "Fijar",
+  "rosterUnpin": "Dejar de fijar",
+  "rosterHide": "Ocultar",
+  "rosterUnhide": "Mostrar",
+  "rosterMoveToSection": "Mover a sección…",
+  "rosterUpdateFailed": "No se pudo actualizar la lista. Inténtalo de nuevo.",
+  "notifBotModeListenerOn": "Los Bots y las salas pueden avisarte aquí: aprobaciones, @menciones, resúmenes de ronda y progreso en vivo, con Aprobar, Denegar, Responder y Detener desde la propia notificación.",
+  "notifBotModeListenerOff": "La escucha en segundo plano está apagada: los avisos de Bots y salas y los widgets solo se actualizan con Hermes abierto.",
+  "notifLiveUpdatesTitle": "Actualizaciones en vivo",
+  "notifLiveUpdatesSub": "Muestra Bots y salas trabajando en la barra de estado y la pantalla de bloqueo (Android 16+)"
 }

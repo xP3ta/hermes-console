@@ -1,0 +1,110 @@
+{
+  "method": "groups.log",
+  "params": {
+    "room_id": "room-devs",
+    "since_seq": 0,
+    "limit": 4,
+    "include_disbanded": false
+  },
+  "result": {
+    "events": [
+      {
+        "room_id": "room-devs",
+        "seq": 1,
+        "event_id": "user:disc-1",
+        "kind": "message.user",
+        "actor": {
+          "kind": "user",
+          "id": "desktop"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "text": "@astra @radar review the PR",
+          "thread_id": "thread-1"
+        },
+        "created_at": 1790000100.0,
+        "idempotent": false
+      },
+      {
+        "room_id": "room-devs",
+        "seq": 2,
+        "event_id": "turn-start-astra",
+        "kind": "turn.started",
+        "actor": {
+          "kind": "gateway",
+          "id": "gw-home-1"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "discussion_event_id": "user:disc-1",
+          "member_id": "member-astra",
+          "member_index": 0,
+          "round_index": 0,
+          "task_id": "task-astra-1",
+          "thread_id": "thread-1",
+          "turn_id": "turn-a1"
+        },
+        "created_at": 1790000101.0,
+        "idempotent": false
+      },
+      {
+        "room_id": "room-devs",
+        "seq": 3,
+        "event_id": "msg-astra-1",
+        "kind": "message.member",
+        "actor": {
+          "kind": "member",
+          "id": "member-astra",
+          "profile": "astra",
+          "display_name": "Astra"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "discussion_event_id": "user:disc-1",
+          "member_id": "member-astra",
+          "member_index": 0,
+          "round_index": 0,
+          "task_id": "task-astra-1",
+          "thread_id": "thread-1",
+          "turn_id": "turn-a1",
+          "text": "Looks good. @user can you confirm the **release** date?"
+        },
+        "created_at": 1790000150.0,
+        "idempotent": false
+      },
+      {
+        "room_id": "room-devs",
+        "seq": 4,
+        "event_id": "settled-astra-1",
+        "kind": "turn.settled",
+        "actor": {
+          "kind": "gateway",
+          "id": "gw-home-1"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "discussion_event_id": "user:disc-1",
+          "member_id": "member-astra",
+          "member_index": 0,
+          "round_index": 0,
+          "task_id": "task-astra-1",
+          "thread_id": "thread-1",
+          "turn_id": "turn-a1",
+          "seen_through_seq": 3,
+          "message_event_id": "msg-astra-1",
+          "passed": false
+        },
+        "created_at": 1790000151.0,
+        "idempotent": false
+      }
+    ],
+    "cursor": 4,
+    "latest_seq": 8,
+    "has_more": true,
+    "authority": {
+      "gateway_id": "gw-home-1",
+      "epoch": 2
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

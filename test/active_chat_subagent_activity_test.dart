@@ -161,6 +161,7 @@ class _RecordingNotifications extends NotificationService {
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
+    List<String>? approvalChoices,
   }) async {
     if (approvalId != null) approvalIds.add(approvalId);
   }

@@ -1,0 +1,109 @@
+{
+  "method": "groups.log",
+  "params": {
+    "room_id": "room-devs",
+    "since_seq": 4,
+    "limit": 4,
+    "include_disbanded": false
+  },
+  "result": {
+    "events": [
+      {
+        "room_id": "room-devs",
+        "seq": 5,
+        "event_id": "turn-start-radar",
+        "kind": "turn.started",
+        "actor": {
+          "kind": "gateway",
+          "id": "gw-home-1"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "discussion_event_id": "user:disc-1",
+          "member_id": "member-radar",
+          "member_index": 1,
+          "round_index": 0,
+          "task_id": "task-radar-1",
+          "thread_id": "thread-1",
+          "turn_id": "turn-r1"
+        },
+        "created_at": 1790000152.0,
+        "idempotent": false
+      },
+      {
+        "room_id": "room-devs",
+        "seq": 6,
+        "event_id": "failed-radar-1",
+        "kind": "turn.failed",
+        "actor": {
+          "kind": "gateway",
+          "id": "gw-home-1"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "discussion_event_id": "user:disc-1",
+          "member_id": "member-radar",
+          "member_index": 1,
+          "round_index": 0,
+          "task_id": "task-radar-1",
+          "thread_id": "thread-1",
+          "turn_id": "turn-r1",
+          "seen_through_seq": 5,
+          "error": "provider timeout",
+          "reason_code": "provider_timeout"
+        },
+        "created_at": 1790000200.0,
+        "idempotent": false
+      },
+      {
+        "room_id": "room-devs",
+        "seq": 7,
+        "event_id": "activity-1",
+        "kind": "room.activity",
+        "actor": {
+          "kind": "gateway",
+          "id": "gw-home-1"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "status": "idle",
+          "reason_code": "round_complete",
+          "thread_id": "thread-1",
+          "discussion_event_id": "user:disc-1"
+        },
+        "created_at": 1790000201.0,
+        "idempotent": false
+      },
+      {
+        "room_id": "room-devs",
+        "seq": 8,
+        "event_id": "turn-start-astra-2",
+        "kind": "turn.started",
+        "actor": {
+          "kind": "gateway",
+          "id": "gw-home-1"
+        },
+        "authority_epoch": 2,
+        "payload": {
+          "discussion_event_id": "user:disc-1",
+          "member_id": "member-astra",
+          "member_index": 0,
+          "round_index": 1,
+          "task_id": "task-astra-2",
+          "thread_id": "thread-1",
+          "turn_id": "turn-a2"
+        },
+        "created_at": 1790000300.0,
+        "idempotent": false
+      }
+    ],
+    "cursor": 8,
+    "latest_seq": 8,
+    "has_more": false,
+    "authority": {
+      "gateway_id": "gw-home-1",
+      "epoch": 2
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

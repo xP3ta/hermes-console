@@ -1,0 +1,45 @@
+{
+  "method": "groups.list",
+  "params": {
+    "limit": 500,
+    "offset": 0,
+    "include_disbanded": false
+  },
+  "result": {
+    "rooms": [
+      {
+        "room_id": "room-devs",
+        "name": "Console Devs",
+        "members": [
+          {
+            "member_id": "member-astra",
+            "profile": "astra",
+            "handle": "astra",
+            "display_name": "Astra",
+            "target": {
+              "kind": "local",
+              "profile": "astra"
+            }
+          },
+          {
+            "member_id": "member-radar",
+            "profile": "radar",
+            "handle": "radar",
+            "target": {
+              "kind": "local",
+              "profile": "radar"
+            }
+          }
+        ],
+        "authority_gateway_id": "gw-home-1",
+        "authority_epoch": 2,
+        "revision": 5,
+        "created_at": 1790000000.0,
+        "updated_at": 1790000500.0,
+        "latest_seq": 8
+      }
+    ],
+    "next_offset": null
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

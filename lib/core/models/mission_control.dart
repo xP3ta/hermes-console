@@ -630,15 +630,17 @@ abstract final class MissionProjector {
     );
   }
 
+  /// The canonical Bot Chat (`canonical_session`, spec 070 T206). The legacy
+  /// `ui_meta['hermes-bots'].chat` pin is ignored per Desktop's invariant.
   static Session? _pinnedBotChat(AgentProfile profile) {
-    final id = profile.botChatSessionId;
+    final id = profile.canonicalBotChatSessionId;
     if (id == null || id.isEmpty) return null;
     return Session(
       id: id,
       title: 'Bot Chat',
       model: profile.model.isEmpty ? 'hermes-agent' : profile.model,
-      source: 'bot-mode',
-      messageCount: 0,
+      source: 'bot-mode-canonical',
+      messageCount: profile.canonicalSession?.messageCount ?? 0,
       isActive: true,
       preview: '',
       startedAt: 0,

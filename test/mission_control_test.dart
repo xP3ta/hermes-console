@@ -650,13 +650,17 @@ void main() {
       );
     });
 
-    test('prefers the official hidden Bot Chat pin over visible sessions', () {
+    test('prefers the canonical hidden Bot Chat over visible sessions', () {
       final snapshot = MissionBackendSnapshot(
         profiles: const [
           AgentProfile(
             name: 'infra',
             model: 'bot-model',
-            botChatSessionId: 'hidden-bot-chat',
+            botChatSessionId: 'legacy-pin-ignored',
+            canonicalSession: AgentProfileSessionSummary(
+              id: 'hidden-root',
+              resolvedId: 'hidden-bot-chat',
+            ),
           ),
         ],
         sessions: [_session(id: 'visible-newer', profile: 'infra')],
@@ -669,7 +673,7 @@ void main() {
 
       expect(agent.currentSession?.id, 'hidden-bot-chat');
       expect(agent.currentSession?.title, 'Bot Chat');
-      expect(agent.currentSession?.source, 'bot-mode');
+      expect(agent.currentSession?.source, 'bot-mode-canonical');
       expect(agent.currentSession?.profile, 'infra');
     });
 

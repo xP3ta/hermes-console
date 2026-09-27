@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'pill_copy_fit_test.dart' show expectPillLabelsFit;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/models/kanban.dart';
@@ -13,21 +14,18 @@ import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
-import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
 import 'package:hermes_android/core/widgets/room_team_row.dart';
-import 'package:hermes_android/core/widgets/room_member_status.dart';
-import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
-import 'package:hermes_android/core/models/room_member_status.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/inter_font.dart';
 
 void main() {
   setUpAll(loadInterFont);
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
   TestWidgetsFlutterBinding.ensureInitialized();
-  for (final surface in ['recipients', 'destinations']) {
+  for (final surface in ['destinations']) {
     testWidgets('release $surface copy fits 360dp in es and en', (
       tester,
     ) async {
@@ -50,113 +48,19 @@ void main() {
             locale: locale,
             scale: scale,
           );
-          if (surface == 'destinations') {
-            final bots = find.byKey(const ValueKey('mission-goto-bots'));
-            expectPillLabelsFit(tester, bots);
-            await tester.tap(bots);
-            await tester.pumpAndSettle();
-            expectPillLabelsFit(
-              tester,
-              find.byKey(const ValueKey('mission-goto-work')),
-            );
-          } else {
-            await tester.tap(
-              find.byKey(const ValueKey('mission-hosted-room-0')),
-            );
-            await tester.pumpAndSettle();
-            await tester.enterText(
-              find.byKey(const ValueKey('mission-hosted-composer')),
-              'hello',
-            );
-            await tester.pump();
-            expectPillLabelsFit(
-              tester,
-              find.byKey(const ValueKey('room-recipients-preview')),
-            );
-          }
+          final bots = find.byKey(const ValueKey('mission-goto-bots'));
+          expectPillLabelsFit(tester, bots);
+          await tester.tap(bots);
+          await tester.pumpAndSettle();
+          expectPillLabelsFit(
+            tester,
+            find.byKey(const ValueKey('mission-goto-work')),
+          );
           await tester.pumpWidget(const SizedBox());
         }
       }
     });
   }
-
-  for (final newerDraft in [false, true]) {
-    testWidgets(
-      'room ACK after leaving clears only its own draft, newer=$newerDraft',
-      (tester) async {
-        FlutterSecureStorage.setMockInitialValues({});
-        SharedPreferences.setMockInitialValues({});
-        final manager = await ConnectionManager.create(
-          await SharedPreferences.getInstance(),
-        );
-        addTearDown(manager.dispose);
-        final gate = Completer<void>();
-        final source = _workspaceSource()..sendGate = gate;
-        await _pumpHostedScreen(tester, manager, source);
-        final room = find.byKey(const ValueKey('mission-hosted-room-0'));
-        final composer = find.byKey(const ValueKey('mission-hosted-composer'));
-        await tester.tap(room);
-        await tester.pumpAndSettle();
-        await tester.enterText(composer, 'Submitted draft');
-        await tester.pump();
-        await tester.tap(
-          find.byKey(const ValueKey('mission-hosted-composer-send')),
-        );
-        await tester.pump();
-        Navigator.of(tester.element(composer)).pop();
-        await tester.pumpAndSettle();
-        if (newerDraft) {
-          await tester.tap(room);
-          await tester.pumpAndSettle();
-          await tester.enterText(composer, 'New draft');
-          await tester.pump(const Duration(milliseconds: 400));
-          Navigator.of(tester.element(composer)).pop();
-          await tester.pumpAndSettle();
-        }
-        gate.complete();
-        await tester.pumpAndSettle();
-        await tester.tap(room);
-        await tester.pumpAndSettle();
-        expect(
-          tester.widget<TextField>(composer).controller!.text,
-          newerDraft ? 'New draft' : '',
-        );
-      },
-    );
-  }
-
-  testWidgets('room draft survives immediate back and reopen', (tester) async {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
-    final manager = await ConnectionManager.create(
-      await SharedPreferences.getInstance(),
-    );
-    addTearDown(manager.dispose);
-    final source = _workspaceSource();
-    await _pumpHostedScreen(tester, manager, source);
-    final room = find.byKey(const ValueKey('mission-hosted-room-0'));
-    final composer = find.byKey(const ValueKey('mission-hosted-composer'));
-    await tester.tap(room);
-    await tester.pumpAndSettle();
-    await tester.enterText(composer, 'First line\nSecond line');
-    Navigator.of(tester.element(composer)).pop();
-    await tester.pumpAndSettle();
-    await tester.tap(room);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextField>(composer).controller!.text,
-      'First line\nSecond line',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('mission-hosted-composer-send')),
-    );
-    await tester.pumpAndSettle();
-    Navigator.of(tester.element(composer)).pop();
-    await tester.pumpAndSettle();
-    await tester.tap(room);
-    await tester.pumpAndSettle();
-    expect(tester.widget<TextField>(composer).controller!.text, isEmpty);
-  });
 
   for (final missingMethod in [false, true]) {
     test(
@@ -748,449 +652,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a fully-capable hosted room shows its team, transcript, and a working composer',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      final source = _workspaceSource();
-      await _pumpHostedScreen(tester, manager, source);
-
-      // The card-level quick-send action is only ever official once a
-      // complete room log can back it up — see `HostedGroupLogPage.
-      // loadComplete` — which this fixture's capabilities do provide.
-      expect(
-        find.byKey(const ValueKey('mission-hosted-send-0')),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-room-workspace')),
-        findsOneWidget,
-      );
-      // El desplegable "Ver miembros" con `ListTile`s vacíos ya no existe:
-      // la sala tiene una sección "Equipo" plegada con su pila de avatares y
-      // una fila real por miembro al abrirla.
-      expect(
-        find.byKey(const ValueKey('mission-hosted-members')),
-        findsOneWidget,
-      );
-      expect(find.text('Team'), findsOneWidget);
-      expect(find.text('1 member'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-members-header')),
-      );
-      await tester.pumpAndSettle();
-      final memberRow = find.byKey(const ValueKey('room-team-member-builder'));
-      expect(memberRow, findsOneWidget);
-      // Sin perfil local (sala federada): la fila informa de dónde viene y
-      // no finge un destino que la app no tiene.
-      expect(find.textContaining('@builder'), findsOneWidget);
-      expect(tester.widget<Semantics>(memberRow).properties.onTap, isNull);
-      expect(tester.widget<Semantics>(memberRow).properties.button, isFalse);
-
-      // A proven-complete log means the transcript, reply-in-thread and
-      // composer are no longer withheld: `groups.send` is official here.
-      //
-      // El transcript ya no lleva un título de sección "Conversación" encima:
-      // ningún chat real rotula su propio hilo, y esos ~44 dp se los queda la
-      // conversación. La frontera con la tira de equipo la marca su línea.
-      expect(find.text('Conversation'), findsNothing);
-      expect(find.text('Before'), findsOneWidget);
-      final message = find.byKey(const ValueKey('mission-hosted-message-0'));
-      final bubble = find.descendant(
-        of: message,
-        matching: find.byType(Container),
-      );
-      final decoration =
-          tester.widget<Container>(bubble).decoration! as BoxDecoration;
-      final colors = Theme.of(tester.element(message)).hermes;
-      expect(decoration.color, colors.surfaceVariant.withValues(alpha: 0.6));
-      expect(decoration.borderRadius, BorderRadius.circular(20));
-      expect(
-        find.descendant(of: message, matching: find.text('user')),
-        findsNothing,
-      );
-      expect(tester.getRect(bubble).right, tester.getRect(message).right - 12);
-      expect(
-        tester.getRect(bubble).left,
-        greaterThanOrEqualTo(tester.getRect(message).left + 56),
-      );
-      expect(
-        find.byKey(const ValueKey('mission-hosted-reply-0')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-hosted-composer')),
-        findsOneWidget,
-      );
-
-      await tester.enterText(
-        find.byKey(const ValueKey('mission-hosted-composer')),
-        'hello there',
-      );
-      // Con el campo vacío la flecha de envío se pinta atenuada y no responde
-      // (mismo criterio que `_SendButton` del chat real: antes lucía activa
-      // sobre un tap que no hacía nada). `enterText` no bombea un frame, así
-      // que el árbol pintado todavía es el del campo vacío; hace falta este
-      // `pump` para que el botón ya esté habilitado al tocarlo.
-      await tester.pump();
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-composer-send')),
-      );
-      await tester.pumpAndSettle();
-      expect(source.calls, contains('send:3:hello there'));
-    },
-  );
-
-  for (final themeId in ['dark', 'light']) {
-    testWidgets('room member headers share team identity in $themeId', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(360, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      addTearDown(manager.dispose);
-      final events = [
-        _event(text: 'Before'),
-        {
-          ..._event(text: 'Local reply'),
-          'seq': 2,
-          'event_id': 'local-event',
-          'payload': {'text': 'Local reply', 'thread_id': 'local-thread'},
-          'kind': 'message.member',
-          'actor': {'kind': 'member', 'id': 'member-local'},
-        },
-        {
-          ..._event(text: 'Peer reply'),
-          'seq': 3,
-          'event_id': 'peer-event',
-          'kind': 'message.member',
-          'actor': {
-            'kind': 'member',
-            'id': 'peer-actor',
-            'profile': 'peer-profile',
-            'connection_id': 'peer-connection',
-          },
-        },
-        {
-          ..._event(text: 'Unknown reply'),
-          'seq': 4,
-          'event_id': 'unknown-event',
-          'kind': 'message.member',
-          'actor': {
-            'kind': 'member',
-            'id': 'unknown-private',
-            'display_name': 'Guest bot',
-            'profile': 'builder',
-            'connection_id': 'unknown-connection-private',
-          },
-        },
-      ];
-      final log = HostedGroupLogPage.fromJson(
-        {
-          'events': events,
-          'cursor': 4,
-          'latest_seq': 4,
-          'has_more': false,
-          'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
-        },
-        expectedRoomId: 'room-private',
-        sinceSeq: 0,
-      );
-      final source = _workspaceSource(
-        room: _mixedMemberRoom(latestSeq: 4),
-        log: log,
-        profiles: const [
-          AgentProfile(name: 'builder'),
-          // A local profile with the same name must never claim a peer's avatar.
-          AgentProfile(name: 'peer-profile'),
-        ],
-      );
-      await _pumpHostedScreen(tester, manager, source, themeId: themeId);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-
-      Finder message(int index) =>
-          find.byKey(ValueKey('mission-hosted-message-$index'));
-      final localAvatar = tester.widget<MissionProfileAvatar>(
-        find.descendant(
-          of: message(1),
-          matching: find.byType(MissionProfileAvatar),
-        ),
-      );
-      expect(localAvatar.profileName, 'builder');
-      expect(localAvatar.size, 32);
-      expect(find.text('>_ BUILDER BOT'), findsOneWidget);
-      expect(find.text('Local reply'), findsOneWidget);
-      expect(tester.getTopLeft(find.text('Local reply')).dx, 12);
-      final header = tester.widget<Text>(find.text('>_ BUILDER BOT'));
-      expect(
-        header.style!.color,
-        Theme.of(tester.element(message(1))).hermes.accent,
-      );
-      expect(header.style!.fontSize, 12.5);
-      expect(find.text('>_ PEER BOT'), findsOneWidget);
-      expect(
-        find.descendant(
-          of: message(2),
-          matching: find.byType(MissionProfileAvatar),
-        ),
-        findsNothing,
-      );
-      final peerAvatar = tester.widget<RoomMemberAvatar>(
-        find.descendant(
-          of: message(2),
-          matching: find.byType(RoomMemberAvatar),
-        ),
-      );
-      expect(peerAvatar.profileName, 'peer-handle');
-      expect(peerAvatar.profile, isNull);
-      // The transcript is reversed (newest message hugs the composer, like
-      // any real chat), so the latest message — index 3 — is the one
-      // nearest the bottom and already on-screen; no scroll needed for it.
-      expect(find.text('>_ GUEST BOT'), findsOneWidget);
-      expect(
-        find.descendant(
-          of: message(3),
-          matching: find.byType(MissionProfileAvatar),
-        ),
-        findsNothing,
-      );
-      expect(find.textContaining('unknown-private'), findsNothing);
-      expect(find.textContaining('unknown-connection-private'), findsNothing);
-
-      // The restyled action still targets the original event's thread.
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-reply-1')));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('mission-hosted-composer')),
-        'Thread reply',
-      );
-      // Ver la nota del envío de arriba: `enterText` no bombea, y la flecha
-      // solo se habilita con texto.
-      await tester.pump();
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-composer-send')),
-      );
-      await tester.pumpAndSettle();
-      expect(source.attempts.single.threadId, 'local-thread');
-      expect(source.calls, contains('send:3:Thread reply'));
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    });
-  }
-
-  testWidgets(
-    'typing @ in the room composer suggests and applies a matching member',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      final source = _workspaceSource();
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-
-      final composer = find.byKey(const ValueKey('mission-hosted-composer'));
-      await tester.enterText(composer, '@bui');
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-mention-suggestions')),
-        findsOneWidget,
-      );
-      final suggestion = find.byKey(
-        const ValueKey('mission-hosted-mention-builder'),
-      );
-      expect(suggestion, findsOneWidget);
-
-      await tester.tap(suggestion);
-      await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(composer).controller!.text, '@builder ');
-      // The resolved mention text closes the suggestion strip until another
-      // in-progress `@fragment` starts.
-      expect(
-        find.byKey(const ValueKey('mission-hosted-mention-suggestions')),
-        findsNothing,
-      );
-    },
-  );
-
-  testWidgets(
-    'open hosted room refreshes later replies and stops polling on disposal',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      final source = _RefreshingHostedSource(_workspaceSource().snapshot);
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pumpAndSettle();
-      expect(source.reads, 1);
-      expect(find.text('Later bot reply'), findsOneWidget);
-      source.failRead = true;
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-room-error')),
-        findsOneWidget,
-      );
-      expect(find.textContaining('private remote failure'), findsNothing);
-      final reads = source.reads;
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(seconds: 4));
-      expect(source.reads, reads);
-    },
-  );
-
-  // Both equivalent server broadcast aliases are offered.
-  for (final handle in ['everyone', 'all']) {
-    testWidgets('broadcast autocomplete inserts @$handle and sends it', (
-      tester,
-    ) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      final source = _workspaceSource();
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-      final composer = find.byKey(const ValueKey('mission-hosted-composer'));
-      await tester.enterText(composer, '@${handle.substring(0, 2)}');
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(ValueKey('mission-hosted-mention-$handle')));
-      await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(composer).controller!.text, '@$handle ');
-      await tester.enterText(composer, '@$handle reply once');
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-composer-send')),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        source.calls.where((call) => call.startsWith('send:')).single,
-        endsWith(':@$handle reply once'),
-      );
-    });
-  }
-
-  testWidgets('an open room cannot stop its replacement after a refresh', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final manager = await ConnectionManager.create(
-      await SharedPreferences.getInstance(),
-    );
-    final source = _workspaceSource();
-    await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-    await tester.pumpAndSettle();
-    final old = source.snapshot;
-    source.snapshot = MissionBackendSnapshot(
-      profiles: old.profiles,
-      board: old.board,
-      profilesCapability: old.profilesCapability,
-      sessionsCapability: old.sessionsCapability,
-      kanbanCapability: old.kanbanCapability,
-      hostedGroupsCapability: old.hostedGroupsCapability,
-      hostedGroups: HostedGroupsSnapshot(
-        capabilities: old.hostedGroups.capabilities,
-        rooms: [_room(name: 'Replacement', revision: 1, roomId: 'replacement')],
-      ),
-      loadedAt: old.loadedAt,
-    );
-    // `tester.binding.handleAppLifecycleStateChanged` broadcasts to every
-    // registered WidgetsBindingObserver, including an unrelated framework
-    // AppLifecycleListener elsewhere in this pumped tree that asserts on its
-    // own transition graph and throws regardless of the sequence given here.
-    // The screen's own observer is what this test actually needs to drive,
-    // so call it directly instead of going through the global broadcast.
-    final observer =
-        tester.state<State<MissionControlScreen>>(
-              find.byType(MissionControlScreen, skipOffstage: false),
-            )
-            as WidgetsBindingObserver;
-    observer.didChangeAppLifecycleState(AppLifecycleState.paused);
-    observer.didChangeAppLifecycleState(AppLifecycleState.resumed);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Stop room'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Confirm').last);
-    await tester.pumpAndSettle();
-    expect(source.calls, isNot(contains('stop:3')));
-    await tester.pumpWidget(const SizedBox.shrink());
-    manager.dispose();
-  });
-
-  testWidgets(
-    'route rename stop and disband converge then close authoritatively',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      final source = _workspaceSource();
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byType(PopupMenuButton<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Rename room'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextFormField).last, 'Renamed route');
-      await tester.tap(find.text('Save').last);
-      await tester.pumpAndSettle();
-      expect(find.text('Renamed route'), findsOneWidget);
-
-      await tester.tap(find.byType(PopupMenuButton<String>));
-      await tester.pumpAndSettle();
-      // El ítem del menú es imperativo ("Stop room"); el diálogo de
-      // confirmación que abre sigue preguntando ("Stop room?") —
-      // antes ambos compartían el mismo texto con "?", lo que leía como una
-      // pregunta suelta en el menú (confirmado en dispositivo real).
-      await tester.tap(find.text('Stop room'));
-      await tester.pumpAndSettle();
-      expect(find.text('Stop room?'), findsOneWidget);
-      await tester.tap(find.text('Confirm').last);
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byType(PopupMenuButton<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Disband room'));
-      await tester.pumpAndSettle();
-      expect(find.text('Disband room?'), findsOneWidget);
-      await tester.tap(find.text('Confirm').last);
-      await tester.pumpAndSettle();
-
-      expect(
-        source.calls,
-        containsAllInOrder(['rename:3:Renamed route', 'stop:3', 'disband:3']),
-      );
-      expect(
-        find.byKey(const ValueKey('mission-hosted-room-workspace')),
-        findsNothing,
-      );
-      expect(find.text('Renamed route'), findsNothing);
-    },
-  );
-
   testWidgets('retired retry never reaches the owning hosted workspace', (
     tester,
   ) async {
@@ -1633,38 +1094,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // El equipo de una sala compartida era un desplegable con `ListTile`s de
-  // icono genérico y `@handle`: "entro en la sala, voy al equipo y no sale
-  // nada". Ahora cada miembro es una fila real, y solo los que resuelven a un
-  // perfil local de esta conexión llevan a algún sitio.
-  testWidgets('shared room team rows resolve local bots and mark federated', (
+  // ── Spec 070: the hosted room opens the group-chat RoomScreen ───────────
+
+  Finder roomField() => find.descendant(
+    of: find.byKey(const ValueKey('room-composer')),
+    matching: find.byType(TextField),
+  );
+
+  Future<void> tapSend(WidgetTester tester) async {
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('composer-primary-action-switcher')),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a hosted room opens RoomScreen with transcript and composer', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
     );
-    final source = _HostedScreenSource(
-      MissionBackendSnapshot(
-        profiles: const [AgentProfile(name: 'builder')],
-        board: const KanbanBoard(columns: []),
-        profilesCapability: MissionCapabilityState.available,
-        sessionsCapability: MissionCapabilityState.available,
-        kanbanCapability: MissionCapabilityState.available,
-        hostedGroupsCapability: MissionCapabilityState.available,
-        hostedGroups: HostedGroupsSnapshot(
-          capabilities: _capabilities(const [
-            GroupMethod.capabilities,
-            GroupMethod.list,
-            GroupMethod.state,
-            GroupMethod.log,
-          ]),
-          rooms: [_mixedMemberRoom()],
-          logs: const [],
-        ),
-        loadedAt: DateTime.fromMillisecondsSinceEpoch(1),
-      ),
-    );
+    addTearDown(manager.dispose);
+    final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
     await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
     await tester.pumpAndSettle();
@@ -1672,222 +1125,107 @@ void main() {
       find.byKey(const ValueKey('mission-hosted-room-workspace')),
       findsOneWidget,
     );
-
-    // Plegada por defecto: cabecera con pila de avatares y recuento.
-    expect(
-      find.byKey(const ValueKey('mission-hosted-members')),
-      findsOneWidget,
-    );
-    expect(find.text('2 members'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('room-team-member-builder')),
-      findsNothing,
-    );
-
-    await tester.tap(
-      find.byKey(const ValueKey('mission-hosted-members-header')),
-    );
-    await tester.pumpAndSettle();
-
-    // Miembro local: nombre publicado por el servidor y ficha alcanzable.
-    final local = find.byKey(const ValueKey('room-team-member-builder'));
-    expect(local, findsOneWidget);
-    expect(find.text('Builder bot'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('room-team-unavailable-builder')),
-      findsNothing,
-    );
-    expect(tester.widget<Semantics>(local).properties.button, isTrue);
-
-    // Miembro federado con nombre publicado: no es "no disponible", pero de
-    // él no hay ficha local, así que su fila no es tocable.
-    final peer = find.byKey(const ValueKey('room-team-member-peer-handle'));
-    expect(peer, findsOneWidget);
-    expect(find.text('Peer bot'), findsOneWidget);
-    expect(tester.widget<Semantics>(peer).properties.onTap, isNull);
-    expect(
-      find.byKey(const ValueKey('room-team-unavailable-peer-handle')),
-      findsNothing,
-    );
-
-    // Las salas compartidas no tienen coordinador: ninguna fila lleva rol.
-    expect(find.byKey(const ValueKey('room-team-role-builder')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('room-team-role-peer-handle')),
-      findsNothing,
-    );
-
-    await tester.tap(local);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.byType(RoomScreen), findsOneWidget);
+    expect(find.text('Before'), findsOneWidget);
+    // No legacy team strip or summary pill.
+    expect(find.byKey(const ValueKey('room-summary-pill')), findsNothing);
+    expect(find.byKey(const ValueKey('mission-hosted-members')), findsNothing);
+    await tester.enterText(roomField(), 'hello there');
+    await tapSend(tester);
+    expect(source.calls, contains('send:3:hello there'));
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  // El modelo admite hasta 128 miembros por sala: el desplegable no puede
-  // pintarlos todos en línea dentro del cuerpo de la sala.
-  testWidgets('a crowded shared room caps inline rows and lists the rest', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final manager = await ConnectionManager.create(
-      await SharedPreferences.getInstance(),
-    );
-    final source = _HostedScreenSource(
-      MissionBackendSnapshot(
-        profiles: const [],
-        board: const KanbanBoard(columns: []),
-        profilesCapability: MissionCapabilityState.available,
-        sessionsCapability: MissionCapabilityState.available,
-        kanbanCapability: MissionCapabilityState.available,
-        hostedGroupsCapability: MissionCapabilityState.available,
-        hostedGroups: HostedGroupsSnapshot(
-          capabilities: _capabilities(const [
-            GroupMethod.capabilities,
-            GroupMethod.list,
-            GroupMethod.state,
-            GroupMethod.log,
-          ]),
-          rooms: [_crowdedRoom(14)],
-          logs: const [],
-        ),
-        loadedAt: DateTime.fromMillisecondsSinceEpoch(1),
-      ),
-    );
-    await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-    await tester.pumpAndSettle();
-    expect(find.text('14 members'), findsOneWidget);
-
-    await tester.tap(
-      find.byKey(const ValueKey('mission-hosted-members-header')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byType(RoomTeamRow), findsNWidgets(12));
-    final all = find.byKey(const ValueKey('mission-hosted-members-all'));
-    expect(all, findsOneWidget);
-    expect(find.text('See all 14 members'), findsOneWidget);
-
-    // El desplegable tiene techo y se desplaza solo, para no comerle el alto
-    // a la conversación de la sala.
-    await Scrollable.ensureVisible(
-      tester.element(all),
-      duration: Duration.zero,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(all);
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('mission-hosted-members-screen')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  // Con el equipo desplegado y el teclado abierto la columna de la sala
-  // desbordaba (61 px en 360×640 con 300 px de IME) cuando el desplegable
-  // tenía alto fijo.
-  testWidgets('the expanded team yields height to the keyboard', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(360, 640);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    SharedPreferences.setMockInitialValues({});
-    final manager = await ConnectionManager.create(
-      await SharedPreferences.getInstance(),
-    );
-    final source = _HostedScreenSource(
-      MissionBackendSnapshot(
-        profiles: const [],
-        board: const KanbanBoard(columns: []),
-        profilesCapability: MissionCapabilityState.available,
-        sessionsCapability: MissionCapabilityState.available,
-        kanbanCapability: MissionCapabilityState.available,
-        hostedGroupsCapability: MissionCapabilityState.available,
-        hostedGroups: HostedGroupsSnapshot(
-          capabilities: _capabilities(const [
-            GroupMethod.capabilities,
-            GroupMethod.list,
-            GroupMethod.state,
-            GroupMethod.log,
-            GroupMethod.send,
-          ]),
-          rooms: [_crowdedRoom(14)],
-          logs: const [],
-        ),
-        loadedAt: DateTime.fromMillisecondsSinceEpoch(1),
-      ),
-    );
-    await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('mission-hosted-members-header')),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-
-    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('mission-hosted-members-header')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  // La tira de equipo plegada mide ~69 dp. Cuando era un hijo `Flexible` de la
-  // misma columna que el `Expanded` del transcript, se repartían el hueco
-  // libre al 50 % y los ~250 dp de su mitad que no usaba NO volvían al
-  // transcript: `RenderFlex` los dejaba como sobrante al final de la columna,
-  // o sea un vacío negro debajo del composer (258 dp medidos en 360×800). Es
-  // el "no se puede ver así" reportado en dispositivo real.
-  // En horizontal con el teclado abierto al cuerpo de la sala le quedan poco
-  // más de 100 dp. La tira de equipo mide ~69 dp y su cabecera no se puede
-  // comprimir, así que acotarla a secas la hacía desbordar; ahora se desplaza
-  // dentro de su techo y, si ni la cabecera cabe, se retira entera. Sea como
-  // sea, la conversación y el composer siguen ahí y no hay `RenderFlex`
-  // desbordado.
-  testWidgets('the room survives landscape with the keyboard open', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(740, 360);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
+  testWidgets('room draft survives immediate back and reopen', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
     );
     addTearDown(manager.dispose);
-    final source = _workspaceSource(room: _crowdedRoom(14));
+    final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    final room = find.byKey(const ValueKey('mission-hosted-room-0'));
+    await tester.tap(room);
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('mission-hosted-members-header')),
+    await tester.enterText(roomField(), 'First line\nSecond line');
+    Navigator.of(tester.element(roomField())).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(room);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(roomField()).controller!.text,
+      'First line\nSecond line',
     );
+    await tapSend(tester);
+    Navigator.of(tester.element(roomField())).pop();
     await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-
-    for (final inset in const [140.0, 180.0, 230.0]) {
-      tester.view.viewInsets = FakeViewPadding(bottom: inset);
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-composer')),
-        findsOneWidget,
-        reason: 'inset $inset',
-      );
-      expect(tester.takeException(), isNull, reason: 'inset $inset');
-    }
+    await tester.tap(room);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(roomField()).controller!.text, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('the room composer sits at the bottom, with no dead space', (
+  for (final handle in ['builder', 'everyone', 'all']) {
+    testWidgets('@ palette inserts @$handle and sends it', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      addTearDown(manager.dispose);
+      final source = _workspaceSource();
+      await _pumpHostedScreen(tester, manager, source);
+      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(roomField());
+      await tester.enterText(roomField(), '@${handle.substring(0, 1)}');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('room-mention-$handle')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(roomField()).controller!.text,
+        '@$handle ',
+      );
+      await tester.enterText(roomField(), '@$handle reply once');
+      await tapSend(tester);
+      expect(
+        source.calls.where((call) => call.startsWith('send:')).single,
+        endsWith(':@$handle reply once'),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets('open room polls later replies and stops polling on disposal', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(360, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _RefreshingHostedSource(_workspaceSource().snapshot);
+    await _pumpHostedScreen(tester, manager, source);
+    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(source.reads, greaterThanOrEqualTo(1));
+    expect(find.text('Later bot reply'), findsOneWidget);
+    source.failRead = true;
+    await tester.pump(const Duration(seconds: 16));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-error')), findsOneWidget);
+    expect(find.textContaining('private remote failure'), findsNothing);
+    final reads = source.reads;
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 20));
+    expect(source.reads, reads);
+  });
+
+  testWidgets('overflow rename, stop and disband converge then close', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
@@ -1898,119 +1236,45 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
     await tester.pumpAndSettle();
 
-    final workspace = tester.getRect(
+    Future<void> menu(String item) async {
+      await tester.tap(find.byKey(const ValueKey('room-overflow')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('room-menu-$item')));
+      await tester.pumpAndSettle();
+    }
+
+    await menu('settings');
+    await tester.enterText(
+      find.byKey(const ValueKey('room-settings-name')),
+      'Renamed route',
+    );
+    await tester.tap(find.byKey(const ValueKey('room-settings-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Renamed route'), findsOneWidget);
+
+    await menu('stop');
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pumpAndSettle();
+
+    await menu('disband');
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      source.calls,
+      containsAllInOrder(['rename:3:Renamed route', 'stop:3', 'disband:3']),
+    );
+    expect(
       find.byKey(const ValueKey('mission-hosted-room-workspace')),
+      findsNothing,
     );
-    final composer = tester.getRect(
-      find.byKey(const ValueKey('mission-hosted-composer')),
-    );
-    // El relleno inferior del host del composer son 10 dp; cualquier cosa
-    // mucho mayor que eso es hueco muerto otra vez.
-    expect(workspace.bottom - composer.bottom, lessThan(24));
-    // Y el transcript llega hasta el composer en vez de cortarse a media
-    // pantalla.
-    final transcript = tester.getRect(find.byType(ListView).last);
-    final summary = tester.getRect(
-      find.byKey(const ValueKey('room-summary-pill')),
-    );
-    expect(transcript.top - summary.bottom, inInclusiveRange(0, 8));
-    expect(summary.height, lessThan(45));
-    expect(composer.top - transcript.bottom, lessThan(24));
-    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets(
-    'both broadcasts, complete scrollable roster and live recipient preview',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      addTearDown(manager.dispose);
-      final source = _presenceSource();
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-      final header = find.byKey(const ValueKey('room-live-members'));
-      expect(tester.widget<ListView>(header).scrollDirection, Axis.horizontal);
-      for (final status in [
-        'member-builder-active',
-        'member-reviewer-idle',
-        'member-default-unknown',
-      ]) {
-        expect(find.byKey(ValueKey('room-status-$status')), findsOneWidget);
-      }
-      final composer = find.byKey(const ValueKey('mission-hosted-composer'));
-      await tester.enterText(composer, '@');
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-mention-all')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-hosted-mention-everyone')),
-        findsOneWidget,
-      );
-      final palette = find.byKey(
-        const ValueKey('mission-hosted-mention-suggestions'),
-      );
-      final scroll = find.descendant(
-        of: palette,
-        matching: find.byType(ListView),
-      );
-      expect(tester.widget<ListView>(scroll).scrollDirection, Axis.horizontal);
-      await tester.drag(scroll, const Offset(-450, 0));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-mention-default')),
-        findsOneWidget,
-      );
-      for (final entry in {
-        'Hello': 'Everyone (3)',
-        '@everyone hello': 'Everyone (3)',
-        '@all hello': 'Everyone (3)',
-        '@unknown hello': 'Everyone (3)',
-        '@builder hello': 'To 1 of 3',
-        '@builder @reviewer hello': 'To 2 of 3',
-      }.entries) {
-        await tester.enterText(composer, entry.key);
-        await tester.pumpAndSettle();
-        final preview = find.byKey(const ValueKey('room-recipients-preview'));
-        expect(
-          find.descendant(of: preview, matching: find.text(entry.value)),
-          findsOneWidget,
-        );
-      }
-      await tester.enterText(composer, '@');
-      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
-      await tester.pumpAndSettle();
-      expect(
-        tester.getRect(palette).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top),
-      );
-      expect(tester.getRect(composer).bottom, lessThanOrEqualTo(844 - 320));
-      final summary = find.byKey(const ValueKey('room-summary-pill'));
-      if (summary.evaluate().isNotEmpty) {
-        expect(
-          tester.getRect(summary).bottom,
-          lessThanOrEqualTo(
-            tester
-                .getRect(find.byKey(const ValueKey('room-recipients-preview')))
-                .top,
-          ),
-        );
-      }
-      expect(find.byKey(const ValueKey('room-summary-expanded')), findsNothing);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
-
-  testWidgets('room inline pending is replaced by reply and explicit pass', (
+  testWidgets('local members show their face; peers never borrow a local one', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -2018,65 +1282,140 @@ void main() {
       await SharedPreferences.getInstance(),
     );
     addTearDown(manager.dispose);
-    final source = _presenceSource();
+    final events = [
+      _event(text: 'Before'),
+      {
+        ..._event(text: 'Local reply'),
+        'seq': 2,
+        'event_id': 'local-event',
+        'payload': {'text': 'Local reply', 'thread_id': 'local-thread'},
+        'kind': 'message.member',
+        'actor': {'kind': 'member', 'id': 'member-local'},
+      },
+      {
+        ..._event(text: 'Peer reply'),
+        'seq': 3,
+        'event_id': 'peer-event',
+        'kind': 'message.member',
+        'actor': {
+          'kind': 'member',
+          'id': 'peer-actor',
+          'profile': 'peer-profile',
+          'connection_id': 'peer-connection',
+        },
+      },
+    ];
+    final log = HostedGroupLogPage.fromJson(
+      {
+        'events': events,
+        'cursor': 3,
+        'latest_seq': 3,
+        'has_more': false,
+        'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+      },
+      expectedRoomId: 'room-private',
+      sinceSeq: 0,
+    );
+    final source = _workspaceSource(
+      room: _mixedMemberRoom(latestSeq: 3),
+      log: log,
+      profiles: const [
+        AgentProfile(name: 'builder'),
+        AgentProfile(name: 'peer-profile'),
+      ],
+    );
     await _pumpHostedScreen(tester, manager, source);
     await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
     await tester.pumpAndSettle();
-    final composer = find.byKey(const ValueKey('mission-hosted-composer'));
-    await tester.enterText(composer, '@builder @reviewer please reply');
-    await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('mission-hosted-composer-send')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(
-        const ValueKey('room-response-event-1-member-builder-pending'),
+    final local = tester.widget<RoomMemberAvatar>(
+      find.descendant(
+        of: find.byKey(const ValueKey('room-face-local-event')),
+        matching: find.byType(RoomMemberAvatar),
       ),
+    );
+    expect(local.profile?.name, 'builder');
+    final peer = tester.widget<RoomMemberAvatar>(
+      find.descendant(
+        of: find.byKey(const ValueKey('room-face-peer-event')),
+        matching: find.byType(RoomMemberAvatar),
+      ),
+    );
+    expect(peer.profile, isNull);
+    expect(find.text('Builder bot'), findsOneWidget);
+    expect(find.text('Peer bot'), findsOneWidget);
+    // Cross-gateway room: attachments are disabled with a reason (G1).
+    expect(
+      find.byKey(const ValueKey('room-attach-disabled-reason')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(
-        const ValueKey('room-response-event-1-member-reviewer-pending'),
-      ),
-      findsOneWidget,
-    );
-    source.events.add(
-      _presenceEvent(2, 'message.member', text: 'Here is the answer'),
-    );
-    source.events.add(
-      _presenceEvent(
-        3,
-        'turn.settled',
-        member: 'reviewer',
-        payload: {'passed': true},
-      ),
-    );
-    await tester.pump(const Duration(seconds: 3));
+    // Reply-in-thread targets the original event thread.
+    await tester.tap(find.byKey(const ValueKey('room-reply-local-event')));
     await tester.pumpAndSettle();
-    expect(find.text('Here is the answer'), findsOneWidget);
-    expect(
-      find.byKey(
-        const ValueKey('room-response-event-1-member-builder-pending'),
-      ),
-      findsNothing,
-    );
-    expect(find.text('reviewer passed'), findsOneWidget);
-    expect(find.byKey(const ValueKey('room-summary-expanded')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('room-summary-toggle')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('room-summary-expanded')), findsOneWidget);
-    expect(find.text('builder answered'), findsOneWidget);
-    expect(find.text('reviewer passed'), findsWidgets);
-    await tester.tap(find.byKey(const ValueKey('room-summary-toggle')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('room-summary-expanded')), findsNothing);
+    expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
+    await tester.enterText(roomField(), 'Thread reply');
+    await tapSend(tester);
+    expect(source.attempts.single.threadId, 'local-thread');
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('the room leaves the thread from its banner', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _workspaceSource();
+    await _pumpHostedScreen(tester, manager, source);
+    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-reply-event-private')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('room-thread-leave')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-thread-banner')), findsNothing);
+    await tester.enterText(roomField(), 'Back to the room');
+    await tapSend(tester);
+    expect(source.attempts.single.threadId, isNot('thread-event-private'));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  for (final size in const [Size(360, 800), Size(740, 360)]) {
+    testWidgets('room composer stays docked with the keyboard at $size', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      SharedPreferences.setMockInitialValues({});
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      addTearDown(manager.dispose);
+      final source = _workspaceSource(room: _crowdedRoom(14));
+      await _pumpHostedScreen(tester, manager, source);
+      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+      await tester.pumpAndSettle();
+      final screen = tester.getRect(
+        find.byKey(const ValueKey('mission-hosted-room-workspace')),
+      );
+      final composer = tester.getRect(
+        find.byKey(const ValueKey('room-composer')),
+      );
+      expect(screen.bottom - composer.bottom, lessThan(24));
+      for (final inset in const [140.0, 180.0]) {
+        tester.view.viewInsets = FakeViewPadding(bottom: inset);
+        await tester.pumpAndSettle();
+        expect(roomField(), findsOneWidget, reason: 'inset $inset');
+        expect(tester.takeException(), isNull, reason: 'inset $inset');
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets(
-    'timeout is a muted inline line; summary merges the bounded durable activity',
+    'member replies and passes: reply shown, pass is one quiet line',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final manager = await ConnectionManager.create(
@@ -2084,151 +1423,32 @@ void main() {
       );
       addTearDown(manager.dispose);
       final source = _presenceSource();
-      source.events.addAll([
-        _presenceEvent(
-          1,
-          'message.user',
-          at: DateTime.now().millisecondsSinceEpoch / 1000 - 130,
-        ),
-        _presenceEvent(2, 'message.member', discussion: 'older-run'),
-        for (var i = 3; i < 58; i++)
-          _presenceEvent(
-            i,
-            'turn.settled',
-            member: 'reviewer',
-            payload: {'passed': true},
-          ),
-      ]);
       await _pumpHostedScreen(tester, manager, source);
       await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-room-refresh')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('builder did not reply'), findsOneWidget);
-      expect(find.byKey(const ValueKey('room-activity-toggle')), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('room-summary-toggle')));
-      await tester.pumpAndSettle();
-      expect(find.text('Recent'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('room-summary-more-recent')),
-        findsOneWidget,
-      );
-      expect(find.text('see more (44)'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('room-summary-recent-event-2')),
-        findsNothing,
-      );
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
-
-  testWidgets(
-    'working header uses existing face motion and unboxed detail; reduced motion stays still',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      addTearDown(manager.dispose);
-      final source = _presenceSource();
-      source.events.addAll([
-        _presenceEvent(1, 'message.user'),
-        _presenceEvent(
-          2,
-          'turn.started',
-          payload: {'description': 'Review the requested changes'},
-        ),
-      ]);
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-room-refresh')),
-      );
-      await tester.pump(const Duration(milliseconds: 300));
-      final faces = tester.widgetList<HermesBotFace>(
-        find.byType(HermesBotFace),
-      );
-      expect(
-        faces.any(
-          (face) =>
-              face.animate &&
-              face.motionState == HermesBotFaceMotionState.thinking,
-        ),
-        isTrue,
-      );
-      expect(find.textContaining('Review the requested changes'), findsWidgets);
-      final statuses = tester.widgetList<RoomStatusAvatar>(
-        find.byType(RoomStatusAvatar),
-      );
-      expect(
-        statuses.any(
-          (avatar) => avatar.status.presence == RoomPresence.working,
-        ),
-        isTrue,
-      );
-      tester.platformDispatcher.accessibilityFeaturesTestValue =
-          const FakeAccessibilityFeatures(disableAnimations: true);
-      addTearDown(
-        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
-      );
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
-
-  // Tras tocar "Responder en hilo" el único indicio era que cambiaba el texto
-  // de sugerencia del campo, y no había forma de salir del hilo salvo enviar.
-  testWidgets(
-    'the room says which thread it is replying to, and can leave it',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      addTearDown(manager.dispose);
-      final source = _workspaceSource();
-      await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-thread-banner')),
-        findsNothing,
-      );
-
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-reply-0')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-thread-banner')),
-        findsOneWidget,
-      );
-      expect(find.text('Replying in thread'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-thread-cancel')),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('mission-hosted-thread-banner')),
-        findsNothing,
-      );
-      // Salir del hilo devuelve el envío a la sala: el intento estrena su
-      // propio hilo derivado del `client_event_id` en vez de reusar el del
-      // mensaje al que se había tocado "Responder en hilo".
-      await tester.enterText(
-        find.byKey(const ValueKey('mission-hosted-composer')),
-        'Back to the room',
-      );
+      await tester.enterText(roomField(), '@builder @reviewer please reply');
       await tester.pump();
       await tester.tap(
-        find.byKey(const ValueKey('mission-hosted-composer-send')),
+        find.byKey(const ValueKey('composer-primary-action-switcher')),
       );
       await tester.pumpAndSettle();
-      expect(source.attempts.single.threadId, isNot('thread-event-private'));
+      source.events.add(
+        _presenceEvent(2, 'message.member', text: 'Here is the answer'),
+      );
+      source.events.add(
+        _presenceEvent(
+          3,
+          'turn.settled',
+          member: 'reviewer',
+          payload: {'passed': true},
+        ),
+      );
+      // Idle rooms back off (3 s → 15 s ceiling); one idle interval later.
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(find.text('Here is the answer'), findsOneWidget);
+      expect(find.text('reviewer passed · Activity ›'), findsOneWidget);
+      expect(find.text('reviewer passed'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -2598,7 +1818,26 @@ final class _RefreshingHostedSource extends _HostedScreenSource
     if (failRead) throw StateError('private remote failure');
     return HostedGroupWorkspaceReadback(
       room: room,
-      log: _log(text: 'Later bot reply'),
+      // A later reply advances the log (a real server never rewrites seq 1).
+      log: HostedGroupLogPage.fromJson(
+        {
+          'events': [
+            _event(text: 'Before'),
+            {
+              ..._event(text: 'Later bot reply'),
+              'seq': 2,
+              'event_id': 'event-later',
+              'payload': {'text': 'Later bot reply', 'thread_id': 'later'},
+            },
+          ],
+          'cursor': 2,
+          'latest_seq': 2,
+          'has_more': false,
+          'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+        },
+        expectedRoomId: 'room-private',
+        sinceSeq: 0,
+      ),
       capabilityGeneration: generation,
     );
   }

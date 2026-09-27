@@ -1,6 +1,9 @@
 import 'dart:convert';
 
+import '../bots/data/room_driver_status.dart';
 import 'bot_mode_v13.dart';
+
+export '../bots/data/room_driver_status.dart';
 
 enum GroupMethod {
   capabilities('groups.capabilities'),
@@ -433,10 +436,14 @@ final class HostedGroupWorkspaceReadback {
   final HostedGroupLogPage? log;
   final int capabilityGeneration;
 
+  /// Server driver evidence read with [room]; `null` on older gateways.
+  final RoomDriverStatus? driverStatus;
+
   const HostedGroupWorkspaceReadback({
     required this.room,
     required this.log,
     required this.capabilityGeneration,
+    this.driverStatus,
   });
 }
 
@@ -689,6 +696,9 @@ final class HostedGroupActivityDetails {
   final String? reasonCode;
   final bool passed;
 
+  /// Round of the discussion this turn belongs to (`round_index`, 0-based).
+  final int? roundIndex;
+
   HostedGroupActivityDetails.fromJson(Map<String, dynamic> payload)
     : memberId = _text(payload['member_id']),
       discussionId = _text(payload['discussion_event_id']),
@@ -702,7 +712,11 @@ final class HostedGroupActivityDetails {
       messageEventId = _text(payload['message_event_id']),
       // Only translated, recognized codes are rendered, never raw errors.
       reasonCode = _text(payload['reason_code']) ?? _text(payload['reason']),
-      passed = payload['passed'] == true;
+      passed = payload['passed'] == true,
+      roundIndex =
+          payload['round_index'] is int && (payload['round_index'] as int) >= 0
+          ? payload['round_index'] as int
+          : null;
 
   static String? _text(Object? value) {
     if (value is! String || value.trim().isEmpty || value.length > 512) {
@@ -937,6 +951,44 @@ final class HostedGroupLogPage {
     throw const FormatException('room log pagination limit exceeded');
   }
 
+  /// Appends an incremental `groups.log` delta (read with
+  /// `since_seq == previous.cursor`) to an already proven prefix. The delta's
+  /// own contiguity is verified by [fromJson]; this adds the cross-read
+  /// invariants: same authority, no rewind and no duplicate event ids.
+  /// [maxEvents] bounds memory on long rooms by keeping the newest tail.
+  static HostedGroupLogPage append(
+    HostedGroupLogPage previous,
+    HostedGroupLogPage delta, {
+    int maxEvents = 2000,
+  }) {
+    if (delta.authority.gatewayId != previous.authority.gatewayId ||
+        delta.authority.epoch != previous.authority.epoch) {
+      throw const FormatException('room authority rotated between reads');
+    }
+    if (delta.latestSeq < previous.latestSeq ||
+        (delta.events.isNotEmpty &&
+            delta.events.first.sequence != previous.cursor + 1)) {
+      throw const FormatException('non-contiguous incremental room log');
+    }
+    final ids = {for (final event in previous.events) event.eventId};
+    for (final event in delta.events) {
+      if (!ids.add(event.eventId)) {
+        throw const FormatException('duplicate event across log reads');
+      }
+    }
+    var events = [...previous.events, ...delta.events];
+    if (events.length > maxEvents) {
+      events = events.sublist(events.length - maxEvents);
+    }
+    return HostedGroupLogPage._(
+      events: List.unmodifiable(events),
+      cursor: delta.cursor > previous.cursor ? delta.cursor : previous.cursor,
+      latestSeq: delta.latestSeq,
+      hasMore: delta.hasMore,
+      authority: delta.authority,
+    );
+  }
+
   List<HostedGroupRetryAction> retryActions({
     required HostedGroupRoom room,
     required GroupsCapabilities capabilities,
@@ -994,11 +1046,17 @@ final class HostedGroupsSnapshot {
   final List<HostedGroupRoom> rooms;
   final List<HostedGroupLogPage> logs;
 
+  /// `groups.state.driver_status` per room id, when the gateway reported it.
+  final Map<String, RoomDriverStatus> driverStatuses;
+
   const HostedGroupsSnapshot({
     this.capabilities,
     this.rooms = const [],
     this.logs = const [],
+    this.driverStatuses = const {},
   });
+
+  RoomDriverStatus? driverStatusFor(String roomId) => driverStatuses[roomId];
 
   static const empty = HostedGroupsSnapshot();
 }

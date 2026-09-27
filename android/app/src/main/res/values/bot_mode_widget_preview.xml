@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget-picker preview palette: mirrors darkBotPalette in HermesBotModeWidgets.kt. -->
+<resources>
+    <color name="botw_preview_background">#FF0E0D11</color>
+    <color name="botw_preview_surface">#FF1A191D</color>
+    <color name="botw_preview_text">#FFF3F0E8</color>
+    <color name="botw_preview_secondary">#FFB9B4A9</color>
+    <color name="botw_preview_accent">#FFE8821C</color>
+    <color name="botw_preview_on_accent">#FF201000</color>
+    <color name="botw_preview_success">#FF78C99B</color>
+    <color name="botw_preview_warning">#FFFFC66A</color>
+    <color name="botw_preview_error">#FFFF8A80</color>
+    <dimen name="botw_preview_radius">20dp</dimen>
+</resources>

@@ -21971,6 +21971,7 @@ class ActiveChat {
       surface: notificationSurface,
       profile: sessionProfile,
       roomId: notificationRoomId,
+      approvalChoices: permittedApprovalChoices(event).toList(),
     );
   }
 

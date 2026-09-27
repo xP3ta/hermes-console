@@ -3,19 +3,22 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/mission_bot_activity_store.dart';
+import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/room_member_status.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/fake_bot_chat_title_lookup.dart';
+import 'support/spec070_fixtures.dart';
 
 final _connection = SavedConnection(
   id: 'mission-bots-discovery',
@@ -79,7 +82,6 @@ Widget _host({
   required ConnectionManager manager,
   required MissionBackendSnapshot snapshot,
   ActiveChatService? activeChats,
-  MissionBotActivityStore? botActivityStore,
   ValueChanged<Session>? botChatOpenObserver,
 }) => MaterialApp(
   locale: const Locale('es'),
@@ -91,8 +93,8 @@ Widget _host({
     connManager: manager,
     dataSource: _FakeSource(snapshot),
     activeChats: activeChats,
-    botActivityStore: botActivityStore,
     botChatOpenObserver: botChatOpenObserver,
+    botChatTitleLookup: FakeBotChatTitleLookup(),
   ),
 );
 
@@ -155,6 +157,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Spec 070 S1: search is a round header button.
+    await tester.tap(find.byKey(const ValueKey('roster-search')));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('mission-bot-search')),
       '  ALPHA   ops  ',
@@ -209,7 +214,7 @@ void main() {
     expect(find.byKey(const ValueKey('mission-bot-infra')), findsOneWidget);
   });
 
-  testWidgets('Executing Bot Chats are grouped under Active now', (
+  testWidgets('Executing Bot Chats carry the working signal on their face', (
     tester,
   ) async {
     // This test checks grouping; steady live motion has no settled frame.
@@ -245,17 +250,29 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('mission-active-now')), findsOneWidget);
-    expect(find.byKey(const ValueKey('mission-bot-row-infra')), findsOneWidget);
+    // Spec 070 S1: no "Active now" section; the face carries the state.
+    expect(find.byKey(const ValueKey('mission-active-now')), findsNothing);
     expect(
-      find.byKey(const ValueKey('mission-bot-row-quality_assurance')),
+      find.descendant(
+        of: find.byKey(const ValueKey('mission-bot-row-infra')),
+        matching: find.byKey(const ValueKey('living-face-ring-working')),
+      ),
       findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('mission-bot-row-quality_assurance')),
+        matching: find.byKey(const ValueKey('living-face-ring-working')),
+      ),
+      findsNothing,
     );
   });
 
   testWidgets(
-    'Bots row and sheet share animated work detail, idle stays calm',
+    'Working bot row is alive with its worker title; idle face stays calm',
     (tester) async {
+      debugLivingBotFacesStill = false;
+      addTearDown(() => debugLivingBotFacesStill = true);
       final manager = await _manager();
       addTearDown(manager.dispose);
       final snapshot = _snapshot(
@@ -276,43 +293,34 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump(const Duration(milliseconds: 300));
       final row = find.byKey(const ValueKey('mission-bot-row-forja'));
+      expect(find.text('Trabajando · Revisando PR #38'), findsOneWidget);
+      final working = tester.widget<HermesBotFace>(
+        find.descendant(of: row, matching: find.byType(HermesBotFace)),
+      );
+      expect(working.animate, isTrue);
+      expect(working.clock, isNotNull, reason: 'one shared ticker per face');
       expect(
-        find.descendant(of: row, matching: find.byType(BotStatusLine)),
+        find.descendant(
+          of: row,
+          matching: find.byKey(const ValueKey('living-face-ring-working')),
+        ),
         findsOneWidget,
       );
-      expect(find.text('Trabajando · Revisando PR #38'), findsOneWidget);
-      expect(
-        tester
-            .widget<HermesBotFace>(
-              find.descendant(of: row, matching: find.byType(HermesBotFace)),
-            )
-            .animate,
-        isTrue,
-      );
       final idle = find.byKey(const ValueKey('mission-bot-row-idle'));
+      expect(
+        find.descendant(
+          of: idle,
+          matching: find.byKey(const ValueKey('living-face-ring-working')),
+        ),
+        findsNothing,
+      );
       expect(
         tester
             .widget<HermesBotFace>(
               find.descendant(of: idle, matching: find.byType(HermesBotFace)),
             )
-            .animate,
-        isFalse,
-      );
-      await tester.tap(find.byKey(const ValueKey('mission-bot-forja')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      final sheet = find.byKey(const ValueKey('mission-agent-detail'));
-      expect(sheet, findsOneWidget);
-      expect(
-        find.descendant(
-          of: sheet,
-          matching: find.text('Trabajando · Revisando PR #38'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: sheet, matching: find.byType(BotStatusAvatar)),
-        findsOneWidget,
+            .motionState,
+        HermesBotFaceMotionState.idle,
       );
       tester.platformDispatcher.accessibilityFeaturesTestValue =
           const FakeAccessibilityFeatures(disableAnimations: true);
@@ -325,67 +333,64 @@ void main() {
     },
   );
 
-  testWidgets('Opening a Bot Chat clears its scoped unread watermark', (
-    tester,
-  ) async {
-    final manager = await _manager();
-    final activityStore = MissionBotActivityStore(manager.prefs);
-    await activityStore.markRead(
-      connectionId: _connection.id,
-      profile: 'infra',
-      activityAtMs: 110000,
-    );
-    final session = _session('s-infra-new', 'infra', updatedAt: 120);
-    final opened = Completer<Session>();
-
-    await tester.pumpWidget(
-      _host(
-        manager: manager,
-        botActivityStore: activityStore,
-        botChatOpenObserver: (value) {
-          if (!opened.isCompleted) opened.complete(value);
-        },
-        snapshot: _snapshot(
-          profiles: const [
-            AgentProfile(
-              name: 'infra',
-              botModeUiMeta: {'chat': null},
-              botModeMetadataPublished: true,
+  testWidgets(
+    'Bot row attention comes from server room state, not local unread marks',
+    (tester) async {
+      final manager = await _manager();
+      final log = HostedGroupLogPage.append(
+        spec070LogPage('groups_log_page1'),
+        spec070LogPage('groups_log_page2'),
+      );
+      final session = _session('s-radar-new', 'radar', updatedAt: 120);
+      await tester.pumpWidget(
+        _host(
+          manager: manager,
+          snapshot: MissionBackendSnapshot(
+            profiles: const [
+              AgentProfile(name: 'astra'),
+              AgentProfile(name: 'radar'),
+            ],
+            sessions: [session],
+            profilesCapability: MissionCapabilityState.available,
+            sessionsCapability: MissionCapabilityState.available,
+            hostedGroups: HostedGroupsSnapshot(
+              rooms: [spec070Room()],
+              logs: [log],
+              // No pending actions: radar's failed turn is the only signal.
+              driverStatuses: {
+                'room-devs': const RoomDriverStatus(
+                  running: false,
+                  working: false,
+                  blocked: false,
+                ),
+              },
             ),
-          ],
-          sessions: [session],
+            loadedAt: DateTime.fromMillisecondsSinceEpoch(0),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('mission-bot-unread-infra')),
-      findsOneWidget,
-    );
-
-    // Tocar la fila abre el detalle; abrir el Bot Chat pasa por "Abrir
-    // chat" en la hoja de acciones rápidas (mantener pulsada la fila o
-    // tocar el ⋯), según la especificación del mockup "Bots con fijados".
-    await tester.tap(find.byKey(const ValueKey('mission-bot-details-infra')));
-    await tester.pumpAndSettle();
-    final openChatItem = find.byKey(const ValueKey('bot-quick-open-chat'));
-    await tester.ensureVisible(openChatItem);
-    await tester.pumpAndSettle();
-    await tester.tap(openChatItem);
-    final openedSession = await tester.runAsync(
-      () => opened.future.timeout(const Duration(seconds: 1)),
-    );
-    await tester.pumpAndSettle();
-
-    expect(openedSession?.profile, 'infra');
-    expect(
-      find.byKey(const ValueKey('mission-bot-unread-infra')),
-      findsNothing,
-    );
-    expect(
-      activityStore.watermark(_connection.id, 'infra'),
-      greaterThanOrEqualTo(120000),
-    );
-  });
+      // radar (failed room turn) and astra (@user mention) both carry the
+      // single attention signal and sit under "Needs you" — server state,
+      // no local unread watermark, no dots.
+      for (final name in const ['radar', 'astra']) {
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('mission-bot-row-$name')),
+            matching: find.byKey(const ValueKey('living-face-ring-attention')),
+          ),
+          findsOneWidget,
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('mission-bot-unread-radar')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('roster-section-needs-you')),
+        findsOneWidget,
+      );
+    },
+  );
 }

@@ -18,6 +18,15 @@ final class BotMentionRoster extends ChangeNotifier {
 
   bool contains(String connectionId) => _sources.containsKey(connectionId);
 
+  /// Loaded profile [name] on [connectionId] (face shape/display name for
+  /// notifications and widgets); null when not loaded yet.
+  AgentProfile? profileFor(String connectionId, String name) {
+    for (final profile in _sources[connectionId]?.profiles ?? const []) {
+      if (profile.name == name) return profile;
+    }
+    return null;
+  }
+
   void replace(
     String connectionId,
     String label,

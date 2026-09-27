@@ -460,6 +460,62 @@ void main() {
     expect(requests.map((request) => request['method']), ['profiles.list']);
   });
 
+  test('adopt-before-mint: a canonical chat created elsewhere blocks titling', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final requests = <Map<String, dynamic>>[];
+
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+        }),
+      );
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
+        requests.add(frame);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': frame['id'],
+            'result': {
+              'profiles': [
+                {
+                  'name': 'infra',
+                  // Desktop minted the forever-chat meanwhile (no pin yet).
+                  'canonical_session': {
+                    'id': 'stored-desktop',
+                    'resolved_id': 'stored-desktop',
+                    'title': 'Bot Chat',
+                  },
+                },
+              ],
+            },
+          }),
+        );
+      }
+    });
+
+    final client = _clientFor(server);
+    addTearDown(client.close);
+    await expectLater(
+      client.persistCanonicalBotChat(
+        profile: 'infra',
+        runtimeSessionId: 'runtime-new',
+        storedSessionId: 'stored-new',
+      ),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    expect(requests.map((request) => request['method']), ['profiles.list']);
+  });
+
   test(
     'pins presentes pero malformados bloquean antes de session.title',
     () async {

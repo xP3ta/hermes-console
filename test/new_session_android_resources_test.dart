@@ -18,7 +18,7 @@ void main() {
     ).readAsStringSync();
     final glance = File(
       'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
-      'HermesConsoleGlanceWidget.kt',
+      'HermesBotModeWidgets.kt',
     ).readAsStringSync();
 
     expect(shortcut, contains(action));
@@ -53,7 +53,7 @@ void main() {
     }
     expect(glance, contains('NewSessionLaunchTarget.COMPOSER'));
     expect(glance, contains('NewSessionLaunchTarget.VOICE'));
-    expect(glance, contains('openSessionIntent'));
+    expect(glance, contains('openActivityIntent'));
 
     final nativeSurface = '$shortcut\n$contract\n$provider\n$glance'
         .toLowerCase();
@@ -93,138 +93,158 @@ void main() {
     expectConsumedBeforeSuper(onNewIntent, 'super.onNewIntent(intent)');
   });
 
-  test('Glance widgets expose three height-stable adaptive variants', () {
-    final dashboardInfo = File(
-      'android/app/src/main/res/xml/new_session_widget_info.xml',
-    ).readAsStringSync();
-    final compactInfo = File(
-      'android/app/src/main/res/xml/hermes_widget_compact_info.xml',
-    ).readAsStringSync();
-    final controlInfo = File(
-      'android/app/src/main/res/xml/hermes_widget_control_info.xml',
-    ).readAsStringSync();
-    final shortcut = File(
-      'android/app/src/main/res/xml/shortcuts.xml',
-    ).readAsStringSync();
-    final controlPreview = File(
-      'android/app/src/main/res/layout/new_session_widget_large.xml',
-    ).readAsStringSync();
-    final compactPreview = File(
-      'android/app/src/main/res/layout/hermes_widget_compact_preview.xml',
-    ).readAsStringSync();
-    final dashboardPreview = File(
-      'android/app/src/main/res/layout/hermes_widget_dashboard_preview.xml',
-    ).readAsStringSync();
-    final provider = File(
-      'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
-      'NewSessionWidgetProvider.kt',
-    ).readAsStringSync();
-    final glance = File(
-      'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
-      'HermesConsoleGlanceWidget.kt',
-    ).readAsStringSync();
-    final state = File(
-      'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
-      'HermesWidgetState.kt',
-    ).readAsStringSync();
-    final expiryWorker = File(
-      'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
-      'HermesWidgetExpiryWorker.kt',
-    ).readAsStringSync();
-    final appGradle = File('android/app/build.gradle.kts').readAsStringSync();
-    final manifest = File(
-      'android/app/src/main/AndroidManifest.xml',
-    ).readAsStringSync();
-    final publisher = File(
-      'lib/core/services/home_widget_publisher.dart',
-    ).readAsStringSync();
+  test('Bot Mode widget family replaces the old variants in place', () {
+    String read(String path) => File(path).readAsStringSync();
+    const kt = 'android/app/src/main/kotlin/com/hermesagent/hermes_android/';
+    final provider = read('${kt}NewSessionWidgetProvider.kt');
+    final glance = read('${kt}HermesBotModeWidgets.kt');
+    final state = read('${kt}BotModeWidgetState.kt');
+    final expiryWorker = read('${kt}HermesWidgetExpiryWorker.kt');
+    final manifest = read('android/app/src/main/AndroidManifest.xml');
+    final publisher = read('lib/core/services/home_widget_publisher.dart');
+    final background = read(
+      'lib/core/services/notifications/bot_mode_background.dart',
+    );
 
-    expect(shortcut, contains('android:icon="@mipmap/ic_launcher"'));
-    expect(compactPreview, contains('192.168.1.20'));
-    expect(compactPreview, contains('@string/hermes_widget_voice'));
-    expect(controlPreview, contains('@string/hermes_widget_context'));
-    expect(controlPreview, contains('<ProgressBar'));
-    expect(dashboardPreview, contains('@string/hermes_widget_brand'));
-    expect(dashboardPreview, contains('TTFT&#10;860ms'));
-    for (final info in [dashboardInfo, compactInfo, controlInfo]) {
-      expect(info, contains('android:updatePeriodMillis="0"'));
-      expect(info, contains('android:resizeMode="horizontal"'));
-      expect(info, contains('android:minResizeWidth'));
-      expect(info, isNot(contains('android:minResizeHeight')));
+    // Legacy receiver names survive so placed widgets migrate, not vanish.
+    expect(provider, contains('class NewSessionWidgetProvider'));
+    expect(provider, contains('class HermesCompactWidgetProvider'));
+    expect(provider, contains('class HermesControlWidgetProvider'));
+    expect(provider, contains('BotModeWidgetKind.BOTS'));
+    expect(provider, contains('BotModeWidgetKind.STATUS'));
+    expect(provider, contains('BotModeWidgetKind.QUICK_ASK'));
+    expect(glance, contains('class HermesNeedsYouWidgetProvider'));
+    expect(glance, contains('class HermesRoomWidgetProvider'));
+    for (final receiver in [
+      '.NewSessionWidgetProvider',
+      '.HermesCompactWidgetProvider',
+      '.HermesControlWidgetProvider',
+      '.HermesNeedsYouWidgetProvider',
+      '.HermesRoomWidgetProvider',
+      '.HermesNotificationActionReceiver',
+    ]) {
+      expect(manifest, contains(receiver));
+    }
+    for (final name in [
+      'HermesNeedsYouWidgetProvider',
+      'HermesRoomWidgetProvider',
+      'HermesCompactWidgetProvider',
+    ]) {
+      expect(publisher, contains(name));
+      expect(background, contains(name));
+    }
+
+    expect(glance, contains('SizeMode.Responsive'));
+    expect(glance, contains('system_app_widget_background_radius'));
+    expect(glance, contains('appWidgetBackground()'));
+    expect(glance, isNot(contains('RemoteViews')));
+    expect(
+      glance,
+      isNot(contains('WorkManager.getInstance(context).enqueue(\n')),
+    );
+    // Widget actions go through the same inbox as notification actions.
+    expect(glance, contains('actionSendBroadcast'));
+    expect(glance, contains('"widget"'));
+    expect(state, contains('fun trusted(nowMs: Long)'));
+    expect(state, contains('BOT_MODE_STALE_AFTER_MS'));
+    expect(expiryWorker, contains('botModeWidgetReceivers()'));
+    expect(expiryWorker, isNot(contains('PeriodicWorkRequest')));
+
+    for (final info in [
+      'new_session_widget_info',
+      'hermes_widget_compact_info',
+      'hermes_widget_control_info',
+      'botw_needs_you_info',
+      'botw_room_info',
+    ]) {
+      final xml = read('android/app/src/main/res/xml/$info.xml');
+      expect(xml, contains('android:updatePeriodMillis="0"'));
+      // Informational widgets may live on the lock screen; widgets with
+      // Approve / Deny / Stop or conversation text are home-screen only.
+      const informational = {
+        'hermes_widget_compact_info',
+        'hermes_widget_control_info',
+      };
+      expect(
+        xml,
+        contains(
+          informational.contains(info)
+              ? 'android:widgetCategory="home_screen|keyguard"'
+              : 'android:widgetCategory="home_screen"',
+        ),
+      );
+      expect(xml, contains('android:previewLayout="@layout/botw_preview_'));
+      expect(
+        xml,
+        contains('android:previewImage="@drawable/botw_preview_image"'),
+      );
+    }
+    // Picker previews mirror the dark, face-based Glance widgets and only use
+    // RemoteViews-safe views.
+    const allowedViews = {
+      'LinearLayout',
+      'FrameLayout',
+      'ImageView',
+      'TextView',
+    };
+    for (final name in ['bots', 'needs_you', 'room', 'quick_ask', 'status']) {
+      final layout = read(
+        'android/app/src/main/res/layout/botw_preview_$name.xml',
+      );
+      expect(
+        layout,
+        contains('@drawable/botw_preview_background'),
+        reason: name,
+      );
+      expect(layout, contains('@color/botw_preview_'), reason: name);
+      expect(layout, isNot(contains('new_session_widget_')), reason: name);
+      final tags = RegExp(r'<([A-Za-z.]+)[\s>]')
+          .allMatches(layout)
+          .map((m) => m.group(1)!)
+          .where((t) => t != '?xml')
+          .toSet();
+      expect(
+        allowedViews.containsAll(tags),
+        isTrue,
+        reason: '$name uses $tags',
+      );
+      if (name != 'status') {
+        expect(layout, contains('@drawable/botw_preview_face_'), reason: name);
+      }
     }
     expect(
-      dashboardInfo,
-      contains(
-        'android:initialLayout="@layout/hermes_widget_dashboard_preview"',
-      ),
+      read('android/app/src/main/res/layout/botw_preview_needs_you.xml'),
+      allOf(contains('@string/botw_approve'), contains('@string/botw_deny')),
     );
     expect(
-      dashboardInfo,
-      contains(
-        'android:previewLayout="@layout/hermes_widget_dashboard_preview"',
-      ),
+      read('android/app/src/main/res/values-v31/bot_mode_widget_preview.xml'),
+      contains('@android:dimen/system_app_widget_background_radius'),
     );
-    expect(compactInfo, contains('android:targetCellWidth="2"'));
-    expect(compactInfo, contains('android:targetCellHeight="1"'));
-    expect(controlInfo, contains('android:targetCellWidth="4"'));
-    expect(controlInfo, contains('android:targetCellHeight="1"'));
-    expect(dashboardInfo, contains('android:targetCellWidth="4"'));
-    expect(dashboardInfo, contains('android:targetCellHeight="2"'));
-    expect(provider, contains('HomeWidgetGlanceWidgetReceiver'));
-    expect(provider, contains('HermesConsoleGlanceWidget'));
-    expect(provider, contains('HermesCompactWidgetProvider'));
-    expect(provider, contains('HermesControlWidgetProvider'));
-    expect(provider, contains('HermesWidgetVariant.COMPACT'));
-    expect(provider, contains('HermesWidgetVariant.CONTROL'));
-    expect(provider, contains('HermesWidgetVariant.DASHBOARD'));
-    expect(glance, contains('SizeMode.Exact'));
-    expect(glance, isNot(contains('SizeMode.Responsive')));
-    expect(glance, contains('LocalSize.current'));
-    expect(glance, contains('WidgetLayoutProfile'));
-    expect(glance, contains('enum class WidgetContentTier'));
-    expect(glance, contains('width < 100.dp || height < 54.dp'));
-    expect(glance, contains('width < 190.dp || height < 100.dp'));
-    expect(glance, contains('width < 270.dp || height < 190.dp'));
-    expect(glance, contains('variantCeiling'));
-    expect(glance, contains('enum class HermesWidgetVariant'));
-    expect(glance, contains('CompactContent(context, state, colors, layout)'));
-    expect(glance, contains('ControlContent(context, state, colors, layout)'));
-    expect(glance, contains('ExpandedContent(context, state, colors, layout)'));
-    expect(glance, contains('private fun ExpandedStatusPanel'));
-    expect(glance, contains('.background(colors.surface)'));
-    expect(glance, contains('ExpandedDetails(context, state, colors, roomy)'));
-    expect(glance, contains('LinearProgressIndicator'));
-    expect(glance, contains('firstTokenLatencyMs'));
-    expect(state, contains('SCHEMA_VERSION'));
-    expect(state, contains('cacheReadTokens'));
-    expect(state, contains('firstTokenLatencyMs'));
-    expect(state, contains('lastActivityAtMs'));
-    expect(state, contains('fun staleAtMs()'));
-    expect(state, contains('ATOMIC_SNAPSHOT'));
-    expect(state, contains('JSONObject'));
-    expect(state, contains('atomicSnapshotValues'));
-    expect(glance, contains('HermesWidgetExpiryScheduler.replace'));
-    expect(expiryWorker, contains('HomeWidgetPlugin.getData'));
-    expect(expiryWorker, contains('OneTimeWorkRequestBuilder'));
-    expect(expiryWorker, contains('ExistingWorkPolicy.REPLACE'));
-    expect(expiryWorker, contains('NewSessionWidgetProvider::class.java'));
-    expect(expiryWorker, contains('HermesCompactWidgetProvider::class.java'));
-    expect(expiryWorker, contains('HermesControlWidgetProvider::class.java'));
-    expect(expiryWorker, isNot(contains('PeriodicWorkRequest')));
-    expect(expiryWorker, isNot(contains('NetworkType')));
-    expect(appGradle, contains('androidx.work:work-runtime-ktx:2.11.2'));
-    expect(glance, isNot(contains('RemoteViews')));
-    expect(provider, isNot(contains('WorkManager')));
-    expect(glance, isNot(contains('WorkManager')));
-    expect(manifest, contains('android.app.shortcuts'));
-    expect(manifest, contains('.NewSessionWidgetProvider'));
-    expect(manifest, contains('.HermesCompactWidgetProvider'));
-    expect(manifest, contains('.HermesControlWidgetProvider'));
-    expect(manifest, contains('@xml/new_session_widget_info'));
-    expect(manifest, contains('@xml/hermes_widget_compact_info'));
-    expect(manifest, contains('@xml/hermes_widget_control_info'));
-    expect(publisher, contains('HermesCompactWidgetProvider'));
-    expect(publisher, contains('HermesControlWidgetProvider'));
+    expect(
+      read('android/app/src/main/res/values/bot_mode_widget_preview.xml'),
+      contains('<color name="botw_preview_surface">#FF1A191D</color>'),
+    );
+    for (final locale in ['values', 'values-es']) {
+      final strings = read(
+        'android/app/src/main/res/$locale/bot_mode_widgets.xml',
+      );
+      for (final key in [
+        'botw_preview_working',
+        'botw_preview_working_count',
+        'botw_preview_approval',
+        'botw_preview_room_name',
+        'botw_preview_room_line',
+        'botw_preview_ask',
+        'botw_preview_status',
+        'botw_preview_status_line',
+      ]) {
+        expect(strings, contains('name="$key"'), reason: '$locale/$key');
+      }
+    }
+    expect(
+      read('android/app/src/main/res/xml/new_session_widget_info.xml'),
+      contains('android:minResizeHeight="110dp"'),
+    );
   });
 
   test('widget has localized Material You and OLED-safe resources', () {

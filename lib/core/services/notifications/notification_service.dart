@@ -14,6 +14,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../utils/markdown_clipboard.dart';
+import '../bot_mention_roster.dart';
+import 'bot_face_bitmap.dart';
+import 'bot_notification_presenter.dart';
+import 'rich_notifications.dart';
 import '../new_session_launch_coordinator.dart';
 import 'notification_delivery_coordinator.dart';
 import 'notification_delivery_store.dart';
@@ -380,6 +384,54 @@ class NotificationService
   Future<NavigationDeliveryOutcome>? _pendingOpenDelivery;
   String? _pendingOpenDeliveryPayload;
   String? _lastPlatformOpenFingerprint;
+
+  /// Rich conversation renderer (`hermes/rich_notifications`, spec 070).
+  RichNotificationSink _rich = PlatformRichNotifications();
+  BotFaceBitmapCache _faces = BotFaceBitmapCache();
+  late BotChatRichNotifications _botChatRich = _newBotChatRich();
+
+  BotChatRichNotifications _newBotChatRich() => BotChatRichNotifications(
+    sink: _rich,
+    faces: _faces,
+    shapeFor: (connId, profile) =>
+        BotMentionRoster.shared.profileFor(connId, profile)?.botShape,
+  );
+
+  @visibleForTesting
+  void setRichForTesting(RichNotificationSink sink, {BotFaceBitmapCache? faces}) {
+    _rich = sink;
+    if (faces != null) _faces = faces;
+    _botChatRich = _newBotChatRich();
+  }
+
+  /// Same foreground policy as [_show]: a system card only when the app is in
+  /// the background, or the user asked for foreground alerts and the event
+  /// belongs to another chat.
+  bool _richEligible(String? targetSessionId) {
+    if (!enabled) return false;
+    if (!appInForeground) return true;
+    if (targetSessionId != null && targetSessionId == visibleSessionId) {
+      return false;
+    }
+    return evenInForeground;
+  }
+
+  /// Read-only connections never get Approve / Reply buttons (spec 070).
+  bool _connectionReadOnly(String connId) {
+    for (final raw in _prefs.getStringList('saved_connections') ?? const []) {
+      try {
+        final map = jsonDecode(raw);
+        if (map is Map && map['id'] == connId) return map['read_only'] == true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  String _botName(String connId, String profile) {
+    final loaded = BotMentionRoster.shared.profileFor(connId, profile);
+    final display = loaded?.displayName.trim() ?? '';
+    return display.isNotEmpty ? display : profile;
+  }
 
   NotificationService(this._prefs, {NotificationDeliveryStore? deliveryStore}) {
     _automationNotificationsOptedIn =
@@ -991,6 +1043,7 @@ class NotificationService
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
+    List<String>? approvalChoices,
   }) async {
     if (!notifyApprovals) return;
     final connection = connId?.trim() ?? '';
@@ -1017,6 +1070,23 @@ class NotificationService
       sourceVersion: version,
     );
     final t = NotifL10n.of(_prefs);
+    if (surface == NotificationChatSurface.bot &&
+        (sessionId?.isNotEmpty ?? false) &&
+        _richEligible(sessionId)) {
+      final posted = await _botChatRich.approval(
+        t: t,
+        connId: connection,
+        profile: normalizedProfile,
+        botName: _botName(connection, normalizedProfile),
+        sessionId: sessionId!,
+        requestId: version,
+        offered: approvalChoices ?? const ['once', 'deny'],
+        command: tool,
+        hideSensitive: hideSensitiveContent,
+        readOnly: _connectionReadOnly(connection),
+      );
+      if (posted) return;
+    }
     final where = (instance != null && instance.isNotEmpty)
         ? ' · $instance'
         : '';
@@ -1499,6 +1569,50 @@ class NotificationService
     final t = NotifL10n.of(_prefs);
     final label = compactSessionLabel(session);
     final visibleLabel = _replyIdentity(instance: instance, session: label);
+    final botProfile = profile?.trim() ?? '';
+    if (surface == NotificationChatSurface.bot &&
+        botProfile.isNotEmpty &&
+        (connId?.isNotEmpty ?? false) &&
+        (sessionId?.isNotEmpty ?? false) &&
+        _richEligible(sessionId)) {
+      return () async {
+        final posted = await _botChatRich.replyReady(
+          t: t,
+          connId: connId!,
+          profile: botProfile,
+          botName: _botName(connId, botProfile),
+          sessionId: sessionId!,
+          preview: preview,
+          hideSensitive: hideSensitiveContent,
+          readOnly: _connectionReadOnly(connId),
+        );
+        if (posted) return;
+        await _replyFallback(t, label, visibleLabel, connId, sessionId, surface,
+            profile, roomId);
+      }();
+    }
+    return _replyFallback(
+      t,
+      label,
+      visibleLabel,
+      connId,
+      sessionId,
+      surface,
+      profile,
+      roomId,
+    );
+  }
+
+  Future<void> _replyFallback(
+    NotifL10n t,
+    String label,
+    String? visibleLabel,
+    String? connId,
+    String? sessionId,
+    NotificationChatSurface surface,
+    String? profile,
+    String? roomId,
+  ) {
     return _show(
       kind: NotificationKind.reply,
       id: replyNotificationId(
@@ -2191,6 +2305,16 @@ class NotificationService
     if (connection.isEmpty || normalizedProfile.isEmpty || run.isEmpty) {
       _log('cancelApproval ignorada: scope durable incompleto');
       return;
+    }
+    if (request.isNotEmpty) {
+      // Bot Chat approvals may be rich conversation cards (spec 070): clear
+      // them in place wherever the request was answered.
+      unawaited(
+        _rich.cancel(
+          id: RichNotificationIds.approval(request),
+          tag: RichNotificationIds.botTag(connection, normalizedProfile),
+        ),
+      );
     }
     if (terminal) {
       await _delivery.cancelApprovalForRun(

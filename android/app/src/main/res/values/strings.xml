@@ -13,4 +13,17 @@
     <string name="external_data_sync_channel">Secure transfers</string>
     <string name="external_data_sync_active">Secure transfer or terminal active</string>
     <string name="external_data_sync_stop">Stop</string>
+    <string name="rich_channel_conversations">Bots and rooms</string>
+    <string name="rich_channel_conversations_desc">Messages, mentions and round summaries from your Bots</string>
+    <string name="rich_channel_live">Live activity</string>
+    <string name="rich_channel_live_desc">Ongoing progress while a Bot or room works</string>
+    <string name="rich_channel_approvals">Approvals</string>
+    <string name="rich_brand">Hermes</string>
+    <string name="rich_you">You</string>
+    <string name="rich_thinking">Thinking…</string>
+    <string name="rich_done">Done</string>
+    <string name="rich_sending">Sending…</string>
+    <string name="rich_unlock_to_answer">Unlock Hermes to answer</string>
+    <string name="rich_reply_failed">Couldn’t send · open to retry</string>
+    <string name="rich_action_failed">Couldn’t send · open Hermes</string>
 </resources>

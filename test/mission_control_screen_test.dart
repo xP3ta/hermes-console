@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:ui' show Tristate;
 
+import 'package:hermes_android/core/bots/state/bot_chat_target.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
-import 'package:hermes_android/core/widgets/room_member_status.dart';
+import 'package:hermes_android/core/services/bot_profile_client.dart';
 import 'package:hermes_android/core/widgets/remote_bot_roster.dart';
 import 'package:hermes_android/core/models/bot_visual_identity.dart';
 import 'package:hermes_android/core/models/kanban.dart';
@@ -25,6 +26,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/fake_bot_chat_title_lookup.dart';
 
 final _connection = SavedConnection(
   id: 'mission-widget',
@@ -270,6 +273,8 @@ Widget _host({
   MissionControlOpenTarget? initialOpenTarget,
   HermesDesktopBotCreationGateway? botCreateGateway,
   HermesDesktopProfileAssetsGateway? profileAssetsGateway,
+  BotChatTitleLookup? botChatTitleLookup,
+  BotProfileGateway? botProfileGateway,
 }) => MaterialApp(
   locale: const Locale('es'),
   localizationsDelegates: Strings.localizationsDelegates,
@@ -299,9 +304,25 @@ Widget _host({
     remoteBotLoader: remoteBotLoader,
     botCreateGateway: botCreateGateway,
     profileAssetsGateway: profileAssetsGateway,
+    botChatTitleLookup: botChatTitleLookup ?? FakeBotChatTitleLookup(),
+    botProfileGateway: botProfileGateway,
     modelOptionsLoader: botCreateGateway == null ? null : (_) async => const [],
   ),
 );
+
+final class _UiMetaGateway implements BotProfileGateway {
+  final patches = <(String, Map<String, dynamic>, Set<String>)>[];
+
+  @override
+  Future<void> patchBotMetadata(
+    String profile,
+    Map<String, dynamic> patch, {
+    Set<String> remove = const {},
+  }) async => patches.add((profile, patch, remove));
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 Future<void> _openDestination(WidgetTester tester, String key) async {
   await tester.tap(find.byKey(ValueKey('mission-destination-$key')));
@@ -310,39 +331,58 @@ Future<void> _openDestination(WidgetTester tester, String key) async {
 
 Future<void> _openWork(WidgetTester tester) => _openDestination(tester, 'work');
 
-/// El ⋯ (o mantener pulsada la fila) abre la hoja de acciones rápidas; su
-/// ítem "Detalles del bot" es el que lleva a la ficha completa
-/// (`_AgentDetail`). Reemplaza al tap directo sobre la fila, que ahora abre
-/// el chat (ver [_openBotChat]).
+/// Spec 070 S1: mantener pulsada la fila abre las acciones (fijar,
+/// sección, ocultar, abrir ficha); "Abrir ficha" lleva a la ficha del bot
+/// (S4, `BotProfileScreen`).
 Future<void> _openAgentDetail(WidgetTester tester, String profile) async {
-  await tester.tap(find.byKey(ValueKey('mission-bot-details-$profile')));
-  await tester.pumpAndSettle();
-  final detailsItem = find.byKey(const ValueKey('bot-quick-details'));
+  await _openRosterActions(tester, profile);
+  final item = find.byKey(const ValueKey('roster-action-profile'));
   await tester.scrollUntilVisible(
-    detailsItem,
+    item,
     80,
     scrollable: find
         .descendant(
-          of: find.byKey(const ValueKey('mission-bot-quick-actions')),
+          of: find.byKey(const ValueKey('roster-bot-actions')),
           matching: find.byType(Scrollable),
         )
         .first,
   );
   await tester.pumpAndSettle();
-  await tester.tap(detailsItem);
+  await tester.tap(item);
   await tester.pumpAndSettle();
 }
 
-/// Tocar la fila abre el detalle del bot; abrir su Bot Chat pasa por el
-/// "Abrir chat" de la hoja de acciones rápidas (mantener pulsada la fila o
-/// tocar el ⋯), según la especificación del mockup "Bots con fijados".
+Future<void> _openRosterActions(WidgetTester tester, String profile) async {
+  final row = find.byKey(ValueKey('mission-bot-$profile'));
+  await tester.scrollUntilVisible(
+    row,
+    200,
+    scrollable: find
+        .descendant(
+          of: find.byKey(const ValueKey('mission-bots')),
+          matching: find.byType(Scrollable),
+        )
+        .first,
+  );
+  await tester.longPress(row);
+  await tester.pumpAndSettle();
+}
+
+/// Spec 070 S1: the roster refreshes by pull-to-refresh (and every 30 s
+/// while visible); the header keeps only search and "New".
+Future<void> _pullToRefresh(WidgetTester tester) async {
+  await tester.fling(
+    find.byKey(const ValueKey('mission-bots')),
+    const Offset(0, 400),
+    1000,
+  );
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
+}
+
+/// Spec 070 S1: tocar una fila de bot abre su Bot Chat canónico.
 Future<void> _openBotChat(WidgetTester tester, String profile) async {
-  await tester.tap(find.byKey(ValueKey('mission-bot-details-$profile')));
-  await tester.pumpAndSettle();
-  final openChatItem = find.byKey(const ValueKey('bot-quick-open-chat'));
-  await tester.ensureVisible(openChatItem);
-  await tester.pumpAndSettle();
-  await tester.tap(openChatItem);
+  await tester.tap(find.byKey(ValueKey('mission-bot-$profile')));
   await tester.pumpAndSettle();
 }
 
@@ -524,9 +564,7 @@ void main() {
           profiles: const [
             AgentProfile(
               name: 'builder',
-              botChatSessionId: 'stored-bot-1',
-              botModeUiMeta: {'chat': 'stored-bot-1'},
-              botModeMetadataPublished: true,
+              canonicalSession: AgentProfileSessionSummary(id: 'stored-bot-1'),
             ),
           ],
           sessions: [_session('stored-bot-1', 'builder')],
@@ -543,10 +581,10 @@ void main() {
     expect(opened, isNotNull);
     expect(opened!.profile, 'builder');
     expect(opened!.lineageRootId, 'stored-bot-1');
-    expect(opened!.source, 'bot-mode');
+    expect(opened!.source, 'bot-mode-canonical');
   });
 
-  testWidgets('bot row opens detail; quick actions reach chat directly', (
+  testWidgets('bot row opens its Bot Chat; long-press reaches the profile', (
     tester,
   ) async {
     final manager = await _manager();
@@ -561,26 +599,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('mission-bots')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('mission-bot-infra')));
-    await tester.pumpAndSettle();
-
-    // Tocar la fila sigue abriendo el detalle del bot, como especifica la
-    // nota de interacción del mockup "Bots con fijados": el chat directo ya
-    // no es el gesto primario de la fila.
-    expect(opened, isNull);
-    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
-    expect(find.byKey(const ValueKey('bot-detail-chat')), findsOneWidget);
-    Navigator.of(
-      tester.element(find.byKey(const ValueKey('mission-agent-detail'))),
-    ).pop();
-    await tester.pumpAndSettle();
-
-    // Mantener pulsada la fila (o tocar el ⋯) abre en cambio la hoja de
-    // acciones rápidas, cuyo "Abrir chat" explícito sigue llevando al Bot
-    // Chat directamente.
+    // Spec 070 S1: like a messenger, tapping the row opens the Bot Chat.
     await _openBotChat(tester, 'infra');
     expect(opened?.profile, 'infra');
     expect(opened?.title, 'Bot Chat');
+
+    opened = null;
+    await _openAgentDetail(tester, 'infra');
+    expect(opened, isNull);
+    expect(find.byKey(const ValueKey('bot-profile')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('bot-profile-chat')));
+    await tester.pumpAndSettle();
+    expect(opened?.profile, 'infra');
   });
 
   testWidgets('working bot row prioritizes its task over chat preview', (
@@ -625,7 +655,7 @@ void main() {
     );
   });
 
-  testWidgets('bot detail lists every assigned task', (tester) async {
+  testWidgets('bot profile counts every assigned task', (tester) async {
     final manager = await _manager();
     await tester.pumpWidget(
       _host(
@@ -668,7 +698,7 @@ void main() {
                     title: 'Documentar recuperación',
                     body: '',
                     status: 'ready',
-                    assignee: 'infra',
+                    assignee: 'other',
                   ),
                 ],
               ),
@@ -680,14 +710,17 @@ void main() {
     await tester.pumpAndSettle();
     await _openAgentDetail(tester, 'infra');
 
-    expect(find.text('Tareas asignadas (4)'), findsOneWidget);
-    expect(find.text('Desplegar gateway'), findsOneWidget);
-    expect(find.text('Revisar backups'), findsOneWidget);
-    expect(find.text('Rotar certificados'), findsOneWidget);
-    expect(find.text('Documentar recuperación'), findsOneWidget);
+    final tasks = find.byKey(const ValueKey('bot-profile-tasks'));
+    await tester.scrollUntilVisible(tasks, 200);
+    expect(
+      find.descendant(of: tasks, matching: find.text('3')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('bot sheet groups every action around the bot', (tester) async {
+  testWidgets('bot profile groups every action around the bot', (
+    tester,
+  ) async {
     final manager = await _manager();
     Session? opened;
     await tester.pumpWidget(
@@ -706,37 +739,34 @@ void main() {
     await tester.pumpAndSettle();
     await _openAgentDetail(tester, 'infra');
 
-    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-profile')), findsOneWidget);
     expect(find.text('Infra'), findsWidgets);
-    expect(find.byKey(const ValueKey('bot-detail-chat')), findsOneWidget);
-    final sheetScroll = find.byType(Scrollable).last;
     for (final key in const [
-      'bot-detail-edit-profile',
-      'bot-detail-routines',
-      'bot-detail-tasks',
-      'bot-detail-memory',
-      'bot-detail-skills',
-      'bot-detail-soul',
+      'bot-profile-chat',
+      'bot-profile-rooms',
+      'bot-profile-routines',
+      'bot-profile-now',
+      'bot-profile-model',
+      'bot-profile-reasoning',
+      'bot-profile-soul',
+      'bot-profile-skills',
+      'bot-profile-memory',
+      'bot-profile-tasks',
+      'bot-profile-machine',
     ]) {
-      await tester.scrollUntilVisible(
-        find.byKey(ValueKey(key)),
-        240,
-        scrollable: sheetScroll,
-      );
+      await tester.scrollUntilVisible(find.byKey(ValueKey(key)), 200);
       expect(find.byKey(ValueKey(key)), findsOneWidget);
     }
-
     await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('bot-detail-chat')),
-      -240,
-      scrollable: sheetScroll,
+      find.byKey(const ValueKey('bot-profile-chat')),
+      -200,
     );
-    await tester.tap(find.byKey(const ValueKey('bot-detail-chat')));
+    await tester.tap(find.byKey(const ValueKey('bot-profile-chat')));
     await tester.pumpAndSettle();
     expect(opened?.profile, 'infra');
   });
 
-  testWidgets('bot sheet persists pin and hidden roster metadata', (
+  testWidgets('long-press persists pin and hidden roster metadata', (
     tester,
   ) async {
     final manager = await _manager();
@@ -753,30 +783,90 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await _openAgentDetail(tester, 'infra');
-    var sheetScroll = find.byType(Scrollable).last;
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('bot-detail-toggle-pinned')),
-      240,
-      scrollable: sheetScroll,
-    );
-    await tester.tap(find.byKey(const ValueKey('bot-detail-toggle-pinned')));
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-togglePin')));
     await tester.pumpAndSettle();
     expect(gateway.metaPinned, isTrue);
 
-    await _openAgentDetail(tester, 'infra');
-    sheetScroll = find.byType(Scrollable).last;
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('bot-detail-toggle-hidden')),
-      240,
-      scrollable: sheetScroll,
-    );
-    await tester.tap(find.byKey(const ValueKey('bot-detail-toggle-hidden')));
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
     await tester.pumpAndSettle();
     expect(gateway.metaHidden, isTrue);
   });
 
-  testWidgets('bot sheet reads as identity, actions and one quiet usage line', (
+  testWidgets('long-press writes pin, hidden and section to ui_meta', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final gateway = _UiMetaGateway();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        botProfileGateway: gateway,
+        snapshot: _snapshot(
+          profiles: const [
+            AgentProfile(name: 'infra'),
+            AgentProfile(
+              name: 'qa',
+              botModeUiMeta: {'sectionId': 'ops', 'sectionName': 'Ops'},
+            ),
+          ],
+          board: const KanbanBoard(columns: []),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-togglePin')));
+    await tester.pumpAndSettle();
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
+    await tester.pumpAndSettle();
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-section')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ops').last);
+    await tester.pumpAndSettle();
+
+    // Desktop-compatible keys in ui_meta['hermes-bots']; every write drops
+    // the legacy `chat` pointer (T208).
+    expect(gateway.patches.map((p) => p.$1), ['infra', 'infra', 'infra']);
+    expect(gateway.patches.map((p) => p.$2).toList(), [
+      {'pinned': true},
+      {'hidden': true},
+      {'sectionId': 'ops', 'sectionName': 'Ops'},
+    ]);
+    expect(gateway.patches.every((p) => p.$3.contains('chat')), isTrue);
+  });
+
+  testWidgets('header offers New bot / New room without a floating button', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(FloatingActionButton), findsNothing);
+    expect(find.text('Trabajo · 0 salas'), findsNothing);
+    final newButton = find.byKey(const ValueKey('mission-create-agent'));
+    expect(
+      find.ancestor(of: newButton, matching: find.byType(AppBar)),
+      findsOneWidget,
+    );
+    await tester.tap(newButton);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('mission-create-chooser-bot')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('bot profile reads as hero identity, Now and model', (
     tester,
   ) async {
     final manager = await _manager();
@@ -785,7 +875,12 @@ void main() {
         manager: manager,
         snapshot: _snapshot(
           profiles: const [
-            AgentProfile(name: 'infra', botModeUiMeta: {'title': 'Infra'}),
+            AgentProfile(
+              name: 'infra',
+              model: 'gpt-5.5',
+              provider: 'openai',
+              botModeUiMeta: {'title': 'Infra'},
+            ),
           ],
           sessions: [_session('s-infra', 'infra')],
           board: const KanbanBoard(columns: []),
@@ -795,62 +890,21 @@ void main() {
     await tester.pumpAndSettle();
     await _openAgentDetail(tester, 'infra');
 
-    // Addendum 2: nombre + handle + una línea de estado sin badge ni caja.
-    // No como filas
-    // "Profile"/"Modelo" de etiqueta y valor.
+    expect(find.byKey(const ValueKey('bot-profile-hero')), findsOneWidget);
     expect(find.text('Infra'), findsWidgets);
-    expect(find.text('@infra'), findsOneWidget);
-    expect(find.text('Profile'), findsNothing);
-    expect(find.text('Modelo'), findsNothing);
+    expect(find.textContaining('@infra'), findsOneWidget);
+    expect(find.text('Ahora mismo no está trabajando'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('bot-profile-model')),
+      200,
+    );
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('mission-agent-detail')),
-        matching: find.byType(BotStatusLine),
+        of: find.byKey(const ValueKey('bot-profile-model')),
+        matching: find.text('openai · gpt-5.5'),
       ),
       findsOneWidget,
     );
-
-    // Las 8 acciones ya no son una parrilla de botones: van en dos grupos de
-    // filas (`HermesGroup`), y ninguna se perdió por el camino.
-    final sheetScroll = find.byType(Scrollable).last;
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('mission-agent-detail')),
-        matching: find.byType(HermesSecondaryButton),
-      ),
-      findsNothing,
-    );
-    for (final key in const [
-      'bot-detail-edit-profile',
-      'bot-detail-routines',
-      'bot-detail-tasks',
-      'bot-detail-memory',
-      'bot-detail-skills',
-      'bot-detail-soul',
-      'bot-detail-toggle-pinned',
-      'bot-detail-toggle-hidden',
-    ]) {
-      await tester.scrollUntilVisible(
-        find.byKey(ValueKey(key)),
-        240,
-        scrollable: sheetScroll,
-      );
-      expect(find.byKey(ValueKey(key)), findsOneWidget);
-    }
-
-    // El uso baja a una única línea tenue (input/output/caché ya no se pintan
-    // como cifras grandes que compiten con las acciones del bot).
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('bot-detail-usage')),
-      240,
-      scrollable: sheetScroll,
-    );
-    expect(
-      tester.widget<Text>(find.byKey(const ValueKey('bot-detail-usage'))).data,
-      '150 tokens',
-    );
-    expect(find.text('input'), findsNothing);
-    expect(find.text('output'), findsNothing);
   });
 
   testWidgets('rooms list and bots stay reachable with the dock switched off', (
@@ -899,14 +953,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('bot row shows the pinned Bot Chat preview and time', (
+  testWidgets('bot row shows the canonical Bot Chat preview and time', (
     tester,
   ) async {
     final manager = await _manager();
+    // Preview/time come from profiles.list canonical_session (spec 070 T206),
+    // never from the legacy ui_meta pin nor a local session list.
     final official = AgentProfile.fromJson({
       'name': 'infra',
       'ui_meta': {
-        'hermes-bots': {'chat': 'stored-official'},
+        'hermes-bots': {'chat': 'legacy-ignored'},
+      },
+      'canonical_session': {
+        'id': 'stored-official',
+        'title': 'Bot Chat',
+        'preview': 'Última respuesta del bot',
+        'last_active': 120,
+        'message_count': 4,
       },
     });
     await tester.pumpWidget(
@@ -934,7 +997,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Inactivo · Última respuesta del bot'), findsOneWidget);
+    expect(find.text('Última respuesta del bot'), findsOneWidget);
+    expect(find.text('Inactivo · Última respuesta del bot'), findsNothing);
     expect(find.text('Bot Chat'), findsNothing);
   });
 
@@ -1032,8 +1096,8 @@ void main() {
 
     expect(find.text('Bots'), findsWidgets);
     expect(find.text('default'), findsWidgets);
-    // Even without Kanban, a known profile now has an explicit idle status.
-    expect(find.text('Inactivo'), findsWidgets);
+    // Spec 070 S1: no Activo/Inactivo labels; idle rows show the preview.
+    expect(find.text('Inactivo'), findsNothing);
 
     await _openWork(tester);
     expect(
@@ -1115,7 +1179,7 @@ void main() {
   });
 
   testWidgets(
-    'appearance-only Bot metadata preserves the known local conversation',
+    'Console-local Bot Chat pins are retired, never used as identity',
     (tester) async {
       final manager = await _manager();
       final botStore = MissionBotChatStore(manager.prefs);
@@ -1141,14 +1205,15 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openBotChat(tester, 'infra');
-      expect(opened?.lineageRootId, 'stored-local-keep');
-      expect(opened?.source, 'bot-mode-local');
-      expect(await botStore.load(_connection.id, 'infra'), 'stored-local-keep');
+      // Desktop invariant: the only identity is the "Bot Chat" title row.
+      expect(opened?.lineageRootId, isNull);
+      expect(opened?.source, 'mobile-bot');
+      expect(await botStore.load(_connection.id, 'infra'), isNull);
     },
   );
 
   testWidgets(
-    'official Bot metadata with a pin or explicit null reset retires stale local pins',
+    'legacy ui_meta chat pin or explicit null reset is ignored and local pins retired',
     (tester) async {
       final manager = await _manager();
       final botStore = MissionBotChatStore(manager.prefs);
@@ -1176,8 +1241,8 @@ void main() {
       await tester.pumpAndSettle();
       await _openBotChat(tester, 'infra');
 
-      expect(opened?.lineageRootId, 'stored-official');
-      expect(opened?.source, 'bot-mode');
+      expect(opened?.lineageRootId, isNull);
+      expect(opened?.source, 'mobile-bot');
       expect(await botStore.load(_connection.id, 'infra'), isNull);
 
       await botStore.save(
@@ -1470,7 +1535,7 @@ void main() {
     },
   );
 
-  testWidgets('read-only official Bot Chat performs no local mutation', (
+  testWidgets('read-only Bot Chat open performs no local mutation', (
     tester,
   ) async {
     final manager = await _manager();
@@ -1502,37 +1567,32 @@ void main() {
     await tester.pumpAndSettle();
     await _openBotChat(tester, 'infra');
 
-    expect(opened?.lineageRootId, 'stored-official');
-    expect(opened?.source, 'bot-mode');
+    expect(opened?.lineageRootId, isNull);
+    expect(opened?.source, 'mobile-bot');
     expect(secureWrites, 0);
     expect(secureDeletes, 0);
     expect(secureStore.values, contains('stored-local-must-remain'));
   });
 
-  testWidgets('corrupt local Bot pin blocks creation instead of forking chat', (
+  testWidgets('Bot Chat registry failure blocks creation instead of forking', (
     tester,
   ) async {
     final manager = await _manager();
-    final botStore = MissionBotChatStore(manager.prefs);
-    await botStore.save(
-      connectionId: _connection.id,
-      profile: 'infra',
-      sessionId: 'stored-valid-first',
-    );
-    secureStore[secureStore.keys.single] = 'bad\nsession';
     Session? opened;
+    final lookup = FakeBotChatTitleLookup()..fail = true;
 
     await tester.pumpWidget(
       _host(
         manager: manager,
-        botChatStore: botStore,
         botChatOpenObserver: (session) => opened = session,
+        botChatTitleLookup: lookup,
         snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
       ),
     );
     await tester.pumpAndSettle();
     await _openBotChat(tester, 'infra');
 
+    expect(lookup.calls, ['infra']);
     expect(opened, isNull);
     expect(
       find.textContaining('No se pudo verificar el Bot Chat'),
@@ -1541,29 +1601,31 @@ void main() {
   });
 
   testWidgets(
-    'unavailable Bot pin storage blocks creation instead of forking chat',
+    'without canonical_session the title registry row is opened, not forked',
     (tester) async {
       final manager = await _manager();
-      final botStore = MissionBotChatStore(manager.prefs);
-      failSecureReads = true;
       Session? opened;
+      final lookup = FakeBotChatTitleLookup({
+        'infra': const AgentProfileSessionSummary(
+          id: 'registry-root',
+          resolvedId: 'registry-tip',
+          title: 'Bot Chat',
+        ),
+      });
 
       await tester.pumpWidget(
         _host(
           manager: manager,
-          botChatStore: botStore,
           botChatOpenObserver: (session) => opened = session,
+          botChatTitleLookup: lookup,
           snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
         ),
       );
       await tester.pumpAndSettle();
       await _openBotChat(tester, 'infra');
 
-      expect(opened, isNull);
-      expect(
-        find.textContaining('No se pudo verificar el Bot Chat'),
-        findsOneWidget,
-      );
+      expect(opened?.lineageRootId, 'registry-tip');
+      expect(opened?.source, 'bot-mode-canonical');
     },
   );
 
@@ -1580,8 +1642,9 @@ void main() {
     final after = AgentProfile.fromJson({
       'name': 'manager',
       'ui_meta': {
-        'hermes-bots': {'group': 'Homelab', 'chat': 'stored-canonical-manager'},
+        'hermes-bots': {'group': 'Homelab'},
       },
+      'canonical_session': {'id': 'stored-canonical-manager'},
     });
     final initial = _snapshot(profiles: [before]);
     final refreshed = _snapshot(profiles: [after]);
@@ -1612,7 +1675,7 @@ void main() {
     expect(opened, hasLength(2));
     expect(opened.first.source, 'mobile-bot');
     expect(opened.first.lineageRootId, isNull);
-    expect(opened.last.source, 'bot-mode');
+    expect(opened.last.source, 'bot-mode-canonical');
     expect(opened.last.lineageRootId, 'stored-canonical-manager');
     expect(source.loadCount, 3);
   });
@@ -1652,7 +1715,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Necesita tu atención'), findsOneWidget);
+    expect(find.text('Te necesitan'), findsOneWidget);
     expect(find.byKey(const ValueKey('mission-attention')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
@@ -1710,9 +1773,9 @@ void main() {
           profiles: const [
             AgentProfile(
               name: 'infra',
-              botChatSessionId: 'stored-bot-approval',
-              botModeUiMeta: {'chat': 'stored-bot-approval'},
-              botModeMetadataPublished: true,
+              canonicalSession: AgentProfileSessionSummary(
+                id: 'stored-bot-approval',
+              ),
             ),
           ],
           sessions: [session],
@@ -1727,7 +1790,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(opened, isNotNull);
-    expect(opened!.source, 'bot-mode');
+    expect(opened!.source, 'bot-mode-canonical');
     expect(opened!.lineageRootId, 'stored-bot-approval');
     expect(find.byKey(const ValueKey('mission-bots')), findsOneWidget);
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
@@ -2137,7 +2200,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.refresh_rounded).last);
+    await _pullToRefresh(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('infra'), findsWidgets);
@@ -2198,7 +2261,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.refresh_rounded).last);
+    await _pullToRefresh(tester);
     await tester.pumpAndSettle();
 
     expect(
@@ -2254,25 +2317,33 @@ void main() {
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
 
-    await _openAgentDetail(tester, 'infra');
-    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Editar profile'),
-      240,
-      scrollable: find.byType(Scrollable).last,
+    // Read-only: long-press offers no mutation, the profile opens but its
+    // model/reasoning rows and identity editing are not interactive.
+    await _openRosterActions(tester, 'infra');
+    expect(find.byKey(const ValueKey('roster-action-togglePin')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('roster-action-toggleHidden')),
+      findsNothing,
     );
-    final manageLabel = find.text('Editar profile');
-    expect(manageLabel, findsOneWidget);
-    // La ficha rediseñada agrupa las acciones en filas (`HermesGroup`), no en
-    // una parrilla de botones: en modo consulta la fila sigue visible pero sin
-    // `onTap`, igual que antes hacía el botón deshabilitado.
-    final manageRow = tester.widget<InkWell>(
+    expect(find.byKey(const ValueKey('roster-action-section')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('roster-action-profile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('bot-profile')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('bot-profile-edit-identity')),
+      findsNothing,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('bot-profile-model')),
+      200,
+    );
+    final modelRow = tester.widget<InkWell>(
       find.descendant(
-        of: find.byKey(const ValueKey('bot-detail-edit-profile')),
+        of: find.byKey(const ValueKey('bot-profile-model')),
         matching: find.byType(InkWell),
       ),
     );
-    expect(manageRow.onTap, isNull);
+    expect(modelRow.onTap, isNull);
   });
 
   testWidgets('Kanban live updates debounce and pause with Android lifecycle', (
@@ -2330,7 +2401,9 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.refresh_rounded).last);
+    // Initial load still pending: a lifecycle resume starts the newer read.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     second.complete(_snapshot(profiles: const [AgentProfile(name: 'newer')]));
     await tester.pumpAndSettle();
@@ -2584,14 +2657,31 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Spec 070 S1: one state signal on the face (attention ring) and the
+    // bot listed under "Needs you" — no extra badge or dot on the row.
     expect(
-      find.byKey(const ValueKey('mission-bot-needs-you-infra')),
+      find.descendant(
+        of: find.byKey(const ValueKey('mission-bot-row-infra')),
+        matching: find.byKey(const ValueKey('living-face-ring-attention')),
+      ),
       findsOneWidget,
     );
-    expect(find.text('te necesita'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('mission-bot-needs-you-qa')),
+      find.descendant(
+        of: find.byKey(const ValueKey('mission-bot-row-qa')),
+        matching: find.byKey(const ValueKey('living-face-ring-attention')),
+      ),
       findsNothing,
+    );
+    expect(
+      tester
+          .getTopLeft(find.byKey(const ValueKey('mission-bot-row-infra')))
+          .dy,
+      lessThan(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('roster-section-recent')))
+            .dy,
+      ),
     );
   });
 
@@ -2778,6 +2868,9 @@ void main() {
       expect(gateway.disabledSkills, ['web']);
 
       // Sin catálogo (gateway antiguo), la sección degrada con aviso.
+      // The success notice floats over the header "New" button; let it go.
+      await tester.pump(const Duration(seconds: 8));
+      await tester.pumpAndSettle();
       await _openCreateBot(tester);
       gateway.skills = null;
       await _scrollCreateFormTo(tester, 'bot-create-skills-row');
@@ -2990,7 +3083,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _openAgentDetail(tester, 'infra');
-    expect(find.byKey(const ValueKey('mission-agent-detail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-profile')), findsOneWidget);
     expect(find.byKey(const ValueKey('bot-mode-floating-dock')), findsNothing);
     // La sala local (con su propio modal "mission-room-editor") ya no existe
     // (spec 061). Reconstruir aquí la capacidad `groups.create` solo para

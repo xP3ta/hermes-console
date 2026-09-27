@@ -35,6 +35,7 @@ class MessageAvatarHeader extends StatelessWidget {
     required this.name,
     this.mascot,
     this.subtitle,
+    this.nameColor,
     this.actions = const [],
     super.key,
   });
@@ -46,6 +47,9 @@ class MessageAvatarHeader extends StatelessWidget {
 
   /// Segunda línea bajo el título (desplegable del turno o «Trabajando…»).
   final Widget? subtitle;
+
+  /// Color del título; por defecto el acento del tema.
+  final Color? nameColor;
   final List<Widget> actions;
 
   @override
@@ -95,7 +99,7 @@ class MessageAvatarHeader extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w700,
-                    color: colors.accent,
+                    color: nameColor ?? colors.accent,
                     letterSpacing: 0.3,
                   ),
                 ),

@@ -23,6 +23,7 @@ import '../../models/kanban.dart';
 import '../connection_manager.dart';
 import '../secure_storage.dart';
 import '../../utils/transport_privacy.dart';
+import 'bot_mode_background.dart';
 import 'notification_delivery_store.dart';
 import 'notification_service.dart';
 import 'notification_strings.dart';
@@ -1096,6 +1097,21 @@ class BackgroundKanbanWatch {
   }
 }
 
+/// Listener cadence without watched runs (spec 028 + 070 P1-6): 30 s only
+/// while a watched room works or waits for an approval, 60 s while Cron or
+/// Kanban are watched, otherwise the 180 s base. Configured connections
+/// alone never force a faster cadence.
+@visibleForTesting
+int listenerIdleIntervalMs({
+  required bool roomsActive,
+  required bool watchesCron,
+  required bool watchesKanban,
+}) => roomsActive
+    ? 30000
+    : watchesCron || watchesKanban
+    ? 60000
+    : 180000;
+
 /// Punto de entrada del isolate del servicio. Debe ser top-level y anotado.
 @pragma('vm:entry-point')
 void hermesForegroundCallback() {
@@ -1336,8 +1352,10 @@ class _HermesTaskHandler extends TaskHandler {
   int _targetRevision = -1;
   final ForegroundTaskStopFence _stopFence = ForegroundTaskStopFence();
 
+  /// Rooms, Bot Chat actions and the Bot Mode widgets (spec 070 T607).
+  final BotModeBackgroundMonitor _botMode = BotModeBackgroundMonitor();
+
   static const int _kActiveIntervalMs = 30000;
-  static const int _kCronIntervalMs = 60000;
   static const int _kIdleIntervalMs = 180000;
   int _currentIntervalMs = _kActiveIntervalMs;
 
@@ -1472,6 +1490,19 @@ class _HermesTaskHandler extends TaskHandler {
         prefs,
         cronTargets,
       );
+      // True only while a watched room works or waits for an approval.
+      var roomsWorking = false;
+      try {
+        roomsWorking = await _botMode.tick(
+          prefs: prefs,
+          targets: cronTargets,
+          notificationsEnabled: notif.enabled,
+        );
+      } catch (error) {
+        if (kDebugMode) {
+          debugPrint('[hermes-notif] rooms tick (${error.runtimeType})');
+        }
+      }
       if (runs.isEmpty) {
         if (!_stopFence.allowsUpdate) return;
         // Con opt-in de escucha permanente y NADA que vigilar, baja el ritmo
@@ -1480,7 +1511,11 @@ class _HermesTaskHandler extends TaskHandler {
         // entra una run vigilada.
         if (!audioCardActive) {
           _setPollInterval(
-            watchesCron || watchesKanban ? _kCronIntervalMs : _kIdleIntervalMs,
+            listenerIdleIntervalMs(
+              roomsActive: roomsWorking,
+              watchesCron: watchesCron,
+              watchesKanban: watchesKanban,
+            ),
             persistentAutomation: true,
           );
         }
@@ -2131,6 +2166,7 @@ class _HermesTaskHandler extends TaskHandler {
     NotificationService.setAutomationNotificationsOptedIn(false);
     await _notif?.closeDelivery();
     _notif = null;
+    await _botMode.close();
     _dashboardClients.close();
     _http.close();
   }

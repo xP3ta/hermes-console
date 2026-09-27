@@ -64,13 +64,20 @@ final class BotLiveStatus {
             .expand((log) => log.events)
             .where((e) => e.roomId == room.roomId)
             .toList();
+        final driver = rooms.driverStatusFor(room.roomId);
         final candidate = derive(
           agent: agent,
           member: member,
           events: events,
           now: now,
+          driverStatus: driver,
         );
-        final roomOnly = derive(member: member, events: events, now: now);
+        final roomOnly = derive(
+          member: member,
+          events: events,
+          now: now,
+          driverStatus: driver,
+        );
         if (priority(roomOnly.presence) >= priority(result.presence)) {
           result = candidate;
         }
@@ -85,6 +92,7 @@ final class BotLiveStatus {
     required DateTime now,
     MissionAgent? agent,
     HostedGroupEvent? addressedMessage,
+    RoomDriverStatus? driverStatus,
   }) {
     final ordered = [...events]
       ..sort((a, b) => a.sequence.compareTo(b.sequence));
@@ -134,22 +142,31 @@ final class BotLiveStatus {
         running = null;
       }
     }
-    // A stranded start is not indefinite proof of liveness.
+    // Server driver evidence (spec 070 T204) is authoritative: an open turn
+    // only counts while the room driver reports it is working. Older
+    // gateways without driver_status keep the bounded stranded-start guard.
     final working =
         running != null &&
-        seconds - running.createdAt >= -60 &&
-        seconds - running.createdAt < 120;
+        (driverStatus != null
+            ? driverStatus.working
+            : seconds - running.createdAt >= -60 &&
+                  seconds - running.createdAt < 120);
+    final driverApproval =
+        member != null &&
+        (driverStatus?.approvals.any((a) => a.memberId == member.memberId) ??
+            false);
     final profile = agent?.profile;
     final summaries = [
       profile?.preferredSession,
       profile?.lastSession,
       profile?.canonicalSession,
     ];
-    final active =
-        (last != null && recent(last.createdAt)) ||
-        (agent?.lastActivityAt != null &&
-            recent(agent!.lastActivityAt!.millisecondsSinceEpoch / 1000)) ||
-        summaries.any((s) => s?.lastActive != null && recent(s!.lastActive!));
+    // "Active" means a live server signal (a streaming/thinking chat), never
+    // "wrote something in the last 90 s" (spec 070 § Presence).
+    final active = const {
+      MissionAgentStatus.thinking,
+      MissionAgentStatus.responding,
+    }.contains(agent?.status);
     final worker = profile?.workerSession;
     final freshWorker =
         worker != null &&
@@ -161,6 +178,7 @@ final class BotLiveStatus {
             freshWorker);
     final presence =
         question != null ||
+            driverApproval ||
             agent?.approval != null ||
             agent?.status == MissionAgentStatus.approvalRequired ||
             agent?.status == MissionAgentStatus.blocked

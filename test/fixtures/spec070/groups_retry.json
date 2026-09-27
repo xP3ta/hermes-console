@@ -1,0 +1,20 @@
+{
+  "method": "groups.retry",
+  "params": {
+    "room_id": "room-devs",
+    "task_id": "task-radar-1"
+  },
+  "result": {
+    "retried": true,
+    "task": {
+      "room_id": "room-devs",
+      "task_id": "task-radar-1",
+      "thread_id": "thread-1",
+      "turn_id": "turn-r1",
+      "status": "queued",
+      "execution_generation": 2,
+      "cancel_generation": 0
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

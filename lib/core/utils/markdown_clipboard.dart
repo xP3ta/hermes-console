@@ -52,6 +52,10 @@ String markdownToCompactText(String markdown) {
         RegExp(r'(^|\s)#{1,6}\s+'),
         (match) => match.group(1) ?? '',
       )
+      // Server previews are cut at a fixed length, so an opening `**`, `__`
+      // or backtick can survive without its closing pair. Balanced markers
+      // were already consumed by the parser; the leftovers are never content.
+      .replaceAll(RegExp(r'\*\*|__(?=\S)|(?<=\S)__|`'), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 }

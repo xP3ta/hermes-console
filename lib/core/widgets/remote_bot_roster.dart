@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/agent_profile.dart';
 import '../screens/mission_control_copy.dart';
 import '../services/connection_manager.dart';
+import '../services/shared_gateway_pool.dart';
 import '../services/tui_gateway_client.dart';
 import 'mission_profile_avatar.dart';
 
@@ -36,7 +37,8 @@ class RemoteBotRoster extends StatefulWidget {
 }
 
 class _RemoteBotRosterState extends State<RemoteBotRoster> {
-  final _clients = <String, TuiGatewayClient>{};
+  // Pooled leases (spec 070 T202): one shared socket per connection.
+  final _leases = <String, SharedGatewayLease>{};
   final _avatars = <String, MissionProfileAvatarCache>{};
   final _profiles = <String, List<AgentProfile>>{};
   final _unavailable = <String>{};
@@ -81,10 +83,10 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
           );
         }
       }
-      for (final client in _clients.values) {
-        unawaited(client.close());
+      for (final lease in _leases.values) {
+        lease.release();
       }
-      _clients.clear();
+      _leases.clear();
       _avatars.clear();
       _epoch++;
       _profiles.clear();
@@ -109,10 +111,12 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
         try {
           final loader = widget.loader;
           if (loader == null) {
-            client = _clients.putIfAbsent(
-              connection.id,
-              () => TuiGatewayClient(connection),
-            );
+            client = _leases
+                .putIfAbsent(
+                  connection.id,
+                  () => SharedGatewayPool.instance.acquire(connection),
+                )
+                .client;
             _avatars.putIfAbsent(
               connection.id,
               () => MissionProfileAvatarCache(
@@ -151,9 +155,10 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
   @override
   void dispose() {
     _epoch++;
-    for (final client in _clients.values) {
-      unawaited(client.close());
+    for (final lease in _leases.values) {
+      lease.release();
     }
+    _leases.clear();
     super.dispose();
   }
 
