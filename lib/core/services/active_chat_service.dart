@@ -4320,6 +4320,16 @@ class ActiveChat {
   int _adaptiveProcessRepairRevision = 0;
   int _adaptiveControlRepairRevision = 0;
   int _adaptiveSnapshotFailureRevision = 0;
+  // `sessions.changed` is a session-less broadcast (state.db moved) that
+  // today only drives the subagent/process/control adaptive snapshot and
+  // the session list — the OPEN transcript is never reconciled, so a
+  // message written by another surface (Desktop, another Console) can sit
+  // unseen until an unrelated event happens to trigger a passive read.
+  // This revision lets the chat screen distinguish "sessions.changed fired"
+  // from every other reason `sessionInfo` gets emitted, so it can route the
+  // signal through `ForegroundConversationReader.notifySessionsChanged`
+  // (durable-chat-id-scoped, already wired but never fed a real signal).
+  int _durableSessionsChangeRevision = 0;
   ArtifactIndexSnapshot? _artifactIndex;
   ArtifactIndexScope? _artifactScope;
   List<ArtifactTranscriptEntry> _pendingArtifactTranscript = const [];
@@ -4653,6 +4663,10 @@ class ActiveChat {
 
   int get adaptiveRefreshEventRevision => _adaptiveRefreshEventRevision;
   int get adaptiveFullRefreshRevision => _adaptiveFullRefreshRevision;
+  /// Bumped on every `sessions.changed` broadcast, regardless of runtime
+  /// ownership or busy state — the screen reads this to reconcile the OPEN
+  /// transcript against the durable store, the same trigger Desktop uses.
+  int get durableSessionsChangeRevision => _durableSessionsChangeRevision;
   int get adaptiveSubagentRepairRevision => _adaptiveSubagentRepairRevision;
   int get adaptiveProcessRepairRevision => _adaptiveProcessRepairRevision;
   int get adaptiveControlRepairRevision => _adaptiveControlRepairRevision;
@@ -18386,12 +18400,22 @@ class ActiveChat {
     final runtimeId = _desktopRuntimeSessionId;
     if (runtimeId == null) return;
     if (event.type == 'sessions.changed') {
+      // The transcript reconciliation trigger is independent of subagent/
+      // process/control adaptive refresh: it must fire even while streaming
+      // (queued) and even when change events aren't advertised, since it is
+      // the same class of signal Desktop already reconciles an open pane on.
+      _durableSessionsChangeRevision += 1;
       if (desktopChangeEventsAvailable) {
         _signalAdaptiveRefresh(full: true);
         _emit(ActiveChatEvent.sessionInfo);
       } else {
         unawaited(refreshBackgroundProcesses());
         unawaited(refreshSessionControl());
+        // Legacy backends without change_events still broadcast
+        // sessions.changed itself; the transcript reconciliation trigger
+        // must not depend on the change-events capability the same way the
+        // heavier adaptive-snapshot cadence does.
+        _emit(ActiveChatEvent.sessionInfo);
       }
       return;
     }
