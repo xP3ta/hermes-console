@@ -8643,5 +8643,226 @@
   "sklCopyInstallCmd": "Copiar comando de instalación",
   "sklCopyRemoveCmd": "Copiar comando para quitarla",
   "memDetailFile": "Archivo",
-  "designDetails": "Detalles"
+  "designDetails": "Detalles",
+  "cphTitle": "Capacidades",
+  "cphSegCatalog": "Catálogo",
+  "cphSegInstalled": "Instaladas",
+  "cphSegConnectors": "Conectores",
+  "cphSearchHint": "Buscar skills, plugins y MCP",
+  "cphFilter": "Filtrar",
+  "cphFilterType": "Tipo",
+  "cphFilterTrust": "Confianza",
+  "cphFilterAllTypes": "Todos los tipos",
+  "cphFilterAnyTrust": "Cualquier origen",
+  "cphKindSkills": "Skills",
+  "cphKindPlugins": "Plugins",
+  "cphKindMcp": "Servidores MCP",
+  "cphKindSkill": "Skill",
+  "cphKindPlugin": "Plugin",
+  "cphKindMcpOne": "Servidor MCP",
+  "cphTrustOfficial": "Oficial",
+  "cphTrustTrusted": "De confianza",
+  "cphTrustCommunity": "Comunidad",
+  "cphTrustLocal": "Local",
+  "cphTrustUnknown": "Sin verificar",
+  "cphTrustOfficialBody": "Mantenida por el proyecto Hermes.",
+  "cphTrustTrustedBody": "Procede de un origen revisado.",
+  "cphTrustCommunityBody": "Aportación de la comunidad. Revisa qué puede hacer antes de instalarla.",
+  "cphTrustLocalBody": "Creada o configurada en este servidor.",
+  "cphTrustUnknownBody": "El servidor no indica quién la publica.",
+  "cphStatusInstalled": "Instalada",
+  "cphStatusUpdate": "Actualización disponible",
+  "cphStatusDisabled": "Desactivada",
+  "cphStatusEnabled": "Activa",
+  "cphStatusNotInstalled": "No instalada",
+  "cphHubResults": "Del hub de skills",
+  "cphHubSearchFailed": "El hub de skills no respondió. Se muestra el catálogo local.",
+  "cphMore": "Más opciones",
+  "cphMenuUpdateSkills": "Actualizar skills",
+  "cphMenuAdvanced": "Ajustes avanzados",
+  "cphMenuClassicSkills": "Skills clásicas",
+  "cphEmptyCatalog": "Ninguna capacidad coincide",
+  "cphEmptyCatalogBody": "Prueba otra búsqueda o quita los filtros.",
+  "cphEmptyInstalled": "Aún no hay nada instalado",
+  "cphEmptyInstalledBody": "Instala skills, plugins o servidores MCP desde el catálogo.",
+  "cphErrorTitle": "No se pueden cargar las capacidades",
+  "cphErrorOffline": "El servidor no respondió. Revisa la conexión y vuelve a intentarlo.",
+  "cphErrorForbidden": "El Dashboard rechazó las credenciales de esta instancia.",
+  "cphErrorUnsupported": "Este servidor no publica la API de capacidades.",
+  "cphPartial": "Algunas fuentes no se pudieron cargar.",
+  "cphReadOnly": "Conexión de solo lectura: los cambios están desactivados.",
+  "cphReadOnlyTag": "Solo lectura",
+  "cphConnectorsAccounts": "Cuentas",
+  "cphConnectorsSignedOut": "Inicia sesión con tu cuenta Nous en el servidor para usar los conectores de cuenta.",
+  "cphConnectorsUnavailable": "Los conectores de cuenta no están disponibles ahora en este servidor.",
+  "cphConnectorsUnsupported": "Este servidor no ofrece conectores de cuenta.",
+  "cphConnectorsError": "No se pudieron cargar los conectores de cuenta.",
+  "cphConnectorsConnectHint": "Conectar cuentas nuevas aún no está disponible en Console; usa Hermes Desktop.",
+  "cphConnectorsEmpty": "El servidor no publica conectores de cuenta.",
+  "cphConnected": "Conectada",
+  "cphNotConnected": "Sin conectar",
+  "cphNoMcpServers": "No hay servidores MCP configurados.",
+  "cphActionInstall": "Instalar",
+  "cphActionUpdate": "Actualizar",
+  "cphActionEnable": "Activar",
+  "cphActionDisable": "Desactivar",
+  "cphActionRemove": "Quitar",
+  "cphActionTest": "Probar conexión",
+  "cphActionDocs": "Abrir documentación",
+  "cphConfirmInstall": "¿Instalar {name}?",
+  "@cphConfirmInstall": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmInstallBody": "Se ejecutará en el servidor con los permisos de este perfil.",
+  "cphConfirmRemove": "¿Quitar {name}?",
+  "@cphConfirmRemove": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmRemoveBody": "El agente dejará de usarla.",
+  "cphConfirmUpdate": "¿Actualizar {name}?",
+  "@cphConfirmUpdate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmUpdateSkills": "¿Actualizar todas las skills del hub?",
+  "cphProgressInstalling": "Instalando {name}…",
+  "@cphProgressInstalling": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressRemoving": "Quitando {name}…",
+  "@cphProgressRemoving": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressUpdating": "Actualizando {name}…",
+  "@cphProgressUpdating": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressSaving": "Guardando…",
+  "cphProgressTesting": "Probando {name}…",
+  "@cphProgressTesting": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressUpdatingSkills": "Actualizando skills…",
+  "cphProgressKeepOpen": "Mantén Console abierta hasta que termine.",
+  "cphDoneInstalled": "{name} instalada",
+  "@cphDoneInstalled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneRemoved": "{name} quitada",
+  "@cphDoneRemoved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneUpdated": "{name} actualizada",
+  "@cphDoneUpdated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneEnabled": "{name} activada",
+  "@cphDoneEnabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneDisabled": "{name} desactivada",
+  "@cphDoneDisabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneSkillsUpdated": "Skills actualizadas",
+  "cphTestOk": "La conexión funciona",
+  "cphTestFailed": "El servidor no pudo conectar",
+  "cphFailRejected": "El servidor rechazó la acción.",
+  "cphFailBlockedByScan": "El escaneo de seguridad bloqueó esta instalación.",
+  "cphFailUnavailable": "El servidor no respondió a tiempo.",
+  "cphFailForbidden": "No está permitido con estas credenciales.",
+  "cphFailUnsupported": "Este servidor no admite esta acción.",
+  "cphFailInvalid": "El servidor envió una respuesta inesperada.",
+  "cphConsentTitle": "Permisos nuevos de {name}",
+  "@cphConsentTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConsentAccept": "Aceptar y actualizar",
+  "cphConsentNeeded": "Este plugin pide tu consentimiento. Instálalo desde Ajustes avanzados.",
+  "cphRestartRequired": "Reinicia el gateway para aplicar el cambio.",
+  "cphSecTrust": "Confianza",
+  "cphSecPermissions": "Qué puede usar",
+  "cphSecTechnical": "Detalles técnicos",
+  "cphRowSource": "Origen",
+  "cphRowPublisher": "Editor",
+  "cphRowVersion": "Versión",
+  "cphRowCategory": "Categoría",
+  "cphRowTools": "Herramientas",
+  "cphRowRequires": "Necesita",
+  "cphRowTransport": "Transporte",
+  "cphRowCommand": "Comando",
+  "cphRowUrl": "URL",
+  "cphNoPermissions": "No declara herramientas ni credenciales.",
+  "cphNeedsCredentials": "Necesita credenciales ({names}). Configúralas desde Ajustes avanzados.",
+  "@cphNeedsCredentials": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphNotInstallable": "No se puede instalar desde Console.",
+  "cphBuiltIn": "Integrada: se puede desactivar pero no quitar.",
+  "cphShowAll": "Ver todas ({count})",
+  "@cphShowAll": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphFilterClear": "Quitar",
+  "cphStatusUpdateShort": "Actualizable",
+  "cphRowAuth": "Autenticación"
 }

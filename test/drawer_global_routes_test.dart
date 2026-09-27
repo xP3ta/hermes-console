@@ -2,6 +2,7 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/screens/appearance_screen.dart';
 import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/tools_hub_screen.dart';
@@ -139,8 +140,7 @@ void main() {
         'models',
         'ssh',
         'profiles',
-        'skills',
-        'extensions',
+        'capabilities',
         'memory',
         'cron',
         'soul',
@@ -152,7 +152,32 @@ void main() {
     // runtimeSessionId desde este catálogo genérico, así que nunca podía
     // mostrar nada útil — confirmado leyendo agent_center_screen.dart, que
     // solo tiene este único call site en todo el código.
-    expect(hub.destinations.map((destination) => destination.id).length, 13);
+    expect(hub.destinations.map((destination) => destination.id).length, 12);
+  });
+
+  testWidgets('Capacidades sustituye a Skills y Extensiones', (tester) async {
+    final manager = await _manager();
+    await _pumpDrawer(tester, manager: manager, connection: _connection);
+
+    await _revealDrawerItem(tester, 'Herramientas');
+    await tester.tap(find.text('Herramientas'));
+    await tester.pumpAndSettle();
+
+    final hub = tester.widget<ToolsHubScreen>(find.byType(ToolsHubScreen));
+    final ids = hub.destinations.map((destination) => destination.id);
+    expect(ids, isNot(contains('skills')));
+    expect(ids, isNot(contains('extensions')));
+    final entry = hub.destinations.singleWhere((d) => d.id == 'capabilities');
+    expect(entry.label, 'Capacidades');
+    expect(entry.enabled, isTrue);
+
+    // Built without mounting: mounting would open real transports.
+    final screen =
+        entry.builder(tester.element(find.byType(ToolsHubScreen)))
+            as CapabilitiesHub;
+    expect(identical(screen.connection, _connection), isTrue);
+    expect(screen.advancedBuilder, isNotNull);
+    expect(screen.classicSkillsBuilder, isNotNull);
   });
 
   testWidgets('Voz se bloquea y Herramientas sigue accesible sin instancia', (

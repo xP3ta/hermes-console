@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../capabilities/capabilities_screen.dart';
 import '../screens/activity_screen.dart';
 import '../screens/appearance_screen.dart';
 import '../screens/chat_screen.dart';
@@ -49,8 +50,7 @@ enum DrawerSection {
   providers,
   profiles,
   agents,
-  skills,
-  extensions,
+  capabilities,
   memory,
   soul,
   cron,
@@ -142,30 +142,30 @@ List<HermesToolDestination> buildHermesToolDestinations({
       builder: (_) =>
           ProfilesScreen(connection: conn!, connManager: connManager),
     ),
+    // One entry for skills, plugins, MCP and account connectors. The older
+    // Skills and Extensions screens stay reachable from the hub's "More".
     HermesToolDestination(
-      id: 'skills',
+      id: 'capabilities',
       group: strings.drawerGroupAgent,
       icon: Icons.extension_outlined,
-      label: strings.drawerSkills,
-      enabled: enabled(capabilities.skillsRead),
-      disabledReason: disabledReason(capabilities.skillsRead),
-      builder: (_) => SkillsScreen(connection: conn!),
-    ),
-    HermesToolDestination(
-      id: 'extensions',
-      group: strings.drawerGroupAgent,
-      icon: Icons.extension_outlined,
-      label: strings.drawerExtensions,
+      label: strings.cphTitle,
       enabled: enabled(),
       disabledReason: disabledReason(),
-      builder: (_) {
-        final gateway = TuiGatewayClient(conn!);
-        return ExtensionsCenterScreen(
-          gateway: gateway,
-          readOnly: conn.readOnly,
-          disposeGateway: gateway.close,
-        );
-      },
+      builder: (_) => CapabilitiesHub(
+        connection: conn!,
+        profile: connManager.activeProfileFor(conn.id),
+        advancedBuilder: (_) {
+          final gateway = TuiGatewayClient(conn);
+          return ExtensionsCenterScreen(
+            gateway: gateway,
+            readOnly: conn.readOnly,
+            disposeGateway: gateway.close,
+          );
+        },
+        classicSkillsBuilder: capabilities.skillsRead.isNo
+            ? null
+            : (_) => SkillsScreen(connection: conn),
+      ),
     ),
     HermesToolDestination(
       id: 'memory',
