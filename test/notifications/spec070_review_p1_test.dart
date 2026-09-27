@@ -531,7 +531,7 @@ void main() {
       for (final name in [
         'botw_needs_you_info',
         'botw_room_info',
-        'new_session_widget_info',
+        'botw_bots_info',
       ]) {
         expect(xml(name), contains('widgetCategory="home_screen"'), reason: name);
       }
@@ -743,6 +743,30 @@ void main() {
   });
 
   group('P1-6 battery and network', () {
+    test('a room send kicks the listener: envelope and fast cadence', () {
+      expect(
+        BackgroundListener.roomKickFromData(BackgroundListener.roomKickData()),
+        isTrue,
+      );
+      expect(BackgroundListener.roomKickFromData({'kind': 'other'}), isFalse);
+      expect(BackgroundListener.roomKickFromData('x'), isFalse);
+      final policy = BotModeTickPolicy();
+      final now = DateTime(2026, 9, 27, 12);
+      // An empty room list backs off for minutes...
+      policy.record(
+        now: now,
+        ok: true,
+        rooms: 0,
+        working: false,
+        pendingApprovals: false,
+      );
+      expect(policy.shouldConnect(now.add(const Duration(seconds: 5))), isFalse);
+      // ...but a send from this device reads rooms at once, at 30 s.
+      policy.kick();
+      expect(policy.shouldConnect(now.add(const Duration(seconds: 5))), isTrue);
+      expect(policy.cadence, BotModeCadence.active);
+    });
+
     test('listener cadence: 180 s base, 60 s cron, 30 s active rooms', () {
       expect(
         listenerIdleIntervalMs(
@@ -940,6 +964,9 @@ final class _Ops implements NotificationActionOps {
   @override
   Future<void> botChatReply(NotificationActionPayload p, String text, String id) =>
       _record('botChatReply:$text:$id');
+  @override
+  Future<void> cronTrigger(NotificationActionPayload p) =>
+      _record('cronTrigger:${p.taskId}');
 }
 
 final class _Sink implements RichNotificationSink {

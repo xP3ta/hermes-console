@@ -10,7 +10,6 @@ import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
 import 'package:hermes_android/core/widgets/room_mirror_avatar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -141,11 +140,9 @@ void main() {
         expect(find.text('Recientes'), findsOneWidget);
         expect(find.text('Sin sección'), findsNothing);
         if (work) {
-          await tester.tap(
-            find.byKey(const ValueKey('mission-destination-work')),
-          );
+          // Rooms filter of the roster (the Work destination is gone).
+          await tester.tap(find.byKey(const ValueKey('roster-filter-rooms')));
           await tester.pumpAndSettle();
-          expect(find.byType(RoomAvatarStack), findsOneWidget);
           expect(find.byType(RoomMirrorAvatar), findsNothing);
         }
         return (await tester.runAsync(() => _pixels(tester)))!;
@@ -339,14 +336,21 @@ void main() {
         ]),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mission-destination-work')));
-      await tester.pumpAndSettle();
       expect(find.text('Team picture'), findsOneWidget);
-      expect(find.text('Desktop only'), findsNothing);
+      // A Desktop-only room is listed by the roster as a read-only Desktop
+      // projection row, never as a hosted (writable) room.
+      expect(find.text('Desktop only'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate((widget) {
+          final key = widget.key;
+          return key is ValueKey<String> &&
+              key.value.startsWith('roster-room-desktop-');
+        }),
+        findsOneWidget,
+      );
       expect(find.text('MIRROR ONLY MESSAGE'), findsNothing);
       expect(find.byType(RoomMirrorAvatar), findsOneWidget);
-      expect(find.byType(RoomAvatarStack), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+      await tester.tap(find.text('Team picture'));
       await tester.pumpAndSettle();
       expect(find.text('Team picture'), findsOneWidget);
       expect(find.byType(RoomMirrorAvatar), findsOneWidget);

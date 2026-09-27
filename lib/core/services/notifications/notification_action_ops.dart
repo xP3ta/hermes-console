@@ -11,12 +11,14 @@
 //    `prompt.submit`; `client_turn_id` only when the gateway advertises
 //    `turn_idempotency` (same gate as the main chat), else the official
 //    `{status: "streaming"}` reply is the acceptance
+//  * cron retry   → `POST /api/cron/jobs/{id}/trigger` (Cron "Run now")
 import 'dart:async';
 
 import '../../bots/data/bot_mode_repository.dart';
 import '../../models/desktop_compression_outcome.dart';
 import '../../models/hosted_groups.dart';
 import '../connection_manager.dart';
+import '../cron_repository.dart';
 import '../secure_storage.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
@@ -54,6 +56,7 @@ class GatewayNotificationActionOps implements NotificationActionOps {
     SharedGatewayPool? pool,
     SecureStorage? secure,
     this.clientFactory,
+    this.dashboardFactory,
   }) : _pool = pool ?? SharedGatewayPool.instance,
        _secure = secure ?? SecureStorage(),
        _turnIdempotency =
@@ -63,6 +66,7 @@ class GatewayNotificationActionOps implements NotificationActionOps {
   final ChatApprovalExecutor? chatApproval;
   final TurnIdempotencyGate _turnIdempotency;
   final TuiGatewayClient Function(SavedConnection connection)? clientFactory;
+  final DashboardClient Function(SavedConnection connection)? dashboardFactory;
   final SharedGatewayPool _pool;
   final SecureStorage _secure;
 
@@ -207,4 +211,15 @@ class GatewayNotificationActionOps implements NotificationActionOps {
       rethrow;
     }
   });
+
+  @override
+  Future<void> cronTrigger(NotificationActionPayload p) async {
+    final connection = await _connection(p);
+    final client =
+        dashboardFactory?.call(connection) ?? DashboardClient.lazy(connection);
+    await CronRepository(
+      client,
+      profile: p.profile ?? '',
+    ).triggerById(p.taskId!);
+  }
 }

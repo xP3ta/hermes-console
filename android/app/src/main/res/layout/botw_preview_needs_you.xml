@@ -1,143 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Widget-picker preview (previewLayout, API 31+) and initial layout for the
-     Glance widget; mirrors the dark Bot Mode palette. RemoteViews-safe views only. -->
+<!-- Picker preview of Needs you (v2): black card, amber bottom glow, plain
+     row + Approve/Deny. RemoteViews-safe views only. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/botw_preview_background"
+    android:background="@drawable/botw_glow_needs_you"
     android:orientation="vertical"
-    android:padding="12dp">
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:fontFamily="sans-serif-medium"
-            android:maxLines="1"
-            android:text="@string/botw_needs_you_title"
-            android:textColor="@color/botw_preview_text"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="20dp"
-            android:layout_marginStart="6dp"
-            android:background="@drawable/botw_preview_badge"
-            android:gravity="center"
-            android:minWidth="20dp"
-            android:paddingStart="7dp"
-            android:paddingEnd="7dp"
-            android:text="2"
-            android:textColor="@color/botw_preview_on_accent"
-            android:textSize="11sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:background="@drawable/botw_preview_card"
-        android:orientation="vertical"
-        android:padding="8dp">
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-            <FrameLayout
-                android:layout_width="26dp"
-                android:layout_height="26dp">
-                <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/botw_preview_face_lead" />
-            </FrameLayout>
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-medium"
-                    android:maxLines="1"
-                    android:text="lead"
-                    android:textColor="@color/botw_preview_text"
-                    android:textSize="12sp" />
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:text="@string/botw_preview_approval"
-                    android:textColor="@color/botw_preview_secondary"
-                    android:textSize="11sp" />
-            </LinearLayout>
-        </LinearLayout>
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="32dp"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal">
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:background="@drawable/botw_preview_pill_accent"
-                android:fontFamily="sans-serif-medium"
-                android:gravity="center"
-                android:maxLines="1"
-                android:text="@string/botw_approve"
-                android:textColor="@color/botw_preview_on_accent"
-                android:textSize="12sp" />
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                android:background="@drawable/botw_preview_pill_dark"
-                android:fontFamily="sans-serif-medium"
-                android:gravity="center"
-                android:maxLines="1"
-                android:text="@string/botw_deny"
-                android:textColor="@color/botw_preview_text"
-                android:textSize="12sp" />
+    android:padding="14dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+        <ImageView android:layout_width="40dp" android:layout_height="40dp" android:src="@drawable/botw_preview_face_lead_needs" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:orientation="vertical">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="start" android:maxLines="1" android:text="lead · Atlas" android:textColor="@color/botw_preview_text" android:textSize="13.5sp" android:textStyle="bold"/>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="start" android:maxLines="1" android:text="@string/botw_preview_approval" android:textColor="@color/botw_preview_secondary" android:textSize="11.5sp" />
         </LinearLayout>
     </LinearLayout>
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:background="@drawable/botw_preview_card"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="8dp">
-        <FrameLayout
-            android:layout_width="22dp"
-            android:layout_height="22dp">
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_gravity="center"
-                android:src="@drawable/botw_preview_face_scout" />
-        </FrameLayout>
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="@string/botw_preview_approval_2"
-            android:textColor="@color/botw_preview_secondary"
-            android:textSize="11sp" />
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal">
+        <TextView android:layout_width="0dp" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_approve" android:textColor="@color/botw_preview_background" android:textSize="12.5sp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/botw_pill_amber" android:textStyle="bold"/>
+        <FrameLayout android:layout_width="6dp" android:layout_height="match_parent" />
+        <TextView android:layout_width="0dp" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_deny" android:textColor="@color/botw_preview_text" android:textSize="12.5sp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/botw_pill_glass" android:textStyle="bold"/>
     </LinearLayout>
 </LinearLayout>

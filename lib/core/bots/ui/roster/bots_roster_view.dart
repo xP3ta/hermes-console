@@ -27,10 +27,15 @@ class BotsRosterView extends StatefulWidget {
   final ValueChanged<BotRosterEntry> onOpenBot;
   final ValueChanged<BotRosterEntry> onBotActions;
   final ValueChanged<RoomRosterEntry> onOpenRoom;
+
+  /// Long-press on a room row: room actions (open, members, rename, stop,
+  /// disband).
+  final ValueChanged<RoomRosterEntry>? onRoomActions;
   final void Function(String sectionId, String name)? onSectionMenu;
 
   /// Chat approvals / blocked Kanban tasks summary ("2 approvals · 0
-  /// blocked"), shown as the first Needs-you row; tapping opens Work.
+  /// blocked"), shown as the first Needs-you row; tapping opens the Bot
+  /// chat of a single approval or a chooser (approvals + task board).
   final String? attentionSummary;
   final VoidCallback? onAttention;
   final Future<void> Function()? onRefresh;
@@ -53,6 +58,7 @@ class BotsRosterView extends StatefulWidget {
     required this.onOpenBot,
     required this.onBotActions,
     required this.onOpenRoom,
+    this.onRoomActions,
     this.prefs,
     this.onSectionMenu,
     this.attentionSummary,
@@ -140,6 +146,9 @@ class _BotsRosterViewState extends State<BotsRosterView> {
       avatarCache: widget.avatarCache,
       now: widget.now,
       onTap: () => widget.onOpenRoom(entry),
+      onLongPress: widget.onRoomActions == null
+          ? null
+          : () => widget.onRoomActions!(entry),
     ),
   };
 

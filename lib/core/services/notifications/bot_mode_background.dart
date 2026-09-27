@@ -18,6 +18,9 @@ import '../../models/hosted_groups.dart';
 import '../connection_manager.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
+import '../../widgets/hermes_bot_face.dart';
+import '../bot_widget_activity.dart';
+import '../../widgets/bot_face_identity.dart';
 import 'bot_face_bitmap.dart';
 import 'bot_notification_presenter.dart';
 import 'notification_event_ledger.dart';
@@ -30,13 +33,13 @@ import 'room_watcher.dart';
 
 /// Android receivers of the Bot Mode widget family.
 const botModeWidgetProviders = <String>[
-  // Legacy receiver names (placed widgets migrate in place): Bots, Status,
-  // Quick ask. Needs you and Room are new.
-  'com.hermesagent.hermes_android.NewSessionWidgetProvider',
-  'com.hermesagent.hermes_android.HermesCompactWidgetProvider',
-  'com.hermesagent.hermes_android.HermesControlWidgetProvider',
+  // The original Hermes Console widgets are refreshed by
+  // HermesHomeWidgetPublisher, not by this listener.
+  'com.hermesagent.hermes_android.HermesBotsWidgetProvider',
   'com.hermesagent.hermes_android.HermesNeedsYouWidgetProvider',
   'com.hermesagent.hermes_android.HermesRoomWidgetProvider',
+  'com.hermesagent.hermes_android.HermesQuickAskWidgetProvider',
+  'com.hermesagent.hermes_android.HermesStatusWidgetProvider',
 ];
 
 /// Connection whose rooms are watched: the last one the user opened, else
@@ -59,6 +62,9 @@ SavedConnection? activeWatchConnection(
 }
 
 /// Builds the widget snapshot from server evidence gathered this tick.
+///
+/// Live presence only; outcomes (done/failed), tickers, ordering and the
+/// hero are applied afterwards by `BotWidgetActivityTracker`.
 BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
   required SavedConnection connection,
   required bool connected,
@@ -71,8 +77,21 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
   bool hideSensitive = false,
 }) {
   final writable = !connection.readOnly;
-  WidgetBotState stateFor(AgentProfile profile) {
+  String? rosterName(String profile) {
+    for (final p in profiles) {
+      if (p.name == profile && p.displayName.trim().isNotEmpty) {
+        return p.displayName.trim();
+      }
+    }
+    return null;
+  }
+
+  // Seat evidence per profile, with the room it belongs to.
+  ({WidgetBotState state, HostedGroupRoom? room}) stateFor(
+    AgentProfile profile,
+  ) {
     final seats = <BotRoomSeat>[];
+    final seatRooms = <String, HostedGroupRoom>{};
     for (final view in rooms) {
       final status = view.driverStatus;
       if (status == null) continue;
@@ -92,9 +111,10 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
             queued: !status.working && status.running && open,
           ),
         );
+        seatRooms[view.room.roomId] = view.room;
       }
     }
-    return switch (BotPresence.derive(
+    final state = switch (BotPresence.derive(
       profile: profile,
       now: now,
       liveSessions: liveSessions,
@@ -105,6 +125,25 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
       BotPresence.working => WidgetBotState.working,
       BotPresence.attention => WidgetBotState.needsYou,
     };
+    // Attribute the state to the room whose seat proves the same level.
+    HostedGroupRoom? room;
+    for (final seat in seats) {
+      final asked = seat.driverStatus.approvals.any(
+        (a) => a.memberId == seat.memberId,
+      );
+      final level = asked
+          ? WidgetBotState.needsYou
+          : seat.running
+          ? WidgetBotState.working
+          : seat.queued
+          ? WidgetBotState.thinking
+          : WidgetBotState.idle;
+      if (level != WidgetBotState.idle && level == state) {
+        room = seatRooms[seat.roomId];
+        break;
+      }
+    }
+    return (state: state, room: room);
   }
 
   String nameOf(AgentProfile p) =>
@@ -113,27 +152,36 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
   final bots = <WidgetBot>[
     for (final profile in profiles)
       () {
-        final state = stateFor(profile);
-        final worker = profile.workerSession;
+        final derived = stateFor(profile);
+        final state = derived.state;
         final line = switch (state) {
           WidgetBotState.working || WidgetBotState.thinking =>
-            !hideSensitive &&
-                    worker != null &&
-                    BotPresence.workerIsFresh(worker, now)
-                ? plainNotificationText(worker.title, max: 60)
-                : t.thinking,
+            botPublicStep(
+                  profile: profile,
+                  liveSessions: liveSessions,
+                  now: now,
+                  hideSensitive: hideSensitive,
+                ) ??
+                t.working,
           WidgetBotState.needsYou => t.needsYou(nameOf(profile)),
-          WidgetBotState.idle => null,
+          _ => null,
         };
         // Server-resolved canonical chat only; never the legacy pin or the
         // most recent session (apps/desktop/src/AGENTS.md).
         final session = profile.canonicalBotChatSessionId ?? '';
+        final room = derived.room;
         return WidgetBot(
           profile: profile.name,
           name: nameOf(profile),
           state: state,
           line: line == null || line.isEmpty ? null : line,
-          facePath: facePaths['${profile.name}/${state.name}'],
+          facePath: facePaths['${profile.name}/${state.faceState}'],
+          idleFacePath: facePaths['${profile.name}/idle'],
+          role: hideSensitive ? null : _publicRole(profile),
+          color: _identityColor(profile),
+          roomId: room?.roomId,
+          roomName: hideSensitive ? null : room?.name,
+          pinned: profile.botPinned,
           openPayload: NotificationOpen(
             connId: connection.id,
             // A payload needs one destination; Bot Mode opens the Bot by
@@ -146,20 +194,13 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
         );
       }(),
   ];
-  bots.sort((a, b) {
-    int rank(WidgetBotState s) => switch (s) {
-      WidgetBotState.needsYou => 0,
-      WidgetBotState.working => 1,
-      WidgetBotState.thinking => 2,
-      WidgetBotState.idle => 3,
-    };
-    return rank(a.state).compareTo(rank(b.state));
-  });
+  bots.sort((a, b) => a.state.priority.compareTo(b.state.priority));
 
   final approvals = <WidgetApproval>[];
   for (final view in rooms) {
-    for (final a in view.driverStatus?.approvals ?? const <RoomApprovalAction>[]) {
-      final who = memberName(view.room, a.memberId);
+    for (final a
+        in view.driverStatus?.approvals ?? const <RoomApprovalAction>[]) {
+      final who = memberName(view.room, a.memberId, nameFor: rosterName);
       approvals.add(
         WidgetApproval(
           requestId: a.requestId,
@@ -167,8 +208,11 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
           text: hideSensitive
               ? t.approvalNeedsOk(null, null)
               : t.approvalNeedsOk(a.command, a.description),
-          facePath: facePaths['${memberProfile(view.room, a.memberId)}/needsYou'],
+          facePath:
+              facePaths['${memberProfile(view.room, a.memberId)}/needsYou'],
           canApprove: writable && a.offers('once') && a.offers('deny'),
+          // Room + member + request identity: a widget/notification button
+          // can only ever answer THIS room's request.
           actionPayload: NotificationActionPayload(
             route: NotificationActionRoute.room,
             connId: connection.id,
@@ -185,58 +229,74 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
     }
   }
 
-  WidgetRoom? room;
   final chosen = [...rooms]
     ..sort((a, b) {
       int score(RoomWatchView v) =>
+          (v.driverStatus?.approvals.isNotEmpty == true ? 4 : 0) +
           (v.driverStatus?.working == true ? 2 : 0) +
           (v.driverStatus?.needsUser == true ? 1 : 0);
       final s = score(b).compareTo(score(a));
       return s != 0 ? s : b.room.latestSeq.compareTo(a.room.latestSeq);
     });
-  if (chosen.isNotEmpty) {
-    final v = chosen.first;
-    final status = v.driverStatus;
-    final approvalsBy = {
-      for (final a in status?.approvals ?? const <RoomApprovalAction>[])
-        a.memberId,
-    };
-    room = WidgetRoom(
-      roomId: v.room.roomId,
-      name: v.room.name,
-      working: status?.working == true,
-      members: [
-        for (final m in v.room.members)
-          WidgetRoomMember(
-            m.displayName?.trim().isNotEmpty == true
-                ? m.displayName!.trim()
-                : m.handle,
-            approvalsBy.contains(m.memberId)
-                ? 'needs_you'
-                : v.state.openMembers.contains(m.memberId)
-                ? (status?.working == true ? 'working' : 'queued')
-                : v.state.repliers.contains(m.memberId)
-                ? 'done'
-                : 'idle',
-            facePath: facePaths['${m.owner.profile}/idle'],
-          ),
-      ],
-      lastSpeaker: hideSensitive || v.lastMemberId == null
-          ? null
-          : memberName(v.room, v.lastMemberId!),
-      lastMessage: hideSensitive || v.lastText == null
-          ? null
-          : plainNotificationText(v.lastText, max: 120),
-      openPayload: _roomOpen(connection.id, v.room).toPayload(),
-      stopPayload: writable && status?.working == true
-          ? NotificationActionPayload(
-              route: NotificationActionRoute.room,
-              connId: connection.id,
-              roomId: v.room.roomId,
-            ).encode()
-          : null,
-    );
-  }
+  final widgetRooms = <WidgetRoom>[
+    for (final v in chosen.take(4))
+      () {
+        final status = v.driverStatus;
+        final approvalsBy = {
+          for (final a in status?.approvals ?? const <RoomApprovalAction>[])
+            a.memberId,
+        };
+        final members = [
+          for (final m in v.room.members)
+            WidgetRoomMember(
+              memberName(v.room, m.memberId, nameFor: rosterName),
+              approvalsBy.contains(m.memberId)
+                  ? 'needs_you'
+                  : v.state.openMembers.contains(m.memberId)
+                  ? (status?.working == true ? 'working' : 'queued')
+                  : v.state.repliers.contains(m.memberId)
+                  ? 'done'
+                  : 'idle',
+              profile: m.owner.profile,
+            ),
+        ];
+        final phase = approvalsBy.isNotEmpty
+            ? 'needs_you'
+            : status?.working == true ||
+                  (status?.running == true && v.state.openMembers.isNotEmpty)
+            ? 'working'
+            : 'idle';
+        return WidgetRoom(
+          roomId: v.room.roomId,
+          name: v.room.name,
+          working: status?.working == true,
+          members: [
+            for (final m in members)
+              m.withFace(
+                m.profile == null
+                    ? null
+                    : facePaths['${m.profile}/${m.faceState}'],
+              ),
+          ],
+          phase: phase,
+          steps: roomRoundSteps(members, t),
+          lastSpeaker: hideSensitive || v.lastMemberId == null
+              ? null
+              : memberName(v.room, v.lastMemberId!, nameFor: rosterName),
+          lastMessage: hideSensitive || v.lastText == null
+              ? null
+              : plainNotificationText(v.lastText, max: 120),
+          openPayload: _roomOpen(connection.id, v.room).toPayload(),
+          stopPayload: writable && status?.working == true
+              ? NotificationActionPayload(
+                  route: NotificationActionRoute.room,
+                  connId: connection.id,
+                  roomId: v.room.roomId,
+                ).encode()
+              : null,
+        );
+      }(),
+  ];
 
   return BotModeWidgetSnapshot(
     connectionId: connection.id,
@@ -244,9 +304,73 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
     connected: connected,
     bots: bots,
     approvals: approvals,
-    room: room,
+    rooms: widgetRooms,
     updatedAtMs: now.millisecondsSinceEpoch,
   );
+}
+
+/// Public display step for a working Bot: its fresh worker-session title,
+/// else the title of its live session. Titles are public display metadata
+/// (the session list shows them); previews, tool names/arguments and paths
+/// never are. Null when hidden or unknown.
+String? botPublicStep({
+  required AgentProfile profile,
+  required List<DesktopActiveSession> liveSessions,
+  required DateTime now,
+  bool hideSensitive = false,
+}) {
+  if (hideSensitive) return null;
+  final worker = profile.workerSession;
+  if (worker != null && BotPresence.workerIsFresh(worker, now)) {
+    final title = plainNotificationText(worker.title, max: 60);
+    if (title.isNotEmpty) return title;
+  }
+  final own = {
+    for (final s in [
+      profile.canonicalSession,
+      profile.lastSession,
+      profile.preferredSession,
+    ])
+      if (s != null) ...[s.id, ?s.resolvedId],
+  };
+  for (final live in liveSessions) {
+    if (live.status != 'working' && live.status != 'starting') continue;
+    if (live.storedSessionId == null || !own.contains(live.storedSessionId)) {
+      continue;
+    }
+    final title = plainNotificationText(live.title, max: 60);
+    if (title.isNotEmpty) return title;
+  }
+  return null;
+}
+
+/// Round ticker for a room: replied members first (in reply order), then
+/// working, then waiting on you; last three.
+List<String> roomRoundSteps(List<WidgetRoomMember> members, NotifL10n t) {
+  final steps = <String>[
+    for (final m in members)
+      if (m.state == 'done') t.stepReplied(m.name),
+    for (final m in members)
+      if (m.state == 'working' || m.state == 'queued') t.stepWorking(m.name),
+    for (final m in members)
+      if (m.state == 'needs_you') t.needsYou(m.name),
+  ];
+  return steps.length > 3 ? steps.sublist(steps.length - 3) : steps;
+}
+
+String? _publicRole(AgentProfile p) {
+  final title = p.mentionTitle.trim();
+  if (title.isEmpty) return null;
+  final plain = plainNotificationText(title, max: 40);
+  return plain.isEmpty ? null : plain;
+}
+
+int? _identityColor(AgentProfile p) {
+  final hex = p.botColorHex;
+  if (hex != null) return 0xFF000000 | int.parse(hex.substring(1), radix: 16);
+  final visual = BotFaceBitmapCache.visualFor(p.name, p.botFaceShape);
+  if (visual is HermesBlobatarFaceVisual) return visual.headColor.toARGB32();
+  return null;
 }
 
 NotificationOpen _roomOpen(String connId, HostedGroupRoom room) =>
@@ -323,6 +447,15 @@ class BotModeTickPolicy {
     _nextNetworkAt = null;
     _emptyStreak = 0;
     _cadence = BotModeCadence.idle;
+  }
+
+  /// A round was just started from this device: read rooms on the next
+  /// tick (drop any empty-list backoff) and ask for the fast cadence until
+  /// a pass says otherwise.
+  void kick() {
+    _nextNetworkAt = null;
+    _emptyStreak = 0;
+    _cadence = BotModeCadence.active;
   }
 }
 
@@ -401,6 +534,9 @@ class BotModeBackgroundMonitor {
 
   BotModeCadence get cadence => _policy.cadence;
 
+  /// The UI just sent a message to a room (see [BotModeTickPolicy.kick]).
+  void expectActivity() => _policy.kick();
+
   /// The listener executes every route: room / run / Bot Chat through the
   /// same server calls as the app, and live chat approvals by durable
   /// identity (`approval.respond` + `request_id`) when the UI is gone.
@@ -435,15 +571,39 @@ class BotModeBackgroundMonitor {
       drainer.router.t = NotifL10n.of(prefs);
       await drainer.drain();
     } catch (error) {
-      if (kDebugMode) debugPrint('[hermes-rooms] actions (${error.runtimeType})');
+      if (kDebugMode) {
+        debugPrint('[hermes-rooms] actions (${error.runtimeType})');
+      }
     }
   }
 
-  Future<String?> _shape(String connId, String profile) async {
+  /// Configured face of [profile] (shared resolver); null when unknown.
+  BotFaceIdentity? _identity(String connId, String profile) {
     for (final p in _profiles) {
-      if (p.name == profile) return p.botShape;
+      if (p.name == profile) return BotFaceIdentity.ofProfile(p);
     }
     return null;
+  }
+
+  /// Roster display name of [profile] (room members without a room name).
+  String? _displayName(String profile) {
+    for (final p in _profiles) {
+      if (p.name == profile) {
+        final name = p.displayName.trim();
+        return name.isEmpty ? null : name;
+      }
+    }
+    return null;
+  }
+
+  /// Raster avatar of an avatar identity, loaded through the current
+  /// gateway lease and memoised per roster refresh.
+  Future<Uint8List?> Function(String profile)? _avatarLoader;
+
+  Future<Uint8List?> _image(String connId, String profile) async {
+    final load = _avatarLoader;
+    if (load == null) return _avatars[profile];
+    return _avatarBytes(profile, load);
   }
 
   /// One pass. Returns true when Bot Mode needs the fast (30 s) cadence.
@@ -469,7 +629,9 @@ class BotModeBackgroundMonitor {
       sink: _sink,
       prefs: prefs,
       faces: _faces,
-      shapeFor: _shape,
+      identityFor: _identity,
+      imageFor: _image,
+      nameFor: _displayName,
       now: _now,
       readOnly: connection.readOnly,
     );
@@ -493,6 +655,8 @@ class BotModeBackgroundMonitor {
     // One pooled socket held across passes (rooms, profiles, live list,
     // widgets): no handshake per tick.
     final lease = _leaseFor(connection);
+    _avatarLoader = (profile) async =>
+        (await lease.client.profileAvatar(profile))?.bytes;
     {
       final gateway = _gatewayFor(lease.client);
       await _refreshProfiles(gateway);
@@ -519,7 +683,13 @@ class BotModeBackgroundMonitor {
           (v) => v.driverStatus?.approvals.isNotEmpty == true,
         ),
       );
-      await _publishWidgets(prefs, connection, gateway, connected: ok);
+      await _publishWidgets(
+        prefs,
+        connection,
+        gateway,
+        connected: ok,
+        avatar: _avatarLoader,
+      );
     }
     return _policy.cadence == BotModeCadence.active;
   }
@@ -536,6 +706,8 @@ class BotModeBackgroundMonitor {
     try {
       _profiles = await gateway.listProfiles();
       _profilesAt = _now();
+      // Avatars may have changed with the roster.
+      _avatars.clear();
     } catch (_) {}
   }
 
@@ -544,6 +716,7 @@ class BotModeBackgroundMonitor {
     SavedConnection connection,
     BotModeGateway gateway, {
     required bool connected,
+    Future<Uint8List?> Function(String profile)? avatar,
   }) async {
     try {
       var live = const <DesktopActiveSession>[];
@@ -553,48 +726,84 @@ class BotModeBackgroundMonitor {
         } catch (_) {}
       }
       final rooms = _watcher?.views ?? const <RoomWatchView>[];
-      final faces = <String, String?>{};
-      Future<void> face(String? profile, BotFaceBitmapState state) async {
-        if (profile == null) return;
-        final key = '$profile/${state.name}';
-        if (faces.containsKey(key)) return;
-        faces[key] = await _faces.pathFor(
-          profile: profile,
-          shape: await _shape(connection.id, profile),
-          state: state,
-        );
-      }
-
-      for (final p in _profiles.take(16)) {
-        for (final s in BotFaceBitmapState.values) {
-          if (s != BotFaceBitmapState.failed) await face(p.name, s);
-        }
-      }
-      for (final v in rooms) {
-        for (final m in v.room.members.take(6)) {
-          await face(m.owner.profile, BotFaceBitmapState.idle);
-          await face(m.owner.profile, BotFaceBitmapState.needsYou);
-        }
-      }
-      final snapshot = buildBotModeWidgetSnapshot(
+      final hideSensitive =
+          prefs.getBool('notif_hide_sensitive_content') ?? false;
+      final t = NotifL10n.of(prefs);
+      final now = _now();
+      final built = buildBotModeWidgetSnapshot(
         connection: connection,
         connected: connected,
-        profiles: _profiles,
+        profiles: _profiles.take(16).toList(),
         liveSessions: live,
         rooms: rooms,
-        facePaths: faces,
-        t: NotifL10n.of(prefs),
-        now: _now(),
-        hideSensitive: prefs.getBool('notif_hide_sensitive_content') ?? false,
+        facePaths: const {},
+        t: t,
+        now: now,
+        hideSensitive: hideSensitive,
       );
-      await _publish(snapshot);
+      final tracked =
+          await (_activity ??= BotWidgetActivityTracker(
+            PrefsBotWidgetActivityStore(prefs),
+          )).apply(
+            built,
+            now: now,
+            roomFailed: {
+              for (final v in rooms)
+                if (v.driverStatus?.blocked == true) v.room.roomId,
+            },
+          );
+      // Expression frames rotate on every published update (widgets cannot
+      // animate); content-addressed files keep this bounded.
+      final frame = now.millisecondsSinceEpoch ~/ 30000;
+      final faces = <String, String?>{};
+      for (final key in tracked.faceKeys) {
+        final slash = key.lastIndexOf('/');
+        final profile = key.substring(0, slash);
+        final state =
+            BotFaceBitmapState.values.asNameMap()[key.substring(slash + 1)] ??
+            BotFaceBitmapState.idle;
+        final identity =
+            _identity(connection.id, profile) ??
+            BotFaceIdentity.resolve(profile: profile);
+        final photo = identity.source == BotFaceSource.avatar && avatar != null
+            ? await _avatarBytes(profile, avatar)
+            : null;
+        faces[key] = await _faces.pathFor(
+          profile: profile,
+          identity: identity,
+          state: state,
+          size: 192,
+          frame: frame,
+          plate: false,
+          image: photo,
+        );
+      }
+      await _publish(tracked.withFaces(faces));
     } catch (error) {
-      if (kDebugMode) debugPrint('[hermes-widgets] publish (${error.runtimeType})');
+      if (kDebugMode) {
+        debugPrint('[hermes-widgets] publish (${error.runtimeType})');
+      }
+    }
+  }
+
+  BotWidgetActivityTracker? _activity;
+  final Map<String, Uint8List?> _avatars = {};
+
+  Future<Uint8List?> _avatarBytes(
+    String profile,
+    Future<Uint8List?> Function(String profile) load,
+  ) async {
+    if (_avatars.containsKey(profile)) return _avatars[profile];
+    try {
+      return _avatars[profile] = await load(profile);
+    } catch (_) {
+      return _avatars[profile] = null;
     }
   }
 
   Future<void> _dropWatcher() async {
     _releaseLease();
+    _avatarLoader = null;
     try {
       await _presenter?.cancelAllLive();
     } catch (_) {}
@@ -613,13 +822,12 @@ String? _lastPublished;
 int _lastPublishedAtMs = 0;
 
 /// Writes the snapshot atomically and asks the Bot Mode widgets to redraw.
-Future<void> publishBotModeWidgetSnapshot(BotModeWidgetSnapshot snapshot) async {
+Future<void> publishBotModeWidgetSnapshot(
+  BotModeWidgetSnapshot snapshot,
+) async {
   final encoded = snapshot.encode();
   // `updated_at_ms` changes every tick; compare without it to avoid redraws.
-  final comparable = encoded.replaceFirst(
-    RegExp(r'"updated_at_ms":\d+'),
-    '',
-  );
+  final comparable = encoded.replaceFirst(RegExp(r'"updated_at_ms":\d+'), '');
   // Identical content is skipped, but refreshed every 5 min so the widget's
   // staleness guard keeps seeing a live listener.
   if (comparable == _lastPublished &&

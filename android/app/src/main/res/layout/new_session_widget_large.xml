@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static selector preview for the Glance widget. Runtime UI lives in Kotlin. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/new_session_widget_background"
+    android:gravity="center_vertical"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:orientation="vertical"
+    android:padding="14dp"
+    android:theme="@style/NewSessionWidgetTheme">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="sans-serif-medium"
+            android:includeFontPadding="false"
+            android:text="@string/hermes_widget_brand"
+            android:textColor="@color/new_session_widget_on_background"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:drawablePadding="5dp"
+            android:fontFamily="sans-serif-medium"
+            android:includeFontPadding="false"
+            android:text="@string/hermes_widget_online"
+            android:textColor="@color/new_session_widget_accent"
+            android:textSize="9sp" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:ellipsize="end"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="Hermes Demo · GPT-5.5"
+        android:textColor="@color/new_session_widget_secondary"
+        android:textSize="10.5sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="7dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:text="@string/hermes_widget_context"
+            android:textColor="@color/new_session_widget_secondary"
+            android:textSize="9.5sp" />
+
+        <ProgressBar
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="0dp"
+            android:layout_height="5dp"
+            android:layout_marginStart="7dp"
+            android:layout_marginEnd="7dp"
+            android:layout_weight="1"
+            android:max="100"
+            android:progress="72"
+            android:progressTint="@color/new_session_widget_accent"
+            android:progressBackgroundTint="@color/new_session_widget_outline" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:includeFontPadding="false"
+            android:text="72%"
+            android:textColor="@color/new_session_widget_on_background"
+            android:textSize="9.5sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/new_session_widget_control_background"
+            android:gravity="center"
+            android:text="@string/hermes_widget_new_short"
+            android:textColor="@color/new_session_widget_on_background"
+            android:textSize="9sp" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="7dp"
+            android:layout_weight="1"
+            android:background="@drawable/new_session_widget_control_background"
+            android:gravity="center"
+            android:text="@string/hermes_widget_voice"
+            android:textColor="@color/new_session_widget_on_background"
+            android:textSize="9sp" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="7dp"
+            android:layout_weight="1"
+            android:background="@drawable/new_session_widget_control_background"
+            android:gravity="center"
+            android:text="@string/hermes_widget_open"
+            android:textColor="@color/new_session_widget_on_background"
+            android:textSize="9sp" />
+    </LinearLayout>
+</LinearLayout>
