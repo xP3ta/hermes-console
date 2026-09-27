@@ -247,6 +247,13 @@ class CronRepository {
     return CronJob.fromJson(data);
   }
 
+  /// Runs job [id] now (notification "Retry"); same endpoint as [trigger].
+  Future<void> triggerById(String id) async {
+    await client.apiPost(
+      'cron/jobs/${Uri.encodeComponent(id)}/trigger${_query()}',
+    );
+  }
+
   Future<CronJob> trigger(CronJob job) async {
     final data = await client.apiPost(
       'cron/jobs/${Uri.encodeComponent(job.id)}/trigger${_query()}',

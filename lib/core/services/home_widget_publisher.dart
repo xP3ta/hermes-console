@@ -70,8 +70,12 @@ class PluginHomeWidgetStore implements HomeWidgetStore {
     'com.hermesagent.hermes_android.NewSessionWidgetProvider',
     'com.hermesagent.hermes_android.HermesCompactWidgetProvider',
     'com.hermesagent.hermes_android.HermesControlWidgetProvider',
+    // Bot Mode widgets also read this snapshot (connection label/state).
+    'com.hermesagent.hermes_android.HermesBotsWidgetProvider',
     'com.hermesagent.hermes_android.HermesNeedsYouWidgetProvider',
     'com.hermesagent.hermes_android.HermesRoomWidgetProvider',
+    'com.hermesagent.hermes_android.HermesQuickAskWidgetProvider',
+    'com.hermesagent.hermes_android.HermesStatusWidgetProvider',
   ];
 
   @override
@@ -98,7 +102,11 @@ class PluginHomeWidgetStore implements HomeWidgetStore {
   @override
   Future<void> requestUpdate() async {
     for (final provider in _androidProviders) {
-      await HomeWidget.updateWidget(qualifiedAndroidName: provider);
+      // Bot Mode receivers are disabled in release builds; a failed update of
+      // one provider must never block the others.
+      try {
+        await HomeWidget.updateWidget(qualifiedAndroidName: provider);
+      } catch (_) {}
     }
   }
 }

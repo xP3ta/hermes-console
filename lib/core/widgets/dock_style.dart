@@ -22,10 +22,6 @@ const Map<DockItemId, DockItemVisual> _dockItemVisuals = {
     icon: Icons.smart_toy_outlined,
     selectedIcon: Icons.smart_toy_rounded,
   ),
-  DockItemId.work: DockItemVisual(
-    icon: Icons.work_outline_rounded,
-    selectedIcon: Icons.work_rounded,
-  ),
   DockItemId.create: DockItemVisual(icon: Icons.add_rounded),
   DockItemId.home: DockItemVisual(
     icon: Icons.home_outlined,
@@ -72,7 +68,6 @@ bool dockShowsBack(BuildContext context) =>
 
 String dockItemLabel(Strings strings, DockItemId id) => switch (id) {
   DockItemId.bots => strings.missionBotsLabel,
-  DockItemId.work => strings.missionWorkLabel,
   DockItemId.create => strings.missionCreateLabel,
   DockItemId.home => strings.dockHomeLabel,
   DockItemId.settings => strings.dockSettingsLabel,

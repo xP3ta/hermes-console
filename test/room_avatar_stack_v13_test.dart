@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/bot_mode_v13.dart';
-import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -49,45 +48,6 @@ void main() {
       expect(publicKeys, isNot(contains('source-secret')));
       expect(publicKeys, isNot(contains('alpha')));
       expect(find.byType(RoomAvatarStack), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'work row render visibility and tap retain one destination instance',
-    (tester) async {
-      const destination = TaskDestination(
-        connectionId: 'owner-a',
-        boardId: 'board-a',
-        taskId: 'task-a',
-        mode: WorkRouteMode.read,
-      );
-      const item = WorkItem.task(
-        stableKey: 'private-key',
-        title: 'Review release',
-        decisionCopy: 'Ready',
-        attention: WorkAttention.ready,
-        taskRef: BoardTaskRef(boardId: 'board-a', taskId: 'task-a'),
-        destination: destination,
-      );
-      WorkDestination? tapped;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: MissionWorkItemAction(
-              item: item,
-              icon: Icons.work_outline,
-              color: Colors.blue,
-              onDestination: (value) => tapped = value,
-            ),
-          ),
-        ),
-      );
-      final row = tester.widget<MissionWorkItemAction>(
-        find.byType(MissionWorkItemAction),
-      );
-      expect(row.item.destination, same(destination));
-      await tester.tap(find.byType(MissionWorkItemAction));
-      expect(tapped, same(destination));
     },
   );
 

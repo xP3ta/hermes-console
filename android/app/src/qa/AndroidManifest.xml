@@ -2,5 +2,34 @@
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:label="Hermes Console QA"
-        tools:replace="android:label" />
+        tools:replace="android:label">
+        <!-- QA-only: renders the real Bot Mode widgets with sample data to PNG. -->
+        <activity
+            android:name="com.hermesagent.hermes_android.WidgetGalleryActivity"
+            android:exported="true"
+            android:label="Widget gallery"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
+        <!-- QA-only: the Bot Mode widgets are disabled in release builds
+             (src/main) until their 1.2.15 redesign; QA keeps them placeable. -->
+        <receiver
+            android:name="com.hermesagent.hermes_android.HermesBotsWidgetProvider"
+            android:enabled="true"
+            tools:replace="android:enabled" />
+        <receiver
+            android:name="com.hermesagent.hermes_android.HermesNeedsYouWidgetProvider"
+            android:enabled="true"
+            tools:replace="android:enabled" />
+        <receiver
+            android:name="com.hermesagent.hermes_android.HermesRoomWidgetProvider"
+            android:enabled="true"
+            tools:replace="android:enabled" />
+        <receiver
+            android:name="com.hermesagent.hermes_android.HermesQuickAskWidgetProvider"
+            android:enabled="true"
+            tools:replace="android:enabled" />
+        <receiver
+            android:name="com.hermesagent.hermes_android.HermesStatusWidgetProvider"
+            android:enabled="true"
+            tools:replace="android:enabled" />
+    </application>
 </manifest>

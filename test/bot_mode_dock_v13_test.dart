@@ -40,10 +40,6 @@ Widget _host({
           onTap: () => onDestination(0),
           selected: selectedIndex == 0,
         ),
-        DockItemId.work: DockItemAction(
-          onTap: () => onDestination(1),
-          selected: selectedIndex == 1,
-        ),
         DockItemId.create: const DockItemAction(),
       },
       createOrbits: [
@@ -82,7 +78,7 @@ void main() {
         final dock = find.byKey(const ValueKey('bot-mode-floating-dock'));
         expect(tester.getSize(dock).height, 48);
         expect(tester.getSize(dock).width, lessThanOrEqualTo(size.width - 32));
-        for (final key in const ['bots', 'create', 'work']) {
+        for (final key in const ['home', 'bots', 'create']) {
           final target = find.byKey(ValueKey('bot-mode-dock-$key'));
           expect(tester.getSize(target).width, greaterThanOrEqualTo(48));
           expect(tester.getSize(target).height, greaterThanOrEqualTo(48));
@@ -138,7 +134,9 @@ void main() {
   testWidgets('outside tap, Back, destination and lifecycle close actions', (
     tester,
   ) async {
-    var destination = 0;
+    // Bots is the only destination left in this dock: start "elsewhere"
+    // (index 1) so the tap on Bots is observable.
+    var destination = 1;
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -169,9 +167,9 @@ void main() {
     expect(find.byKey(const ValueKey('bot-mode-create-actions')), findsNothing);
 
     await open();
-    await tester.tap(find.byKey(const ValueKey('bot-mode-dock-work')));
+    await tester.tap(find.byKey(const ValueKey('bot-mode-dock-bots')));
     await tester.pumpAndSettle();
-    expect(destination, 1);
+    expect(destination, 0);
     expect(find.byKey(const ValueKey('bot-mode-create-actions')), findsNothing);
 
     await open();

@@ -5,6 +5,7 @@ import '../../../../l10n/app_localizations.dart';
 import '../../../design/content.dart' show HermesStatusText;
 import '../../../theme/app_theme.dart';
 import '../../../widgets/mission_profile_avatar.dart';
+import '../../../widgets/room_mirror_avatar.dart';
 import '../room_avatar_tile.dart';
 import 'living_bot_face.dart';
 import 'roster_model.dart';
@@ -327,6 +328,7 @@ class RosterRoomRow extends StatelessWidget {
   final RoomRosterEntry entry;
   final MissionProfileAvatarCache? avatarCache;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final DateTime? now;
 
   const RosterRoomRow({
@@ -334,8 +336,17 @@ class RosterRoomRow extends StatelessWidget {
     required this.entry,
     required this.avatarCache,
     required this.onTap,
+    this.onLongPress,
     this.now,
   });
+
+  Widget _tile() => RoomAvatarTile(
+    members: [
+      for (final m in entry.members) RoomAvatarTileMember(m.handle, m.profile),
+    ],
+    avatarCache: avatarCache,
+    size: 48,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -356,19 +367,19 @@ class RosterRoomRow extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             children: [
-              RoomAvatarTile(
-                members: [
-                  for (final m in entry.members)
-                    RoomAvatarTileMember(m.handle, m.profile),
-                ],
-                avatarCache: avatarCache,
-                size: 48,
-              ),
+              if (entry.image case final image?)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: RoomMirrorAvatar(image: image, fallback: _tile()),
+                )
+              else
+                _tile(),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(

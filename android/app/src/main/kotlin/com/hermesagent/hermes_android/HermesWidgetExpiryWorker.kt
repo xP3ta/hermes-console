@@ -26,8 +26,10 @@ internal class HermesWidgetExpiryWorker(
         val data = HomeWidgetPlugin.getData(applicationContext)
         val now = System.currentTimeMillis()
         val legacyStale = HermesWidgetState.from(data).isStale(now)
-        val botModeStale = BotModeWidgetState.from(data).isStale(now)
-        if (!legacyStale && !botModeStale) return Result.success()
+        val botMode = BotModeWidgetState.from(data)
+        // Stale snapshot, or a done/failed outcome whose window ended.
+        val botModeDue = botMode.isStale(now) || botMode.hasExpiredOutcome(now)
+        if (!legacyStale && !botModeDue) return Result.success()
         requestWidgetUpdates(applicationContext)
         return Result.success()
     }
@@ -54,9 +56,17 @@ internal object HermesWidgetExpiryScheduler {
     }
 }
 
+/** Original Hermes Console widgets (1.2.13 receivers, HermesConsoleGlanceWidget). */
+internal fun originalWidgetReceivers(): List<Class<*>> =
+    listOf(
+        NewSessionWidgetProvider::class.java,
+        HermesCompactWidgetProvider::class.java,
+        HermesControlWidgetProvider::class.java,
+    )
+
 private fun requestWidgetUpdates(context: Context) {
-    // NewSessionWidgetProvider, HermesCompactWidgetProvider and
-    // HermesControlWidgetProvider are part of this list (legacy names).
+    // Both families: the original widgets and the Bot Mode widgets.
+    for (receiver in originalWidgetReceivers()) updateReceiver(context, receiver)
     for (receiver in botModeWidgetReceivers()) updateReceiver(context, receiver)
 }
 

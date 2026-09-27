@@ -8,14 +8,14 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 void main() {
   for (final entry in const {
     'en': [
-      'Work',
+      'Bots',
       'Create',
       'New bot',
       'New room',
       '1 member, incomplete team',
     ],
     'es': [
-      'Trabajo',
+      'Bots',
       'Crear',
       'Nuevo bot',
       'Nueva sala',
@@ -50,9 +50,6 @@ void main() {
                           selected: true,
                           semanticsKey: ValueKey('mission-destination-bots'),
                         ),
-                        DockItemId.work: DockItemAction(
-                          semanticsKey: ValueKey('mission-destination-work'),
-                        ),
                         DockItemId.create: DockItemAction(),
                       },
                       createOrbits: [
@@ -84,7 +81,7 @@ void main() {
         expect(
           tester
               .getSemantics(
-                find.byKey(const ValueKey('mission-destination-work')),
+                find.byKey(const ValueKey('mission-destination-bots')),
               )
               .label,
           entry.value[0],

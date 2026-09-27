@@ -2,6 +2,7 @@ import '../../../models/agent_profile.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../models/mission_control.dart';
 import '../../../models/room_member_status.dart';
+import '../../../models/room_mirror.dart';
 import '../../../utils/markdown_clipboard.dart';
 import '../../data/desktop_projection_rooms.dart';
 import '../../state/attention.dart';
@@ -160,6 +161,9 @@ final class RoomRosterEntry extends RosterEntry {
   final ProjectionRoom? projection;
   final bool working;
 
+  /// Desktop's mirrored room picture (`ui_meta` room mirror), when set.
+  final AgentProfileAvatar? image;
+
   const RoomRosterEntry({
     required this.roomKey,
     required this.title,
@@ -172,6 +176,7 @@ final class RoomRosterEntry extends RosterEntry {
     this.hostedRoomId,
     this.projection,
     this.working = false,
+    this.image,
   });
 
   bool get desktopOnly => hostedRoomId == null;
@@ -198,10 +203,12 @@ final class RoomRosterEntry extends RosterEntry {
     required AttentionSummary attention,
     DesktopProjectionRooms projection = DesktopProjectionRooms.empty,
     Map<String, AgentProfile> localProfiles = const {},
+    RoomMirrorIdentity? Function(HostedGroupRoom room)? identityFor,
   }) {
     final entries = <RoomRosterEntry>[];
     for (final room in hosted.rooms) {
       if (room.disbanded) continue;
+      final identity = identityFor?.call(room);
       HostedGroupEvent? last;
       for (final log in hosted.logs) {
         for (final event in log.events) {
@@ -237,7 +244,8 @@ final class RoomRosterEntry extends RosterEntry {
         RoomRosterEntry(
           roomKey: 'hosted:${room.roomId}',
           hostedRoomId: room.roomId,
-          title: room.name,
+          title: identity?.name ?? room.name,
+          image: identity?.image,
           members: [
             for (final member in room.members)
               RoomRosterMember(

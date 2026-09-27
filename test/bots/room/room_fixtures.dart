@@ -167,10 +167,31 @@ final class EventSeq {
       'reason_code': 'provider_timeout',
     },
   );
+
+  /// Gateway round verdict (`room.activity`, status settled|bounded).
+  Map<String, dynamic> activity(
+    String discussion, {
+    String status = 'settled',
+    String reason = 'silent_round',
+    String thread = 'thread-1',
+  }) => _event(
+    'room.activity',
+    {'kind': 'gateway', 'id': gatewayId},
+    {
+      'status': status,
+      'reason_code': reason,
+      'thread_id': thread,
+      'discussion_event_id': discussion,
+    },
+    id: 'dactivity:$discussion:$reason',
+  );
 }
 
-HostedGroupLogPage buildLog(List<Map<String, dynamic>> events) {
-  final latest = events.isEmpty ? 0 : events.last['seq'] as int;
+HostedGroupLogPage buildLog(
+  List<Map<String, dynamic>> events, {
+  int sinceSeq = 0,
+}) {
+  final latest = events.isEmpty ? sinceSeq : events.last['seq'] as int;
   return HostedGroupLogPage.fromJson(
     {
       'events': events,
@@ -180,7 +201,7 @@ HostedGroupLogPage buildLog(List<Map<String, dynamic>> events) {
       'authority': {'gateway_id': gatewayId, 'epoch': 2},
     },
     expectedRoomId: roomId,
-    sinceSeq: 0,
+    sinceSeq: sinceSeq,
   );
 }
 

@@ -14,6 +14,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../utils/markdown_clipboard.dart';
+import '../../widgets/bot_face_identity.dart';
 import '../bot_mention_roster.dart';
 import 'bot_face_bitmap.dart';
 import 'bot_notification_presenter.dart';
@@ -207,6 +208,8 @@ class DurableDiscoveryNotification {
     this.requestId,
     this.subText,
     this.payload,
+    this.botRoutine,
+    this.rich,
   });
 
   final NotificationEventIdentity identity;
@@ -221,6 +224,83 @@ class DurableDiscoveryNotification {
   final String? requestId;
   final String? subText;
   final String? payload;
+
+  /// Set when a Bot owns the job (`[bot:x]` routine): the result is shown
+  /// as a message from that Bot in its conversation.
+  final BotRoutineDisplay? botRoutine;
+
+  /// Rich card for this event (neutral glyph or owner face).
+  final RichCardSpec? rich;
+}
+
+/// How a Hermes event is drawn as a rich conversation card (spec 070): one
+/// plain line, the face of [faceProfile] (resolved through the shared
+/// identity resolver) or the neutral ">_" glyph, the state accent/badge and
+/// verbs. Every system notification of the app carries one.
+class RichCardSpec {
+  const RichCardSpec({
+    required this.line,
+    this.state = BotFaceBitmapState.idle,
+    this.faceProfile,
+    this.openLabel,
+    this.retryJobId,
+    this.retryProfile,
+    this.reasonLabel,
+    this.conversationTitle,
+    this.senderLabel,
+    this.conversationKey,
+  });
+
+  final String line;
+
+  /// Task/job name shown as the card's conversation title (Kanban, Cron).
+  final String? conversationTitle;
+
+  /// Sender name when no Bot owns the event ("Tareas", "Tareas
+  /// programadas"); falls back to the brand.
+  final String? senderLabel;
+
+  /// Stable per-task/job conversation (one shortcut per task or job).
+  final String? conversationKey;
+  final BotFaceBitmapState state;
+
+  /// Bot/profile whose face represents the event; null = neutral glyph.
+  final String? faceProfile;
+
+  /// Label of the open action ("Ver resultado", "Abrir tarea"…).
+  final String? openLabel;
+
+  /// Failed scheduled job: "Reintentar" triggers it again.
+  final String? retryJobId;
+  final String? retryProfile;
+
+  /// Second open action on failures ("Ver motivo").
+  final String? reasonLabel;
+
+  int get accent => switch (state) {
+    BotFaceBitmapState.done => RichAccent.done,
+    BotFaceBitmapState.failed => RichAccent.failed,
+    BotFaceBitmapState.needsYou => RichAccent.needsYou,
+    BotFaceBitmapState.working => RichAccent.working,
+    BotFaceBitmapState.idle => RichAccent.brand,
+  };
+}
+
+/// A scheduled routine result owned by a Bot (spec 070 § Notifications).
+class BotRoutineDisplay {
+  const BotRoutineDisplay({
+    required this.profile,
+    required this.routineTitle,
+    required this.ok,
+    this.summary = '',
+  });
+
+  final String profile;
+  final String routineTitle;
+  final bool ok;
+
+  /// Public preview of the result (already public display text).
+  final String summary;
 }
 
 enum _ShowOutcome {
@@ -393,12 +473,17 @@ class NotificationService
   BotChatRichNotifications _newBotChatRich() => BotChatRichNotifications(
     sink: _rich,
     faces: _faces,
-    shapeFor: (connId, profile) =>
-        BotMentionRoster.shared.profileFor(connId, profile)?.botShape,
+    identityFor: (connId, profile) {
+      final loaded = BotMentionRoster.shared.profileFor(connId, profile);
+      return loaded == null ? null : BotFaceIdentity.ofProfile(loaded);
+    },
   );
 
   @visibleForTesting
-  void setRichForTesting(RichNotificationSink sink, {BotFaceBitmapCache? faces}) {
+  void setRichForTesting(
+    RichNotificationSink sink, {
+    BotFaceBitmapCache? faces,
+  }) {
     _rich = sink;
     if (faces != null) _faces = faces;
     _botChatRich = _newBotChatRich();
@@ -475,6 +560,12 @@ class NotificationService
           targetSessionId: event.sessionId,
           subText: event.subText,
           payload: event.payload,
+          botRoutine: event.botRoutine,
+          rich: event.rich,
+          neutralAvatar:
+              event.botRoutine == null &&
+              (event.destinationKind == 'cron_terminal' ||
+                  event.destinationKind == 'kanban_transition'),
         );
     for (final event in events) {
       displayKeys.add(event.identity.eventKey);
@@ -1296,7 +1387,11 @@ class NotificationService
           generation: 1,
           initialized: true,
           events: <DeliveryEventSpec>[
-            DeliveryEventSpec(identity: identity, destinationKind: 'goal_transition', sessionId: session),
+            DeliveryEventSpec(
+              identity: identity,
+              destinationKind: 'goal_transition',
+              sessionId: session,
+            ),
           ],
         ),
       ]);
@@ -1349,6 +1444,15 @@ class NotificationService
         sessionId,
         title,
         profile: normalizedProfile,
+        jobId: sessionId.isEmpty ? jobId : null,
+      ),
+      neutralAvatar: true,
+      rich: cronRichSpec(
+        t: t,
+        title: title,
+        ok: ok,
+        jobId: jobId,
+        profile: normalizedProfile,
       ),
     );
     try {
@@ -1377,6 +1481,66 @@ class NotificationService
     } finally {
       _pendingDisplays.remove(identity.eventKey);
     }
+  }
+
+  /// Rich card of a non-Bot scheduled job: neutral glyph, one line, green
+  /// or red, "Ver resultado" / "Reintentar" + "Ver motivo".
+  static RichCardSpec cronRichSpec({
+    required NotifL10n t,
+    required String title,
+    required bool ok,
+    required String jobId,
+    String? profile,
+  }) {
+    final job = compactSessionLabel(title);
+    final key = jobId.trim().isEmpty ? null : 'cron-${jobId.trim()}';
+    return ok
+        ? RichCardSpec(
+            line: t.cronStatusLine(true, job),
+            state: BotFaceBitmapState.done,
+            openLabel: t.actViewResult,
+            conversationTitle: job.isEmpty ? null : job,
+            senderLabel: t.senderScheduled,
+            conversationKey: key,
+          )
+        : RichCardSpec(
+            line: t.cronStatusLine(false, job),
+            state: BotFaceBitmapState.failed,
+            retryJobId: jobId.trim().isEmpty ? null : jobId.trim(),
+            retryProfile: profile == 'default' ? null : profile,
+            reasonLabel: t.actViewReason,
+            conversationTitle: job.isEmpty ? null : job,
+            senderLabel: t.senderScheduled,
+            conversationKey: key,
+          );
+  }
+
+  /// Rich card of a Kanban transition: the assignee Bot's face when the task
+  /// has one, else the neutral glyph; "Abrir tarea".
+  static RichCardSpec kanbanRichSpec({
+    required NotifL10n t,
+    required String title,
+    required String status,
+    String? assignee,
+    String? taskId,
+  }) {
+    final who = assignee?.trim().toLowerCase();
+    final task = compactSessionLabel(title);
+    final id = taskId?.trim() ?? '';
+    return RichCardSpec(
+      line: t.kanbanStatusLine(status, task),
+      conversationTitle: task.isEmpty ? null : task,
+      senderLabel: t.senderTasks,
+      conversationKey: id.isEmpty ? null : 'task-$id',
+      state: switch (status) {
+        'done' => BotFaceBitmapState.done,
+        'blocked' => BotFaceBitmapState.failed,
+        'triage' => BotFaceBitmapState.needsYou,
+        _ => BotFaceBitmapState.idle,
+      },
+      faceProfile: who == null || who.isEmpty ? null : who,
+      openLabel: t.actOpenTask,
+    );
   }
 
   /// Convierte la respuesta final del agente en texto legible para la bandeja.
@@ -1408,6 +1572,7 @@ class NotificationService
     required String status,
     String profile = 'default',
     String sourceVersion = 'current',
+    String? assignee,
   }) async {
     if (!notifyKanbanResults) return;
     if (isTaskMuted(taskId)) return;
@@ -1443,6 +1608,14 @@ class NotificationService
       body: title,
       subText: 'Kanban · $task',
       payload: _encodePayload(connection, null, title, taskId: task),
+      neutralAvatar: true,
+      rich: kanbanRichSpec(
+        t: t,
+        title: title,
+        status: status,
+        assignee: assignee,
+        taskId: task,
+      ),
     );
     try {
       await _delivery.ingestAndDispatch(<SourceCursorUpdate>[
@@ -1555,7 +1728,9 @@ class NotificationService
         span: 512,
         parts: [connId ?? '', taskId ?? ''],
       ),
-      title: isError ? t.backgroundTaskFailedTitle : t.backgroundTaskFinishedTitle,
+      title: isError
+          ? t.backgroundTaskFailedTitle
+          : t.backgroundTaskFinishedTitle,
       body: t.backgroundTaskBody,
       targetSessionId: sessionId,
       payload: _encodePayload(connId, sessionId, null, profile: profile),
@@ -1604,8 +1779,16 @@ class NotificationService
           readOnly: _connectionReadOnly(connId),
         );
         if (posted) return;
-        await _replyFallback(t, label, visibleLabel, connId, sessionId, surface,
-            profile, roomId);
+        await _replyFallback(
+          t,
+          label,
+          visibleLabel,
+          connId,
+          sessionId,
+          surface,
+          profile,
+          roomId,
+        );
       }();
     }
     return _replyFallback(
@@ -1914,12 +2097,7 @@ class NotificationService
       indeterminate: true,
       category: AndroidNotificationCategory.progress,
     );
-    await _plugin.show(
-      id,
-      title,
-      body,
-      NotificationDetails(android: details),
-    );
+    await _plugin.show(id, title, body, NotificationDetails(android: details));
   }
 
   Future<void> cancelOperation(int id) => cancelById(id, 'operation');
@@ -2003,6 +2181,29 @@ class NotificationService
     }
   }
 
+  /// Bot-owned routine result as a message from that Bot in its own
+  /// conversation (face + state accent). False when the rich renderer is
+  /// unavailable; the caller then falls back to the plain card.
+  @visibleForTesting
+  Future<bool> presentBotRoutine({
+    required String connId,
+    required String sessionId,
+    required BotRoutineDisplay routine,
+  }) {
+    final profile = routine.profile.trim().toLowerCase();
+    return _botChatRich.routineResult(
+      t: NotifL10n.of(_prefs),
+      connId: connId,
+      profile: profile,
+      botName: _botName(connId, profile),
+      sessionId: sessionId,
+      routineTitle: routine.routineTitle,
+      ok: routine.ok,
+      summary: hideSensitiveContent ? '' : stripBotMentionNote(routine.summary),
+      hideSensitive: hideSensitiveContent,
+    );
+  }
+
   @override
   Future<DeliveryPresentation> show(DeliveryEventRecord event) async {
     final t = NotifL10n.of(_prefs);
@@ -2032,10 +2233,27 @@ class NotificationService
           targetSessionId: event.sessionId,
           payload: durablePayload,
         );
+    final routine = display.botRoutine;
+    final routineSession = display.targetSessionId ?? event.sessionId;
+    if (routine != null &&
+        routineSession != null &&
+        routineSession.isNotEmpty &&
+        _richEligible(routineSession)) {
+      final posted = await presentBotRoutine(
+        connId: event.connId,
+        sessionId: routineSession,
+        routine: routine,
+      );
+      if (posted) return DeliveryPresentation.alert;
+    }
     final outcome = await _show(
       kind: display.kind,
       id: event.androidId,
       androidTag: event.androidTag,
+      largeIconPath: display.neutralAvatar
+          ? await _faces.neutralGlyphPath()
+          : null,
+      rich: display.rich,
       title: display.title,
       body: display.body,
       ongoingFeel: display.ongoingFeel,
@@ -2057,6 +2275,111 @@ class NotificationService
   Future<void> cancel(DeliveryEventRecord event) =>
       _plugin.cancel(event.androidId, tag: event.androidTag);
 
+  /// Spec for callers that did not describe their card: the title (and a
+  /// short body) as the line, neutral glyph, no state.
+  static RichCardSpec _defaultRichSpec(
+    NotificationKind kind,
+    String title,
+    String body,
+  ) {
+    final line = body.trim().isEmpty || body.length > 80
+        ? title
+        : '$title · ${body.trim()}';
+    return RichCardSpec(
+      line: line,
+      state: kind == NotificationKind.approval
+          ? BotFaceBitmapState.needsYou
+          : BotFaceBitmapState.idle,
+    );
+  }
+
+  /// Face of [spec]: the owner's configured face (shared resolver) or the
+  /// neutral glyph, both with the state badge.
+  Future<String?> _richFace(String? connId, RichCardSpec spec) async {
+    final profile = spec.faceProfile?.trim().toLowerCase() ?? '';
+    if (profile.isNotEmpty && profile != 'default' && connId != null) {
+      final loaded = BotMentionRoster.shared.profileFor(connId, profile);
+      return botFacePath(
+        faces: _faces,
+        connId: connId,
+        profile: profile,
+        state: spec.state,
+        identityFor: (_, _) =>
+            loaded == null ? null : BotFaceIdentity.ofProfile(loaded),
+      );
+    }
+    return _faces.neutralGlyphPath(state: spec.state);
+  }
+
+  String _richSender(String? connId, RichCardSpec spec) {
+    final profile = spec.faceProfile?.trim().toLowerCase() ?? '';
+    if (profile.isEmpty || profile == 'default' || connId == null) {
+      return spec.senderLabel ?? NotifL10n.of(_prefs).brand;
+    }
+    return _botName(connId, profile);
+  }
+
+  Future<bool> _postRichCard({
+    required NotificationKind kind,
+    required int id,
+    required String? androidTag,
+    required String title,
+    required String body,
+    required bool redact,
+    required String? payload,
+    required RichCardSpec spec,
+  }) async {
+    final open = _decodePayload(payload);
+    final connId = open?.connId;
+    final t = NotifL10n.of(_prefs);
+    final conversationKey = spec.conversationKey?.replaceAll(
+      RegExp(r'[^A-Za-z0-9_.-]'),
+      '_',
+    );
+    final identityKey = conversationKey != null && conversationKey.isNotEmpty
+        ? 'hermes-${conversationKey.length > 80 ? conversationKey.substring(0, 80) : conversationKey}'
+        : 'hermes-${kind.name}-${(spec.faceProfile ?? 'hermes').toLowerCase()}';
+    final actions = <RichAction>[
+      if (spec.retryJobId != null && !redact) RichAction('retry', t.actRetry),
+      RichAction('open', spec.reasonLabel ?? spec.openLabel ?? t.actOpen),
+    ];
+    try {
+      return await _rich.postConversation(
+        RichNotificationBuilder(t).hermesCard(
+          tag: androidTag,
+          id: id,
+          identityKey: identityKey,
+          senderName: _richSender(connId, spec),
+          line: redact ? title : spec.line,
+          open: open ?? const NotificationOpen(connId: ''),
+          accent: spec.accent,
+          iconPath: await _richFace(connId, spec),
+          conversationTitle: redact ? null : spec.conversationTitle,
+          actions: actions,
+          action: spec.retryJobId == null || connId == null
+              ? null
+              : NotificationActionPayload(
+                  route: NotificationActionRoute.cron,
+                  connId: connId,
+                  taskId: spec.retryJobId,
+                  profile: spec.retryProfile,
+                ),
+          alert:
+              kind == NotificationKind.approval ||
+              spec.state == BotFaceBitmapState.failed ||
+              spec.state == BotFaceBitmapState.needsYou,
+          channel: kind == NotificationKind.approval
+              ? 'approvals'
+              : 'conversations',
+          nowMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+    } catch (error) {
+      _log('${kind.name} rica falló (${error.runtimeType})');
+      return false;
+    }
+  }
+
   // ── Núcleo ──────────────────────────────────────────────────────────────
   Future<_ShowOutcome> _show({
     required NotificationKind kind,
@@ -2071,6 +2394,8 @@ class NotificationService
     String? subText,
     List<AndroidNotificationAction>? actions,
     bool compact = false,
+    String? largeIconPath,
+    RichCardSpec? rich,
   }) async {
     await _ensurePlatformInitialized();
     // Cada return false registra el motivo: es el único modo de saber por qué un
@@ -2166,6 +2491,26 @@ class NotificationService
                     ]
                   : null);
 
+    // Every notification is a rich conversation card (face + state accent +
+    // verbs + public version). The plain template below is only the
+    // fallback when the native renderer is unavailable.
+    {
+      final posted = await _postRichCard(
+        kind: kind,
+        id: id,
+        androidTag: androidTag,
+        title: displayTitle,
+        body: displayBody,
+        redact: redact,
+        payload: payload,
+        spec: rich ?? _defaultRichSpec(kind, title, body),
+      );
+      if (posted) {
+        _log('${kind.name} MOSTRADA rica (id=$id, fg=$appInForeground)');
+        return _ShowOutcome.alertShown;
+      }
+    }
+
     final ch = _channelFor(kind, t);
     final summary = redact
         ? t.brand
@@ -2180,6 +2525,9 @@ class NotificationService
       importance: ongoingFeel ? Importance.max : ch.importance,
       priority: ongoingFeel ? Priority.max : ch.priority,
       icon: 'ic_stat_hermes',
+      largeIcon: largeIconPath == null
+          ? null
+          : FilePathAndroidBitmap(largeIconPath),
       tag: androidTag,
       color: _accent,
       colorized: false,
@@ -2376,6 +2724,9 @@ class _DurableDisplay {
     this.targetSessionId,
     this.subText,
     this.actions,
+    this.botRoutine,
+    this.neutralAvatar = false,
+    this.rich,
   });
 
   final NotificationKind kind;
@@ -2387,4 +2738,10 @@ class _DurableDisplay {
   final String? targetSessionId;
   final String? subText;
   final List<AndroidNotificationAction>? actions;
+  final BotRoutineDisplay? botRoutine;
+
+  /// Cron / Kanban without a Bot owner: neutral glyph as the large icon,
+  /// never the app portrait.
+  final bool neutralAvatar;
+  final RichCardSpec? rich;
 }

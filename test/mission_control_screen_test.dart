@@ -14,6 +14,7 @@ import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
+import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
@@ -324,12 +325,22 @@ final class _UiMetaGateway implements BotProfileGateway {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Future<void> _openDestination(WidgetTester tester, String key) async {
-  await tester.tap(find.byKey(ValueKey('mission-destination-$key')));
+/// The header "New" menu (round + button): new bot / room, task board,
+/// workspaces and roster management.
+Future<void> _openNewMenu(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('mission-create-agent')));
   await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('mission-create-chooser')), findsOneWidget);
 }
 
-Future<void> _openWork(WidgetTester tester) => _openDestination(tester, 'work');
+/// Workspaces moved from the header switcher into the "New" menu.
+Future<void> _openWorkspaces(WidgetTester tester) async {
+  await _openNewMenu(tester);
+  final item = find.byKey(const ValueKey('mission-create-chooser-workspaces'));
+  await tester.ensureVisible(item);
+  await tester.tap(item);
+  await tester.pumpAndSettle();
+}
 
 /// Spec 070 S1: mantener pulsada la fila abre las acciones (fijar,
 /// sección, ocultar, abrir ficha); "Abrir ficha" lleva a la ficha del bot
@@ -514,7 +525,7 @@ void main() {
     }
   });
 
-  testWidgets('opens on a bots-first roster with rooms and work shell', (
+  testWidgets('opens on the Bots roster with no Work destination', (
     tester,
   ) async {
     final manager = await _manager();
@@ -547,8 +558,11 @@ void main() {
     );
     expect(
       find.byKey(const ValueKey('mission-destination-work')),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.byKey(const ValueKey('mission-goto-work')), findsNothing);
+    expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
+    expect(find.byKey(const ValueKey('mission-workspace-button')), findsNothing);
     expect(find.text('Resumen'), findsNothing);
   });
 
@@ -907,7 +921,7 @@ void main() {
     );
   });
 
-  testWidgets('rooms list and bots stay reachable with the dock switched off', (
+  testWidgets('rooms and the task board stay reachable with the dock off', (
     tester,
   ) async {
     final manager = await _manager();
@@ -935,21 +949,16 @@ void main() {
       findsNothing,
     );
 
-    // …y aun así la pantalla lleva a las salas y de vuelta a Bots: apagar el
-    // dock nunca puede quitar funcionalidad.
-    final toWork = find.byKey(const ValueKey('mission-goto-work'));
-    expect(toWork, findsOneWidget);
-    expect(find.byKey(const ValueKey('mission-goto-bots')), findsNothing);
-    await tester.tap(toWork);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
-
-    final toBots = find.byKey(const ValueKey('mission-goto-bots'));
-    expect(toBots, findsOneWidget);
+    // …and nothing is lost: the header "New" menu still reaches new rooms,
+    // room management and the shared task board.
     expect(find.byKey(const ValueKey('mission-goto-work')), findsNothing);
-    await tester.tap(toBots);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-bots')), findsOneWidget);
+    await _openNewMenu(tester);
+    expect(
+      find.byKey(const ValueKey('mission-create-chooser-board')),
+      findsOneWidget,
+    );
+    expect(find.text('Tablero de tareas'), findsOneWidget);
+    expect(find.text('Gestionar salas'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -1016,57 +1025,21 @@ void main() {
     await tester.pumpAndSettle();
     final semantics = tester.ensureSemantics();
 
-    for (final destination in const {
-      'Bots': 'bots',
-      'Trabajo': 'work',
-    }.entries) {
-      expect(
-        tester
-            .getSemantics(
-              find.byKey(ValueKey('mission-destination-${destination.value}')),
-            )
-            .getSemanticsData()
-            .hasAction(SemanticsAction.tap),
-        isTrue,
-        reason: '${destination.key} debe publicar la acción tap en Android',
-      );
-    }
-    // El dock real pinta solo iconos (ver dock.dart): la etiqueta
-    // ya no es un Text visible en la barra, así que la cobertura de
-    // accesibilidad se comprueba por el `label` semántico publicado, no por
-    // `find.text` (que sí sigue encontrando "Bots" en otras superficies de
-    // la pantalla, como la lista de agentes).
-    expect(find.text('Bots'), findsWidgets);
+    final bots = find.byKey(const ValueKey('mission-destination-bots'));
     expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('mission-destination-work')))
-          .getSemanticsData()
-          .label,
-      'Trabajo',
+      tester.getSemantics(bots).getSemanticsData().hasAction(SemanticsAction.tap),
+      isTrue,
+      reason: 'Bots debe publicar la acción tap en Android',
     );
-
+    expect(tester.getSemantics(bots).getSemanticsData().label, 'Bots');
     expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('mission-destination-bots')))
-          .flagsCollection
-          .isSelected,
+      tester.getSemantics(bots).flagsCollection.isSelected,
       Tristate.isTrue,
     );
-    await tester.tap(find.byKey(const ValueKey('mission-destination-work')));
-    await tester.pumpAndSettle();
+    // Bots is the only destination of this screen: no Work tile.
     expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('mission-destination-work')))
-          .flagsCollection
-          .isSelected,
-      Tristate.isTrue,
-    );
-    expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('mission-destination-bots')))
-          .flagsCollection
-          .isSelected,
-      Tristate.isFalse,
+      find.byKey(const ValueKey('mission-destination-work')),
+      findsNothing,
     );
     semantics.dispose();
   });
@@ -1098,14 +1071,7 @@ void main() {
     expect(find.text('default'), findsWidgets);
     // Spec 070 S1: no Activo/Inactivo labels; idle rows show the preview.
     expect(find.text('Inactivo'), findsNothing);
-
-    await _openWork(tester);
-    expect(
-      find.text(
-        'El tablero de tareas no está disponible en esta instalación de Hermes.',
-      ),
-      findsOneWidget,
-    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -1134,8 +1100,7 @@ void main() {
 
       expect(find.text('infra'), findsWidgets);
       expect(find.text('security'), findsWidgets);
-      await tester.tap(find.byKey(const ValueKey('mission-workspace-button')));
-      await tester.pumpAndSettle();
+      await _openWorkspaces(tester);
       await tester.tap(find.text('Homelab').last);
       await tester.pumpAndSettle();
       expect(find.text('infra'), findsWidgets);
@@ -1165,8 +1130,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('mission-workspace-button')));
-    await tester.pumpAndSettle();
+    await _openWorkspaces(tester);
     expect(find.text('Sin manager'), findsOneWidget);
     expect(
       find.descendant(
@@ -1702,6 +1666,8 @@ void main() {
       'risk': 'high',
     };
 
+    Session? opened;
+
     await tester.pumpWidget(
       _host(
         manager: manager,
@@ -1711,33 +1677,21 @@ void main() {
           sessions: [session],
           board: const KanbanBoard(columns: []),
         ),
+        botChatOpenObserver: (session) => opened = session,
       ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('Te necesitan'), findsOneWidget);
     expect(find.byKey(const ValueKey('mission-attention')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('mission-attention')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
-    expect(find.text('Aprobación pendiente'), findsOneWidget);
-    expect(find.text('Decide si quieres continuar'), findsOneWidget);
     expect(find.text('Restart Proxmox node'), findsNothing);
     expect(find.textContaining('approval-1'), findsNothing);
-    final semantics = tester.ensureSemantics();
-    final publicApproval = tester
-        .getSemantics(find.byKey(const ValueKey('mission-global-approval-0')))
-        .getSemanticsData()
-        .label;
-    expect(publicApproval, contains('Aprobación pendiente'));
-    expect(publicApproval, contains('Decide si quieres continuar'));
-    expect(publicApproval, isNot(contains('Restart Proxmox node')));
-    expect(publicApproval, isNot(contains('approval-1')));
-    semantics.dispose();
-    expect(
-      find.byKey(const ValueKey('mission-global-work-tray')),
-      findsOneWidget,
-    );
+    // One approval: the row opens that Bot's chat directly (no Work feed).
+    await tester.tap(find.byKey(const ValueKey('mission-attention')));
+    await tester.pumpAndSettle();
+    expect(opened, isNotNull);
+    expect(opened!.profile, 'infra');
+    expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
   });
 
   testWidgets('Bot approval opens canonical Bot Chat and returns to Bots', (
@@ -1785,8 +1739,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _openWork(tester);
-    await tester.tap(find.byKey(const ValueKey('mission-global-approval-0')));
+    await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
 
     expect(opened, isNotNull);
@@ -1796,7 +1749,7 @@ void main() {
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
   });
 
-  testWidgets('multiple approvals open the overview instead of one request', (
+  testWidgets('multiple approvals open a chooser instead of one request', (
     tester,
   ) async {
     final manager = await _manager();
@@ -1833,6 +1786,7 @@ void main() {
         'description': 'Publish release',
       };
 
+    Session? opened;
     await tester.pumpWidget(
       _host(
         manager: manager,
@@ -1845,6 +1799,7 @@ void main() {
           sessions: [infraSession, qaSession],
           board: const KanbanBoard(columns: []),
         ),
+        botChatOpenObserver: (session) => opened = session,
       ),
     );
     await tester.pumpAndSettle();
@@ -1852,11 +1807,19 @@ void main() {
     expect(find.text('2 aprobaciones · 0 bloqueados'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
+    expect(find.byKey(const ValueKey('mission-attention-sheet')), findsOneWidget);
+    expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
     expect(find.text('Aprobación pendiente'), findsNWidgets(2));
-    expect(find.text('Decide si quieres continuar'), findsNWidgets(2));
     expect(find.text('Restart node'), findsNothing);
     expect(find.text('Publish release'), findsNothing);
+    expect(opened, isNull);
+
+    await tester.tap(
+      find.byKey(const ValueKey('mission-attention-approval-qa')),
+    );
+    await tester.pumpAndSettle();
+    expect(opened, isNotNull);
+    expect(opened!.profile, 'qa');
   });
 
   testWidgets('empty and incompatible profile states remain actionable', (
@@ -1878,13 +1841,7 @@ void main() {
       find.text('Esta instalación de Hermes no publica profiles.'),
       findsOneWidget,
     );
-    await _openDestination(tester, 'work');
-    expect(
-      find.text(
-        'Hermes no puede verificar el equipo ahora. Las salas guardadas siguen visibles en modo consulta.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('mission-create-agent')), findsOneWidget);
   });
 
   testWidgets('unknown usage is not rendered as a published zero', (
@@ -1918,188 +1875,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await _openWork(tester);
     expect(find.text('Tokens no publicados'), findsNothing);
     expect(find.text('Uso'), findsNothing);
     expect(find.text('Coste no publicado'), findsNothing);
     expect(find.text(r'$0.0000'), findsNothing);
-
-    // La cabecera de sección del área de Trabajo va en mayúsculas desde el
-    // rediseño (mismo lenguaje que las secciones de Conversaciones).
-    expect(find.text('OTROS PENDIENTES'), findsOneWidget);
+    // Tasks live on the shared board, never as a pending tray in Bots.
+    expect(find.text('OTROS PENDIENTES'), findsNothing);
   });
 
-  testWidgets(
-    'work is one feed with three exact actionable tasks and no bot duplicate',
-    (tester) async {
-      final manager = await _manager();
-      await tester.pumpWidget(
-        _host(
-          manager: manager,
-          snapshot: _snapshot(
-            profiles: const [
-              AgentProfile(name: 'infra'),
-              AgentProfile(name: 'qa'),
-            ],
-            sessions: [_session('session-infra', 'infra')],
-            board: const KanbanBoard(
-              boardId: 'operations',
-              columns: [
-                KanbanColumn(
-                  name: 'ready',
-                  tasks: [
-                    KanbanTask(
-                      id: 'task-ready',
-                      title: 'Prepare release notes',
-                      body: '',
-                      status: 'ready',
-                      assignee: 'qa',
-                      createdAt: 116,
-                    ),
-                  ],
-                ),
-                KanbanColumn(
-                  name: 'running',
-                  tasks: [
-                    KanbanTask(
-                      id: 'task-running',
-                      title: 'Deploy services',
-                      body: '',
-                      status: 'running',
-                      assignee: 'infra',
-                      startedAt: 119,
-                    ),
-                  ],
-                ),
-                KanbanColumn(
-                  name: 'blocked',
-                  tasks: [
-                    KanbanTask(
-                      id: 'task-blocked',
-                      title: 'Repair backup',
-                      body: '',
-                      status: 'blocked',
-                      assignee: 'infra',
-                      createdAt: 118,
-                    ),
-                  ],
-                ),
-                KanbanColumn(
-                  name: 'review',
-                  tasks: [
-                    KanbanTask(
-                      id: 'task-review',
-                      title: 'Review firewall',
-                      body: '',
-                      status: 'review',
-                      assignee: 'qa',
-                      createdAt: 117,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await _openWork(tester);
-
-      expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
-      expect(find.byType(TabBar), findsNothing);
-      expect(find.byType(TabBarView), findsNothing);
-      expect(find.byKey(const ValueKey('mission-bot-infra')), findsNothing);
-      expect(
-        find.byKey(
-          const ValueKey('mission-global-task-operations-task-blocked'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(
-          const ValueKey('mission-global-task-operations-task-running'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(
-          const ValueKey('mission-global-task-operations-task-review'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-global-task-operations-task-ready')),
-        findsNothing,
-      );
-
-      final blockedTask = find.byKey(
-        const ValueKey('mission-global-task-operations-task-blocked'),
-      );
-      await tester.scrollUntilVisible(
-        blockedTask,
-        160,
-        scrollable: find.descendant(
-          of: find.byKey(const ValueKey('mission-work-feed')),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      await tester.ensureVisible(blockedTask);
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('work hides an empty global tray and keeps activity contextual', (
-    tester,
-  ) async {
-    final manager = await _manager();
-    final sessions = List.generate(
-      7,
-      (index) => Session(
-        id: 'activity-$index',
-        title: 'Activity $index',
-        model: 'model',
-        source: 'gateway',
-        messageCount: 2,
-        isActive: true,
-        preview: 'Recent work',
-        startedAt: 100 + index.toDouble(),
-        updatedAt: 110 + index.toDouble(),
-        profile: 'infra',
-      ),
-    );
-    await tester.pumpWidget(
-      _host(
-        manager: manager,
-        snapshot: _snapshot(
-          profiles: const [AgentProfile(name: 'infra')],
-          sessions: sessions,
-          board: const KanbanBoard(columns: []),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openWork(tester);
-
-    expect(
-      find.byKey(const ValueKey('mission-global-work-tray')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('mission-open-global-kanban')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('mission-work-activity')), findsNothing);
-    expect(find.text('Uso'), findsNothing);
-  });
-
-  // El tablero era un `TextButton` suelto llamado "Tablero completo" colgado
-  // del final de "Otros pendientes": ni decía qué abría ni es un pendiente.
-  // Ahora es su propia sección explicada, fuera de la bandeja, con la misma
-  // clave y el mismo destino.
-  testWidgets('the task board is its own explained section outside the tray', (
-    tester,
-  ) async {
+  testWidgets('the shared task board opens from the New menu', (tester) async {
     final manager = await _manager();
     await tester.pumpWidget(
       _host(
@@ -2110,13 +1894,13 @@ void main() {
           board: const KanbanBoard(
             columns: [
               KanbanColumn(
-                name: 'ready',
+                name: 'blocked',
                 tasks: [
                   KanbanTask(
-                    id: 'task-ready',
-                    title: 'Audit services',
+                    id: 'task-blocked',
+                    title: 'Repair backup',
                     body: '',
-                    status: 'ready',
+                    status: 'blocked',
                     assignee: 'infra',
                   ),
                 ],
@@ -2127,33 +1911,25 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _openWork(tester);
 
-    final feed = find.descendant(
-      of: find.byKey(const ValueKey('mission-work-feed')),
-      matching: find.byType(Scrollable),
-    );
-    final board = find.byKey(const ValueKey('mission-open-global-kanban'));
-    await tester.scrollUntilVisible(board, 180, scrollable: feed);
-    expect(board, findsOneWidget);
-
-    // Ya no cuelga de la bandeja de pendientes.
+    // No task tray or board section on the Bots screen any more.
+    expect(find.text('Repair backup'), findsNothing);
+    expect(find.text('TABLERO DE TAREAS'), findsNothing);
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('mission-global-work-tray')),
-        matching: board,
-      ),
+      find.byKey(const ValueKey('mission-open-global-kanban')),
       findsNothing,
     );
 
-    // Y dice qué es y qué abre, en vez de solo "Tablero completo".
-    expect(find.text('TABLERO DE TAREAS'), findsOneWidget);
-    expect(find.text('Abrir el tablero compartido'), findsOneWidget);
+    await _openNewMenu(tester);
+    final board = find.byKey(const ValueKey('mission-create-chooser-board'));
     expect(
-      find.text('Todas las tareas del equipo en un tablero, por columnas.'),
+      find.descendant(of: board, matching: find.text('Tablero de tareas')),
       findsOneWidget,
     );
-    expect(tester.takeException(), isNull);
+    await tester.tap(board);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(TasksScreen), findsOneWidget);
   });
 
   testWidgets('partial refresh retains last good source and marks it stale', (
@@ -2208,13 +1984,6 @@ void main() {
       find.text('Algunos datos del equipo pueden estar desactualizados.'),
       findsOneWidget,
     );
-    await _openWork(tester);
-    await tester.drag(
-      find.byKey(const ValueKey('mission-work-feed')),
-      const Offset(0, -320),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Cached native task'), findsOneWidget);
   });
 
   testWidgets('unsupported refresh discards cached data without saying offline', (
@@ -2270,21 +2039,11 @@ void main() {
       ),
       findsNothing,
     );
-    await _openDestination(tester, 'work');
     expect(
-      find.text(
-        'Hermes no puede verificar el equipo ahora. Las salas guardadas siguen visibles en modo consulta.',
-      ),
+      find.text('Esta instalación de Hermes no publica profiles.'),
       findsOneWidget,
     );
-    await _openWork(tester);
     expect(find.text('Old cached task'), findsNothing);
-    expect(
-      find.text(
-        'El tablero de tareas no está disponible en esta instalación de Hermes.',
-      ),
-      findsOneWidget,
-    );
   });
 
   testWidgets('read-only Mission Control disables profile management', (
@@ -2311,8 +2070,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('mission-workspace-button')));
-    await tester.pumpAndSettle();
+    await _openWorkspaces(tester);
     expect(find.text('Crear espacio de trabajo'), findsNothing);
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
@@ -2437,9 +2195,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await _openWork(tester);
+    await _openNewMenu(tester);
     expect(tester.takeException(), isNull);
-    expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('mission-create-chooser-board')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('large teams scroll the full bot roster on the first surface', (
@@ -2520,8 +2281,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('mission-workspace-button')));
-      await tester.pumpAndSettle();
+      await _openWorkspaces(tester);
       expect(
         find.byKey(const ValueKey('mission-workspace-sheet')),
         findsOneWidget,
@@ -2544,24 +2304,6 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
-      await _openWork(tester);
-      expect(find.byKey(const ValueKey('mission-work-feed')), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('mission-open-global-kanban')),
-        180,
-        scrollable: find.descendant(
-          of: find.byKey(const ValueKey('mission-work-feed')),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      expect(
-        find.byKey(const ValueKey('mission-global-work-tray')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-open-global-kanban')),
-        findsOneWidget,
-      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -3045,7 +2787,7 @@ void main() {
             tester.getRect(dock).bottom,
             lessThanOrEqualTo(size.height - 290),
           );
-          for (final key in const ['bots', 'create', 'work']) {
+          for (final key in const ['home', 'bots', 'create']) {
             final target = find.byKey(ValueKey('bot-mode-dock-$key'));
             expect(tester.getSize(target).width, greaterThanOrEqualTo(48));
             expect(tester.getSize(target).height, greaterThanOrEqualTo(48));
@@ -3147,16 +2889,6 @@ void main() {
         find.byKey(const ValueKey('bot-mode-floating-dock')),
         findsOneWidget,
         reason: 'allowed contained dock exception',
-      );
-
-      await _openWork(tester);
-      const key = 'mission-global-task-ops-task-running';
-      final target = find.byKey(const ValueKey(key));
-      expect(target, findsOneWidget);
-      expect(
-        find.ancestor(of: target, matching: find.byType(HermesCard)),
-        findsNothing,
-        reason: 'accent-rail/unearthed-box/wrong-surface: $key',
       );
     },
   );
