@@ -192,6 +192,7 @@ final class ActivitySnapshot {
     this.schedules = const [],
     this.goal,
     this.processesStale = false,
+    this.subagentsStale = false,
     this.backgroundStartedAt,
     this.subagents = const [],
     this.subagentGenericCount = 0,
@@ -226,6 +227,10 @@ final class ActivitySnapshot {
   final List<SessionActivitySchedule> schedules;
   final SessionActivityGoal? goal;
   final bool processesStale;
+
+  /// El recuento de subagentes es el último conocido de un runtime perdido
+  /// (corte, rotación): se enseña como desfasado, nunca como en vivo.
+  final bool subagentsStale;
   final DateTime? backgroundStartedAt;
   final List<SubagentActivity> subagents;
 
@@ -284,6 +289,7 @@ final class ActivitySnapshot {
           _listEqualsBy(schedules, other.schedules, _scheduleEquals) &&
           _goalEquals(goal, other.goal) &&
           processesStale == other.processesStale &&
+          subagentsStale == other.subagentsStale &&
           backgroundStartedAt == other.backgroundStartedAt &&
           _listEqualsBy(subagents, other.subagents, _subagentEquals) &&
           subagentGenericCount == other.subagentGenericCount &&
@@ -304,6 +310,7 @@ final class ActivitySnapshot {
     _listHashBy(schedules, _scheduleHash),
     _goalHash(goal),
     processesStale,
+    subagentsStale,
     backgroundStartedAt,
     _listHashBy(subagents, _subagentHash),
     subagentGenericCount,
@@ -324,6 +331,7 @@ final class ActivitySnapshot {
     schedules: schedules,
     goal: goal,
     processesStale: processesStale,
+    subagentsStale: subagentsStale,
     backgroundStartedAt: backgroundStartedAt,
     subagents: subagents,
     subagentGenericCount: subagentGenericCount,
@@ -353,6 +361,7 @@ final class ActivitySnapshot {
     schedules: schedules,
     goal: goal,
     processesStale: processesStale,
+    subagentsStale: subagentsStale,
     backgroundStartedAt: backgroundStartedAt,
     subagents: subagents,
     subagentGenericCount: subagentGenericCount,

@@ -158,6 +158,7 @@ class _ModernGateway extends _LegacyGateway
   bool duplicate = false;
   DesktopTurnState ackState = DesktopTurnState.accepted;
   DesktopTurnStatus? nextStatus;
+  Object? statusError;
 
   @override
   RecoveryProof recoveryProofForSnapshot(
@@ -241,8 +242,64 @@ class _ModernGateway extends _LegacyGateway
     String clientTurnId,
   ) async {
     statusCalls++;
+    final error = statusError;
+    if (error != null) throw error;
     return nextStatus ??
         DesktopTurnStatus(known: false, clientTurnId: clientTurnId);
+  }
+}
+
+class _ProbeGateway extends _ModernGateway
+    implements HermesDesktopTransportProbeGateway {
+  int probeCalls = 0;
+
+  @override
+  Future<bool> probeNow() async {
+    probeCalls++;
+    return true;
+  }
+}
+
+/// Modela el `session.resume` real de Hermes: un runtime vivo responde con
+/// `_live_session_payload` (server.py), que solo incluye `pending_approval`
+/// cuando hay una pendiente (nunca `null`); una sesión no viva responde con
+/// `_resume_response`, que no incluye la clave nunca y trae `running: false`.
+class _ApprovalSnapshotGateway extends _ModernGateway {
+  Map<String, dynamic>? snapshotApproval;
+  bool snapshotRunning = true;
+
+  @override
+  Future<DesktopSessionBinding> resumeSession(
+    String storedSessionId, {
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async {
+    final base = await super.resumeSession(
+      storedSessionId,
+      profile: profile,
+      seedMessages: seedMessages,
+      model: model,
+    );
+    final approval = snapshotApproval;
+    return DesktopSessionBinding.fromSnapshot(
+      DesktopSessionSnapshot.fromJson(
+        {
+          'session_id': base.runtimeSessionId,
+          'session_key': base.storedSessionId,
+          'message_count': 0,
+          'messages': const <Object>[],
+          'messages_omitted': true,
+          'running': snapshotRunning,
+          'status': snapshotRunning ? 'working' : 'idle',
+          'info': const <String, dynamic>{},
+          if (snapshotRunning && approval != null) 'pending_approval': approval,
+        },
+        requestedStoredSessionId: storedSessionId,
+        created: false,
+        method: 'session.resume',
+      ),
+    );
   }
 }
 
@@ -645,6 +702,7 @@ class _ConflictMutationGateway extends _RecheckOwnershipGateway
   Duration desktopRecoveryAttemptTimeout = const Duration(seconds: 15),
   CompressionRestoreStore? compressionRestoreStore,
   ApprovalPolicyService? policy,
+  StoredSessionMessageLoader? storedMessageLoader,
 }) {
   final api = ApiClient(
     baseUrl: 'https://example.invalid',
@@ -668,20 +726,22 @@ class _ConflictMutationGateway extends _RecheckOwnershipGateway
     onTerminal: () {},
     api: api,
     desktopGateway: gateway,
-    storedMessageLoader: gateway is _RuntimeReleaseGateway
-        ? (_, _) async => const [
-            {
-              'message_id': 'release-user',
-              'role': 'user',
-              'content': 'prime release ownership',
-            },
-            {
-              'message_id': 'release-assistant',
-              'role': 'assistant',
-              'content': 'ownership terminal',
-            },
-          ]
-        : null,
+    storedMessageLoader:
+        storedMessageLoader ??
+        (gateway is _RuntimeReleaseGateway
+            ? (_, _) async => const [
+                {
+                  'message_id': 'release-user',
+                  'role': 'user',
+                  'content': 'prime release ownership',
+                },
+                {
+                  'message_id': 'release-assistant',
+                  'role': 'assistant',
+                  'content': 'ownership terminal',
+                },
+              ]
+            : null),
     allowUnownedDesktopSnapshotForTesting: true,
     turnIdempotencyCapability: capability,
     wallClockMs: wallClockMs,
@@ -3397,5 +3457,345 @@ void main() {
 
     expect(resolved.state, PreparedTurnState.ambiguous);
     expect(gateway.statusCalls, 0);
+  });
+
+  for (final kind in TuiGatewayRpcFailureKind.values) {
+    test('turn.status con corte de transporte (${kind.name}) conserva la '
+        'capability de idempotencia', () async {
+      final gateway = _ModernGateway()
+        ..statusError = TuiGatewayRpcError(
+          'turn.status',
+          'Hermes Desktop gateway connection lost',
+          failureKind: kind,
+        );
+      final fixture = _fixture(gateway, capability: () async => true);
+      addTearDown(fixture.chat.dispose);
+      final ambiguous = fixture.delivery.current.copyWith(
+        updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+        state: PreparedTurnState.ambiguous,
+      );
+
+      final resolved = await fixture.chat.reconcileAmbiguousTurn(
+        ambiguous,
+        fixture.store,
+      );
+
+      expect(resolved.state, PreparedTurnState.ambiguous);
+      expect(gateway.statusCalls, 1);
+      expect(fixture.chat.turnIdempotencyInvalid, isFalse);
+      expect(fixture.store.deletes, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.idempotentSubmissions, isEmpty);
+    });
+  }
+
+  test('turn.status method-not-found invalida la capability', () async {
+    final gateway = _ModernGateway()
+      ..statusError = const TuiGatewayRpcError(
+        'turn.status',
+        'method not found',
+        code: -32601,
+      );
+    final fixture = _fixture(gateway, capability: () async => true);
+    addTearDown(fixture.chat.dispose);
+    final ambiguous = fixture.delivery.current.copyWith(
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      state: PreparedTurnState.ambiguous,
+    );
+
+    final resolved = await fixture.chat.reconcileAmbiguousTurn(
+      ambiguous,
+      fixture.store,
+    );
+
+    expect(resolved.state, PreparedTurnState.ambiguous);
+    expect(fixture.chat.turnIdempotencyInvalid, isTrue);
+  });
+
+  test('turn.status mal formado invalida la capability', () async {
+    final gateway = _ModernGateway()
+      ..statusError = const TuiGatewayRpcError(
+        'turn.status',
+        'Hermes returned an invalid turn status',
+      );
+    final fixture = _fixture(gateway, capability: () async => true);
+    addTearDown(fixture.chat.dispose);
+    final ambiguous = fixture.delivery.current.copyWith(
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      state: PreparedTurnState.ambiguous,
+    );
+
+    await fixture.chat.reconcileAmbiguousTurn(ambiguous, fixture.store);
+
+    expect(fixture.chat.turnIdempotencyInvalid, isTrue);
+  });
+
+  test(
+    'cambio de red/resume sondea el socket en vez de solo acortar backoff',
+    () async {
+      final gateway = _ProbeGateway();
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      final chat = service.attach(
+        connection: SavedConnection(
+          id: 'conn-probe-signal',
+          label: 'Probe',
+          host: 'example.invalid',
+          port: 443,
+          apiKey: 'probe-key',
+          useHttps: true,
+        ),
+        sessionId: 'session-probe',
+        sessionTitle: 'Probe',
+        api: ApiClient(
+          baseUrl: 'https://example.invalid',
+          apiKey: 'probe-key',
+          httpClient: MockClient((_) async => http.Response('unused', 500)),
+        ),
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => const [],
+        disableForegroundKeepAlive: true,
+      );
+
+      // `onAvailable` (main.dart) y el resume del ciclo de vida sondean.
+      service.requestImmediateTransportRecovery();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.probeCalls, 1);
+      await service.reconcileAfterResume();
+      expect(gateway.probeCalls, 2);
+
+      // `sessions.changed` y Reintentar reconcilian un solo chat: no
+      // demuestran nada del socket y no pueden cortarlo.
+      await service.invalidateDurableSession(
+        connectionId: 'conn-probe-signal',
+        profile: '',
+        sessionId: 'session-probe',
+      );
+      await chat.reconcileAfterResume();
+      chat.requestImmediateTransportRecovery();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.probeCalls, 2);
+    },
+  );
+
+  test('turn.status running tras reconectar retira la tarjeta de aprobación '
+      'caducada según el snapshot', () async {
+    final gateway = _ApprovalSnapshotGateway()
+      ..nextStatus = const DesktopTurnStatus(
+        known: true,
+        clientTurnId: 'client-turn-1',
+        serverTurnId: 'server-turn-1',
+        state: DesktopTurnState.running,
+      );
+    final fixture = _fixture(gateway, capability: () async => true);
+    addTearDown(fixture.chat.dispose);
+    fixture.chat.pendingApproval = const {
+      'request_id': 'approval-before-disconnect',
+      'command': 'rm -rf build',
+    };
+    final ambiguous = fixture.delivery.current.copyWith(
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      state: PreparedTurnState.ambiguous,
+    );
+
+    final resolved = await fixture.chat.reconcileAmbiguousTurn(
+      ambiguous,
+      fixture.store,
+    );
+
+    expect(resolved.state, PreparedTurnState.running);
+    expect(fixture.chat.pendingApproval, isNull);
+    expect(gateway.submissions, isEmpty);
+    expect(gateway.idempotentSubmissions, isEmpty);
+  });
+
+  test('snapshot sin turno vivo (running:false) no demuestra nada: la tarjeta '
+      'queda a cargo de resolved:0', () async {
+    final gateway = _ApprovalSnapshotGateway()
+      ..snapshotRunning = false
+      ..nextStatus = const DesktopTurnStatus(
+        known: true,
+        clientTurnId: 'client-turn-1',
+        serverTurnId: 'server-turn-1',
+        state: DesktopTurnState.accepted,
+      );
+    final fixture = _fixture(gateway, capability: () async => true);
+    addTearDown(fixture.chat.dispose);
+    fixture.chat.pendingApproval = const {
+      'request_id': 'approval-before-disconnect',
+    };
+    final ambiguous = fixture.delivery.current.copyWith(
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      state: PreparedTurnState.ambiguous,
+    );
+
+    await fixture.chat.reconcileAmbiguousTurn(ambiguous, fixture.store);
+
+    expect(
+      fixture.chat.pendingApproval?['request_id'],
+      'approval-before-disconnect',
+    );
+  });
+
+  test('turn.status running tras reconectar restaura la aprobación viva del '
+      'snapshot', () async {
+    final gateway = _ApprovalSnapshotGateway()
+      ..snapshotApproval = const {
+        'request_id': 'approval-live',
+        'command': 'pwd',
+      }
+      ..nextStatus = const DesktopTurnStatus(
+        known: true,
+        clientTurnId: 'client-turn-1',
+        serverTurnId: 'server-turn-1',
+        state: DesktopTurnState.running,
+      );
+    final fixture = _fixture(gateway, capability: () async => true);
+    addTearDown(fixture.chat.dispose);
+    fixture.chat.pendingApproval = const {
+      'request_id': 'approval-before-disconnect',
+    };
+    final ambiguous = fixture.delivery.current.copyWith(
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      state: PreparedTurnState.ambiguous,
+    );
+
+    await fixture.chat.reconcileAmbiguousTurn(ambiguous, fixture.store);
+
+    expect(fixture.chat.pendingApproval?['request_id'], 'approval-live');
+  });
+
+  group('turno del composer resuelto por transcript', () {
+    PreparedTurn composerTurn({String sessionId = 'session-modern'}) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      return PreparedTurn(
+        connectionId: 'conn-modern',
+        sessionId: sessionId,
+        clientTurnId: 'composer-turn',
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: 'turno del composer',
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: '',
+        state: PreparedTurnState.ambiguous,
+        retryBoundary: PreparedTurnRetryBoundary.identity(rowId: 10),
+      );
+    }
+
+    List<Map<String, dynamic>> deliveredTranscript() {
+      final ts = DateTime.now().millisecondsSinceEpoch / 1000;
+      return [
+        {'id': 10, 'role': 'user', 'content': 'antes', 'timestamp': ts - 60},
+        {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': ts - 59},
+        {
+          'id': 12,
+          'role': 'user',
+          'content': 'turno del composer',
+          'timestamp': ts + 1,
+        },
+      ];
+    }
+
+    test(
+      'messagesHydrated en ráfaga no descarga el transcript cada vez',
+      () async {
+        var clock = 1000000;
+        var loads = 0;
+        final transcript = deliveredTranscript()..removeLast();
+        final fixture = _fixture(
+          _ModernGateway(),
+          wallClockMs: () => clock,
+          storedMessageLoader: (_, _) async {
+            loads++;
+            return transcript;
+          },
+        );
+        addTearDown(fixture.chat.dispose);
+        final turn = composerTurn();
+
+        for (var i = 0; i < 5; i++) {
+          expect(
+            await fixture.chat.composerTurnDeliveredPerTranscript(turn),
+            isFalse,
+          );
+          clock += 100;
+        }
+        expect(loads, 1, reason: 'intervalo mínimo de 5 s como la cola');
+
+        clock += 6000;
+        expect(
+          await fixture.chat.composerTurnDeliveredPerTranscript(turn),
+          isFalse,
+        );
+        expect(loads, 2);
+      },
+    );
+
+    test(
+      'un turno de otra sesión nunca se prueba con este transcript',
+      () async {
+        final fixture = _fixture(
+          _ModernGateway(),
+          storedMessageLoader: (_, _) async => deliveredTranscript(),
+        );
+        addTearDown(fixture.chat.dispose);
+
+        expect(
+          await fixture.chat.composerTurnDeliveredPerTranscript(
+            composerTurn(sessionId: 'otra-sesion'),
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test('mismo turno y misma sesión sí se resuelve', () async {
+      final fixture = _fixture(
+        _ModernGateway(),
+        storedMessageLoader: (_, _) async => deliveredTranscript(),
+      );
+      addTearDown(fixture.chat.dispose);
+
+      expect(
+        await fixture.chat.composerTurnDeliveredPerTranscript(composerTurn()),
+        isTrue,
+      );
+    });
+
+    test(
+      'reanudar el drenado tras resolver el composer respeta el conflicto de '
+      'propiedad',
+      () async {
+        const rejection = TuiGatewayRpcError(
+          'prompt.submit',
+          'private ownership detail',
+          code: 4090,
+          data: {'reason': 'SESSION_NOT_OWNED'},
+        );
+        final gateway = _RecheckOwnershipGateway(
+          resumeRuntimeIds: const ['runtime-old', 'runtime-rechecked'],
+          idempotentSubmissionErrors: const [rejection, null],
+          activeLists: const [DesktopActiveSessionList()],
+        );
+        final fixture = _fixture(gateway, capability: () async => true);
+        addTearDown(fixture.chat.dispose);
+        await fixture.chat.loadMessages();
+        await fixture.chat.send(
+          fullText: 'mensaje moderno',
+          model: 'hermes-agent',
+          history: const [],
+          delivery: fixture.delivery,
+        );
+        expect(fixture.chat.conflictReadOnly, isTrue);
+        expect(fixture.chat.queueDrainSuspendedForTesting, isTrue);
+
+        fixture.chat.resumeQueueDrainAfterComposerTurnResolved();
+
+        expect(fixture.chat.queueDrainSuspendedForTesting, isTrue);
+      },
+    );
   });
 }

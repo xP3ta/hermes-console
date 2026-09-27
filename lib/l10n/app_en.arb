@@ -1370,6 +1370,9 @@
   "setVerifyToClear": "Verify to clean up history",
   "setDashTokenNote": "The Dashboard requires a token (port 9119).",
   "setServerUnreachable": "Couldn't reach the server.",
+  "setUpdateAlreadyRunning": "A Hermes update is already running. Wait for it to finish.",
+  "setUpdateFailedNoDetail": "hermes update exited with an error. Check the server's update log.",
+  "setUpdatePartial": "Hermes updated, but could not verify every service on the new version. Check the gateway status.",
   "setUpdateUnconfirmed": "Hermes received the update request, but the app could not confirm the new version yet. Check again in a moment.",
   "setStatusCheckError": "Couldn't check the status.",
   "setUpdateHermes": "Update Hermes",
@@ -4562,6 +4565,8 @@
   "chaStaleRunningStopTitle": "Stop this session",
   "chaStaleRunningStopBody": "This session was already running when it opened. Stop it if that work is no longer expected.",
   "chaStaleRunningStopAction": "Stop this session",
+  "chaStaleRunningKeepAction": "Let it continue",
+  "chaStaleRunningDismiss": "Dismiss notice",
   "chaGoalTurnLabel": "Turn {used}/{max}",
   "@chaGoalTurnLabel": {
     "placeholders": {

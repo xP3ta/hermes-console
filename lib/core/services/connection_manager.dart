@@ -2382,10 +2382,35 @@ class CronDeleteRejectedException implements Exception {
 class DashboardUpdateApplyResult {
   final bool responseConfirmed;
 
-  const DashboardUpdateApplyResult.confirmed() : responseConfirmed = true;
+  /// Identificador que Hermes asigna a esta ejecución de `hermes update`.
+  /// Permite seguirla por `/api/actions/hermes-update/status` y reconocer su
+  /// marcador de fin aunque el Dashboard se reinicie. Null en servidores que
+  /// no lo devuelven o si la respuesta no llegó.
+  final String? actionId;
+
+  /// El servidor ya tenía una actualización en curso y devolvió esa.
+  final bool alreadyRunning;
+
+  const DashboardUpdateApplyResult.confirmed({
+    this.actionId,
+    this.alreadyRunning = false,
+  }) : responseConfirmed = true;
 
   const DashboardUpdateApplyResult.transportUncertain()
-    : responseConfirmed = false;
+    : responseConfirmed = false,
+      actionId = null,
+      alreadyRunning = false;
+}
+
+/// Hermes rechazó la actualización (instalación gestionada externamente,
+/// build de commit, Docker/Nix/apt...). Lleva el mensaje del servidor.
+class DashboardUpdateRefused implements Exception {
+  final String message;
+
+  const DashboardUpdateRefused(this.message);
+
+  @override
+  String toString() => message;
 }
 
 class DashboardBinaryResponse {
@@ -3774,11 +3799,12 @@ class DashboardClient {
   Future<Map<String, dynamic>> checkUpdate({bool force = false}) =>
       apiGet(force ? 'hermes/update/check?force=true' : 'hermes/update/check');
 
-  /// POST /api/hermes/update — aplica la actualización (reinicia Dashboard y
-  /// Gateway). El comando es síncrono y puede tardar bastante más que el timeout
-  /// HTTP; además, el propio reinicio puede cerrar el socket antes de responder.
-  /// En ambos casos el POST ya pudo quedar aceptado y el llamador debe confirmar
-  /// el resultado sondeando `/api/status`, no anunciar un fallo inmediato.
+  /// POST /api/hermes/update — LANZA `hermes update` en segundo plano y
+  /// responde enseguida con `{ok, pid, action_id}` (o `already_running`). La
+  /// actualización real tarda minutos y termina reiniciando gateway y
+  /// Dashboard, así que una respuesta 2xx NO significa "actualizado": el
+  /// llamador debe seguir la acción con [getUpdateActionStatus]. Si el socket
+  /// se corta o vence el timeout, el POST pudo quedar aceptado igualmente.
   Future<DashboardUpdateApplyResult> applyUpdate({
     Duration timeout = _kTimeout,
     bool retried = false,
@@ -3809,8 +3835,30 @@ class DashboardClient {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     }
-    return const DashboardUpdateApplyResult.confirmed();
+    Map<String, dynamic> body = const {};
+    try {
+      body = _decodeMapResponse(res);
+    } on FormatException {
+      body = const {};
+    }
+    if (body['ok'] == false) {
+      final message = (body['message'] ?? body['error'] ?? '').toString();
+      throw DashboardUpdateRefused(
+        message.trim().isEmpty ? 'Hermes rejected the update' : message,
+      );
+    }
+    final rawId = (body['action_id'] ?? '').toString().trim();
+    return DashboardUpdateApplyResult.confirmed(
+      actionId: RegExp(r'^[0-9a-f]{32}$').hasMatch(rawId) ? rawId : null,
+      alreadyRunning: body['already_running'] == true,
+    );
   }
+
+  /// GET /api/actions/hermes-update/status → `{running, exit_code, pid,
+  /// lines, action_id?, receipt?}`. Estado del proceso `hermes update` y cola
+  /// de su log. 404 en servidores antiguos sin este endpoint.
+  Future<Map<String, dynamic>> getUpdateActionStatus({int lines = 400}) =>
+      apiGet('actions/hermes-update/status?lines=$lines');
 
   /// POST /api/ops/config-migrate — migra el esquema de config.yaml al último
   /// (lanza `hermes config migrate` en segundo plano). Migración ADITIVA: añade
