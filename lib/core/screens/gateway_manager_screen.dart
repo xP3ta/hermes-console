@@ -23,6 +23,8 @@ import 'instance_edit_screen.dart';
 import 'local_instance_control_screen.dart';
 import 'onboarding/welcome_mode_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 class GatewayManagerScreen extends StatefulWidget {
   final ConnectionManager connManager;
@@ -226,24 +228,23 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
       return;
     }
 
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    final confirm = await showDialog<bool>(
+    final confirm = await showHermesDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(s.gwDeleteInstanceTitle),
-        content: Text(s.gwDeleteInstanceBody(conn.label)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(s.commonCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(s.gwDelete, style: TextStyle(color: colors.error)),
-          ),
-        ],
-      ),
+      title: s.gwDeleteInstanceTitle,
+      message: s.gwDeleteInstanceBody(conn.label),
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: s.gwDelete,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirm != true) return;
     await widget.connManager.deleteConnection(conn.id);

@@ -38,6 +38,8 @@ import '../widgets/bot_avatar_generate_button.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import 'mission_control_copy.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 typedef BotCreateImagePicker = Future<XFile?> Function();
 typedef BotCreateImageNormalizer =
@@ -760,36 +762,33 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   Future<void> _confirmDiscard() async {
     if (_discardDialogOpen || _busy) return;
     _discardDialogOpen = true;
-    final discard = await showDialog<bool>(
+    final discard = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('bot-create-discard-dialog'),
-        scrollable: true,
-        title: Text(_text('¿Descartar cambios?', 'Discard changes?')),
-        content: Text(
-          _profileCreated
-              ? _text(
-                  'El perfil ya existe, pero su configuración visual no terminó. Si sales, no se abrirá su chat automático.',
-                  'The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.',
-                )
-              : _text(
-                  'Perderás la configuración de este bot.',
-                  'You will lose this bot setup.',
-                ),
+      surfaceKey: const ValueKey('bot-create-discard-dialog'),
+      title: _text('¿Descartar cambios?', 'Discard changes?'),
+      message: _profileCreated
+                  ? _text(
+                      'El perfil ya existe, pero su configuración visual no terminó. Si sales, no se abrirá su chat automático.',
+                      'The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.',
+                    )
+                  : _text(
+                      'Perderás la configuración de este bot.',
+                      'You will lose this bot setup.',
+                    ),
+      actions: [
+        HermesDialogAction(
+          key: const ValueKey('bot-create-keep-editing'),
+          label: _text('Seguir editando', 'Keep editing'),
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            key: const ValueKey('bot-create-keep-editing'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(_text('Seguir editando', 'Keep editing')),
-          ),
-          TextButton(
-            key: const ValueKey('bot-create-discard'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(_text('Descartar', 'Discard')),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          key: const ValueKey('bot-create-discard'),
+          label: _text('Descartar', 'Discard'),
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     _discardDialogOpen = false;
     if (discard == true && mounted) {

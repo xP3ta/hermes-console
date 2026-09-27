@@ -53,6 +53,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
+import '../widgets/install_source_section.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// Estado del único canal que consume Hermes Console.
 ///
@@ -304,6 +307,8 @@ class SettingsScreen extends StatelessWidget {
               _OrphanDataTile(connManager: connManager),
               _SectionHeader(Strings.of(context).setSecAbout),
               _AboutCard(),
+              const SizedBox(height: 10),
+              const InstallSourceSection(),
               const SizedBox(height: 24),
             ],
           ),
@@ -2531,7 +2536,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       if (!auto) showReadOnlyNotice(context);
       return;
     }
-    final colors = Theme.of(context).hermes;
     // El agente local NO se actualiza por el endpoint del dashboard
     // (`hermes update`): en el dispositivo ese flujo reinstala el perfil amplio
     // `.[termux-all]` server-side, tarda muchísimo y devuelve 500 dejando la
@@ -2542,26 +2546,21 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       if (auto) return; // la auto-actualización no aplica al agente local
       // Aviso accionable: explica por qué y abre directamente el panel local
       // (Reparar/Reinstalar), la vía robusta para actualizar el agente on-device.
-      final goPanel = await showDialog<bool>(
+      final goPanel = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: colors.surface,
-          title: Text(Strings.of(context).setUpdateLocalTitle),
-          content: Text(
-            Strings.of(context).setUpdateLocalBody,
-            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+        title: Strings.of(context).setUpdateLocalTitle,
+        message: Strings.of(context).setUpdateLocalBody,
+        actions: [
+          HermesDialogAction(
+            label: Strings.of(context).commonClose,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(Strings.of(context).commonClose),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(Strings.of(context).setOpenLocalPanel),
-            ),
-          ],
-        ),
+          HermesDialogAction(
+            label: Strings.of(context).setOpenLocalPanel,
+            value: true,
+          ),
+        ],
       );
       if (goPanel == true && mounted) {
         await Navigator.of(context).push(
@@ -2581,28 +2580,23 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     // En modo auto saltamos la confirmación (el usuario optó por automático),
     // pero el App Lock de abajo se mantiene como salvaguarda.
     if (!auto) {
-      final confirm = await showDialog<bool>(
+      final confirm = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: colors.surface,
-          title: Text(Strings.of(context).setUpdateHermes),
-          content: Text(
-            Strings.of(
-              context,
-            ).setUpdateBody(behind > 0 ? ' ($behind commits)' : '', method),
-            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+        title: Strings.of(context).setUpdateHermes,
+        message: Strings.of(
+                    context,
+                  ).setUpdateBody(behind > 0 ? ' ($behind commits)' : '', method),
+        actions: [
+          HermesDialogAction(
+            label: Strings.of(context).commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(Strings.of(context).commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(Strings.of(context).setUpdate),
-            ),
-          ],
-        ),
+          HermesDialogAction(
+            label: Strings.of(context).setUpdate,
+            value: true,
+          ),
+        ],
       );
       if (confirm != true || !mounted) return;
     }
@@ -2749,27 +2743,21 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       _snack(Strings.of(context).setUpdateAlreadyRunning);
       return;
     }
-    final colors = Theme.of(context).hermes;
-    final confirm = await showDialog<bool>(
+    final confirm = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(Strings.of(context).setRestartGateway),
-        content: Text(
-          Strings.of(context).setRestartGatewayBody,
-          style: TextStyle(fontSize: 13, color: colors.textSecondary),
+      title: Strings.of(context).setRestartGateway,
+      message: Strings.of(context).setRestartGatewayBody,
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(Strings.of(context).commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(Strings.of(context).setRestart),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: Strings.of(context).setRestart,
+          value: true,
+        ),
+      ],
     );
     if (confirm != true || !mounted) return;
     if (!await _confirmLock(Strings.of(context).setVerifyToRestart) ||
@@ -2799,29 +2787,23 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       showReadOnlyNotice(context);
       return;
     }
-    final colors = Theme.of(context).hermes;
     final cur = _status?['config_version'];
     final latest = _status?['latest_config_version'];
-    final confirm = await showDialog<bool>(
+    final confirm = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(Strings.of(context).setUpdateConfigSchema),
-        content: Text(
-          Strings.of(context).setMigrateBody('$cur', '$latest'),
-          style: TextStyle(fontSize: 13, color: colors.textSecondary),
+      title: Strings.of(context).setUpdateConfigSchema,
+      message: Strings.of(context).setMigrateBody('$cur', '$latest'),
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(Strings.of(context).commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(Strings.of(context).setUpdate),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: Strings.of(context).setUpdate,
+          value: true,
+        ),
+      ],
     );
     if (confirm != true || !mounted) return;
     if (!await _confirmLock(Strings.of(context).setVerifyToMigrate) ||

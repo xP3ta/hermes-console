@@ -4,6 +4,12 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/bridge_client.dart';
 import '../services/bridge_manager.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesReviewPage;
 import '../widgets/hermes_notice.dart';
 import 'bridge_config_screen.dart';
 import 'lock_screen.dart';
@@ -91,22 +97,21 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
     final s = Strings.of(context);
     if (confirmIfDirty && bridgeController.text.trim().isNotEmpty) {
       FocusManager.instance.primaryFocus?.unfocus();
-      final ok = await showDialog<bool>(
+      final ok = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(s.bfeReloadTitle),
-          content: Text(s.bfeReloadBody),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(s.commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(s.commonReload),
-            ),
-          ],
-        ),
+        title: s.bfeReloadTitle,
+        message: s.bfeReloadBody,
+        actions: [
+          HermesDialogAction(
+            label: s.commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            label: s.commonReload,
+            value: true,
+          ),
+        ],
       );
       if (ok != true || !mounted) return;
     }
@@ -122,9 +127,9 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
         final exists = res['exists'] == true;
         HermesNotice.of(context).showSnackBar(
           SnackBar(
-            content: Text(exists
-                ? s.bfeLoadedBytes(res['size'])
-                : s.bfeFileNotOnServer),
+            content: Text(
+              exists ? s.bfeLoadedBytes(res['size']) : s.bfeFileNotOnServer,
+            ),
           ),
         );
       }
@@ -156,19 +161,22 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
 
       final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
       if (lock != null && lock.enabled) {
-        final ok = await LockScreen.verify(context, lock,
-            reason: bridgeLockReason);
+        final ok = await LockScreen.verify(
+          context,
+          lock,
+          reason: bridgeLockReason,
+        );
         if (!ok || !mounted) return;
       }
 
       setState(() => bridgeApplying = true);
-      final res =
-          await client.write(file: bridgeTarget, content: bridgeController.text);
+      final res = await client.write(
+        file: bridgeTarget,
+        content: bridgeController.text,
+      );
       if (!mounted) return;
       final backup = res['backup_id'];
-      _snack(backup != null
-          ? s.bfeAppliedWithBackup(backup)
-          : s.bfeAppliedOk);
+      _snack(backup != null ? s.bfeAppliedWithBackup(backup) : s.bfeAppliedOk);
     } on BridgeException catch (e) {
       _snack(s.bfeBridgeError(e.message));
     } catch (e) {
@@ -180,30 +188,12 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
   }
 
   Future<bool?> _confirmDiff(String diff, Strings s) {
-    return showDialog<bool>(
+    return showHermesReviewPage(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.bfeApplyTitle(bridgeTarget)),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Text(
-              diff.isEmpty ? s.bfeNoDiff : diff,
-              style: const TextStyle( fontSize: 11.5),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.soulApply),
-          ),
-        ],
-      ),
+      pageKey: const ValueKey('bridge-editor-diff-page'),
+      title: s.bfeApplyTitle(bridgeTarget),
+      text: diff.isEmpty ? s.bfeNoDiff : diff,
+      confirmLabel: s.soulApply,
     );
   }
 
@@ -221,19 +211,24 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
     );
     if (result == null || !mounted) return;
     final override = result.url.trim() == derived ? '' : result.url.trim();
-    await bridgeManager.save(bridgeConnectionId,
-        token: result.token, urlOverride: override);
+    await bridgeManager.save(
+      bridgeConnectionId,
+      token: result.token,
+      urlOverride: override,
+    );
     if (!mounted) return;
     _bridgeAutoLoadDone = false;
     await probeBridge();
     if (mounted) {
-      _snack(bridge.connected
-          ? (bridgeCanWrite
-              ? s.bfeBridgeConnectedWrite
-              : s.bfeBridgeConnectedNoWrite)
-          : bridge.running
-          ? s.bfeBridgeTokenInvalid
-          : s.bfeBridgeConnectFailed(bridge.url));
+      _snack(
+        bridge.connected
+            ? (bridgeCanWrite
+                  ? s.bfeBridgeConnectedWrite
+                  : s.bfeBridgeConnectedNoWrite)
+            : bridge.running
+            ? s.bfeBridgeTokenInvalid
+            : s.bfeBridgeConnectFailed(bridge.url),
+      );
     }
   }
 
@@ -253,10 +248,7 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
           icon: Icons.cloud_queue,
         );
       case BridgeStatus.authFailed:
-        return (
-          text: s.bfeBannerAuthFailed,
-          icon: Icons.cloud_off_outlined,
-        );
+        return (text: s.bfeBannerAuthFailed, icon: Icons.cloud_off_outlined);
       case BridgeStatus.unreachable:
         final base = s.bfeBannerUnreachable(bridge.url);
         return (

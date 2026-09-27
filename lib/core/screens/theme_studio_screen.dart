@@ -12,6 +12,8 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/theme_color_picker.dart';
+import '../design/hermes_design.dart'
+    show showHermesReviewPage;
 
 class ThemeStudioScreen extends StatefulWidget {
   final ThemeProfile initialProfile;
@@ -245,47 +247,19 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
       _showMessage(Strings.of(context).themesRepairIncomplete);
       return;
     }
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesReviewPage(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(Strings.of(context).themesRepairTitle),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(Strings.of(context).themesRepairBody),
-              const SizedBox(height: 12),
-              for (final change in proposal.changes)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '${change.token}: '
-                    '${ThemeProfileCodec.colorToCanonical(change.from)} → '
-                    '${ThemeProfileCodec.colorToCanonical(change.to)} '
-                    '(${change.ratioBefore.toStringAsFixed(2)} → '
-                    '${change.ratioAfter.toStringAsFixed(2)})',
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(Strings.of(context).themesRepairApply),
-          ),
-        ],
-      ),
+      title: Strings.of(context).themesRepairTitle,
+      message: Strings.of(context).themesRepairBody,
+      text: [
+        for (final change in proposal.changes)
+          '${change.token}: '
+              '${ThemeProfileCodec.colorToCanonical(change.from)} → '
+              '${ThemeProfileCodec.colorToCanonical(change.to)} '
+              '(${change.ratioBefore.toStringAsFixed(2)} → '
+              '${change.ratioAfter.toStringAsFixed(2)})',
+      ].join('\n'),
+      confirmLabel: Strings.of(context).themesRepairApply,
     );
     if (confirmed != true || !mounted) return;
     final repaired = proposal.applyTo(candidate);

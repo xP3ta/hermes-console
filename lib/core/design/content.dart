@@ -341,7 +341,8 @@ class _BlockAction extends StatelessWidget {
       minimumSize: const Size(48, 44),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       foregroundColor: Theme.of(context).hermes.accentText,
-      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      textStyle: (Theme.of(context).textTheme.labelLarge ?? const TextStyle())
+          .copyWith(fontSize: 13, fontWeight: FontWeight.w600),
     ),
     child: Text(label),
   );
@@ -540,4 +541,129 @@ class HermesInlineNotice extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Full-page review of long read-only text (diffs, previews) followed by a
+/// decision: ONE page scroll, with Cancel / [confirmLabel] pinned at the
+/// bottom. Returns true when confirmed. Replaces dialogs with scrolling text.
+Future<bool> showHermesReviewPage({
+  required BuildContext context,
+  required String title,
+  required String text,
+  required String confirmLabel,
+  String? message,
+  bool mono = true,
+  bool destructive = false,
+  Key pageKey = const ValueKey('hermes-review-page'),
+}) async {
+  final result = await Navigator.of(context).push<bool>(
+    MaterialPageRoute<bool>(
+      builder: (context) {
+        final colors = Theme.of(context).hermes;
+        final s = Strings.of(context);
+        return Scaffold(
+          key: pageKey,
+          appBar: HermesAppBar(
+            centerTitle: false,
+            title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          body: SafeArea(
+            top: false,
+            child: Column(
+              children: [
+                Expanded(
+                  child: SelectionArea(
+                    child: ListView(
+                      key: const ValueKey('hermes-review-scroll'),
+                      padding: const EdgeInsets.fromLTRB(
+                        HermesSpace.pageH,
+                        HermesSpace.pageTop,
+                        HermesSpace.pageH,
+                        HermesSpace.pageBottom,
+                      ),
+                      children: [
+                        if (message != null && message.isNotEmpty) ...[
+                          Text(
+                            message,
+                            style: HermesType.text.copyWith(
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: HermesSpace.x4),
+                        ],
+                        Text(
+                          text,
+                          style: mono
+                              ? TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 12.5,
+                                  height: 1.5,
+                                  color: colors.textPrimary,
+                                )
+                              : HermesType.text.copyWith(
+                                  color: colors.textPrimary,
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    HermesSpace.pageH,
+                    HermesSpace.x2,
+                    HermesSpace.pageH,
+                    HermesSpace.x3,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          key: const ValueKey('hermes-review-cancel'),
+                          onPressed: () => Navigator.of(context).pop(false),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size.fromHeight(HermesSpace.tap),
+                            foregroundColor: colors.textPrimary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                HermesRadius.control,
+                              ),
+                            ),
+                          ),
+                          child: Text(s.commonCancel),
+                        ),
+                      ),
+                      const SizedBox(width: HermesSpace.x2),
+                      Expanded(
+                        child: FilledButton(
+                          key: const ValueKey('hermes-review-confirm'),
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(HermesSpace.tap),
+                            backgroundColor: destructive
+                                ? colors.error
+                                : colors.accent,
+                            foregroundColor: destructive
+                                ? Colors.white
+                                : colors.onAccent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                HermesRadius.control,
+                              ),
+                            ),
+                          ),
+                          child: Text(confirmLabel),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
+  return result == true;
 }

@@ -18,12 +18,23 @@ import '../services/bridge_manager.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../services/skill_store_client.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDetailScaffold,
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesListGroup,
+        HermesListRow,
+        HermesSectionHeader,
+        HermesStatusText,
+        HermesStatusTone,
+        HermesTextBlock,
+        showHermesDialog;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
-import '../widgets/hermes_premium_ui.dart';
 import '../widgets/read_only.dart';
 import 'bridge_config_screen.dart';
 import 'lock_screen.dart';
@@ -353,26 +364,22 @@ class _SkillsScreenState extends State<SkillsScreen>
       return;
     }
     if (gate == ActionGate.ask) {
-      final colors = Theme.of(context).hermes;
-      final ok = await showDialog<bool>(
+      final ok = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(str.sklRemoveTitle),
-          content: Text(str.sklRemoveConfirm(name)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(str.sklCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(
-                str.sklRemove,
-                style: TextStyle(color: colors.onAccent),
-              ),
-            ),
-          ],
-        ),
+        title: str.sklRemoveTitle,
+        message: str.sklRemoveConfirm(name),
+        actions: [
+          HermesDialogAction(
+            label: str.sklCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            label: str.sklRemove,
+            value: true,
+            style: HermesDialogActionStyle.destructive,
+          ),
+        ],
       );
       if (ok != true || !mounted) return;
       if (!await _lock('remove skill $name') || !mounted) return;
@@ -456,7 +463,6 @@ class _SkillsScreenState extends State<SkillsScreen>
       showReadOnlyNotice(context);
       return;
     }
-    final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final client = await _bridgeMgr.clientFor(widget.connection.id);
     if (client == null) return;
@@ -466,50 +472,21 @@ class _SkillsScreenState extends State<SkillsScreen>
         final dry = await client.installSkill(source, dryRun: true);
         if (!mounted) return;
         final cmd = (dry['would_run'] ?? '').toString();
-        final ok = await showDialog<bool>(
+        final ok = await showHermesDialog<bool>(
           context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text(str.sklInstallTitle(s.name)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (s.description.isNotEmpty)
-                  Text(
-                    s.description,
-                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: colors.warning.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: colors.warning.withValues(alpha: 0.4),
-                    ),
-                  ),
-                  child: Text(
-                    str.sklInstallWarning(cmd),
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
+          title: str.sklInstallTitle(s.name),
+          message: [
+            if (s.description.isNotEmpty) s.description,
+            str.sklInstallWarning(cmd),
+          ].join('\n\n'),
+          actions: [
+            HermesDialogAction(
+              label: str.sklCancel,
+              value: false,
+              style: HermesDialogActionStyle.cancel,
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(str.sklCancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(str.sklInstall),
-              ),
-            ],
-          ),
+            HermesDialogAction(label: str.sklInstall, value: true),
+          ],
         );
         if (ok != true || !mounted) return;
         if (!await _lock('install skill ${s.name}') || !mounted) return;
@@ -705,157 +682,18 @@ class _SkillsScreenState extends State<SkillsScreen>
     final enabled = skill['enabled'] as bool? ?? false;
     final description = skill['description'] as String? ?? '';
     final category = skill['category'] as String? ?? '';
-    final removeCmd = 'npx skills remove $name';
-    final str = Strings.of(ctx);
 
-    showHermesFloatingSurface<void>(
-      context: ctx,
-      surfaceKey: const ValueKey('installed-skill-detail-surface'),
-      maxWidth: 560,
-      maxHeightFactor: 0.88,
-      builder: (sheetCtx) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      name,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                  ),
-                  _StatusChip(enabled: enabled, colors: colors),
-                ],
-              ),
-              if (description.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Text(
-                  description,
-                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                ),
-              ],
-              if (category.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _MetaChip(label: category, colors: colors),
-              ],
-              const SizedBox(height: 20),
-              // Nota de gestión: nativa (bridge) o CLI (fallback).
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: colors.divider.withValues(alpha: 0.55),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          _bridgeSkills
-                              ? Icons.cloud_done_outlined
-                              : Icons.terminal,
-                          size: 13,
-                          color: colors.textSecondary,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _bridgeSkills ? str.sklModeNative : str.sklModeCli,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: colors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _bridgeSkills
-                          ? str.sklDetailHintBridge
-                          : str.sklDetailHintNoBridge,
-                      style: TextStyle(
-                        fontSize: 11,
-                        height: 1.4,
-                        color: colors.textDisabled,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: Icon(
-                        Icons.download_outlined,
-                        size: 14,
-                        color: colors.textSecondary,
-                      ),
-                      label: Text(
-                        'cmd install',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                          color: colors.divider.withValues(alpha: 0.55),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(sheetCtx);
-                        final cmd = 'npx skills add $name';
-                        _copyToClipboard(cmd, 'copied: $cmd');
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: Icon(
-                        Icons.delete_outline,
-                        size: 14,
-                        color: colors.error.withValues(alpha: 0.8),
-                      ),
-                      label: Text(
-                        'cmd remove',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: colors.error.withValues(alpha: 0.8),
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                          color: colors.error.withValues(alpha: 0.3),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(sheetCtx);
-                        _copyToClipboard(removeCmd, 'copied: $removeCmd');
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
+    Navigator.of(ctx).push(
+      MaterialPageRoute<void>(
+        builder: (_) => InstalledSkillDetailPage(
+          name: name,
+          enabled: enabled,
+          description: description,
+          category: category,
+          bridgeManaged: _bridgeSkills,
+          onCopy: _copyToClipboard,
+        ),
+      ),
     );
   }
 
@@ -1617,38 +1455,6 @@ class _StoreSkillCard extends StatelessWidget {
 
 // ── Reusable small widgets ────────────────────────────────────────────────────
 
-class _StatusChip extends StatelessWidget {
-  final bool enabled;
-  final HermesThemeColors colors;
-
-  const _StatusChip({required this.enabled, required this.colors});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: enabled
-            ? colors.success.withValues(alpha: 0.15)
-            : colors.surfaceVariant,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: enabled
-              ? colors.success.withValues(alpha: 0.4)
-              : colors.divider,
-        ),
-      ),
-      child: Text(
-        enabled ? 'enabled' : 'disabled',
-        style: TextStyle(
-          fontSize: 10,
-          color: enabled ? colors.success : colors.textDisabled,
-        ),
-      ),
-    );
-  }
-}
-
 class _MetaChip extends StatelessWidget {
   final String label;
   final HermesThemeColors colors;
@@ -2186,6 +1992,81 @@ class _SkillsCliCatalogPanelState extends State<_SkillsCliCatalogPanel> {
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Installed skill detail (spec 080): one page scroll, inline status, the
+/// description as a text block and the management rows.
+class InstalledSkillDetailPage extends StatelessWidget {
+  final String name;
+  final bool enabled;
+  final String description;
+  final String category;
+  final bool bridgeManaged;
+  final void Function(String text, String label) onCopy;
+
+  const InstalledSkillDetailPage({
+    super.key = const ValueKey('installed-skill-detail-page'),
+    required this.name,
+    required this.enabled,
+    required this.description,
+    required this.category,
+    required this.bridgeManaged,
+    required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final str = Strings.of(context);
+    final installCmd = 'npx skills add $name';
+    final removeCmd = 'npx skills remove $name';
+    return HermesDetailScaffold(
+      listKey: const ValueKey('installed-skill-detail'),
+      title: name,
+      status: HermesStatusText(
+        label: enabled ? str.designEnabled : str.designDisabled,
+        tone: enabled ? HermesStatusTone.ok : HermesStatusTone.neutral,
+        meta: category.isEmpty ? null : category,
+      ),
+      sections: [
+        if (description.isNotEmpty) ...[
+          HermesSectionHeader(str.sklDetailWhat),
+          HermesTextBlock(text: description),
+        ],
+        HermesSectionHeader(str.sklDetailManage),
+        HermesListGroup(
+          children: [
+            HermesListRow(
+              icon: bridgeManaged
+                  ? Icons.cloud_done_outlined
+                  : Icons.terminal_rounded,
+              title: bridgeManaged ? str.sklModeNative : str.sklModeCli,
+              subtitle: bridgeManaged
+                  ? str.sklDetailHintBridge
+                  : str.sklDetailHintNoBridge,
+              subtitleMaxLines: 4,
+            ),
+            HermesListRow(
+              key: const ValueKey('installed-skill-copy-install'),
+              icon: Icons.download_outlined,
+              title: str.sklCopyInstallCmd,
+              subtitle: installCmd,
+              showChevron: false,
+              onTap: () => onCopy(installCmd, 'copied: $installCmd'),
+            ),
+            HermesListRow(
+              key: const ValueKey('installed-skill-copy-remove'),
+              icon: Icons.delete_outline,
+              destructive: true,
+              title: str.sklCopyRemoveCmd,
+              subtitle: removeCmd,
+              showChevron: false,
+              onTap: () => onCopy(removeCmd, 'copied: $removeCmd'),
+            ),
+          ],
         ),
       ],
     );

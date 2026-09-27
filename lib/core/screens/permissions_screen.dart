@@ -15,6 +15,8 @@ import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// Ajustes globales de permisos / aprobaciones (PRIORIDAD 2 de la fase de
 /// permisos). Lee y escribe sobre el [ApprovalPolicyService] compartido, así
@@ -82,24 +84,22 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
   }
 
   Future<bool> _confirmYolo() async {
-    final colors = Theme.of(context).hermes;
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(Strings.of(context).permEnableYoloQ),
-        content: Text(Strings.of(context).permYoloBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(Strings.of(context).commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: colors.error),
-            child: Text(Strings.of(context).permEnableYolo),
-          ),
-        ],
-      ),
+      title: Strings.of(context).permEnableYoloQ,
+      message: Strings.of(context).permYoloBody,
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: Strings.of(context).permEnableYolo,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     return ok == true;
   }

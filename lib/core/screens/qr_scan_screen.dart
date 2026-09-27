@@ -6,8 +6,11 @@ import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../services/pairing_link.dart';
+import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/platform_setup_commands.dart';
+import '../design/hermes_design.dart'
+    show HermesPage, HermesSpace, HermesType;
 
 /// Escanea el QR de emparejado (`hermes://pair?...`) que imprime el servidor y
 /// devuelve el [PairingLink] vía `Navigator.pop`. La cámara solo vive aquí.
@@ -89,27 +92,22 @@ class _QrScanScreenState extends State<QrScanScreen> {
   void _showServerCommand() {
     // Los comandos cortos reimprimen el mismo QR/enlace, pero el usuario debe
     // elegir el sistema del equipo que ejecuta Hermes (no el del teléfono).
-    showDialog<void>(
-      context: context,
-      builder: (dctx) => AlertDialog(
-        title: Text(Strings.of(context).qrGenTitle),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(Strings.of(context).qrGenBody),
-              const SizedBox(height: 12),
-              const PlatformSetupCommands(pairing: true),
-            ],
-          ),
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => HermesPage(
+          key: const ValueKey('qr-server-command-page'),
+          title: Strings.of(context).qrGenTitle,
+          children: [
+            Text(
+              Strings.of(context).qrGenBody,
+              style: HermesType.text.copyWith(
+                color: Theme.of(context).hermes.textSecondary,
+              ),
+            ),
+            const SizedBox(height: HermesSpace.x4),
+            const PlatformSetupCommands(pairing: true),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dctx).pop(),
-            child: Text(Strings.of(context).commonClose),
-          ),
-        ],
       ),
     );
   }

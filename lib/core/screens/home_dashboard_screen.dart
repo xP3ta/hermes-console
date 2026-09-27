@@ -66,6 +66,8 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
 import '../widgets/session_status_tone.dart';
 import '../../l10n/app_localizations.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// App home: clean dashboard around the active gateway.
 ///
@@ -597,7 +599,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       return;
     }
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     final title = _archive?.titleForSession(session) ?? session.displayTitle;
     final isLocal =
         conn.kind == InstanceKind.localhost || session.source == 'mobile-local';
@@ -607,25 +608,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (choice == null) return;
       cronDeletion = choice;
     } else {
-      final confirm = await showDialog<bool>(
+      final confirm = await showHermesDialog<bool>(
         context: context,
-        builder: (_) => AlertDialog(
-          title: Text(s.homeDeleteChatTitle),
-          content: Text(s.homeDeleteChatBody(title)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(s.commonCancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(
-                s.commonDelete,
-                style: TextStyle(color: colors.error),
-              ),
-            ),
-          ],
-        ),
+        title: s.homeDeleteChatTitle,
+        message: s.homeDeleteChatBody(title),
+        actions: [
+          HermesDialogAction(
+            label: s.commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            label: s.commonDelete,
+            value: true,
+            style: HermesDialogActionStyle.destructive,
+          ),
+        ],
       );
       if (confirm != true) return;
     }

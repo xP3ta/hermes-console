@@ -12,6 +12,8 @@ import '../widgets/hermes_notice.dart';
 import 'sftp_browser_screen.dart';
 import 'ssh_credentials_screen.dart';
 import 'ssh_terminal_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 class SshScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -69,23 +71,22 @@ class _SshScreenState extends State<SshScreen> {
   }
 
   Future<void> _remove() async {
-    final colors = Theme.of(context).hermes;
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(Strings.of(context).ssh2RemoveSsh),
-        content: Text(Strings.of(context).ssh2RemoveSshBody),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(Strings.of(context).commonCancel)),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: colors.error),
-            child: Text(Strings.of(context).ssh2Remove, style: TextStyle(color: colors.onAccent)),
-          ),
-        ],
-      ),
+      title: Strings.of(context).ssh2RemoveSsh,
+      message: Strings.of(context).ssh2RemoveSshBody,
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: Strings.of(context).ssh2Remove,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (ok == true) {
       await _mgr.clear(widget.connection.id);

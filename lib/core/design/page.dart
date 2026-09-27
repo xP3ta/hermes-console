@@ -270,7 +270,12 @@ class HermesActionButton extends StatelessWidget {
         ),
       ],
     );
-    const textStyle = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600);
+    // Keep the theme family (Inter): a bare TextStyle drops it.
+    final textStyle =
+        (Theme.of(context).textTheme.labelLarge ?? const TextStyle()).copyWith(
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
+        );
     if (primary) {
       return FilledButton(
         onPressed: onPressed,

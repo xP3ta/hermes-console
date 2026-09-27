@@ -17,6 +17,12 @@ import '../services/agent_runtime/local_termux_agent_provider.dart';
 import '../services/bridge_manager.dart';
 import '../services/connection_manager.dart';
 import '../services/platform/android_apps.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesLogPage,
+        showHermesDialog;
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -166,35 +172,16 @@ class _LocalInstanceControlScreenState extends State<LocalInstanceControlScreen>
     }
     if (!mounted) return;
     setState(() => _bridgeBusy = false);
-    final colors = Theme.of(context).hermes;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(Strings.of(context).bridgeLogTitle),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: SelectionArea(
-              child: Text(
-                log ??
-                    'Sin log todavía (~/.hermes/bridge.out vacío o Termux no '
-                        'respondió). Pulsa "Install & start" y vuelve a intentarlo.',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  color: colors.textPrimary,
-                ),
-              ),
-            ),
-          ),
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HermesLogPage(
+          key: const ValueKey('bridge-log-page'),
+          title: Strings.of(context).bridgeLogTitle,
+          text:
+              log ??
+              'Sin log todavía (~/.hermes/bridge.out vacío o Termux no '
+                  'respondió). Pulsa "Install & start" y vuelve a intentarlo.',
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(Strings.of(context).commonClose),
-          ),
-        ],
       ),
     );
   }
@@ -380,53 +367,15 @@ class _LocalInstanceControlScreenState extends State<LocalInstanceControlScreen>
   Future<void> _showGatewayLog() async {
     final log = await _termux.fetchGatewayLog();
     if (!mounted) return;
-    final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final hasLog = log != null && log.trim().isNotEmpty;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          str.licGatewayLogTitle,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: colors.textPrimary,
-          ),
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HermesLogPage(
+          key: const ValueKey('gateway-log-page'),
+          title: str.licGatewayLogTitle,
+          text: hasLog ? log : str.licGatewayLogUnavail,
         ),
-        content: SingleChildScrollView(
-          child: SelectionArea(
-            child: Text(
-              hasLog ? log : str.licGatewayLogUnavail,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-            ),
-          ),
-        ),
-        actions: [
-          if (hasLog)
-            TextButton(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: log));
-                HermesNotice.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      str.licLogCopied,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    duration: const Duration(seconds: 2),
-                  ),
-                  kind: HermesNoticeKind.success,
-                );
-              },
-              child: Text(str.licCopy),
-            ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(str.licClose),
-          ),
-        ],
       ),
     );
   }
@@ -663,22 +612,21 @@ class _LocalInstanceControlScreenState extends State<LocalInstanceControlScreen>
   /// volver, refresca el estado por si el agente ya arranca.
   Future<void> _repairAgent() async {
     final str = Strings.of(context);
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(str.licRepairConfirmTitle),
-        content: Text(str.licRepairConfirmBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(str.commonCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(str.licRepairAgent),
-          ),
-        ],
-      ),
+      title: str.licRepairConfirmTitle,
+      message: str.licRepairConfirmBody,
+      actions: [
+        HermesDialogAction(
+          label: str.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: str.licRepairAgent,
+          value: true,
+        ),
+      ],
     );
     if (ok != true || !mounted) return;
     await Navigator.of(context).push(

@@ -42,6 +42,8 @@ import 'mission_control_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/session_status_tone.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 const sessionLibraryRefreshGap = Duration(seconds: 10);
 const sessionLibrarySafetyRefreshInterval = Duration(seconds: 60);
@@ -1251,28 +1253,22 @@ class _SessionListScreenState extends State<SessionListScreen>
       if (choice == null) return false;
       cronDeletion = choice;
     } else {
-      final colors = Theme.of(context).hermes;
-      final confirm = await showDialog<bool>(
+      final confirm = await showHermesDialog<bool>(
         context: context,
-        builder: (_) => AlertDialog(
-          title: Text(Strings.of(context).slDeleteTitle),
-          content: Text(
-            Strings.of(context).slDeleteContent(_titleFor(session)),
+        title: Strings.of(context).slDeleteTitle,
+        message: Strings.of(context).slDeleteContent(_titleFor(session)),
+        actions: [
+          HermesDialogAction(
+            label: Strings.of(context).slCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(Strings.of(context).slCancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(
-                Strings.of(context).slDeleteConfirm,
-                style: TextStyle(color: colors.error),
-              ),
-            ),
-          ],
-        ),
+          HermesDialogAction(
+            label: Strings.of(context).slDeleteConfirm,
+            value: true,
+            style: HermesDialogActionStyle.destructive,
+          ),
+        ],
       );
       if (confirm != true) return false;
     }

@@ -252,8 +252,8 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
     );
   }
 
-  /// Picks a window edge. The end is shown as an exclusive hour ("until
-  /// 18:00" = the last run happens in the 17:xx hour).
+  /// Picks a window edge. The end is shown as the LAST run time ("until
+  /// 17:55" for every 5 min), the same time the summary reads.
   Future<void> _pickWindowEdge(
     BuildContext rowContext, {
     required bool end,
@@ -264,25 +264,30 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
     final picked = await showHermesOptions<int>(
       context: context,
       title: end ? s.schWindowTo : s.schWindowFrom,
-      selected: end ? last + 1 : start,
+      selected: end ? last : start,
       originRect: hermesOriginOf(rowContext),
       surfaceKey: ValueKey('schedule-window-${end ? 'end' : 'start'}-surface'),
       searchThreshold: 99,
       options: [
-        for (var h = end ? start + 1 : 0; h <= (end ? 24 : last); h++)
+        for (var h = end ? start : 0; h <= (end ? 23 : last); h++)
           HermesOption(
             key: ValueKey('schedule-window-${end ? 'end' : 'start'}-$h'),
             value: h,
-            label: _hourLabel(h),
+            label: end ? _endLabel(h) : _hourLabel(h),
           ),
       ],
     );
     if (picked == null) return;
     _set(
       end
-          ? _schedule.copyWith(windowEnd: () => picked - 1)
+          ? _schedule.copyWith(windowEnd: () => picked)
           : _schedule.copyWith(windowStart: () => picked),
     );
+  }
+
+  String _endLabel(int end) {
+    final (h, m) = _schedule.lastRunInWindow(end);
+    return '$h:${m.toString().padLeft(2, '0')}';
   }
 
   static String _hourLabel(int hour) => '$hour:00';
@@ -406,7 +411,7 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
                       builder: (rowContext) => HermesSelectRow(
                         key: const ValueKey('schedule-window-end'),
                         title: s.schWindowTo,
-                        value: _hourLabel(_schedule.windowEnd! + 1),
+                        value: _endLabel(_schedule.windowEnd!),
                         onTap: () => _pickWindowEdge(rowContext, end: true),
                       ),
                     ),

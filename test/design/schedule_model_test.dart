@@ -234,4 +234,21 @@ void main() {
       );
     });
   });
+
+  group('window end shown by the builder matches the summary', () {
+    for (final schedule in const [
+      HermesSchedule.interval(5, windowStart: 14, windowEnd: 17),
+      HermesSchedule.interval(15, windowStart: 8, windowEnd: 20),
+      HermesSchedule.interval(60, windowStart: 9, windowEnd: 17),
+      HermesSchedule.interval(120, windowStart: 9, windowEnd: 16),
+      HermesSchedule.interval(120, minute: 30, windowStart: 9, windowEnd: 17),
+    ]) {
+      test(schedule.toCron(), () {
+        final (h, m) = schedule.lastRunInWindow(schedule.windowEnd!);
+        final label = '$h:${m.toString().padLeft(2, '0')}';
+        expect(schedule.describe(en), contains('to $label'));
+        expect(schedule.describe(es), contains('a $label'));
+      });
+    }
+  });
 }

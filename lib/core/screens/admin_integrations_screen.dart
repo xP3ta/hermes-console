@@ -12,6 +12,8 @@ import '../widgets/mcp_provisioning_surface.dart';
 import '../widgets/webhook_admin_surfaces.dart';
 import 'admin_integrations_copy.dart';
 import 'lock_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 enum AdminIntegrationsSection { mcp, webhooks, server }
 
@@ -109,30 +111,25 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     required String action,
     bool destructive = false,
   }) async {
-    final colors = Theme.of(context).hermes;
     final copy = AdminIntegrationsCopy.of(context);
-    final approved = await showDialog<bool>(
+    final approved = await showHermesDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(copy.cancel),
-          ),
-          FilledButton(
-            style: destructive
-                ? FilledButton.styleFrom(
-                    backgroundColor: colors.error,
-                    foregroundColor: Colors.white,
-                  )
-                : null,
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(action),
-          ),
-        ],
-      ),
+      title: title,
+      message: body,
+      actions: [
+        HermesDialogAction(
+          label: copy.cancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: action,
+          value: true,
+          style: destructive
+              ? HermesDialogActionStyle.destructive
+              : HermesDialogActionStyle.primary,
+        ),
+      ],
     );
     return approved == true;
   }

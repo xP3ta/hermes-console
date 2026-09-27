@@ -351,13 +351,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.descendant(
-        of: find.byType(AlertDialog),
+        of: find.byKey(const ValueKey('hermes-dialog')),
         matching: find.textContaining('reiniciar el Gateway'),
       ),
       findsOneWidget,
     );
     expect(gateway.enableCalls, 0);
-    await tester.tap(find.widgetWithText(FilledButton, 'Activar'));
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('hermes-dialog')),
+        matching: find.text('Activar'),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(gateway.enableCalls, 1);

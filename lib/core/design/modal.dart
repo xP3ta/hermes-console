@@ -711,39 +711,55 @@ Future<T?> showHermesDialog<T>({
   required List<HermesDialogAction<T>> actions,
   String? message,
   Key surfaceKey = const ValueKey('hermes-dialog'),
+  bool barrierDismissible = true,
   bool useRootNavigator = false,
 }) => showHermesSurface<T>(
   context: context,
   surfaceKey: surfaceKey,
   maxWidth: 400,
-  maxHeightFactor: 0.6,
+  // Content-sized; the cap only matters with the keyboard up (small free
+  // height), where the actions must stay inside the surface.
+  maxHeightFactor: 0.9,
+  barrierDismissible: barrierDismissible,
   useRootNavigator: useRootNavigator,
   builder: (context) {
     final colors = Theme.of(context).hermes;
+    // Title + message scroll together when space is short (keyboard up,
+    // large text); the actions stay pinned and always reachable.
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 22, 18, 14),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Semantics(
-            header: true,
-            child: Text(
-              title,
-              style: HermesType.title.copyWith(color: colors.textPrimary),
-            ),
-          ),
-          if (message != null && message.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Flexible(
-              child: SingleChildScrollView(
-                child: Text(
-                  message,
-                  style: HermesType.text.copyWith(color: colors.textSecondary),
-                ),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      title,
+                      style: HermesType.title.copyWith(
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (message != null && message.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      message,
+                      style: HermesType.text.copyWith(
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-          ],
+          ),
           const SizedBox(height: 16),
           Wrap(
             alignment: WrapAlignment.end,
@@ -768,7 +784,7 @@ Future<T?> showHermesDialog<T>({
 class _DialogPill extends StatelessWidget {
   final String label;
   final HermesDialogActionStyle style;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _DialogPill({
     super.key,
@@ -790,7 +806,7 @@ class _DialogPill extends StatelessWidget {
             : Colors.black,
       ),
     };
-    return Material(
+    final pill = Material(
       color: bg ?? Colors.transparent,
       shape: const StadiumBorder(),
       clipBehavior: Clip.antiAlias,
@@ -798,21 +814,112 @@ class _DialogPill extends StatelessWidget {
         onTap: onTap,
         child: Container(
           constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-          alignment: Alignment.center,
           padding: EdgeInsets.symmetric(horizontal: bg == null ? 16 : 22),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: bg == null ? FontWeight.w500 : FontWeight.w600,
-              color: fg,
+          // Shrink-wrap (an aligned Container fills the Wrap's width).
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: bg == null ? FontWeight.w500 : FontWeight.w600,
+                color: fg,
+              ),
             ),
           ),
         ),
       ),
     );
+    if (onTap != null) return pill;
+    return Semantics(
+      enabled: false,
+      child: Opacity(opacity: 0.4, child: IgnorePointer(child: pill)),
+    );
   }
 }
+
+/// Short form dialog (spec 080): the [showHermesDialog] shell with a small
+/// stateful body (one field, a checkbox, a short choice). [enabled] decides
+/// per action whether it can be tapped; the body calls `setState` to
+/// re-evaluate it. Long text never goes here — use a page.
+Future<T?> showHermesFormDialog<T>({
+  required BuildContext context,
+  required String title,
+  required List<HermesDialogAction<T>> actions,
+  required Widget Function(BuildContext context, StateSetter setState) body,
+  String? message,
+  bool Function(T value)? enabled,
+  Key surfaceKey = const ValueKey('hermes-form-dialog'),
+  bool barrierDismissible = true,
+  bool useRootNavigator = false,
+}) => showHermesSurface<T>(
+  context: context,
+  surfaceKey: surfaceKey,
+  maxWidth: 440,
+  maxHeightFactor: 0.8,
+  barrierDismissible: barrierDismissible,
+  useRootNavigator: useRootNavigator,
+  builder: (context) {
+    final colors = Theme.of(context).hermes;
+    return StatefulBuilder(
+      builder: (context, setState) => Padding(
+        padding: const EdgeInsets.fromLTRB(22, 22, 18, 14),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              header: true,
+              child: Text(
+                title,
+                style: HermesType.title.copyWith(color: colors.textPrimary),
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(top: 10, right: 4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (message != null && message.isNotEmpty) ...[
+                      Text(
+                        message,
+                        style: HermesType.text.copyWith(
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    body(context, setState),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                for (final action in actions)
+                  _DialogPill(
+                    key: action.key,
+                    label: action.label,
+                    style: action.style,
+                    onTap: enabled == null || enabled(action.value)
+                        ? () => Navigator.of(context).pop(action.value)
+                        : null,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  },
+);
 
 // ── Model picker ───────────────────────────────────────────────────────────
 

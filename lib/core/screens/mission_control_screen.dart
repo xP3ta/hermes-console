@@ -66,6 +66,8 @@ import 'profiles_screen.dart';
 import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// Mobile composition surface over Hermes profiles, sessions and native Kanban.
 ///
@@ -998,22 +1000,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<void> _deleteOrganization(MissionOrganization organization) async {
     if (widget.connection.readOnly) return;
     final copy = MissionControlCopy.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(copy.deleteOrganizationTitle),
-        content: Text(copy.deleteOrganizationBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(copy.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(copy.delete),
-          ),
-        ],
-      ),
+      title: copy.deleteOrganizationTitle,
+      message: copy.deleteOrganizationBody,
+      actions: [
+        HermesDialogAction(
+          label: copy.cancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: copy.delete,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirmed != true) return;
     await _organizationStore.delete(widget.connection.id, organization.id);
@@ -1848,27 +1850,24 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   Future<bool> _confirmRoomAction(String title) async {
     final copy = MissionControlCopy.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('roster-room-confirm-dialog'),
-        title: Text(title),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(copy.cancel),
-          ),
-          TextButton(
-            key: const ValueKey('roster-room-confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(copy.confirm),
-          ),
-        ],
-      ),
+      title: title,
+      actions: [
+        HermesDialogAction(
+          label: copy.cancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('roster-room-confirm'),
+          label: copy.confirm,
+          value: true,
+        ),
+      ],
     );
     return mounted && confirmed == true;
   }
-
 
   MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
     final source = _dataSource;

@@ -4,6 +4,8 @@ import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// Only fields present in the server snapshot can become editable patches.
 class BotProfileSettingsScreen extends StatefulWidget {
@@ -76,22 +78,21 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
       if (!mounted) return;
       if (result['confirm_required'] == true) {
         setState(() => _busy = false);
-        final yes = await showDialog<bool>(
+        final yes = await showHermesDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: Text(s.botModel),
-            content: Text((result['confirm_message'] as String?) ?? s.botModel),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: Text(s.botCancel),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(s.botSave),
-              ),
-            ],
-          ),
+          title: s.botModel,
+          message: (result['confirm_message'] as String?) ?? s.botModel,
+          actions: [
+            HermesDialogAction(
+              label: s.botCancel,
+              value: false,
+              style: HermesDialogActionStyle.cancel,
+            ),
+            HermesDialogAction(
+              label: s.botSave,
+              value: true,
+            ),
+          ],
         );
         if (yes == true && mounted) await _save(confirmed: true);
         return;

@@ -22,6 +22,8 @@ import '../../companion/state/companion_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/hermes_app_bar.dart';
 import '../../widgets/hermes_ui.dart';
+import '../../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// Función de apertura de enlaces externos (inyectable para tests). Devuelve
 /// `true` si el sistema aceptó abrir la URL.
@@ -616,35 +618,22 @@ class _MascotasBodyState extends State<_MascotasBody> {
   /// Pide confirmación y elimina una mascota importada. Las base nunca llegan
   /// aquí (no exponen control de borrado); aun así el controller las protege.
   Future<void> _confirmDelete(Companion companion) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(
-          Strings.of(context).petDeleteTitle,
-          style: TextStyle(color: colors.textPrimary),
+      title: Strings.of(context).petDeleteTitle,
+      message: Strings.of(context).petDeleteConfirm(companion.name),
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        content: Text(
-          Strings.of(context).petDeleteConfirm(companion.name),
-          style: TextStyle(color: colors.textSecondary),
+        HermesDialogAction(
+          label: Strings.of(context).commonDelete,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx, false),
-            child: Text(
-              Strings.of(context).commonCancel,
-              style: TextStyle(color: colors.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx, true),
-            child: Text(
-              Strings.of(context).commonDelete,
-              style: TextStyle(color: colors.accent),
-            ),
-          ),
-        ],
-      ),
+      ],
     );
     if (confirmed == true) {
       _testTimer?.cancel();

@@ -171,7 +171,7 @@ void main() {
       matching: find.byType(Text),
     );
 
-    testWidgets('*/5 14-17 * * 1-5 → Repeat, 5 min, 14:00–18:00, Mon–Fri', (
+    testWidgets('*/5 14-17 * * 1-5 → Repeat, 5 min, 14:00–17:55, Mon–Fri', (
       tester,
     ) async {
       final result = await _open(
@@ -210,7 +210,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('schedule-window-end')),
-          matching: find.text('18:00'),
+          matching: find.text('17:55'),
         ),
         findsOneWidget,
       );
@@ -262,6 +262,14 @@ void main() {
         _summary(tester),
         startsWith('Every hour from 9:00 to 17:00 on weekdays'),
       );
+      // The builder's "Until" shows the same last run as the summary.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('schedule-window-end')),
+          matching: find.text('17:00'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const ValueKey('schedule-apply')));
       await tester.pumpAndSettle();
       expect(await result, '0 9-17 * * 1-5');
@@ -297,7 +305,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('schedule-window-end')));
       await tester.pumpAndSettle();
-      final endOption = find.byKey(const ValueKey('schedule-window-end-18'));
+      final endOption = find.byKey(const ValueKey('schedule-window-end-17'));
       await tester.scrollUntilVisible(
         endOption,
         60,

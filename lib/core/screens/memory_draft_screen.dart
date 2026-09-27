@@ -12,6 +12,12 @@ import '../services/bridge_client.dart';
 import '../services/bridge_manager.dart';
 import '../services/command_risk.dart';
 import '../services/memory_draft_store.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesReviewPage;
 import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/hermes_notice.dart';
@@ -142,27 +148,22 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
     if (confirmIfDirty && _ctrl.text.trim().isNotEmpty) {
       // Suelta el foco antes del diálogo (higiene anti `_dependents`).
       FocusManager.instance.primaryFocus?.unfocus();
-      final colors = Theme.of(context).hermes;
       final s = Strings.of(context);
-      final ok = await showDialog<bool>(
+      final ok = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(s.memReloadTitle),
-          content: Text(s.memReloadContent),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(s.memCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(
-                s.memReload,
-                style: TextStyle(color: colors.onAccent),
-              ),
-            ),
-          ],
-        ),
+        title: s.memReloadTitle,
+        message: s.memReloadContent,
+        actions: [
+          HermesDialogAction(
+            label: s.memCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            label: s.memReload,
+            value: true,
+          ),
+        ],
       );
       if (ok != true || !mounted) return;
     }
@@ -336,31 +337,12 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
 
   Future<bool?> _confirmDiff(String diff) {
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    return showDialog<bool>(
+    return showHermesReviewPage(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.memApplyDiffTitle(_bridgeTarget)),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Text(
-              diff.isEmpty ? s.memNoDiff : diff,
-              style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.memCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.memApply),
-          ),
-        ],
-      ),
+      pageKey: const ValueKey('memory-draft-diff-page'),
+      title: s.memApplyDiffTitle(_bridgeTarget),
+      text: diff.isEmpty ? s.memNoDiff : diff,
+      confirmLabel: s.memApply,
     );
   }
 
@@ -456,23 +438,22 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
 
   Future<void> _discard() async {
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final confirm = await showDialog<bool>(
+    final confirm = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.memDiscardTitle),
-        content: Text(s.memDiscardContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.memCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.memDiscard, style: TextStyle(color: colors.error)),
-          ),
-        ],
-      ),
+      title: s.memDiscardTitle,
+      message: s.memDiscardContent,
+      actions: [
+        HermesDialogAction(
+          label: s.memCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: s.memDiscard,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirm != true || !mounted) return;
     _saveDebounce?.cancel();

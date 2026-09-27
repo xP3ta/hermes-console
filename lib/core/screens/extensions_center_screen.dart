@@ -15,6 +15,8 @@ import '../widgets/mcp_provisioning_surface.dart';
 import 'admin_integrations_copy.dart';
 import 'admin_integrations_screen.dart';
 import 'lock_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 enum _ExtensionsSection { plugins, tools, mcp }
 
@@ -169,29 +171,24 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
     bool destructive = false,
   }) async {
     if (widget.readOnly) return false;
-    final colors = Theme.of(context).hermes;
-    final approved = await showDialog<bool>(
+    final approved = await showHermesDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(Strings.of(context).commonCancel),
-          ),
-          FilledButton(
-            style: destructive
-                ? FilledButton.styleFrom(
-                    backgroundColor: colors.error,
-                    foregroundColor: Colors.white,
-                  )
-                : null,
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(action),
-          ),
-        ],
-      ),
+      title: title,
+      message: body,
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: action,
+          value: true,
+          style: destructive
+              ? HermesDialogActionStyle.destructive
+              : HermesDialogActionStyle.primary,
+        ),
+      ],
     );
     return approved == true;
   }

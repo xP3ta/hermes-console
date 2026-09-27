@@ -406,7 +406,12 @@ void main() {
 
       expect(find.textContaining('Process 1'), findsWidgets);
       _expectNoPrivateProjection(tester);
-      await tester.tap(find.widgetWithText(FilledButton, 'Stop'));
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('hermes-dialog')),
+          matching: find.text('Stop'),
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(gateway.killedProcesses, ['proc-sensitive-id']);
@@ -442,7 +447,12 @@ void main() {
 
     await tester.tap(find.byTooltip('Detener este proceso').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Detener'));
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('hermes-dialog')),
+        matching: find.text('Detener'),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(gateway.killedProcesses, ['proc-a']);

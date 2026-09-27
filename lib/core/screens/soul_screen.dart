@@ -34,6 +34,8 @@ import '../widgets/read_only.dart';
 import 'bridge_editor_mixin.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 // ── Repository interface (local-first, API-ready) ─────────────────────────────
 
@@ -359,27 +361,21 @@ class _SoulScreenState extends State<SoulScreen>
       return;
     }
     if (gate == ActionGate.ask) {
-      final colors = Theme.of(context).hermes;
-      final confirm = await showDialog<bool>(
+      final confirm = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: colors.surface,
-          title: Text(s.soulApplyProfileTitle(_effectiveProfile)),
-          content: Text(
-            s.soulApplyProfileBody(_effectiveProfile),
-            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+        title: s.soulApplyProfileTitle(_effectiveProfile),
+        message: s.soulApplyProfileBody(_effectiveProfile),
+        actions: [
+          HermesDialogAction(
+            label: s.commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(s.commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(s.soulApply),
-            ),
-          ],
-        ),
+          HermesDialogAction(
+            label: s.soulApply,
+            value: true,
+          ),
+        ],
       );
       if (confirm != true || !mounted) return;
       final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
@@ -514,38 +510,26 @@ class _SoulScreenState extends State<SoulScreen>
   }
 
   Future<_SoulApplyMode?> _askApplyMode(String templateLabel) {
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    return showDialog<_SoulApplyMode>(
+    return showHermesDialog<_SoulApplyMode?>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(
-          s.soulApplyTemplateTitle(templateLabel),
-          style: TextStyle(fontSize: 15, color: colors.textPrimary),
+      title: s.soulApplyTemplateTitle(templateLabel),
+      message: s.soulApplyTemplateBody,
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: null,
+          style: HermesDialogActionStyle.cancel,
         ),
-        content: Text(
-          s.soulApplyTemplateBody,
-          style: TextStyle(fontSize: 13, color: colors.textSecondary),
+        HermesDialogAction(
+          label: s.soulAppendToEnd,
+          value: _SoulApplyMode.append,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(s.commonCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, _SoulApplyMode.append),
-            child: Text(
-              s.soulAppendToEnd,
-              style: TextStyle(color: colors.accent),
-            ),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, _SoulApplyMode.replace),
-            child: Text(s.soulReplace),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: s.soulReplace,
+          value: _SoulApplyMode.replace,
+        ),
+      ],
     );
   }
 
@@ -553,27 +537,21 @@ class _SoulScreenState extends State<SoulScreen>
     final s = Strings.of(context);
     final backup = await _repo.loadBackup(_connectionId);
     if (backup == null || !mounted) return;
-    final colors = Theme.of(context).hermes;
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(s.soulRestorePrevTitle),
-        content: Text(
-          s.soulRestorePrevBody,
-          style: TextStyle(fontSize: 13, color: colors.textSecondary),
+      title: s.soulRestorePrevTitle,
+      message: s.soulRestorePrevBody,
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.soulRestore),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: s.soulRestore,
+          value: true,
+        ),
+      ],
     );
     if (ok != true || !mounted) return;
     _setText(backup);

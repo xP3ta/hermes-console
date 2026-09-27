@@ -91,6 +91,21 @@ class HermesSchedule {
 
   bool get hasWindow => windowStart != null && windowEnd != null;
 
+  /// Clock time of the LAST run inside a window that ends in hour [end]
+  /// (inclusive): the value the builder shows next to "Until", so it always
+  /// matches the summary ("from 14:00 to 17:55").
+  (int, int) lastRunInWindow(int end) {
+    final start = windowStart ?? 0;
+    if (intervalMinutes < 60) {
+      return (end, 60 - intervalMinutes);
+    }
+    final hours = intervalMinutes ~/ 60;
+    final lastHour = end < start
+        ? end
+        : start + ((end - start) ~/ hours) * hours;
+    return (lastHour, minute);
+  }
+
   /// Whether a clock-aligned cron can express [intervalMinutes].
   static bool cronExpressible(int minutes) =>
       (minutes >= 1 && minutes < 60) ||

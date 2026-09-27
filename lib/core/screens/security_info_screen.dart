@@ -12,6 +12,8 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 /// Centro de seguridad: bloqueo local accionable (PIN/biometría), gestión de
 /// credenciales y el modelo de seguridad de la app. Las afirmaciones
@@ -129,7 +131,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
   Future<void> _wipeCredentials() async {
     final lock = _lock;
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     if (lock != null) {
       final verified = await LockScreen.verify(
         context,
@@ -139,22 +140,22 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       if (!verified || !mounted) return;
     }
     final count = widget.connManager.getConnections().length;
-    final confirm = await showDialog<bool>(
+    final confirm = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.secWipeTitle),
-        content: Text(s.secWipeContent(count)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.secCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.secWipeButton, style: TextStyle(color: colors.error)),
-          ),
-        ],
-      ),
+      title: s.secWipeTitle,
+      message: s.secWipeContent(count),
+      actions: [
+        HermesDialogAction(
+          label: s.secCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: s.secWipeButton,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirm != true || !mounted) return;
     await widget.connManager.wipeAllApiKeys();

@@ -44,6 +44,23 @@ valid update between them must preserve application data. The `qa` variant has
 a separate package for internal testing and must never be presented as the
 public APK.
 
+### Troubleshooting: "App not installed"
+
+Google Play builds are re-signed by Play App Signing, while GitHub/Obtainium
+builds are signed with the project's own key. Android only updates an app with
+a build signed by the same key, so installing a GitHub APK over a Play install
+(or the reverse) fails with **App not installed** (sometimes "package conflicts
+with an existing package").
+
+To switch channel:
+
+1. Check the current channel in **Settings → About → Updates**.
+2. Export or note anything you need (connections can be re-paired).
+3. Uninstall Hermes Console.
+4. Install it from the other channel.
+
+Stay on one channel afterwards; updates then install normally.
+
 ## Build from source
 
 Requirements for the current tree:

@@ -17,6 +17,8 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import '../widgets/ssh_transfer_bar.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 class SftpBrowserScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -198,27 +200,22 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
     final s = Strings.of(context);
     final sftp = _sftp;
     if (sftp == null || _readOnly || e.attr.isDirectory) return;
-    final colors = Theme.of(context).hermes;
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(Strings.of(context).sftpDeleteTitle),
-        content: Text(Strings.of(context).sftpDeleteBody(e.filename)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(Strings.of(context).commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: colors.error),
-            child: Text(
-              Strings.of(context).commonDelete,
-              style: TextStyle(color: colors.onAccent),
-            ),
-          ),
-        ],
-      ),
+      title: Strings.of(context).sftpDeleteTitle,
+      message: Strings.of(context).sftpDeleteBody(e.filename),
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: Strings.of(context).commonDelete,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (ok != true) return;
     setState(() => _busy = true);
