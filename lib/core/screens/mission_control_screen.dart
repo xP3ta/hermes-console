@@ -1869,8 +1869,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     return mounted && confirmed == true;
   }
 
-
-
   MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
     final source = _dataSource;
     return source is MissionHostedGroupsDataSource
