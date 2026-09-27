@@ -6377,10 +6377,8 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(
-        find.byKey(const ValueKey('subagent-row-stable-refresh-child')),
-        findsOneWidget,
-      );
+      // Spec 080: a single subagent opens its detail page directly.
+      expect(find.byKey(const ValueKey('subagent-detail')), findsOneWidget);
       navigator.pop();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
