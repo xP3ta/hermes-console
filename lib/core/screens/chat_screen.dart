@@ -1374,6 +1374,17 @@ class _ChatScreenState extends State<ChatScreen>
   int _seenAdaptiveSubagentRepairRevision = 0;
   int _seenAdaptiveProcessRepairRevision = 0;
   int _seenAdaptiveControlRepairRevision = 0;
+  // Mirrors `_chat.durableSessionsChangeRevision`: consumed in `_onChatEvent`
+  // to route a `sessions.changed` broadcast into the passive conversation
+  // reader's durable-chat-id-scoped path, so the OPEN transcript reconciles
+  // (busy/reconnect/id-promotion aware) the same way the session list does.
+  int _seenDurableSessionsChangeRevision = 0;
+  // Set when a `sessions.changed` tick requests a reconciliation read;
+  // consumed (and cleared) by `_refreshPassiveTranscript`, which then treats
+  // it as real evidence of a durable change rather than a guess — bypassing
+  // the runtime-ownership polling optimization the same way an observed
+  // remote-turn settlement already does.
+  bool _durableTranscriptReadPending = false;
   SubagentPresentationOwnerToken? _subagentPresentationOwner;
   int _viewerAttachGeneration = 0;
 
@@ -4094,6 +4105,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
+      _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
       // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
@@ -4628,6 +4640,14 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<bool> _refreshPassiveTranscript() async {
     if (!_canProbePassiveRemoteActivity) return true;
+    // `sessions.changed` is direct evidence the durable store moved — unlike
+    // the roster-derived heuristics below, it does not depend on catching
+    // another surface's turn while it is still `busy`. A fast turn on
+    // Desktop can complete before this client's next roster poll, leaving
+    // `remoteSurfaceOwnsLiveTurn` false even though state.db just changed;
+    // without this bypass such a reply would sit unread until an unrelated
+    // event happened to trigger a passive read.
+    final durableChangeConfirmed = _durableTranscriptReadPending;
     final ownedLiveTurn = _chat.remoteSurfaceOwnsLiveTurn;
     await _chat.refreshPassiveRemoteActivity();
     if (!_canProbePassiveRemoteActivity) return true;
@@ -4637,15 +4657,24 @@ class _ChatScreenState extends State<ChatScreen>
     // Another surface's assistant is not in REST until the turn ends. The
     // busy poll therefore never sees the reply; fetch once more on idle.
     final remoteTurnSettled = ownedLiveTurn && !_chat.remoteSurfaceOwnsLiveTurn;
-    if (!_canPassivelyRefreshTranscript && !remoteTurnSettled) {
+    if (!_canPassivelyRefreshTranscript &&
+        !remoteTurnSettled &&
+        !durableChangeConfirmed) {
       return true;
     }
     if (!_composerEmpty &&
         !_chat.remoteSurfaceOwnsLiveTurn &&
-        !remoteTurnSettled) {
+        !remoteTurnSettled &&
+        !durableChangeConfirmed) {
       return true;
     }
-    return _fetchMessages(passiveOnly: true);
+    final fetched = await _fetchMessages(passiveOnly: true);
+    // Only retire the pending flag on a successful read — a transient
+    // failure (disconnect/network blip) must keep bypassing the runtime-
+    // ownership gate on the reader's own retry, or the signal would be lost
+    // the moment the first attempt fails.
+    if (fetched) _durableTranscriptReadPending = false;
+    return fetched;
   }
 
   void _invalidatePassiveMessageRefresh() {
@@ -5140,10 +5169,29 @@ class _ChatScreenState extends State<ChatScreen>
         event == ActiveChatEvent.waiting ||
         event == ActiveChatEvent.approvalRequest ||
         event == ActiveChatEvent.interactiveRequest;
+    // `sessions.changed` is the same session-less broadcast Desktop already
+    // reconciles its open pane on (see wiring.tsx#refreshActiveTranscript):
+    // Desktop treats it as an unconditional reconcile trigger and lets its
+    // own message-signature gate (sessionMessagesSignature) turn a no-change
+    // tick into a no-op REST diff. Console received the event and refreshed
+    // the session list/roster but never the open transcript; mirror Desktop
+    // by feeding it into the same passive-read trigger as a recovery-class
+    // event, gated by the existing busy/foreground/route checks so a
+    // mid-stream tick defers instead of clobbering a live turn.
+    final durableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
+    final sessionsChangedTick =
+        durableSessionsChangeRevision != _seenDurableSessionsChangeRevision;
+    if (sessionsChangedTick) {
+      _seenDurableSessionsChangeRevision = durableSessionsChangeRevision;
+      _durableTranscriptReadPending = true;
+    }
     _syncPassiveTranscriptRefresh(
       refreshNow:
-          passiveTerminalEvent || passiveRecoveryEvent || passiveRuntimeEvent,
-      recoveryConverging: passiveRecoveryEvent,
+          sessionsChangedTick ||
+          passiveTerminalEvent ||
+          passiveRecoveryEvent ||
+          passiveRuntimeEvent,
+      recoveryConverging: passiveRecoveryEvent || sessionsChangedTick,
       terminal: passiveTerminalEvent,
     );
     if (_editingRewriteSubmitted &&
