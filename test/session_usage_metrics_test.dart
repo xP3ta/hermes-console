@@ -61,11 +61,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('tokens en caché'), findsOneWidget);
+    // Las métricas técnicas viven plegadas en UNA fila.
+    expect(find.text('Tokens en caché'), findsNothing);
+    final technical = find.byKey(const ValueKey('session-detail-technical'));
+    await tester.ensureVisible(technical);
+    await tester.pumpAndSettle();
+    await tester.tap(technical);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tokens en caché'), findsOneWidget);
+    expect(find.text('Escrituras en caché'), findsOneWidget);
     expect(find.text('50'), findsNWidgets(2));
-    expect(find.text('caché %'), findsOneWidget);
+    expect(find.text('Acierto de caché'), findsOneWidget);
     expect(find.text('25.0%'), findsOneWidget);
-    expect(find.text('TTFT · medido por la app'), findsWidgets);
+    expect(find.text('Primer token'), findsOneWidget);
+    expect(find.text('840 ms'), findsOneWidget);
+
+    // La página de contexto conserva el TTFT medido por la app.
+    await tester.tap(find.byKey(const ValueKey('session-detail-context')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('session-context-page')), findsOneWidget);
+    expect(find.text('TTFT · medido por la app'), findsOneWidget);
     expect(find.text('840 ms'), findsOneWidget);
   });
 }

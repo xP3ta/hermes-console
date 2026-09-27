@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/kanban.dart';
+import '../design/hermes_design.dart';
 import '../theme/app_theme.dart';
-import 'hermes_ui.dart';
 
 typedef KanbanTaskAction = Future<void> Function();
 typedef KanbanCommentAction = Future<void> Function(String body);
@@ -12,9 +12,12 @@ typedef KanbanAttachmentAction =
 typedef KanbanRunAction = Future<void> Function(KanbanRun run);
 typedef KanbanLinkedTaskAction = Future<void> Function(String taskId);
 
-/// Contenido del detalle Kanban 0.20. La red y las confirmaciones permanecen
-/// en [TasksScreen]; este widget solo representa el snapshot autoritativo y
-/// evita que sus actualizaciones reconstruyan el tablero completo.
+/// Contenido del detalle Kanban 0.20 como página action-first (spec 080): una
+/// sola columna desplazable, estado en línea, acciones primero y grupos
+/// editoriales en lugar de tarjetas con borde. Las listas secundarias
+/// (ejecuciones, actividad, comentarios…) se pliegan en una fila y solo se
+/// construyen al abrirlas. La red y las confirmaciones permanecen en
+/// [TasksScreen].
 class KanbanTaskDetailSurface extends StatefulWidget {
   final KanbanTaskDetail detail;
   final bool readOnly;
@@ -78,6 +81,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   final TextEditingController _commentController = TextEditingController();
   String? _busyAction;
   bool _showAllEvents = false;
+  final Set<String> _open = <String>{};
 
   @override
   void dispose() {
@@ -90,6 +94,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.detail.task.id != widget.detail.task.id) {
       _showAllEvents = false;
+      _open.clear();
     }
   }
 
@@ -116,203 +121,279 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     }
   }
 
+  void _toggle(String key) => setState(() {
+    if (!_open.remove(key)) _open.add(key);
+  });
+
+  static String statusLabel(Strings s, String status) => switch (status) {
+    'triage' => s.kanbanColTriage,
+    'todo' => s.kanbanColTodo,
+    'scheduled' => s.kanbanColScheduled,
+    'ready' => s.kanbanColReady,
+    'running' => s.kanbanColRunning,
+    'blocked' => s.kanbanColBlocked,
+    'review' => s.kanbanColReview,
+    'done' => s.kanbanColDone,
+    'archived' => s.kanbanFilterArchived,
+    _ => status.replaceAll('_', ' '),
+  };
+
+  static HermesStatusTone statusTone(String status) => switch (status) {
+    'running' => HermesStatusTone.active,
+    'blocked' => HermesStatusTone.error,
+    'review' => HermesStatusTone.warn,
+    'done' => HermesStatusTone.ok,
+    _ => HermesStatusTone.neutral,
+  };
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
     final copy = _KanbanDetailCopy.forLocale(s.localeName);
     final detail = widget.detail;
     final task = detail.task;
+    final meta = <String>[
+      if (task.assignee?.isNotEmpty == true) task.assignee!,
+      if (task.hasProgress)
+        s.kanbanCardProgress(task.progressDone, task.progressTotal),
+    ].join(' · ');
+
+    final work = <Widget>[
+      if (detail.runs.isNotEmpty && widget.onShowLog != null)
+        HermesListRow(
+          key: const ValueKey('kanban-task-log'),
+          icon: Icons.terminal_rounded,
+          title: s.kanbanUiWorkerLog,
+          subtitle: s.kanbanUiWorkerLogHint,
+          onTap: _busyAction == null
+              ? () => _run('log', widget.onShowLog!)
+              : null,
+        ),
+      if (detail.runs.isNotEmpty) ..._runs(colors, copy, detail.runs),
+      if (detail.events.isNotEmpty) ..._events(colors, copy, detail.events),
+      if (detail.diagnostics.isNotEmpty)
+        ..._collapsible(
+          key: 'kanban-detail-diagnostics',
+          icon: Icons.health_and_safety_outlined,
+          title: copy.diagnostics,
+          count: detail.diagnostics.length,
+          content: [
+            for (final diagnostic in detail.diagnostics)
+              _DiagnosticTile(colors: colors, diagnostic: diagnostic),
+          ],
+        ),
+      if (_hasDependencies(detail)) ..._dependencies(colors, copy, detail),
+      if (detail.childResults.isNotEmpty)
+        ..._childResults(colors, copy, detail.childResults),
+    ];
+
+    final conversation = <Widget>[
+      if (detail.supports(KanbanTaskDetailCapability.comments))
+        ..._comments(colors, copy, detail.comments),
+      if (detail.supports(KanbanTaskDetailCapability.attachments))
+        ..._attachments(colors, copy, detail.attachments),
+    ];
+
+    final settings = _settings(copy, task);
+    final destructive = _destructive(s, task);
+
     return SingleChildScrollView(
       key: const ValueKey('kanban-task-detail-rich'),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+      padding: EdgeInsets.fromLTRB(
+        HermesSpace.pageH,
+        HermesSpace.x1,
+        HermesSpace.pageH,
+        HermesSpace.pageBottom + MediaQuery.paddingOf(context).bottom,
+      ),
       child: Column(
         key: ValueKey('kanban-task-detail-${task.id}'),
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Semantics(
-            header: true,
-            child: Text(
-              task.title,
-              style: TextStyle(
-                fontSize: 17,
-                height: 1.25,
-                fontWeight: FontWeight.w700,
-                color: colors.textPrimary,
+          Padding(
+            padding: const EdgeInsets.only(left: 2, top: 6),
+            child: Semantics(
+              header: true,
+              child: Text(
+                task.title,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: HermesType.display.copyWith(color: colors.textPrimary),
               ),
             ),
           ),
-          const SizedBox(height: 5),
-          SelectableText(
-            task.id,
-            style: TextStyle(
-              fontSize: 10.5,
-              fontFamily: 'monospace',
-              color: colors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _MetaPill(
-                icon: Icons.flag_outlined,
-                label: task.status.replaceAll('_', ' '),
-                color: colors.accent,
+          const SizedBox(height: HermesSpace.x1),
+          Padding(
+            padding: const EdgeInsets.only(left: 2),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: HermesStatusText(
+                key: const ValueKey('kanban-detail-status'),
+                label: statusLabel(s, task.status),
+                tone: statusTone(task.status),
+                meta: meta.isEmpty ? null : meta,
               ),
-              if (task.assignee?.isNotEmpty == true)
-                _MetaPill(
-                  icon: Icons.person_outline,
-                  label: task.assignee!,
-                  color: colors.textSecondary,
-                ),
-              if (task.hasProgress)
-                _MetaPill(
-                  icon: Icons.donut_large_rounded,
-                  label: '${task.progressDone}/${task.progressTotal}',
-                  color: colors.textSecondary,
-                ),
-            ],
+            ),
           ),
           if (task.blockReason?.isNotEmpty == true) ...[
-            const SizedBox(height: 14),
-            _Notice(
-              colors: colors,
+            const SizedBox(height: HermesSpace.x3),
+            HermesInlineNotice(
+              key: const ValueKey('kanban-detail-block-reason'),
               icon: Icons.warning_amber_rounded,
-              text: task.blockReason!,
-              error: true,
+              tone: HermesStatusTone.error,
+              message: task.blockReason!,
             ),
           ] else if (detail.diagnostics.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            _Notice(
-              colors: colors,
+            const SizedBox(height: HermesSpace.x3),
+            HermesInlineNotice(
               icon: Icons.info_outline_rounded,
-              text:
-                  '${detail.diagnostics.first.title}: ${detail.diagnostics.first.detail}',
-            ),
-          ] else if (task.latestSummary?.isNotEmpty == true) ...[
-            const SizedBox(height: 14),
-            _Notice(
-              colors: colors,
-              icon: Icons.summarize_outlined,
-              text: task.latestSummary!,
+              tone: HermesStatusTone.warn,
+              message:
+                  '${detail.diagnostics.first.title}: '
+                  '${detail.diagnostics.first.detail}',
             ),
           ],
           if (widget.readOnly) ...[
-            const SizedBox(height: 14),
-            _Notice(
+            const SizedBox(height: HermesSpace.x3),
+            HermesInlineNotice(
               key: const ValueKey('kanban-detail-read-only'),
-              colors: colors,
               icon: Icons.lock_outline_rounded,
-              text: copy.readOnly,
+              message: copy.readOnly,
+            ),
+          ],
+          if (!widget.readOnly &&
+              (widget.onEdit != null || widget.onMove != null)) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if (widget.onEdit != null)
+                  Expanded(
+                    child: HermesActionButton(
+                      key: const ValueKey('kanban-task-edit'),
+                      primary: true,
+                      icon: Icons.edit_outlined,
+                      label: s.kanbanEdit,
+                      onPressed: widget.onEdit,
+                    ),
+                  ),
+                if (widget.onEdit != null && widget.onMove != null)
+                  const SizedBox(width: HermesSpace.x2),
+                if (widget.onMove != null)
+                  Expanded(
+                    child: HermesActionButton(
+                      key: const ValueKey('kanban-task-move'),
+                      icon: Icons.swap_horiz_rounded,
+                      label: s.kanbanMove,
+                      onPressed: widget.onMove,
+                    ),
+                  ),
+              ],
             ),
           ],
           if (task.body.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _DetailSection(
-              key: const ValueKey('kanban-detail-objective'),
-              colors: colors,
-              title: copy.objective,
-              summary: Text(
-                task.body,
-                key: const ValueKey('kanban-task-detail-body-summary'),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: colors.textSecondary),
-              ),
-              child: SelectableText(
-                task.body,
-                key: const ValueKey('kanban-task-detail-body'),
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.45,
-                  color: colors.textSecondary,
-                ),
-              ),
+            HermesSectionHeader(s.kanbanUiObjective),
+            HermesTextBlock(
+              key: const ValueKey('kanban-task-detail-body'),
+              text: task.body,
+              collapsedLines: 6,
+              copyable: true,
+              openTitle: s.kanbanUiObjective,
             ),
           ],
           if (task.result?.isNotEmpty == true) ...[
-            const SizedBox(height: 18),
-            _DetailSection(
+            HermesSectionHeader(copy.result),
+            HermesTextBlock(
               key: const ValueKey('kanban-detail-result'),
-              colors: colors,
-              title: copy.result,
-              child: SelectableText(
-                task.result!,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.4,
-                  color: colors.textSecondary,
-                ),
-              ),
+              text: task.result!,
+              collapsedLines: 6,
+              copyable: true,
+              openTitle: copy.result,
             ),
           ],
           if (task.latestSummary?.isNotEmpty == true &&
               task.latestSummary != task.result) ...[
-            const SizedBox(height: 18),
-            _DetailSection(
-              colors: colors,
-              title: copy.latestSummary,
-              child: SelectableText(
-                task.latestSummary!,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.4,
-                  color: colors.textSecondary,
-                ),
-              ),
+            HermesSectionHeader(copy.latestSummary),
+            HermesTextBlock(
+              key: const ValueKey('kanban-detail-summary'),
+              text: task.latestSummary!,
+              collapsedLines: 4,
+              openTitle: copy.latestSummary,
             ),
           ],
-          if (detail.diagnostics.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            _DetailSection(
-              key: const ValueKey('kanban-detail-diagnostics'),
-              colors: colors,
-              title: '${copy.diagnostics} · ${detail.diagnostics.length}',
-              child: _HairlineRows(
-                colors: colors,
-                children: [
-                  for (final diagnostic in detail.diagnostics)
-                    _DiagnosticTile(colors: colors, diagnostic: diagnostic),
-                ],
-              ),
+          if (work.isNotEmpty) ...[
+            HermesSectionHeader(s.kanbanUiWork),
+            HermesListGroup(children: work),
+          ],
+          if (conversation.isNotEmpty) ...[
+            HermesSectionHeader(s.kanbanUiConversation),
+            HermesListGroup(children: conversation),
+          ],
+          if (settings.isNotEmpty) ...[
+            HermesSectionHeader(s.kanbanUiThisTask),
+            HermesListGroup(
+              key: const ValueKey('kanban-detail-operations'),
+              children: settings,
             ),
           ],
-          if (_hasDependencies(detail)) ...[
-            const SizedBox(height: 18),
-            _dependencies(colors, copy, detail),
+          if (destructive.isNotEmpty) ...[
+            const SizedBox(height: HermesSpace.x5),
+            HermesListGroup(children: destructive),
           ],
-          if (detail.childResults.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            _childResults(colors, copy, detail.childResults),
-          ],
-          if (detail.supports(KanbanTaskDetailCapability.comments)) ...[
-            const SizedBox(height: 18),
-            _comments(colors, copy, detail.comments),
-          ],
-          if (detail.supports(KanbanTaskDetailCapability.attachments)) ...[
-            const SizedBox(height: 18),
-            _attachments(colors, copy, detail.attachments),
-          ],
-          if (detail.runs.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            _runs(colors, copy, detail.runs),
-          ],
-          if (detail.events.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            _events(colors, copy, detail.events),
-          ],
-          if (_hasOperationalActions(task)) ...[
-            const SizedBox(height: 18),
-            _operations(colors, copy, task),
-          ],
-          const SizedBox(height: 20),
-          _taskActions(colors, s, task),
         ],
       ),
     );
+  }
+
+  /// Header row of a folded list plus, when open, its content. Content is
+  /// only built while open so private rows never render collapsed.
+  List<Widget> _collapsible({
+    required String key,
+    required IconData icon,
+    required String title,
+    required int count,
+    required List<Widget> content,
+  }) {
+    final open = _open.contains(key);
+    return [
+      HermesListRow(
+        key: ValueKey(key),
+        icon: icon,
+        title: title,
+        semanticLabel: '$title, $count',
+        onTap: () => _toggle(key),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$count',
+              style: HermesType.value.copyWith(
+                color: Theme.of(context).hermes.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              size: 20,
+              color: Theme.of(context).hermes.textSecondary,
+            ),
+          ],
+        ),
+      ),
+      if (open)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            HermesSpace.rowH,
+            HermesSpace.x1,
+            HermesSpace.rowH,
+            HermesSpace.x2,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: content,
+          ),
+        ),
+    ];
   }
 
   bool _hasDependencies(KanbanTaskDetail detail) =>
@@ -321,31 +402,34 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       detail.links.blockedBy.isNotEmpty ||
       detail.links.blocks.isNotEmpty;
 
-  Widget _dependencies(
+  List<Widget> _dependencies(
     HermesThemeColors colors,
     _KanbanDetailCopy copy,
     KanbanTaskDetail detail,
   ) {
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-links'),
-      colors: colors,
+    final links = detail.links;
+    return _collapsible(
+      key: 'kanban-detail-links',
+      icon: Icons.account_tree_outlined,
       title: copy.dependencies,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _linkRow(colors, copy.parents, detail.links.parents),
-          _linkRow(colors, copy.children, detail.links.children),
-          _linkRow(colors, copy.blockedBy, detail.links.blockedBy),
-          _linkRow(colors, copy.blocks, detail.links.blocks),
-        ],
-      ),
+      count:
+          links.parents.length +
+          links.children.length +
+          links.blockedBy.length +
+          links.blocks.length,
+      content: [
+        _linkRow(colors, copy.parents, links.parents),
+        _linkRow(colors, copy.children, links.children),
+        _linkRow(colors, copy.blockedBy, links.blockedBy),
+        _linkRow(colors, copy.blocks, links.blocks),
+      ],
     );
   }
 
   Widget _linkRow(HermesThemeColors colors, String label, List<String> ids) {
     if (ids.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Wrap(
         spacing: 7,
         runSpacing: 6,
@@ -353,7 +437,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 11, color: colors.textSecondary),
+            style: HermesType.support.copyWith(color: colors.textSecondary),
           ),
           for (final id in ids)
             ActionChip(
@@ -368,382 +452,293 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     );
   }
 
-  Widget _childResults(
+  List<Widget> _childResults(
     HermesThemeColors colors,
     _KanbanDetailCopy copy,
     List<KanbanChildResult> children,
   ) {
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-children'),
-      colors: colors,
-      title: '${copy.childResults} · ${children.length}',
-      child: _HairlineRows(
-        colors: colors,
-        children: [
-          for (final child in children)
-            _CompactRow(
-              key: ValueKey('kanban-child-${child.id}'),
-              colors: colors,
-              onTap: widget.onOpenLinkedTask == null
-                  ? null
-                  : () => _run(
-                      'child-${child.id}',
-                      () => widget.onOpenLinkedTask!(child.id),
-                    ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          child.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        if (child.latestSummary?.isNotEmpty == true) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            child.latestSummary!,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    child.status.replaceAll('_', ' '),
-                    style: TextStyle(fontSize: 11, color: colors.accent),
-                  ),
-                ],
+    final s = Strings.of(context);
+    return _collapsible(
+      key: 'kanban-detail-children',
+      icon: Icons.checklist_rounded,
+      title: copy.childResults,
+      count: children.length,
+      content: [
+        for (final child in children)
+          _SubRow(
+            key: ValueKey('kanban-child-${child.id}'),
+            title: child.title,
+            subtitle: child.latestSummary,
+            trailing: Text(
+              statusLabel(s, child.status),
+              style: HermesType.support.copyWith(
+                color: statusTone(child.status).colorIn(colors),
               ),
             ),
-        ],
-      ),
+            onTap: widget.onOpenLinkedTask == null
+                ? null
+                : () => _run(
+                    'child-${child.id}',
+                    () => widget.onOpenLinkedTask!(child.id),
+                  ),
+          ),
+      ],
     );
   }
 
-  Widget _comments(
+  List<Widget> _comments(
     HermesThemeColors colors,
     _KanbanDetailCopy copy,
     List<KanbanComment> comments,
   ) {
     final canWrite = !widget.readOnly && widget.onAddComment != null;
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-comments'),
-      colors: colors,
-      title: '${copy.comments} · ${comments.length}',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (comments.isEmpty)
-            Text(
+    return _collapsible(
+      key: 'kanban-detail-comments',
+      icon: Icons.forum_outlined,
+      title: copy.comments,
+      count: comments.length,
+      content: [
+        if (comments.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(
               copy.noComments,
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
-            )
-          else
-            for (final comment in comments)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      comment.author.isEmpty ? copy.someone : comment.author,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    SelectableText(
-                      comment.body,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.35,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          if (canWrite) ...[
-            const SizedBox(height: 5),
-            TextField(
-              key: const ValueKey('kanban-comment-field'),
-              controller: _commentController,
-              minLines: 1,
-              maxLines: 4,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                hintText: widget.detail.task.status == 'running'
-                    ? copy.messageWorker
-                    : copy.addComment,
-                suffixIcon: IconButton(
-                  key: const ValueKey('kanban-comment-send'),
-                  tooltip: copy.send,
-                  onPressed: _busyAction == null ? _submitComment : null,
-                  icon: _busyAction == 'comment'
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.send_rounded),
-                ),
-              ),
-              onSubmitted: (_) => _submitComment(),
+              style: HermesType.support.copyWith(color: colors.textSecondary),
             ),
-          ],
+          )
+        else
+          for (final comment in comments)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    comment.author.isEmpty ? copy.someone : comment.author,
+                    style: HermesType.support.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  SelectableText(
+                    comment.body,
+                    style: HermesType.text.copyWith(
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        if (canWrite) ...[
+          const SizedBox(height: HermesSpace.x1),
+          TextField(
+            key: const ValueKey('kanban-comment-field'),
+            controller: _commentController,
+            minLines: 1,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              hintText: widget.detail.task.status == 'running'
+                  ? copy.messageWorker
+                  : copy.addComment,
+              suffixIcon: IconButton(
+                key: const ValueKey('kanban-comment-send'),
+                tooltip: copy.send,
+                onPressed: _busyAction == null ? _submitComment : null,
+                icon: _busyAction == 'comment'
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_rounded),
+              ),
+            ),
+            onSubmitted: (_) => _submitComment(),
+          ),
         ],
-      ),
+      ],
     );
   }
 
-  Widget _attachments(
+  List<Widget> _attachments(
     HermesThemeColors colors,
     _KanbanDetailCopy copy,
     List<KanbanAttachment> attachments,
   ) {
     final canWrite = !widget.readOnly;
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-attachments'),
-      colors: colors,
-      title: '${copy.attachments} · ${attachments.length}',
-      action: canWrite && widget.onUploadAttachment != null
-          ? IconButton(
-              key: const ValueKey('kanban-attachment-upload'),
-              tooltip: copy.uploadAttachment,
-              onPressed: _busyAction == null
-                  ? () => _run('upload', widget.onUploadAttachment!)
-                  : null,
-              icon: const Icon(Icons.attach_file_rounded, size: 19),
+    return [
+      ..._collapsible(
+        key: 'kanban-detail-attachments',
+        icon: Icons.attach_file_rounded,
+        title: copy.attachments,
+        count: attachments.length,
+        content: [
+          if (attachments.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                copy.noAttachments,
+                style: HermesType.support.copyWith(color: colors.textSecondary),
+              ),
             )
-          : null,
-      child: attachments.isEmpty
-          ? Text(
-              copy.noAttachments,
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
-            )
-          : _HairlineRows(
-              colors: colors,
-              children: [
-                for (final attachment in attachments)
-                  _CompactRow(
-                    key: ValueKey('kanban-attachment-${attachment.id}'),
-                    colors: colors,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                attachment.safeFilename,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                  color: colors.textPrimary,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _formatBytes(attachment.size),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: colors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: copy.download,
-                          onPressed:
-                              widget.onDownloadAttachment == null ||
-                                  _busyAction != null
-                              ? null
-                              : () => _run(
-                                  'download-${attachment.id}',
-                                  () =>
-                                      widget.onDownloadAttachment!(attachment),
-                                ),
-                          icon: const Icon(Icons.download_rounded, size: 19),
-                        ),
-                        if (canWrite && widget.onDeleteAttachment != null)
-                          IconButton(
-                            tooltip: copy.deleteAttachment,
-                            onPressed: _busyAction == null
-                                ? () => _run(
-                                    'delete-attachment-${attachment.id}',
-                                    () =>
-                                        widget.onDeleteAttachment!(attachment),
-                                  )
-                                : null,
-                            icon: Icon(
-                              Icons.delete_outline_rounded,
-                              size: 19,
-                              color: colors.error,
+          else
+            for (final attachment in attachments)
+              _SubRow(
+                key: ValueKey('kanban-attachment-${attachment.id}'),
+                title: attachment.safeFilename,
+                subtitle: _formatBytes(attachment.size),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: copy.download,
+                      onPressed:
+                          widget.onDownloadAttachment == null ||
+                              _busyAction != null
+                          ? null
+                          : () => _run(
+                              'download-${attachment.id}',
+                              () => widget.onDownloadAttachment!(attachment),
                             ),
-                          ),
-                      ],
+                      icon: const Icon(Icons.download_rounded, size: 19),
                     ),
-                  ),
-              ],
-            ),
-    );
+                    if (canWrite && widget.onDeleteAttachment != null)
+                      IconButton(
+                        tooltip: copy.deleteAttachment,
+                        onPressed: _busyAction == null
+                            ? () => _run(
+                                'delete-attachment-${attachment.id}',
+                                () => widget.onDeleteAttachment!(attachment),
+                              )
+                            : null,
+                        icon: Icon(
+                          Icons.delete_outline_rounded,
+                          size: 19,
+                          color: colors.error,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+      if (canWrite && widget.onUploadAttachment != null)
+        HermesListRow(
+          key: const ValueKey('kanban-attachment-upload'),
+          icon: Icons.upload_file_rounded,
+          title: copy.uploadAttachment,
+          showChevron: false,
+          onTap: _busyAction == null
+              ? () => _run('upload', widget.onUploadAttachment!)
+              : null,
+        ),
+    ];
   }
 
-  Widget _runs(
+  List<Widget> _runs(
     HermesThemeColors colors,
     _KanbanDetailCopy copy,
     List<KanbanRun> runs,
   ) {
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-runs'),
-      colors: colors,
-      title: '${copy.runs} · ${runs.length}',
-      action: widget.onShowLog == null
-          ? null
-          : TextButton.icon(
-              key: const ValueKey('kanban-task-log'),
-              onPressed: _busyAction == null
-                  ? () => _run('log', widget.onShowLog!)
-                  : null,
-              icon: const Icon(Icons.terminal_rounded, size: 16),
-              label: Text(copy.log),
-            ),
-      child: _HairlineRows(
-        colors: colors,
-        children: [
-          for (final run in runs)
-            _CompactRow(
-              key: ValueKey('kanban-run-${run.id}'),
-              colors: colors,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${copy.run} #${run.id} · ${run.status}',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                            color: colors.textPrimary,
-                          ),
+    return _collapsible(
+      key: 'kanban-detail-runs',
+      icon: Icons.play_circle_outline_rounded,
+      title: copy.runs,
+      count: runs.length,
+      content: [
+        for (final run in runs)
+          _SubRow(
+            key: ValueKey('kanban-run-${run.id}'),
+            title: '${copy.run} #${run.id} · ${run.status}',
+            subtitle: run.summary,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: copy.inspect,
+                  onPressed: widget.onInspectRun == null || _busyAction != null
+                      ? null
+                      : () => _run(
+                          'inspect-${run.id}',
+                          () => widget.onInspectRun!(run),
                         ),
-                        if (run.summary?.isNotEmpty == true) ...[
-                          const SizedBox(height: 3),
-                          Text(
-                            run.summary!,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                  icon: const Icon(Icons.monitor_heart_outlined, size: 19),
+                ),
+                if (!widget.readOnly &&
+                    run.endedAt == null &&
+                    widget.onTerminateRun != null)
                   IconButton(
-                    tooltip: copy.inspect,
-                    onPressed:
-                        widget.onInspectRun == null || _busyAction != null
-                        ? null
-                        : () => _run(
-                            'inspect-${run.id}',
-                            () => widget.onInspectRun!(run),
-                          ),
-                    icon: const Icon(Icons.monitor_heart_outlined, size: 19),
-                  ),
-                  if (!widget.readOnly &&
-                      run.endedAt == null &&
-                      widget.onTerminateRun != null)
-                    IconButton(
-                      key: ValueKey('kanban-run-terminate-${run.id}'),
-                      tooltip: copy.terminate,
-                      onPressed: _busyAction == null
-                          ? () => _run(
-                              'terminate-${run.id}',
-                              () => widget.onTerminateRun!(run),
-                            )
-                          : null,
-                      icon: Icon(
-                        Icons.stop_circle_outlined,
-                        size: 20,
-                        color: colors.error,
-                      ),
+                    key: ValueKey('kanban-run-terminate-${run.id}'),
+                    tooltip: copy.terminate,
+                    onPressed: _busyAction == null
+                        ? () => _run(
+                            'terminate-${run.id}',
+                            () => widget.onTerminateRun!(run),
+                          )
+                        : null,
+                    icon: Icon(
+                      Icons.stop_circle_outlined,
+                      size: 20,
+                      color: colors.error,
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
-  Widget _events(
+  List<Widget> _events(
     HermesThemeColors colors,
     _KanbanDetailCopy copy,
     List<KanbanTaskEvent> events,
   ) {
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-events'),
-      colors: colors,
-      title: '${copy.activity} · ${events.length}',
-      child: Column(
-        children: [
-          for (final event
-              in (_showAllEvents ? events.reversed : events.reversed.take(5)))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 7),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.circle, size: 6, color: colors.accent),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: SelectableText(
-                      _eventText(event),
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        height: 1.35,
-                        color: colors.textSecondary,
-                      ),
+    return _collapsible(
+      key: 'kanban-detail-events',
+      icon: Icons.history_rounded,
+      title: copy.activity,
+      count: events.length,
+      content: [
+        for (final event
+            in (_showAllEvents ? events.reversed : events.reversed.take(5)))
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Icon(
+                    Icons.circle,
+                    size: 6,
+                    color: colors.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SelectableText(
+                    _eventText(event),
+                    style: HermesType.support.copyWith(
+                      color: colors.textSecondary,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          if (events.length > 5)
-            TextButton(
+          ),
+        if (events.length > 5)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
               key: const ValueKey('kanban-events-show-all'),
+              style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
               onPressed: () => setState(() => _showAllEvents = !_showAllEvents),
               child: Text(_showAllEvents ? copy.showLess : copy.showAll),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -762,209 +757,101 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     return primitive.isEmpty ? label : '$label · $primitive';
   }
 
-  bool _hasOperationalActions(KanbanTask task) {
-    if (widget.onConfigureModel != null) return true;
-    if (widget.onToggleNotificationsMuted != null) return true;
-    if (widget.readOnly) return false;
-    return widget.onReassign != null ||
-        (task.status == 'running' && widget.onReclaim != null) ||
-        (task.status == 'triage' &&
-            (widget.onSpecify != null || widget.onDecompose != null));
-  }
-
-  Widget _operations(
-    HermesThemeColors colors,
-    _KanbanDetailCopy copy,
-    KanbanTask task,
-  ) {
+  /// Per-task settings and operations. Mutating rows are hidden (not
+  /// disabled) on read-only connections; the model stays visible read-only.
+  List<Widget> _settings(_KanbanDetailCopy copy, KanbanTask task) {
     final currentModel = task.modelOverride?.isNotEmpty == true
         ? '${task.providerOverride?.isNotEmpty == true ? '${task.providerOverride}: ' : ''}${task.modelOverride}'
         : copy.inheritModel;
-    return _DetailSection(
-      key: const ValueKey('kanban-detail-operations'),
-      colors: colors,
-      title: copy.operations,
-      initiallyExpanded: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (widget.onConfigureModel != null)
-            _CompactRow(
-              key: const ValueKey('kanban-model-override'),
-              colors: colors,
-              enabled: !widget.readOnly && _busyAction == null,
-              onTap: widget.readOnly
-                  ? null
-                  : () => _run('model', widget.onConfigureModel!),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      copy.model,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      task.reasoningEffort?.isNotEmpty == true
-                          ? '$currentModel · ${task.reasoningEffort}'
-                          : currentModel,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.end,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (widget.onToggleNotifyWhenDone != null)
-            HermesSwitchTile(
-              controlKey: const ValueKey('kanban-task-notify-done'),
-              contentPadding: EdgeInsets.zero,
-              secondary: const Icon(Icons.notifications_active_outlined),
-              title: copy.notifyWhenDone,
-              value: widget.notifyWhenDone && !widget.notificationsMuted,
-              onChanged: widget.notificationsMuted
-                  ? null
-                  : widget.onToggleNotifyWhenDone,
-            ),
-          if (widget.onToggleNotificationsMuted != null)
-            HermesSwitchTile(
-              controlKey: const ValueKey('kanban-task-mute-notifications'),
-              contentPadding: EdgeInsets.zero,
-              secondary: const Icon(Icons.notifications_off_outlined),
-              title: copy.muteNotifications,
-              subtitle: copy.muteNotificationsSub,
-              value: widget.notificationsMuted,
-              onChanged: widget.onToggleNotificationsMuted,
-            ),
-          if (!widget.readOnly)
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (widget.onReassign != null)
-                  OutlinedButton.icon(
-                    key: const ValueKey('kanban-task-reassign'),
-                    onPressed: _busyAction == null
-                        ? () => _run('reassign', widget.onReassign!)
-                        : null,
-                    icon: const Icon(Icons.person_search_outlined, size: 17),
-                    label: Text(copy.reassign),
-                  ),
-                if (task.status == 'running' && widget.onReclaim != null)
-                  OutlinedButton.icon(
-                    key: const ValueKey('kanban-task-reclaim'),
-                    onPressed: _busyAction == null
-                        ? () => _run('reclaim', widget.onReclaim!)
-                        : null,
-                    icon: const Icon(Icons.restart_alt_rounded, size: 17),
-                    label: Text(copy.reclaim),
-                  ),
-                if (task.status == 'triage' && widget.onSpecify != null)
-                  OutlinedButton.icon(
-                    key: const ValueKey('kanban-task-specify'),
-                    onPressed: _busyAction == null
-                        ? () => _run('specify', widget.onSpecify!)
-                        : null,
-                    icon: const Icon(Icons.auto_fix_high_outlined, size: 17),
-                    label: Text(copy.specify),
-                  ),
-                if (task.status == 'triage' && widget.onDecompose != null)
-                  OutlinedButton.icon(
-                    key: const ValueKey('kanban-task-decompose'),
-                    onPressed: _busyAction == null
-                        ? () => _run('decompose', widget.onDecompose!)
-                        : null,
-                    icon: const Icon(Icons.account_tree_outlined, size: 17),
-                    label: Text(copy.decompose),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
+    final canAct = !widget.readOnly && _busyAction == null;
+    return [
+      if (widget.onConfigureModel != null)
+        HermesListRow(
+          key: const ValueKey('kanban-model-override'),
+          icon: Icons.memory_rounded,
+          title: copy.model,
+          value: task.reasoningEffort?.isNotEmpty == true
+              ? '$currentModel · ${task.reasoningEffort}'
+              : currentModel,
+          showChevron: !widget.readOnly,
+          onTap: canAct ? () => _run('model', widget.onConfigureModel!) : null,
+        ),
+      if (widget.onToggleNotifyWhenDone != null)
+        HermesToggleRow(
+          switchKey: const ValueKey('kanban-task-notify-done'),
+          icon: Icons.notifications_active_outlined,
+          title: copy.notifyWhenDone,
+          value: widget.notifyWhenDone && !widget.notificationsMuted,
+          onChanged: widget.notificationsMuted
+              ? null
+              : widget.onToggleNotifyWhenDone,
+        ),
+      if (widget.onToggleNotificationsMuted != null)
+        HermesToggleRow(
+          switchKey: const ValueKey('kanban-task-mute-notifications'),
+          icon: Icons.notifications_off_outlined,
+          title: copy.muteNotifications,
+          subtitle: copy.muteNotificationsSub,
+          value: widget.notificationsMuted,
+          onChanged: widget.onToggleNotificationsMuted,
+        ),
+      if (!widget.readOnly) ...[
+        if (widget.onReassign != null)
+          HermesListRow(
+            key: const ValueKey('kanban-task-reassign'),
+            icon: Icons.person_search_outlined,
+            title: copy.reassign,
+            onTap: canAct ? () => _run('reassign', widget.onReassign!) : null,
+          ),
+        if (task.status == 'running' && widget.onReclaim != null)
+          HermesListRow(
+            key: const ValueKey('kanban-task-reclaim'),
+            icon: Icons.restart_alt_rounded,
+            title: copy.reclaim,
+            showChevron: false,
+            onTap: canAct ? () => _run('reclaim', widget.onReclaim!) : null,
+          ),
+        if (task.status == 'triage' && widget.onSpecify != null)
+          HermesListRow(
+            key: const ValueKey('kanban-task-specify'),
+            icon: Icons.auto_fix_high_outlined,
+            title: copy.specify,
+            showChevron: false,
+            onTap: canAct ? () => _run('specify', widget.onSpecify!) : null,
+          ),
+        if (task.status == 'triage' && widget.onDecompose != null)
+          HermesListRow(
+            key: const ValueKey('kanban-task-decompose'),
+            icon: Icons.account_tree_outlined,
+            title: copy.decompose,
+            showChevron: false,
+            onTap: canAct ? () => _run('decompose', widget.onDecompose!) : null,
+          ),
+      ],
+    ];
   }
 
-  Widget _taskActions(HermesThemeColors colors, Strings s, KanbanTask task) {
-    if (widget.readOnly) return const SizedBox.shrink();
-    final primaryActions = <Widget>[
+  List<Widget> _destructive(Strings s, KanbanTask task) {
+    if (widget.readOnly) return const [];
+    return [
       if (task.status != 'archived' && widget.onArchive != null)
-        OutlinedButton.icon(
+        HermesListRow(
           key: const ValueKey('kanban-task-archive'),
-          onPressed: widget.onArchive,
-          icon: const Icon(Icons.archive_outlined, size: 16),
-          label: Text(s.kanbanArchive),
+          icon: Icons.archive_outlined,
+          title: s.kanbanArchive,
+          showChevron: false,
+          onTap: widget.onArchive,
         ),
       if (widget.onDelete != null)
-        OutlinedButton.icon(
+        HermesListRow(
           key: const ValueKey('kanban-task-delete-permanent'),
-          style: OutlinedButton.styleFrom(foregroundColor: colors.error),
-          onPressed: widget.onDelete,
-          icon: const Icon(Icons.delete_forever_outlined, size: 16),
-          label: Text(s.kanbanDeletePermanent),
+          icon: Icons.delete_forever_outlined,
+          title: s.kanbanDeletePermanent,
+          destructive: true,
+          showChevron: false,
+          onTap: widget.onDelete,
         ),
     ];
-    final secondaryActions = <Widget>[
-      if (widget.onMove != null)
-        OutlinedButton.icon(
-          onPressed: widget.onMove,
-          icon: const Icon(Icons.swap_horiz_rounded, size: 16),
-          label: Text(s.kanbanMove),
-        ),
-      if (widget.onEdit != null)
-        FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: colors.accent),
-          onPressed: widget.onEdit,
-          icon: Icon(Icons.edit_outlined, size: 16, color: colors.onAccent),
-          label: Text(s.kanbanEdit, style: TextStyle(color: colors.onAccent)),
-        ),
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (primaryActions.isNotEmpty) _responsiveActionGroup(primaryActions),
-        if (secondaryActions.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          _responsiveActionGroup(secondaryActions),
-        ],
-      ],
-    );
-  }
-
-  Widget _responsiveActionGroup(List<Widget> actions) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 360) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var index = 0; index < actions.length; index++) ...[
-                SizedBox(width: double.infinity, child: actions[index]),
-                if (index != actions.length - 1) const SizedBox(height: 8),
-              ],
-            ],
-          );
-        }
-        return Row(
-          children: [
-            for (var index = 0; index < actions.length; index++) ...[
-              Expanded(child: actions[index]),
-              if (index != actions.length - 1) const SizedBox(width: 10),
-            ],
-          ],
-        );
-      },
-    );
   }
 
   String _formatBytes(int bytes) {
@@ -974,62 +861,63 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   }
 }
 
-class _DetailSection extends StatelessWidget {
-  final HermesThemeColors colors;
+/// Row inside an open folded list: title, optional support line, trailing.
+class _SubRow extends StatelessWidget {
   final String title;
-  final Widget child;
-  final Widget? action;
-  final Widget? summary;
-  final bool initiallyExpanded;
+  final String? subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
 
-  const _DetailSection({
-    required this.colors,
+  const _SubRow({
     required this.title,
-    required this.child,
-    this.action,
-    this.summary,
-    this.initiallyExpanded = false,
+    this.subtitle,
+    this.trailing,
+    this.onTap,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      container: true,
-      label: title,
-      child: Material(
-        color: colors.surfaceVariant.withValues(alpha: 0.16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 13),
-          childrenPadding: const EdgeInsets.fromLTRB(13, 0, 13, 13),
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: colors.textPrimary,
+    final colors = Theme.of(context).hermes;
+    final content = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: HermesSpace.tap),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: HermesType.body.copyWith(color: colors.textPrimary),
                   ),
-                ),
+                  if (subtitle?.isNotEmpty == true)
+                    Text(
+                      subtitle!,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: HermesType.support.copyWith(
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                ],
               ),
-              ?action,
+            ),
+            if (trailing != null) ...[
+              const SizedBox(width: HermesSpace.x2),
+              trailing!,
             ],
-          ),
-          subtitle: summary,
-          shape: const Border(),
-          collapsedShape: const Border(),
-          children: [child],
+          ],
         ),
       ),
     );
+    if (onTap == null) return content;
+    return InkWell(onTap: onTap, child: content);
   }
 }
 
@@ -1041,186 +929,32 @@ class _DiagnosticTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tone = switch (diagnostic.severity) {
-      KanbanDiagnosticSeverity.warning => Colors.amber,
-      KanbanDiagnosticSeverity.error ||
-      KanbanDiagnosticSeverity.critical => colors.error,
-      KanbanDiagnosticSeverity.unknown => colors.textSecondary,
-    };
     return Padding(
       key: ValueKey('kanban-diagnostic-${diagnostic.kind}'),
-      padding: const EdgeInsets.symmetric(vertical: 9),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 6,
-                height: 6,
-                margin: const EdgeInsets.only(top: 4, right: 8),
-                decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
-              ),
-              Expanded(
-                child: Text(
-                  '${diagnostic.title}${diagnostic.count > 1 ? ' ×${diagnostic.count}' : ''}',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: tone,
-                  ),
-                ),
-              ),
-            ],
+          HermesStatusText(
+            label:
+                '${diagnostic.title}${diagnostic.count > 1 ? ' ×${diagnostic.count}' : ''}',
+            tone: switch (diagnostic.severity) {
+              KanbanDiagnosticSeverity.warning => HermesStatusTone.warn,
+              KanbanDiagnosticSeverity.error ||
+              KanbanDiagnosticSeverity.critical => HermesStatusTone.error,
+              KanbanDiagnosticSeverity.unknown => HermesStatusTone.neutral,
+            },
           ),
           const SizedBox(height: 4),
           Padding(
-            padding: const EdgeInsets.only(left: 14),
+            padding: const EdgeInsets.only(left: 12),
             child: SelectableText(
               diagnostic.detail,
-              style: TextStyle(
-                fontSize: 11.5,
-                height: 1.35,
-                color: colors.textSecondary,
-              ),
+              style: HermesType.support.copyWith(color: colors.textSecondary),
             ),
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Plain-whitespace list: rows separated by a single hairline divider,
-/// never boxed or bordered. Used in place of the old `Container` +
-/// `BoxDecoration` + `Border.all` blocks (runs, diagnostics).
-class _HairlineRows extends StatelessWidget {
-  final HermesThemeColors colors;
-  final List<Widget> children;
-
-  const _HairlineRows({required this.colors, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = <Widget>[];
-    for (var i = 0; i < children.length; i++) {
-      rows.add(children[i]);
-      if (i != children.length - 1) {
-        rows.add(
-          Divider(
-            height: 1,
-            thickness: 1,
-            color: colors.divider.withValues(alpha: 0.6),
-          ),
-        );
-      }
-    }
-    return Column(children: rows);
-  }
-}
-
-/// Compact row: no leading circle, no generic Material chevron — just the
-/// row's own [child] content at a comfortable minimum tap height. Replaces
-/// the old `ListTile` usages across the task detail.
-class _CompactRow extends StatelessWidget {
-  final HermesThemeColors colors;
-  final Widget child;
-  final VoidCallback? onTap;
-  final bool enabled;
-
-  const _CompactRow({
-    required this.colors,
-    required this.child,
-    this.onTap,
-    this.enabled = true,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final content = ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 44),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Align(alignment: Alignment.centerLeft, child: child),
-      ),
-    );
-    if (onTap == null) return content;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(onTap: enabled ? onTap : null, child: content),
-    );
-  }
-}
-
-class _MetaPill extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  const _MetaPill({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.11),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Notice extends StatelessWidget {
-  final HermesThemeColors colors;
-  final IconData icon;
-  final String text;
-  final bool error;
-
-  const _Notice({
-    required this.colors,
-    required this.icon,
-    required this.text,
-    this.error = false,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final tone = error ? colors.error : colors.textSecondary;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 16, color: tone),
-        const SizedBox(width: 7),
-        Expanded(
-          child: Text(
-            text,
-            style: TextStyle(fontSize: 12, height: 1.35, color: tone),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1279,9 +1013,8 @@ class _KanbanDetailCopy {
       spanish ? 'Recuperar y reencolar' : 'Reclaim and requeue';
   String get specify => spanish ? 'Especificar' : 'Specify';
   String get decompose => spanish ? 'Descomponer' : 'Decompose';
-  String get notifyWhenDone => spanish
-      ? 'Avisarme cuando termine'
-      : "Notify me when it's done";
+  String get notifyWhenDone =>
+      spanish ? 'Avisarme cuando termine' : "Notify me when it's done";
   String get muteNotifications =>
       spanish ? 'Silenciar notificaciones' : 'Mute notifications';
   String get muteNotificationsSub => spanish

@@ -8,6 +8,10 @@ import '../models/agent_task_list.dart';
 import '../models/session_activity.dart';
 import '../models/subagent_activity.dart';
 import '../theme/app_theme.dart';
+import '../design/content.dart' show HermesStatusText;
+import '../design/tokens.dart';
+import '../screens/subagent_detail_screen.dart'
+    show subagentElapsed, subagentHumanStatus, subagentTitle;
 import 'activity_pill.dart';
 
 /// Acciones por elemento del panel. Son los mismos controladores que tenían las
@@ -1186,17 +1190,6 @@ class ActivityGoalSection extends StatelessWidget {
   }
 }
 
-String _phaseWord(Strings s, SubagentActivityPhase phase) => switch (phase) {
-  SubagentActivityPhase.requested => s.subagentActivityRequested,
-  SubagentActivityPhase.running => s.subagentActivityRunning,
-  SubagentActivityPhase.thinking => s.subagentActivityThinking,
-  SubagentActivityPhase.tool => s.subagentActivityTool,
-  SubagentActivityPhase.completed => s.subagentActivityCompleted,
-  SubagentActivityPhase.failed => s.subagentActivityFailed,
-  SubagentActivityPhase.cancelled => s.subagentActivityCancelled,
-  SubagentActivityPhase.unknown => s.subagentActivityUnknown,
-};
-
 class ActivitySubagentsSection extends StatelessWidget {
   const ActivitySubagentsSection({
     required this.snapshot,
@@ -1271,20 +1264,11 @@ class ActivitySubagentsSection extends StatelessWidget {
     SubagentActivity activity,
     int index,
   ) {
-    final terminal = activity.isTerminal;
-    final failed = activity.phase == SubagentActivityPhase.failed;
-    final elapsed =
-        activity.details.durationSeconds ??
-        (activity.details.startedAt == null
-            ? null
-            : (activity.details.completedAt ?? now.toUtc())
-                  .difference(activity.details.startedAt!)
-                  .inSeconds
-                  .toDouble());
-    final facts = <String>[
-      _phaseWord(s, activity.phase),
-      if (elapsed != null && elapsed >= 0)
-        formatTurnElapsed(Duration(seconds: elapsed.round())),
+    final status = subagentHumanStatus(s, activity);
+    final elapsed = subagentElapsed(activity, now);
+    final title = subagentTitle(s, activity, maxChars: 80);
+    final meta = <String>[
+      if (elapsed != null) formatTurnElapsed(elapsed),
       if (activity.progress case final progress?)
         s.subagentActivityProgress(
           progress.displayTaskIndex,
@@ -1295,71 +1279,52 @@ class ActivitySubagentsSection extends StatelessWidget {
     return Semantics(
       container: true,
       button: open != null,
-      label: '${s.subagentActivityItem(index)}, ${facts.join(', ')}',
+      label:
+          '$title, ${status.label}${meta.isEmpty ? '' : ', ${meta.join(', ')}'}',
       hint: open == null ? null : s.liveSubagentControl,
       excludeSemantics: true,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Material(
-          color: colors.surfaceVariant.withValues(alpha: 0.6),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: colors.divider, width: 0.8),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            key: ValueKey('activity-subagent-${activity.key.stableId}'),
-            onTap: open == null ? null : () => open(activity),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-                child: Row(
-                  children: [
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          key: ValueKey('activity-subagent-${activity.key.stableId}'),
+          borderRadius: BorderRadius.circular(HermesRadius.control),
+          onTap: open == null ? null : () => open(activity),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 52),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(2, 6, 0, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: HermesType.body.copyWith(
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        HermesStatusText(
+                          label: status.label,
+                          tone: status.tone,
+                          meta: meta.isEmpty ? null : meta.join(' · '),
+                          maxLines: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (open != null)
                     Icon(
-                      failed
-                          ? Icons.error_outline
-                          : terminal
-                          ? Icons.check_circle_outline_rounded
-                          : Icons.account_tree_outlined,
-                      size: 16,
-                      color: failed
-                          ? colors.error
-                          : terminal
-                          ? colors.success
-                          : colors.accent,
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: colors.textDisabled,
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            s.subagentActivityItem(index),
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                          Text(
-                            facts.join(' · '),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (open != null)
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 18,
-                        color: colors.textSecondary,
-                      ),
-                  ],
-                ),
+                ],
               ),
             ),
           ),

@@ -353,11 +353,15 @@ class HermesLogPage extends StatelessWidget {
   final String text;
   final bool mono;
 
+  /// Optional one-line note above the text (for example "truncated").
+  final String? notice;
+
   const HermesLogPage({
     super.key,
     required this.title,
     required this.text,
     this.mono = true,
+    this.notice,
   });
 
   @override
@@ -397,6 +401,10 @@ class HermesLogPage extends StatelessWidget {
               HermesSpace.pageBottom,
             ),
             children: [
+              if (notice != null && notice!.isNotEmpty) ...[
+                HermesInlineNotice(message: notice!),
+                const SizedBox(height: HermesSpace.x3),
+              ],
               Text(
                 text,
                 style: mono

@@ -8452,5 +8452,178 @@
       }
     }
   },
-  "crnDeliveryOrigin": "Chat donde se creó"
+  "crnDeliveryOrigin": "Chat donde se creó",
+  "subagentUiRowTitle": "Subagente",
+  "subagentUiGroupTitle": "{count, plural, =1{1 subagente} other{{count} subagentes}}",
+  "@subagentUiGroupTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentUiWorkingCount": "{count} trabajando",
+  "@subagentUiWorkingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentUiStatusWorking": "Trabajando",
+  "subagentUiStatusThinking": "Pensando",
+  "subagentUiStatusTool": "Usando una herramienta",
+  "subagentUiStatusQueued": "Empezando",
+  "subagentUiStatusDone": "Terminado",
+  "subagentUiStatusFailed": "Falló",
+  "subagentUiStatusStopped": "Detenido",
+  "subagentUiStatusUnknown": "Estado desconocido",
+  "subagentUiStatusStopping": "Deteniendo…",
+  "subagentUiAllDone": "todos terminados",
+  "subagentUiFailedCount": "{count} fallaron",
+  "@subagentUiFailedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentUiListTitle": "Subagentes",
+  "subagentUiListSubtitle": "Trabajo que este chat ha delegado",
+  "subagentUiStop": "Detener",
+  "subagentUiOpenConversation": "Abrir conversación",
+  "subagentUiSectionNow": "Qué está haciendo",
+  "subagentUiSectionDid": "Qué ha hecho",
+  "subagentUiSectionLive": "En directo",
+  "subagentUiSectionGuide": "Guiar",
+  "subagentUiSectionResult": "Resultado",
+  "subagentUiSectionBelongs": "Pertenece a",
+  "subagentUiTechnical": "Detalles técnicos",
+  "subagentUiStepStarted": "Empezó",
+  "subagentUiStepQueued": "Esperando para empezar",
+  "subagentUiStepWorking": "Trabajando en ello",
+  "subagentUiStepThinking": "Pensando el siguiente paso",
+  "subagentUiStepTool": "Usando {tool}",
+  "@subagentUiStepTool": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "subagentUiStepToolGeneric": "Usando una herramienta",
+  "subagentUiStepTools": "{count, plural, =1{1 herramienta usada} other{{count} herramientas usadas}}",
+  "@subagentUiStepTools": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentUiStepFiles": "Archivos leídos {read} · escritos {written}",
+  "@subagentUiStepFiles": {
+    "placeholders": {
+      "read": {
+        "type": "String"
+      },
+      "written": {
+        "type": "String"
+      }
+    }
+  },
+  "subagentUiStepFinished": "Terminó",
+  "subagentUiStepFailed": "Se detuvo con un error",
+  "subagentUiStepStopped": "Se detuvo antes de terminar",
+  "subagentUiParentChat": "Este chat",
+  "subagentUiParentHint": "Volver a la conversación que lo delegó",
+  "subagentUiOpenConversationHint": "Leer su conversación completa",
+  "subagentUiLiveWaiting": "Esperando salida…",
+  "subagentUiLiveUnavailable": "La salida en directo no está disponible para este subagente.",
+  "subagentUiLivePaused": "En pausa mientras la pantalla no está visible.",
+  "subagentUiLiveOpen": "Pantalla completa",
+  "subagentUiLiveTruncated": "Solo se muestra la salida más reciente.",
+  "subagentUiLiveTitle": "Salida en directo",
+  "subagentUiLiveFollow": "Seguir",
+  "subagentUiGuideHint": "Dile qué cambiar…",
+  "subagentUiGuideSend": "Enviar indicación",
+  "subagentUiGuideQueued": "Enviado · lo aplicará en su próximo paso",
+  "subagentUiGuideMissedNote": "Si estaba a punto de terminar, puede que no llegue a leerlo.",
+  "subagentUiGuideRejected": "No aceptó la indicación. Vuelve a intentarlo o detenlo.",
+  "subagentUiGuideUnsupported": "Este servidor todavía no permite guiar subagentes.",
+  "subagentUiStopTitle": "¿Detener este subagente?",
+  "subagentUiStopBody": "Solo se detiene este subagente. La conversación principal sigue.",
+  "subagentUiStopConfirm": "Detener",
+  "subagentUiCancel": "Cancelar",
+  "subagentUiTechModel": "Modelo",
+  "subagentUiTechTokensIn": "Tokens de entrada",
+  "subagentUiTechTokensOut": "Tokens de salida",
+  "subagentUiTechReasoning": "Tokens de razonamiento",
+  "subagentUiTechCalls": "Llamadas a la API",
+  "subagentUiTechCost": "Coste",
+  "subagentUiTechDuration": "Duración",
+  "subagentUiTechToolsets": "Conjuntos de herramientas",
+  "subagentUiTechDepth": "Profundidad",
+  "subagentUiTranscriptTitle": "Conversación del subagente",
+  "subagentUiTranscriptTask": "Encargo",
+  "subagentUiTranscriptEmpty": "Esta conversación todavía no tiene mensajes.",
+  "subagentUiTranscriptError": "No se pudo cargar la conversación.",
+  "subagentUiTranscriptReadOnly": "Solo lectura",
+  "subagentUiRetry": "Reintentar",
+  "sesUiStatusActive": "Activa",
+  "sesUiStatusIdle": "Abierta",
+  "sesUiStatusStale": "Antigua",
+  "sesUiStatusArchived": "Archivada",
+  "sesUiStatusBroken": "Error",
+  "sesUiLastMessage": "Último mensaje",
+  "sesUiActions": "Acciones",
+  "sesUiResume": "Reanudar",
+  "sesUiDuplicate": "Duplicar",
+  "sesUiArchive": "Archivar",
+  "sesUiUnarchive": "Desarchivar",
+  "sesUiCopySummary": "Copiar resumen",
+  "sesUiDelete": "Eliminar",
+  "sesUiOpenRoutine": "Abrir tarea programada",
+  "sesUiDetails": "Detalles",
+  "sesUiContext": "Contexto de la sesión",
+  "sesUiContextHint": "ID, origen, fechas y caché",
+  "sesUiTechnical": "Detalles técnicos",
+  "sesUiMessages": "Mensajes",
+  "sesUiToolCalls": "Llamadas a herramientas",
+  "sesUiTokens": "Tokens",
+  "sesUiTokensIn": "Tokens de entrada",
+  "sesUiTokensOut": "Tokens de salida",
+  "sesUiCacheRead": "Tokens en caché",
+  "sesUiCacheWrite": "Escrituras en caché",
+  "sesUiCachePercent": "Acierto de caché",
+  "sesUiTtft": "Primer token",
+  "sesUiDuration": "Duración",
+  "sesUiApiCalls": "Llamadas a la API",
+  "sesUiCost": "Coste",
+  "sesUiCostEst": "Coste estimado",
+  "sesUiModel": "Modelo",
+  "sesUiInstance": "Instancia",
+  "sesUiBranched": "Duplicada de otra conversación",
+  "sesUiReadOnly": "Conexión de solo lectura: solo se muestran acciones de lectura.",
+  "sesUiDuplicateTitle": "¿Duplicar esta conversación?",
+  "sesUiDeleteTitle": "¿Eliminar esta conversación?",
+  "sesUiCancel": "Cancelar",
+  "sesUiLastActivity": "Última actividad {when}",
+  "@sesUiLastActivity": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "sesUiReadOnlyTag": "Solo lectura",
+  "sesUiContextOrigin": "Origen",
+  "sesUiContextDates": "Fechas",
+  "sesUiContextCache": "Rendimiento y caché",
+  "kanbanUiObjective": "Objetivo",
+  "kanbanUiWork": "Trabajo",
+  "kanbanUiConversation": "Conversación",
+  "kanbanUiThisTask": "Esta tarea",
+  "kanbanUiWorkerLog": "Log del worker",
+  "kanbanUiWorkerLogHint": "Salida completa de la última ejecución",
+  "kanbanUiTaskTitle": "Tarea"
 }

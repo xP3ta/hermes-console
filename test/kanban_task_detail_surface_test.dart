@@ -108,19 +108,27 @@ void main() {
 
     expect(find.text('Tarjeta larga'), findsOneWidget);
     expect(find.text('Falta decisión humana'), findsOneWidget);
+    // Una sola página: el objetivo y el resultado se leen en bloques de texto
+    // sin scroll propio; el bloqueo aparece antes que el objetivo.
     expect(
-      find.byKey(const ValueKey('kanban-task-detail-body-summary')),
+      find.byKey(const ValueKey('kanban-task-detail-body')),
       findsOneWidget,
     );
     final blockY = tester.getTopLeft(find.text('Falta decisión humana')).dy;
-    final summaryY = tester
-        .getTopLeft(
-          find.byKey(const ValueKey('kanban-task-detail-body-summary')),
-        )
+    final bodyY = tester
+        .getTopLeft(find.byKey(const ValueKey('kanban-task-detail-body')))
         .dy;
-    expect(blockY, lessThan(summaryY));
+    expect(blockY, lessThan(bodyY));
+    expect(find.byKey(const ValueKey('kanban-detail-result')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-task-detail-rich')),
+        matching: find.byType(Scrollable),
+      ),
+      findsOneWidget,
+      reason: 'the detail must scroll as ONE page',
+    );
     for (final hidden in [
-      'Evidencia final reservada',
       'Detalle diagnóstico',
       'parent-private',
       'Subtarea reservada',
@@ -133,7 +141,6 @@ void main() {
     }
 
     final sections = {
-      'kanban-detail-result': 'Evidencia final reservada',
       'kanban-detail-diagnostics': 'Detalle diagnóstico',
       'kanban-detail-links': 'parent-private',
       'kanban-detail-children': 'Subtarea reservada',
@@ -142,16 +149,14 @@ void main() {
       'kanban-detail-runs': 'Resumen ejecución',
       'kanban-detail-events': 'event 22',
     };
-    await expand(tester, 'kanban-detail-objective');
-    expect(
-      find.byKey(const ValueKey('kanban-task-detail-body')),
-      findsOneWidget,
-    );
     for (final entry in sections.entries) {
       await expand(tester, entry.key);
       expect(find.text(entry.value), findsOneWidget, reason: entry.key);
     }
     expect(find.text('event 1'), findsNothing);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('kanban-events-show-all')),
+    );
     await tester.tap(find.byKey(const ValueKey('kanban-events-show-all')));
     await tester.pumpAndSettle();
     expect(find.text('event 0'), findsOneWidget);

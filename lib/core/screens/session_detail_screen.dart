@@ -1,4 +1,5 @@
-// Detalle de sesión — vista premium sobre los datos reales del Gateway.
+// Detalle de sesión — página action-first (spec 080) sobre datos reales del
+// Gateway.
 //
 // Fuentes (verificadas contra api_server.py del upstream y el servidor vivo):
 //   GET  /api/sessions/{id}            → métricas client-safe (_session_response)
@@ -15,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../main.dart';
 import '../../l10n/app_localizations.dart';
+import '../design/hermes_design.dart';
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/session_archive.dart';
@@ -22,16 +24,12 @@ import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
-import '../widgets/accent_card.dart';
 import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_pill.dart';
-import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_context_usage.dart';
 import 'chat_screen.dart';
 import 'cron_screen.dart';
-import '../widgets/hermes_app_bar.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -53,14 +51,13 @@ class SessionDetailScreen extends StatefulWidget {
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionDetailScreenState extends State<SessionDetailScreen>
-    with SingleTickerProviderStateMixin {
+class _SessionDetailScreenState extends State<SessionDetailScreen> {
   late final ApiClient _client;
   late final SessionRepository _repository;
-  late final TabController _tabs;
 
   late Session _session;
   bool _refreshing = false;
+  bool _technicalOpen = false;
 
   SessionArchive? _archive;
   bool _archivePending = false;
@@ -81,7 +78,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       widget.connection,
       gateway: _client,
     );
-    _tabs = TabController(length: 2, vsync: this);
     _loadArchive();
     _refresh(refreshSession: !widget.skipInitialSessionRefresh);
   }
@@ -103,7 +99,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
   @override
   void dispose() {
-    _tabs.dispose();
     _repository.close();
     _client.close();
     super.dispose();
@@ -242,23 +237,22 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       return;
     }
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final confirm = await showDialog<bool>(
+    final confirm = await showHermesDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(s.sesDuplicateTitle),
-        content: Text(s.sesDuplicateContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(s.sesCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(s.sesDuplicate, style: TextStyle(color: colors.accent)),
-          ),
-        ],
-      ),
+      title: s.sesUiDuplicateTitle,
+      message: s.sesDuplicateContent,
+      actions: [
+        HermesDialogAction(
+          label: s.sesUiCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('session-detail-duplicate-confirm'),
+          label: s.sesUiDuplicate,
+          value: true,
+        ),
+      ],
     );
     if (confirm != true || !mounted) return;
 
@@ -302,23 +296,23 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       if (choice == null || !mounted) return;
       cronDeletion = choice;
     } else {
-      final colors = Theme.of(context).hermes;
-      final confirm = await showDialog<bool>(
+      final confirm = await showHermesDialog<bool>(
         context: context,
-        builder: (_) => AlertDialog(
-          title: Text(s.sesDeleteTitle),
-          content: Text(s.sesDeleteContent(_session.title)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(s.sesCancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(s.sesDelete, style: TextStyle(color: colors.error)),
-            ),
-          ],
-        ),
+        title: s.sesUiDeleteTitle,
+        message: s.sesDeleteContent(_titleText(s)),
+        actions: [
+          HermesDialogAction(
+            label: s.sesUiCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            key: const ValueKey('session-detail-delete-confirm'),
+            label: s.sesUiDelete,
+            value: true,
+            style: HermesDialogActionStyle.destructive,
+          ),
+        ],
       );
       if (confirm != true || !mounted) return;
     }
@@ -401,7 +395,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     final preview = s.cleanPreview;
     final lines = <String>[
       str.sesCopySessionLabel(s.title.isNotEmpty ? s.title : s.id),
-      str.sesCopyStateLabel(_state.label),
+      str.sesCopyStateLabel(_statusLabel(str)),
       str.sesCopyInstanceLabel(widget.connection.label),
       if (s.model.isNotEmpty) str.sesCopyModelLabel(s.model),
       str.sesCopyMessagesLabel(s.messageCount),
@@ -427,331 +421,25 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     return '${d.inDays}d ${d.inHours % 24}h';
   }
 
-  static String _formatTimestamp(double ts) {
-    final dt = DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${dt.year}-${two(dt.month)}-${two(dt.day)} '
-        '${two(dt.hour)}:${two(dt.minute)}';
-  }
+  // ── Presentación ───────────────────────────────────────────────────────
 
-  // ── Build ──────────────────────────────────────────────────────────────
+  String _titleText(Strings s) =>
+      _session.title.trim().isNotEmpty ? _session.title.trim() : s.sesNoTitle;
 
-  @override
-  Widget build(BuildContext context) {
-    final str = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    return Scaffold(
-      appBar: HermesAppBar(
-        centerTitle: false,
-        title: Text(
-          str.sesScreenTitle,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 15,
-            letterSpacing: 1.5,
-            color: colors.accentHover,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, size: 20),
-            tooltip: str.sesRefreshTooltip,
-            onPressed: _refreshing ? null : _refresh,
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabs,
-          labelStyle: const TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.8,
-          ),
-          tabs: [
-            Tab(text: str.sesTabSummary),
-            Tab(text: str.sesTabContext),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabs,
-        children: [_buildSummaryTab(colors), _buildContextTab(colors)],
-      ),
-    );
-  }
-
-  // ── Tab: resumen ───────────────────────────────────────────────────────
-
-  Widget _buildSummaryTab(HermesThemeColors colors) {
-    final str = Strings.of(context);
-    final s = _session;
-    final preview = s.cleanPreview;
-    final isOpen = _state == SessionState.active || _state == SessionState.idle;
-
-    return RefreshIndicator(
-      color: colors.accent,
-      onRefresh: _refresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
-        children: [
-          // Cabecera: título + estado + contexto de instancia.
-          AccentCard(
-            accent: isOpen ? colors.accent.withValues(alpha: 0.7) : null,
-            background: colors.surface,
-            borderColor: colors.divider,
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    HermesIconTile(
-                      _state == SessionState.broken
-                          ? Icons.error_outline
-                          : Icons.chat_bubble_outline,
-                      size: 38,
-                      active: isOpen,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            s.title.isNotEmpty ? s.title : str.sesNoTitle,
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              HermesPill(
-                                color: _stateColor(colors),
-                                label: _state.label,
-                              ),
-                              if (s.model.isNotEmpty &&
-                                  s.model != 'hermes-agent')
-                                HermesBadge(
-                                  s.model,
-                                  color: colors.textSecondary,
-                                  dot: false,
-                                ),
-                              if (widget.connection.readOnly)
-                                const ReadOnlyBadge(compact: true),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  '${widget.connection.label} · '
-                  '${str.sesLastActivity(relativeTime(s.lastActivityAt))}'
-                  '${s.source.isNotEmpty ? ' · ${s.source}' : ''}',
-                  style: TextStyle(fontSize: 10.5, color: colors.textSecondary),
-                ),
-              ],
-            ),
-          ),
-
-          if (s.endReason == 'branched' || s.parentSessionId != null) ...[
-            const SizedBox(height: 10),
-            HermesInfoBanner(
-              s.parentSessionId != null
-                  ? str.sesBranchedFrom(s.parentSessionId!)
-                  : str.sesBranchedInfo,
-              icon: Icons.call_split,
-            ),
-          ],
-
-          const SizedBox(height: 18),
-          HermesSectionHeader(str.sesSectionMetrics),
-          const SizedBox(height: 8),
-          _buildMetricsGrid(colors, s),
-
-          if (preview.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            HermesSectionHeader(str.sesSectionLastMessage),
-            const SizedBox(height: 8),
-            HermesCard(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                preview,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.45,
-                  color: colors.textSecondary,
-                ),
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 18),
-          HermesSectionHeader(str.sesSectionActions),
-          const SizedBox(height: 8),
-          if (widget.connection.readOnly) ...[
-            HermesInfoBanner(str.sesReadOnlyNotice, icon: Icons.lock_outline),
-            const SizedBox(height: 8),
-          ],
-          if (s.isJob) ...[
-            HermesSecondaryButton(
-              label: str.crnOpenFromConversation,
-              icon: Icons.schedule_outlined,
-              onTap: _openLinkedCron,
-            ),
-            const SizedBox(height: 8),
-          ],
-          HermesPrimaryButton(
-            label: str.sesActionResume,
-            icon: Icons.play_arrow_rounded,
-            onTap: _resume,
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: HermesSecondaryButton(
-                  label: str.sesActionDuplicate,
-                  icon: Icons.call_split,
-                  onTap: widget.connection.readOnly ? null : _fork,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: HermesSecondaryButton(
-                  label: _archived
-                      ? str.sesActionUnarchive
-                      : str.sesActionArchive,
-                  icon: _archived
-                      ? Icons.unarchive_outlined
-                      : Icons.archive_outlined,
-                  onTap: _archivePending ? null : _toggleArchive,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: HermesSecondaryButton(
-                  label: str.sesActionCopySummary,
-                  icon: Icons.content_copy_outlined,
-                  onTap: _copySummary,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: HermesSecondaryButton(
-                  label: str.sesActionDelete,
-                  icon: Icons.delete_outline,
-                  color: widget.connection.readOnly ? null : colors.error,
-                  onTap: widget.connection.readOnly ? null : _delete,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            str.sesActionDisclaimer,
-            style: TextStyle(fontSize: 10, color: colors.textDisabled),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Color _stateColor(HermesThemeColors colors) => switch (_state) {
-    SessionState.active => colors.success,
-    SessionState.idle => colors.accent,
-    SessionState.stale => colors.textDisabled,
-    SessionState.archived => colors.textSecondary,
-    SessionState.broken => colors.error,
-    SessionState.unknown => colors.textSecondary,
+  String _statusLabel(Strings s) => switch (_state) {
+    SessionState.active => s.sesUiStatusActive,
+    SessionState.idle => s.sesUiStatusIdle,
+    SessionState.stale || SessionState.unknown => s.sesUiStatusStale,
+    SessionState.archived => s.sesUiStatusArchived,
+    SessionState.broken => s.sesUiStatusBroken,
   };
 
-  Widget _buildMetricsGrid(HermesThemeColors colors, Session s) {
-    final str = Strings.of(context);
-    final usage = _contextMetrics;
-    // Solo métricas que el servidor informa de verdad; las vacías no se
-    // pintan como "0" engañoso salvo mensajes (siempre presente).
-    final metrics = <(String, String)>[
-      (str.sesMetricMessages, '${s.messageCount}'),
-      if (s.toolCallCount > 0) (str.sesMetricToolCalls, '${s.toolCallCount}'),
-      if (s.totalTokens > 0)
-        (str.sesMetricTokens, _compactNumber(s.totalTokens)),
-      if (s.inputTokens > 0)
-        (str.sesMetricTokensIn, _compactNumber(s.inputTokens)),
-      if (s.outputTokens > 0)
-        (str.sesMetricTokensOut, _compactNumber(s.outputTokens)),
-      if (usage.cacheReadTokens != null)
-        (str.sesMetricCachedTokens, _compactNumber(usage.cacheReadTokens!)),
-      if (usage.cacheWriteTokens != null)
-        (str.chaContextCacheWrite, _compactNumber(usage.cacheWriteTokens!)),
-      if (usage.cacheReadPercent != null)
-        (
-          str.sesMetricCachePercent,
-          '${usage.cacheReadPercent!.toStringAsFixed(1)}%',
-        ),
-      if (usage.observedFirstTokenLatencyMs != null)
-        (str.chaContextObservedTtft, '${usage.observedFirstTokenLatencyMs} ms'),
-      if (s.sessionDuration != null)
-        (str.sesMetricDuration, _formatDuration(s.sessionDuration!)),
-      if (s.apiCallCount > 0) (str.sesMetricApiCalls, '${s.apiCallCount}'),
-      if ((s.actualCostUsd ?? 0) > 0)
-        (str.sesMetricCost, '\$${s.actualCostUsd!.toStringAsFixed(4)}')
-      else if ((s.estimatedCostUsd ?? 0) > 0)
-        (str.sesMetricCostEst, '\$${s.estimatedCostUsd!.toStringAsFixed(4)}'),
-    ];
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final (label, value) in metrics)
-          Container(
-            width: (MediaQuery.of(context).size.width - 28 - 16) / 3,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-            decoration: BoxDecoration(
-              color: colors.surface,
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: colors.accentHover,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 9,
-                    letterSpacing: 0.6,
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
+  HermesStatusTone get _statusTone => switch (_state) {
+    SessionState.active => HermesStatusTone.active,
+    SessionState.idle => HermesStatusTone.ok,
+    SessionState.broken => HermesStatusTone.error,
+    _ => HermesStatusTone.neutral,
+  };
 
   static String _compactNumber(int n) {
     if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
@@ -760,134 +448,349 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     return '$n';
   }
 
-  // ── Tab: contexto ──────────────────────────────────────────────────────
-
-  Widget _buildContextTab(HermesThemeColors colors) {
-    final str = Strings.of(context);
-    final s = _session;
+  /// Only metrics the server (or the app, for TTFT) really reports; empty
+  /// ones are never painted as a misleading "0".
+  List<(String, String)> _technicalRows(Strings s) {
+    final session = _session;
     final usage = _contextMetrics;
-    final rows = <(String, String, bool)>[
-      // (label, valor, copiable)
-      (str.sesCtxId, s.id, true),
-      if (s.parentSessionId != null)
-        (str.sesCtxBranchedFrom, s.parentSessionId!, true),
-      (str.sesCtxModel, s.model.isNotEmpty ? s.model : '—', false),
-      (str.sesCtxSource, s.source.isNotEmpty ? s.source : '—', false),
-      (str.sesCtxInstance, widget.connection.label, false),
-      (
-        str.sesCtxCreated,
-        s.startedAt > 0 ? _formatTimestamp(s.startedAt) : '—',
-        false,
-      ),
-      if (s.updatedAt != null)
-        (str.sesCtxLastActivity, _formatTimestamp(s.updatedAt!), false),
-      if (s.endedAt != null)
-        (str.sesCtxClosed, _formatTimestamp(s.endedAt!), false),
-      if (s.endReason != null) (str.sesCtxCloseReason, s.endReason!, false),
-      (
-        str.sesCtxSystemPrompt,
-        s.hasSystemPrompt
-            ? str.sesCtxSystemPromptDefined
-            : str.sesCtxSystemPromptNone,
-        false,
-      ),
-      (
-        str.chaContextObservedTtft,
-        usage.observedFirstTokenLatencyMs == null
-            ? str.chaContextNotMeasured
-            : '${usage.observedFirstTokenLatencyMs} ms',
-        false,
-      ),
-      (
-        str.chaContextCacheRead,
-        usage.cacheReadTokens == null
-            ? str.chaContextNotPublished
-            : _compactNumber(usage.cacheReadTokens!),
-        false,
-      ),
-      (
-        str.chaContextCacheWrite,
-        usage.cacheWriteTokens == null
-            ? str.chaContextNotPublished
-            : _compactNumber(usage.cacheWriteTokens!),
-        false,
-      ),
+    return [
+      if (session.toolCallCount > 0)
+        (s.sesUiToolCalls, '${session.toolCallCount}'),
+      if (session.totalTokens > 0)
+        (s.sesUiTokens, _compactNumber(session.totalTokens)),
+      if (session.inputTokens > 0)
+        (s.sesUiTokensIn, _compactNumber(session.inputTokens)),
+      if (session.outputTokens > 0)
+        (s.sesUiTokensOut, _compactNumber(session.outputTokens)),
+      if (usage.cacheReadTokens != null)
+        (s.sesUiCacheRead, _compactNumber(usage.cacheReadTokens!)),
+      if (usage.cacheWriteTokens != null)
+        (s.sesUiCacheWrite, _compactNumber(usage.cacheWriteTokens!)),
       if (usage.cacheReadPercent != null)
-        (
-          str.sesMetricCachePercent,
-          '${usage.cacheReadPercent!.toStringAsFixed(1)}%',
-          false,
+        (s.sesUiCachePercent, '${usage.cacheReadPercent!.toStringAsFixed(1)}%'),
+      if (usage.observedFirstTokenLatencyMs != null)
+        (s.sesUiTtft, '${usage.observedFirstTokenLatencyMs} ms'),
+      if (session.sessionDuration != null)
+        (s.sesUiDuration, _formatDuration(session.sessionDuration!)),
+      if (session.apiCallCount > 0)
+        (s.sesUiApiCalls, '${session.apiCallCount}'),
+      if ((session.actualCostUsd ?? 0) > 0)
+        (s.sesUiCost, '\$${session.actualCostUsd!.toStringAsFixed(4)}')
+      else if ((session.estimatedCostUsd ?? 0) > 0)
+        (s.sesUiCostEst, '\$${session.estimatedCostUsd!.toStringAsFixed(4)}'),
+    ];
+  }
+
+  void _openContext() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _SessionContextPage(
+          session: _session,
+          instanceLabel: widget.connection.label,
+          metrics: _contextMetrics,
         ),
-      if (s.reasoningTokens > 0)
-        (str.sesCtxReasoningTokens, _compactNumber(s.reasoningTokens), false),
+      ),
+    );
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final session = _session;
+    final readOnly = widget.connection.readOnly;
+    final preview = session.cleanPreview;
+    final branched =
+        session.endReason == 'branched' || session.parentSessionId != null;
+    final lang = Localizations.localeOf(context).languageCode;
+    final technical = _technicalRows(s);
+    final showModel =
+        session.model.isNotEmpty && session.model != 'hermes-agent';
+
+    return HermesDetailScaffold(
+      listKey: const ValueKey('session-detail-list'),
+      title: _titleText(s),
+      eyebrow: readOnly
+          ? HermesTag(
+              label: s.sesUiReadOnlyTag,
+              tone: HermesStatusTone.neutral,
+              icon: Icons.lock_outline_rounded,
+            )
+          : null,
+      status: HermesStatusText(
+        key: const ValueKey('session-detail-status'),
+        label: _statusLabel(s),
+        tone: _statusTone,
+        meta: s.sesUiLastActivity(
+          relativeTime(session.lastActivityAt, languageCode: lang),
+        ),
+      ),
+      reason: readOnly ? s.sesUiReadOnly : (branched ? s.sesUiBranched : null),
+      primaryAction: HermesActionButton(
+        key: const ValueKey('session-detail-resume'),
+        primary: true,
+        icon: Icons.play_arrow_rounded,
+        label: s.sesUiResume,
+        onPressed: _resume,
+      ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded, size: 20),
+          tooltip: s.sesRefreshTooltip,
+          onPressed: _refreshing ? null : _refresh,
+        ),
+      ],
+      onRefresh: _refresh,
+      sections: [
+        if (preview.isNotEmpty) ...[
+          HermesSectionHeader(s.sesUiLastMessage),
+          HermesTextBlock(
+            key: const ValueKey('session-detail-last-message'),
+            text: preview,
+            collapsedLines: 5,
+            copyable: true,
+            openTitle: s.sesUiLastMessage,
+          ),
+        ],
+        HermesSectionHeader(s.sesUiActions),
+        HermesListGroup(
+          children: [
+            if (session.isJob)
+              HermesListRow(
+                key: const ValueKey('session-detail-open-routine'),
+                icon: Icons.schedule_rounded,
+                title: s.sesUiOpenRoutine,
+                onTap: _openLinkedCron,
+              ),
+            if (!readOnly)
+              HermesListRow(
+                key: const ValueKey('session-detail-duplicate'),
+                icon: Icons.call_split_rounded,
+                title: s.sesUiDuplicate,
+                showChevron: false,
+                onTap: _fork,
+              ),
+            HermesListRow(
+              key: const ValueKey('session-detail-archive'),
+              icon: _archived
+                  ? Icons.unarchive_outlined
+                  : Icons.archive_outlined,
+              title: _archived ? s.sesUiUnarchive : s.sesUiArchive,
+              showChevron: false,
+              onTap: _archive == null || _archivePending
+                  ? null
+                  : _toggleArchive,
+            ),
+            HermesListRow(
+              key: const ValueKey('session-detail-copy-summary'),
+              icon: Icons.content_copy_outlined,
+              title: s.sesUiCopySummary,
+              showChevron: false,
+              onTap: _copySummary,
+            ),
+            if (!readOnly)
+              HermesListRow(
+                key: const ValueKey('session-detail-delete'),
+                icon: Icons.delete_outline_rounded,
+                title: s.sesUiDelete,
+                destructive: true,
+                showChevron: false,
+                onTap: _delete,
+              ),
+          ],
+        ),
+        HermesSectionHeader(s.sesUiDetails),
+        HermesListGroup(
+          children: [
+            HermesListRow(
+              icon: Icons.chat_bubble_outline_rounded,
+              title: s.sesUiMessages,
+              value: '${session.messageCount}',
+            ),
+            if (showModel)
+              HermesListRow(
+                icon: Icons.memory_rounded,
+                title: s.sesUiModel,
+                value: session.model,
+              ),
+            HermesListRow(
+              icon: Icons.dns_outlined,
+              title: s.sesUiInstance,
+              value: widget.connection.label,
+            ),
+            HermesListRow(
+              key: const ValueKey('session-detail-context'),
+              icon: Icons.info_outline_rounded,
+              title: s.sesUiContext,
+              subtitle: s.sesUiContextHint,
+              onTap: _openContext,
+            ),
+            if (technical.isNotEmpty) ...[
+              HermesListRow(
+                key: const ValueKey('session-detail-technical'),
+                icon: Icons.tune_rounded,
+                title: s.sesUiTechnical,
+                onTap: () => setState(() => _technicalOpen = !_technicalOpen),
+                trailing: Icon(
+                  _technicalOpen
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 20,
+                  color: colors.textSecondary,
+                ),
+              ),
+              if (_technicalOpen)
+                for (final (label, value) in technical)
+                  HermesListRow(title: label, value: value, muted: true),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Session context as its own page: identity, dates and cache data reported
+/// by the Gateway. Identifiers copy on tap.
+class _SessionContextPage extends StatelessWidget {
+  final Session session;
+  final String instanceLabel;
+  final SessionContextMetrics metrics;
+
+  const _SessionContextPage({
+    required this.session,
+    required this.instanceLabel,
+    required this.metrics,
+  });
+
+  static String _formatTimestamp(double ts) {
+    final dt = DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)} '
+        '${two(dt.hour)}:${two(dt.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final ids = <(String, String)>[
+      (s.sesCtxId, session.id),
+      if (session.parentSessionId != null)
+        (s.sesCtxBranchedFrom, session.parentSessionId!),
+    ];
+    final origin = <(String, String)>[
+      (s.sesCtxModel, session.model.isNotEmpty ? session.model : '—'),
+      (s.sesCtxSource, session.source.isNotEmpty ? session.source : '—'),
+      (s.sesCtxInstance, instanceLabel),
+      (
+        s.sesCtxSystemPrompt,
+        session.hasSystemPrompt
+            ? s.sesCtxSystemPromptDefined
+            : s.sesCtxSystemPromptNone,
+      ),
+    ];
+    final dates = <(String, String)>[
+      (
+        s.sesCtxCreated,
+        session.startedAt > 0 ? _formatTimestamp(session.startedAt) : '—',
+      ),
+      if (session.updatedAt != null)
+        (s.sesCtxLastActivity, _formatTimestamp(session.updatedAt!)),
+      if (session.endedAt != null)
+        (s.sesCtxClosed, _formatTimestamp(session.endedAt!)),
+      if (session.endReason != null) (s.sesCtxCloseReason, session.endReason!),
+    ];
+    final cache = <(String, String)>[
+      (
+        s.chaContextObservedTtft,
+        metrics.observedFirstTokenLatencyMs == null
+            ? s.chaContextNotMeasured
+            : '${metrics.observedFirstTokenLatencyMs} ms',
+      ),
+      (
+        s.chaContextCacheRead,
+        metrics.cacheReadTokens == null
+            ? s.chaContextNotPublished
+            : _SessionDetailScreenState._compactNumber(
+                metrics.cacheReadTokens!,
+              ),
+      ),
+      (
+        s.chaContextCacheWrite,
+        metrics.cacheWriteTokens == null
+            ? s.chaContextNotPublished
+            : _SessionDetailScreenState._compactNumber(
+                metrics.cacheWriteTokens!,
+              ),
+      ),
+      if (metrics.cacheReadPercent != null)
+        (
+          s.sesUiCachePercent,
+          '${metrics.cacheReadPercent!.toStringAsFixed(1)}%',
+        ),
+      if (session.reasoningTokens > 0)
+        (
+          s.sesCtxReasoningTokens,
+          _SessionDetailScreenState._compactNumber(session.reasoningTokens),
+        ),
     ];
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+    // Legacy context labels are lowercase; rows use sentence case.
+    String label(String raw) =>
+        raw.isEmpty ? raw : raw[0].toUpperCase() + raw.substring(1);
+
+    Widget copyRow((String, String) row) => HermesListRow(
+      title: label(row.$1),
+      subtitle: row.$2,
+      subtitleMaxLines: 3,
+      trailing: Icon(
+        Icons.content_copy_outlined,
+        size: 16,
+        color: colors.textDisabled,
+      ),
+      onTap: () async {
+        await Clipboard.setData(ClipboardData(text: row.$2));
+        if (!context.mounted) return;
+        HermesNotice.show(
+          context,
+          message: s.designCopied,
+          kind: HermesNoticeKind.success,
+        );
+      },
+    );
+    Widget valueRow((String, String) row) => row.$2.length > 22
+        ? HermesListRow(
+            title: label(row.$1),
+            subtitle: row.$2,
+            subtitleMaxLines: 3,
+          )
+        : HermesListRow(title: label(row.$1), value: row.$2);
+
+    return HermesPage(
+      title: s.sesUiContext,
+      listKey: const ValueKey('session-context-page'),
       children: [
-        HermesSectionHeader(str.sesSectionContext),
-        const SizedBox(height: 8),
-        HermesCard(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: Column(
-            children: [
-              for (final (label, value, copyable) in rows)
-                InkWell(
-                  onLongPress: copyable
-                      ? () {
-                          Clipboard.setData(ClipboardData(text: value));
-                          HermesNotice.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                Strings.of(context).sesCopiedMessage,
-                              ),
-                            ),
-                            kind: HermesNoticeKind.success,
-                          );
-                        }
-                      : null,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: 118,
-                          child: Text(
-                            label,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              letterSpacing: 0.4,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            value,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: colors.textPrimary.withValues(alpha: 0.9),
-                            ),
-                          ),
-                        ),
-                        if (copyable)
-                          Icon(
-                            Icons.content_copy_outlined,
-                            size: 12,
-                            color: colors.textDisabled,
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
+        HermesListGroup(
+          dividerIndent: HermesSpace.rowH,
+          children: [for (final row in ids) copyRow(row)],
         ),
-        const SizedBox(height: 8),
-        Text(
-          Strings.of(context).sesCtxDisclaimer,
-          style: TextStyle(fontSize: 10, color: colors.textDisabled),
+        HermesSectionHeader(s.sesUiContextOrigin),
+        HermesListGroup(
+          dividerIndent: HermesSpace.rowH,
+          children: [for (final row in origin) valueRow(row)],
+        ),
+        HermesSectionHeader(s.sesUiContextDates),
+        HermesListGroup(
+          dividerIndent: HermesSpace.rowH,
+          children: [for (final row in dates) valueRow(row)],
+        ),
+        HermesSectionHeader(s.sesUiContextCache),
+        HermesListGroup(
+          dividerIndent: HermesSpace.rowH,
+          children: [for (final row in cache) valueRow(row)],
         ),
       ],
     );
