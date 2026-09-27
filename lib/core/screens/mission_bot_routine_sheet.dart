@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
+import '../design/hermes_design.dart'
+    show HermesSchedule, hermesFormatNextRun, showHermesScheduleBuilder;
 import '../theme/app_theme.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/mission_profile_avatar.dart';
@@ -165,13 +168,12 @@ class MissionBotRoutineSheet extends StatefulWidget {
 class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
   final _promptController = TextEditingController();
   final _nameController = TextEditingController();
-  final _customScheduleController = TextEditingController();
 
-  _RoutineSchedule _schedule = _RoutineSchedule.dailyAtNine;
+  /// Spec 080: the schedule comes from the shared schedule builder.
+  String _cron = '0 9 * * *';
   bool _showMore = false;
   bool _submitting = false;
   String? _promptError;
-  String? _scheduleError;
   String? _submitError;
 
   MissionBotRoutineSheetCopy get _copy =>
@@ -182,7 +184,6 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
   void dispose() {
     _promptController.dispose();
     _nameController.dispose();
-    _customScheduleController.dispose();
     super.dispose();
   }
 
@@ -196,28 +197,41 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
     }
   }
 
-  void _selectSchedule(_RoutineSchedule? value) {
-    if (value == null || _submitting) return;
+  Future<void> _pickSchedule() async {
+    if (_submitting) return;
+    final cron = await showHermesScheduleBuilder(context, initialCron: _cron);
+    if (cron == null || !mounted) return;
     setState(() {
-      _schedule = value;
-      _scheduleError = null;
+      _cron = cron;
       _submitError = null;
     });
+  }
+
+  /// Human label of [_cron]; falls back to the injected copy for the
+  /// default when the host has no app localizations.
+  String _scheduleLabel(MissionBotRoutineSheetCopy copy) {
+    final s = Localizations.of<Strings>(context, Strings);
+    if (s == null) {
+      // Never the raw cron: without app strings only the default is known.
+      return _cron == '0 9 * * *' ? copy.dailyAtNine : copy.custom;
+    }
+    return HermesSchedule.parse(_cron).describe(s);
+  }
+
+  String? _nextLabel() {
+    final s = Localizations.of<Strings>(context, Strings);
+    if (s == null) return null;
+    final next = HermesSchedule.parse(_cron).nextRun(DateTime.now());
+    return next == null ? null : s.schNextRun(hermesFormatNextRun(s, next));
   }
 
   Future<void> _submit() async {
     if (_submitting) return;
     final prompt = _promptController.text.trim();
-    final customSchedule = _customScheduleController.text.trim();
     final promptError = prompt.isEmpty ? _copy.whatRequired : null;
-    final scheduleError =
-        _schedule == _RoutineSchedule.custom && customSchedule.isEmpty
-        ? _copy.customScheduleRequired
-        : null;
-    if (promptError != null || scheduleError != null) {
+    if (promptError != null) {
       setState(() {
         _promptError = promptError;
-        _scheduleError = scheduleError;
         _submitError = null;
       });
       return;
@@ -227,7 +241,6 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
     setState(() {
       _submitting = true;
       _promptError = null;
-      _scheduleError = null;
       _submitError = null;
     });
     try {
@@ -235,9 +248,7 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
         MissionBotRoutineDraft(
           name: _nameController.text.trim(),
           prompt: prompt,
-          schedule: _schedule == _RoutineSchedule.custom
-              ? customSchedule
-              : _schedule.expression!,
+          schedule: _cron,
         ),
       );
     } catch (_) {
@@ -333,41 +344,11 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
                 ),
                 const SizedBox(height: 18),
                 _FieldLabel(copy.whenLabel),
-                DropdownButtonFormField<_RoutineSchedule>(
-                  key: const ValueKey('mission-routine-schedule'),
-                  initialValue: _schedule,
-                  isExpanded: true,
-                  decoration: const InputDecoration(),
-                  items: [
-                    for (final option in _RoutineSchedule.values)
-                      DropdownMenuItem(
-                        value: option,
-                        child: Text(
-                          option.label(copy),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
-                  onChanged: _submitting ? null : _selectSchedule,
+                _ScheduleRow(
+                  label: _scheduleLabel(copy),
+                  next: _nextLabel(),
+                  onTap: _submitting ? null : _pickSchedule,
                 ),
-                if (_schedule == _RoutineSchedule.custom) ...[
-                  const SizedBox(height: 12),
-                  HermesField(
-                    key: const ValueKey('mission-routine-custom-schedule'),
-                    controller: _customScheduleController,
-                    label: copy.customScheduleLabel,
-                    hint: copy.customScheduleHint,
-                    keyboardType: TextInputType.text,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    errorText: _scheduleError,
-                    onChanged: (_) {
-                      if (_scheduleError == null || !mounted) return;
-                      setState(() => _scheduleError = null);
-                    },
-                  ),
-                ],
                 const SizedBox(height: 16),
                 Semantics(
                   button: true,
@@ -586,26 +567,69 @@ class _FieldLabel extends StatelessWidget {
   }
 }
 
-enum _RoutineSchedule {
-  dailyAtNine('0 9 * * *'),
-  weekdaysAtNine('0 9 * * 1-5'),
-  weeklyMondayAtNine('0 9 * * 1'),
-  monthlyAtNine('0 9 1 * *'),
-  hourly('0 * * * *'),
-  everyFifteenMinutes('*/15 * * * *'),
-  custom(null);
+/// "When" row: the human schedule + next run, opening the schedule builder.
+class _ScheduleRow extends StatelessWidget {
+  final String label;
+  final String? next;
+  final VoidCallback? onTap;
 
-  const _RoutineSchedule(this.expression);
+  const _ScheduleRow({required this.label, this.next, this.onTap});
 
-  final String? expression;
-
-  String label(MissionBotRoutineSheetCopy copy) => switch (this) {
-    _RoutineSchedule.dailyAtNine => copy.dailyAtNine,
-    _RoutineSchedule.weekdaysAtNine => copy.weekdaysAtNine,
-    _RoutineSchedule.weeklyMondayAtNine => copy.weeklyMondayAtNine,
-    _RoutineSchedule.monthlyAtNine => copy.monthlyAtNine,
-    _RoutineSchedule.hourly => copy.hourly,
-    _RoutineSchedule.everyFifteenMinutes => copy.everyFifteenMinutes,
-    _RoutineSchedule.custom => copy.custom,
-  };
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Material(
+      color: colors.surfaceVariant.withValues(alpha: .35),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: const ValueKey('mission-routine-schedule'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 52),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.schedule_rounded,
+                  size: 20,
+                  color: colors.textSecondary,
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (next != null)
+                        Text(
+                          next!,
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: colors.textDisabled,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

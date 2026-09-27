@@ -86,9 +86,18 @@ class _Fixture {
         final result =
             await (respond?.call(frame) ?? Future.value(defaultResult(frame)));
         if (socket.readyState == WebSocket.open) {
-          socket.add(
-            jsonEncode({'jsonrpc': '2.0', 'id': frame['id'], 'result': result}),
-          );
+          try {
+            socket.add(
+              jsonEncode({
+                'jsonrpc': '2.0',
+                'id': frame['id'],
+                'result': result,
+              }),
+            );
+          } on StateError {
+            // The client closed while this reply was pending (a clean close
+            // now drains instead of resetting); a real server drops it too.
+          }
         }
       });
     });

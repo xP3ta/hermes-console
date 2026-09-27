@@ -17,6 +17,41 @@ final class GatewaySocketMeter {
   int _total = 0;
   DateTime? _lastLog;
 
+  /// Last closes (newest last), capped; no private data (stable reasons).
+  static const closeHistory = 50;
+  final List<GatewaySocketClose> _closes = [];
+  final Map<String, int> _closeCounts = {};
+  int _networkLost = 0;
+
+  List<GatewaySocketClose> get recentCloses => List.unmodifiable(_closes);
+
+  /// Closes per stable reason since process start (or [reset]).
+  Map<String, int> get closeCounts => Map.unmodifiable(_closeCounts);
+
+  int get networkLostCount => _networkLost;
+
+  /// One transport close: `reason` is a stable token (client_dispose,
+  /// heartbeat_timeout, probe_timeout, protocol_violation, peer_closed,
+  /// transport_error, connect_aborted…), `code` the close code sent or
+  /// received, `life` how long the socket was up.
+  void recordClose({
+    required String reason,
+    int? code,
+    Duration life = Duration.zero,
+  }) {
+    _closes.add(GatewaySocketClose(reason, code, life, now()));
+    if (_closes.length > closeHistory) _closes.removeAt(0);
+    _closeCounts[reason] = (_closeCounts[reason] ?? 0) + 1;
+    if (kDebugMode) {
+      debugPrint(
+        '[gateway-sockets] closed reason=$reason code=${code ?? 'none'} '
+        'life=${life.inMilliseconds}ms',
+      );
+    }
+  }
+
+  void recordNetworkLost() => _networkLost++;
+
   /// Total opens since process start (or the last [reset]).
   int get totalOpened => _total;
 
@@ -34,15 +69,16 @@ final class GatewaySocketMeter {
     if (kDebugMode &&
         (_lastLog == null || at.difference(_lastLog!) >= window)) {
       _lastLog = at;
-      debugPrint(
-        '[gateway-sockets] opened=${_opens.length}/min total=$_total',
-      );
+      debugPrint('[gateway-sockets] opened=${_opens.length}/min total=$_total');
     }
   }
 
   @visibleForTesting
   void reset() {
     _opens.clear();
+    _closes.clear();
+    _closeCounts.clear();
+    _networkLost = 0;
     _total = 0;
     _lastLog = null;
     now = DateTime.now;
@@ -54,4 +90,13 @@ final class GatewaySocketMeter {
       _opens.removeAt(0);
     }
   }
+}
+
+final class GatewaySocketClose {
+  const GatewaySocketClose(this.reason, this.code, this.life, this.at);
+
+  final String reason;
+  final int? code;
+  final Duration life;
+  final DateTime at;
 }

@@ -74,7 +74,14 @@ class MainActivity : FlutterFragmentActivity() {
             override fun onAvailable(network: Network) {
                 val sink = networkAvailabilitySink ?: return
                 runOnUiThread {
-                    if (networkAvailabilitySink === sink) sink.success(null)
+                    if (networkAvailabilitySink === sink) sink.success("available")
+                }
+            }
+
+            override fun onLost(network: Network) {
+                val sink = networkAvailabilitySink ?: return
+                runOnUiThread {
+                    if (networkAvailabilitySink === sink) sink.success("lost")
                 }
             }
         }

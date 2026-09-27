@@ -4004,6 +4004,14 @@ class ActiveChat {
     return Duration(microseconds: (cap.inMicroseconds * bounded).floor());
   }
 
+  /// Recovery loops never undercut the gateway owner's reconnect backoff:
+  /// their RPCs would only fail fast until it elapses.
+  Duration _atLeastGatewayBackoff(Object gateway, Duration delay) {
+    if (gateway is! TuiGatewayClient) return delay;
+    final floor = gateway.reconnectBackoffRemaining;
+    return floor > delay ? floor : delay;
+  }
+
   @visibleForTesting
   Duration desktopRecoveryDelayForTesting(int attempt) =>
       _desktopRecoveryDelayForAttempt(attempt);
@@ -4632,6 +4640,15 @@ class ActiveChat {
     } on NoSuchMethodError {
       return false;
     }
+  }
+
+  /// Remaining reconnect backoff of the chat's gateway owner. Pollers pause
+  /// instead of issuing RPCs that would only fail fast (or, before P0-2, dial
+  /// a new socket per tick).
+  Duration get desktopReconnectBackoffRemaining {
+    final gateway = _desktopGateway;
+    if (gateway is TuiGatewayClient) return gateway.reconnectBackoffRemaining;
+    return Duration.zero;
   }
 
   int get adaptiveRefreshEventRevision => _adaptiveRefreshEventRevision;
@@ -16836,7 +16853,10 @@ class ActiveChat {
     _publishTransportState(ChatTransportState.offline);
     var attempt = 0;
     while (isCurrent()) {
-      final delay = _desktopRecoveryDelayForAttempt(attempt);
+      final delay = _atLeastGatewayBackoff(
+        gateway,
+        _desktopRecoveryDelayForAttempt(attempt),
+      );
       attempt += 1;
       if (delay > Duration.zero) {
         final elapsed = await _waitForDesktopRecoveryDelay(
@@ -17227,7 +17247,10 @@ class ActiveChat {
       var attempt = 0;
       Object lastError = originalError;
       while (_canRecoverTurn(turnEpoch)) {
-        final delay = _desktopRecoveryDelayForAttempt(attempt);
+        final delay = _atLeastGatewayBackoff(
+          gateway,
+          _desktopRecoveryDelayForAttempt(attempt),
+        );
         attempt++;
         debugPrint('[active-chat] recovery attempt $attempt');
         if (!_canRecoverTurn(turnEpoch)) return;
@@ -17404,7 +17427,10 @@ class ActiveChat {
     Object lastError = originalError;
     debugPrint('[active-chat] snapshot recovery start');
     while (_canRecoverTurn(turnEpoch)) {
-      final delay = _desktopRecoveryDelayForAttempt(attempt);
+      final delay = _atLeastGatewayBackoff(
+        gateway,
+        _desktopRecoveryDelayForAttempt(attempt),
+      );
       attempt++;
       debugPrint('[active-chat] snapshot recovery attempt $attempt');
       if (delay > Duration.zero) {

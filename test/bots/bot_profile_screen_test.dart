@@ -182,7 +182,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Expensive'), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, 'Save'));
+    await tester.tap(
+      find.byKey(const ValueKey('bot-profile-model-confirm-save')),
+    );
     await tester.pumpAndSettle();
     expect(gateway.configures, hasLength(2));
     expect(gateway.configures.last.$2['confirm_expensive_model'], isTrue);

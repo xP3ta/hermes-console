@@ -7,10 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/moa_config.dart';
 import '../services/connection_manager.dart';
+import '../design/modal.dart' show HermesModelGroup, showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
 
@@ -217,51 +217,25 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
     }
   }
 
-  /// Picker de proveedor+modelo del catálogo (excluye "moa": no anidar).
-  Future<MoaSlot?> _pickSlot() {
-    final colors = Theme.of(context).hermes;
-    return showHermesFloatingSurface<MoaSlot>(
+  /// Shared floating model picker (excludes "moa": no nesting).
+  Future<MoaSlot?> _pickSlot() async {
+    final picked = await showHermesModelPicker(
       context: context,
       surfaceKey: const ValueKey('moa-model-picker-surface'),
-      maxWidth: 560,
-      maxHeightFactor: 0.88,
-      builder: (ctx) => ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        children: [
-          Text(
-            Strings.of(ctx).moaPickModel,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: colors.textPrimary,
+      keyPrefix: 'moa-model',
+      title: Strings.of(context).moaPickModel,
+      groups: [
+        for (final p in _providers.where((p) => p.slug != 'moa'))
+          if (p.models.isNotEmpty)
+            HermesModelGroup(
+              slug: p.slug,
+              name: p.name.isNotEmpty ? p.name : p.slug,
+              models: p.models,
             ),
-          ),
-          const SizedBox(height: 12),
-          for (final p in _providers.where((p) => p.slug != 'moa'))
-            ...p.models.map(
-              (m) => ListTile(
-                dense: true,
-                leading: Icon(
-                  p.authenticated ? Icons.memory_rounded : Icons.lock_outline,
-                  size: 18,
-                  color: p.authenticated ? colors.accent : colors.textDisabled,
-                ),
-                title: Text(
-                  m,
-                  style: TextStyle(fontSize: 14, color: colors.textPrimary),
-                ),
-                subtitle: Text(
-                  p.name.isNotEmpty ? p.name : p.slug,
-                  style: TextStyle(fontSize: 11, color: colors.textSecondary),
-                ),
-                onTap: () =>
-                    Navigator.pop(ctx, MoaSlot(provider: p.slug, model: m)),
-              ),
-            ),
-        ],
-      ),
+      ],
     );
+    if (picked == null || picked.isDefault) return null;
+    return MoaSlot(provider: picked.provider, model: picked.model);
   }
 
   @override

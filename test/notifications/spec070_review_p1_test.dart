@@ -678,6 +678,70 @@ void main() {
     });
   });
 
+  group('Bot Mode rooms through the real listener tick', () {
+    late SharedPreferences prefs;
+    late Directory dir;
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({'last_connection_id': 'a'});
+      prefs = await SharedPreferences.getInstance();
+      dir = await Directory.systemTemp.createTemp('faces');
+    });
+    tearDown(() => dir.delete(recursive: true));
+
+    test('approval and round-finished are posted once each', () async {
+      var now = DateTime(2026, 9, 26, 12);
+      final sink = _Sink();
+      final gateway = _RoundGateway();
+      final monitor = BotModeBackgroundMonitor(
+        sink: sink,
+        faces: BotFaceBitmapCache(directory: () async => dir),
+        now: () => now,
+        publish: (_) async {},
+        gatewayFor: (_) => gateway,
+      );
+      Future<void> tick() async {
+        await monitor.tick(
+          prefs: prefs,
+          targets: [conn('a')],
+          notificationsEnabled: true,
+        );
+        now = now.add(const Duration(seconds: 30));
+      }
+
+      // Baseline: an idle room with history never alerts.
+      final seq = EventSeq();
+      gateway.events = [
+        seq.user('old'),
+        seq.member('m-builder', 'builder', 'old', 'd0'),
+      ];
+      await tick();
+      expect(sink.conversations, isEmpty);
+
+      // A round starts and a member asks for approval.
+      gateway.events = [...gateway.events, seq.user('ship it')];
+      gateway.working = true;
+      gateway.pending = [approvalAction()];
+      await tick();
+      expect(sink.conversations, hasLength(1), reason: 'approval card');
+      await tick();
+      expect(sink.conversations, hasLength(1), reason: 'never re-announced');
+
+      // Approved elsewhere; members reply; the round finishes.
+      gateway.pending = const [];
+      gateway.events = [
+        ...gateway.events,
+        seq.member('m-lead', 'lead', 'Done, PR is ready', 'd1'),
+      ];
+      await tick();
+      gateway.working = false;
+      await tick();
+      expect(sink.conversations, hasLength(2), reason: 'round summary');
+      await tick();
+      expect(sink.conversations, hasLength(2));
+      await monitor.close();
+    });
+  });
+
   group('P1-6 battery and network', () {
     test('listener cadence: 180 s base, 60 s cron, 30 s active rooms', () {
       expect(
@@ -756,29 +820,46 @@ void main() {
       expect(policy.cadence, BotModeCadence.idle);
     });
 
-    test('one pooled socket per tick, released afterwards', () async {
+    test('one lease for the listener lifetime: 10 ticks, 1 client', () async {
       final gateway = _RoomsGateway();
-      final clientsSeen = <int>[];
+      final clientsSeen = <int>{};
+      var created = 0;
+      var now = DateTime(2026, 9, 26, 12);
+      final pool = SharedGatewayPool.forTesting(
+        factory: (c) {
+          created++;
+          return TuiGatewayClient(c);
+        },
+      );
       final monitor = BotModeBackgroundMonitor(
         sink: _Sink(),
         faces: BotFaceBitmapCache(directory: () async => dir),
         publish: (_) async {},
+        pool: pool,
+        now: () => now,
         gatewayFor: (client) {
           clientsSeen.add(identityHashCode(client));
           return gateway;
         },
       );
-      await monitor.tick(
-        prefs: prefs,
-        targets: [conn('pool-a')],
-        notificationsEnabled: true,
-      );
+      for (var i = 0; i < 10; i++) {
+        await monitor.tick(
+          prefs: prefs,
+          targets: [conn('pool-a')],
+          notificationsEnabled: true,
+        );
+        now = now.add(const Duration(seconds: 60));
+      }
+      expect(created, 1, reason: 'no handshake + ticket per tick');
       expect(clientsSeen, hasLength(1));
       expect(
-        SharedGatewayPool.instance.liveClientCount,
-        0,
-        reason: 'no socket kept open between ticks',
+        pool.leaseCount,
+        1,
+        reason: 'the listener holds ONE lease between ticks, not per tick',
       );
+      await monitor.close();
+      expect(pool.leaseCount, 0, reason: 'listener stop releases the lease');
+      await pool.closeAll();
     });
   });
 
@@ -862,6 +943,7 @@ final class _Ops implements NotificationActionOps {
 }
 
 final class _Sink implements RichNotificationSink {
+  final conversations = <Map<String, Object?>>[];
   final confirms = <String>[];
   final timeouts = <int>[];
   final liveTags = <String>[];
@@ -885,7 +967,10 @@ final class _Sink implements RichNotificationSink {
   }
 
   @override
-  Future<bool> postConversation(Map<String, Object?> args) async => true;
+  Future<bool> postConversation(Map<String, Object?> args) async {
+    conversations.add(args);
+    return true;
+  }
   @override
   Future<void> postLiveUpdate(Map<String, Object?> args) async =>
       liveTags.add(args['tag']! as String);
@@ -957,6 +1042,59 @@ final class _RoomsGateway implements BotModeGateway {
     String roomId, {
     required int generation,
   }) async => (room: buildRoom(), driverStatus: driver(working: working));
+
+  @override
+  Future<List<AgentProfile>> listProfiles() async => const [];
+  @override
+  Future<DesktopActiveSessionList> listActiveSessions() async =>
+      const DesktopActiveSessionList();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Room that works, asks for an approval, then finishes a round.
+final class _RoundGateway implements BotModeGateway {
+  bool working = false;
+  List<Map<String, dynamic>> pending = const [];
+  List<Map<String, dynamic>> events = [];
+
+  int get latest => events.isEmpty ? 0 : events.last['seq'] as int;
+
+  @override
+  Future<GroupsCapabilities> groupCapabilities() async => _caps();
+  @override
+  Future<List<HostedGroupRoom>> listGroups({required int generation}) async => [
+    buildRoom(latestSeq: latest),
+  ];
+  @override
+  Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})> groupState(
+    String roomId, {
+    required int generation,
+  }) async => (
+    room: buildRoom(latestSeq: latest),
+    driverStatus: driver(working: working, pending: pending),
+  );
+  @override
+  Future<HostedGroupLogPage> groupLog(
+    String roomId, {
+    required int sinceSeq,
+    required int limit,
+    required int generation,
+  }) async {
+    final page = events.where((e) => (e['seq'] as int) > sinceSeq).toList();
+    return HostedGroupLogPage.fromJson(
+      {
+        'events': page,
+        'cursor': latest,
+        'latest_seq': latest,
+        'has_more': false,
+        'authority': {'gateway_id': gatewayId, 'epoch': 2},
+      },
+      expectedRoomId: roomId,
+      sinceSeq: sinceSeq,
+    );
+  }
 
   @override
   Future<List<AgentProfile>> listProfiles() async => const [];

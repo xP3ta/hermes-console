@@ -474,9 +474,8 @@ class _SessionListScreenState extends State<SessionListScreen>
         _eventStableTimer = null;
         if (mounted && _foreground) _eventReconnectBackoff.markHealthy();
       });
-      if (await _refreshRemoteActivity()) {
-        _eventReconnectBackoff.markHealthy();
-      }
+      // Only 30 s of stable connection resets the backoff, never one read.
+      await _refreshRemoteActivity();
     } catch (_) {
       _eventStableTimer?.cancel();
       _eventStableTimer = null;

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../l10n/app_localizations.dart';
+import '../../../design/content.dart' show HermesStatusText;
 import '../../../theme/app_theme.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../room_avatar_tile.dart';
@@ -50,15 +51,7 @@ class RosterBotRow extends StatelessWidget {
     final s = Strings.of(context);
     final profile = entry.profile;
     final working = entry.working;
-    final line = switch (entry.signal) {
-      BotFaceSignal.working || BotFaceSignal.thinking || BotFaceSignal.speaking
-          when entry.workingOn != null =>
-        s.rosterWorkingOn(entry.workingOn!),
-      BotFaceSignal.working => s.rosterWorking,
-      BotFaceSignal.thinking => s.rosterThinking,
-      BotFaceSignal.speaking => s.rosterSpeaking,
-      _ => entry.preview.isEmpty ? s.rosterNoPreview : entry.preview,
-    };
+    final line = rosterBotLine(s, entry);
     final at = entry.at;
     return Semantics(
       container: true,
@@ -157,12 +150,30 @@ class RosterBotRow extends StatelessWidget {
   }
 }
 
-/// Pinned bot: large living face with the name below.
+/// Line 2 of a bot: what it is doing, else its last preview.
+String rosterBotLine(Strings s, BotRosterEntry entry) => switch (entry.signal) {
+  BotFaceSignal.working || BotFaceSignal.thinking || BotFaceSignal.speaking
+      when entry.workingOn != null =>
+    s.rosterWorkingOn(entry.workingOn!),
+  BotFaceSignal.working => s.rosterWorking,
+  BotFaceSignal.thinking => s.rosterThinking,
+  BotFaceSignal.speaking => s.rosterSpeaking,
+  _ => entry.preview.isEmpty ? s.rosterNoPreview : entry.preview,
+};
+
+/// Pinned bot: living face with its name.
+///
+/// Two layouts share one visual size: [compact] (face beside the name, used
+/// when only one or two bots are pinned so the strip does not leave a wide
+/// empty area) and the default strip tile (name centred under the face).
+/// A raster avatar fills its whole box while a procedural face draws its body
+/// at ~74 % of it, so rasters are inset to [rasterScale] for equal weight.
 class RosterPinnedTile extends StatelessWidget {
   final BotRosterEntry entry;
   final MissionProfileAvatarCache? avatarCache;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final bool compact;
 
   const RosterPinnedTile({
     super.key,
@@ -170,9 +181,13 @@ class RosterPinnedTile extends StatelessWidget {
     required this.avatarCache,
     required this.onTap,
     required this.onLongPress,
+    this.compact = false,
   });
 
   static const double faceSize = 60;
+  static const double compactFaceSize = 44;
+  static const double tileWidth = 76;
+  static const double rasterScale = .76;
   static const double _nameFontSize = 12.5;
   static const double _nameHeight = 1.3;
 
@@ -185,9 +200,97 @@ class RosterPinnedTile extends StatelessWidget {
       MediaQuery.textScalerOf(context).scale(_nameFontSize) * _nameHeight +
       4;
 
+  /// Height of a compact tile at the current text scale (48 dp minimum).
+  static double compactHeightFor(BuildContext context) {
+    final text =
+        MediaQuery.textScalerOf(context).scale(14.5) * 1.3 +
+        MediaQuery.textScalerOf(context).scale(12.5) * 1.3;
+    return (text > compactFaceSize ? text : compactFaceSize) + 12;
+  }
+
+  bool get _raster => entry.profile.botPaintsPhoto && avatarCache != null;
+
+  Widget _face(double box) {
+    final size = _raster ? (box * rasterScale).roundToDouble() : box;
+    return SizedBox.square(
+      dimension: box,
+      child: Center(
+        child: LivingBotFace(
+          profileName: entry.profile.name,
+          profile: entry.profile,
+          avatarCache: avatarCache,
+          signal: entry.signal,
+          size: size,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final emphasis = entry.needsYou || entry.working;
+    final nameStyle = TextStyle(
+      color: emphasis ? colors.textPrimary : colors.textSecondary,
+      fontSize: _nameFontSize,
+      height: _nameHeight,
+      fontWeight: FontWeight.w600,
+    );
+    if (compact) {
+      final status = rosterBotLine(Strings.of(context), entry).trim();
+      return Semantics(
+        container: true,
+        button: true,
+        label: entry.title,
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _face(compactFaceSize),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 14.5,
+                          height: 1.3,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (status.isNotEmpty)
+                        Text(
+                          status,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: entry.working
+                                ? colors.accentText
+                                : colors.textSecondary,
+                            fontSize: 12.5,
+                            height: 1.3,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Semantics(
       container: true,
       button: true,
@@ -197,31 +300,18 @@ class RosterPinnedTile extends StatelessWidget {
         onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(16),
         child: SizedBox(
-          width: 76,
+          width: tileWidth,
           child: Column(
             children: [
               const SizedBox(height: 4),
-              LivingBotFace(
-                profileName: entry.profile.name,
-                profile: entry.profile,
-                avatarCache: avatarCache,
-                signal: entry.signal,
-                size: faceSize,
-              ),
+              _face(faceSize),
               const SizedBox(height: 8),
               Text(
                 entry.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: entry.needsYou || entry.working
-                      ? colors.textPrimary
-                      : colors.textSecondary,
-                  fontSize: _nameFontSize,
-                  height: _nameHeight,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: nameStyle,
               ),
             ],
           ),
@@ -293,27 +383,7 @@ class RosterRoomRow extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text.rich(
-                            TextSpan(
-                              text: entry.title,
-                              children: [
-                                if (entry.desktopOnly)
-                                  WidgetSpan(
-                                    alignment: PlaceholderAlignment.middle,
-                                    child: Padding(
-                                      padding: const EdgeInsetsDirectional.only(
-                                        start: 7,
-                                      ),
-                                      child: _Tag(
-                                        key: ValueKey(
-                                          'roster-room-desktop-$id',
-                                        ),
-                                        label: s.rosterDesktopLabel,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
+                            TextSpan(text: entry.title),
                             key: ValueKey('roster-room-title-$id'),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -345,6 +415,28 @@ class RosterRoomRow extends StatelessWidget {
                     const SizedBox(height: 3),
                     Row(
                       children: [
+                        // Spec 080: projection rooms say so inline on the
+                        // preview line (dot + "Desktop · read only"), never
+                        // as a bordered box next to the title.
+                        if (entry.desktopOnly) ...[
+                          Flexible(
+                            flex: 0,
+                            child: HermesStatusText(
+                              key: ValueKey('roster-room-desktop-$id'),
+                              label: s.rosterDesktopLabel,
+                              meta: s.statusReadOnly,
+                              maxLines: 1,
+                            ),
+                          ),
+                          if (line.isNotEmpty)
+                            Text(
+                              ' · ',
+                              style: TextStyle(
+                                color: colors.textDisabled,
+                                fontSize: 13,
+                              ),
+                            ),
+                        ],
                         Expanded(
                           child: Text(
                             line,

@@ -21,6 +21,8 @@ import '../models/dock_config.dart';
 import '../services/connection_manager.dart';
 import '../services/dock_preferences_store.dart';
 import '../services/tui_gateway_client.dart';
+import '../design/modal.dart'
+    show HermesModelChoice, HermesModelGroup, showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/general_dock_shell.dart';
@@ -108,8 +110,12 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       });
       if (!_initialDeleteShown && widget.initialDeleteProfile != null) {
         _initialDeleteShown = true;
-        final profile = list.where((p) => p.name == widget.initialDeleteProfile).firstOrNull;
-        if (profile != null && !profile.isDefault && profile.name != 'default') {
+        final profile = list
+            .where((p) => p.name == widget.initialDeleteProfile)
+            .firstOrNull;
+        if (profile != null &&
+            !profile.isDefault &&
+            profile.name != 'default') {
           await _delete(profile);
         }
       }
@@ -190,7 +196,9 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   }
 
   Future<void> _delete(AgentProfile p) async {
-    if (widget.connection.readOnly || p.isDefault || p.name == 'default') return;
+    if (widget.connection.readOnly || p.isDefault || p.name == 'default') {
+      return;
+    }
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     // Acción destructiva en el servidor: App Lock si está activo.
@@ -781,16 +789,44 @@ class _ProfileBuilderScreenState extends State<ProfileBuilderScreen> {
 
   Future<void> _pickModel() async {
     _releaseFocus();
-    final picked =
-        await showHermesFloatingSurface<({String provider, String model})>(
-          context: context,
-          surfaceKey: const ValueKey('profile-model-picker-surface'),
-          maxWidth: 560,
-          maxHeightFactor: 0.88,
-          builder: (_) =>
-              _ModelPickerSheet(client: _client, source: _cloneSource),
-        );
-    if (picked == null || !mounted) return;
+    final str = Strings.of(context);
+    List<ModelProvider> providers;
+    try {
+      providers = await _client.getModelOptions(profile: _cloneSource);
+    } catch (error) {
+      if (!mounted) return;
+      HermesNotice.show(
+        context,
+        message: str.prfModelsLoadError('$error'),
+        kind: HermesNoticeKind.error,
+      );
+      return;
+    }
+    if (!mounted) return;
+    final groups = [
+      for (final provider in providers)
+        if (provider.models.isNotEmpty)
+          HermesModelGroup(
+            slug: provider.slug,
+            name: provider.name,
+            models: provider.models,
+          ),
+    ];
+    if (groups.isEmpty) {
+      HermesNotice.show(context, message: str.prfNoModelsHint);
+      return;
+    }
+    final picked = await showHermesModelPicker(
+      context: context,
+      surfaceKey: const ValueKey('profile-model-picker-surface'),
+      keyPrefix: 'profile-model',
+      title: str.prfPickerTitle,
+      current: _modelId.isEmpty
+          ? null
+          : HermesModelChoice(_modelProvider, _modelId),
+      groups: groups,
+    );
+    if (picked == null || picked.isDefault || !mounted) return;
     setState(() {
       _modelProvider = picked.provider;
       _modelId = picked.model;
@@ -1439,176 +1475,6 @@ class _BottomBar extends StatelessWidget {
                 ],
               ),
       ),
-    );
-  }
-}
-
-// ── Selector de modelo (reutiliza getModelOptions del perfil base) ───────────
-
-class _ModelPickerSheet extends StatefulWidget {
-  final DashboardClient client;
-  final String source;
-  const _ModelPickerSheet({required this.client, required this.source});
-
-  @override
-  State<_ModelPickerSheet> createState() => _ModelPickerSheetState();
-}
-
-class _ModelPickerSheetState extends State<_ModelPickerSheet> {
-  List<ModelProvider> _providers = [];
-  bool _loading = true;
-  String? _error;
-  bool _onlyAuthed = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final p = await widget.client.getModelOptions(profile: widget.source);
-      if (!mounted) return;
-      setState(() {
-        _providers = p;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = '$e';
-        _loading = false;
-      });
-    }
-  }
-
-  /// Proveedores con modelos disponibles. Solo los autenticados traen modelos;
-  /// los demás necesitan clave/login (se configuran en Modelos).
-  List<ModelProvider> get _visible {
-    final withModels = _providers.where((p) => p.models.isNotEmpty).toList();
-    if (_onlyAuthed) return withModels;
-    return _providers;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final str = Strings.of(context);
-    if (_loading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(40),
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Text(
-            str.prfModelsLoadError('$_error'),
-            textAlign: TextAlign.center,
-            style: TextStyle(color: colors.textSecondary),
-          ),
-        ),
-      );
-    }
-    return ListView(
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-      children: [
-        Row(
-          children: [
-            Text(
-              str.prfPickerTitle,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: colors.textPrimary,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              str.prfConnectedOnly,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
-            ),
-            Switch(
-              value: _onlyAuthed,
-              onChanged: (v) => setState(() => _onlyAuthed = v),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        if (_visible.isEmpty)
-          Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              str.prfNoModelsHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: colors.textSecondary, fontSize: 13),
-            ),
-          )
-        else
-          for (final prov in _visible) _providerBlock(prov, colors, str),
-      ],
-    );
-  }
-
-  Widget _providerBlock(
-    ModelProvider prov,
-    HermesThemeColors colors,
-    Strings str,
-  ) {
-    final hasModels = prov.models.isNotEmpty;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
-          child: Row(
-            children: [
-              Text(
-                prov.name,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: colors.accentHover,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (!prov.authenticated)
-                Text(
-                  str.prfNotConnected,
-                  style: TextStyle(fontSize: 10, color: colors.textDisabled),
-                ),
-            ],
-          ),
-        ),
-        if (!hasModels)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
-            child: Text(
-              str.prfConnectInModels,
-              style: TextStyle(fontSize: 11.5, color: colors.textDisabled),
-            ),
-          )
-        else
-          for (final m in prov.models)
-            ListTile(
-              dense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-              leading: Icon(
-                Icons.memory_outlined,
-                size: 16,
-                color: colors.textSecondary,
-              ),
-              title: Text(m, style: const TextStyle(fontSize: 13)),
-              onTap: () =>
-                  Navigator.pop(context, (provider: prov.slug, model: m)),
-            ),
-      ],
     );
   }
 }

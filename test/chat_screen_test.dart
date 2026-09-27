@@ -3548,6 +3548,30 @@ void main() {
     },
   );
 
+  testWidgets('eventless fallback poll backs off 5 s then 15 s then 30 s', (
+    tester,
+  ) async {
+    final gateway = _StableRefreshGateway();
+    await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-eventless-ladder'),
+      messagesLoaded: true,
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    await tester.pump();
+    final base = gateway.listCalls;
+    final ticks = <int>[];
+    for (var second = 1; second <= 60; second++) {
+      await tester.pump(const Duration(seconds: 1));
+      if (gateway.listCalls > base + ticks.length) ticks.add(second);
+    }
+    // Before: a fixed 5 s cadence (12 polls a minute, each able to reopen
+    // a socket). Now: 5, +15, +30, +30…
+    expect(ticks, [5, 20, 50]);
+  });
+
   testWidgets(
     'subagent list polling is foreground visible immediate and nonoverlapping',
     (tester) async {

@@ -57,16 +57,18 @@ void main() {
     });
 
     test('approval falls back to approval.request_id and filters choices', () {
-      final action = RoomPendingAction.tryParse({
-        'kind': 'approval',
-        'task_id': 't',
-        'member_id': 'm',
-        'execution_generation': 0,
-        'approval': {
-          'request_id': 'nested',
-          'choices': ['once', 'bogus', 'always'],
-        },
-      })! as RoomApprovalAction;
+      final action =
+          RoomPendingAction.tryParse({
+                'kind': 'approval',
+                'task_id': 't',
+                'member_id': 'm',
+                'execution_generation': 0,
+                'approval': {
+                  'request_id': 'nested',
+                  'choices': ['once', 'bogus', 'always'],
+                },
+              })!
+              as RoomApprovalAction;
       expect(action.requestId, 'nested');
       expect(action.choices, ['once', 'always']);
       expect(action.offers('bogus'), isFalse);

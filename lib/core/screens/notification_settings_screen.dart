@@ -484,6 +484,18 @@ class _NotificationSettingsScreenState
       ),
       _eventSwitch(
         colors,
+        enabled: on && notif.notifyKanbanResults,
+        icon: Icons.task_alt_rounded,
+        title: s.notifKanbanDoneTitle,
+        subtitle: s.notifKanbanDoneSub,
+        value: notif.muteStore.kanbanDoneDefault,
+        onChanged: (v) async {
+          await notif.muteStore.setKanbanDoneDefault(v);
+          if (mounted) setState(() {});
+        },
+      ),
+      _eventSwitch(
+        colors,
         enabled: on,
         icon: Icons.flag_outlined,
         title: s.notifLocalAgentResultsTitle,

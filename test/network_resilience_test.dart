@@ -11,6 +11,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -241,23 +243,55 @@ void main() {
     );
   });
 
-  test('online events wake recovery and stop after listener disposal', () async {
-    final events = StreamController<void>.broadcast();
-    addTearDown(events.close);
-    var wakeCalls = 0;
-    final listener = NetworkAvailabilityRecoveryListener(
-      events: events.stream,
-      onAvailable: () => wakeCalls += 1,
-    );
+  test('online events wake recovery and stop after listener disposal', () {
+    fakeAsync((async) {
+      final events = StreamController<dynamic>.broadcast();
+      var wakeCalls = 0;
+      final listener = NetworkAvailabilityRecoveryListener(
+        events: events.stream,
+        onAvailable: () => wakeCalls += 1,
+      );
 
-    events.add(null);
-    await Future<void>.delayed(Duration.zero);
-    expect(wakeCalls, 1);
+      events.add(null);
+      async.elapse(NetworkAvailabilityRecoveryListener.debounce);
+      expect(wakeCalls, 1);
 
-    await listener.dispose();
-    events.add(null);
-    await Future<void>.delayed(Duration.zero);
-    expect(wakeCalls, 1);
+      unawaited(listener.dispose());
+      events.add(null);
+      async.elapse(NetworkAvailabilityRecoveryListener.debounce);
+      expect(wakeCalls, 1);
+      unawaited(events.close());
+    });
+  });
+
+  test('an onAvailable burst is debounced into one probe; onLost only '
+      'marks sockets stale', () {
+    fakeAsync((async) {
+      final events = StreamController<dynamic>.broadcast();
+      var wakeCalls = 0;
+      var lostCalls = 0;
+      final listener = NetworkAvailabilityRecoveryListener(
+        events: events.stream,
+        onAvailable: () => wakeCalls += 1,
+        onLost: () => lostCalls += 1,
+      );
+      // Logcat showed several "network available" per second on Wi-Fi
+      // re-association: one probe per owner, not one per event.
+      for (var i = 0; i < 5; i++) {
+        events.add('available');
+        async.elapse(const Duration(milliseconds: 300));
+      }
+      expect(wakeCalls, 0);
+      async.elapse(NetworkAvailabilityRecoveryListener.debounce);
+      expect(wakeCalls, 1);
+
+      events.add('lost');
+      async.elapse(const Duration(seconds: 5));
+      expect(lostCalls, 1);
+      expect(wakeCalls, 1, reason: 'loss never triggers a reconnect storm');
+      unawaited(listener.dispose());
+      unawaited(events.close());
+    });
   });
 
   group('Bridge — resiliencia de red', () {

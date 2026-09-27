@@ -75,7 +75,7 @@ void main() {
 
     expect(find.text('Nightly report'), findsWidgets);
     expect(find.text('Destination'), findsOneWidget);
-    expect(find.text('origin'), findsOneWidget);
+    expect(find.text('Chat it was created in'), findsOneWidget);
     expect(find.text('Model'), findsOneWidget);
     expect(find.text('model-a'), findsOneWidget);
     expect(find.textContaining('provider-a'), findsNothing);

@@ -11,6 +11,7 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/bridge_manager.dart';
 import '../services/connection_manager.dart';
+import '../design/modal.dart' show HermesModelGroup, showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/hermes_notice.dart';
@@ -857,135 +858,42 @@ class _ModelsScreenState extends State<ModelsScreen> {
     );
   }
 
-  /// Hoja genérica para elegir provider+model (o automático).
+  /// The shared floating model picker (spec 080) for provider+model or
+  /// automatic. Respects what the user hid (spec 028 U-05).
   Future<({String provider, String model})?> _pickModel({
     required String title,
     String? subtitle,
     bool allowAuto = true,
-  }) {
-    final colors = Theme.of(context).hermes;
-    var query = '';
-    return showHermesFloatingSurface<({String provider, String model})>(
+  }) async {
+    final s = Strings.of(context);
+    final groups = [
+      for (final provider in _providers)
+        if (provider.authenticated && !_hidden.contains(provider.slug))
+          HermesModelGroup(
+            slug: provider.slug,
+            name: provider.name,
+            models: [
+              for (final model in provider.models)
+                if (!_isModelHidden(provider.slug, model)) model,
+            ],
+          ),
+    ];
+    final picked = await showHermesModelPicker(
       context: context,
       surfaceKey: const ValueKey('models-picker-surface'),
-      maxWidth: 560,
-      maxHeightFactor: 0.88,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) {
-          final candidates = _providers
-              .where(
-                (provider) =>
-                    provider.authenticated && !_hidden.contains(provider.slug),
-              )
-              .map(
-                (provider) => provider.copyWith(
-                  models: provider.models
-                      .where((model) => !_isModelHidden(provider.slug, model))
-                      .toList(),
-                ),
-              )
-              .toList();
-          final visibleProviders = filterModelProviders(candidates, query);
-          final hasMatches = visibleProviders.any(
-            (provider) => provider.models.isNotEmpty,
-          );
-
-          return ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: colors.textPrimary,
-                ),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-              ],
-              const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('models-model-search'),
-                textInputAction: TextInputAction.search,
-                onChanged: (value) => setSheet(() => query = value),
-                decoration: InputDecoration(
-                  hintText: Strings.of(ctx).modelSearchHint,
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 10),
-              if (allowAuto && query.trim().isEmpty) ...[
-                ListTile(
-                  dense: true,
-                  leading: Icon(
-                    Icons.auto_mode,
-                    color: colors.accent,
-                    size: 20,
-                  ),
-                  title: Text(
-                    Strings.of(ctx).mdlAutomatic,
-                    style: TextStyle(color: colors.textPrimary),
-                  ),
-                  subtitle: Text(
-                    Strings.of(ctx).mdlUsesMainModel,
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled),
-                  ),
-                  onTap: () =>
-                      Navigator.pop(ctx, (provider: 'auto', model: '')),
-                ),
-                const Divider(),
-              ],
-              // El selector respeta lo ocultado por el usuario, igual que la
-              // lista principal: proveedores y modelos ocultos no se ofrecen
-              // (se restauran desde "ver ocultos") (spec 028 U-05).
-              if (!hasMatches)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 22,
-                  ),
-                  child: Text(
-                    Strings.of(ctx).modelSearchEmpty,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ),
-              for (final p in visibleProviders)
-                ...p.models.map(
-                  (m) => ListTile(
-                    dense: true,
-                    title: Text(
-                      m,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                    subtitle: Text(
-                      p.name,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: colors.textDisabled,
-                      ),
-                    ),
-                    onTap: () =>
-                        Navigator.pop(ctx, (provider: p.slug, model: m)),
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
+      keyPrefix: 'models-picker',
+      title: title,
+      subtitle: subtitle,
+      defaultLabel: allowAuto ? s.mdlAutomatic : null,
+      defaultSubtitle: allowAuto ? s.mdlUsesMainModel : null,
+      groups: [
+        for (final group in groups)
+          if (group.models.isNotEmpty) group,
+      ],
     );
+    if (picked == null) return null;
+    if (picked.isDefault) return (provider: 'auto', model: '');
+    return (provider: picked.provider, model: picked.model);
   }
 
   Future<void> _pickFallback() async {

@@ -136,12 +136,15 @@ void main() {
       expect(byName['astra']!.presence, BotPresence.attention);
       expect(byName['radar']!.presence, BotPresence.idle);
       expect(byName['default']!.chat.sessionId, '20260920_100000_tip001');
-      expect(byName['astra']!.attention.map((a) => a.kind),
-          contains(AttentionKind.approval));
+      expect(
+        byName['astra']!.attention.map((a) => a.kind),
+        contains(AttentionKind.approval),
+      );
       expect(snapshot.rooms.single.log?.events, hasLength(8));
       expect(snapshot.attentionCount, 3);
-      expect(snapshot.projectionRooms.rooms.map((r) => r.roomId),
-          ['room-desktop-1']);
+      expect(snapshot.projectionRooms.rooms.map((r) => r.roomId), [
+        'room-desktop-1',
+      ]);
       expect(snapshot.hostedGroups.driverStatusFor('room-devs'), isNotNull);
     });
 
@@ -160,30 +163,38 @@ void main() {
       expect(snapshot.rooms, isEmpty);
     });
 
-    test('approve sends the exact server tuple and only offered choices',
-        () async {
-      final snapshot = await repo.load();
-      final room = snapshot.rooms.single;
-      final action = room.driverStatus!.approvals.single;
-      await repo.approve(room, action: action, choice: 'once', generation: 1);
-      expect(gateway.lastMutation?.$1, 'groups.approve');
-      expect(gateway.lastMutation?.$2, spec070Fixture('groups_approve')['params']);
-      expect(
-        () => repo.approve(
-          room,
-          action: action,
-          choice: 'always',
-          generation: 1,
-        ),
-        throwsStateError,
-      );
-    });
+    test(
+      'approve sends the exact server tuple and only offered choices',
+      () async {
+        final snapshot = await repo.load();
+        final room = snapshot.rooms.single;
+        final action = room.driverStatus!.approvals.single;
+        await repo.approve(room, action: action, choice: 'once', generation: 1);
+        expect(gateway.lastMutation?.$1, 'groups.approve');
+        expect(
+          gateway.lastMutation?.$2,
+          spec070Fixture('groups_approve')['params'],
+        );
+        expect(
+          () => repo.approve(
+            room,
+            action: action,
+            choice: 'always',
+            generation: 1,
+          ),
+          throwsStateError,
+        );
+      },
+    );
 
     test('retry only for server-listed retryable tasks', () async {
       final room = (await repo.load()).rooms.single;
       await repo.retry(room, taskId: 'task-radar-1', generation: 1);
       expect(gateway.lastMutation?.$1, 'groups.retry');
-      expect(gateway.lastMutation?.$2, spec070Fixture('groups_retry')['params']);
+      expect(
+        gateway.lastMutation?.$2,
+        spec070Fixture('groups_retry')['params'],
+      );
       expect(
         () => repo.retry(room, taskId: 'task-astra-1', generation: 1),
         throwsStateError,
@@ -227,28 +238,29 @@ void main() {
       apiKey: 'k',
     );
 
-    test('pooled repositories share one client; no client per refresh',
-        () async {
-      final pool = SharedGatewayPool.instance;
-      final before = pool.liveClientCount;
-      var created = 0;
-      TuiGatewayClient factory(SavedConnection c) {
-        created++;
-        return TuiGatewayClient(c);
-      }
+    test(
+      'pooled repositories share one client; no client per refresh',
+      () async {
+        final pool = SharedGatewayPool.instance;
+        final before = pool.liveClientCount;
+        var created = 0;
+        TuiGatewayClient factory(SavedConnection c) {
+          created++;
+          return TuiGatewayClient(c);
+        }
 
-      final a = BotModeRepository.pooled(connection, factory: factory);
-      final b = BotModeRepository.pooled(connection, factory: factory);
-      expect(created, 1);
-      expect(pool.liveClientCount, before + 1);
-      a.close();
-      expect(pool.liveClientCount, before + 1);
-      b.close();
-      expect(pool.liveClientCount, before);
-    });
+        final a = BotModeRepository.pooled(connection, factory: factory);
+        final b = BotModeRepository.pooled(connection, factory: factory);
+        expect(created, 1);
+        expect(pool.liveClientCount, before + 1);
+        a.close();
+        expect(pool.liveClientCount, before + 1);
+        b.close();
+        expect(pool.liveClientCount, before);
+      },
+    );
 
-    test('room refreshes over one repository open zero new clients',
-        () async {
+    test('room refreshes over one repository open zero new clients', () async {
       final gateway = FakeBotModeGateway();
       final repo = BotModeRepository(gateway: gateway);
       GatewaySocketMeter.instance.reset();

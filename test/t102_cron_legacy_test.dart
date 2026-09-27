@@ -57,7 +57,8 @@ void main() {
     expect(reads, 1);
     expect(find.text('Legacy daily'), findsOneWidget);
     expect(find.text('Create the daily report'), findsOneWidget);
-    expect(find.text('0 7 * * *'), findsOneWidget);
+    // Spec 080: the schedule reads as human text from the real expression.
+    expect(find.textContaining('Every day at 7:00'), findsOneWidget);
     expect(find.textContaining('delivery:'), findsNothing);
     expect(find.textContaining('model:'), findsNothing);
     expect(find.textContaining('provider:'), findsNothing);

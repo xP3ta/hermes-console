@@ -30,8 +30,8 @@ class _TicketDashboardClient extends DashboardClient {
 }
 
 void main() {
-  test('reconnect backoff uses full jitter and caps at fifteen seconds', () {
-    final samples = <double>[0, 0.5, 1, 1, 1, 1].iterator;
+  test('reconnect backoff never undercuts the base and caps at 30/60 s', () {
+    final samples = <double>[0, 0.5, 1, 1, 1, 1, 1, 1].iterator;
     final backoff = GatewayReconnectBackoff(
       random: () {
         samples.moveNext();
@@ -39,12 +39,16 @@ void main() {
       },
     );
 
-    expect(backoff.nextDelay(), Duration.zero);
     expect(backoff.nextDelay(), const Duration(seconds: 1));
+    expect(backoff.nextDelay(), const Duration(milliseconds: 1500));
     expect(backoff.nextDelay(), const Duration(seconds: 4));
     expect(backoff.nextDelay(), const Duration(seconds: 8));
-    expect(backoff.nextDelay(), const Duration(seconds: 15));
-    expect(backoff.nextDelay(), const Duration(seconds: 15));
+    expect(backoff.nextDelay(), const Duration(seconds: 16));
+    expect(backoff.nextDelay(), const Duration(seconds: 30));
+    addTearDown(() => GatewayReconnectBackoff.backgroundCadence = false);
+    GatewayReconnectBackoff.backgroundCadence = true;
+    expect(backoff.nextDelay(), const Duration(seconds: 60));
+    GatewayReconnectBackoff.backgroundCadence = false;
 
     final reset = GatewayReconnectBackoff(random: () => 1);
     reset.nextDelay();
@@ -2233,7 +2237,10 @@ void main() {
       }
       expect(client.isConnected, isFalse);
       expect(
-        logs.where((line) => line.contains('reason=heartbeat_timeout')),
+        logs.where(
+          (line) =>
+              line.startsWith('[tui-gateway]') && line.contains('reason=heartbeat_timeout'),
+        ),
         hasLength(1),
       );
 
@@ -2245,7 +2252,10 @@ void main() {
       }
       expect(client.isConnected, isFalse);
       expect(
-        logs.where((line) => line.contains('reason=on_done')),
+        logs.where(
+          (line) =>
+              line.startsWith('[tui-gateway]') && line.contains('reason=on_done'),
+        ),
         hasLength(1),
       );
       expect(logs.join('\n'), isNot(contains('bye')));

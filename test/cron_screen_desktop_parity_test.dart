@@ -159,7 +159,7 @@ void main() {
       matching: find.byType(EditableText),
     );
     await tester.enterText(promptField, 'Summarize the day');
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.byKey(const ValueKey('cron-editor-submit')));
     await tester.pumpAndSettle();
 
     expect(createdBody, isNotNull);
@@ -229,7 +229,8 @@ void main() {
 
     expect(requestedProfiles.first, 'research');
     expect(find.byType(FloatingActionButton), findsOneWidget);
-    expect(find.byType(PopupMenuButton<String>), findsNWidgets(2));
+    // Spec 080: anchored Hermes menus replace PopupMenuButton.
+    expect(find.byKey(const ValueKey('cron-screen-more')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('cron-job-menu-active-job')),
       findsOneWidget,
@@ -240,16 +241,26 @@ void main() {
     );
     expect(find.byTooltip('Clean up Cron results'), findsNothing);
 
-    await tester.tap(find.text('all'));
+    await tester.tap(find.text('All'));
     await tester.pumpAndSettle();
 
     expect(requestedProfiles.last, 'all');
     expect(find.text('Other profile job'), findsOneWidget);
-    expect(find.text('profile: research'), findsOneWidget);
-    // HermesPill presents status labels in its canonical uppercase style.
-    expect(find.text('READ ONLY'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('cron-job-all-job')),
+        matching: find.textContaining('Research'),
+      ),
+      findsOneWidget,
+    );
+    // Spec 080: read-only is an inline notice, not a boxed pill.
+    expect(
+      find.byKey(const ValueKey('cron-profile-all-readonly')),
+      findsOneWidget,
+    );
+    expect(find.text('Read only'), findsOneWidget);
     expect(find.byType(FloatingActionButton), findsNothing);
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(find.byKey(const ValueKey('cron-screen-more')), findsNothing);
     expect(find.byKey(const ValueKey('cron-job-menu-all-job')), findsNothing);
     expect(tester.takeException(), isNull);
   });

@@ -185,7 +185,10 @@ class Session implements SessionSortKey {
     // Worker del Kanban: el dispatcher la nombra/arranca con "work kanban
     // task t_<id>" (id crudo, no dice de qué tarea vino). Título humano.
     if (isKanbanJob) return 'Tarea del Kanban';
-    final humanizedTitle = _humanizeTitle(stripBotMentionNote(title));
+    // Bot routines store their owner as a technical `[bot:<name>]` prefix.
+    final humanizedTitle = _humanizeTitle(
+      stripBotMentionNote(title),
+    ).replaceFirst(_botRoutinePrefix, '');
     final syntheticTodoTitle = _looksSyntheticTodoTitle(
       humanizedTitle,
       preview,
@@ -256,7 +259,9 @@ class Session implements SessionSortKey {
       return '';
     }
     return markdownToCompactText(
-      stripCronPreamble(stripBackgroundProcessCarrier(stripBotMentionNote(preview))),
+      stripCronPreamble(
+        stripBackgroundProcessCarrier(stripBotMentionNote(preview)),
+      ),
     );
   }
 
@@ -345,6 +350,10 @@ class Session implements SessionSortKey {
   /// y se vería con los `%20` literales en la lista. Solo decodifica si hay
   /// secuencias `%XX` válidas y la decodificación no falla; en cualquier otro
   /// caso devuelve el texto tal cual (no toca títulos que usan `%` legítimo).
+  static final RegExp _botRoutinePrefix = RegExp(
+    r'^\[bot:[a-z0-9][a-z0-9_-]{0,63}\]\s*',
+  );
+
   static String _humanizeTitle(String title) {
     if (!title.contains('%') || !RegExp(r'%[0-9A-Fa-f]{2}').hasMatch(title)) {
       return title;
@@ -523,14 +532,17 @@ class Session implements SessionSortKey {
     final explicitActive = json['is_active'];
     return Session(
       id: _opaqueId(json['id']) ?? '',
-      title: _boundedText(_mentionDisplayValue(json['title']), 512) ?? 'Untitled',
+      title:
+          _boundedText(_mentionDisplayValue(json['title']), 512) ?? 'Untitled',
       model: _boundedText(json['model'], 256) ?? 'Default',
       source: _boundedText(json['source'], 128) ?? '',
       messageCount: _nonNegativeInt(json['message_count']) ?? 0,
       isActive: explicitActive is bool ? explicitActive : endedAt == null,
       preview: _boundedText(_mentionDisplayValue(json['preview']), 2048) ?? '',
       lastUserPreview: _boundedText(
-        _mentionDisplayValue(json['last_user_preview'] ?? json['lastUserPreview']),
+        _mentionDisplayValue(
+          json['last_user_preview'] ?? json['lastUserPreview'],
+        ),
         2048,
       ),
       lastAssistantPreview: _boundedText(
@@ -633,4 +645,5 @@ double? _nonNegativeDouble(Object? value) {
   return value.toDouble();
 }
 
-Object? _mentionDisplayValue(Object? value) => value is String ? stripBotMentionNote(value) : value;
+Object? _mentionDisplayValue(Object? value) =>
+    value is String ? stripBotMentionNote(value) : value;

@@ -369,6 +369,32 @@ class BotModeBackgroundMonitor {
   bool _listening = false;
   NotificationActionDrainer? _drainer;
 
+  /// One pooled lease for the listener's lifetime (per watched connection):
+  /// the socket stays open between ticks (WS ping keeps it alive) instead of
+  /// a handshake + dashboard ticket every 30-180 s. Released on stop or when
+  /// the watched connection changes; a dropped socket reconnects through the
+  /// gateway owner's backoff.
+  SharedGatewayLease? _lease;
+  String? _leaseConnId;
+
+  SharedGatewayLease _leaseFor(SavedConnection connection) {
+    final current = _lease;
+    if (current != null &&
+        _leaseConnId == connection.id &&
+        !current.client.isClosed) {
+      return current;
+    }
+    current?.release();
+    _leaseConnId = connection.id;
+    return _lease = _pool.acquire(connection);
+  }
+
+  void _releaseLease() {
+    _lease?.release();
+    _lease = null;
+    _leaseConnId = null;
+  }
+
   static const _profilesTtl = Duration(minutes: 3);
 
   bool get anyWorking => _watcher?.anyWorking ?? false;
@@ -464,10 +490,10 @@ class BotModeBackgroundMonitor {
       await _expireIfUnreachable(now);
       return _policy.cadence == BotModeCadence.active;
     }
-    // One pooled socket for the whole pass (rooms, profiles, live list,
-    // widgets), released at the end: no socket stays open between ticks.
-    final lease = _pool.acquire(connection);
-    try {
+    // One pooled socket held across passes (rooms, profiles, live list,
+    // widgets): no handshake per tick.
+    final lease = _leaseFor(connection);
+    {
       final gateway = _gatewayFor(lease.client);
       await _refreshProfiles(gateway);
       final ok = await watcher.tick(gateway);
@@ -494,8 +520,6 @@ class BotModeBackgroundMonitor {
         ),
       );
       await _publishWidgets(prefs, connection, gateway, connected: ok);
-    } finally {
-      lease.release();
     }
     return _policy.cadence == BotModeCadence.active;
   }
@@ -570,6 +594,7 @@ class BotModeBackgroundMonitor {
   }
 
   Future<void> _dropWatcher() async {
+    _releaseLease();
     try {
       await _presenter?.cancelAllLive();
     } catch (_) {}

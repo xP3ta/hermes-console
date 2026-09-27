@@ -4341,6 +4341,9 @@ class _ChatScreenState extends State<ChatScreen>
   void _cancelAdaptiveSnapshotTimers() {
     _subagentPollTimer?.cancel();
     _subagentPollTimer = null;
+    // Polling stopped (route covered, background, runtime change): the next
+    // start refreshes immediately, so the eventless ladder starts over.
+    _eventlessBackstopIndex = 0;
     _subagentRepairDebounce?.cancel();
     _subagentRepairDebounce = null;
     _processControlRepairDebounce?.cancel();
@@ -4352,10 +4355,21 @@ class _ChatScreenState extends State<ChatScreen>
     _queuedControlRefresh = false;
   }
 
+  /// Fallback cadence when the backend does not announce change events:
+  /// 5 s → 15 s → 30 s instead of a fixed 5 s, reset once events return.
+  static const _eventlessBackstopDelays = [5, 15, 30];
+  int _eventlessBackstopIndex = 0;
+
   Duration _adaptiveBackstopDelay() {
     if (!_chat.desktopChangeEventsAvailable) {
-      return const Duration(seconds: 5);
+      final index = _eventlessBackstopIndex.clamp(
+        0,
+        _eventlessBackstopDelays.length - 1,
+      );
+      _eventlessBackstopIndex = index + 1;
+      return Duration(seconds: _eventlessBackstopDelays[index]);
     }
+    _eventlessBackstopIndex = 0;
     final hasActiveItems =
         _chat.safeActiveSubagentCount > 0 ||
         _chat.sessionActivity.backgroundItemCount > 0;
@@ -4462,6 +4476,18 @@ class _ChatScreenState extends State<ChatScreen>
 
     _subagentPollTimer?.cancel();
     _subagentPollTimer = null;
+    // The gateway owner is backing off after a transport loss: pause instead
+    // of issuing RPCs, and resume once its backoff elapses.
+    final backoff = _chat.desktopReconnectBackoffRemaining;
+    if (backoff > Duration.zero) {
+      _scheduleAdaptiveSnapshot(
+        backoff + const Duration(milliseconds: 50),
+        subagents: subagents,
+        processes: processes,
+        control: control,
+      );
+      return;
+    }
     _adaptiveSnapshotInFlight = true;
     final failureRevision = _chat.adaptiveSnapshotFailureRevision;
     await Future.wait<void>([

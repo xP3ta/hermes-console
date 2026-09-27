@@ -694,6 +694,11 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
     required bool suppressByPolicy,
     bool suppressEventsWhenVersionUnchanged = false,
     bool suppressInitialEvents = true,
+
+    /// Reports event keys newly inserted by this call and whether they were
+    /// suppressed only because this is the source's initial snapshot.
+    void Function(List<String> insertedEventKeys, bool initialSuppressed)?
+    onInserted,
   }) async {
     _requireDedupeValue(scopeKey, 'scopeKey');
     return _exclusive((transaction) async {
@@ -740,9 +745,17 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
       final suppressed =
           (previousGeneration == null && suppressInitialEvents) ||
           suppressByPolicy;
-      await _ingestUpdates(transaction, <SourceCursorUpdate>[
-        effectiveUpdate,
-      ], suppressEvents: suppressed);
+      final inserted = <String>[];
+      await _ingestUpdates(
+        transaction,
+        <SourceCursorUpdate>[effectiveUpdate],
+        suppressEvents: suppressed,
+        inserted: inserted,
+      );
+      onInserted?.call(
+        inserted,
+        previousGeneration == null && suppressInitialEvents,
+      );
       return suppressed;
     });
   }
@@ -751,6 +764,7 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
     sqflite.Transaction transaction,
     List<SourceCursorUpdate> updates, {
     required bool suppressEvents,
+    List<String>? inserted,
   }) async {
     final now = _clock();
     var eventIndex = 0;
@@ -792,7 +806,7 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
       }
 
       for (final event in update.events) {
-        await _insertEvent(
+        final key = await _insertEvent(
           transaction,
           event,
           now,
@@ -800,6 +814,7 @@ ON delivery_event(conn_id, profile, run_id, destination_kind, status)
               ? DeliveryStatus.suppressed
               : DeliveryStatus.pending,
         );
+        if (key != null) inserted?.add(key);
         await ingestFaultInjector?.call(eventIndex, event);
         eventIndex += 1;
       }
@@ -838,7 +853,8 @@ ON CONFLICT(scope_key) DO UPDATE SET
     }
   }
 
-  Future<void> _insertEvent(
+  /// Returns the event key when a new row was inserted, null when deduped.
+  Future<String?> _insertEvent(
     sqflite.DatabaseExecutor executor,
     DeliveryEventSpec event,
     int now, {
@@ -857,7 +873,7 @@ ON CONFLICT(scope_key) DO UPDATE SET
       whereArgs: <Object?>[eventKey],
       limit: 1,
     );
-    if (existing.isNotEmpty) return;
+    if (existing.isNotEmpty) return null;
     final retained = await executor.query(
       'android_id_map',
       columns: const <String>['event_key'],
@@ -865,7 +881,7 @@ ON CONFLICT(scope_key) DO UPDATE SET
       whereArgs: <Object?>[eventKey],
       limit: 1,
     );
-    if (retained.isNotEmpty) return;
+    if (retained.isNotEmpty) return null;
 
     final active = sqflite.Sqflite.firstIntValue(
       await executor.rawQuery('''
@@ -907,6 +923,7 @@ WHERE status IN ('pending', 'leased', 'cancel_pending')
       'created_at': now,
       'updated_at': now,
     });
+    return eventKey;
   }
 
   Future<(int, String)> _allocateAndroidIdentity(

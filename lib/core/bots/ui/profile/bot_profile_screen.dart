@@ -6,10 +6,10 @@ import '../../../../l10n/app_localizations.dart';
 import '../../../models/agent_profile.dart';
 import '../../../models/desktop_model_catalog.dart';
 import '../../../services/bot_profile_client.dart';
+import '../../../design/hermes_design.dart';
 import '../../../theme/app_theme.dart';
 import '../../../widgets/hermes_app_bar.dart';
 import '../../../widgets/hermes_notice.dart';
-import '../../../widgets/hermes_premium_ui.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../roster/living_bot_face.dart';
 
@@ -229,13 +229,27 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
     final current = _modelOverride ?? profile.model;
-    final picked = await showHermesFloatingSurface<(String, String)>(
+    final groups = [
+      for (final p in catalog.providers)
+        if (p.authenticated != false && p.models.isNotEmpty)
+          HermesModelGroup(slug: p.slug, name: p.name, models: p.models),
+    ];
+    if (groups.isEmpty) {
+      _notice(s.botProfileModelUnavailable, error: true);
+      return;
+    }
+    final choice = await showHermesModelPicker(
       context: context,
+      groups: groups,
+      current: HermesModelChoice(
+        _providerOverride ?? profile.provider,
+        current,
+      ),
       surfaceKey: const ValueKey('bot-profile-model-picker'),
-      maxWidth: 520,
-      builder: (context) => _ModelPicker(catalog: catalog, current: current),
+      keyPrefix: 'bot-profile-model',
     );
-    if (picked == null || !mounted) return;
+    if (choice == null || choice.isDefault || !mounted) return;
+    final picked = (choice.provider, choice.model);
     await _applyModel(profile, picked.$1, picked.$2);
   }
 
@@ -257,24 +271,23 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
       if (!mounted) return;
       if (result['confirm_required'] == true && !confirmed) {
         setState(() => _busy = false);
-        final yes = await showDialog<bool>(
+        final yes = await showHermesDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: Text(s.botProfileModel),
-            content: Text(
-              (result['confirm_message'] as String?) ?? s.botProfileModel,
+          surfaceKey: const ValueKey('bot-profile-model-confirm'),
+          title: s.botProfileModel,
+          message: (result['confirm_message'] as String?) ?? s.botProfileModel,
+          actions: [
+            HermesDialogAction(
+              label: s.botCancel,
+              value: false,
+              style: HermesDialogActionStyle.cancel,
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: Text(s.botCancel),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(s.botSave),
-              ),
-            ],
-          ),
+            HermesDialogAction(
+              key: const ValueKey('bot-profile-model-confirm-save'),
+              label: s.botSave,
+              value: true,
+            ),
+          ],
         );
         if (yes == true && mounted) {
           await _applyModel(profile, provider, model, confirmed: true);
@@ -302,25 +315,18 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     final gateway = widget.modelGateway;
     final s = Strings.of(context);
     if (gateway == null || widget.readOnly || _busy) return;
-    final picked = await showHermesFloatingSurface<String>(
+    final picked = await showHermesOptions<String>(
       context: context,
       surfaceKey: const ValueKey('bot-profile-reasoning-picker'),
-      maxWidth: 420,
-      builder: (context) => ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        children: [
-          for (final effort in BotProfileClient.reasoningEfforts)
-            ListTile(
-              key: ValueKey('bot-profile-reasoning-$effort'),
-              title: Text(reasoningLabel(Strings.of(context), effort)),
-              trailing: effort == _reasoning
-                  ? const Icon(Icons.check_rounded)
-                  : null,
-              onTap: () => Navigator.pop(context, effort),
-            ),
-        ],
-      ),
+      selected: _reasoning,
+      options: [
+        for (final effort in BotProfileClient.reasoningEfforts)
+          HermesOption(
+            key: ValueKey('bot-profile-reasoning-$effort'),
+            value: effort,
+            label: reasoningLabel(s, effort),
+          ),
+      ],
     );
     if (picked == null || !mounted || picked == _reasoning) return;
     setState(() => _busy = true);
@@ -337,24 +343,22 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     }
   }
 
+  final GlobalKey _moreKey = GlobalKey(debugLabel: 'bot-profile-more');
+
   Future<void> _showMore() async {
-    final action = await showHermesFloatingSurface<BotProfileAction>(
+    final action = await showHermesMenu<BotProfileAction>(
       context: context,
       surfaceKey: const ValueKey('bot-profile-more-surface'),
-      maxWidth: 420,
-      builder: (context) => ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        children: [
-          for (final action in widget.moreActions)
-            ListTile(
-              key: action.key,
-              leading: Icon(action.icon),
-              title: Text(action.label),
-              onTap: () => Navigator.pop(context, action),
-            ),
-        ],
-      ),
+      anchorKey: _moreKey,
+      actions: [
+        for (final action in widget.moreActions)
+          HermesAction(
+            key: action.key,
+            value: action,
+            icon: action.icon,
+            label: action.label,
+          ),
+      ],
     );
     action?.onTap();
   }
@@ -408,11 +412,14 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
               onPressed: widget.onEditIdentity,
             ),
           if (widget.moreActions.isNotEmpty)
-            IconButton(
-              key: const ValueKey('bot-profile-more'),
-              tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-              icon: const Icon(Icons.more_vert_rounded),
-              onPressed: _showMore,
+            KeyedSubtree(
+              key: _moreKey,
+              child: IconButton(
+                key: const ValueKey('bot-profile-more'),
+                tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
+                icon: const Icon(Icons.more_vert_rounded),
+                onPressed: _showMore,
+              ),
             ),
         ],
       ),
@@ -491,12 +498,12 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                 ),
               ],
             ),
-            _Header(s.botProfileNow),
-            _Card(
+            HermesSectionHeader(s.botProfileNow),
+            HermesListGroup(
               key: const ValueKey('bot-profile-now'),
               children: data.now.isEmpty
                   ? [
-                      _Line(
+                      HermesListRow(
                         icon: Icons.bedtime_outlined,
                         title: s.botProfileIdle,
                         muted: true,
@@ -504,7 +511,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                     ]
                   : [
                       for (var i = 0; i < data.now.length; i++)
-                        _Line(
+                        HermesListRow(
                           key: ValueKey('bot-profile-now-$i'),
                           icon: data.now[i].attention
                               ? Icons.front_hand_outlined
@@ -534,71 +541,77 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                         ),
                     ],
             ),
-            _Header(s.botProfileModelSection),
-            _Card(
+            Column(
+              key: const ValueKey('bot-profile-sections'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _Line(
-                  key: const ValueKey('bot-profile-model'),
-                  icon: Icons.memory_rounded,
-                  title: s.botProfileModel,
-                  value: [
-                    if (provider.isNotEmpty) provider,
-                    if (model.isNotEmpty) model,
-                  ].join(' · '),
-                  onTap: canEditModel ? () => _pickModel(profile) : null,
+                HermesSectionHeader(s.botProfileModelSection),
+                HermesListGroup(
+                  children: [
+                    HermesListRow(
+                      key: const ValueKey('bot-profile-model'),
+                      icon: Icons.memory_rounded,
+                      title: s.botProfileModel,
+                      value: [
+                        if (provider.isNotEmpty) provider,
+                        if (model.isNotEmpty) model,
+                      ].join(' · '),
+                      onTap: canEditModel ? () => _pickModel(profile) : null,
+                    ),
+                    HermesListRow(
+                      key: const ValueKey('bot-profile-reasoning'),
+                      icon: Icons.psychology_alt_outlined,
+                      title: s.botProfileReasoning,
+                      value: !_reasoningLoaded
+                          ? '…'
+                          : _reasoning == null
+                          ? s.botProfileReasoningDefault
+                          : reasoningLabel(s, _reasoning!),
+                      onTap: canEditModel && _reasoningLoaded
+                          ? () => _pickReasoning(profile)
+                          : null,
+                    ),
+                  ],
                 ),
-                _Line(
-                  key: const ValueKey('bot-profile-reasoning'),
-                  icon: Icons.psychology_alt_outlined,
-                  title: s.botProfileReasoning,
-                  value: !_reasoningLoaded
-                      ? '…'
-                      : _reasoning == null
-                      ? s.botProfileReasoningDefault
-                      : reasoningLabel(s, _reasoning!),
-                  onTap: canEditModel && _reasoningLoaded
-                      ? () => _pickReasoning(profile)
-                      : null,
-                ),
-              ],
-            ),
-            _Header(s.botProfileProfileSection),
-            _Card(
-              children: [
-                _Line(
-                  key: const ValueKey('bot-profile-soul'),
-                  icon: Icons.auto_awesome_outlined,
-                  title: s.botProfileSoul,
-                  onTap: widget.onSoul,
-                ),
-                _Line(
-                  key: const ValueKey('bot-profile-skills'),
-                  icon: Icons.extension_outlined,
-                  title: s.botProfileSkills,
-                  value: profile.skillCount > 0
-                      ? '${profile.skillCount}'
-                      : null,
-                  onTap: widget.onSkills,
-                ),
-                _Line(
-                  key: const ValueKey('bot-profile-memory'),
-                  icon: Icons.bookmark_border_rounded,
-                  title: s.botProfileMemory,
-                  onTap: widget.onMemory,
-                ),
-                if (widget.onTasks != null)
-                  _Line(
-                    key: const ValueKey('bot-profile-tasks'),
-                    icon: Icons.view_kanban_outlined,
-                    title: s.botProfileTasks,
-                    value: data.taskCount > 0 ? '${data.taskCount}' : null,
-                    onTap: widget.onTasks,
-                  ),
-                _Line(
-                  key: const ValueKey('bot-profile-machine'),
-                  icon: Icons.dns_outlined,
-                  title: s.botProfileMachine,
-                  value: widget.machineLabel,
+                HermesSectionHeader(s.botProfileProfileSection),
+                HermesListGroup(
+                  children: [
+                    HermesListRow(
+                      key: const ValueKey('bot-profile-soul'),
+                      icon: Icons.auto_awesome_outlined,
+                      title: s.botProfileSoul,
+                      onTap: widget.onSoul,
+                    ),
+                    HermesListRow(
+                      key: const ValueKey('bot-profile-skills'),
+                      icon: Icons.extension_outlined,
+                      title: s.botProfileSkills,
+                      value: profile.skillCount > 0
+                          ? '${profile.skillCount}'
+                          : null,
+                      onTap: widget.onSkills,
+                    ),
+                    HermesListRow(
+                      key: const ValueKey('bot-profile-memory'),
+                      icon: Icons.bookmark_border_rounded,
+                      title: s.botProfileMemory,
+                      onTap: widget.onMemory,
+                    ),
+                    if (widget.onTasks != null)
+                      HermesListRow(
+                        key: const ValueKey('bot-profile-tasks'),
+                        icon: Icons.view_kanban_outlined,
+                        title: s.botProfileTasks,
+                        value: data.taskCount > 0 ? '${data.taskCount}' : null,
+                        onTap: widget.onTasks,
+                      ),
+                    HermesListRow(
+                      key: const ValueKey('bot-profile-machine'),
+                      icon: Icons.dns_outlined,
+                      title: s.botProfileMachine,
+                      value: widget.machineLabel,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -620,57 +633,6 @@ String reasoningLabel(Strings s, String effort) => switch (effort) {
   'ultra' => s.reasoningEffortUltra,
   _ => effort,
 };
-
-class _ModelPicker extends StatelessWidget {
-  final DesktopModelCatalog catalog;
-  final String current;
-
-  const _ModelPicker({required this.catalog, required this.current});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final providers = catalog.providers
-        .where((p) => p.authenticated != false && p.models.isNotEmpty)
-        .toList();
-    if (providers.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(Strings.of(context).botProfileModelUnavailable),
-      );
-    }
-    return ListView(
-      key: const ValueKey('bot-profile-model-list'),
-      shrinkWrap: true,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      children: [
-        for (final provider in providers) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-            child: Text(
-              provider.name.isEmpty ? provider.slug : provider.name,
-              style: TextStyle(
-                color: colors.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          for (final model in provider.models)
-            ListTile(
-              key: ValueKey('bot-profile-model-${provider.slug}-$model'),
-              dense: true,
-              title: Text(model, maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: model == current
-                  ? Icon(Icons.check_rounded, color: colors.accentText)
-                  : null,
-              onTap: () => Navigator.pop(context, (provider.slug, model)),
-            ),
-        ],
-      ],
-    );
-  }
-}
 
 class _Shortcut extends StatelessWidget {
   final IconData icon;
@@ -717,146 +679,6 @@ class _Shortcut extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  final String text;
-  const _Header(this.text);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(6, 22, 6, 8),
-    child: Text(
-      text.toUpperCase(),
-      style: TextStyle(
-        color: Theme.of(context).hermes.textSecondary,
-        fontSize: 11.5,
-        fontWeight: FontWeight.w700,
-        letterSpacing: .6,
-      ),
-    ),
-  );
-}
-
-class _Card extends StatelessWidget {
-  final List<Widget> children;
-  const _Card({super.key, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Container(
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0)
-              Divider(
-                height: 1,
-                indent: 50,
-                color: colors.divider.withValues(alpha: .5),
-              ),
-            children[i],
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Line extends StatelessWidget {
-  final IconData icon;
-  final Color? iconColor;
-  final String title;
-  final String? subtitle;
-  final String? value;
-  final Widget? trailing;
-  final VoidCallback? onTap;
-  final bool muted;
-
-  const _Line({
-    super.key,
-    required this.icon,
-    required this.title,
-    this.iconColor,
-    this.subtitle,
-    this.value,
-    this.trailing,
-    this.onTap,
-    this.muted = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return InkWell(
-      onTap: onTap,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 52),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
-            children: [
-              Icon(icon, size: 20, color: iconColor ?? colors.textSecondary),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: muted
-                            ? colors.textSecondary
-                            : colors.textPrimary,
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    if (subtitle != null)
-                      Text(
-                        subtitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.textSecondary,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              if (value != null && value!.isNotEmpty) ...[
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    value!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.end,
-                    style: TextStyle(color: colors.textSecondary, fontSize: 13),
-                  ),
-                ),
-              ],
-              ?trailing,
-              if (onTap != null && trailing == null)
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: colors.textDisabled,
-                ),
-            ],
           ),
         ),
       ),

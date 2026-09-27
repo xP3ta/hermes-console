@@ -60,7 +60,7 @@ void main() {
     );
     expect(sessions, contains('await _confirmAndDeleteSession(session);'));
 
-    expect(cron, contains('Future<void> _delete(CronJob job)'));
+    expect(cron, contains('Future<bool> _delete(CronJob job)'));
     expect(cron, contains('_client.deleteCronJob(job.id, profile: _profile)'));
     expect(cron, contains("value: 'delete'"));
 

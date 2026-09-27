@@ -417,7 +417,30 @@ void main() {
         find.byKey(ValueKey('roster-room-desktop-${desktopRoom.publicKey}')),
         findsOneWidget,
       );
-      expect(find.text('Desktop'), findsOneWidget);
+      // Spec 080: inline status text on the preview line, not a boxed tag.
+      expect(
+        find.text('Desktop · read only', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getTopLeft(
+              find.byKey(
+                ValueKey('roster-room-desktop-${desktopRoom.publicKey}'),
+              ),
+            )
+            .dy,
+        greaterThan(
+          tester
+                  .getBottomLeft(
+                    find.byKey(
+                      ValueKey('roster-room-title-${desktopRoom.publicKey}'),
+                    ),
+                  )
+                  .dy -
+              1,
+        ),
+      );
       expect(
         find.byKey(ValueKey('roster-room-needs-you-${desktopRoom.publicKey}')),
         findsOneWidget,

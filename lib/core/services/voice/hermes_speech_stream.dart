@@ -121,7 +121,7 @@ class _WebSocketHermesSpeechSocket implements HermesSpeechSocket {
   void send(String frame) => channel.sink.add(frame);
 
   @override
-  Future<void> close() => channel.sink.close();
+  Future<void> close() => channel.sink.close(1000, 'client_dispose');
 }
 
 typedef HermesSpeechSocketConnector =
