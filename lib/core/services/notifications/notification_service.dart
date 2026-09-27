@@ -458,8 +458,15 @@ class NotificationService
     bool versionEventsByPreviousSnapshot = false,
     bool suppressEventsWhenVersionUnchanged = false,
     bool suppressInitialEvents = true,
+
+    /// Spec 080: called with the events that were genuinely new but withheld
+    /// from the system tray by [suppressByPolicy] (the UI is in the
+    /// foreground), so the caller can surface an in-app notice instead.
+    void Function(List<DurableDiscoveryNotification> events)?
+    onForegroundSuppressed,
   }) async {
     final displayKeys = <String>{};
+    final eventsByKey = <String, DurableDiscoveryNotification>{};
     _DurableDisplay displayFor(DurableDiscoveryNotification event) =>
         _DurableDisplay(
           kind: event.kind,
@@ -493,6 +500,7 @@ class NotificationService
               )
             : original;
         displayKeys.add(identity.eventKey);
+        eventsByKey[identity.eventKey] = event;
         _pendingDisplays[identity.eventKey] = displayFor(event);
         specs.add(
           DeliveryEventSpec(
@@ -533,6 +541,15 @@ class NotificationService
             versionEventsByPreviousSnapshot ||
             suppressEventsWhenVersionUnchanged,
         suppressInitialEvents: suppressInitialEvents,
+        onInserted: onForegroundSuppressed == null || !suppressByPolicy
+            ? null
+            : (keys, initialSuppressed) {
+                if (initialSuppressed || keys.isEmpty) return;
+                final fresh = <DurableDiscoveryNotification>[
+                  for (final key in keys) ?eventsByKey[key],
+                ];
+                if (fresh.isNotEmpty) onForegroundSuppressed(fresh);
+              },
       );
     } finally {
       for (final key in displayKeys) {

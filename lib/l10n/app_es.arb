@@ -3242,7 +3242,7 @@
   "crnEditJobsJson": "Editar jobs.json (servidor)",
   "crnApplyJobsJson": "Aplicar jobs.json al servidor",
   "crnJobsJsonLabel": "jobs.json",
-  "crnAddNew": "Añadir nuevo cron job",
+  "crnAddNew": "Añadir tarea programada",
   "crnLoadError": "No se pudieron cargar los cron jobs",
   "crnEmpty": "No hay tareas programadas",
   "crnAddJob": "Nueva tarea",
@@ -8258,5 +8258,198 @@
   "notifBotModeListenerOn": "Los Bots y las salas pueden avisarte aquí: aprobaciones, @menciones, resúmenes de ronda y progreso en vivo, con Aprobar, Denegar, Responder y Detener desde la propia notificación.",
   "notifBotModeListenerOff": "La escucha en segundo plano está apagada: los avisos de Bots y salas y los widgets solo se actualizan con Hermes abierto.",
   "notifLiveUpdatesTitle": "Actualizaciones en vivo",
-  "notifLiveUpdatesSub": "Muestra Bots y salas trabajando en la barra de estado y la pantalla de bloqueo (Android 16+)"
+  "notifLiveUpdatesSub": "Muestra Bots y salas trabajando en la barra de estado y la pantalla de bloqueo (Android 16+)",
+  "notifKanbanDoneTitle": "También cuando una tarea termine",
+  "notifKanbanDoneSub": "Valor por defecto para tareas sin elección propia",
+  "designShowAll": "Ver todo",
+  "designShowLess": "Ver menos",
+  "designCopied": "Copiado",
+  "designSearch": "Buscar",
+  "designNoMatches": "Sin resultados",
+  "designDefault": "Predeterminado",
+  "designDismiss": "Cerrar",
+  "crnWhen": "Cuándo",
+  "crnWhatItDoes": "Qué hace",
+  "crnNotifications": "Avisos",
+  "crnLastRuns": "Últimas ejecuciones",
+  "crnNotifyFinish": "Notificarme al terminar",
+  "crnNotifyFailOnly": "Solo si falla",
+  "crnNotifyGlobalOff": "Los avisos de Cron están desactivados en Ajustes",
+  "crnNotifyGlobalOffAction": "Activar",
+  "crnDetails": "Detalles",
+  "crnNextShort": "próxima {when}",
+  "@crnNextShort": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "crnLastShort": "última {when}",
+  "@crnLastShort": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "crnRunCompleted": "Completado",
+  "crnRunFailed": "Falló",
+  "crnRunRunning": "En curso",
+  "crnEditSchedule": "Editar horario",
+  "crnDeleteTask": "Eliminar tarea",
+  "crnMore": "Más",
+  "schTitle": "Cuándo",
+  "schModeDaily": "Cada día",
+  "schModeDays": "Días",
+  "schModeInterval": "Repetir",
+  "schModeMonth": "Mes",
+  "schTime": "Hora",
+  "schEvery": "Cada",
+  "schDayOfMonth": "Día del mes",
+  "schLastDay": "Último día",
+  "schPresets": "Atajos",
+  "schPresetMorning": "Cada mañana a las 8:00",
+  "schPresetWeekdays": "Laborables a las 9:00",
+  "schPresetHourly": "Cada hora",
+  "schAdvanced": "Avanzado",
+  "schAdvancedSub": "Escribir el horario a mano",
+  "schCronInvalid": "No es una expresión cron válida (5 campos).",
+  "schApply": "Aplicar",
+  "schNextRun": "próxima: {when}",
+  "@schNextRun": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "schEveryDayAt": "Cada día a las {time}",
+  "@schEveryDayAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "schWeekdaysAt": "Laborables a las {time}",
+  "@schWeekdaysAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "schWeekendsAt": "Fines de semana a las {time}",
+  "@schWeekendsAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "schDaysAt": "{days} a las {time}",
+  "@schDaysAt": {
+    "placeholders": {
+      "days": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "schEveryMinutes": "Cada {n} minutos",
+  "@schEveryMinutes": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "schEveryHour": "Cada hora",
+  "schEveryHours": "Cada {n} horas",
+  "@schEveryHours": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "schMonthlyAt": "El día {day} de cada mes a las {time}",
+  "@schMonthlyAt": {
+    "placeholders": {
+      "day": {
+        "type": "int"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "schMonthlyLastAt": "El último día de cada mes a las {time}",
+  "@schMonthlyLastAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "schPickDays": "Elige al menos un día.",
+  "schMinutesShort": "{n} min",
+  "@schMinutesShort": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "schHoursShort": "{n} h",
+  "@schHoursShort": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "schDayMonShort": "L",
+  "schDayTueShort": "M",
+  "schDayWedShort": "X",
+  "schDayThuShort": "J",
+  "schDayFriShort": "V",
+  "schDaySatShort": "S",
+  "schDaySunShort": "D",
+  "schDayMonAbbr": "lun",
+  "schDayTueAbbr": "mar",
+  "schDayWedAbbr": "mié",
+  "schDayThuAbbr": "jue",
+  "schDayFriAbbr": "vie",
+  "schDaySatAbbr": "sáb",
+  "schDaySunAbbr": "dom",
+  "crnFieldSchedule": "Horario",
+  "schLimits": "Horas y días",
+  "schWindowToggle": "Solo en una franja horaria",
+  "schWindowFrom": "Desde",
+  "schWindowTo": "Hasta",
+  "schCustomHint": "Este horario no encaja en los modos de arriba. Puedes editarlo aquí o elegir un modo.",
+  "crnScopeThisProfile": "Este perfil",
+  "crnScopeAll": "Todos",
+  "crnProfileLabel": "Perfil",
+  "crnDeliveryBotChat": "Chat de {bot}",
+  "@crnDeliveryBotChat": {
+    "placeholders": {
+      "bot": {
+        "type": "String"
+      }
+    }
+  },
+  "crnOwnerBot": "Rutina de {bot}",
+  "@crnOwnerBot": {
+    "placeholders": {
+      "bot": {
+        "type": "String"
+      }
+    }
+  },
+  "crnDeliveryOrigin": "Chat donde se creó"
 }

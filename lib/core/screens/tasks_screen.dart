@@ -23,6 +23,8 @@ import '../services/kanban_client.dart';
 import '../services/connection_manager.dart'
     show ConnectionManager, DashboardHttpException;
 import '../services/dock_preferences_store.dart';
+import '../design/modal.dart'
+    show HermesModelChoice, HermesModelGroup, showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
 import '../widgets/dock_anchored_popover.dart';
@@ -1890,11 +1892,36 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                       Navigator.of(sheetCtx).pop();
                       _openTaskForm(existing: hydratedTask);
                     },
-              notificationsMuted: notif?.isTaskMuted(hydratedTask.id) ?? false,
+              notificationsMuted:
+                  notif?.muteStore.kanbanMuted(
+                    connId: widget.connection.id,
+                    taskId: hydratedTask.id,
+                  ) ??
+                  false,
               onToggleNotificationsMuted: notif == null
                   ? null
                   : (muted) async {
-                      await notif.setTaskMuted(hydratedTask.id, muted);
+                      await notif.muteStore.setKanbanMuted(
+                        connId: widget.connection.id,
+                        taskId: hydratedTask.id,
+                        muted: muted,
+                      );
+                      if (sheetCtx.mounted) setSheet(() {});
+                    },
+              notifyWhenDone:
+                  notif?.muteStore.kanbanNotifyDone(
+                    connId: widget.connection.id,
+                    taskId: hydratedTask.id,
+                  ) ??
+                  false,
+              onToggleNotifyWhenDone: notif == null
+                  ? null
+                  : (value) async {
+                      await notif.muteStore.setKanbanNotifyDone(
+                        connId: widget.connection.id,
+                        taskId: hydratedTask.id,
+                        value: value,
+                      );
                       if (sheetCtx.mounted) setSheet(() {});
                     },
             );
@@ -2232,62 +2259,27 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       _snack(copy.modelOptionsUnavailable);
       return;
     }
-    final selection = await showHermesFloatingSurface<_KanbanModelChoice>(
+    final picked = await showHermesModelPicker(
       context: context,
       surfaceKey: const ValueKey('kanban-model-options-surface'),
-      maxWidth: 560,
-      maxHeightFactor: 0.82,
-      builder: (surfaceCtx) => ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(12, 14, 12, 18),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            child: Text(
-              copy.chooseModel,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
+      keyPrefix: 'kanban-model',
+      title: copy.chooseModel,
+      defaultLabel: copy.inheritModel,
+      current: task.modelOverride?.isNotEmpty == true
+          ? HermesModelChoice(task.providerOverride ?? '', task.modelOverride!)
+          : const HermesModelChoice.defaultModel(),
+      groups: [
+        for (final provider in options.providers)
+          HermesModelGroup(
+            slug: provider.slug,
+            name: provider.label,
+            models: provider.models,
           ),
-          ListTile(
-            key: const ValueKey('kanban-model-inherit'),
-            leading: const Icon(Icons.call_merge_rounded),
-            title: Text(copy.inheritModel),
-            onTap: () => Navigator.of(
-              surfaceCtx,
-            ).pop(const _KanbanModelChoice(provider: '', model: '')),
-          ),
-          for (final provider in options.providers) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
-              child: Text(
-                provider.label,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            for (final model in provider.models)
-              ListTile(
-                dense: true,
-                title: Text(
-                  model,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing:
-                    provider.slug == task.providerOverride &&
-                        model == task.modelOverride
-                    ? const Icon(Icons.check_rounded)
-                    : null,
-                onTap: () => Navigator.of(surfaceCtx).pop(
-                  _KanbanModelChoice(provider: provider.slug, model: model),
-                ),
-              ),
-          ],
-        ],
-      ),
+      ],
     );
+    final selection = picked == null
+        ? null
+        : _KanbanModelChoice(provider: picked.provider, model: picked.model);
     if (selection == null || !mounted) return;
     final effort = await _pickOption(
       title: copy.reasoningEffort,

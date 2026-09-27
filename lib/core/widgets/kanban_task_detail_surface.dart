@@ -38,6 +38,10 @@ class KanbanTaskDetailSurface extends StatefulWidget {
   final bool notificationsMuted;
   final ValueChanged<bool>? onToggleNotificationsMuted;
 
+  /// Spec 080: opt-in "Notify me when it's done" for this task.
+  final bool notifyWhenDone;
+  final ValueChanged<bool>? onToggleNotifyWhenDone;
+
   const KanbanTaskDetailSurface({
     required this.detail,
     required this.readOnly,
@@ -60,6 +64,8 @@ class KanbanTaskDetailSurface extends StatefulWidget {
     this.onEdit,
     this.notificationsMuted = false,
     this.onToggleNotificationsMuted,
+    this.notifyWhenDone = false,
+    this.onToggleNotifyWhenDone,
     super.key,
   });
 
@@ -820,6 +826,17 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                 ],
               ),
             ),
+          if (widget.onToggleNotifyWhenDone != null)
+            HermesSwitchTile(
+              controlKey: const ValueKey('kanban-task-notify-done'),
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.notifications_active_outlined),
+              title: copy.notifyWhenDone,
+              value: widget.notifyWhenDone && !widget.notificationsMuted,
+              onChanged: widget.notificationsMuted
+                  ? null
+                  : widget.onToggleNotifyWhenDone,
+            ),
           if (widget.onToggleNotificationsMuted != null)
             HermesSwitchTile(
               controlKey: const ValueKey('kanban-task-mute-notifications'),
@@ -1262,6 +1279,9 @@ class _KanbanDetailCopy {
       spanish ? 'Recuperar y reencolar' : 'Reclaim and requeue';
   String get specify => spanish ? 'Especificar' : 'Specify';
   String get decompose => spanish ? 'Descomponer' : 'Decompose';
+  String get notifyWhenDone => spanish
+      ? 'Avisarme cuando termine'
+      : "Notify me when it's done";
   String get muteNotifications =>
       spanish ? 'Silenciar notificaciones' : 'Mute notifications';
   String get muteNotificationsSub => spanish

@@ -1596,39 +1596,32 @@ class AppTheme {
         closeIconColor: colors.textSecondary,
       ),
       switchTheme: SwitchThemeData(
-        // Adaptación code-native del toggle retro de referencia: la pista sigue
-        // los tokens del tema y el pulgar se lee como un bloque redondeado, sin
-        // bitmaps base64 que se pixelen mal o ignoren los temas claros.
-        thumbColor: const WidgetStatePropertyAll(Colors.transparent),
-        thumbIcon: WidgetStateProperty.resolveWith((states) {
-          final disabled = states.contains(WidgetState.disabled);
+        // Standard Material 3 switch: a round thumb (no glyph icon — the old
+        // `Icons.square_rounded` rendered as a black square on device) on the
+        // theme's accent track. The selected thumb is white on every accent,
+        // the idle one uses the secondary text tone like M3's outline thumb.
+        thumbIcon: const WidgetStatePropertyAll<Icon?>(null),
+        thumbColor: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          return Icon(
-            Icons.square_rounded,
-            size: 18,
-            color: disabled
-                ? colors.textDisabled
-                : selected
-                ? colors.onAccent
-                : colors.textSecondary,
-          );
+          if (states.contains(WidgetState.disabled)) {
+            return selected
+                ? Colors.white.withValues(alpha: 0.7)
+                : colors.textDisabled;
+          }
+          return selected ? Colors.white : colors.textSecondary;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.disabled)) {
             return colors.surfaceVariant.withValues(alpha: 0.45);
           }
-          if (states.contains(WidgetState.selected)) {
-            return colors.accent.withValues(alpha: 0.82);
-          }
+          if (states.contains(WidgetState.selected)) return colors.accent;
           return colors.surfaceVariant;
         }),
         trackOutlineColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return colors.accentHover.withValues(alpha: 0.85);
-          }
-          return colors.divider.withValues(alpha: 0.78);
+          if (states.contains(WidgetState.selected)) return Colors.transparent;
+          return colors.textDisabled;
         }),
-        trackOutlineWidth: const WidgetStatePropertyAll(1.2),
+        trackOutlineWidth: const WidgetStatePropertyAll(1.5),
         overlayColor: WidgetStatePropertyAll(
           colors.accent.withValues(alpha: 0.12),
         ),
@@ -1640,7 +1633,9 @@ class AppTheme {
           displayColor: c.textPrimary,
           fontFamily: fontFamily,
         ),
-        titleColor: c.accent,
+        // Spec 080: titles never use the accent colour; accent is reserved
+        // for actions and active state.
+        titleColor: c.textPrimary,
         titleWeight: titleWeight,
         titleSpacing: titleSpacing,
       ),
@@ -1841,7 +1836,7 @@ class AppTheme {
     );
   }
 
-  /// Tiñe los títulos al color de acento del tema y les aplica el peso y el
+  /// Tiñe los títulos con [titleColor] (textPrimary, spec 080) y les aplica el peso y el
   /// tracking de su personalidad, dejando el cuerpo de texto sin tocar. Es lo
   /// que hace que la jerarquía se "sienta" distinta entre temas, no solo
   /// recoloreada.

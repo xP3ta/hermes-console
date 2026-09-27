@@ -17,7 +17,6 @@ import 'dart:math' show Random, min;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
-import 'package:web_socket_channel/status.dart' as ws_status;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/command_descriptor.dart';
@@ -153,26 +152,66 @@ final class _SanitizedRpcFailure extends TuiGatewayRpcError {
   });
 }
 
+/// Close codes Console sends on `/api/ws`. `package:web_socket`'s dart:io
+/// adapter (behind `IOWebSocketChannel`) only accepts 1000 or 3000-4999: any
+/// other code (1001, 1002…) throws asynchronously, no close frame is sent and
+/// the server later logs the socket as 1006. Error paths therefore use the
+/// private 4xxx range with a stable reason so server logs say why.
+abstract final class TuiGatewayCloseCodes {
+  static const normal = 1000;
+  static const transportError = 4000;
+  static const heartbeatTimeout = 4001;
+  static const probeTimeout = 4002;
+  static const protocolViolation = 4003;
+  static const networkChanged = 4004;
+}
+
+/// Reconnect backoff shared by every Desktop gateway socket owner.
+///
+/// Exponential (base 1 s, ×2) with jitter spread above the base so no attempt
+/// ever follows a failure sooner than [baseDelay]; the ceiling is 30 s in the
+/// foreground and 60 s while the app (or the background listener isolate) is
+/// in the background. [markHealthy] is for owners that observed
+/// [stableInterval] of continuous health, never for a single good read.
 class GatewayReconnectBackoff {
   static const stableInterval = Duration(seconds: 30);
-  static const _baseDelay = Duration(seconds: 1);
-  static const _maximumDelay = Duration(seconds: 15);
+  static const baseDelay = Duration(seconds: 1);
+  static const foregroundCap = Duration(seconds: 30);
+  static const backgroundCap = Duration(seconds: 60);
+
+  /// Test hook: scales every new backoff's base (real-socket suites that
+  /// drive many reconnects use milliseconds instead of seconds).
+  @visibleForTesting
+  static Duration? debugBaseOverride;
+
+  /// True while this isolate runs without a visible UI (app paused or the
+  /// foreground-service isolate). Widens the ceiling to [backgroundCap].
+  static bool backgroundCadence = false;
 
   final double Function() _random;
+  final Duration _base;
   int _attempt = 0;
 
-  GatewayReconnectBackoff({double Function()? random})
-    : _random = random ?? Random().nextDouble;
+  GatewayReconnectBackoff({double Function()? random, Duration? base})
+    : _random = random ?? Random().nextDouble,
+      _base = base ?? debugBaseOverride ?? baseDelay;
+
+  int get attempt => _attempt;
+
+  Duration get _cap {
+    final cap = backgroundCadence ? backgroundCap : foregroundCap;
+    // Keep the 1:30 base:cap ratio for scaled test bases.
+    return _base == baseDelay ? cap : _base * (cap.inSeconds);
+  }
 
   Duration nextDelay() {
-    final exponent = _attempt.clamp(0, 6);
+    final exponent = _attempt.clamp(0, 7);
     _attempt += 1;
-    final ceilingMs = min(
-      _baseDelay.inMilliseconds * (1 << exponent),
-      _maximumDelay.inMilliseconds,
-    );
-    final jitter = (_random().clamp(0.0, 1.0) * ceilingMs).floor();
-    return Duration(milliseconds: jitter);
+    final baseUs = _base.inMicroseconds;
+    final ceilingUs = min(baseUs * (1 << exponent), _cap.inMicroseconds);
+    final spread = ceilingUs - baseUs;
+    final jitter = (_random().clamp(0.0, 1.0) * spread).floor();
+    return Duration(microseconds: baseUs + jitter);
   }
 
   void markHealthy() => _attempt = 0;
@@ -1309,6 +1348,27 @@ class TuiGatewayClient
         HermesDesktopExclusiveSubmitCapabilityGateway {
   static const _transportTeardownBudget = Duration(seconds: 1);
 
+  /// Silence tolerated before a socket is declared half-open. Below the
+  /// server's uvicorn ping (20 s + 20 s pong) and TCP keepalive (≤60 s), so
+  /// Console detects a dead path before the server tears it down.
+  static const defaultHeartbeatDeadline = Duration(seconds: 35);
+
+  /// How long a teardown keeps reading after sending the close frame so the
+  /// peer's close (and any reply already in flight) is consumed before the
+  /// subscription is cancelled. Cancelling first shuts the read side down and
+  /// can turn a clean close into a TCP reset (server logs 1006).
+  static const _closeDrainCap = Duration(milliseconds: 750);
+
+  /// Completes when a channel's inbound stream ends (peer close, error or
+  /// local close echo). Keyed by channel so superseded sockets drain too.
+  final Expando<Completer<void>> _streamDrained = Expando<Completer<void>>();
+
+  /// When each channel reached `gateway.ready` (close telemetry).
+  final Expando<DateTime> _channelReadyAt = Expando<DateTime>();
+
+  /// Responses a deliberately closed, already detached channel still owes.
+  final Expando<_OwedResponses> _awaitResponses = Expando<_OwedResponses>();
+
   static String durableGroupEventId(String clientEventId) =>
       'user:${sha256.convert(utf8.encode(clientEventId))}';
 
@@ -1366,6 +1426,10 @@ class TuiGatewayClient
   /// [probeNow] distingue un socket vivo de uno medio abierto tras un resume.
   DateTime _lastFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _lastHeartbeatTickAt;
+
+  /// A `gateway.ping` was sent and no frame arrived since; a clean close
+  /// waits for it (see [_quiesceInFlight]).
+  bool _heartbeatAwaitingReply = false;
   Timer? _heartbeatTimer;
   String? _watchdogRuntimeId;
   bool _watchdogRuntimeBusy = false;
@@ -1373,6 +1437,14 @@ class TuiGatewayClient
   int _watchdogRuntimeRevision = 0;
   bool _fanoutWatchdogInFlight = false;
   Future<void>? _connecting;
+
+  /// Single reconnect owner for this client (P0-2): every loss of the socket
+  /// (failed connect, error, peer close, malformed frame) arms a backoff;
+  /// RPCs fail fast while it runs instead of dialing per call.
+  final GatewayReconnectBackoff _reconnectBackoff;
+  DateTime? _backoffUntil;
+  DateTime? _connectedAt;
+  int _lossNotedGeneration = -1;
 
   final ReplayCoordinator _replayCoordinator = ReplayCoordinator();
   bool _replayInFlight = false;
@@ -1399,12 +1471,14 @@ class TuiGatewayClient
     channelFactory,
     DesktopGatewayCapabilityCache? capabilityCache,
     Duration heartbeatInterval = const Duration(seconds: 15),
-    Duration heartbeatDeadline = const Duration(seconds: 45),
+    Duration heartbeatDeadline = defaultHeartbeatDeadline,
     Duration probeNowDeadline = const Duration(seconds: 5),
     Duration probeNowRecentInbound = const Duration(seconds: 3),
     Duration? fanoutInactivityDeadline,
     DateTime Function()? now,
+    GatewayReconnectBackoff? reconnectBackoff,
   }) : _dashboard = dashboard ?? DashboardClient.lazy(_connection),
+       _reconnectBackoff = reconnectBackoff ?? GatewayReconnectBackoff(),
        _channelFactory = channelFactory,
        _capabilityCache = capabilityCache ?? DesktopGatewayCapabilityCache(),
        _heartbeatInterval = heartbeatInterval,
@@ -1439,6 +1513,20 @@ class TuiGatewayClient
     );
   }
 
+  /// Remaining reconnect backoff after a transport loss (zero when none).
+  Duration get reconnectBackoffRemaining {
+    final until = _backoffUntil;
+    if (until == null || _connected) return Duration.zero;
+    final left = until.difference(_now());
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  /// True while the owner is waiting out a reconnect backoff.
+  bool get isBackingOff => reconnectBackoffRemaining > Duration.zero;
+
+  /// Explicit connect, used by owners that run their own reattach schedule
+  /// (ActiveChat recovery, the Home/Library event subscriptions). Lazy RPC
+  /// dials go through [_connectForRequest], which honours the backoff.
   @override
   Future<void> connect() {
     if (_closed) {
@@ -1454,9 +1542,46 @@ class TuiGatewayClient
     });
   }
 
+  /// Connect on behalf of an RPC: fails fast with `connectionLost` while the
+  /// owner is backing off, so pollers and screens cannot turn every call into
+  /// a new socket (the #46 reconnect loop).
+  Future<void> _connectForRequest(String method) {
+    if (!_connected && _connecting == null && isBackingOff) {
+      return Future.error(
+        TuiGatewayRpcError(
+          method,
+          'Hermes Desktop reconnect is backing off',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        ),
+      );
+    }
+    return connect();
+  }
+
+  /// Arms the reconnect backoff once per socket generation. The attempt
+  /// counter only resets when the lost socket had been up for
+  /// [GatewayReconnectBackoff.stableInterval].
+  void _noteTransportLoss(int generation) {
+    if (_closed || _lossNotedGeneration == generation) return;
+    _lossNotedGeneration = generation;
+    final since = _connectedAt;
+    _connectedAt = null;
+    if (since != null &&
+        _now().difference(since) >= GatewayReconnectBackoff.stableInterval) {
+      _reconnectBackoff.markHealthy();
+    }
+    final delay = _reconnectBackoff.nextDelay();
+    _backoffUntil = _now().add(delay);
+    debugPrint(
+      '[tui-gateway] reconnect backoff ${delay.inMilliseconds} ms '
+      '(attempt ${_reconnectBackoff.attempt}, generation=$generation)',
+    );
+  }
+
   Future<void> _connectOnce() async {
     final generation = ++_socketGeneration;
     _stopHeartbeat();
+    _heartbeatAwaitingReply = false;
     _resetLegacyEventRuntimeAnchor();
     late DashboardWebSocketAuth auth;
     try {
@@ -1466,6 +1591,7 @@ class TuiGatewayClient
         '[tui-gateway] Dashboard auth unavailable '
         '(${_safeFailureKind(error)})',
       );
+      if (generation == _socketGeneration) _noteTransportLoss(generation);
       Error.throwWithStackTrace(error, stackTrace);
     }
     if (_closed || generation != _socketGeneration) {
@@ -1482,7 +1608,12 @@ class TuiGatewayClient
           connectTimeout: const Duration(seconds: 10),
         );
     if (_closed || generation != _socketGeneration) {
-      await _teardownTransport(channel, null);
+      await _teardownTransport(
+        channel,
+        null,
+        closeCode: TuiGatewayCloseCodes.normal,
+        closeReason: 'connect_aborted',
+      );
       throw StateError('Hermes Desktop connection was cancelled');
     }
     _connectionReplayCapable = false;
@@ -1493,12 +1624,21 @@ class TuiGatewayClient
     // result without an unhandled secondary Future.
     unawaited(gatewayReady.future.catchError((Object _) {}));
     _gatewayReadyCompleter = gatewayReady;
+    final drained = Completer<void>();
+    _streamDrained[channel] = drained;
     late final StreamSubscription<dynamic> subscription;
     subscription = channel.stream.listen(
-      (raw) => _handleFrame(generation, channel, raw),
+      (raw) {
+        _awaitResponses[channel]?.observe(raw);
+        _handleFrame(generation, channel, raw);
+      },
       onError: (Object error, StackTrace stackTrace) =>
           _handleSocketError(generation, channel, error, stackTrace),
-      onDone: () => _handleSocketDone(generation, channel),
+      onDone: () {
+        if (!drained.isCompleted) drained.complete();
+        _awaitResponses[channel]?.settle();
+        _handleSocketDone(generation, channel);
+      },
       cancelOnError: false,
     );
     _channel = channel;
@@ -1513,6 +1653,9 @@ class TuiGatewayClient
       }
       _capabilityCache.resetForReconnect();
       _connected = true;
+      _connectedAt = _now();
+      _channelReadyAt[channel] = _connectedAt;
+      _backoffUntil = null;
       _advertiseServerRequestCapability(generation, channel);
       // A recovery caller resumes its stored session only after connect() ends.
       // Drain the server's sequence gap first so replayed deltas/tools cannot
@@ -1535,12 +1678,19 @@ class TuiGatewayClient
       if (generation == _socketGeneration && identical(_channel, channel)) {
         _subscription = null;
         _channel = null;
+        _connected = false;
+        _noteTransportLoss(generation);
       }
       // Si el upgrade falla antes de enlazar el sink real (HTTP 401/404), tanto
       // `cancel()` como `close()` pueden quedar pendientes. Se desvincula antes
       // de limpiar y ambas operaciones comparten un único presupuesto para que
       // ActiveChat pueda degradar a `/v1/runs` sin quedar en "Conectando".
-      await _teardownTransport(channel, subscription);
+      await _teardownTransport(
+        channel,
+        subscription,
+        closeCode: TuiGatewayCloseCodes.normal,
+        closeReason: 'connect_aborted',
+      );
       rethrow;
     }
   }
@@ -1590,6 +1740,7 @@ class TuiGatewayClient
       if (parsed == null) return;
       _lastInboundAt = _now();
       _lastFrameAt = _lastInboundAt;
+      _heartbeatAwaitingReply = false;
       if (parsed is JsonRpcNotificationFrame) return;
       if (parsed is JsonRpcServerRequestFrame) {
         _deliverServerRequest(parsed, generation, channel);
@@ -1906,6 +2057,7 @@ class TuiGatewayClient
       return;
     }
     final wasConnected = _connected;
+    _noteTransportLoss(generation);
     _replayCoordinator.retireTransport(
       generation: generation,
       channel: channel,
@@ -1918,7 +2070,14 @@ class TuiGatewayClient
     _channel = null;
     final subscription = _subscription;
     _subscription = null;
-    unawaited(_teardownTransport(channel, subscription));
+    unawaited(
+      _teardownTransport(
+        channel,
+        subscription,
+        closeCode: TuiGatewayCloseCodes.protocolViolation,
+        closeReason: 'protocol_violation',
+      ),
+    );
     final ready = _gatewayReadyCompleter;
     _gatewayReadyCompleter = null;
     if (ready != null && !ready.isCompleted) {
@@ -2032,7 +2191,8 @@ class TuiGatewayClient
 
   static const _heartbeatTimeoutMessage =
       'Hermes Desktop WebSocket heartbeat timed out';
-  static const _probeTimeoutMessage = 'Hermes Desktop WebSocket probe timed out';
+  static const _probeTimeoutMessage =
+      'Hermes Desktop WebSocket probe timed out';
 
   /// Motivo estable y no privado del cierre: nunca imprime el mensaje remoto.
   String _socketCloseReason(Object error) {
@@ -2072,6 +2232,7 @@ class TuiGatewayClient
     // owner del teardown. Evita dos cancel/close concurrentes sobre un upgrade
     // rechazado.
     if (!wasConnected) return;
+    _noteTransportLoss(generation);
     // Diagnóstico sin datos privados: distingue un plazo de heartbeat/sonda
     // vencido de un error del socket (bucles de reconexión en turnos largos).
     debugPrint(
@@ -2086,7 +2247,21 @@ class TuiGatewayClient
     _channel = null;
     final subscription = _subscription;
     _subscription = null;
-    unawaited(_teardownTransport(channel, subscription));
+    final closeReason = _socketCloseReason(error);
+    unawaited(
+      _teardownTransport(
+        channel,
+        subscription,
+        closeCode: switch (closeReason) {
+          'heartbeat_timeout' => TuiGatewayCloseCodes.heartbeatTimeout,
+          'probe_timeout' => TuiGatewayCloseCodes.probeTimeout,
+          _ => TuiGatewayCloseCodes.transportError,
+        },
+        closeReason: closeReason.startsWith('error:')
+            ? 'transport_error'
+            : closeReason,
+      ),
+    );
     final hadSensitivePending = _pending.values.any(
       (pending) => pending.redactRemoteError,
     );
@@ -2135,6 +2310,7 @@ class TuiGatewayClient
         ),
       );
     }
+    if (wasConnected) _noteTransportLoss(generation);
     if (wasConnected) {
       debugPrint(
         '[tui-gateway] WebSocket closed '
@@ -2151,7 +2327,14 @@ class TuiGatewayClient
     _channel = null;
     _subscription = null;
     if (wasConnected) {
-      unawaited(_teardownTransport(channel, subscription));
+      unawaited(
+        _teardownTransport(
+          channel,
+          subscription,
+          closeCode: TuiGatewayCloseCodes.normal,
+          closeReason: 'peer_closed',
+        ),
+      );
     }
     final hadSensitivePending = _pending.values.any(
       (pending) => pending.redactRemoteError,
@@ -2223,6 +2406,7 @@ class TuiGatewayClient
           'params': const <String, dynamic>{},
         }),
       );
+      _heartbeatAwaitingReply = true;
       await _probeSilentFanout(generation, channel, now);
     } catch (error, stackTrace) {
       _handleSocketError(generation, channel, error, stackTrace);
@@ -2517,7 +2701,7 @@ class TuiGatewayClient
     Map<String, dynamic> params, {
     Duration timeout = const Duration(seconds: 120),
   }) async {
-    await connect();
+    await _connectForRequest(method);
     return _requestConnected(method, params, timeout: timeout);
   }
 
@@ -2585,7 +2769,7 @@ class TuiGatewayClient
   _requireExclusiveSubmitCapabilityProof({
     bool preserveTypedFailure = false,
   }) async {
-    await connect();
+    await _connectForRequest('gateway.connect');
     final generation = _socketGeneration;
     final channel = _channel;
     if (!_connected || channel == null || _closed) {
@@ -2866,7 +3050,7 @@ class TuiGatewayClient
   static const int _maxGroupListPages = 512;
 
   Future<GroupsCapabilities> groupCapabilities() async {
-    await connect();
+    await _connectForRequest('gateway.connect');
     final lease = _captureGroupSocketLease(
       _socketGeneration,
       'groups.capabilities',
@@ -3354,7 +3538,7 @@ class TuiGatewayClient
     if (!RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(owner)) {
       throw const FormatException('invalid profile');
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     final result = await _request('session.list', {
       'title': botChatTitle,
       'include_hidden': true,
@@ -3462,7 +3646,7 @@ class TuiGatewayClient
     Map<String, String> preferredSessionIds = const {},
   }) async {
     final rosterGeneration = BotMentionRoster.shared.generation(_connection.id);
-    await connect();
+    await _connectForRequest('gateway.connect');
     final safePreferredSessionIds = <String, String>{};
     if (includeSessions) {
       final validProfile = RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$');
@@ -3555,7 +3739,7 @@ class TuiGatewayClient
       );
     }
 
-    await connect();
+    await _connectForRequest('gateway.connect');
     final payload = <String, dynamic>{
       'name': profile,
       'description': safeDescription,
@@ -3702,7 +3886,7 @@ class TuiGatewayClient
         (_connection.readOnly && method != 'groups.capabilities')) {
       throw TuiGatewayRpcError(method, 'Room linking unavailable');
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     return _request(method, params);
   }
 
@@ -3718,7 +3902,7 @@ class TuiGatewayClient
         'Connection is read only',
       );
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     return _request(method, params);
   });
 
@@ -3831,7 +4015,7 @@ class TuiGatewayClient
     if (!RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(owner)) {
       throw const TuiGatewayRpcError(method, 'Invalid profile name');
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     final Map<String, dynamic> result;
     try {
       result = await _request(method, {'name': owner});
@@ -3886,7 +4070,7 @@ class TuiGatewayClient
       if (safe.length >= 512) break;
       safe.add(name);
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     final result = await _request(method, {
       'name': owner,
       'disabled_skills': safe,
@@ -4049,7 +4233,7 @@ class TuiGatewayClient
       );
     }
 
-    await connect();
+    await _connectForRequest('gateway.connect');
     var current = await _botModeProfile(owner);
     _rejectConcurrentBotChatPin(current, storedId);
     // Adopt-before-mint (Desktop parity): re-check the server-resolved
@@ -4137,7 +4321,7 @@ class TuiGatewayClient
         'Invalid canonical Bot Chat identity',
       );
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     final current = await _botModeProfile(owner);
     if (current.hasInvalidBotChatPin || current.botChatSessionId != storedId) {
       throw const TuiGatewayRpcError(
@@ -4189,7 +4373,7 @@ class TuiGatewayClient
         'Invalid Bot Chat runtime identity',
       );
     }
-    await connect();
+    await _connectForRequest('gateway.connect');
     final result = await _request('session.set_hidden', {
       'session_id': runtimeId,
       'hidden': true,
@@ -4284,7 +4468,7 @@ class TuiGatewayClient
       );
     }
 
-    await connect();
+    await _connectForRequest('gateway.connect');
     final lease = _captureSessionRosterLease(activeMethod);
     DesktopActiveSessionList roster;
     try {
@@ -6211,7 +6395,7 @@ class TuiGatewayClient
       late final Future<Map<String, dynamic>> pendingResponse;
       try {
         final opaqueRequestId = _interactiveRequestId(method, requestId);
-        await connect();
+        await _connectForRequest('gateway.connect');
         pendingResponse = _sendSensitiveResponseConnected(
           method: method,
           requestId: opaqueRequestId,
@@ -6366,6 +6550,16 @@ class TuiGatewayClient
   }
 
   Future<void> _disconnectTransport(String reason) async {
+    // Replies still owed on this socket (RPCs + an unanswered heartbeat). A
+    // deliberate close waits for them, capped, before the close frame: Hermes'
+    // uvicorn stack handles the close independently of the handler, so a reply
+    // written after it fails and the socket is logged as a failed send or 1006
+    // instead of a clean close.
+    final owed = _pending.length + (_heartbeatAwaitingReply ? 1 : 0);
+    final owedChannel = _channel;
+    if (owedChannel != null && owed > 0 && _connected) {
+      _awaitResponses[owedChannel] = _OwedResponses(owed);
+    }
     _socketGeneration++;
     _connected = false;
     _stopHeartbeat();
@@ -6380,7 +6574,7 @@ class TuiGatewayClient
     await _teardownTransport(
       channel,
       subscription,
-      closeCode: ws_status.normalClosure,
+      closeCode: TuiGatewayCloseCodes.normal,
       closeReason: reason,
     );
   }
@@ -6388,10 +6582,24 @@ class TuiGatewayClient
   Future<void> _teardownTransport(
     WebSocketChannel? channel,
     StreamSubscription<dynamic>? subscription, {
-    int? closeCode,
-    String? closeReason,
+    required int closeCode,
+    required String closeReason,
   }) async {
     if (channel == null && subscription == null) return;
+    if (channel != null) {
+      final readyAt = _channelReadyAt[channel];
+      if (readyAt != null) {
+        _channelReadyAt[channel] = null;
+        final peerCode = closeReason == 'peer_closed'
+            ? channel.closeCode
+            : null;
+        GatewaySocketMeter.instance.recordClose(
+          reason: closeReason,
+          code: peerCode ?? closeCode,
+          life: _now().difference(readyAt),
+        );
+      }
+    }
 
     Future<void> bestEffort(Future<dynamic> Function() operation) async {
       try {
@@ -6402,18 +6610,46 @@ class TuiGatewayClient
       }
     }
 
-    final pending = <Future<void>>[];
-    // Invocar `close` antes de `cancel` conserva el close frame deliberado que
-    // evita cierres 1006 en Android. Las Futures se esperan en paralelo para
-    // que ambas compartan el mismo presupuesto total.
-    if (channel != null) {
-      pending.add(bestEffort(() => channel.sink.close(closeCode, closeReason)));
+    final elapsed = Stopwatch()..start();
+    Duration remaining() {
+      final left = _transportTeardownBudget - elapsed.elapsed;
+      return left.isNegative ? Duration.zero : left;
     }
+
+    // 1. Close frame first, always with a code and reason (a frame without a
+    //    code is logged by the server as 1005).
+    // 2. Keep reading until the peer echoes the close (stream done), capped,
+    //    so replies already in flight are consumed instead of reset.
+    // 3. Only then cancel the subscription. Cancelling in parallel with close
+    //    shuts the read side down (SHUT_RD) and a late reply triggers a TCP
+    //    RST, which the server logs as 1006 even though Console closed cleanly.
+    final owed = channel == null ? null : _awaitResponses[channel];
+    if (owed != null && subscription != null) {
+      final cap = remaining() < _closeDrainCap ? remaining() : _closeDrainCap;
+      try {
+        await owed.settled.future.timeout(cap);
+      } catch (_) {
+        // Server too slow: close anyway.
+      }
+    }
+    final closing = channel == null
+        ? Future<void>.value()
+        : bestEffort(() => channel.sink.close(closeCode, closeReason));
+    final drained = channel == null ? null : _streamDrained[channel];
+    if (drained != null && subscription != null) {
+      final cap = remaining() < _closeDrainCap ? remaining() : _closeDrainCap;
+      try {
+        await drained.future.timeout(cap);
+      } catch (_) {
+        // Peer never echoed the close: fall through to cancel.
+      }
+    }
+    final pending = <Future<void>>[closing];
     if (subscription != null) {
       pending.add(bestEffort(subscription.cancel));
     }
     try {
-      await Future.wait(pending).timeout(_transportTeardownBudget);
+      await Future.wait(pending).timeout(remaining());
     } catch (_) {
       // Un sink todavía no enlazado o un onCancel remoto pueden no completar.
       // Las referencias propietarias ya se retiraron antes de entrar aquí.
@@ -6447,6 +6683,30 @@ class TuiGatewayClient
     _closed = true;
     await _disconnectTransport('client_dispose');
     if (!_events.isClosed) await _events.close();
+  }
+}
+
+/// Counts JSON-RPC responses a detached channel still owes before its close.
+final class _OwedResponses {
+  _OwedResponses(this._remaining);
+
+  int _remaining;
+  final Completer<void> settled = Completer<void>();
+
+  void observe(dynamic raw) {
+    if (settled.isCompleted || raw is! String) return;
+    try {
+      final frame = jsonDecode(raw);
+      if (frame is Map &&
+          frame.containsKey('id') &&
+          !frame.containsKey('method')) {
+        if (--_remaining <= 0) settle();
+      }
+    } catch (_) {}
+  }
+
+  void settle() {
+    if (!settled.isCompleted) settled.complete();
   }
 }
 

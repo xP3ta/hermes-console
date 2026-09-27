@@ -128,9 +128,12 @@ class NotificationDeliveryCoordinator {
     required bool suppressByPolicy,
     bool suppressEventsWhenVersionUnchanged = false,
     bool suppressInitialEvents = true,
+    void Function(List<String> insertedEventKeys, bool initialSuppressed)?
+    onInserted,
   }) => _accept(() async {
     await _initialize();
     final suppressed = await store.ingestDiscovery(
+      onInserted: onInserted,
       scopeKey: scopeKey,
       buildUpdate: buildUpdate,
       buildUpdateWithPrevious: buildUpdateWithPrevious,

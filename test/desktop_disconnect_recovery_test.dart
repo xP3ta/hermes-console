@@ -1728,6 +1728,14 @@ void _expectNoViewerAttachmentMutations(
 }
 
 void main() {
+  // Real-socket reconnect scenarios: keep the owner's backoff shape but on a
+  // millisecond scale so waits stay within the suite's 2 s polls.
+  setUpAll(
+    () => GatewayReconnectBackoff.debugBaseOverride = const Duration(
+      milliseconds: 20,
+    ),
+  );
+  tearDownAll(() => GatewayReconnectBackoff.debugBaseOverride = null);
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(

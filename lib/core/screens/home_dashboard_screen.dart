@@ -324,14 +324,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         }
       });
       final connection = _active;
-      if (connection != null &&
-          await _refreshRemoteActivity(
-            connection,
-            Session.profileOwner(
-              widget.connManager.activeProfileFor(connection.id),
-            ),
-          )) {
-        _activityReconnectBackoff.markHealthy();
+      // A good read does not reset the backoff: only [_activityStableTimer]
+      // (30 s connected) does, so a socket that drops after each read keeps
+      // growing its delay instead of reconnecting at 0-1 s forever.
+      if (connection != null) {
+        await _refreshRemoteActivity(
+          connection,
+          Session.profileOwner(
+            widget.connManager.activeProfileFor(connection.id),
+          ),
+        );
       }
     } catch (_) {
       _markActivityTransportStale(connectionId);
@@ -348,9 +350,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _activityReconnectTimer != null) {
       return;
     }
-    final delay = immediate
+    final ownDelay = immediate
         ? Duration.zero
         : _activityReconnectBackoff.nextDelay();
+    final ownerDelay = client.reconnectBackoffRemaining;
+    final delay = ownerDelay > ownDelay ? ownerDelay : ownDelay;
     _activityReconnectTimer = Timer(delay, () {
       _activityReconnectTimer = null;
       if (_activityRefreshAllowed && _activityConnectionId == connectionId) {

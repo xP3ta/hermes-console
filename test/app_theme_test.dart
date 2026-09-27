@@ -25,25 +25,31 @@ void main() {
     expect(scheme.surfaceTint, colors.accent);
   });
 
-  test('los switches usan bloque redondeado y tokens del tema', () {
-    final theme = AppTheme.hermesRedDark;
-    final colors = theme.hermes;
-    final switchTheme = theme.switchTheme;
-    final selected = <WidgetState>{WidgetState.selected};
-    final idle = <WidgetState>{};
+  test('switches are the standard M3 switch on the accent track', () {
+    for (final preset in AppTheme.presets) {
+      final theme = AppTheme.fromId(preset.id);
+      final colors = theme.hermes;
+      final switchTheme = theme.switchTheme;
+      final selected = <WidgetState>{WidgetState.selected};
+      final idle = <WidgetState>{};
 
-    final selectedIcon = switchTheme.thumbIcon!.resolve(selected)!;
-    final idleIcon = switchTheme.thumbIcon!.resolve(idle)!;
-
-    expect(selectedIcon.icon, Icons.square_rounded);
-    expect(selectedIcon.color, colors.onAccent);
-    expect(idleIcon.icon, Icons.square_rounded);
-    expect(idleIcon.color, colors.textSecondary);
-    expect(
-      switchTheme.trackColor!.resolve(selected),
-      colors.accent.withValues(alpha: 0.82),
-    );
-    expect(switchTheme.trackColor!.resolve(idle), colors.surfaceVariant);
+      // No glyph thumb: an icon font glyph painted a black square on device.
+      expect(
+        switchTheme.thumbIcon?.resolve(selected),
+        isNull,
+        reason: preset.id,
+      );
+      expect(switchTheme.thumbIcon?.resolve(idle), isNull, reason: preset.id);
+      expect(switchTheme.thumbColor!.resolve(selected), Colors.white);
+      expect(switchTheme.thumbColor!.resolve(idle), colors.textSecondary);
+      expect(switchTheme.trackColor!.resolve(selected), colors.accent);
+      expect(switchTheme.trackColor!.resolve(idle), colors.surfaceVariant);
+      expect(
+        switchTheme.thumbColor!.resolve(selected)!.a,
+        1.0,
+        reason: 'the thumb must be opaque, never transparent',
+      );
+    }
   });
 
   test('los avisos transitorios son superficies flotantes en cada tema', () {

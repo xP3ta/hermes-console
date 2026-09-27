@@ -41,15 +41,17 @@ void main() {
       );
     });
 
-    test('recent Bot Chat writes alone never mean active (no 90s heuristic)',
-        () {
-      final hermes = profileNamed('default');
-      // canonical_session.last_active is 1790000060: 10s ago.
-      expect(
-        BotPresence.derive(profile: hermes, now: at(1790000070)),
-        BotPresence.idle,
-      );
-    });
+    test(
+      'recent Bot Chat writes alone never mean active (no 90s heuristic)',
+      () {
+        final hermes = profileNamed('default');
+        // canonical_session.last_active is 1790000060: 10s ago.
+        expect(
+          BotPresence.derive(profile: hermes, now: at(1790000070)),
+          BotPresence.idle,
+        );
+      },
+    );
 
     test('live session status from session.active_list', () {
       final hermes = profileNamed('default');
@@ -157,8 +159,10 @@ void main() {
       expect(kinds, contains(AttentionKind.mention));
       // radar's failed turn is already offered as a retry: one item only.
       expect(attention.ofKind(AttentionKind.failedTurn), isEmpty);
-      expect(attention.ofKind(AttentionKind.mention).single.eventId,
-          'msg-astra-1');
+      expect(
+        attention.ofKind(AttentionKind.mention).single.eventId,
+        'msg-astra-1',
+      );
       expect(
         attention.ofKind(AttentionKind.approval).single.approval?.requestId,
         'apr-1',
