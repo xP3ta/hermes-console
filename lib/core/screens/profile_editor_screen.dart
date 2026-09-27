@@ -27,6 +27,8 @@ import '../widgets/bot_face_options.dart';
 import '../widgets/bot_avatar_generate_button.dart';
 import '../widgets/hermes_ui.dart';
 import 'mission_control_copy.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 typedef ProfileEditorImagePicker = Future<XFile?> Function();
 typedef ProfileEditorImageNormalizer =
@@ -474,29 +476,27 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   Future<void> _confirmDiscard() async {
     if (_discardDialogOpen || _saving) return;
     _discardDialogOpen = true;
-    final discard = await showDialog<bool>(
+    final discard = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_text('¿Descartar cambios?', 'Discard changes?')),
-        content: Text(
-          _text(
-            'La identidad del bot todavía no se ha guardado.',
-            'The bot identity has not been saved yet.',
-          ),
+      title: _text('¿Descartar cambios?', 'Discard changes?'),
+      message: _text(
+                'La identidad del bot todavía no se ha guardado.',
+                'The bot identity has not been saved yet.',
+              ),
+      actions: [
+        HermesDialogAction(
+          key: const ValueKey('profile-editor-keep-editing'),
+          label: _text('Seguir editando', 'Keep editing'),
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            key: const ValueKey('profile-editor-keep-editing'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(_text('Seguir editando', 'Keep editing')),
-          ),
-          TextButton(
-            key: const ValueKey('profile-editor-discard'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(_text('Descartar', 'Discard')),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          key: const ValueKey('profile-editor-discard'),
+          label: _text('Descartar', 'Discard'),
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     _discardDialogOpen = false;
     if (discard == true && mounted) {

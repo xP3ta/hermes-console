@@ -11,6 +11,12 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesFormDialog;
 
 /// Readable mobile view of native background work and saved spawn trees.
 ///
@@ -200,26 +206,24 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
       return;
     }
     final strings = Strings.of(context);
-    final approved = await showDialog<bool>(
+    final approved = await showHermesDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(strings.agentCenterStopProcessTitle),
-        content: Text(
-          strings.agentCenterStopProcessBody(
-            strings.agentCenterProcessFallback('$ordinal'),
-          ),
+      title: strings.agentCenterStopProcessTitle,
+      message: strings.agentCenterStopProcessBody(
+                strings.agentCenterProcessFallback('$ordinal'),
+              ),
+      actions: [
+        HermesDialogAction(
+          label: strings.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(strings.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.agentCenterStop),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: strings.agentCenterStop,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (approved != true || !mounted || widget.readOnly) return;
     final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
@@ -253,30 +257,26 @@ class _AgentCenterScreenState extends State<AgentCenterScreen> {
     if (!_hasRuntime || widget.readOnly) return;
     final strings = Strings.of(context);
     final controller = TextEditingController();
-    final text = await showDialog<String>(
+    final text = await showHermesFormDialog<String?>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(strings.agentCenterNewTaskTitle),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          minLines: 2,
-          maxLines: 5,
-          maxLength: 2000,
-          decoration: InputDecoration(hintText: strings.agentCenterNewTaskHint),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(strings.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: Text(strings.agentCenterStart),
-          ),
-        ],
+      title: strings.agentCenterNewTaskTitle,
+      body: (context, setState) => TextField(
+        controller: controller,
+        autofocus: true,
+        minLines: 2,
+        maxLines: 5,
+        maxLength: 2000,
+        decoration: InputDecoration(hintText: strings.agentCenterNewTaskHint),
       ),
-    );
+      actions: [
+        HermesDialogAction(
+          label: strings.commonCancel,
+          value: null,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(label: strings.agentCenterStart, value: ''),
+      ],
+    ).then((v) => v == null ? null : controller.text.trim());
     controller.dispose();
     if (text == null || text.isEmpty || !mounted || widget.readOnly) return;
     try {

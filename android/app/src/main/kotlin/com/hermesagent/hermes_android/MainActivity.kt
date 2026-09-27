@@ -208,6 +208,21 @@ class MainActivity : FlutterFragmentActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getSdkInt" -> result.success(Build.VERSION.SDK_INT)
+                "getInstallerPackage" -> {
+                    val installer =
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                packageManager.getInstallSourceInfo(packageName)
+                                    .installingPackageName
+                            } else {
+                                @Suppress("DEPRECATION")
+                                packageManager.getInstallerPackageName(packageName)
+                            }
+                        } catch (_: Exception) {
+                            null
+                        }
+                    result.success(installer)
+                }
                 else -> result.notImplemented()
             }
         }

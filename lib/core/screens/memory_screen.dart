@@ -18,11 +18,21 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
+import '../design/hermes_design.dart' as d show HermesListRow;
+import '../design/hermes_design.dart'
+    show
+        HermesActionButton,
+        HermesDetailScaffold,
+        HermesInlineNotice,
+        HermesListGroup,
+        HermesSectionHeader,
+        HermesSpace,
+        HermesStatusText,
+        HermesStatusTone;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
-import '../widgets/hermes_premium_ui.dart';
 import 'memory_draft_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/feature_dependency_notice.dart';
@@ -228,7 +238,10 @@ class _MemoryScreenState extends State<MemoryScreen> {
               )
             else if (_info != null)
               Text(
-                Strings.of(context).memoryConfiguredCount(_info!.configuredCount, _info!.providers.length),
+                Strings.of(context).memoryConfiguredCount(
+                  _info!.configuredCount,
+                  _info!.providers.length,
+                ),
                 style: TextStyle(fontSize: 11, color: colors.textSecondary),
               ),
           ],
@@ -570,92 +583,16 @@ class _MemoryScreenState extends State<MemoryScreen> {
   }
 
   void _showFileDetail(String name, int bytes, HermesThemeColors colors) {
-    final kb = (bytes / 1024).toStringAsFixed(2);
-    showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('memory-file-detail-surface'),
-      maxWidth: 520,
-      builder: (ctx) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '$name.md',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: colors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _DetailRow(
-              label: Strings.of(context).memSize,
-              value: '$kb KB ($bytes bytes)',
-              colors: colors,
-            ),
-            _DetailRow(
-              label: Strings.of(context).memFormat,
-              value: 'Markdown',
-              colors: colors,
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: colors.divider.withValues(alpha: 0.55),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 13,
-                    color: colors.textDisabled,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      Strings.of(context).memNoFileEndpoint,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.textDisabled,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _openDraft(name);
-                },
-                icon: Icon(
-                  Icons.edit_note_outlined,
-                  size: 18,
-                  color: colors.accentHover,
-                ),
-                label: Text(
-                  _hasDraft(name)
-                      ? Strings.of(context).memOpenDraft
-                      : Strings.of(context).memCreateDraft,
-                  style: TextStyle(fontSize: 13, color: colors.accentHover),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: colors.accent.withValues(alpha: 0.4)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-          ],
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (pageCtx) => MemoryFileDetailPage(
+          name: name,
+          bytes: bytes,
+          hasDraft: _hasDraft(name),
+          onOpenDraft: () {
+            Navigator.pop(pageCtx);
+            _openDraft(name);
+          },
         ),
       ),
     );
@@ -791,38 +728,61 @@ class _MemoryScreenState extends State<MemoryScreen> {
   }
 }
 
-class _DetailRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final HermesThemeColors colors;
+/// Memory file detail (spec 080): one page scroll, one primary action.
+class MemoryFileDetailPage extends StatelessWidget {
+  final String name;
+  final int bytes;
+  final bool hasDraft;
+  final VoidCallback onOpenDraft;
 
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    required this.colors,
+  const MemoryFileDetailPage({
+    super.key = const ValueKey('memory-file-detail-page'),
+    required this.name,
+    required this.bytes,
+    required this.hasDraft,
+    required this.onOpenDraft,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(fontSize: 12, color: colors.textPrimary),
-            ),
-          ),
-        ],
+    final s = Strings.of(context);
+    final kb = (bytes / 1024).toStringAsFixed(2);
+    return HermesDetailScaffold(
+      listKey: const ValueKey('memory-file-detail'),
+      title: '$name.md',
+      status: hasDraft
+          ? HermesStatusText(
+              label: s.memBadgeDraft,
+              tone: HermesStatusTone.active,
+            )
+          : null,
+      primaryAction: HermesActionButton(
+        key: const ValueKey('memory-file-open-draft'),
+        primary: true,
+        icon: Icons.edit_note_outlined,
+        label: hasDraft ? s.memOpenDraft : s.memCreateDraft,
+        onPressed: onOpenDraft,
       ),
+      sections: [
+        HermesSectionHeader(s.designDetails),
+        HermesListGroup(
+          dividerIndent: HermesSpace.rowH,
+          children: [
+            d.HermesListRow(
+              title: s.memSize,
+              value: '$kb KB ($bytes bytes)',
+              showChevron: false,
+            ),
+            d.HermesListRow(
+              title: s.memFormat,
+              value: 'Markdown',
+              showChevron: false,
+            ),
+          ],
+        ),
+        const SizedBox(height: HermesSpace.x3),
+        HermesInlineNotice(message: s.memNoFileEndpoint),
+      ],
     );
   }
 }

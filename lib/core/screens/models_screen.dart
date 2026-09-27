@@ -21,6 +21,8 @@ import '../widgets/bridge_update_banner.dart';
 import '../widgets/hermes_premium_ui.dart';
 import 'external_provider_screen.dart';
 import 'moa_recipe_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 class ModelsScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -964,35 +966,29 @@ class _ModelsScreenState extends State<ModelsScreen> {
       showReadOnlyNotice(context);
       return;
     }
-    final colors = Theme.of(context).hermes;
     final isActive = provider.isCurrent;
     final isOAuth = _isOAuthProvider(provider);
     final s = Strings.of(context);
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.mdlDisconnectProviderTitle(provider.name)),
-        content: Text(
-          (provider.keyEnv.isNotEmpty && !isOAuth)
-              ? s.mdlDisconnectApiKeyBody(provider.keyEnv) +
-                    (isActive ? s.mdlDisconnectActiveWarningModel : '')
-              : s.mdlDisconnectOAuthBody(provider.name) +
-                    (isActive ? s.mdlDisconnectActiveWarning : ''),
+      title: s.mdlDisconnectProviderTitle(provider.name),
+      message: (provider.keyEnv.isNotEmpty && !isOAuth)
+                  ? s.mdlDisconnectApiKeyBody(provider.keyEnv) +
+                        (isActive ? s.mdlDisconnectActiveWarningModel : '')
+                  : s.mdlDisconnectOAuthBody(provider.name) +
+                        (isActive ? s.mdlDisconnectActiveWarning : ''),
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              s.mdlDisconnect,
-              style: TextStyle(color: colors.onAccent),
-            ),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: s.mdlDisconnect,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (ok != true || !mounted) return;
     setState(() => _setting = true);

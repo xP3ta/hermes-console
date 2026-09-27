@@ -8,7 +8,6 @@
 // Todos los streams se cancelan en dispose() cerrando el ApiClient.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -18,6 +17,12 @@ import '../services/bridge_client.dart';
 import '../services/connection_manager.dart';
 import '../services/run_registry.dart';
 import '../services/run_template_store.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesLogPage,
+        showHermesDialog;
 import '../theme/app_theme.dart';
 import '../services/notifications/notification_controller.dart';
 import '../utils/relative_time.dart';
@@ -437,33 +442,15 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
   /// plano (no SelectableText) para no reactivar el crash `_dependents.isEmpty`.
   Future<void> _showLocalResult(String response) async {
     if (!mounted) return;
-    final colors = Theme.of(context).hermes;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(Strings.of(context).commonResult),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Text(
-              response.isEmpty ? Strings.of(context).commonNoOutput : response,
-              style: TextStyle(color: colors.textPrimary, height: 1.4),
-            ),
-          ),
+    final s = Strings.of(context);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HermesLogPage(
+          key: const ValueKey('local-run-result-page'),
+          title: s.commonResult,
+          text: response.isEmpty ? s.commonNoOutput : response,
+          mono: false,
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: response));
-              Navigator.pop(ctx);
-            },
-            child: Text(Strings.of(context).commonCopy),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(Strings.of(context).commonClose),
-          ),
-        ],
       ),
     );
   }
@@ -506,25 +493,23 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     final registry = _registry;
     if (registry == null || registry.records.isEmpty) return;
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     final count = registry.records.length;
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(s.runsClearTitle),
-        content: Text(s.runsClearConfirm(count)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.commonCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.runsClear, style: TextStyle(color: colors.accent)),
-          ),
-        ],
-      ),
+      title: s.runsClearTitle,
+      message: s.runsClearConfirm(count),
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: s.runsClear,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (ok != true) return;
     _statusOverrides.clear();

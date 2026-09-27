@@ -8,6 +8,8 @@ import '../services/dock_preferences_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/dock_style.dart';
 import '../widgets/hermes_ui.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 enum _DockTab { bots, general }
 
@@ -56,28 +58,23 @@ class _DockSettingsScreenState extends State<DockSettingsScreen> {
   // afectado y la confirmación lo repite explícitamente.
   Future<void> _confirmAndReset(BuildContext context) async {
     final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     final profile = _profileLabel(strings);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(strings.dockSettingsResetProfile(profile)),
-        content: Text(
-          strings.dockSettingsResetConfirmBody(profile),
-          style: TextStyle(fontSize: 13, color: colors.textSecondary),
+      title: strings.dockSettingsResetProfile(profile),
+      message: strings.dockSettingsResetConfirmBody(profile),
+      actions: [
+        HermesDialogAction(
+          label: strings.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(strings.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(strings.dockSettingsReset),
-          ),
-        ],
-      ),
+        HermesDialogAction(
+          label: strings.dockSettingsReset,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirmed == true) await _reset();
   }
