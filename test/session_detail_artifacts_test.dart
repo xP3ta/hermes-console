@@ -84,9 +84,91 @@ void main() {
 
       expect(messageRequests, 0);
       expect(find.byTooltip('Artefactos'), findsNothing);
-      expect(find.byType(Tab), findsNWidgets(2));
-      expect(find.text('contexto'), findsOneWidget);
+      expect(find.byType(Tab), findsNothing);
       expect(find.textContaining('PRIVATE_'), findsNothing);
+
+      // Ni los detalles técnicos ni la página de contexto piden el transcript.
+      final context = find.byKey(const ValueKey('session-detail-context'));
+      await tester.ensureVisible(context);
+      await tester.pumpAndSettle();
+      await tester.tap(context);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('session-context-page')),
+        findsOneWidget,
+      );
+      expect(find.text('session-tip'), findsOneWidget);
+      expect(messageRequests, 0);
+      expect(find.textContaining('PRIVATE_'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'SessionDetail oculta (no deshabilita) las acciones de escritura en '
+    'conexiones de solo lectura',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final api = ApiClient(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'k',
+        httpClient: MockClient((_) async => http.Response('{}', 404)),
+      );
+      Future<void> pump({required bool readOnly}) async {
+        await tester.pumpWidget(
+          _host(
+            SessionDetailScreen(
+              key: ValueKey(readOnly),
+              connection: SavedConnection(
+                id: 'connection-ro-$readOnly',
+                label: 'Instance',
+                host: '127.0.0.1',
+                port: 8642,
+                apiKey: 'k',
+                readOnly: readOnly,
+              ),
+              session: const Session(
+                id: 'session-ro',
+                title: 'Plan',
+                model: 'model-a',
+                source: 'mobile',
+                messageCount: 1,
+                isActive: false,
+                preview: 'Último mensaje',
+                startedAt: 1784500000,
+              ),
+              client: api,
+              skipInitialSessionRefresh: true,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await pump(readOnly: true);
+      expect(find.byKey(const ValueKey('session-detail-resume')), findsOne);
+      expect(
+        find.byKey(const ValueKey('session-detail-duplicate')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('session-detail-delete')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('session-detail-copy-summary')),
+        findsOne,
+      );
+      expect(find.text('Solo lectura'), findsOneWidget);
+
+      await pump(readOnly: false);
+      expect(find.byKey(const ValueKey('session-detail-duplicate')), findsOne);
+      final delete = find.byKey(const ValueKey('session-detail-delete'));
+      await tester.ensureVisible(delete);
+      await tester.pumpAndSettle();
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('hermes-dialog')), findsOneWidget);
+      expect(find.text('¿Eliminar esta conversación?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('hermes-dialog')), findsNothing);
     },
   );
 }

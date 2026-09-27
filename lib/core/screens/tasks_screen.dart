@@ -23,8 +23,15 @@ import '../services/kanban_client.dart';
 import '../services/connection_manager.dart'
     show ConnectionManager, DashboardHttpException;
 import '../services/dock_preferences_store.dart';
+import '../design/content.dart' show HermesLogPage;
 import '../design/modal.dart'
-    show HermesModelChoice, HermesModelGroup, showHermesModelPicker;
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesModelChoice,
+        HermesModelGroup,
+        showHermesDialog,
+        showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
 import '../widgets/dock_anchored_popover.dart';
@@ -376,28 +383,23 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   /// historial sigue en el servidor; solo desaparecen del tablero.
   Future<void> _confirmClearDone(List<KanbanTask> done) async {
     if (done.isEmpty) return;
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(s.kanbanClearDoneTitle),
-        content: Text(s.kanbanClearDoneConfirm(done.length)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: Text(s.kanbanCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: Text(
-              s.kanbanClearDone,
-              style: TextStyle(color: colors.accent),
-            ),
-          ),
-        ],
-      ),
+      title: s.kanbanClearDoneTitle,
+      message: s.kanbanClearDoneConfirm(done.length),
+      actions: [
+        HermesDialogAction(
+          label: s.kanbanCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('kanban-clear-done-confirm'),
+          label: s.kanbanClearDone,
+          value: true,
+        ),
+      ],
     );
     if (ok != true) return;
     if (!await _verifyAppLock(s.kanbanClearDoneTitle) || !mounted) return;
@@ -1710,222 +1712,239 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       task.id,
       board: _selectedBoard,
     );
-    await showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('kanban-task-detail-surface'),
-      maxWidth: 580,
-      maxHeightFactor: 0.88,
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (sheetCtx, setSheet) => FutureBuilder<KanbanTaskDetail>(
-          future: detailFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const SizedBox(
-                key: ValueKey('kanban-task-detail-loading'),
-                height: 220,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            if (snapshot.hasError || snapshot.data == null) {
-              return _TaskDetailError(
-                colors: colors,
-                message: _humanError(snapshot.error ?? 'invalid task'),
-                onRetry: () {
+    // Spec 080: the task detail is a full page with ONE scroll (the rich
+    // content owns it), not a floating surface with nested scrolls.
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (sheetCtx) => Scaffold(
+          key: const ValueKey('kanban-task-detail-surface'),
+          appBar: HermesAppBar(
+            centerTitle: false,
+            title: Text(Strings.of(sheetCtx).kanbanUiTaskTitle),
+          ),
+          body: StatefulBuilder(
+            builder: (sheetCtx, setSheet) => FutureBuilder<KanbanTaskDetail>(
+              future: detailFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox(
+                    key: ValueKey('kanban-task-detail-loading'),
+                    height: 220,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (snapshot.hasError || snapshot.data == null) {
+                  return _TaskDetailError(
+                    colors: colors,
+                    message: _humanError(snapshot.error ?? 'invalid task'),
+                    onRetry: () {
+                      setSheet(() {
+                        detailFuture = _client.getTaskDetail(
+                          task.id,
+                          board: _selectedBoard,
+                        );
+                      });
+                    },
+                  );
+                }
+                final detail = snapshot.data!;
+
+                void refreshDetail() {
+                  if (!sheetCtx.mounted) return;
                   setSheet(() {
                     detailFuture = _client.getTaskDetail(
-                      task.id,
+                      detail.task.id,
                       board: _selectedBoard,
                     );
                   });
-                },
-              );
-            }
-            final detail = snapshot.data!;
-
-            void refreshDetail() {
-              if (!sheetCtx.mounted) return;
-              setSheet(() {
-                detailFuture = _client.getTaskDetail(
-                  detail.task.id,
-                  board: _selectedBoard,
-                );
-              });
-            }
-
-            Future<void> mutate(Future<void> Function() action) async {
-              try {
-                await action();
-                _scheduleRefresh();
-                refreshDetail();
-              } catch (error) {
-                if (!mounted) return;
-                _snack(_humanError(error));
-                if (error is DashboardHttpException &&
-                    error.statusCode == 409) {
-                  refreshDetail();
                 }
-              }
-            }
 
-            Future<void> guarded(Future<void> Function() action) async {
-              try {
-                await action();
-              } catch (error) {
-                if (mounted) _snack(_humanError(error));
-              }
-            }
+                Future<void> mutate(Future<void> Function() action) async {
+                  try {
+                    await action();
+                    _scheduleRefresh();
+                    refreshDetail();
+                  } catch (error) {
+                    if (!mounted) return;
+                    _snack(_humanError(error));
+                    if (error is DashboardHttpException &&
+                        error.statusCode == 409) {
+                      refreshDetail();
+                    }
+                  }
+                }
 
-            final hydratedTask = detail.task;
-            final notif = context
-                .findAncestorStateOfType<HermesAppState>()
-                ?.notifications;
-            return KanbanTaskDetailSurface(
-              detail: detail,
-              readOnly: widget.connection.readOnly,
-              onAddComment: widget.connection.readOnly
-                  ? null
-                  : (body) => mutate(
-                      () => _client.addComment(
-                        hydratedTask.id,
-                        body,
-                        board: _selectedBoard,
-                      ),
-                    ),
-              onUploadAttachment: widget.connection.readOnly
-                  ? null
-                  : () => mutate(() => _uploadTaskAttachment(hydratedTask.id)),
-              onDownloadAttachment: (attachment) =>
-                  guarded(() => _downloadTaskAttachment(attachment)),
-              onDeleteAttachment: widget.connection.readOnly
-                  ? null
-                  : (attachment) =>
-                        mutate(() => _deleteTaskAttachment(attachment)),
-              onInspectRun: (run) => guarded(() => _showRunInspection(run)),
-              onTerminateRun: widget.connection.readOnly
-                  ? null
-                  : (run) => mutate(() => _terminateRun(run)),
-              onShowLog: () => guarded(() => _showTaskLog(hydratedTask.id)),
-              onReclaim: widget.connection.readOnly
-                  ? null
-                  : () => mutate(() => _reclaimTask(hydratedTask)),
-              onReassign: widget.connection.readOnly
-                  ? null
-                  : () => mutate(() => _reassignTask(hydratedTask)),
-              onSpecify: widget.connection.readOnly
-                  ? null
-                  : () => mutate(() async {
-                      if (!await _confirm020(
-                        title: copy.specifyTitle,
-                        body: copy.specifyBody,
-                        confirmLabel: copy.specify,
-                      )) {
-                        return;
-                      }
-                      if (!await _verifyAppLock(copy.specifyTitle)) return;
-                      final result = await _client.specifyTask(
-                        hydratedTask.id,
-                        author: 'mobile',
-                        board: _selectedBoard,
-                      );
-                      if (!mounted) return;
-                      _snack(
-                        result.ok
-                            ? copy.specifyStarted
-                            : (result.reason ?? copy.actionUnavailable),
-                      );
-                    }),
-              onDecompose: widget.connection.readOnly
-                  ? null
-                  : () => mutate(() async {
-                      if (!await _confirm020(
-                        title: copy.decomposeTitle,
-                        body: copy.decomposeBody,
-                        confirmLabel: copy.decompose,
-                      )) {
-                        return;
-                      }
-                      if (!await _verifyAppLock(copy.decomposeTitle)) return;
-                      final result = await _client.decomposeTask(
-                        hydratedTask.id,
-                        author: 'mobile',
-                        board: _selectedBoard,
-                      );
-                      if (!mounted) return;
-                      _snack(
-                        result.ok
-                            ? copy.decomposeResult(result.childIds.length)
-                            : (result.reason ?? copy.actionUnavailable),
-                      );
-                    }),
-              onConfigureModel: detail.capabilities.isEmpty
-                  ? null
-                  : () => mutate(() => _configureTaskModel(hydratedTask)),
-              onOpenLinkedTask: (id) async {
-                Navigator.of(sheetCtx).pop();
-                await Future<void>.delayed(const Duration(milliseconds: 350));
-                if (!mounted) return;
-                await _openTaskSheet(
-                  KanbanTask(id: id, title: id, body: '', status: 'todo'),
+                Future<void> guarded(Future<void> Function() action) async {
+                  try {
+                    await action();
+                  } catch (error) {
+                    if (mounted) _snack(_humanError(error));
+                  }
+                }
+
+                final hydratedTask = detail.task;
+                final notif = context
+                    .findAncestorStateOfType<HermesAppState>()
+                    ?.notifications;
+                return KanbanTaskDetailSurface(
+                  detail: detail,
+                  readOnly: widget.connection.readOnly,
+                  onAddComment: widget.connection.readOnly
+                      ? null
+                      : (body) => mutate(
+                          () => _client.addComment(
+                            hydratedTask.id,
+                            body,
+                            board: _selectedBoard,
+                          ),
+                        ),
+                  onUploadAttachment: widget.connection.readOnly
+                      ? null
+                      : () => mutate(
+                          () => _uploadTaskAttachment(hydratedTask.id),
+                        ),
+                  onDownloadAttachment: (attachment) =>
+                      guarded(() => _downloadTaskAttachment(attachment)),
+                  onDeleteAttachment: widget.connection.readOnly
+                      ? null
+                      : (attachment) =>
+                            mutate(() => _deleteTaskAttachment(attachment)),
+                  onInspectRun: (run) => guarded(() => _showRunInspection(run)),
+                  onTerminateRun: widget.connection.readOnly
+                      ? null
+                      : (run) => mutate(() => _terminateRun(run)),
+                  onShowLog: () => guarded(() => _showTaskLog(hydratedTask.id)),
+                  onReclaim: widget.connection.readOnly
+                      ? null
+                      : () => mutate(() => _reclaimTask(hydratedTask)),
+                  onReassign: widget.connection.readOnly
+                      ? null
+                      : () => mutate(() => _reassignTask(hydratedTask)),
+                  onSpecify: widget.connection.readOnly
+                      ? null
+                      : () => mutate(() async {
+                          if (!await _confirm020(
+                            title: copy.specifyTitle,
+                            body: copy.specifyBody,
+                            confirmLabel: copy.specify,
+                          )) {
+                            return;
+                          }
+                          if (!await _verifyAppLock(copy.specifyTitle)) return;
+                          final result = await _client.specifyTask(
+                            hydratedTask.id,
+                            author: 'mobile',
+                            board: _selectedBoard,
+                          );
+                          if (!mounted) return;
+                          _snack(
+                            result.ok
+                                ? copy.specifyStarted
+                                : (result.reason ?? copy.actionUnavailable),
+                          );
+                        }),
+                  onDecompose: widget.connection.readOnly
+                      ? null
+                      : () => mutate(() async {
+                          if (!await _confirm020(
+                            title: copy.decomposeTitle,
+                            body: copy.decomposeBody,
+                            confirmLabel: copy.decompose,
+                          )) {
+                            return;
+                          }
+                          if (!await _verifyAppLock(copy.decomposeTitle)) {
+                            return;
+                          }
+                          final result = await _client.decomposeTask(
+                            hydratedTask.id,
+                            author: 'mobile',
+                            board: _selectedBoard,
+                          );
+                          if (!mounted) return;
+                          _snack(
+                            result.ok
+                                ? copy.decomposeResult(result.childIds.length)
+                                : (result.reason ?? copy.actionUnavailable),
+                          );
+                        }),
+                  onConfigureModel: detail.capabilities.isEmpty
+                      ? null
+                      : () => mutate(() => _configureTaskModel(hydratedTask)),
+                  onOpenLinkedTask: (id) async {
+                    Navigator.of(sheetCtx).pop();
+                    await Future<void>.delayed(
+                      const Duration(milliseconds: 350),
+                    );
+                    if (!mounted) return;
+                    await _openTaskSheet(
+                      KanbanTask(id: id, title: id, body: '', status: 'todo'),
+                    );
+                  },
+                  onArchive: widget.connection.readOnly
+                      ? null
+                      : () async {
+                          if (await _confirmArchive(hydratedTask) &&
+                              sheetCtx.mounted) {
+                            Navigator.of(sheetCtx).pop();
+                          }
+                        },
+                  onDelete: widget.connection.readOnly
+                      ? null
+                      : () async {
+                          if (await _confirmDelete(hydratedTask) &&
+                              sheetCtx.mounted) {
+                            Navigator.of(sheetCtx).pop();
+                          }
+                        },
+                  onMove: widget.connection.readOnly
+                      ? null
+                      : () {
+                          Navigator.of(sheetCtx).pop();
+                          _pickMove(hydratedTask);
+                        },
+                  onEdit: widget.connection.readOnly
+                      ? null
+                      : () {
+                          Navigator.of(sheetCtx).pop();
+                          _openTaskForm(existing: hydratedTask);
+                        },
+                  notificationsMuted:
+                      notif?.muteStore.kanbanMuted(
+                        connId: widget.connection.id,
+                        taskId: hydratedTask.id,
+                      ) ??
+                      false,
+                  onToggleNotificationsMuted: notif == null
+                      ? null
+                      : (muted) async {
+                          await notif.muteStore.setKanbanMuted(
+                            connId: widget.connection.id,
+                            taskId: hydratedTask.id,
+                            muted: muted,
+                          );
+                          if (sheetCtx.mounted) setSheet(() {});
+                        },
+                  notifyWhenDone:
+                      notif?.muteStore.kanbanNotifyDone(
+                        connId: widget.connection.id,
+                        taskId: hydratedTask.id,
+                      ) ??
+                      false,
+                  onToggleNotifyWhenDone: notif == null
+                      ? null
+                      : (value) async {
+                          await notif.muteStore.setKanbanNotifyDone(
+                            connId: widget.connection.id,
+                            taskId: hydratedTask.id,
+                            value: value,
+                          );
+                          if (sheetCtx.mounted) setSheet(() {});
+                        },
                 );
               },
-              onArchive: widget.connection.readOnly
-                  ? null
-                  : () {
-                      Navigator.of(sheetCtx).pop();
-                      _confirmArchive(hydratedTask);
-                    },
-              onDelete: widget.connection.readOnly
-                  ? null
-                  : () {
-                      Navigator.of(sheetCtx).pop();
-                      _confirmDelete(hydratedTask);
-                    },
-              onMove: widget.connection.readOnly
-                  ? null
-                  : () {
-                      Navigator.of(sheetCtx).pop();
-                      _pickMove(hydratedTask);
-                    },
-              onEdit: widget.connection.readOnly
-                  ? null
-                  : () {
-                      Navigator.of(sheetCtx).pop();
-                      _openTaskForm(existing: hydratedTask);
-                    },
-              notificationsMuted:
-                  notif?.muteStore.kanbanMuted(
-                    connId: widget.connection.id,
-                    taskId: hydratedTask.id,
-                  ) ??
-                  false,
-              onToggleNotificationsMuted: notif == null
-                  ? null
-                  : (muted) async {
-                      await notif.muteStore.setKanbanMuted(
-                        connId: widget.connection.id,
-                        taskId: hydratedTask.id,
-                        muted: muted,
-                      );
-                      if (sheetCtx.mounted) setSheet(() {});
-                    },
-              notifyWhenDone:
-                  notif?.muteStore.kanbanNotifyDone(
-                    connId: widget.connection.id,
-                    taskId: hydratedTask.id,
-                  ) ??
-                  false,
-              onToggleNotifyWhenDone: notif == null
-                  ? null
-                  : (value) async {
-                      await notif.muteStore.setKanbanNotifyDone(
-                        connId: widget.connection.id,
-                        taskId: hydratedTask.id,
-                        value: value,
-                      );
-                      if (sheetCtx.mounted) setSheet(() {});
-                    },
-            );
-          },
+            ),
+          ),
         ),
       ),
     );
@@ -2007,80 +2026,45 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _showTaskLog(String taskId) async {
-    final colors = Theme.of(context).hermes;
     final copy = _Kanban020Copy.forContext(context);
     final future = _client.getTaskLog(
       taskId,
       tailBytes: 65536,
       board: _selectedBoard,
     );
-    await showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: const ValueKey('kanban-log-surface'),
-      maxWidth: 620,
-      maxHeightFactor: 0.82,
-      builder: (_) => FutureBuilder<KanbanTaskLog>(
-        future: future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const SizedBox(
-              height: 220,
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snapshot.hasError || snapshot.data == null) {
-            return Padding(
-              padding: const EdgeInsets.all(22),
-              child: Text(
-                _humanError(snapshot.error ?? copy.actionUnavailable),
-              ),
-            );
-          }
-          final log = snapshot.data!;
-          return Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  copy.workerLog,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: colors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 420),
-                  child: SingleChildScrollView(
-                    child: SelectionArea(
-                      child: Text(
-                        log.exists && log.content.isNotEmpty
-                            ? log.content
-                            : copy.noLog,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11.5,
-                          height: 1.35,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                if (log.truncated) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    copy.logTruncated,
-                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
-                  ),
-                ],
-              ],
-            ),
-          );
-        },
+    // Spec 080: the worker log is a full page (HermesLogPage) with ONE
+    // scroll, never a capped pane inside a floating surface.
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => KeyedSubtree(
+          key: const ValueKey('kanban-log-surface'),
+          child: FutureBuilder<KanbanTaskLog>(
+            future: future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return Scaffold(
+                  appBar: HermesAppBar(title: Text(copy.workerLog)),
+                  body: const Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (snapshot.hasError || snapshot.data == null) {
+                return HermesLogPage(
+                  title: copy.workerLog,
+                  mono: false,
+                  text: _humanError(snapshot.error ?? copy.actionUnavailable),
+                );
+              }
+              final log = snapshot.data!;
+              final hasLog = log.exists && log.content.isNotEmpty;
+              return HermesLogPage(
+                title: copy.workerLog,
+                mono: hasLog,
+                notice: log.truncated ? copy.logTruncated : null,
+                text: hasLog ? log.content : copy.noLog,
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -2320,67 +2304,64 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
   }
 
-  Future<void> _confirmArchive(KanbanTask task) async {
-    final colors = Theme.of(context).hermes;
+  Future<bool> _confirmArchive(KanbanTask task) async {
     final s = Strings.of(context);
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(s.kanbanArchiveTitle),
-        content: Text(s.kanbanArchiveConfirm(task.title)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: Text(s.kanbanCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: Text(s.kanbanArchive),
-          ),
-        ],
-      ),
+      title: s.kanbanArchiveTitle,
+      message: s.kanbanArchiveConfirm(task.title),
+      actions: [
+        HermesDialogAction(
+          label: s.kanbanCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('kanban-archive-confirm'),
+          label: s.kanbanArchive,
+          value: true,
+        ),
+      ],
     );
-    if (ok != true) return;
-    if (!await _verifyAppLock(s.kanbanArchiveTitle) || !mounted) return;
+    if (ok != true || !mounted) return false;
+    if (!await _verifyAppLock(s.kanbanArchiveTitle) || !mounted) return false;
     try {
       await _client.archiveTask(task.id, board: _selectedBoard);
-      if (!mounted) return;
+      if (!mounted) return true;
       _snack(s.kanbanArchived);
       _scheduleRefresh();
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       _snack(_humanError(e));
+      return false;
     }
   }
 
-  Future<void> _confirmDelete(KanbanTask task) async {
-    final colors = Theme.of(context).hermes;
+  Future<bool> _confirmDelete(KanbanTask task) async {
     final s = Strings.of(context);
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(s.kanbanDeleteTitle),
-        content: Text(s.kanbanDeletePermanentConfirm(task.title)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: Text(s.kanbanCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: Text(
-              s.kanbanDeletePermanent,
-              style: TextStyle(color: colors.error),
-            ),
-          ),
-        ],
-      ),
+      title: s.kanbanDeleteTitle,
+      message: s.kanbanDeletePermanentConfirm(task.title),
+      actions: [
+        HermesDialogAction(
+          label: s.kanbanCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('kanban-delete-confirm'),
+          label: s.kanbanDeletePermanent,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
-    if (ok != true) return;
-    if (!await _verifyAppLock(s.kanbanDeleteTitle) || !mounted) return;
+    if (ok != true || !mounted) return false;
+    if (!await _verifyAppLock(s.kanbanDeleteTitle) || !mounted) return false;
     await _delete(task);
+    return true;
   }
 }
 

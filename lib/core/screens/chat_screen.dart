@@ -146,7 +146,6 @@ import 'extensions_center_screen.dart';
 import 'memory_screen.dart';
 import 'models_screen.dart';
 import 'recovery_center_screen.dart';
-import 'session_detail_screen.dart';
 import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -176,6 +175,9 @@ import '../bots/ui/bot_identity.dart';
 import '../bots/ui/roster/living_bot_face.dart';
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
+import '../design/modal.dart'
+    show showHermesDialog, HermesDialogAction, HermesDialogActionStyle;
+import 'subagent_detail_screen.dart' show SubagentTranscriptPage;
 import '../widgets/activity_panel.dart';
 import '../widgets/activity_task_linger.dart';
 import '../widgets/compaction_dock.dart';
@@ -1463,6 +1465,27 @@ class _ChatScreenState extends State<ChatScreen>
             details: activity.details,
           ),
     ]);
+  }
+
+  /// The subagent detail page covers this chat, which drops the chat's own
+  /// presentation lease (route no longer current). The detail holds its own
+  /// lease so the authoritative roster and controls stay valid under it.
+  VoidCallback _acquireSubagentDetailLease() {
+    if (_disposed || !_chatBound) return () {};
+    final chat = _chat;
+    final SubagentPresentationOwnerToken token;
+    try {
+      token = chat.acquireSubagentForegroundPresentation();
+    } on StateError {
+      return () {};
+    }
+    unawaited(chat.refreshSubagents());
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      chat.releaseSubagentForegroundPresentation(token);
+    };
   }
 
   void _dismissSubagentPill() {
@@ -9117,43 +9140,34 @@ class _ChatScreenState extends State<ChatScreen>
     final childSessionId = activity.childSessionId?.trim();
     if (childSessionId == null ||
         childSessionId.isEmpty ||
-        !_openingSubagentSessionIds.add(childSessionId)) {
+        _openingSubagentSessionIds.contains(childSessionId)) {
       return;
     }
-    setState(() {});
-
     final readOnlyConnection = widget.connection.copyWith(readOnly: true);
-    final client = ApiClient(
-      baseUrl: readOnlyConnection.baseUrl,
-      apiKey: readOnlyConnection.apiKey,
-      connectionId: readOnlyConnection.id,
-    );
-    Session? childSession;
-    try {
-      childSession = await client.getSession(
-        childSessionId,
-        profile: _chat.sessionProfile,
-      );
-    } catch (_) {
-      if (!_disposed && mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).subagentOpenFailed)),
-          kind: HermesNoticeKind.error,
-        );
-      }
-    } finally {
-      client.close();
-      _openingSubagentSessionIds.remove(childSessionId);
-      if (!_disposed && mounted) setState(() {});
-    }
-
-    if (childSession == null || _disposed || !mounted) return;
+    final profile = _chat.sessionProfile;
+    final strings = Strings.of(context);
+    final goal = activity.goalPreview?.trim() ?? '';
+    // Spec 080: the child conversation opens as a read-only transcript page
+    // (no composer, no duplicate/archive/delete), not the generic session
+    // "profile". The loader uses a read-only connection copy.
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => SessionDetailScreen(
-          connection: readOnlyConnection,
-          session: childSession!,
-          skipInitialSessionRefresh: true,
+        builder: (_) => SubagentTranscriptPage(
+          title: goal.isEmpty
+              ? strings.subagentUiTranscriptTitle
+              : goal.split('\n').first,
+          load: () async {
+            final client = ApiClient(
+              baseUrl: readOnlyConnection.baseUrl,
+              apiKey: readOnlyConnection.apiKey,
+              connectionId: readOnlyConnection.id,
+            );
+            try {
+              return await client.getMessages(childSessionId, profile: profile);
+            } finally {
+              client.close();
+            }
+          },
         ),
       ),
     );
@@ -9164,25 +9178,24 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _confirmInterruptSubagent(SubagentActivity activity) async {
     if (_chat.isSubagentInterruptPending(activity)) return false;
     final strings = Strings.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(strings.subagentInterruptTitle),
-        content: Text(strings.subagentInterruptBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(strings.sesCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(
-              strings.subagentInterruptConfirm,
-              style: TextStyle(color: Theme.of(context).hermes.error),
-            ),
-          ),
-        ],
-      ),
+      surfaceKey: const ValueKey('subagent-stop-dialog'),
+      title: strings.subagentUiStopTitle,
+      message: strings.subagentUiStopBody,
+      actions: [
+        HermesDialogAction(
+          label: strings.subagentUiCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('subagent-stop-confirm'),
+          label: strings.subagentUiStopConfirm,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirmed != true || _disposed || !mounted) return false;
 
@@ -10363,6 +10376,11 @@ class _ChatScreenState extends State<ChatScreen>
                                                     _chat.canInterruptSubagent,
                                                 canSteer:
                                                     _chat.canSteerSubagent,
+                                                canTail: _chat.canTailSubagent,
+                                                parentTitle:
+                                                    widget.session.title,
+                                                acquirePresentation:
+                                                    _acquireSubagentDetailLease,
                                                 isInterruptPending: _chat
                                                     .isSubagentInterruptPending,
                                                 appForeground:

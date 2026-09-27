@@ -205,11 +205,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('subagent-disclosure')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.byKey(const ValueKey('subagent-row-child')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    final stop = find.byKey(const ValueKey('subagent-stop-child'));
+    await tester.pump(const Duration(milliseconds: 400));
+    final stop = find.descendant(
+      of: find.byKey(const ValueKey('subagent-detail-stop')),
+      matching: find.byType(FilledButton),
+    );
     expect(tester.getSize(stop).height, greaterThanOrEqualTo(48));
     expect(tester.getSize(stop).width, greaterThanOrEqualTo(48));
     expect(find.text('Revisar proyecto'), findsNothing);

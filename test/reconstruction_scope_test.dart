@@ -75,7 +75,7 @@ void main() {
     final source = File(
       'lib/core/widgets/subagent_activity_card.dart',
     ).readAsStringSync();
-    final row = _classBody(source, 'class _SubagentRow');
+    final row = _classBody(source, 'class _SubagentListRow');
 
     expect(row, isNot(contains('activity.goalPreview')));
     expect(row, isNot(contains('activity.resultPreview')));
