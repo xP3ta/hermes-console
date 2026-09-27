@@ -434,15 +434,44 @@ void main() {
       'status': status,
     };
 
-    test('baseline: blocked notifies, done does not by default', () async {
+    test('baseline: done notifies by default when never configured', () async {
+      expect(
+        prefs.containsKey(NotificationMuteStore.kanbanDoneDefaultKey),
+        isFalse,
+      );
+      dashboard.kanban = [task('running')];
+      await kanbanTick();
+      dashboard.kanban = [task('done')];
+      await kanbanTick();
+      expect(shows, hasLength(1));
+    });
+
+    test(
+      'an explicit global OFF keeps done silent; blocked still notifies',
+      () async {
+        await mutes().setKanbanDoneDefault(false);
+        dashboard.kanban = [task('running')];
+        await kanbanTick();
+        dashboard.kanban = [task('done')];
+        await kanbanTick();
+        expect(shows, isEmpty);
+        dashboard.kanban = [task('blocked')];
+        await kanbanTick();
+        expect(shows, hasLength(1));
+      },
+    );
+
+    test('a per-task OFF wins over the default', () async {
+      await mutes().setKanbanNotifyDone(
+        connId: _connId,
+        taskId: 'task-1',
+        value: false,
+      );
       dashboard.kanban = [task('running')];
       await kanbanTick();
       dashboard.kanban = [task('done')];
       await kanbanTick();
       expect(shows, isEmpty);
-      dashboard.kanban = [task('blocked')];
-      await kanbanTick();
-      expect(shows, hasLength(1));
     });
 
     test('muted task never notifies (real listener path)', () async {

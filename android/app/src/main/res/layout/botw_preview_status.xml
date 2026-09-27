@@ -1,41 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Widget-picker preview (previewLayout, API 31+) and initial layout for the
-     Glance widget; mirrors the dark Bot Mode palette. RemoteViews-safe views only. -->
+<!-- Picker preview of Status (v2): black, dot + server + one coloured line.
+     RemoteViews-safe views only. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/botw_preview_background"
+    android:background="@drawable/botw_glow_idle"
+    android:gravity="center_vertical"
     android:orientation="vertical"
-    android:padding="10dp"
-    android:gravity="center_vertical">
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-        <FrameLayout
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:background="@drawable/botw_preview_dot_success" />
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:fontFamily="sans-serif-medium"
-            android:maxLines="1"
-            android:text="@string/botw_preview_status"
-            android:textColor="@color/botw_preview_text"
-            android:textSize="13sp" />
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp">
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+        <ImageView android:layout_width="8dp" android:layout_height="8dp" android:src="@drawable/botw_dot_needs_you" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_preview_status" android:textColor="@color/botw_preview_text" android:textSize="13sp" android:layout_marginStart="7dp" android:textStyle="bold"/>
     </LinearLayout>
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="14dp"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:text="@string/botw_preview_status_line"
-        android:textColor="@color/botw_preview_accent"
-        android:textSize="11sp" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_preview_status_line" android:textColor="@color/botw_text_needs_you" android:textSize="11.5sp" android:layout_marginStart="15dp"/>
 </LinearLayout>

@@ -59,7 +59,7 @@ Action routing: notification/widget buttons → `HermesNotificationActionReceive
 - [x] T703 Quick ask (4x1/2x1: face + "Ask <Bot>…" + mic → voice draft).
 - [x] Room widget (4x2): no configuration Activity — it shows the most relevant room (working, then needs-you, then latest activity) with member chips, last message and Stop all. A per-widget room picker can follow later.
 - [x] Status widget (2x1): connection + working / needs-you count.
-Migration: legacy receivers keep their class names (dashboard → Bots, compact → Status, controls → Quick ask), so placed widgets redraw with new content. Snapshot `hermes_widget_botmode_v2` (schema 2) is published only by the listener; the widget demotes "working" after 12 min without a publish (one-shot expiry redraw, no polling).
+Coexistence: the original Hermes Console widgets keep their receivers, look and snapshot (dashboard, compact, controls), so placed widgets are never replaced; the five Bot Mode widgets are new receivers (`HermesBotsWidgetProvider`, `HermesNeedsYouWidgetProvider`, `HermesRoomWidgetProvider`, `HermesQuickAskWidgetProvider`, `HermesStatusWidgetProvider`) and new picker entries. In 1.2.14 they are disabled in release manifests (not in the picker; redesign in 1.2.15) and enabled only in the qa flavor. Snapshot `hermes_widget_botmode_v2` (schema 2) is published only by the listener; the widget demotes "working" after 12 min without a publish (one-shot expiry redraw, no polling).
 
 Gaps at the end of this phase: device verification pending; generated widget previews (API 35) not added — static `previewLayout` only; no Kotlin JVM test setup (logic kept in Dart and covered there).
 

@@ -194,12 +194,9 @@
         <receiver
             android:name=".HermesNotificationActionReceiver"
             android:exported="false" />
-        <!-- Bot Mode widget family (spec 070 Phase 7). The first three keep
-             the legacy receiver names so placed widgets migrate in place:
-             dashboard → Bots, compact → Status, controls → Quick ask. -->
         <receiver
             android:name=".NewSessionWidgetProvider"
-            android:label="@string/botw_bots_name"
+            android:label="@string/hermes_widget_dashboard_name"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -209,8 +206,48 @@
                 android:resource="@xml/new_session_widget_info" />
         </receiver>
         <receiver
+            android:name=".HermesCompactWidgetProvider"
+            android:label="@string/hermes_widget_compact_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hermes_widget_compact_info" />
+        </receiver>
+        <receiver
+            android:name=".HermesControlWidgetProvider"
+            android:label="@string/hermes_widget_control_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hermes_widget_control_info" />
+        </receiver>
+        <!-- Bot Mode widget family (spec 070 Phase 7). New receivers, so the
+             original Hermes Console widgets above stay untouched. Disabled in
+             release builds until their redesign ships (1.2.15): they do not
+             appear in the widget picker. The qa flavor re-enables them in
+             src/qa/AndroidManifest.xml for development. -->
+        <receiver
+            android:name=".HermesBotsWidgetProvider"
+            android:label="@string/botw_bots_name"
+            android:enabled="false"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/botw_bots_info" />
+        </receiver>
+        <receiver
             android:name=".HermesNeedsYouWidgetProvider"
             android:label="@string/botw_needs_you_name"
+            android:enabled="false"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -222,6 +259,7 @@
         <receiver
             android:name=".HermesRoomWidgetProvider"
             android:label="@string/botw_room_name"
+            android:enabled="false"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -231,26 +269,28 @@
                 android:resource="@xml/botw_room_info" />
         </receiver>
         <receiver
-            android:name=".HermesControlWidgetProvider"
+            android:name=".HermesQuickAskWidgetProvider"
             android:label="@string/botw_quick_ask_name"
+            android:enabled="false"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/hermes_widget_control_info" />
+                android:resource="@xml/botw_quick_ask_info" />
         </receiver>
         <receiver
-            android:name=".HermesCompactWidgetProvider"
+            android:name=".HermesStatusWidgetProvider"
             android:label="@string/botw_status_name"
+            android:enabled="false"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/hermes_widget_compact_info" />
+                android:resource="@xml/botw_status_info" />
         </receiver>
     </application>
     <queries>

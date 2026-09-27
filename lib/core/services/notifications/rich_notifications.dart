@@ -45,8 +45,10 @@ extension BotNotificationCopy on NotifL10n {
   String approvalNeedsOk(String? command, String? description) {
     final cmd = plainNotificationText(command, max: 90);
     if (cmd.isNotEmpty) {
-      return _t('Necesita tu OK para ejecutar “$cmd”',
-          'Needs your OK to run “$cmd”');
+      return _t(
+        'Necesita tu OK para ejecutar “$cmd”',
+        'Needs your OK to run “$cmd”',
+      );
     }
     final what = plainNotificationText(description, max: 90);
     if (what.isNotEmpty) {
@@ -61,9 +63,14 @@ extension BotNotificationCopy on NotifL10n {
     if (replied.isEmpty) return _t('Ronda terminada', 'Round done');
     final names = _joinNames(replied);
     return replied.length == 1
-        ? _t('Ronda terminada · $names respondió', 'Round done · $names replied')
-        : _t('Ronda terminada · $names respondieron',
-            'Round done · $names replied');
+        ? _t(
+            'Ronda terminada · $names respondió',
+            'Round done · $names replied',
+          )
+        : _t(
+            'Ronda terminada · $names respondieron',
+            'Round done · $names replied',
+          );
   }
 
   String _joinNames(List<String> names) {
@@ -78,15 +85,22 @@ extension BotNotificationCopy on NotifL10n {
 
   String memberFailed(String who) =>
       _t('$who no pudo terminar', '$who couldn’t finish');
-  String get roomBlocked => _t('La sala está bloqueada · abre para reintentar',
-      'Room is blocked · open to retry');
+  String get roomBlocked => _t(
+    'La sala está bloqueada · abre para reintentar',
+    'Room is blocked · open to retry',
+  );
   String isWorking(String who) =>
       _t('$who está trabajando…', '$who is working…');
+  String isThinking(String who) =>
+      _t('$who está pensando…', '$who is thinking…');
+  String roundReplied(int done, int total) =>
+      _t('$done de $total respondieron', '$done of $total replied');
   String get roomWorking => _t('La sala está trabajando…', 'Room is working…');
   String get thinking => _t('Pensando…', 'Thinking…');
   String roundWorking(int round, int working, int total) => _t(
-      'Ronda $round · $working de $total trabajando',
-      'Round $round · $working of $total working');
+    'Ronda $round · $working de $total trabajando',
+    'Round $round · $working of $total working',
+  );
   String botFinished(String bot, String firstLine) => firstLine.isEmpty
       ? _t('$bot terminó', '$bot finished')
       : _t('$bot terminó · $firstLine', '$bot finished · $firstLine');
@@ -98,11 +112,16 @@ extension BotNotificationCopy on NotifL10n {
   String get actReply => _t('Responder', 'Reply');
   String get actStop => _t('Detener', 'Stop');
   String get actStopAll => _t('Detener todo', 'Stop all');
+
+  /// Stop on a room's own Live Update: acts on that room only.
+  String get actStopRoom => _t('Detener sala', 'Stop room');
   String replyHint(String who) => _t('Responder a $who', 'Reply to $who');
 
   String get confirmApproved => _t('Aprobado', 'Approved');
   String get confirmDenied => _t('Denegado', 'Denied');
   String get confirmStopping => _t('Deteniendo…', 'Stopping…');
+  String get confirmRetrying => _t('Reintentando…', 'Retrying…');
+  String get actRetry => _t('Reintentar', 'Retry');
   String get confirmSent => _t('Enviado', 'Sent');
   String get confirmAlreadyAnswered =>
       _t('Ya estaba respondido', 'Already answered');
@@ -123,6 +142,124 @@ extension BotNotificationCopy on NotifL10n {
 
   /// Lock-screen / hidden-content Live Update copy.
   String get liveWorkingPublic => _t('Trabajando…', 'Working…');
+
+  // ── Widgets / multi-room ────────────────────────────────────────────────
+  String stepReplied(String who) => _t('$who respondió', '$who replied');
+  String stepWorking(String who) => _t('$who trabajando…', '$who working…');
+  String get working => _t('Trabajando…', 'Working…');
+
+  /// Group summary suffix: "Atlas · 3 avisos".
+  String get alertsLabel => _t('avisos', 'alerts');
+
+  String routineDone(String routine, String line) => line.isEmpty
+      ? _t('Terminó «$routine»', 'Finished “$routine”')
+      : _t('Terminó «$routine» · $line', 'Finished “$routine” · $line');
+  String routineFailed(String routine) =>
+      _t('No pudo terminar «$routine»', 'Couldn’t finish “$routine”');
+
+  // Generic Hermes cards (cron / kanban / runs / chats without a Bot).
+  String get actViewResult => _t('Ver resultado', 'View result');
+  String get actViewReason => _t('Ver motivo', 'See why');
+  String get actOpenTask => _t('Abrir tarea', 'Open task');
+  String cronDoneLine(String job) => job.isEmpty
+      ? _t('Tarea programada terminó', 'Scheduled task finished')
+      : _t('Tarea programada terminó · $job', 'Scheduled task finished · $job');
+  String cronFailedLine(String job) => job.isEmpty
+      ? _t('Tarea programada falló', 'Scheduled task failed')
+      : _t('Tarea programada falló · $job', 'Scheduled task failed · $job');
+
+  /// Sender of task-board cards (neutral ">_" face).
+  String get senderTasks => _t('Tareas', 'Tasks');
+
+  /// Sender of scheduled-job cards (neutral ">_" face).
+  String get senderScheduled => _t('Tareas programadas', 'Scheduled tasks');
+
+  /// Task-board line under the task's own title: "Terminada · Subir build".
+  String kanbanStatusLine(String status, String task) {
+    final head = switch (status) {
+      'done' => _t('Terminada', 'Done'),
+      'blocked' => _t('Bloqueada', 'Blocked'),
+      'triage' => _t('Te necesita', 'Needs you'),
+      _ => _t('Actualizada', 'Updated'),
+    };
+    return task.isEmpty ? head : '$head · $task';
+  }
+
+  /// Scheduled-job line under the job's own title.
+  String cronStatusLine(bool ok, String job) {
+    final head = ok ? _t('Terminada', 'Done') : _t('Falló', 'Failed');
+    return job.isEmpty ? head : '$head · $job';
+  }
+
+  String kanbanLine(String status, String task) {
+    final head = switch (status) {
+      'done' => _t('Tarea terminada', 'Task done'),
+      'blocked' => _t('Tarea bloqueada', 'Task blocked'),
+      'triage' => _t('Una tarea te necesita', 'A task needs you'),
+      _ => _t('Tarea actualizada', 'Task updated'),
+    };
+    return task.isEmpty ? head : '$head · $task';
+  }
+
+  // Lock-screen lines: the state, never names, commands or messages.
+  String get publicDone => _t('Terminó', 'Finished');
+  String get publicFailed => _t('No pudo terminar', 'Couldn’t finish');
+  String get publicNeedsYou => _t('Te necesita', 'Needs you');
+
+  /// Ongoing summary when more rooms work than Live Updates are shown.
+  String roomsWorking(int n) => _t('$n salas trabajando', '$n rooms working');
+
+  // ── Room Live Update polish (1.2.14) ────────────────────────────────────
+  /// Stops the room's current round (same call as the room's Stop).
+  String get actStopRound => _t('Parar ronda', 'Stop round');
+
+  /// Opens that room.
+  String get actOpenRoom => _t('Abrir sala', 'Open room');
+
+  /// Expanded per-member row state ("Respondió · 00:41").
+  String rowReplied(String? after) => after == null
+      ? _t('Respondió', 'Replied')
+      : _t('Respondió · $after', 'Replied · $after');
+  String get rowTyping => _t('Escribiendo…', 'Typing…');
+  String get rowWaiting => _t('En espera', 'Waiting');
+  String get rowNeedsYou => _t('Te necesita', 'Needs you');
+  String get rowFailed => _t('No pudo terminar', 'Couldn’t finish');
+
+  /// Inline member state after the speaker ("Atlas respondió · 00:41").
+  String inlineReplied(String who, String? after) => after == null
+      ? _t('$who respondió', '$who replied')
+      : _t('$who respondió · $after', '$who replied · $after');
+  String inlineTyping(String who) => _t('$who escribiendo…', '$who typing…');
+  String inlineWaiting(String who) => _t('$who en espera', '$who waiting');
+  String inlineNeedsYou(String who) => _t('$who te necesita', '$who needs you');
+  String inlineFailed(String who) =>
+      _t('$who no pudo terminar', '$who couldn’t finish');
+
+  /// Lock-safe state word of a quiet card in the grouped summary line.
+  String summaryState(int accent) => switch (accent) {
+    RichAccent.done => _t('hecho', 'done'),
+    RichAccent.failed => _t('falló', 'failed'),
+    RichAccent.needsYou => _t('te necesita', 'needs you'),
+    _ => _t('nuevo', 'new'),
+  };
+}
+
+/// "mm:ss" of a reply offset (minutes are not capped at 59).
+String roundClock(int ms) {
+  final total = ms < 0 ? 0 : ms ~/ 1000;
+  final m = (total ~/ 60).toString().padLeft(2, '0');
+  final sec = (total % 60).toString().padLeft(2, '0');
+  return '$m:$sec';
+}
+
+/// Notification accent colours per state (ARGB). The small icon and
+/// actions take this tint via `setColor` (never colorized).
+abstract final class RichAccent {
+  static const int working = 0xFF2F7CF6;
+  static const int done = 0xFF32D74B;
+  static const int needsYou = 0xFFF5A623;
+  static const int failed = 0xFFEF4D4D;
+  static const int brand = 0xFFE8821C;
 }
 
 /// Which executor handles an action.
@@ -138,6 +275,10 @@ enum NotificationActionRoute {
 
   /// Bot Chat inline reply: `session.resume` + `prompt.submit`.
   botChat,
+
+  /// Scheduled job: `POST /api/cron/jobs/{id}/trigger` (Retry on a failed
+  /// run), the same call as the Cron screen's "Run now".
+  cron,
 }
 
 /// Secret-free action payload carried by notification/widget buttons.
@@ -183,7 +324,9 @@ class NotificationActionPayload {
     this.authorityId,
   });
 
-  static final RegExp _opaque = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$');
+  static final RegExp _opaque = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$',
+  );
 
   String encode() => jsonEncode({
     'v': version,
@@ -230,8 +373,8 @@ class NotificationActionPayload {
       final choices = <String>[
         if (rawChoices is List)
           for (final c in rawChoices)
-            if (c is String && const {'once', 'session', 'always', 'deny'}
-                .contains(c))
+            if (c is String &&
+                const {'once', 'session', 'always', 'deny'}.contains(c))
               c,
       ];
       final title = decoded['title'];
@@ -262,6 +405,7 @@ class NotificationActionPayload {
     NotificationActionRoute.run => runId != null,
     NotificationActionRoute.chat => sessionId != null && requestId != null,
     NotificationActionRoute.botChat => sessionId != null && profile != null,
+    NotificationActionRoute.cron => taskId != null,
   };
 
   bool get isRoomApproval =>
@@ -385,8 +529,7 @@ abstract final class RichNotificationIds {
       'hermes.room.${_short('$connId/$roomId')}';
   static String botTag(String connId, String profile) =>
       'hermes.bot.${_short('$connId/$profile')}';
-  static int approval(String requestId) =>
-      1000 + (_fnv(requestId) & 0x7FFF);
+  static int approval(String requestId) => 1000 + (_fnv(requestId) & 0x7FFF);
 
   static String _short(String value) =>
       _fnv(value).toRadixString(16).padLeft(8, '0');
@@ -425,6 +568,7 @@ class RichNotificationBuilder {
     required int nowMs,
     bool hideSensitive = false,
     bool allowAlways = true,
+    String? shortcutIconPath,
   }) {
     final text = t.approvalNeedsOk(command, description);
     final actions = <RichAction>[
@@ -465,7 +609,9 @@ class RichNotificationBuilder {
       'publicText': t.privateBody,
       'openPayload': open.toPayload(),
       'actionPayload': action.encode(),
-      'shortcutIconPath': ?botIconPath,
+      'shortcutIconPath': ?(shortcutIconPath ?? botIconPath),
+      'accent': RichAccent.needsYou,
+      'summaryLabel': t.alertsLabel,
     };
   }
 
@@ -482,6 +628,12 @@ class RichNotificationBuilder {
     bool alert = false,
     String? shortcutIconPath,
     bool hideSensitive = false,
+    int accent = RichAccent.brand,
+    String? openLabel,
+    String channel = 'conversations',
+    String? subText,
+    String? text,
+    String? alertKey,
   }) {
     final last = messages.isEmpty ? null : messages.last;
     final shown = hideSensitive
@@ -501,15 +653,22 @@ class RichNotificationBuilder {
     return {
       'id': RichNotificationIds.conversation,
       'tag': tag,
-      'channel': 'conversations',
-      'title': isGroup ? conversationTitle : (last?.senderName ?? conversationTitle),
-      'text': hideSensitive ? t.newActivity : (last?.text ?? ''),
+      'channel': channel,
+      'title': isGroup
+          ? conversationTitle
+          : (last?.senderName ?? conversationTitle),
+      'text': hideSensitive ? t.newActivity : (text ?? last?.text ?? ''),
+      'subText': ?(hideSensitive ? null : subText),
       'selfName': t.you,
       'isGroup': isGroup,
       'conversationId': conversationId,
       'conversationTitle': conversationTitle,
       'groupKey': conversationId,
       'alert': alert,
+      // Identity of the news this post carries: a re-post with the same key
+      // updates in place without re-sounding; a new key alerts again even
+      // on the same tag + id (a new round after a seen/dismissed card).
+      'alertKey': ?alertKey,
       'messages': [for (final m in shown) m.toMap()],
       'actions': [
         if (replyAction != null && !hideSensitive)
@@ -520,15 +679,92 @@ class RichNotificationBuilder {
             hint: t.replyHint(replyTo ?? conversationTitle),
             smartReplies: true,
           ).toMap(),
-        RichAction('open', t.actOpen).toMap(),
+        RichAction('open', openLabel ?? t.actOpen).toMap(),
       ],
       'publicTitle': conversationTitle,
-      'publicText': t.newActivity,
+      'publicText': switch (accent) {
+        RichAccent.done => t.publicDone,
+        RichAccent.failed => t.publicFailed,
+        RichAccent.needsYou => t.publicNeedsYou,
+        _ => t.newActivity,
+      },
       'openPayload': open.toPayload(),
       'actionPayload': ?replyAction?.encode(),
       'shortcutIconPath': ?shortcutIconPath,
+      'accent': accent,
+      'summaryLabel': t.alertsLabel,
+      // Lock-safe line of the grouped "Hermes Console · N more" summary:
+      // the same name the public version already shows, plus the state.
+      'summaryLine': '$conversationTitle · ${t.summaryState(accent)}',
     };
   }
+
+  /// Every non-Bot Hermes event (Cron, Kanban, runs, normal chats, goals)
+  /// in the same conversation-card style as Bot events: a "Hermes" (or
+  /// owner) sender with the resolved face, one plain line, the state accent
+  /// and verbs. [identityKey] is the per-source conversation (one shortcut
+  /// per job/task/chat); the lock-screen version keeps only the state.
+  Map<String, Object?> hermesCard({
+    required String? tag,
+    required int id,
+    required String identityKey,
+    required String senderName,
+    required String line,
+    required NotificationOpen open,
+    required int accent,
+    String? iconPath,
+    String? subText,
+    List<RichAction> actions = const [],
+    NotificationActionPayload? action,
+    bool alert = false,
+    bool hideSensitive = false,
+    String channel = 'conversations',
+    String? conversationTitle,
+    required int nowMs,
+  }) => {
+    'id': id,
+    'tag': ?tag,
+    'channel': channel,
+    // A task/job card is its own conversation titled by the task/job name;
+    // the sender ("Tareas", a Bot) speaks inside it.
+    'title': (hideSensitive ? null : conversationTitle) ?? senderName,
+    'text': hideSensitive ? t.newActivity : line,
+    'selfName': t.you,
+    'isGroup': conversationTitle != null && !hideSensitive,
+    'conversationId': identityKey,
+    'conversationTitle':
+        (hideSensitive ? null : conversationTitle) ?? senderName,
+    'groupKey': identityKey,
+    'alert': alert,
+    'onlyAlertOnce': true,
+    'messages': [
+      RichMessage(
+        senderKey: 'hermes:$identityKey',
+        senderName: senderName,
+        text: hideSensitive ? t.newActivity : line,
+        iconPath: iconPath,
+        timeMs: nowMs,
+      ).toMap(),
+    ],
+    'actions': [
+      for (final a in actions.take(3))
+        if (!hideSensitive || a.id == 'open') a.toMap(),
+    ],
+    'subText': ?subText,
+    'publicTitle': senderName,
+    'publicText': switch (accent) {
+      RichAccent.done => t.publicDone,
+      RichAccent.failed => t.publicFailed,
+      RichAccent.needsYou => t.publicNeedsYou,
+      _ => t.newActivity,
+    },
+    'openPayload': open.toPayload(),
+    'actionPayload': ?action?.encode(),
+    'shortcutIconPath': ?iconPath,
+    'accent': accent,
+    'summaryLabel': t.alertsLabel,
+    'summaryLine': '$senderName · ${t.summaryState(accent)}',
+  };
 
   /// Default Live Update lifetime: two 30 s working ticks plus margin. Every
   /// tick re-posts (and so renews) it; a listener that stops ticking lets it
@@ -545,45 +781,132 @@ class RichNotificationBuilder {
     required NotificationOpen open,
     required NotificationActionPayload? stopAction,
     String? workingName,
+    bool thinking = false,
     String? trackerIconPath,
+    String? largeIconPath,
     int? startedAtMs,
     int? round,
     Duration timeout = liveTimeout,
+    Map<String, int> repliedAfterMs = const {},
   }) {
     final working = members.where((m) => m.state == 'working').length;
-    final text = workingName != null && workingName.isNotEmpty
-        ? t.isWorking(workingName)
-        : working > 0
-        ? t.roomWorking
-        : t.thinking;
+    final done = members.where((m) => m.state == 'done').length;
+    final named = workingName != null && workingName.isNotEmpty;
+    // Never a bare "Thinking…" over an empty bar: name the Bot when known,
+    // else the room.
+    final head = named
+        ? (thinking ? t.isThinking(workingName) : t.isWorking(workingName))
+        : t.roomWorking;
+    // Replied members first, then the working one: the tracker (working
+    // face) sits on its own segment.
+    int rank(String s) => switch (s) {
+      'done' => 0,
+      'working' => 1,
+      'needs_you' => 2,
+      _ => 3,
+    };
+    final ordered = [...members]
+      ..sort((a, b) => rank(a.state).compareTo(rank(b.state)));
+    String? after(String name) {
+      final ms = repliedAfterMs[name];
+      return ms == null ? null : roundClock(ms);
+    }
+
+    // One row per member (face + name + state + time) for the expanded
+    // card. Android 16's ProgressStyle cannot host rows, so the promoted
+    // card carries them inline in its 2-line expanded text, the speaker
+    // first; the non-promoted fallback shows them one per line.
+    final rows = [
+      for (final m in ordered.take(12))
+        {
+          'name': m.name,
+          'state': m.state,
+          'line': switch (m.state) {
+            'done' => t.rowReplied(after(m.name)),
+            'working' => t.rowTyping,
+            'needs_you' => t.rowNeedsYou,
+            'failed' => t.rowFailed,
+            _ => t.rowWaiting,
+          },
+        },
+    ];
+    final others = [
+      for (final m in ordered.take(12))
+        if (!(named && m.name == workingName))
+          switch (m.state) {
+            'done' => t.inlineReplied(m.name, after(m.name)),
+            'working' => t.inlineTyping(m.name),
+            'needs_you' => t.inlineNeedsYou(m.name),
+            'failed' => t.inlineFailed(m.name),
+            _ => t.inlineWaiting(m.name),
+          },
+    ];
+    final text = [head, ...others].join(' · ');
     return {
       'id': RichNotificationIds.live,
       'tag': tag,
       'title': title,
       'text': text,
-      'subText': round != null && members.isNotEmpty
+      'rows': rows,
+      'bigText': rows.isEmpty
+          ? head
+          : [for (final r in rows) '${r['name']} · ${r['line']}'].join('\n'),
+      'subText': members.isEmpty
+          ? null
+          : round != null
           ? t.roundWorking(round, working, members.length)
-          : null,
+          : t.roundReplied(done, members.length),
       'segments': [
-        for (final m in members.take(12)) {'state': m.state},
+        for (final m in ordered.take(12)) {'state': m.state},
       ],
       'trackerIconPath': ?trackerIconPath,
+      'largeIconPath': ?(largeIconPath ?? trackerIconPath),
       'startedAtMs': ?startedAtMs,
-      'shortText': ?(workingName == null || workingName.isEmpty
+      'shortText': ?(named
+          ? (workingName.length > 7 ? workingName.substring(0, 7) : workingName)
+          : members.isEmpty
           ? null
-          : workingName.length > 7
-          ? workingName.substring(0, 7)
-          : workingName),
-      'stopLabel': ?(stopAction == null ? null : t.actStopAll),
+          : '$done/${members.length}'),
+      'stopLabel': ?(stopAction == null ? null : t.actStopRound),
+      'openLabel': t.actOpenRoom,
       'conversationId': conversationId,
       'openPayload': open.toPayload(),
       'actionPayload': ?stopAction?.encode(),
       'timeoutMs': timeout.inMilliseconds,
-      // Lock screen: no room, Bot or command names.
+      'accent': RichAccent.working,
+      // Lock screen: no room, Bot or command names; counts only.
       'publicTitle': t.liveWorkingPublic,
-      'publicText': t.newActivity,
+      'publicText': round != null && members.isNotEmpty
+          ? t.roundWorking(round, working, members.length)
+          : t.newActivity,
     };
   }
+
+  /// Tag of the ongoing summary that stands in for rooms beyond the Live
+  /// Update cap.
+  static const liveSummaryTag = 'hermes.live.summary';
+
+  /// Ongoing summary ("3 salas trabajando") listing the rooms that did not
+  /// get their own Live Update. Not promoted and without Stop: each room's
+  /// Stop lives only on its own card (or in the room).
+  Map<String, Object?> liveSummary({
+    required List<String> roomNames,
+    required int total,
+    NotificationOpen? open,
+    Duration timeout = liveTimeout,
+  }) => {
+    'id': RichNotificationIds.live,
+    'tag': liveSummaryTag,
+    'title': t.roomsWorking(total),
+    'text': roomNames.take(6).join(' · '),
+    'segments': const <Object?>[],
+    'promote': false,
+    'openPayload': ?open?.toPayload(),
+    'timeoutMs': timeout.inMilliseconds,
+    'accent': RichAccent.working,
+    'publicTitle': t.liveWorkingPublic,
+    'publicText': t.newActivity,
+  };
 }
 
 /// Narrow platform surface, faked in tests.
@@ -627,6 +950,11 @@ class PlatformRichNotifications
     final raw = await _call<Map<Object?, Object?>>('capabilities');
     return {for (final e in (raw ?? const {}).entries) '${e.key}': e.value};
   }
+
+  /// Re-posts the foreground-service card with the neutral ">_" glyph as its
+  /// large icon (the plugin otherwise shows the launcher portrait).
+  Future<bool> decorateServiceNotification() async =>
+      await _call<bool>('decorateServiceNotification') ?? false;
 
   Future<bool> openPromotionSettings() async =>
       await _call<bool>('openPromotionSettings') ?? false;
@@ -721,6 +1049,9 @@ abstract interface class NotificationActionOps {
     String text,
     String clientTurnId,
   );
+
+  /// Runs the scheduled job [NotificationActionPayload.taskId] now.
+  Future<void> cronTrigger(NotificationActionPayload p);
 }
 
 /// A request that the server no longer holds (answered from Desktop, the app
@@ -807,7 +1138,8 @@ class NotificationActionRouter {
 
   static String semanticKey(PendingNotificationAction a) {
     final p = a.payload;
-    final object = p.requestId ?? p.runId ?? p.roomId ?? p.sessionId ?? '';
+    final object =
+        p.requestId ?? p.runId ?? p.roomId ?? p.taskId ?? p.sessionId ?? '';
     // Replies are never deduplicated by meaning: each uid is a new message.
     final discriminator = a.action == 'reply' ? a.uid : a.action;
     return '${p.route.name}/${p.connId}/$object/$discriminator';
@@ -837,7 +1169,8 @@ class NotificationActionRouter {
   /// approvals (`request_id`). A Bot Chat reply without a verified turn id
   /// could start a second turn.
   static bool _safeToReplay(PendingNotificationAction a) =>
-      !(a.action == 'reply' && a.payload.route == NotificationActionRoute.botChat);
+      !(a.action == 'reply' &&
+          a.payload.route == NotificationActionRoute.botChat);
 
   Future<ActionOutcome> handle(PendingNotificationAction a) async {
     final now = _now();
@@ -867,10 +1200,17 @@ class NotificationActionRouter {
               await ops.runApprove(p, choice);
             case NotificationActionRoute.chat:
               await ops.chatApprove(p, choice);
-            case NotificationActionRoute.botChat:
+            case NotificationActionRoute.botChat ||
+                NotificationActionRoute.cron:
               return await _fail(a, key);
           }
           confirmation = choice == 'deny' ? t.confirmDenied : t.confirmApproved;
+        case 'retry':
+          if (p.route != NotificationActionRoute.cron) {
+            return await _fail(a, key);
+          }
+          await ops.cronTrigger(p);
+          confirmation = t.confirmRetrying;
         case 'stop':
           if (p.route != NotificationActionRoute.room) {
             return await _fail(a, key);

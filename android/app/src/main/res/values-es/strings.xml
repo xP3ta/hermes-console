@@ -26,4 +26,9 @@
     <string name="rich_unlock_to_answer">Desbloquea Hermes para responder</string>
     <string name="rich_reply_failed">No se pudo enviar · abre para reintentar</string>
     <string name="rich_action_failed">No se pudo enviar · abre Hermes</string>
+    <!-- Lock-screen summary of the quiet (non-approval) Hermes cards. -->
+    <plurals name="rich_quiet_more">
+        <item quantity="one">%d más</item>
+        <item quantity="other">%d más</item>
+    </plurals>
 </resources>

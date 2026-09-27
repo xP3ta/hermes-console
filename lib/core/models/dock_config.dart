@@ -47,7 +47,6 @@ enum DockDepth {
 /// nunca se persiste como parte del catálogo de un perfil.
 enum DockItemId {
   bots,
-  work,
   create,
   home,
   settings,
@@ -268,7 +267,6 @@ class DockProfileConfig {
       DockItemConfig(id: DockItemId.home),
       DockItemConfig(id: DockItemId.bots),
       DockItemConfig(id: DockItemId.create),
-      DockItemConfig(id: DockItemId.work),
       // Accesos directos opcionales: en el catálogo, ocultos de fábrica.
       DockItemConfig(id: DockItemId.cron, visible: false),
       DockItemConfig(id: DockItemId.tasks, visible: false),
@@ -283,7 +281,6 @@ class DockProfileConfig {
       DockItemConfig(id: DockItemId.create),
       DockItemConfig(id: DockItemId.bots),
       DockItemConfig(id: DockItemId.settings),
-      DockItemConfig(id: DockItemId.work, visible: false),
       // Accesos directos opcionales: en el catálogo, ocultos de fábrica.
       DockItemConfig(id: DockItemId.cron, visible: false),
       DockItemConfig(id: DockItemId.tasks, visible: false),

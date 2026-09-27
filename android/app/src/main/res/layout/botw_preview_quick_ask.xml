@@ -1,46 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Widget-picker preview (previewLayout, API 31+) and initial layout for the
-     Glance widget; mirrors the dark Bot Mode palette. RemoteViews-safe views only. -->
+<!-- Picker preview of Quick ask (v2): black strip, face, ask pill, mic.
+     RemoteViews-safe views only. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/botw_preview_background"
+    android:background="@drawable/botw_glow_idle"
+    android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:padding="10dp"
-    android:gravity="center_vertical">
-    <FrameLayout
-        android:layout_width="30dp"
-        android:layout_height="30dp">
-        <ImageView
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:layout_gravity="center"
-            android:src="@drawable/botw_preview_face_builder" />
-    </FrameLayout>
-    <TextView
-        android:layout_width="0dp"
-        android:layout_height="36dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        android:layout_weight="1"
-        android:background="@drawable/botw_preview_pill_surface"
-        android:ellipsize="end"
-        android:gravity="center_vertical"
-        android:maxLines="1"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:text="@string/botw_preview_ask"
-        android:textColor="@color/botw_preview_secondary"
-        android:textSize="13sp" />
-    <FrameLayout
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:background="@drawable/botw_preview_circle_accent">
-        <ImageView
-            android:layout_width="18dp"
-            android:layout_height="18dp"
-            android:layout_gravity="center"
-            android:contentDescription="@string/botw_dictate"
-            android:src="@drawable/botw_preview_mic" />
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp">
+    <ImageView android:layout_width="40dp" android:layout_height="40dp" android:src="@drawable/botw_preview_face_builder_idle" />
+    <TextView android:layout_width="0dp" android:ellipsize="end" android:gravity="center_vertical|start" android:maxLines="1" android:text="@string/botw_preview_ask" android:textColor="@color/botw_preview_secondary" android:textSize="13sp" android:layout_height="36dp" android:layout_weight="1" android:layout_marginStart="8dp" android:layout_marginEnd="8dp" android:background="@drawable/botw_pill_glass" android:paddingStart="14dp"/>
+    <FrameLayout android:layout_width="36dp" android:layout_height="36dp" android:background="@drawable/botw_preview_circle_accent">
+        <ImageView android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/botw_preview_mic" />
     </FrameLayout>
 </LinearLayout>

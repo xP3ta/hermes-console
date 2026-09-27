@@ -66,7 +66,7 @@ void main() {
     );
     expect(seq.seq, 0);
     final approval = snapshot.approvals.single;
-    expect(approval.title, 'console-lead · Console Devs');
+    expect(approval.title, 'Lead · Console Devs');
     expect(approval.text, 'Needs your OK to run “gh pr ready 51”');
     final action = NotificationActionPayload.tryParse(approval.actionPayload)!;
     expect(action.isRoomApproval, isTrue);
@@ -75,9 +75,9 @@ void main() {
     expect(widgetRoom.stopPayload, isNotNull);
     expect(widgetRoom.lastMessage, 'Looks good');
     final states = {for (final m in widgetRoom.members) m.name: m.state};
-    expect(states['console-builder'], 'working');
-    expect(states['console-review'], 'done');
-    expect(states['console-lead'], 'needs_you');
+    expect(states['Builder'], 'working');
+    expect(states['Review'], 'done');
+    expect(states['Lead'], 'needs_you');
 
     final json = jsonDecode(snapshot.encode()) as Map;
     expect(json['schema_version'], BotModeWidgetSnapshot.schemaVersion);

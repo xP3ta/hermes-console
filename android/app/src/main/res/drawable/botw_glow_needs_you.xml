@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bot Mode widget background (Grok-style): near-black card; the state colour
+     appears ONLY as a soft blurred glow rising from the bottom edge (a
+     pre-blurred radial bitmap, since RemoteViews/Glance cannot blur). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FF07080A" />
+            <corners android:radius="@dimen/botw_preview_radius" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/botw_glowimg_needs_you" />
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#00000000" />
+            <stroke android:width="1dp" android:color="#0FFFFFFF" />
+            <corners android:radius="@dimen/botw_preview_radius" />
+        </shape>
+    </item>
+</layer-list>

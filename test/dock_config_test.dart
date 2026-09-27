@@ -94,7 +94,6 @@ void main() {
           'create',
           'bots',
           'settings',
-          'work',
           'cron',
           'tasks',
           'sessions',
@@ -167,7 +166,7 @@ void main() {
   });
 
   group('resolveDockSlots', () {
-    const items = [DockItemId.bots, DockItemId.create, DockItemId.work];
+    const items = [DockItemId.bots, DockItemId.create, DockItemId.cron];
 
     test('returns visible items unchanged when Back is not shown', () {
       final slots = resolveDockSlots(visibleItems: items, showBack: false);
@@ -186,7 +185,7 @@ void main() {
         null,
         DockItemId.bots,
         DockItemId.create,
-        DockItemId.work,
+        DockItemId.cron,
       ]);
     });
 
@@ -231,12 +230,37 @@ void main() {
 
       expect(
         defaults.bots.items.map((i) => i.id.name),
-        containsAll(['bots', 'create', 'work']),
+        containsAll(['home', 'bots', 'create']),
+      );
+      expect(
+        defaults.bots.items.map((i) => i.id.name),
+        isNot(contains('work')),
       );
       expect(
         defaults.general.items.map((i) => i.id.name),
         containsAll(['home', 'create', 'bots', 'settings']),
       );
+    });
+
+    test('a persisted Work item from an older build is dropped', () {
+      final value = DockProfileConfig.fromJson({
+        'schema_version': DockProfileConfig.schemaVersion,
+        'items': [
+          {'id': 'home', 'visible': true},
+          {'id': 'bots', 'visible': true},
+          {'id': 'create', 'visible': true},
+          {'id': 'work', 'visible': true},
+        ],
+        'show_back_on_subscreens': true,
+        'style': const DockStyle().toJson(),
+      }, DockProfileConfig.defaultBots());
+
+      expect(value.visibleItemIds.map((i) => i.name), [
+        'home',
+        'bots',
+        'create',
+      ]);
+      expect(value.items.map((i) => i.id.name), isNot(contains('work')));
     });
 
     test('unknown schema fails closed to defaults', () {

@@ -60,7 +60,6 @@ internal object HermesRichNotifications {
     private const val SELECT_NOTIFICATION = "SELECT_NOTIFICATION"
     private const val PAYLOAD = "payload"
     private const val NOTIFICATION_ID = "notificationId"
-    private const val GROUP_PREFIX = "hermes.conv."
 
     private val channels = CopyOnWriteArrayList<MethodChannel>()
     private val main = Handler(Looper.getMainLooper())
@@ -107,6 +106,7 @@ internal object HermesRichNotifications {
                     result.success(true)
                 }
                 "postLiveUpdate" -> result.success(postLiveUpdate(context, call.arguments.asMap()))
+                "decorateServiceNotification" -> result.success(decorateServiceNotification(context))
                 "confirm" -> {
                     confirm(context, call.arguments.asMap())
                     result.success(true)
@@ -115,6 +115,7 @@ internal object HermesRichNotifications {
                     val args = call.arguments.asMap()
                     NotificationManagerCompat.from(context)
                         .cancel(args.str("tag"), args.int("id") ?: 0)
+                    syncGroupSummary(context, args.str("tag"))
                     result.success(true)
                 }
                 "takePendingActions" -> {
@@ -337,19 +338,122 @@ internal object HermesRichNotifications {
         }
     }
 
+    /** Id of the shared foreground-service card (flutter_foreground_task). */
+    const val SERVICE_NOTIFICATION_ID = 256
+
+    /**
+     * The background listener's ongoing card is posted by the foreground
+     * service plugin with the launcher portrait as its large icon. Re-post
+     * it with the neutral ">_" glyph instead: same id (the system keeps it
+     * attached to the service), silent, only-alert-once.
+     */
+    fun decorateServiceNotification(context: Context): Boolean {
+        return try {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+            val current = manager.activeNotifications.firstOrNull { it.id == SERVICE_NOTIFICATION_ID && it.tag == null }
+                ?: return false
+            if (current.notification.extras.getBoolean(EXTRA_GLYPH_DECORATED)) return true
+            val glyph = glyphBitmap(context) ?: return false
+            val builder = android.app.Notification.Builder.recoverBuilder(context, current.notification)
+                .setLargeIcon(glyph)
+                .setOnlyAlertOnce(true)
+                .setColor(ACCENT)
+            // Android 16's redesigned rows draw the APP icon (the launcher
+            // portrait) in the avatar slot of every non-conversation card,
+            // whatever the large icon. A conversation row draws its shortcut
+            // / sender icon instead: make the ongoing card a quiet one-person
+            // conversation spoken by the neutral ">_" glyph.
+            if (Build.VERSION.SDK_INT >= 30) {
+                val extras = current.notification.extras
+                val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString()
+                    ?: context.getString(R.string.rich_brand)
+                val text = extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: ""
+                val icon = android.graphics.drawable.Icon.createWithBitmap(glyph)
+                val speaker = android.app.Person.Builder().setKey(SERVICE_SHORTCUT_ID).setName(title).setIcon(icon).build()
+                val me = android.app.Person.Builder().setKey("hermes-user")
+                    .setName(context.getString(R.string.rich_you)).build()
+                val style = android.app.Notification.MessagingStyle(me)
+                    .setGroupConversation(false)
+                    .addMessage(android.app.Notification.MessagingStyle.Message(text, current.notification.`when`.takeIf { it > 0 } ?: System.currentTimeMillis(), speaker))
+                if (pushServiceShortcut(context, title)) {
+                    builder.setStyle(style).setShortcutId(SERVICE_SHORTCUT_ID)
+                    builder.extras.putParcelable(EXTRA_CONVERSATION_ICON, icon)
+                }
+            }
+            builder.extras.putBoolean(EXTRA_GLYPH_DECORATED, true)
+            manager.notify(SERVICE_NOTIFICATION_ID, builder.build())
+            true
+        } catch (error: Exception) {
+            Log.w(TAG, "service decorate failed: ${error.javaClass.simpleName}")
+            false
+        }
+    }
+
+    private const val SERVICE_SHORTCUT_ID = "hermes-service"
+
+    /** Conversation shortcut of the ongoing service card (">_" glyph). */
+    private fun pushServiceShortcut(context: Context, title: String): Boolean =
+        try {
+            val shortcut =
+                ShortcutInfoCompat.Builder(context, SERVICE_SHORTCUT_ID)
+                    .setShortLabel(title.take(24))
+                    .setLongLabel(title.take(64))
+                    .setLongLived(true)
+                    .setIntent(NewSessionLaunchContract.openAppIntent(context).setAction(Intent.ACTION_VIEW))
+                    .setIcon(glyphIcon(context) ?: IconCompat.createWithResource(context, R.drawable.ic_hermes_glyph_large))
+                    .setCategories(setOf("com.hermesagent.hermes_android.category.CONVERSATION"))
+                    .build()
+            ShortcutManagerCompat.pushDynamicShortcut(context, shortcut)
+            true
+        } catch (error: Exception) {
+            Log.w(TAG, "service shortcut failed: ${error.javaClass.simpleName}")
+            false
+        }
+
+    private const val EXTRA_GLYPH_DECORATED = "hermes.glyphDecorated"
+
+    /** Neutral Hermes glyph on a dark disc (non-Bot cards' large icon). */
+    fun glyphBitmap(context: Context): Bitmap? =
+        try {
+            val drawable = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_hermes_glyph_large) ?: null
+            drawable?.let {
+                val size = (64 * context.resources.displayMetrics.density).toInt()
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bitmap)
+                it.setBounds(0, 0, size, size)
+                it.draw(canvas)
+                bitmap
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+    private var glyphIconCache: IconCompat? = null
+
+    /** Neutral ">_" face as a Person/shortcut icon. */
+    private fun glyphIcon(context: Context): IconCompat? =
+        glyphIconCache ?: glyphBitmap(context)?.let { IconCompat.createWithBitmap(it) }?.also { glyphIconCache = it }
+
     private fun iconFor(path: String?): IconCompat? =
         loadBitmap(path)?.let { IconCompat.createWithAdaptiveBitmap(it) }
 
     private fun personIconFor(path: String?): IconCompat? =
         loadBitmap(path)?.let { IconCompat.createWithBitmap(it) }
 
-    private fun pushShortcut(context: Context, args: Map<String, Any?>, person: Person?) {
-        val id = args.str("conversationId") ?: return
-        val name = args.str("conversationTitle") ?: return
-        val open = args.str("openPayload") ?: return
+    /**
+     * Pushes the dynamic long-lived conversation shortcut the card points
+     * at. Without a valid shortcut Android 11+ does not treat the card as a
+     * conversation (no avatar in the shade, app icon instead), so a missing
+     * open payload falls back to opening the app. Returns true when pushed.
+     */
+    private fun pushShortcut(context: Context, args: Map<String, Any?>, person: Person?): Boolean {
+        val id = args.str("conversationId") ?: return false
+        val name = args.str("conversationTitle") ?: args.str("title") ?: return false
         // Keeps SELECT_NOTIFICATION so the plugin routes the shortcut tap
         // exactly like a notification tap.
-        val intent = openActivityIntent(context, open) ?: return
+        val intent =
+            args.str("openPayload")?.let { openActivityIntent(context, it) }
+                ?: NewSessionLaunchContract.openAppIntent(context).setAction(Intent.ACTION_VIEW)
         val builder =
             ShortcutInfoCompat.Builder(context, id)
                 .setShortLabel(name.take(24))
@@ -358,13 +462,16 @@ internal object HermesRichNotifications {
                 .setLocusId(LocusIdCompat(id))
                 .setIntent(intent)
                 .setCategories(setOf("com.hermesagent.hermes_android.category.CONVERSATION"))
-        val icon = iconFor(args.str("shortcutIconPath"))
-        builder.setIcon(icon ?: IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+        // Bot face (1:1) or room 2x2 tile (group): the shade's big avatar.
+        val icon = iconFor(args.str("shortcutIconPath")) ?: iconFor(lastIconPath(args))
+        builder.setIcon(icon ?: IconCompat.createWithResource(context, R.drawable.ic_hermes_glyph_large))
         if (person != null && args["isGroup"] != true) builder.setPerson(person)
-        try {
+        return try {
             ShortcutManagerCompat.pushDynamicShortcut(context, builder.build())
+            true
         } catch (error: Exception) {
             Log.w(TAG, "shortcut push failed: ${error.javaClass.simpleName}")
+            false
         }
     }
 
@@ -375,8 +482,12 @@ internal object HermesRichNotifications {
         title: String,
         channel: String,
         openPayload: String?,
+        iconPath: String? = null,
+        conversationId: String? = null,
     ) {
-        HermesNotificationActionInbox.rememberPosted(context, tag, id, title, channel, openPayload)
+        HermesNotificationActionInbox.rememberPosted(
+            context, tag, id, title, channel, openPayload, iconPath, conversationId,
+        )
     }
 
     fun postConversation(context: Context, args: Map<String, Any?>) {
@@ -406,8 +517,15 @@ internal object HermesRichNotifications {
                         Person.Builder()
                             .setKey(key)
                             .setName(message.str("senderName") ?: key)
-                            .setBot(true)
-                            .apply { personIconFor(message.str("iconPath"))?.let { setIcon(it) } }
+                            // Never setBot(true): Android 11+ refuses the
+                            // conversation treatment when the shortcut's
+                            // persons are all bots (NotificationRecord
+                            // .isConversation → isOnlyBots) and falls back to
+                            // the app icon inside the app's aggregate group.
+                            // No icon = a letter avatar in the shade: fall
+                            // back to the neutral ">_" face, never a letter
+                            // or the app portrait.
+                            .setIcon(personIconFor(message.str("iconPath")) ?: glyphIcon(context))
                             .build()
                     }
                 }
@@ -423,24 +541,40 @@ internal object HermesRichNotifications {
         if (style.messages.isEmpty()) {
             style.addMessage(NotificationCompat.MessagingStyle.Message(text, System.currentTimeMillis(), firstPerson))
         }
-        pushShortcut(context, args, firstPerson)
+        val shortcutPushed = pushShortcut(context, args, firstPerson)
         val payload = args.str("actionPayload") ?: "{}"
-        val alert = args["alert"] == true
+        val alertKey = args.str("alertKey")
+        // Same tag + id is an update of the SAME card: Android then honours
+        // ONLY_ALERT_ONCE/SILENT against the already-seen record. News with a
+        // new alertKey (a new room round) must alert again; a re-post of the
+        // same key updates in place quietly.
+        val alert = args["alert"] == true && !sameAlertKeyActive(context, tag, id, alertKey)
+        val onlyAlertOnce = if (alertKey != null) !alert else args["onlyAlertOnce"] == true || !alert
+        val accent = args.int("accent") ?: ACCENT
         val builder =
             NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_stat_hermes)
-                .setColor(ACCENT)
+                // State tint (done green, needs you amber, failed red); never
+                // colorized, so the card stays a normal conversation.
+                .setColor(accent)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(style)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
-                .setOnlyAlertOnce(args["onlyAlertOnce"] == true || !alert)
+                .setOnlyAlertOnce(onlyAlertOnce)
                 .setSilent(!alert)
                 .setPriority(if (alert) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
-                .setGroup(GROUP_PREFIX + (args.str("groupKey") ?: args.str("conversationId") ?: "hermes"))
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-        args.str("conversationId")?.let {
+        // Quiet (non-approval) cards join ONE app-wide group while several
+        // are shown, so the lock screen folds them into a single summary row
+        // ("Hermes Console · 3 more"). A lone card stays ungrouped: Android
+        // 16 folds single-child groups into an "Aggregate" bundle whose rows
+        // lose the conversation avatar. Approvals never join it.
+        val summaryLine = args.str("summaryLine")
+        val quiet = summaryLine != null && channel == CH_CONVERSATIONS
+        if (quiet && quietSiblingCount(context, tag, id) > 0) builder.setGroup(QUIET_GROUP)
+        args.str("conversationId")?.takeIf { shortcutPushed }?.let {
             builder.setShortcutId(it)
             builder.setLocusId(LocusIdCompat(it))
         }
@@ -489,18 +623,250 @@ internal object HermesRichNotifications {
         }
         val publicTitle = args.str("publicTitle")
         if (publicTitle != null) {
-            builder.setPublicVersion(
+            // Lock screen: still a conversation (the Bot's state face as the
+            // sender), but only the state line — no command or message text.
+            val publicText = args.str("publicText") ?: ""
+            val publicStyle = NotificationCompat.MessagingStyle(me).setGroupConversation(isGroup)
+            if (isGroup) publicStyle.setConversationTitle(args.str("conversationTitle"))
+            publicStyle.addMessage(
+                NotificationCompat.MessagingStyle.Message(publicText, System.currentTimeMillis(), lastSender(persons, args)),
+            )
+            val publicBuilder =
                 NotificationCompat.Builder(context, channel)
                     .setSmallIcon(R.drawable.ic_stat_hermes)
-                    .setColor(ACCENT)
+                    .setColor(accent)
                     .setContentTitle(publicTitle)
-                    .setContentText(args.str("publicText") ?: "")
+                    .setContentText(publicText)
+                    .setStyle(publicStyle)
                     .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                    .build(),
+            args.str("conversationId")?.takeIf { shortcutPushed }?.let {
+                publicBuilder.setShortcutId(it)
+                publicBuilder.setLocusId(LocusIdCompat(it))
+            }
+            (loadBitmap(if (isGroup) args.str("shortcutIconPath") ?: lastIconPath(args) else lastIconPath(args)) ?: glyphBitmap(context))
+                ?.let { publicBuilder.setLargeIcon(it) }
+            builder.setPublicVersion(publicBuilder.build())
+        }
+        // Large icon = the speaker's state face (with badge) for launchers
+        // that do not render MessagingStyle avatars; a room uses its 2x2 tile.
+        val largeIconPath = if (isGroup) args.str("shortcutIconPath") ?: lastIconPath(args) else lastIconPath(args)
+        (loadBitmap(largeIconPath) ?: glyphBitmap(context))?.let { builder.setLargeIcon(it) }
+        rememberTitle(
+            context, tag, id, title, channel, args.str("openPayload"),
+            iconPath = args.str("shortcutIconPath") ?: lastIconPath(args),
+            conversationId = args.str("conversationId")?.takeIf { shortcutPushed },
+        )
+        // A group conversation without an explicit conversation icon is drawn
+        // as a face pile of the last senders (two faces + app badge). The room
+        // tile is the one identity: set it as the conversation icon.
+        val conversationIcon =
+            if (isGroup && Build.VERSION.SDK_INT >= 30) personIconFor(args.str("shortcutIconPath"))?.toIcon(context) else null
+        val summaryIcon = args.str("shortcutIconPath") ?: lastIconPath(args)
+        notify(context, tag, id, builder) { notification ->
+            conversationIcon?.let { notification.extras.putParcelable(EXTRA_CONVERSATION_ICON, it) }
+            alertKey?.let { notification.extras.putString(EXTRA_ALERT_KEY, it) }
+            if (quiet) {
+                notification.extras.putString(EXTRA_SUMMARY_LINE, summaryLine)
+                summaryIcon?.let { notification.extras.putString(EXTRA_SUMMARY_ICON, it) }
+            }
+        }
+        syncGroupSummary(context, tag)
+    }
+
+    private const val EXTRA_ALERT_KEY = "hermes.alertKey"
+
+    /** The card at tag + id is still shown carrying the same news. */
+    private fun sameAlertKeyActive(context: Context, tag: String?, id: Int, alertKey: String?): Boolean {
+        alertKey ?: return false
+        return try {
+            context.getSystemService(NotificationManager::class.java)
+                ?.activeNotifications
+                ?.any { it.tag == tag && it.id == id && it.notification.extras.getString(EXTRA_ALERT_KEY) == alertKey }
+                ?: false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun lastSender(persons: Map<String, Person>, args: Map<String, Any?>): Person? =
+        args.list("messages").map { it.asMap() }.lastOrNull { it.str("senderKey") != null }
+            ?.str("senderKey")?.let { persons[it] }
+
+    private fun lastIconPath(args: Map<String, Any?>): String? =
+        args.list("messages").map { it.asMap() }.lastOrNull { it.str("iconPath") != null }?.str("iconPath")
+
+    /** Quiet cards other than tag + id currently shown (summary excluded). */
+    private fun quietSiblingCount(context: Context, tag: String?, id: Int): Int =
+        quietCards(context).count { !(it.tag == tag && it.id == id) }
+
+    /** Active quiet cards: rich conversation cards carrying a summary line. */
+    private fun quietCards(context: Context): List<android.service.notification.StatusBarNotification> =
+        try {
+            context.getSystemService(NotificationManager::class.java)
+                ?.activeNotifications
+                ?.filter {
+                    it.tag != QUIET_TAG &&
+                        (it.notification.flags and android.app.Notification.FLAG_ONGOING_EVENT) == 0 &&
+                        (it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY) == 0 &&
+                        it.notification.channelId == CH_CONVERSATIONS &&
+                        it.notification.extras.getString(EXTRA_SUMMARY_LINE) != null
+                }
+                ?.sortedByDescending { it.postTime }
+                ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+    /** Group summary slot (legacy per-Bot/room summaries used it too). */
+    const val SUMMARY_ID = 9
+
+    /** Tag of the single app-wide quiet-group summary. */
+    const val QUIET_TAG = "hermes.quiet"
+    private const val QUIET_GROUP = "hermes.quiet"
+    private const val EXTRA_SUMMARY_LINE = "hermes.summaryLine"
+    private const val EXTRA_SUMMARY_ICON = "hermes.summaryIcon"
+
+    /**
+     * Keeps the one quiet group in sync with the shown cards. With two or
+     * more quiet cards they all join [QUIET_GROUP] under one summary whose
+     * icon is the stacked faces / room tiles of the newest cards and whose
+     * line is lock-safe ("Radar · done · Nightly build · failed"); approvals
+     * and Live Updates stay separate. Below two, the remaining card leaves
+     * the group before the summary is cancelled (cancelling a summary
+     * cascades to its children). The summary never carries actions.
+     */
+    fun syncGroupSummary(context: Context, @Suppress("UNUSED_PARAMETER") tag: String?) {
+        val manager = NotificationManagerCompat.from(context)
+        // Per-Bot/room summaries of the previous release: withdraw them
+        // (their children are re-grouped below, so lift them out first).
+        try {
+            context.getSystemService(NotificationManager::class.java)
+                ?.activeNotifications
+                ?.filter {
+                    it.id == SUMMARY_ID && it.tag != QUIET_TAG &&
+                        (it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY) != 0
+                }
+                ?.forEach { legacy ->
+                    val group = legacy.notification.group
+                    context.getSystemService(NotificationManager::class.java)
+                        ?.activeNotifications
+                        ?.filter { it.notification.group == group && it.id != SUMMARY_ID }
+                        ?.forEach { child ->
+                            manager.notify(
+                                child.tag, child.id,
+                                android.app.Notification.Builder.recoverBuilder(context, child.notification)
+                                    .setGroup(null).setOnlyAlertOnce(true).build(),
+                            )
+                        }
+                    manager.cancel(legacy.tag, SUMMARY_ID)
+                }
+        } catch (_: Exception) {
+        }
+        val cards = quietCards(context)
+        if (cards.size < 2) {
+            for (sbn in cards.filter { it.notification.group == QUIET_GROUP }) {
+                try {
+                    manager.notify(
+                        sbn.tag, sbn.id,
+                        android.app.Notification.Builder.recoverBuilder(context, sbn.notification)
+                            .setGroup(null).setOnlyAlertOnce(true).build(),
+                    )
+                } catch (_: Exception) {
+                }
+            }
+            manager.cancel(QUIET_TAG, SUMMARY_ID)
+            return
+        }
+        // Cards posted before the group existed join it now, silently.
+        for (sbn in cards.filter { it.notification.group != QUIET_GROUP }) {
+            try {
+                manager.notify(
+                    sbn.tag, sbn.id,
+                    android.app.Notification.Builder.recoverBuilder(context, sbn.notification)
+                        .setGroup(QUIET_GROUP).setOnlyAlertOnce(true).build(),
+                )
+            } catch (_: Exception) {
+            }
+        }
+        val lines = cards.mapNotNull { it.notification.extras.getString(EXTRA_SUMMARY_LINE) }
+        val title = context.getString(R.string.rich_quiet_title)
+        val more = context.resources.getQuantityString(R.plurals.rich_quiet_more, cards.size, cards.size)
+        val oneLine = lines.take(3).joinToString(" · ")
+        val inbox = NotificationCompat.InboxStyle()
+            .setBigContentTitle("$title · $more")
+            .setSummaryText(more)
+        lines.take(5).forEach { inbox.addLine(it) }
+        val faces = stackedFaces(
+            context,
+            cards.mapNotNull { it.notification.extras.getString(EXTRA_SUMMARY_ICON) }.distinct().take(3),
+        )
+        fun summary(): NotificationCompat.Builder =
+            NotificationCompat.Builder(context, CH_CONVERSATIONS)
+                .setSmallIcon(R.drawable.ic_stat_hermes)
+                .setColor(ACCENT)
+                .setContentTitle("$title · $more")
+                .setContentText(oneLine)
+                .setStyle(inbox)
+                .setGroup(QUIET_GROUP)
+                .setGroupSummary(true)
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                .setSilent(true)
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .apply { (faces ?: glyphBitmap(context))?.let { setLargeIcon(it) } }
+        // Its lines are already lock-safe (names the public versions show
+        // plus a state word): the lock screen gets the same summary.
+        val builder = summary()
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(summary().build())
+        NewSessionLaunchContract.openAppIntent(context).let { launch ->
+            builder.setContentIntent(
+                PendingIntent.getActivity(
+                    context,
+                    requestCode(QUIET_TAG, SUMMARY_ID, "open"),
+                    launch,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
             )
         }
-        rememberTitle(context, tag, id, title, channel, args.str("openPayload"))
-        notify(context, tag, id, builder)
+        notify(context, QUIET_TAG, SUMMARY_ID, builder)
+    }
+
+    /**
+     * Up to three faces / room tiles overlapped left to right (newest on
+     * top) on a transparent square, each ringed in the shade's dark card
+     * colour: the quiet summary's icon. Null when none could be decoded.
+     */
+    private fun stackedFaces(context: Context, paths: List<String>): Bitmap? {
+        val faces = paths.mapNotNull { loadBitmap(it) }.take(3)
+        if (faces.isEmpty()) return null
+        val density = context.resources.displayMetrics.density
+        val size = (64 * density).toInt()
+        val face = when (faces.size) {
+            1 -> size
+            2 -> (size * 0.72f).toInt()
+            else -> (size * 0.6f).toInt()
+        }
+        val step = if (faces.size == 1) 0f else (size - face).toFloat() / (faces.size - 1)
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FF1F1F24") }
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+        val top = (size - face) / 2f
+        // Oldest first so the newest face ends on top (left-most is newest).
+        for ((index, bitmap) in faces.withIndex().reversed()) {
+            val left = index * step
+            val r = face / 2f
+            canvas.drawCircle(left + r, top + r, r, ring)
+            val inset = 1.5f * density
+            val dst = android.graphics.RectF(left + inset, top + inset, left + face - inset, top + face - inset)
+            val save = canvas.save()
+            val clip = android.graphics.Path().apply { addOval(dst, android.graphics.Path.Direction.CW) }
+            canvas.clipPath(clip)
+            canvas.drawBitmap(bitmap, null, dst, paint)
+            canvas.restoreToCount(save)
+        }
+        return out
     }
 
     /**
@@ -523,6 +889,7 @@ internal object HermesRichNotifications {
         val builder =
             NotificationCompat.Builder(context, CH_LIVE)
                 .setSmallIcon(R.drawable.ic_stat_hermes)
+                .setColor(args.int("accent") ?: WORKING)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setOngoing(true)
@@ -536,15 +903,20 @@ internal object HermesRichNotifications {
         // ticking lets it expire instead of claiming work forever.
         builder.setTimeoutAfter(args.long("timeoutMs")?.takeIf { it > 0 } ?: LIVE_TIMEOUT_MS)
         args.str("publicTitle")?.let { publicTitle ->
-            builder.setPublicVersion(
+            val publicBuilder =
                 NotificationCompat.Builder(context, CH_LIVE)
                     .setSmallIcon(R.drawable.ic_stat_hermes)
+                    .setColor(args.int("accent") ?: WORKING)
                     .setContentTitle(publicTitle)
                     .setContentText(args.str("publicText") ?: "")
                     .setCategory(NotificationCompat.CATEGORY_PROGRESS)
                     .setOngoing(true)
-                    .build(),
-            )
+            // Working face as large icon: identity by shape/colour only.
+            loadBitmap(args.str("trackerIconPath"))?.let { publicBuilder.setLargeIcon(it) }
+            if (startedAt != null && startedAt > 0) {
+                publicBuilder.setWhen(startedAt).setShowWhen(true).setUsesChronometer(true)
+            }
+            builder.setPublicVersion(publicBuilder.build())
         }
         args.str("subText")?.let { builder.setSubText(it) }
         if (startedAt != null && startedAt > 0) {
@@ -568,8 +940,28 @@ internal object HermesRichNotifications {
             if (Build.VERSION.SDK_INT >= 31) stop.setAuthenticationRequired(true)
             builder.addAction(stop.build())
         }
-        val promotedRequested = Build.VERSION.SDK_INT >= 36
-        if (promotedRequested) {
+        // "Open room": deep link to that room (same route as a tap).
+        args.str("openLabel")?.let { label ->
+            openIntent(context, id, tag, args.str("openPayload"))?.let { open ->
+                builder.addAction(
+                    NotificationCompat.Action.Builder(R.drawable.ic_stat_hermes, label, open)
+                        .setShowsUserInterface(true)
+                        .build(),
+                )
+            }
+        }
+        // Expanded member rows. ProgressStyle (the promoted Live Update) has
+        // no room for rows: its 2-line expanded text already lists every
+        // member after the speaker. Non-promoted cards get one line each.
+        val rowsText = args.str("bigText") ?: text
+        // The multi-room summary is an ordinary ongoing card: only real
+        // rooms become Live Updates (max two, decided in Dart).
+        val promotedRequested = Build.VERSION.SDK_INT >= 36 && args["promote"] != false
+        if (args["promote"] == false) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            // Neutral Hermes glyph (not the app portrait) for the summary.
+            builder.setLargeIcon(glyphBitmap(context))
+        } else if (promotedRequested) {
             val style = NotificationCompat.ProgressStyle().setStyledByProgress(true)
             if (segments.isEmpty()) {
                 style.setProgressIndeterminate(true)
@@ -580,11 +972,19 @@ internal object HermesRichNotifications {
                             .setColor(segmentColor(segment.str("state"))),
                     )
                 }
-                style.setProgress((done * 100).coerceAtMost(segments.size * 100))
+                // The tracker (working face) sits in the middle of the working
+                // member's segment, not at 0 over an empty bar.
+                val working = segments.count { it.str("state") == "working" }
+                val progress = done * 100 + if (working > 0) 50 else 0
+                style.setProgress(progress.coerceAtMost(segments.size * 100))
             }
             iconFor(args.str("trackerIconPath"))?.let { style.setProgressTrackerIcon(it) }
             builder.setStyle(style)
             builder.setRequestPromotedOngoing(true)
+            // Room tile / working face instead of the app icon (glyph if
+            // neither rendered in time: never the launcher portrait).
+            (loadBitmap(args.str("largeIconPath")) ?: loadBitmap(args.str("trackerIconPath")) ?: glyphBitmap(context))
+                ?.let { builder.setLargeIcon(it) }
             args.str("shortText")?.let { builder.setShortCriticalText(it.take(7)) }
         } else {
             if (segments.isEmpty()) {
@@ -592,10 +992,14 @@ internal object HermesRichNotifications {
             } else {
                 builder.setProgress(segments.size, done, false)
             }
-            builder.setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            loadBitmap(args.str("trackerIconPath"))?.let { builder.setLargeIcon(it) }
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(rowsText))
+            (loadBitmap(args.str("largeIconPath")) ?: loadBitmap(args.str("trackerIconPath")) ?: glyphBitmap(context))
+                ?.let { builder.setLargeIcon(it) }
         }
-        rememberTitle(context, tag, id, title, CH_LIVE, args.str("openPayload"))
+        rememberTitle(
+            context, tag, id, title, CH_LIVE, args.str("openPayload"),
+            iconPath = args.str("largeIconPath") ?: args.str("trackerIconPath"),
+        )
         notify(context, tag, id, builder)
         var promotable = false
         if (Build.VERSION.SDK_INT >= 36) {
@@ -610,10 +1014,10 @@ internal object HermesRichNotifications {
 
     private fun segmentColor(state: String?): Int =
         when (state) {
-            "done" -> Color.parseColor("#78C99B")
-            "working" -> ACCENT
-            "needs_you" -> Color.parseColor("#FFC66A")
-            "failed" -> Color.parseColor("#FF8A80")
+            "done" -> DONE
+            "working" -> WORKING
+            "needs_you" -> NEEDS_YOU
+            "failed" -> FAILED
             else -> Color.parseColor("#6E675C")
         }
 
@@ -632,6 +1036,8 @@ internal object HermesRichNotifications {
             remembered?.channel ?: CH_CONVERSATIONS,
             args.long("timeoutMs") ?: 4_000L,
             remembered?.openPayload,
+            remembered?.iconPath,
+            remembered?.conversationId,
         )
     }
 
@@ -644,6 +1050,8 @@ internal object HermesRichNotifications {
         channel: String,
         timeoutMs: Long,
         openPayload: String? = null,
+        iconPath: String? = null,
+        conversationId: String? = null,
     ) {
         ensureChannels(context)
         val builder =
@@ -657,10 +1065,40 @@ internal object HermesRichNotifications {
                 .setOngoing(false)
                 .setAutoCancel(true)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+        // Keep the card's identity (room tile / Bot face / glyph) while it
+        // shows "Sending…" / "Approved": a bare template renders as an
+        // iconless card titled only by the room.
+        val icon = loadBitmap(iconPath) ?: glyphBitmap(context)
+        icon?.let { builder.setLargeIcon(it) }
+        var conversationIcon: android.graphics.drawable.Icon? = null
+        if (conversationId != null && icon != null) {
+            val speaker =
+                Person.Builder()
+                    .setKey("hermes-card:$conversationId")
+                    .setName(title)
+                    .setIcon(IconCompat.createWithBitmap(icon))
+                    .build()
+            val me = Person.Builder().setName(context.getString(R.string.rich_you)).setKey("hermes-user").build()
+            builder.setStyle(
+                NotificationCompat.MessagingStyle(me)
+                    .setGroupConversation(true)
+                    .setConversationTitle(title)
+                    .addMessage(NotificationCompat.MessagingStyle.Message(text, System.currentTimeMillis(), speaker)),
+            )
+            builder.setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            builder.setShortcutId(conversationId)
+            builder.setLocusId(LocusIdCompat(conversationId))
+            if (Build.VERSION.SDK_INT >= 30) {
+                conversationIcon = IconCompat.createWithBitmap(icon).toIcon(context)
+            }
+        }
         // 0 = stays until the user acts on it ("Couldn't send · open to retry").
         if (timeoutMs > 0) builder.setTimeoutAfter(timeoutMs)
         openIntent(context, id, tag, openPayload)?.let { builder.setContentIntent(it) }
-        notify(context, tag, id, builder)
+        notify(context, tag, id, builder) { notification ->
+            conversationIcon?.let { notification.extras.putParcelable(EXTRA_CONVERSATION_ICON, it) }
+        }
+        syncGroupSummary(context, tag)
     }
 
     private fun isActive(context: Context, tag: String?, id: Int): Boolean =
@@ -672,7 +1110,15 @@ internal object HermesRichNotifications {
             false
         }
 
-    private fun notify(context: Context, tag: String?, id: Int, builder: NotificationCompat.Builder) {
+    private const val EXTRA_CONVERSATION_ICON = "android.conversationIcon"
+
+    private fun notify(
+        context: Context,
+        tag: String?,
+        id: Int,
+        builder: NotificationCompat.Builder,
+        decorate: (android.app.Notification) -> Unit = {},
+    ) {
         val manager = NotificationManagerCompat.from(context)
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -681,13 +1127,17 @@ internal object HermesRichNotifications {
             return
         }
         try {
-            manager.notify(tag, id, builder.build())
+            manager.notify(tag, id, builder.build().also(decorate))
         } catch (error: SecurityException) {
             Log.w(TAG, "notify refused: ${error.javaClass.simpleName}")
         }
     }
 
     const val ACCENT = 0xFFE8821C.toInt()
+    const val WORKING = 0xFF2F7CF6.toInt()
+    const val DONE = 0xFF32D74B.toInt()
+    const val NEEDS_YOU = 0xFFF5A623.toInt()
+    const val FAILED = 0xFFEF4D4D.toInt()
     const val LIVE_TIMEOUT_MS = 90_000L
 }
 
@@ -717,7 +1167,13 @@ internal object HermesNotificationActionInbox {
     private const val KEY_ALIAS = "hermes_action_inbox_v1"
     private val lock = Any()
 
-    data class Posted(val title: String, val channel: String, val openPayload: String?)
+    data class Posted(
+        val title: String,
+        val channel: String,
+        val openPayload: String?,
+        val iconPath: String? = null,
+        val conversationId: String? = null,
+    )
 
     fun enqueue(
         context: Context,
@@ -865,6 +1321,8 @@ internal object HermesNotificationActionInbox {
                 remembered?.channel ?: HermesRichNotifications.CH_CONVERSATIONS,
                 0L,
                 remembered?.openPayload,
+                remembered?.iconPath,
+                remembered?.conversationId,
             )
         }
     }
@@ -886,6 +1344,8 @@ internal object HermesNotificationActionInbox {
         title: String,
         channel: String,
         openPayload: String? = null,
+        iconPath: String? = null,
+        conversationId: String? = null,
     ) {
         synchronized(lock) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -901,7 +1361,9 @@ internal object HermesNotificationActionInbox {
                     .put("k", key)
                     .put("t", title.take(80))
                     .put("c", channel)
-                    .put("o", openPayload?.takeIf { it.length <= 4_000 } ?: JSONObject.NULL),
+                    .put("o", openPayload?.takeIf { it.length <= 4_000 } ?: JSONObject.NULL)
+                    .put("i", iconPath?.takeIf { it.length <= 512 } ?: JSONObject.NULL)
+                    .put("v", conversationId?.takeIf { it.length <= 128 } ?: JSONObject.NULL),
             )
             while (kept.length() > MAX_POSTED) kept.remove(0)
             prefs.edit().putString(KEY_POSTED, kept.toString()).apply()
@@ -922,6 +1384,8 @@ internal object HermesNotificationActionInbox {
                     entry.optString("t"),
                     entry.optString("c"),
                     entry.opt("o").takeUnless { it == JSONObject.NULL } as String?,
+                    entry.opt("i").takeUnless { it == JSONObject.NULL } as String?,
+                    entry.opt("v").takeUnless { it == JSONObject.NULL } as String?,
                 )
             }
         }
@@ -1037,6 +1501,8 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
                     remembered?.channel ?: HermesRichNotifications.CH_CONVERSATIONS,
                     8_000L,
                     remembered?.openPayload,
+                    remembered?.iconPath,
+                    remembered?.conversationId,
                 )
             }
             return
@@ -1053,6 +1519,8 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
                 // The expiry sweep replaces it before this ever lapses.
                 HermesNotificationActionInbox.TTL_MS + 5 * 60_000L,
                 remembered?.openPayload,
+                remembered?.iconPath,
+                remembered?.conversationId,
             )
         }
         HermesActionDrainScheduler.scheduleExpirySweep(context)

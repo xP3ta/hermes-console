@@ -232,6 +232,7 @@ const allNotificationActionRoutes = {
   NotificationActionRoute.run,
   NotificationActionRoute.chat,
   NotificationActionRoute.botChat,
+  NotificationActionRoute.cron,
 };
 
 /// Headless entrypoint booted by `HermesActionDrainWorker` when no engine is

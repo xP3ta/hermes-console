@@ -6,17 +6,18 @@ import 'package:hermes_android/core/services/notifications/rich_notifications.da
 const en = NotifL10n(false);
 const es = NotifL10n(true);
 
-NotificationActionPayload roomApproval({List<String> choices = const ['once', 'deny']}) =>
-    NotificationActionPayload(
-      route: NotificationActionRoute.room,
-      connId: 'c1',
-      roomId: 'room-1',
-      requestId: 'apr-1',
-      taskId: 'task-1',
-      memberId: 'm-lead',
-      executionGeneration: 1,
-      choices: choices,
-    );
+NotificationActionPayload roomApproval({
+  List<String> choices = const ['once', 'deny'],
+}) => NotificationActionPayload(
+  route: NotificationActionRoute.room,
+  connId: 'c1',
+  roomId: 'room-1',
+  requestId: 'apr-1',
+  taskId: 'task-1',
+  memberId: 'm-lead',
+  executionGeneration: 1,
+  choices: choices,
+);
 
 const open = NotificationOpen(
   connId: 'c1',
@@ -47,8 +48,10 @@ void main() {
         es.approvalNeedsOk('gh pr ready 51', null),
         'Necesita tu OK para ejecutar “gh pr ready 51”',
       );
-      expect(en.roundDone(['builder', 'review']),
-          'Round done · builder and review replied');
+      expect(
+        en.roundDone(['builder', 'review']),
+        'Round done · builder and review replied',
+      );
       expect(es.roundDone(['builder']), 'Ronda terminada · builder respondió');
     });
   });
@@ -65,8 +68,11 @@ void main() {
         ),
         isNull,
       );
-      expect(NotificationActionPayload.tryParse('{"v":1,"route":"chat","conn":"c"}'),
-          isNull, reason: 'chat route needs session + request');
+      expect(
+        NotificationActionPayload.tryParse('{"v":1,"route":"chat","conn":"c"}'),
+        isNull,
+        reason: 'chat route needs session + request',
+      );
       expect(encoded, isNot(contains('token')));
     });
   });
@@ -81,19 +87,25 @@ void main() {
         botKey: 'm-lead',
         botName: 'lead',
         command: 'rm -rf build',
-        action: roomApproval(choices: const ['once', 'session', 'always', 'deny']),
+        action: roomApproval(
+          choices: const ['once', 'session', 'always', 'deny'],
+        ),
         open: open,
         offered: const ['once', 'session', 'always', 'deny'],
         nowMs: 1,
       );
-      final actions = [for (final a in args['actions'] as List) (a as Map)['id']];
+      final actions = [
+        for (final a in args['actions'] as List) (a as Map)['id'],
+      ];
       expect(actions, ['approve', 'deny', 'open']);
       expect(args['channel'], 'approvals');
       expect(args['alert'], isTrue);
       expect(args['text'], contains('rm -rf build'));
       expect(args['publicTitle'], 'lead needs you');
-      expect('${args['publicTitle']}${args['publicText']}',
-          isNot(contains('rm -rf')));
+      expect(
+        '${args['publicTitle']}${args['publicText']}',
+        isNot(contains('rm -rf')),
+      );
     });
 
     test('approval honours hide-sensitive in the visible card too', () {
@@ -127,51 +139,59 @@ void main() {
         offered: const ['deny'],
         nowMs: 1,
       );
-      final actions = [for (final a in args['actions'] as List) (a as Map)['id']];
+      final actions = [
+        for (final a in args['actions'] as List) (a as Map)['id'],
+      ];
       expect(actions, ['deny', 'open']);
     });
 
-    test('conversation: reply uses RemoteInput; hidden content drops reply', () {
-      const b = RichNotificationBuilder(en);
-      final msg = const RichMessage(
-        senderKey: 'm1',
-        senderName: 'builder',
-        text: 'hey @user',
-        timeMs: 1,
-      );
-      final args = b.conversation(
-        tag: 't',
-        conversationId: 'c',
-        conversationTitle: 'Room',
-        isGroup: true,
-        messages: [msg],
-        open: open,
-        replyAction: const NotificationActionPayload(
-          route: NotificationActionRoute.room,
-          connId: 'c1',
-          roomId: 'room-1',
-        ),
-      );
-      final reply = (args['actions'] as List).first as Map;
-      expect(reply['id'], 'reply');
-      expect(reply['remoteInput'], isTrue);
-      final hidden = b.conversation(
-        tag: 't',
-        conversationId: 'c',
-        conversationTitle: 'Room',
-        isGroup: true,
-        messages: [msg],
-        open: open,
-        replyAction: const NotificationActionPayload(
-          route: NotificationActionRoute.room,
-          connId: 'c1',
-          roomId: 'room-1',
-        ),
-        hideSensitive: true,
-      );
-      expect([for (final a in hidden['actions'] as List) (a as Map)['id']], ['open']);
-      expect(hidden.toString(), isNot(contains('hey @user')));
-    });
+    test(
+      'conversation: reply uses RemoteInput; hidden content drops reply',
+      () {
+        const b = RichNotificationBuilder(en);
+        final msg = const RichMessage(
+          senderKey: 'm1',
+          senderName: 'builder',
+          text: 'hey @user',
+          timeMs: 1,
+        );
+        final args = b.conversation(
+          tag: 't',
+          conversationId: 'c',
+          conversationTitle: 'Room',
+          isGroup: true,
+          messages: [msg],
+          open: open,
+          replyAction: const NotificationActionPayload(
+            route: NotificationActionRoute.room,
+            connId: 'c1',
+            roomId: 'room-1',
+          ),
+        );
+        final reply = (args['actions'] as List).first as Map;
+        expect(reply['id'], 'reply');
+        expect(reply['remoteInput'], isTrue);
+        final hidden = b.conversation(
+          tag: 't',
+          conversationId: 'c',
+          conversationTitle: 'Room',
+          isGroup: true,
+          messages: [msg],
+          open: open,
+          replyAction: const NotificationActionPayload(
+            route: NotificationActionRoute.room,
+            connId: 'c1',
+            roomId: 'room-1',
+          ),
+          hideSensitive: true,
+        );
+        expect(
+          [for (final a in hidden['actions'] as List) (a as Map)['id']],
+          ['open'],
+        );
+        expect(hidden.toString(), isNot(contains('hey @user')));
+      },
+    );
 
     test('live update: segments per member, never empty text, short chip', () {
       final args = const RichNotificationBuilder(en).liveUpdate(
@@ -193,10 +213,10 @@ void main() {
         startedAtMs: 1000,
       );
       expect(args['segments'], hasLength(2));
-      expect(args['text'], 'reviewer is working…');
+      expect(args['text'], 'reviewer is working… · builder replied');
       expect(args['shortText'], 'reviewe');
       expect(args['subText'], 'Round 2 · 1 of 2 working');
-      expect(args['stopLabel'], 'Stop all');
+      expect(args['stopLabel'], 'Stop round');
       final idle = const RichNotificationBuilder(en).liveUpdate(
         tag: 't',
         conversationId: 'c',
@@ -209,7 +229,186 @@ void main() {
           roomId: 'room-1',
         ),
       );
-      expect(idle['text'], 'Thinking…');
+      // Never a bare 'Thinking…' with an empty bar.
+      expect(idle['text'], 'Room is working…');
+      final inferred = const RichNotificationBuilder(es).liveUpdate(
+        tag: 't',
+        conversationId: 'c',
+        title: 'QA',
+        members: const [
+          (name: 'Radar', state: 'working'),
+          (name: 'Atlas', state: 'pending'),
+        ],
+        workingName: 'Radar',
+        thinking: true,
+        open: open,
+        stopAction: null,
+      );
+      expect(inferred['text'], 'Radar está pensando… · Atlas en espera');
+      expect(inferred['shortText'], 'Radar');
+      expect(inferred['subText'], '0 de 2 respondieron');
+      expect(inferred['segments'], [
+        {'state': 'working'},
+        {'state': 'pending'},
+      ]);
+    });
+
+    group('room live update polish (1.2.14)', () {
+      const stop = NotificationActionPayload(
+        route: NotificationActionRoute.room,
+        connId: 'c1',
+        roomId: 'room-1',
+      );
+      Map<String, Object?> build(
+        NotifL10n t, {
+        NotificationActionPayload? stopAction = stop,
+      }) => RichNotificationBuilder(t).liveUpdate(
+        tag: 't',
+        conversationId: 'c',
+        title: 'Release checks',
+        members: const [
+          (name: 'Atlas', state: 'done'),
+          (name: 'Radar', state: 'working'),
+          (name: 'Nova', state: 'pending'),
+        ],
+        repliedAfterMs: const {'Atlas': 41000},
+        workingName: 'Radar',
+        open: open,
+        stopAction: stopAction,
+        round: 2,
+        startedAtMs: 1000,
+      );
+
+      test('actions: Stop round + Open room, Stop needs the payload', () {
+        final args = build(es);
+        expect(args['stopLabel'], 'Parar ronda');
+        expect(args['openLabel'], 'Abrir sala');
+        expect(build(en)['stopLabel'], 'Stop round');
+        expect(build(en)['openLabel'], 'Open room');
+        // Read-only: no Stop, but the room still opens.
+        final readOnly = build(es, stopAction: null);
+        expect(readOnly.containsKey('stopLabel'), isFalse);
+        expect(readOnly['openLabel'], 'Abrir sala');
+        expect(readOnly['openPayload'], open.toPayload());
+      });
+
+      test('one row per member with its state and reply time', () {
+        final rows = (build(es)['rows'] as List).cast<Map>();
+        expect(rows, [
+          {'name': 'Atlas', 'state': 'done', 'line': 'Respondió · 00:41'},
+          {'name': 'Radar', 'state': 'working', 'line': 'Escribiendo…'},
+          {'name': 'Nova', 'state': 'pending', 'line': 'En espera'},
+        ]);
+        final enRows = (build(en)['rows'] as List).cast<Map>();
+        expect(
+          [for (final r in enRows) r['line']],
+          ['Replied · 00:41', 'Typing…', 'Waiting'],
+        );
+        // Fallback (non-promoted) expanded body: one line per member.
+        expect(
+          build(es)['bigText'],
+          'Atlas · Respondió · 00:41\nRadar · Escribiendo…\nNova · En espera',
+        );
+      });
+
+      test('promoted text carries the other members after the speaker', () {
+        // ProgressStyle cannot host rows: the 2-line expanded text is the
+        // per-member summary, the working Bot first.
+        expect(
+          build(es)['text'],
+          'Radar está trabajando… · Atlas respondió · 00:41 · Nova en espera',
+        );
+        expect(
+          build(en)['text'],
+          'Radar is working… · Atlas replied · 00:41 · Nova waiting',
+        );
+      });
+
+      test('lock screen stays redacted: no names, rows or actions', () {
+        final args = build(es);
+        expect(args['publicTitle'], 'Trabajando…');
+        expect(args['publicText'], 'Ronda 2 · 1 de 3 trabajando');
+        for (final key in ['publicTitle', 'publicText']) {
+          for (final name in ['Atlas', 'Radar', 'Nova', 'Release checks']) {
+            expect(args[key], isNot(contains(name)));
+          }
+        }
+      });
+
+      test('reply time is mm:ss and omitted when unknown', () {
+        final args = RichNotificationBuilder(es).liveUpdate(
+          tag: 't',
+          conversationId: 'c',
+          title: 'R',
+          members: const [
+            (name: 'Atlas', state: 'done'),
+            (name: 'Radar', state: 'done'),
+          ],
+          repliedAfterMs: const {'Radar': 125400},
+          open: open,
+          stopAction: null,
+        );
+        expect(
+          [for (final r in (args['rows'] as List).cast<Map>()) r['line']],
+          ['Respondió', 'Respondió · 02:05'],
+        );
+      });
+    });
+
+    test('quiet cards carry a lock-safe summary line; approvals do not', () {
+      final done = const RichNotificationBuilder(es).conversation(
+        tag: 't',
+        conversationId: 'c',
+        conversationTitle: 'Radar',
+        isGroup: false,
+        messages: const [
+          RichMessage(
+            senderKey: 'bot:radar',
+            senderName: 'Radar',
+            text: 'secret body',
+            timeMs: 1,
+          ),
+        ],
+        open: open,
+        accent: RichAccent.done,
+      );
+      expect(done['summaryLine'], 'Radar · hecho');
+      final failed = const RichNotificationBuilder(en).hermesCard(
+        tag: null,
+        id: 7,
+        identityKey: 'cron:1',
+        senderName: 'Scheduled tasks',
+        conversationTitle: 'Nightly build',
+        line: 'secret',
+        open: open,
+        accent: RichAccent.failed,
+        nowMs: 1,
+      );
+      expect(failed['summaryLine'], 'Scheduled tasks · failed');
+      final approval = const RichNotificationBuilder(es).approval(
+        tag: 't',
+        conversationId: 'c',
+        conversationTitle: 'Release checks',
+        isGroup: true,
+        botKey: 'm-atlas',
+        botName: 'Atlas',
+        command: 'rm -rf build',
+        action: NotificationActionPayload(
+          route: NotificationActionRoute.room,
+          connId: 'c1',
+          roomId: 'room-1',
+          requestId: 'apr-1',
+          taskId: 'task-1',
+          memberId: 'm-atlas',
+          executionGeneration: 1,
+        ),
+        open: open,
+        offered: const ['once', 'deny'],
+        nowMs: 1,
+      );
+      // Approvals never join the quiet group summary.
+      expect(approval.containsKey('summaryLine'), isFalse);
+      expect(approval['channel'], 'approvals');
     });
   });
 
@@ -223,40 +422,58 @@ void main() {
       router = NotificationActionRouter(ops: ops, sink: sink, t: en);
     });
 
-    PendingNotificationAction tap(String action, NotificationActionPayload p,
-            {String uid = 'u1', String? text}) =>
-        PendingNotificationAction(
-          uid: uid,
-          action: action,
-          payload: p,
-          notificationId: 7,
-          tag: 'tag',
-          text: text,
-        );
+    PendingNotificationAction tap(
+      String action,
+      NotificationActionPayload p, {
+      String uid = 'u1',
+      String? text,
+    }) => PendingNotificationAction(
+      uid: uid,
+      action: action,
+      payload: p,
+      notificationId: 7,
+      tag: 'tag',
+      text: text,
+    );
 
-    test('approve performs groups.approve once and confirms in place', () async {
-      expect(await router.handle(tap('approve', roomApproval())), ActionOutcome.done);
-      expect(ops.calls, ['roomApprove:once']);
-      expect(sink.confirms.single, 'Approved');
-      // Double tap (two engines, or user) is idempotent.
-      expect(await router.handle(tap('approve', roomApproval(), uid: 'u2')),
-          ActionOutcome.ignored);
-      expect(ops.calls, hasLength(1));
-    });
+    test(
+      'approve performs groups.approve once and confirms in place',
+      () async {
+        expect(
+          await router.handle(tap('approve', roomApproval())),
+          ActionOutcome.done,
+        );
+        expect(ops.calls, ['roomApprove:once']);
+        expect(sink.confirms.single, 'Approved');
+        // Double tap (two engines, or user) is idempotent.
+        expect(
+          await router.handle(tap('approve', roomApproval(), uid: 'u2')),
+          ActionOutcome.ignored,
+        );
+        expect(ops.calls, hasLength(1));
+      },
+    );
 
     test('already answered elsewhere counts as success', () async {
       ops.error = Exception('HTTP 409 approval already resolved');
-      expect(await router.handle(tap('deny', roomApproval())),
-          ActionOutcome.alreadyAnswered);
+      expect(
+        await router.handle(tap('deny', roomApproval())),
+        ActionOutcome.alreadyAnswered,
+      );
       expect(sink.confirms.single, 'Already answered');
     });
 
     test('real failures allow a retry', () async {
       ops.error = Exception('socket closed');
-      expect(await router.handle(tap('approve', roomApproval())), ActionOutcome.failed);
+      expect(
+        await router.handle(tap('approve', roomApproval())),
+        ActionOutcome.failed,
+      );
       ops.error = null;
-      expect(await router.handle(tap('approve', roomApproval(), uid: 'u2')),
-          ActionOutcome.done);
+      expect(
+        await router.handle(tap('approve', roomApproval(), uid: 'u2')),
+        ActionOutcome.done,
+      );
     });
 
     test('a choice the server did not offer is never sent', () async {
@@ -267,17 +484,24 @@ void main() {
       expect(ops.calls, isEmpty);
     });
 
-    test('stop and replies route to the room; each reply is distinct', () async {
-      const room = NotificationActionPayload(
-        route: NotificationActionRoute.room,
-        connId: 'c1',
-        roomId: 'room-1',
-      );
-      await router.handle(tap('stop', room));
-      await router.handle(tap('reply', room, uid: 'a', text: 'ok'));
-      await router.handle(tap('reply', room, uid: 'b', text: 'ok'));
-      expect(ops.calls, ['roomStop', 'roomSend:ok:notif-a', 'roomSend:ok:notif-b']);
-    });
+    test(
+      'stop and replies route to the room; each reply is distinct',
+      () async {
+        const room = NotificationActionPayload(
+          route: NotificationActionRoute.room,
+          connId: 'c1',
+          roomId: 'room-1',
+        );
+        await router.handle(tap('stop', room));
+        await router.handle(tap('reply', room, uid: 'a', text: 'ok'));
+        await router.handle(tap('reply', room, uid: 'b', text: 'ok'));
+        expect(ops.calls, [
+          'roomStop',
+          'roomSend:ok:notif-a',
+          'roomSend:ok:notif-b',
+        ]);
+      },
+    );
 
     test('Bot Chat reply uses prompt.submit with the inbox uid', () async {
       const bot = NotificationActionPayload(
@@ -291,13 +515,15 @@ void main() {
     });
 
     test('widget taps do not touch notification cards', () async {
-      await router.handle(PendingNotificationAction(
-        uid: 'w',
-        action: 'approve',
-        payload: roomApproval(),
-        notificationId: 0,
-        source: 'widget',
-      ));
+      await router.handle(
+        PendingNotificationAction(
+          uid: 'w',
+          action: 'approve',
+          payload: roomApproval(),
+          notificationId: 0,
+          source: 'widget',
+        ),
+      );
       expect(ops.calls, ['roomApprove:once']);
       expect(sink.confirms, isEmpty);
     });
@@ -328,8 +554,14 @@ final class _Ops implements NotificationActionOps {
   Future<void> chatApprove(NotificationActionPayload p, String choice) =>
       _record('chatApprove:$choice');
   @override
-  Future<void> botChatReply(NotificationActionPayload p, String text, String id) =>
-      _record('botChatReply:$text:$id');
+  Future<void> botChatReply(
+    NotificationActionPayload p,
+    String text,
+    String id,
+  ) => _record('botChatReply:$text:$id');
+  @override
+  Future<void> cronTrigger(NotificationActionPayload p) =>
+      _record('cronTrigger:${p.taskId}');
 }
 
 final class _Sink implements RichNotificationSink {

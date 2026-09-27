@@ -135,7 +135,6 @@ void main() {
               actions: const {
                 DockItemId.home: DockItemAction(),
                 DockItemId.bots: DockItemAction(selected: true),
-                DockItemId.work: DockItemAction(),
                 DockItemId.create: DockItemAction(),
               },
               createOrbits: [

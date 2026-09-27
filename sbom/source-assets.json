@@ -186,6 +186,110 @@
     },
     {
       "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_glowimg_done.png",
+      "sha256": "95044dd13c516187b1a71301b907a2ed7dca45a60f221a1d1fea51b6b33fb03c",
+      "size": 17433
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_glowimg_failed.png",
+      "sha256": "9e4884fde57baf59d238451dfa388bdd9a80e3d621958b4538e897ec19bcc650",
+      "size": 17433
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_glowimg_needs_you.png",
+      "sha256": "f489fefeaf203409bfec4623ce56832383a19e298fe57f986e52ac0811c374b9",
+      "size": 17433
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_glowimg_working.png",
+      "sha256": "eee6c4f0d5da5fe2756976b4c4d6471f97b21df6622ee585840073012035e6d5",
+      "size": 17433
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_builder_done.png",
+      "sha256": "af88aca39e583659e4bdc86c22781e5c70f9b7c646814dd8522f5c82def1f3d9",
+      "size": 7373
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_builder_idle.png",
+      "sha256": "de928a9369d15d22004ac0c81b6cdd050dbe41e2dff3dc784d5cafd9c4688dbf",
+      "size": 6318
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_builder_working.png",
+      "sha256": "6808d85be9cba8c73f8d9ea25bbd62af521c8aaa266ae77e981c69bd61a0813e",
+      "size": 7590
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_lead_idle.png",
+      "sha256": "25e8da713e5dcc0a8e406acdb926da89014f4a83a7a565135761adeb3e8ee204",
+      "size": 6276
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_lead_needs.png",
+      "sha256": "f6a8ff20040c2639ad8e5452b30179992873b1cf1a89c3d10b22e284e8a17e03",
+      "size": 7136
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_review_done.png",
+      "sha256": "4e7e23d72172917ca08c8e7e18b44aec7bb19deb1c15c940b49ca84bb07d3171",
+      "size": 6008
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_review_idle.png",
+      "sha256": "65f784da84a9d7020d6e24f296f7c585eebdd7e82fa7b8fd00a5bf9423caab08",
+      "size": 4639
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_scout_idle.png",
+      "sha256": "504a8cec25cc2d19acf781e7bcf35055ffad6f063211e267fae6a73ab7076966",
+      "size": 6239
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/main/res/drawable-nodpi/botw_preview_face_scout_working.png",
+      "sha256": "c98cd9efbde57f74c5ab2d901700866586e38f9ce48af855221cae4b45a03f1d",
+      "size": 7475
+    },
+    {
+      "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-nodpi/splash_logo.png",
@@ -514,6 +618,166 @@
     },
     {
       "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_builder_done.png",
+      "sha256": "797dbab9fab33a9fa5ef9914fe8467e8bbb72a7641ea3b1b86254a534d4ecf49",
+      "size": 10037
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_builder_failed.png",
+      "sha256": "77c1110eebac2510230e2641926ad797fe583c832bea1e4cd186a414685454ab",
+      "size": 9216
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_builder_idle.png",
+      "sha256": "c1f006f4ff813f178fd1b1b3534572aef974a3cb4642de50a698b575f4b15234",
+      "size": 8592
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_builder_needs.png",
+      "sha256": "60ed9ad77b3aaddbba1f902d47b801c6281246b07927ac12b1c5050389584be6",
+      "size": 9718
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_builder_working.png",
+      "sha256": "9781f68c510dca2941ee3fa11fd5f59d7811a7ea6419bf076810cd9493839c78",
+      "size": 10264
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_lead_done.png",
+      "sha256": "f4f8ed23406743fa265c661071f6b6beb69daed4cde97bb50e81e7b8da3bf74e",
+      "size": 9989
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_lead_failed.png",
+      "sha256": "a0ad881bc8b692ca0c31276d4c124cd998df6490b4fd05b3fea6ec29744338bc",
+      "size": 9217
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_lead_idle.png",
+      "sha256": "56440a7ad1e08e1c1d5bdf14fd612b3bc7f1d179ae08eabd693c9f16cce71fe0",
+      "size": 8558
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_lead_needs.png",
+      "sha256": "7a238a033879d49c7ec3d93332d8ae244c8e313a470ca8e44e4a451b4fe1db47",
+      "size": 9762
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_lead_working.png",
+      "sha256": "9ba6b13fec1cdf93add76eefcee5e5f289017ecec68724dd3538dde50b3f0645",
+      "size": 10180
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_review_done.png",
+      "sha256": "844b6743950605fb85d57c69114c7b29c39c990725bc4bfab77619f891c325cc",
+      "size": 8049
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_review_failed.png",
+      "sha256": "bb37ba2664956d3cfa605309ecb39d9d6a5fb6be55024a311bed9962c23f2fdd",
+      "size": 9448
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_review_idle.png",
+      "sha256": "9fb18f4bdcaeae610e0088a23db3abddc957dbc378109a5f432ddf5242a44abd",
+      "size": 6377
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_review_needs.png",
+      "sha256": "994402d2d42c0c439f63f30c7c68f34287e25983a85a773efafc8f2c2d1d5f1a",
+      "size": 8820
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_review_working.png",
+      "sha256": "754ab04bbee24109aa56e855dd95654fefa64a99bf61f0568e753649e6b8995e",
+      "size": 8604
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_scout_done.png",
+      "sha256": "a3e9725c26f10e0af2a0d95ec48ce100e753fcb24864f973dc1aaefbc636cf8c",
+      "size": 9942
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_scout_failed.png",
+      "sha256": "bc429feccde3ed982da8d5d35dc4c7cf88a2e767f05483c6fd0c70212b1d1512",
+      "size": 9124
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_scout_idle.png",
+      "sha256": "48ed7ff05b812dbc00fe87c81253a2d91825467e18476d1c0d5204555cd2f68e",
+      "size": 8494
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_scout_needs.png",
+      "sha256": "adbdc6de0e25841852f28192edfcd8e9c394cd64dc676ac21b1ddb05bf0eaaa5",
+      "size": 9605
+    },
+    {
+      "kind": "asset",
+      "license": "NOASSERTION",
+      "licenseEvidence": "none",
+      "path": "android/app/src/qa/res/drawable-nodpi/botw_sample_scout_working.png",
+      "sha256": "66a188a101bb0f279e2c25d8b021ef6445075e5fe459473bd030df7252c82082",
+      "size": 10103
+    },
+    {
+      "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/qa/res/drawable-xhdpi/ic_launcher_background.png",
@@ -641,5 +905,5 @@
       "size": 127920
     }
   ],
-  "inputFingerprint": "b2f739e65a64b13c2e009f34ec65b35d10b8d17d75f7123259a6673271796dc9"
+  "inputFingerprint": "5e0c2b4df03a5844f4a05de9225352f854e244e36d9f7f74861e3982fe4b8b20"
 }

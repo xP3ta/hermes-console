@@ -117,7 +117,12 @@ class NotificationMuteStore {
 
   // ── Kanban ──────────────────────────────────────────────────────────────
 
-  bool get kanbanDoneDefault => _prefs.getBool(kanbanDoneDefaultKey) ?? false;
+  /// Global "also when a task finishes". ON unless the user turned it off:
+  /// an absent key (new install, or never touched) follows the default;
+  /// an explicit choice, global or per task, always wins.
+  static const kanbanDoneDefaultValue = true;
+  bool get kanbanDoneDefault =>
+      _prefs.getBool(kanbanDoneDefaultKey) ?? kanbanDoneDefaultValue;
   Future<void> setKanbanDoneDefault(bool value) =>
       _prefs.setBool(kanbanDoneDefaultKey, value);
 

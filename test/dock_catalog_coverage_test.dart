@@ -143,7 +143,6 @@ void main() {
             actions: {
               DockItemId.home: bump(DockItemId.home),
               DockItemId.bots: bump(DockItemId.bots),
-              DockItemId.work: bump(DockItemId.work),
               DockItemId.create: const DockItemAction(),
               DockItemId.cron: bump(DockItemId.cron),
               DockItemId.tasks: bump(DockItemId.tasks),
@@ -182,7 +181,6 @@ void main() {
       const directAction = [
         DockItemId.home,
         DockItemId.bots,
-        DockItemId.work,
         DockItemId.cron,
         DockItemId.tasks,
         DockItemId.sessions,
@@ -244,7 +242,6 @@ void main() {
                 profileId: DockProfileId.bots,
                 actions: const {
                   DockItemId.bots: DockItemAction(),
-                  DockItemId.work: DockItemAction(),
                 },
               ),
               Dock(
@@ -273,9 +270,9 @@ void main() {
         findsOneWidget,
       );
 
-      // ...su propio catálogo (nada de "Trabajo" en General, nada de
-      // "Ajustes" en Bots)...
-      expect(find.byKey(const ValueKey('bot-mode-dock-work')), findsOneWidget);
+      // ...su propio catálogo (ya no existe el destino "Trabajo" en
+      // ninguno, nada de "Ajustes" en Bots)...
+      expect(find.byKey(const ValueKey('bot-mode-dock-work')), findsNothing);
       expect(
         find.byKey(const ValueKey('general-mode-dock-work')),
         findsNothing,

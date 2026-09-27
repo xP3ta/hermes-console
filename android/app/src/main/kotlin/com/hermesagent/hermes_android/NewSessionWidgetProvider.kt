@@ -3,25 +3,22 @@ package com.hermesagent.hermes_android
 import es.antonborri.home_widget.HomeWidgetGlanceWidgetReceiver
 
 /**
- * Legacy receiver names are kept so launchers keep widgets placed before the
- * Bot Mode redesign (spec 070 Phase 7); each now renders a new-family widget
- * that fits its original cell span.
+ * Receiver name retained from the RemoteViews widget so launchers keep placed
+ * widgets across the app update. It is the 4x2 dashboard variant.
  */
-
-/** Old 4x2 dashboard → Bots grid. */
 class NewSessionWidgetProvider :
-    HomeWidgetGlanceWidgetReceiver<HermesBotModeWidget>() {
-    override val glanceAppWidget = HermesBotModeWidget(BotModeWidgetKind.BOTS)
+    HomeWidgetGlanceWidgetReceiver<HermesConsoleGlanceWidget>() {
+    override val glanceAppWidget = HermesConsoleGlanceWidget(HermesWidgetVariant.DASHBOARD)
 }
 
-/** Old 2x1 compact → Status (connection + working count). */
+/** Height-stable 2x1 status surface with adaptive horizontal sizing. */
 class HermesCompactWidgetProvider :
-    HomeWidgetGlanceWidgetReceiver<HermesBotModeWidget>() {
-    override val glanceAppWidget = HermesBotModeWidget(BotModeWidgetKind.STATUS)
+    HomeWidgetGlanceWidgetReceiver<HermesConsoleGlanceWidget>() {
+    override val glanceAppWidget = HermesConsoleGlanceWidget(HermesWidgetVariant.COMPACT)
 }
 
-/** Old 4x1 controls → Quick ask (face + "Ask <Bot>…" + mic). */
+/** Height-stable 4x1 context surface with adaptive horizontal sizing. */
 class HermesControlWidgetProvider :
-    HomeWidgetGlanceWidgetReceiver<HermesBotModeWidget>() {
-    override val glanceAppWidget = HermesBotModeWidget(BotModeWidgetKind.QUICK_ASK)
+    HomeWidgetGlanceWidgetReceiver<HermesConsoleGlanceWidget>() {
+    override val glanceAppWidget = HermesConsoleGlanceWidget(HermesWidgetVariant.CONTROL)
 }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/new_session_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/new_session_widget_background"
+    android:contentDescription="@string/new_session_widget_composer_description"
+    android:foreground="?android:attr/selectableItemBackgroundBorderless"
+    android:minWidth="48dp"
+    android:minHeight="48dp"
+    android:padding="6dp"
+    android:theme="@style/NewSessionWidgetTheme">
+
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:padding="1dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_launcher_foreground" />
+</FrameLayout>

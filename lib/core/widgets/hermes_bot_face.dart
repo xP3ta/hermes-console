@@ -299,12 +299,27 @@ final class _HermesBotFacePainter extends CustomPainter {
 /// Paints one static frame of [visual] into [canvas] (no ticker, no widget
 /// tree). Used to rasterise Bot faces for notification `Person` icons and
 /// home-screen widgets, so they match the in-app face exactly.
+///
+/// [pose] replaces the neutral reference frame with a static expression
+/// (widgets and notifications cannot animate, so each state gets its own
+/// frame: eyes aside while working, happy eyes when done, raised brows when
+/// it needs you, crossed eyes when it failed). Classic faces ignore it.
 void paintHermesBotFaceFrame(
   Canvas canvas,
   Size size,
   HermesBotFaceVisual visual, {
   HermesBotFaceMotionState motionState = HermesBotFaceMotionState.idle,
+  HermesBotFaceMotionSnapshot? pose,
 }) {
+  if (pose != null && visual is HermesBlobatarFaceVisual) {
+    _paintBlobatar(
+      canvas,
+      size,
+      _BlobatarLayout.create(visual.seed, visual.pinnedKind),
+      pose,
+    );
+    return;
+  }
   _HermesBotFacePainter(
     visual,
     clock: const AlwaysStoppedAnimation<double>(0),
@@ -365,6 +380,29 @@ void _paintBlobatar(
     final cy = value.cy + motion.eyeOffsetY;
     final rx = value.rx * motion.eyeScaleX;
     final ry = value.ry * motion.eyeScaleY * motion.blinkScaleY;
+    if (motion.brows != 0) {
+      _paintBrow(canvas, value, cx, cy, rx, ry, motion.brows, eyeColor);
+    }
+    if (motion.eyeGlyph == HermesBotFaceEyeGlyph.cross) {
+      _paintCrossEye(canvas, cx, cy, value.rx, value.ry, eyeColor);
+      continue;
+    }
+    if (motion.eyeGlyph == HermesBotFaceEyeGlyph.happy) {
+      // Content "smiling eyes": an upward arc (^ ^) instead of the open eye.
+      final w = math.max(rx * 1.35, 2.6);
+      final h = math.max(ry * .75, 2.4);
+      canvas.drawPath(
+        Path()
+          ..moveTo(cx - w, cy + h * .45)
+          ..quadraticBezierTo(cx, cy - h * 1.35, cx + w, cy + h * .45),
+        Paint()
+          ..color = eyeColor
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = math.max(1.8, rx * .95),
+      );
+      continue;
+    }
     canvas.drawPath(
       _superellipse(_BlobEye(cx, cy, rx, ry, value.n, value.rot)).path,
       eye,
@@ -394,12 +432,67 @@ void _paintBlobatar(
   canvas.restore();
 }
 
+void _paintBrow(
+  Canvas canvas,
+  _BlobEye eye,
+  double cx,
+  double cy,
+  double rx,
+  double ry,
+  double brows,
+  Color color,
+) {
+  // brows > 0: raised (surprise / "needs you"); brows < 0: worried, the
+  // inner end lifted (failed).
+  final outward = eye.cx < 50 ? -1.0 : 1.0;
+  final lift = ry + math.max(2.6, ry * .45) + (brows > 0 ? brows * 1.6 : 0);
+  final half = math.max(rx * 1.05, 2.4);
+  final tilt = brows < 0 ? -brows * 2.2 : 0.0;
+  final inner = Offset(cx - outward * half, cy - lift - tilt);
+  final outer = Offset(cx + outward * half, cy - lift + tilt * .35);
+  final mid = Offset(
+    (inner.dx + outer.dx) / 2,
+    math.min(inner.dy, outer.dy) - (brows > 0 ? 1.4 : .3),
+  );
+  canvas.drawPath(
+    Path()
+      ..moveTo(inner.dx, inner.dy)
+      ..quadraticBezierTo(mid.dx, mid.dy, outer.dx, outer.dy),
+    Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = math.max(1.6, math.min(rx, ry) * .55),
+  );
+}
+
+void _paintCrossEye(
+  Canvas canvas,
+  double cx,
+  double cy,
+  double rx,
+  double ry,
+  Color color,
+) {
+  final r = math.max(rx * 1.25, math.min(ry, rx * 2.2) * .62);
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round
+    ..strokeWidth = math.max(1.8, rx * .75);
+  canvas
+    ..drawLine(Offset(cx - r, cy - r), Offset(cx + r, cy + r), paint)
+    ..drawLine(Offset(cx + r, cy - r), Offset(cx - r, cy + r), paint);
+}
+
+/// Eye drawing for a static expression frame.
+enum HermesBotFaceEyeGlyph { open, happy, cross }
+
 /// Observable frame of the Blobatar motion layer.
 ///
 /// The renderer applies these values only when [HermesBotFace.animate] is true.
-/// Keeping the snapshot public and test-only lets motion be verified without
-/// exposing painter internals or relying on fragile golden timing.
-@visibleForTesting
+/// Public so motion can be verified without painter internals, and so static
+/// expression frames (widgets, notifications) can pass a pose.
 final class HermesBotFaceMotionSnapshot {
   final double breatheScaleX;
   final double breatheScaleY;
@@ -411,6 +504,12 @@ final class HermesBotFaceMotionSnapshot {
   final double eyeScaleY;
   final double headTiltRadians;
 
+  /// Static-expression extras (never produced by the living motion layer).
+  final HermesBotFaceEyeGlyph eyeGlyph;
+
+  /// 0 = no brows; > 0 raised; < 0 worried.
+  final double brows;
+
   const HermesBotFaceMotionSnapshot({
     required this.breatheScaleX,
     required this.breatheScaleY,
@@ -421,6 +520,8 @@ final class HermesBotFaceMotionSnapshot {
     required this.eyeScaleX,
     required this.eyeScaleY,
     required this.headTiltRadians,
+    this.eyeGlyph = HermesBotFaceEyeGlyph.open,
+    this.brows = 0,
   });
 
   /// Same pose with every displacement multiplied by [gain] (blink and eye
@@ -438,6 +539,8 @@ final class HermesBotFaceMotionSnapshot {
           eyeScaleX: eyeScaleX,
           eyeScaleY: eyeScaleY,
           headTiltRadians: headTiltRadians * gain,
+          eyeGlyph: eyeGlyph,
+          brows: brows,
         );
 
   static const staticFrame = HermesBotFaceMotionSnapshot(

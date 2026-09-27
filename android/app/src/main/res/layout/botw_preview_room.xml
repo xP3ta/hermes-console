@@ -1,176 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Widget-picker preview (previewLayout, API 31+) and initial layout for the
-     Glance widget; mirrors the dark Bot Mode palette. RemoteViews-safe views only. -->
+<!-- Picker preview of Room (v2): black card, blue bottom glow, member faces
+     in a clean row with state words, last line and a discreet Stop.
+     RemoteViews-safe views only. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/botw_preview_background"
+    android:background="@drawable/botw_glow_working"
     android:orientation="vertical"
-    android:padding="12dp">
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:fontFamily="sans-serif-medium"
-            android:maxLines="1"
-            android:text="@string/botw_preview_room_name"
-            android:textColor="@color/botw_preview_text"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:maxLines="1"
-            android:text="@string/botw_room_working"
-            android:textColor="@color/botw_preview_accent"
-            android:textSize="11sp" />
-    </LinearLayout>
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:orientation="horizontal">
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-            <FrameLayout
-                android:layout_width="36dp"
-                android:layout_height="36dp">
-                <ImageView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:src="@drawable/botw_preview_ring" />
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/botw_preview_face_builder" />
-            </FrameLayout>
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:maxLines="1"
-                android:text="@string/botw_state_working"
-                android:textColor="@color/botw_preview_accent"
-                android:textSize="9sp" />
+    android:padding="14dp">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="start" android:maxLines="1" android:text="@string/botw_preview_room_name" android:textColor="@color/botw_preview_title" android:textSize="12sp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:gravity="center" android:orientation="horizontal">
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:layout_marginEnd="6dp" android:gravity="center_horizontal" android:orientation="vertical">
+            <ImageView android:layout_width="52dp" android:layout_height="52dp" android:src="@drawable/botw_preview_face_builder_working" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="builder" android:textColor="@color/botw_preview_title" android:textSize="10sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_state_working" android:textColor="@color/botw_text_working" android:textSize="9.5sp" />
         </LinearLayout>
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-            <FrameLayout
-                android:layout_width="36dp"
-                android:layout_height="36dp">
-                <ImageView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:src="@drawable/botw_preview_ring_transparent" />
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/botw_preview_face_review" />
-            </FrameLayout>
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:maxLines="1"
-                android:text="@string/botw_state_replied"
-                android:textColor="@color/botw_preview_success"
-                android:textSize="9sp" />
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:layout_marginEnd="6dp" android:gravity="center_horizontal" android:orientation="vertical">
+            <ImageView android:layout_width="52dp" android:layout_height="52dp" android:src="@drawable/botw_preview_face_review_done" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="review" android:textColor="@color/botw_preview_title" android:textSize="10sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_state_replied" android:textColor="@color/botw_text_done" android:textSize="9.5sp" />
         </LinearLayout>
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-            <FrameLayout
-                android:layout_width="36dp"
-                android:layout_height="36dp">
-                <ImageView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:src="@drawable/botw_preview_ring_transparent" />
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/botw_preview_face_scout" />
-            </FrameLayout>
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:maxLines="1"
-                android:text="@string/botw_state_queued"
-                android:textColor="@color/botw_preview_secondary"
-                android:textSize="9sp" />
-        </LinearLayout>
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-            <FrameLayout
-                android:layout_width="36dp"
-                android:layout_height="36dp">
-                <ImageView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:src="@drawable/botw_preview_ring_warning" />
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/botw_preview_face_lead" />
-            </FrameLayout>
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:maxLines="1"
-                android:text="@string/botw_state_needs_you"
-                android:textColor="@color/botw_preview_warning"
-                android:textSize="9sp" />
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:layout_marginEnd="6dp" android:gravity="center_horizontal" android:orientation="vertical">
+            <ImageView android:layout_width="52dp" android:layout_height="52dp" android:src="@drawable/botw_preview_face_lead_idle" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="lead" android:textColor="@color/botw_preview_title" android:textSize="10sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_idle" android:textColor="@color/botw_preview_secondary" android:textSize="9.5sp" />
         </LinearLayout>
     </LinearLayout>
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:ellipsize="end"
-        android:maxLines="2"
-        android:text="@string/botw_preview_room_line"
-        android:textColor="@color/botw_preview_text"
-        android:textSize="12sp" />
-    <FrameLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="32dp"
-        android:layout_marginTop="6dp"
-        android:background="@drawable/botw_preview_pill_surface"
-        android:fontFamily="sans-serif-medium"
-        android:gravity="center"
-        android:maxLines="1"
-        android:text="@string/botw_stop"
-        android:textColor="@color/botw_preview_error"
-        android:textSize="12sp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="start" android:maxLines="1" android:text="@string/botw_preview_room_line" android:textColor="@color/botw_preview_secondary" android:textSize="11.5sp" android:layout_weight="1"/>
+        <ImageView android:layout_width="14dp" android:layout_height="14dp" android:layout_marginStart="8dp" android:src="@drawable/botw_ic_stop" android:tint="@color/botw_preview_secondary" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="@string/botw_stop" android:textColor="@color/botw_preview_secondary" android:textSize="11sp" android:layout_marginStart="4dp"/>
+    </LinearLayout>
 </LinearLayout>

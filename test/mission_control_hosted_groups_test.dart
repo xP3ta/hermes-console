@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'pill_copy_fit_test.dart' show expectPillLabelsFit;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -14,7 +13,6 @@ import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
-import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
 import 'package:hermes_android/core/widgets/room_team_row.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,42 +23,43 @@ void main() {
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
   TestWidgetsFlutterBinding.ensureInitialized();
-  for (final surface in ['destinations']) {
-    testWidgets('release $surface copy fits 360dp in es and en', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(360, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      for (final locale in ['es', 'en']) {
-        for (final scale in [1.0, 1.3]) {
-          FlutterSecureStorage.setMockInitialValues({});
-          SharedPreferences.setMockInitialValues({});
-          final manager = await ConnectionManager.create(
-            await SharedPreferences.getInstance(),
-          );
-          addTearDown(manager.dispose);
-          await _pumpHostedScreen(
-            tester,
-            manager,
-            _workspaceSource(),
-            locale: locale,
-            scale: scale,
-          );
-          final bots = find.byKey(const ValueKey('mission-goto-bots'));
-          expectPillLabelsFit(tester, bots);
-          await tester.tap(bots);
-          await tester.pumpAndSettle();
-          expectPillLabelsFit(
-            tester,
-            find.byKey(const ValueKey('mission-goto-work')),
-          );
-          await tester.pumpWidget(const SizedBox());
-        }
+  testWidgets('Bots header and New menu fit 360dp in es and en', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    for (final locale in ['es', 'en']) {
+      for (final scale in [1.0, 1.3]) {
+        FlutterSecureStorage.setMockInitialValues({});
+        SharedPreferences.setMockInitialValues({});
+        final manager = await ConnectionManager.create(
+          await SharedPreferences.getInstance(),
+        );
+        addTearDown(manager.dispose);
+        await _pumpHostedScreen(
+          tester,
+          manager,
+          _workspaceSource(),
+          locale: locale,
+          scale: scale,
+        );
+        // No Work destination, pill or header switcher.
+        expect(find.byKey(const ValueKey('mission-goto-bots')), findsNothing);
+        expect(find.byKey(const ValueKey('mission-goto-work')), findsNothing);
+        expect(_roomRow(), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('mission-create-agent')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('mission-create-chooser-board')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
       }
-    });
-  }
+    }
+  });
 
   for (final missingMethod in [false, true]) {
     test(
@@ -395,55 +394,25 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mission-destination-work')));
-      await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey('mission-shared-rooms')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-hosted-room-0')),
-        findsOneWidget,
-      );
+      expect(_roomRow(), findsOneWidget);
       expect(find.text('Shared room'), findsOneWidget);
-      expect(find.text('Safe public message'), findsNothing);
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('mission-hosted-room-0')),
-          matching: find.byType(RoomAvatarStack),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.ancestor(
-          of: find.byKey(const ValueKey('mission-hosted-room-0')),
-          matching: find.byType(HermesCard),
-        ),
+        find.ancestor(of: _roomRow(), matching: find.byType(HermesCard)),
         findsNothing,
       );
-      // Complete-history log loading is what unlocks `send` — see
-      // `HostedGroupLogPage.loadComplete` and `GroupMethod.official` — so an
-      // official `groups.send` capability now shows this quick-send action,
-      // same as the other official mutation controls checked below.
-      expect(
-        find.byKey(const ValueKey('mission-hosted-send-0')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('mission-hosted-more-0')),
-        findsOneWidget,
-      );
-      for (final action in const ['send', 'more']) {
-        final target = find.byKey(ValueKey('mission-hosted-$action-0'));
-        expect(tester.getSize(target).width, greaterThanOrEqualTo(48));
-        expect(tester.getSize(target).height, greaterThanOrEqualTo(48));
-      }
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-more-0')));
-      await tester.pumpAndSettle();
-      for (final action in const ['rename', 'stop', 'disband']) {
-        final target = find.byKey(ValueKey('mission-hosted-$action-0'));
-        expect(target, findsOneWidget);
+      // The room actions that lived on the Work card are on the row's
+      // long-press sheet, gated by the same official capabilities.
+      await _openRoomActions(tester);
+      for (final action in const [
+        'open',
+        'members',
+        'rename',
+        'stop',
+        'disband',
+      ]) {
+        final target = find.byKey(ValueKey('roster-room-action-$action'));
+        expect(target, findsOneWidget, reason: action);
         expect(tester.getSize(target).height, greaterThanOrEqualTo(48));
       }
       await tester.binding.handlePopRoute();
@@ -494,14 +463,14 @@ void main() {
       await _pumpHostedScreen(tester, manager, source);
 
       expect(find.text('Disbanded room'), findsNothing);
-      expect(find.byKey(const ValueKey('mission-hosted-room-0')), findsNothing);
-      for (final action in const ['send', 'rename', 'stop', 'disband']) {
-        expect(
-          find.byKey(ValueKey('mission-hosted-$action-0')),
-          findsNothing,
-          reason: action,
-        );
-      }
+      expect(
+        find.byWidgetPredicate((widget) {
+          final key = widget.key;
+          return key is ValueKey<String> &&
+              key.value.startsWith('roster-room-row-');
+        }),
+        findsNothing,
+      );
     },
   );
 
@@ -530,19 +499,22 @@ void main() {
       );
       await _pumpHostedScreen(tester, manager, source);
 
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-more-0')));
+      await _openRoomActions(tester);
+      await tester.tap(find.byKey(const ValueKey('roster-room-action-disband')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-disband-0')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Confirm').last);
+      await tester.tap(find.byKey(const ValueKey('roster-room-confirm')));
       await tester.pumpAndSettle();
 
       expect(source.calls, ['disband:3']);
       expect(find.text('Active room'), findsNothing);
-      expect(find.byKey(const ValueKey('mission-hosted-room-0')), findsNothing);
-      for (final action in const ['send', 'rename', 'stop', 'disband']) {
-        expect(find.byKey(ValueKey('mission-hosted-$action-0')), findsNothing);
-      }
+      expect(
+        find.byWidgetPredicate((widget) {
+          final key = widget.key;
+          return key is ValueKey<String> &&
+              key.value.startsWith('roster-room-row-');
+        }),
+        findsNothing,
+      );
     },
   );
 
@@ -603,8 +575,6 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mission-destination-work')));
-      await tester.pumpAndSettle();
       final semantics = tester.ensureSemantics();
 
       final actualText = tester
@@ -616,7 +586,7 @@ void main() {
           .map((widget) => widget.message ?? '')
           .join('\n');
       final semanticTree = tester
-          .getSemantics(find.byKey(const ValueKey('mission-shared-rooms')))
+          .getSemantics(find.byKey(const ValueKey('mission-bots')))
           .toStringDeep();
       final exposed = '$actualText\n$actualTooltips\n$semanticTree';
       for (final secret in const [
@@ -635,7 +605,6 @@ void main() {
         expect(exposed, isNot(contains(secret)), reason: secret);
       }
       expect(find.text('Public room'), findsOneWidget);
-      expect(find.text('Public event text'), findsNothing);
       expect(
         find.byKey(const ValueKey('mission-hosted-retry-0')),
         findsNothing,
@@ -644,8 +613,9 @@ void main() {
         find.byKey(const ValueKey('mission-hosted-approve-0')),
         findsNothing,
       );
+      await _openRoomActions(tester);
       expect(
-        find.byKey(const ValueKey('mission-hosted-rename-0')),
+        find.byKey(const ValueKey('roster-room-action-rename')),
         findsNothing,
       );
       semantics.dispose();
@@ -661,7 +631,7 @@ void main() {
     );
     final source = _workspaceSource(deferred: true);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.tap(_roomRow());
     await tester.pumpAndSettle();
 
     expect(find.text('A room task can be retried.'), findsNothing);
@@ -876,56 +846,73 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // Las dos secciones eran títulos de 19 px idénticos y la única diferencia
-  // era el texto, así que nada decía de un golpe qué salas viven en este
-  // móvil y cuáles en el servidor. Ahora cada una lleva etiqueta en
-  // mayúsculas, icono de ámbito, recuento, una línea de explicación y su
-  // propia tarjeta redondeada.
-  // Antes había dos secciones ("SHARED ROOMS"/"LOCAL ROOMS"): la sala local
-  // se eliminó por completo (spec 061 — era un chat de 1 bot disfrazado de
-  // sala, sin respaldo real de servidor ni en Desktop). Ahora solo existe
-  // una sala, y su sección ya no lleva el calificador "compartida"/"shared".
-  testWidgets('rooms read as a single labeled scoped section', (tester) async {
+  // The Work area (its "ROOMS" section, the "whole team sees it" line and
+  // the stacked-face cards) is gone: rooms are rows of the Bots roster.
+  testWidgets('rooms are roster rows, never a separate Work section', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
     );
     await _pumpHostedScreen(tester, manager, _workspaceSource());
 
-    expect(find.text('ROOMS'), findsOneWidget);
+    expect(find.text('ROOMS'), findsNothing);
+    expect(find.textContaining('The whole team sees it'), findsNothing);
+    expect(find.byKey(const ValueKey('mission-shared-rooms')), findsNothing);
+    expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
+    expect(_roomRow(), findsOneWidget);
     expect(
-      find.text(
-        'The whole team sees it, from any device — for working together '
-        'in the open.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('LOCAL ROOMS'), findsNothing);
-    expect(find.textContaining('sala local'), findsNothing);
-    expect(find.textContaining('local room'), findsNothing);
-
-    // La fila de sala va dentro de una tarjeta redondeada de sección
-    // (nunca una `HermesCard`, que es el contrato ya verificado arriba).
-    final room = find.byKey(const ValueKey('mission-hosted-room-0'));
-    expect(room, findsOneWidget);
-    expect(
-      find.ancestor(
-        of: room,
-        matching: find.byWidgetPredicate((widget) {
-          if (widget is! DecoratedBox) return false;
-          final decoration = widget.decoration;
-          return decoration is BoxDecoration &&
-              decoration.borderRadius != null &&
-              decoration.color != null;
-        }),
-      ),
-      findsWidgets,
-    );
-    expect(
-      find.ancestor(of: room, matching: find.byType(HermesCard)),
+      find.ancestor(of: _roomRow(), matching: find.byType(HermesCard)),
       findsNothing,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('room actions from the roster rename and stop the room', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _workspaceSource();
+    await _pumpHostedScreen(tester, manager, source);
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-rename')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('roster-room-rename-field')),
+      'Renamed room',
+    );
+    await tester.tap(find.byKey(const ValueKey('roster-room-rename-save')));
+    await tester.pumpAndSettle();
+    expect(source.calls, contains('rename:3:Renamed room'));
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-stop')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('roster-room-confirm')));
+    await tester.pumpAndSettle();
+    expect(source.calls, contains('stop:3'));
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-members')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-members-sheet')), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-open')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('mission-hosted-room-workspace')),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   // "Todos aparecen apilados en un montón": la lista de bots no daba ninguna
@@ -971,8 +958,7 @@ void main() {
       ),
     );
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-create')));
-    await tester.pumpAndSettle();
+    await _openCreateRoom(tester);
 
     await tester.enterText(
       find.byKey(const ValueKey('mission-hosted-create-name')),
@@ -1064,8 +1050,7 @@ void main() {
       ),
     );
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-create')));
-    await tester.pumpAndSettle();
+    await _openCreateRoom(tester);
 
     // Con menos de 9 bots el buscador no aparece: la lista ya cabe.
     expect(
@@ -1119,7 +1104,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.tap(_roomRow());
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('mission-hosted-room-workspace')),
@@ -1145,7 +1130,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    final room = find.byKey(const ValueKey('mission-hosted-room-0'));
+    final room = _roomRow();
     await tester.tap(room);
     await tester.pumpAndSettle();
     await tester.enterText(roomField(), 'First line\nSecond line');
@@ -1175,7 +1160,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _workspaceSource();
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+      await tester.tap(_roomRow());
       await tester.pumpAndSettle();
       await tester.tap(roomField());
       await tester.enterText(roomField(), '@${handle.substring(0, 1)}');
@@ -1206,7 +1191,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _RefreshingHostedSource(_workspaceSource().snapshot);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.tap(_roomRow());
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
@@ -1233,7 +1218,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.tap(_roomRow());
     await tester.pumpAndSettle();
 
     Future<void> menu(String item) async {
@@ -1325,7 +1310,7 @@ void main() {
       ],
     );
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.tap(_roomRow());
     await tester.pumpAndSettle();
     final local = tester.widget<RoomMemberAvatar>(
       find.descendant(
@@ -1367,7 +1352,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+    await tester.tap(_roomRow());
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-reply-event-private')));
     await tester.pumpAndSettle();
@@ -1395,7 +1380,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _workspaceSource(room: _crowdedRoom(14));
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+      await tester.tap(_roomRow());
       await tester.pumpAndSettle();
       final screen = tester.getRect(
         find.byKey(const ValueKey('mission-hosted-room-workspace')),
@@ -1424,7 +1409,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _presenceSource();
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(find.byKey(const ValueKey('mission-hosted-room-0')));
+      await tester.tap(_roomRow());
       await tester.pumpAndSettle();
       await tester.enterText(roomField(), '@builder @reviewer please reply');
       await tester.pump();
@@ -1549,7 +1534,29 @@ Future<void> _pumpHostedScreen(
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const ValueKey('mission-destination-work')));
+}
+
+/// The first hosted room row of the Bots roster (rooms live there now; the
+/// separate Work destination is gone).
+Finder _roomRow() => find
+    .byWidgetPredicate((widget) {
+      final key = widget.key;
+      return key is ValueKey<String> && key.value.startsWith('roster-room-row-');
+    })
+    .first;
+
+/// Long-press a room row to open its actions sheet.
+Future<void> _openRoomActions(WidgetTester tester) async {
+  await tester.longPress(_roomRow());
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('roster-room-actions')), findsOneWidget);
+}
+
+/// Header "New" menu → New room.
+Future<void> _openCreateRoom(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('mission-create-agent')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey('mission-create-chooser-room')));
   await tester.pumpAndSettle();
 }
 

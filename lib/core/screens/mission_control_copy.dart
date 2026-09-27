@@ -112,9 +112,6 @@ final class MissionControlCopy {
   String get retrySharedTaskConfirm => _strings.missionHostedRetryConfirm;
   String sharedRoomSemantics(String name, int members) =>
       _strings.missionSharedRoomSemantics(name, members);
-  String get work => _strings.missionWorkLabel;
-  String get globalWorkTray =>
-      _english ? 'Other pending work' : 'Otros pendientes';
 
   String get addToMissionControl => _english ? 'Add to Bots' : 'Añadir a Bots';
   String get createAgent => _english ? 'New agent' : 'Nuevo agente';

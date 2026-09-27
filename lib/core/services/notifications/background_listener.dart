@@ -30,6 +30,7 @@ import 'bot_mode_background.dart';
 import 'notification_delivery_store.dart';
 import 'notification_mute_store.dart';
 import 'notification_service.dart';
+import 'rich_notifications.dart';
 import 'notification_strings.dart';
 import 'voice_notification_card_adapter.dart';
 
@@ -504,6 +505,10 @@ class CronExecutionSnapshot {
   final double? claimedAt;
   final double? finishedAt;
 
+  /// Bot that owns this routine (`[bot:<name>]` job-name prefix); its result
+  /// is presented as a message from that Bot. Null for ordinary jobs.
+  final String? ownerBot;
+
   const CronExecutionSnapshot({
     required this.jobKey,
     required this.jobId,
@@ -518,6 +523,7 @@ class CronExecutionSnapshot {
     this.noAgent,
     this.claimedAt,
     this.finishedAt,
+    this.ownerBot,
   });
 
   /// The run's only destination is this server (`deliver: local`).
@@ -547,6 +553,7 @@ class CronExecutionSnapshot {
     if (noAgent != null) 'noAgent': noAgent,
     if (claimedAt != null) 'claimedAt': claimedAt,
     if (finishedAt != null) 'finishedAt': finishedAt,
+    if (ownerBot != null) 'ownerBot': ownerBot,
   };
 
   static double? _epochSeconds(Object? value) {
@@ -591,8 +598,13 @@ class CronExecutionSnapshot {
       noAgent: json['noAgent'] is bool ? json['noAgent'] as bool : null,
       claimedAt: _epochSeconds(json['claimedAt']),
       finishedAt: _epochSeconds(json['finishedAt']),
+      ownerBot: _text(json['ownerBot']),
     );
   }
+
+  static final RegExp _botOwner = RegExp(
+    r'^\[bot:([a-z0-9][a-z0-9_-]{0,63})\]',
+  );
 
   static CronExecutionSnapshot? fromJob(Object? value) {
     if (value is! Map) return null;
@@ -624,7 +636,9 @@ class CronExecutionSnapshot {
           .toString();
     }
     if (jobId.isEmpty || executionId.isEmpty || status.isEmpty) return null;
-    final name = CronJob.displayName((job['name'] ?? '').toString());
+    final rawName = (job['name'] ?? '').toString();
+    final name = CronJob.displayName(rawName);
+    final owner = _botOwner.firstMatch(rawName.trim())?.group(1);
     return CronExecutionSnapshot(
       jobKey: '${profile.isEmpty ? 'default' : profile}::$jobId',
       jobId: jobId,
@@ -644,6 +658,7 @@ class CronExecutionSnapshot {
       finishedAt: syntheticExecutionId
           ? null
           : _epochSeconds(latest['finished_at']),
+      ownerBot: owner,
     );
   }
 }
@@ -1109,12 +1124,16 @@ class KanbanDiscoveryEntry {
     required this.taskId,
     required this.title,
     required this.state,
+    this.assignee,
   });
 
   final String scopeKey;
   final String taskId;
   final String title;
   final String state;
+
+  /// Assignee profile (its Bot face represents the task), if any.
+  final String? assignee;
 }
 
 /// Cursor local para los estados del Kanban oficial de Hermes Agent.
@@ -1141,6 +1160,9 @@ class BackgroundKanbanWatch {
           taskId: task.id.trim(),
           title: task.title.trim().isEmpty ? task.id.trim() : task.title.trim(),
           state: task.status.trim().toLowerCase(),
+          assignee: task.assignee?.trim().isNotEmpty == true
+              ? task.assignee!.trim()
+              : null,
         ),
   ];
 
@@ -1489,6 +1511,14 @@ class _HermesTaskHandler extends TaskHandler {
         allowWifiLock: false,
       ),
     );
+    // The plugin re-posts its plain card (launcher portrait) on every
+    // options update too: restore the ">_" glyph once it has landed.
+    unawaited(
+      Future<void>.delayed(
+        const Duration(milliseconds: 800),
+        _decorateServiceCard,
+      ),
+    );
   }
 
   @override
@@ -1534,6 +1564,13 @@ class _HermesTaskHandler extends TaskHandler {
         notificationButtons: [NotificationButton(id: 'stop', text: t.bgStop)],
       );
     }
+    unawaited(_decorateServiceCard());
+  }
+
+  static Future<void> _decorateServiceCard() async {
+    try {
+      await PlatformRichNotifications().decorateServiceNotification();
+    } catch (_) {}
   }
 
   @override
@@ -1542,10 +1579,31 @@ class _HermesTaskHandler extends TaskHandler {
     _poll();
   }
 
+  /// A user message was just sent to a room from the UI: tick now and keep
+  /// the fast cadence, so the Live Update appears within seconds instead of
+  /// after the idle interval (a short round could otherwise finish unseen).
+  bool _kickPending = false;
+
+  @override
+  void onReceiveData(Object data) {
+    if (!BackgroundListener.roomKickFromData(data)) return;
+    _botMode.expectActivity();
+    _setPollInterval(_kActiveIntervalMs, persistentAutomation: true);
+    if (_polling) {
+      _kickPending = true;
+      return;
+    }
+    unawaited(_poll());
+  }
+
   Future<void> _poll() async {
     if (!_stopFence.allowsUpdate) return;
     if (_polling) return;
     _polling = true;
+    _kickPending = false;
+    // The plugin re-posts the ongoing card with the launcher portrait on
+    // every content update: keep the neutral ">_" glyph as its large icon.
+    unawaited(_decorateServiceCard());
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
@@ -1677,6 +1735,14 @@ class _HermesTaskHandler extends TaskHandler {
               ? t.bgActive
               : t.bgWatching(keep.length),
         );
+        // The plugin re-posts its plain card (launcher portrait) on every
+        // text update: restore the ">_" glyph once it has landed.
+        unawaited(
+          Future<void>.delayed(
+            const Duration(milliseconds: 800),
+            _decorateServiceCard,
+          ),
+        );
       }
     } catch (error) {
       if (kDebugMode) {
@@ -1684,6 +1750,10 @@ class _HermesTaskHandler extends TaskHandler {
       }
     } finally {
       _polling = false;
+      if (_kickPending) {
+        _kickPending = false;
+        unawaited(_poll());
+      }
     }
   }
 
@@ -2224,6 +2294,23 @@ class BackgroundAutomationDiscovery {
                   subText: NotificationService.compactSessionLabel(
                     session?.displayTitle ?? execution.title,
                   ),
+                  rich: execution.ownerBot != null
+                      ? null
+                      : NotificationService.cronRichSpec(
+                          t: t,
+                          title: session?.displayTitle ?? execution.title,
+                          ok: execution.ok,
+                          jobId: execution.jobId,
+                          profile: normalizedProfile,
+                        ),
+                  botRoutine: execution.ownerBot == null
+                      ? null
+                      : BotRoutineDisplay(
+                          profile: execution.ownerBot!,
+                          routineTitle: execution.title,
+                          ok: execution.ok,
+                          summary: preview ?? '',
+                        ),
                 ),
             ],
             suppressByPolicy: uiForeground && !notif.evenInForeground,
@@ -2340,6 +2427,13 @@ class BackgroundAutomationDiscovery {
                 body: entry.title,
                 taskId: entry.taskId,
                 subText: 'Kanban · ${entry.taskId}',
+                rich: NotificationService.kanbanRichSpec(
+                  t: t,
+                  title: entry.title,
+                  status: status,
+                  assignee: entry.assignee,
+                  taskId: entry.taskId,
+                ),
               ),
             );
           }
@@ -2694,6 +2788,24 @@ class BackgroundListener {
 
   static Future<bool> isRunning() => FlutterForegroundTask.isRunningService;
 
+  static const String _roomKickKind = 'hermes.rooms.kick';
+
+  /// Envelope the UI sends after posting a message to a room.
+  @visibleForTesting
+  static Map<String, Object?> roomKickData() => {'kind': _roomKickKind};
+
+  static bool roomKickFromData(Object? data) =>
+      data is Map && data['kind'] == _roomKickKind;
+
+  /// Asks the running listener to watch rooms closely right now (a round
+  /// just started). No-op when the listener is not running.
+  static Future<void> kickRoomWatch() async {
+    try {
+      if (!await FlutterForegroundTask.isRunningService) return;
+      FlutterForegroundTask.sendDataToTask(roomKickData());
+    } catch (_) {}
+  }
+
   /// Actualiza el texto de la notificación persistente del foreground service
   /// (si está corriendo). Lo usa el chat LOCAL (bridge): su turno es una llamada
   /// HTTP larga a `hermes -z`, no un run pollable, así que el isolate del
@@ -2721,6 +2833,12 @@ class BackgroundListener {
         await FlutterForegroundTask.updateService(
           notificationTitle: title,
           notificationText: text,
+        );
+        unawaited(
+          Future<void>.delayed(
+            const Duration(milliseconds: 800),
+            () => PlatformRichNotifications().decorateServiceNotification(),
+          ),
         );
         await _persistDurableRestartContract(prefs);
       }
