@@ -6571,5 +6571,386 @@
     }
   },
   "settingsStartupBotsTitle": "Open Bots on launch",
-  "settingsStartupBotsSubtitle": "Start the app in Bot Mode instead of Home. Notifications still open their own screen."
+  "settingsStartupBotsSubtitle": "Start the app in Bot Mode instead of Home. Notifications still open their own screen.",
+  "roomViewAvailability": "{available} of {total} available",
+  "@roomViewAvailability": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundLabel": "Round {round}",
+  "@roomRoundLabel": {
+    "placeholders": {
+      "round": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundWorking": "{count} working",
+  "@roomRoundWorking": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundQueued": "{count} queued",
+  "@roomRoundQueued": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundNeedsYou": "{count, plural, =1{1 needs you} other{{count} need you}}",
+  "@roomRoundNeedsYou": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundFailed": "{count, plural, =1{1 failed} other{{count} failed}}",
+  "@roomRoundFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomRoundDone": "finished",
+  "roomStopAll": "Stop all",
+  "roomRoundExpand": "Show each member's state",
+  "roomStateWorking": "Working",
+  "roomStateNeedsYou": "Needs you",
+  "roomStateQueued": "Queued",
+  "roomStatePassed": "Passed",
+  "roomStateReplied": "Replied",
+  "roomStateFailed": "Failed",
+  "roomStateStopped": "Stopped",
+  "roomStateNoReply": "No reply",
+  "roomRowWorking": "Replying to your message · {elapsed}",
+  "@roomRowWorking": {
+    "placeholders": {
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "roomRowQueued": "Next in the round",
+  "roomRowPassed": "Had nothing to add",
+  "roomRowReplied": "Replied in this round",
+  "roomRowFailed": "Could not reply",
+  "roomRowStopped": "Turn cancelled",
+  "roomRowNoReply": "Did not reply this round",
+  "roomRowNeedsYou": "Wants to run {command}",
+  "@roomRowNeedsYou": {
+    "placeholders": {
+      "command": {
+        "type": "String"
+      }
+    }
+  },
+  "roomRowApproval": "Waiting for your approval",
+  "roomStatusMemberWorking": "{name} is working…",
+  "@roomStatusMemberWorking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStatusWorking": "Room is working…",
+  "roomStatusNeedsApproval": "Needs your approval",
+  "roomStatusBlocked": "Blocked — retry",
+  "roomStatusRoundFinished": "Round {round} finished · {ago}",
+  "@roomStatusRoundFinished": {
+    "placeholders": {
+      "round": {
+        "type": "int"
+      },
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStatusLastActivity": "Last activity {ago}",
+  "@roomStatusLastActivity": {
+    "placeholders": {
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "roomAgoNow": "just now",
+  "roomAgoMinutes": "{count} min ago",
+  "@roomAgoMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomAgoHours": "{count} h ago",
+  "@roomAgoHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomAgoDays": "{count} d ago",
+  "@roomAgoDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomToday": "Today",
+  "roomYesterday": "Yesterday",
+  "roomNewSinceYouLeft": "New since you left",
+  "roomPassesOne": "{name} passed · Activity ›",
+  "@roomPassesOne": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomPassesMany": "{count} passed · Activity ›",
+  "@roomPassesMany": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomThreadReplies": "{count, plural, =1{1 reply} other{{count} replies}}",
+  "@roomThreadReplies": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomThreadLastBy": "· last by @{name}",
+  "@roomThreadLastBy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomReplyInThread": "Reply in thread",
+  "roomReplyTo": "Reply to @{handle}",
+  "@roomReplyTo": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomReplyingInThread": "Replying in thread",
+  "roomLeaveThread": "Leave thread",
+  "roomApprovalWants": "wants to run",
+  "roomApprovalOnce": "Once",
+  "roomApprovalSession": "This session",
+  "roomApprovalAlways": "Always",
+  "roomApprovalDeny": "Deny",
+  "roomRetryTitle": "{name} could not reply",
+  "@roomRetryTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomRetryAction": "Retry",
+  "roomActionFailed": "Hermes rejected the action. Try again.",
+  "roomActivityTitle": "Activity",
+  "roomActivityEmpty": "No passes, failures or retries yet.",
+  "roomActivityPassedLine": "{name} passed",
+  "@roomActivityPassedLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityFailedLine": "{name} failed",
+  "@roomActivityFailedLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityCancelledLine": "{name}'s turn was cancelled",
+  "@roomActivityCancelledLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityDeferredLine": "{name} is waiting to retry",
+  "@roomActivityDeferredLine": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomActivityStopLine": "Room stopped",
+  "roomMenuMembers": "Members",
+  "roomMenuMembersSubtitle": "{count} · read-only",
+  "@roomMenuMembersSubtitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomMenuThreads": "Threads",
+  "roomMenuFiles": "Room files",
+  "roomMenuActivity": "Activity",
+  "roomMenuActivitySubtitle": "passes, failures, retries",
+  "roomMenuNotifications": "Notifications",
+  "roomMenuSettings": "Settings",
+  "roomMenuSettingsSubtitle": "name, picture",
+  "roomMenuDisband": "Disband room",
+  "roomMenuStop": "Stop the room",
+  "roomNotifyAll": "All",
+  "roomNotifyMentions": "Mentions",
+  "roomNotifyMuted": "Muted",
+  "roomNotifyNote": "Saved on this device: Hermes has no setting shared with Desktop yet. Approvals always notify.",
+  "roomMembersReadOnlyNote": "Hermes does not let clients add or remove members yet.",
+  "roomMemberAvailable": "Available",
+  "roomMemberUnavailable": "Unavailable",
+  "roomMemberFederated": "On another connection",
+  "roomSettingsName": "Name",
+  "roomSettingsPicture": "Picture",
+  "roomSettingsPictureReadOnly": "Change it in Hermes Desktop",
+  "roomRename": "Rename",
+  "roomSave": "Save",
+  "roomCancel": "Cancel",
+  "roomStopConfirmTitle": "Stop all work in this room?",
+  "roomStopConfirmBody": "Queued and running turns of every member are cancelled.",
+  "roomStopConfirm": "Stop",
+  "roomDisbandConfirmTitle": "Disband this room?",
+  "roomDisbandConfirmBody": "The room disappears for everyone, Desktop included, and its members stop working in it.",
+  "roomDisbandConfirm": "Disband",
+  "roomThreadsEmpty": "No threads with replies yet.",
+  "roomFilesEmpty": "No files shared in this room yet.",
+  "roomThreadTitle": "Thread",
+  "roomAttachCrossGateway": "Attachments only work when every member runs on this Hermes; some are on another connection.",
+  "roomAttachUnavailable": "This connection cannot upload files to the server.",
+  "roomAttachFailed": "Could not upload {name}",
+  "@roomAttachFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomFileDownload": "Download",
+  "roomFileOpen": "Open",
+  "roomFileShare": "Share",
+  "roomFileSaved": "File saved",
+  "roomFileFailed": "Could not get the file",
+  "roomComposerHint": "Message",
+  "roomDesktopReadOnly": "Desktop room · read-only",
+  "roomDesktopReadOnlyBody": "Hermes Desktop runs this room on its own; you see its latest messages here.",
+  "roomDesktopOmitted": "{count, plural, =1{1 earlier message not shown} other{{count} earlier messages not shown}}",
+  "@roomDesktopOmitted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomEmpty": "No messages yet. Say hi and @mention a bot.",
+  "roomRefreshFailed": "Could not refresh the room.",
+  "roomYou": "You",
+  "roomMoreActions": "More actions",
+  "roomCannotSend": "This connection cannot write to the room.",
+  "rosterTitle": "Bots",
+  "rosterFilterAll": "All",
+  "rosterFilterBots": "Bots",
+  "rosterFilterRooms": "Rooms",
+  "rosterNeedsYou": "Needs you",
+  "rosterRecent": "Recent",
+  "rosterNeedsYouBadge": "Needs you",
+  "rosterWorkingOn": "Working · {title}",
+  "rosterWorking": "Working…",
+  "rosterThinking": "Thinking…",
+  "rosterSpeaking": "Replying…",
+  "rosterYouSaid": "You: {text}",
+  "rosterMemberSaid": "{handle}: {text}",
+  "rosterDesktopLabel": "Desktop",
+  "rosterDesktopReadOnly": "This room runs in Hermes Desktop. Console shows it read-only until Desktop hosts it on the server.",
+  "rosterSearch": "Search",
+  "rosterSearchHint": "Search bots and rooms",
+  "rosterNew": "New",
+  "rosterEmpty": "Nothing here yet",
+  "rosterNoMatches": "No matches",
+  "rosterOpenProfile": "Open profile",
+  "rosterNoPreview": "No messages yet",
+  "rosterRoomMembers": "{count, plural, =1{1 member} other{{count} members}}",
+  "botChatComposerHint": "Message {name}",
+  "botProfileTitle": "Bot profile",
+  "botProfileChat": "Chat",
+  "botProfileRooms": "Rooms · {count}",
+  "botProfileRoutines": "Routines",
+  "botProfileNow": "Now",
+  "botProfileIdle": "Not working on anything right now",
+  "botProfileWorkingOn": "Working on «{title}»",
+  "botProfileWorkingInRoom": "Working in «{room}»",
+  "botProfileNeedsYouInRoom": "Needs you in «{room}»",
+  "botProfileLiveThinking": "Thinking in its chat",
+  "botProfileLiveWorking": "Using tools in its chat",
+  "botProfileLiveReplying": "Replying in its chat",
+  "botProfileLiveApproval": "Waiting for your approval",
+  "botProfileStop": "Stop",
+  "botProfileStopFailed": "Could not stop. Try again.",
+  "botProfileModelSection": "Model",
+  "botProfileModel": "Model",
+  "botProfileReasoning": "Reasoning",
+  "botProfileReasoningDefault": "Default",
+  "botProfileModelUnavailable": "Model options are unavailable on this server",
+  "botProfileModelSaved": "Model updated",
+  "botProfileReasoningSaved": "Reasoning updated",
+  "botProfileProfileSection": "Profile",
+  "botProfileSoul": "Personality (SOUL)",
+  "botProfileSkills": "Skills and tools",
+  "botProfileMemory": "Memory",
+  "botProfileMachine": "Machine",
+  "botProfileEditIdentity": "Edit name and face",
+  "botProfileTasks": "Tasks",
+  "reasoningEffortNone": "Off",
+  "reasoningEffortMinimal": "Minimal",
+  "reasoningEffortLow": "Low",
+  "reasoningEffortMedium": "Medium",
+  "reasoningEffortHigh": "High",
+  "reasoningEffortXhigh": "Extra high",
+  "reasoningEffortMax": "Max",
+  "reasoningEffortUltra": "Ultra",
+  "rosterHideHidden": "Hide hidden bots",
+  "rosterShowHidden": "{count, plural, =1{Show 1 hidden bot} other{Show {count} hidden bots}}",
+  "rosterPin": "Pin",
+  "rosterUnpin": "Unpin",
+  "rosterHide": "Hide",
+  "rosterUnhide": "Show",
+  "rosterMoveToSection": "Move to section…",
+  "rosterUpdateFailed": "Could not update the roster. Try again.",
+  "notifBotModeListenerOn": "Bots and rooms can reach you here: approvals, @mentions, round summaries and live progress, with Approve, Deny, Reply and Stop right in the notification.",
+  "notifBotModeListenerOff": "Background listening is off, so Bot and room alerts and the home-screen widgets only update while Hermes is open.",
+  "notifLiveUpdatesTitle": "Live Updates",
+  "notifLiveUpdatesSub": "Show working Bots and rooms in the status bar and lock screen (Android 16+)"
 }

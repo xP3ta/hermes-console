@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="botw_bots_name">Hermes · Bots</string>
+    <string name="botw_bots_description">Tus Bots de un vistazo: quién trabaja y quién te necesita</string>
+    <string name="botw_needs_you_name">Hermes · Te necesitan</string>
+    <string name="botw_needs_you_description">Aprobaciones pendientes con Aprobar y Denegar</string>
+    <string name="botw_room_name">Hermes · Sala</string>
+    <string name="botw_room_description">La sala más activa: ronda, último mensaje y Detener</string>
+    <string name="botw_quick_ask_name">Hermes · Pregunta rápida</string>
+    <string name="botw_quick_ask_description">Pregunta a un Bot o dicta con un toque</string>
+    <string name="botw_status_name">Hermes · Estado</string>
+    <string name="botw_status_description">Conexión y cuántos Bots están trabajando</string>
+    <string name="botw_bots_title">Bots</string>
+    <string name="botw_needs_you_title">Te necesitan</string>
+    <string name="botw_all_clear">Todo en orden</string>
+    <string name="botw_empty_setup">Abre Hermes para conectar</string>
+    <string name="botw_no_bots">Aún no hay Bots</string>
+    <string name="botw_no_rooms">Ninguna sala activa</string>
+    <string name="botw_approve">Aprobar</string>
+    <string name="botw_deny">Denegar</string>
+    <string name="botw_open">Abrir</string>
+    <string name="botw_stop">Detener todo</string>
+    <string name="botw_working">trabajando…</string>
+    <string name="botw_room_working">Trabajando…</string>
+    <string name="botw_state_working">Trabaja</string>
+    <string name="botw_state_replied">Respondió</string>
+    <string name="botw_state_needs_you">Te necesita</string>
+    <string name="botw_state_queued">En cola</string>
+    <string name="botw_ask">Pregunta a %1$s…</string>
+    <string name="botw_dictate">Dictar</string>
+    <string name="botw_offline">Sin conexión</string>
+    <string name="botw_all_idle">Todos los Bots en reposo</string>
+    <string name="botw_working_count">%1$d trabajando</string>
+    <string name="botw_needs_you_count">%1$d te necesitan</string>
+    <string name="botw_preview_working">builder · Arreglando el test de login</string>
+    <string name="botw_preview_approval">quiere ejecutar “gh pr ready 51”</string>
+    <string name="botw_preview_room_name">Revisión de diseño</string>
+    <string name="botw_preview_room_line">review: Bien. Un detalle de nombres y está listo para fusionar.</string>
+    <string name="botw_preview_ask">Pregunta a builder…</string>
+    <string name="botw_preview_status">Servidor de casa</string>
+    <string name="botw_preview_status_line">2 trabajando</string>
+    <string name="botw_preview_working_count">2 trabajando</string>
+    <string name="botw_preview_approval_2">scout quiere editar 3 archivos en lib/auth</string>
+</resources>

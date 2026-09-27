@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 // Ajustes de notificaciones locales. Privacidad: todo on-device, sin FCM ni
 // Google; las dispara la propia app. El usuario elige qué eventos avisan.
 import 'package:flutter/material.dart';
@@ -8,6 +10,7 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/notifications/background_listener.dart';
 import '../services/notifications/notification_service.dart';
+import '../services/notifications/rich_notifications.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
@@ -616,6 +619,25 @@ class _NotificationSettingsScreenState
                 s.notifBgRestartNotice,
                 style: TextStyle(fontSize: 11, color: colors.textSecondary),
               ),
+            ),
+          // T606: Bot/room notifications and widgets depend on the listener.
+          Padding(
+            key: const ValueKey('notif-bot-mode-listener-note'),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              _bgRunning && on ? s.notifBotModeListenerOn : s.notifBotModeListenerOff,
+              style: TextStyle(fontSize: 11, color: colors.textSecondary),
+            ),
+          ),
+          if (Platform.isAndroid)
+            ListTile(
+              key: const ValueKey('notif-live-updates-settings'),
+              dense: true,
+              title: Text(s.notifLiveUpdatesTitle),
+              subtitle: Text(s.notifLiveUpdatesSub),
+              trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+              onTap: () =>
+                  unawaited(PlatformRichNotifications().openPromotionSettings()),
             ),
         ],
       ),

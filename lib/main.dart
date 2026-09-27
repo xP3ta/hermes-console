@@ -70,6 +70,7 @@ import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
+import 'core/services/notifications/ui_notification_actions.dart';
 import 'l10n/app_localizations.dart';
 
 /// Observador global de rutas. Lo usa [ChatScreen] (vía RouteAware) para saber
@@ -1145,6 +1146,15 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     });
     // Al pulsar una notificación del agente, navega a la sesión correcta.
     widget.notifications.onOpenSession = _openSessionFromNotification;
+    // Approve / Deny / Stop / Reply tapped on rich notifications or Bot Mode
+    // widgets (spec 070): same server calls as the in-app controls.
+    if (Platform.isAndroid) {
+      UiNotificationActionHandler(
+        connManager: widget.connManager,
+        activeChats: activeChats,
+        prefs: widget.connManager.prefs,
+      ).start();
+    }
     // Regla 2: avisos discretos de eventos en OTRO chat con la app delante.
     _inAppSub = widget.notifications.inAppNotices.listen(_showInAppNotice);
     // Presencia (006): saluda al abrir y reacciona a la actividad de chat.

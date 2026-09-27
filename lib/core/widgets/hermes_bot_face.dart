@@ -58,6 +58,11 @@ final class HermesBlobatarFaceVisual extends HermesBotFaceVisual {
   }
 
   String get resolvedKind => _BlobatarLayout.create(seed, pinnedKind).shape;
+
+  /// Head colour of this face: the bot's identity colour wherever its name
+  /// or accents appear next to the face.
+  Color get headColor =>
+      _colorFromHex(_BlobatarLayout.create(seed, pinnedKind).headHex);
 }
 
 final class HermesClassicFaceVisual extends HermesBotFaceVisual {
@@ -90,7 +95,16 @@ final class HermesClassicFaceVisual extends HermesBotFaceVisual {
 ///
 /// This is intentionally independent from the persisted visual identity: a
 /// bot can change activity while keeping the exact same Blobatar silhouette.
-enum HermesBotFaceMotionState { idle, listening, thinking, speaking }
+enum HermesBotFaceMotionState {
+  idle,
+  listening,
+  thinking,
+  speaking,
+
+  /// Busy on a task: eyes scan a line left→right and drop, like reading or
+  /// typing, with a small key-press bob.
+  working,
+}
 
 class HermesBotFace extends StatefulWidget {
   final HermesBotFaceVisual visual;
@@ -99,6 +113,25 @@ class HermesBotFace extends StatefulWidget {
   final bool animate;
   final HermesBotFaceMotionState motionState;
 
+  /// Optional shared clock (0..1 over [clockDuration]). When set, the face
+  /// creates no ticker of its own: a living roster face drives face motion,
+  /// ring and nudge from ONE controller (spec 070 § Motion).
+  final Animation<double>? clock;
+
+  /// Amplitude multiplier for glance, bob, breath and tilt (blink is not
+  /// scaled). 1 keeps the Blobatar reference motion; living roster faces
+  /// use more so motion reads at 44-60 dp.
+  final double motionGain;
+
+  /// Amplitude multiplier for eye glances/scans only; defaults to
+  /// [motionGain]. Eyes carry most of a small face's life, so living faces
+  /// move them more than the body.
+  final double? eyeGain;
+
+  /// Period of the face clock; external clocks must use the same period so
+  /// the seeded breath/blink/saccade periods stay continuous.
+  static const clockDuration = Duration(days: 1);
+
   const HermesBotFace({
     super.key,
     required this.visual,
@@ -106,6 +139,9 @@ class HermesBotFace extends StatefulWidget {
     this.semanticLabel,
     this.animate = false,
     this.motionState = HermesBotFaceMotionState.idle,
+    this.clock,
+    this.motionGain = 1,
+    this.eyeGain,
   }) : assert(size > 0);
 
   @override
@@ -117,7 +153,7 @@ class _HermesBotFaceState extends State<HermesBotFace>
   // A long shared clock keeps all independently seeded periods smooth while
   // still bounding controller values. Resetting once a day is outside any
   // realistic preview session.
-  static const _clockDuration = Duration(days: 1);
+  static const _clockDuration = HermesBotFace.clockDuration;
 
   static const _stoppedClock = AlwaysStoppedAnimation<double>(0);
 
@@ -145,6 +181,12 @@ class _HermesBotFaceState extends State<HermesBotFace>
         !reduceMotion &&
         TickerMode.valuesOf(context).enabled;
     _motionEnabled = enabled;
+    if (widget.clock != null) {
+      // Driven externally: never hold an idle controller of our own.
+      _clock?.dispose();
+      _clock = null;
+      return;
+    }
     if (enabled) {
       final clock = _clock ??= AnimationController(
         vsync: this,
@@ -174,10 +216,12 @@ class _HermesBotFaceState extends State<HermesBotFace>
           key: const ValueKey('hermes-controlled-bot-face'),
           painter: _HermesBotFacePainter(
             widget.visual,
-            clock: _clock ?? _stoppedClock,
+            clock: widget.clock ?? _clock ?? _stoppedClock,
             motionEnabled: _motionEnabled,
             clockDuration: _clockDuration,
             motionState: widget.motionState,
+            motionGain: widget.motionGain,
+            eyeGain: widget.eyeGain ?? widget.motionGain,
           ),
         ),
       ),
@@ -195,6 +239,8 @@ final class _HermesBotFacePainter extends CustomPainter {
   final bool motionEnabled;
   final Duration clockDuration;
   final HermesBotFaceMotionState motionState;
+  final double motionGain;
+  final double eyeGain;
   final _BlobatarLayout? _blobatarLayout;
   final _BlobatarMotionProfile? _motionProfile;
 
@@ -204,6 +250,8 @@ final class _HermesBotFacePainter extends CustomPainter {
     required this.motionEnabled,
     required this.clockDuration,
     required this.motionState,
+    this.motionGain = 1,
+    this.eyeGain = 1,
   }) : _blobatarLayout = switch (visual) {
          final HermesBlobatarFaceVisual face => _BlobatarLayout.create(
            face.seed,
@@ -223,13 +271,15 @@ final class _HermesBotFacePainter extends CustomPainter {
     switch (visual) {
       case HermesBlobatarFaceVisual():
         final frame = motionEnabled
-            ? _motionProfile!.sample(
-                Duration(
-                  microseconds: (clockDuration.inMicroseconds * clock.value)
-                      .round(),
-                ),
-                state: motionState,
-              )
+            ? _motionProfile!
+                  .sample(
+                    Duration(
+                      microseconds: (clockDuration.inMicroseconds * clock.value)
+                          .round(),
+                    ),
+                    state: motionState,
+                  )
+                  .scaled(motionGain, eyeGain: eyeGain)
             : HermesBotFaceMotionSnapshot.staticFrame;
         _paintBlobatar(canvas, size, _blobatarLayout!, frame);
       case final HermesClassicFaceVisual face:
@@ -241,7 +291,27 @@ final class _HermesBotFacePainter extends CustomPainter {
   bool shouldRepaint(_HermesBotFacePainter oldDelegate) =>
       !_sameVisual(oldDelegate.visual, visual) ||
       oldDelegate.motionEnabled != motionEnabled ||
-      oldDelegate.motionState != motionState;
+      oldDelegate.motionState != motionState ||
+      oldDelegate.motionGain != motionGain ||
+      oldDelegate.eyeGain != eyeGain;
+}
+
+/// Paints one static frame of [visual] into [canvas] (no ticker, no widget
+/// tree). Used to rasterise Bot faces for notification `Person` icons and
+/// home-screen widgets, so they match the in-app face exactly.
+void paintHermesBotFaceFrame(
+  Canvas canvas,
+  Size size,
+  HermesBotFaceVisual visual, {
+  HermesBotFaceMotionState motionState = HermesBotFaceMotionState.idle,
+}) {
+  _HermesBotFacePainter(
+    visual,
+    clock: const AlwaysStoppedAnimation<double>(0),
+    motionEnabled: false,
+    clockDuration: HermesBotFace.clockDuration,
+    motionState: motionState,
+  ).paint(canvas, size);
 }
 
 bool _sameVisual(HermesBotFaceVisual a, HermesBotFaceVisual b) =>
@@ -280,23 +350,46 @@ void _paintBlobatar(
   }
   canvas.drawPath(layout.bodyPath.path, head);
 
+  final eyeColor = _colorFromHex(layout.eyeHex);
   final eye = Paint()
-    ..color = _colorFromHex(layout.eyeHex)
+    ..color = eyeColor
     ..style = PaintingStyle.fill;
+  // Living faces get a catchlight (dark eyes) or a pupil (light eyes) that
+  // leads the glance, so a look left/right reads at roster size. The static
+  // reference frame (notifications, widgets, reduced motion) stays exactly
+  // the Blobatar reference.
+  final alive = !identical(motion, HermesBotFaceMotionSnapshot.staticFrame);
+  final lightEyes = eyeColor.computeLuminance() > .45;
   for (final value in layout.eyes) {
+    final cx = value.cx + motion.eyeOffsetX;
+    final cy = value.cy + motion.eyeOffsetY;
+    final rx = value.rx * motion.eyeScaleX;
+    final ry = value.ry * motion.eyeScaleY * motion.blinkScaleY;
     canvas.drawPath(
-      _superellipse(
-        _BlobEye(
-          value.cx + motion.eyeOffsetX,
-          value.cy + motion.eyeOffsetY,
-          value.rx * motion.eyeScaleX,
-          value.ry * motion.eyeScaleY * motion.blinkScaleY,
-          value.n,
-          value.rot,
-        ),
-      ).path,
+      _superellipse(_BlobEye(cx, cy, rx, ry, value.n, value.rot)).path,
       eye,
     );
+    // Hidden while the lid is mostly shut (blink or squint).
+    if (!alive || ry < value.ry * .45) continue;
+    final lead = Offset(
+      (motion.eyeOffsetX * .22).clamp(-rx * .45, rx * .45),
+      (motion.eyeOffsetY * .22).clamp(-ry * .45, ry * .45),
+    );
+    if (lightEyes) {
+      final r = math.min(rx, ry) * .62;
+      canvas.drawCircle(
+        Offset(cx, cy) + lead,
+        r,
+        Paint()..color = const Color(0xff1c1917).withValues(alpha: .92),
+      );
+    } else {
+      final r = math.max(.9, math.min(rx, ry) * .38);
+      canvas.drawCircle(
+        Offset(cx - rx * .28, cy - ry * .34) + lead,
+        r,
+        Paint()..color = const Color(0xffffffff).withValues(alpha: .82),
+      );
+    }
   }
   canvas.restore();
 }
@@ -329,6 +422,23 @@ final class HermesBotFaceMotionSnapshot {
     required this.eyeScaleY,
     required this.headTiltRadians,
   });
+
+  /// Same pose with every displacement multiplied by [gain] (blink and eye
+  /// scale keep their shape).
+  HermesBotFaceMotionSnapshot scaled(double gain, {double? eyeGain}) =>
+      gain == 1 && (eyeGain ?? gain) == 1
+      ? this
+      : HermesBotFaceMotionSnapshot(
+          breatheScaleX: 1 + (breatheScaleX - 1) * gain,
+          breatheScaleY: 1 + (breatheScaleY - 1) * gain,
+          bobY: bobY * gain,
+          blinkScaleY: blinkScaleY,
+          eyeOffsetX: eyeOffsetX * (eyeGain ?? gain),
+          eyeOffsetY: eyeOffsetY * (eyeGain ?? gain),
+          eyeScaleX: eyeScaleX,
+          eyeScaleY: eyeScaleY,
+          headTiltRadians: headTiltRadians * gain,
+        );
 
   static const staticFrame = HermesBotFaceMotionSnapshot(
     breatheScaleX: 1,
@@ -431,6 +541,21 @@ final class _BlobatarMotionProfile {
     final speakingPulse = Curves.easeInOut.transform(
       _alternateProgress(elapsedMs + breathePhaseMs, 420),
     );
+    // Thinking: the gaze wanders slowly along the top of the eye, left and
+    // right, while the head stays tilted.
+    final wander = math.sin((elapsedMs + saccadePhaseMs) / 2600 * 2 * math.pi);
+    // Working: read one "line" left→right in 1.1 s, snap back in 0.25 s.
+    final scanCycle = _cycleProgress(elapsedMs + blinkPhaseMs, 1350);
+    final scan = scanCycle < 0.815
+        ? -1 + 2 * Curves.easeInOut.transform(scanCycle / 0.815)
+        : 1 - 2 * Curves.easeOut.transform((scanCycle - 0.815) / 0.185);
+    final keyPress = _alternateProgress(elapsedMs + bobPhaseMs, 170);
+    // Every ~11 s a content squint ("happy eyes"): the eyes narrow to a
+    // smile for ~0.7 s, then open again.
+    final squintCycle = _cycleProgress(elapsedMs + saccadePhaseMs * 1.7, 11000);
+    final squint = squintCycle < 0.064
+        ? math.sin(squintCycle / 0.064 * math.pi)
+        : 0.0;
     return switch (state) {
       HermesBotFaceMotionState.idle => HermesBotFaceMotionSnapshot(
         breatheScaleX: 1 + 0.022 * breathe,
@@ -438,9 +563,9 @@ final class _BlobatarMotionProfile {
         bobY: -1.1 * bob,
         blinkScaleY: blink,
         eyeOffsetX: glance.dx,
-        eyeOffsetY: glance.dy,
-        eyeScaleX: 1,
-        eyeScaleY: 1,
+        eyeOffsetY: glance.dy - squint * 0.6,
+        eyeScaleX: 1 + 0.08 * squint,
+        eyeScaleY: 1 - 0.5 * squint,
         headTiltRadians: followedGlance.dx * 0.008,
       ),
       HermesBotFaceMotionState.listening => HermesBotFaceMotionSnapshot(
@@ -459,8 +584,10 @@ final class _BlobatarMotionProfile {
         breatheScaleY: 1 - 0.012 * breathe,
         bobY: -0.65 * bob,
         blinkScaleY: blink,
-        eyeOffsetX: lookX * 0.78 + glance.dx * 0.18,
-        eyeOffsetY: -lookY.abs() * 0.78 + glance.dy * 0.1,
+        // Up-left ↔ up-right, never a sub-pixel twitch.
+        eyeOffsetX:
+            math.max(lookX.abs(), 1.6) * 0.9 * wander + glance.dx * 0.18,
+        eyeOffsetY: -math.max(lookY.abs(), 1.3) * 0.9 + glance.dy * 0.1,
         eyeScaleX: 1,
         eyeScaleY: 0.9,
         headTiltRadians:
@@ -477,6 +604,17 @@ final class _BlobatarMotionProfile {
         eyeScaleY: 1 - 0.08 * speakingPulse,
         headTiltRadians:
             (lookX.isNegative ? -1 : 1) * (speakingPulse - 0.5) * 0.018,
+      ),
+      HermesBotFaceMotionState.working => HermesBotFaceMotionSnapshot(
+        breatheScaleX: 1 + 0.012 * breathe,
+        breatheScaleY: 1 - 0.01 * breathe,
+        bobY: -0.35 * bob - 0.35 * keyPress,
+        blinkScaleY: blink,
+        eyeOffsetX: scan * math.max(lookX.abs(), 1.8) * 1.05,
+        eyeOffsetY: lookY.abs() * 0.55,
+        eyeScaleX: 1.04,
+        eyeScaleY: 0.94,
+        headTiltRadians: scan * 0.012,
       ),
     };
   }

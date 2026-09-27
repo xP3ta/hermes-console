@@ -1,3 +1,5 @@
+import '../bots/data/gateway_socket_meter.dart';
+import '../bots/state/bot_chat_target.dart';
 import 'bot_room_link.dart';
 import 'bot_mention_roster.dart';
 import 'bot_profile_client.dart';
@@ -1265,6 +1267,8 @@ class TuiGatewayClient
         BotMentionRosterGateway,
         BotRoomLinkGateway,
         BotProfileGateway,
+        BotModelGateway,
+        BotChatTitleLookup,
         BotAvatarGenerationGateway,
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
@@ -1468,6 +1472,7 @@ class TuiGatewayClient
       throw StateError('Hermes Desktop connection was cancelled');
     }
     final uri = _webSocketUri(auth);
+    GatewaySocketMeter.instance.recordOpen();
     final channel =
         _channelFactory?.call(uri, auth.headers) ??
         IOWebSocketChannel.connect(
@@ -3032,16 +3037,49 @@ class TuiGatewayClient
     );
   }
 
+  /// `groups.state` including the server driver evidence
+  /// (`driver_status`: running/working/blocked/counts/pending_actions).
+  /// `driverStatus` is `null` when the gateway omits or malforms it.
+  Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})>
+  groupStateWithDriver(String roomId, {int? generation}) async {
+    final proof = await _requireGroupMethod(
+      GroupMethod.state,
+      generation: generation,
+    );
+    final result = await _groupStateResultOnLease(roomId, lease: proof.lease);
+    return (
+      room: _parseGroupState(roomId, result),
+      driverStatus: RoomDriverStatus.tryParse(result['driver_status']),
+    );
+  }
+
+  Future<Map<String, dynamic>> _groupStateResultOnLease(
+    String roomId, {
+    required _GroupSocketLease lease,
+    bool includeDisbanded = false,
+  }) {
+    final room = _groupIdentifier(roomId, 'room id');
+    return _requestGroupOnLease(lease, 'groups.state', {
+      'room_id': room,
+      'include_disbanded': includeDisbanded,
+    });
+  }
+
   Future<HostedGroupRoom> _groupStateOnLease(
     String roomId, {
     required _GroupSocketLease lease,
     bool includeDisbanded = false,
   }) async {
+    final result = await _groupStateResultOnLease(
+      roomId,
+      lease: lease,
+      includeDisbanded: includeDisbanded,
+    );
+    return _parseGroupState(roomId, result);
+  }
+
+  HostedGroupRoom _parseGroupState(String roomId, Map<String, dynamic> result) {
     final room = _groupIdentifier(roomId, 'room id');
-    final result = await _requestGroupOnLease(lease, 'groups.state', {
-      'room_id': room,
-      'include_disbanded': includeDisbanded,
-    });
     try {
       final state = HostedGroupRoom.fromJson(result['room']);
       if (state.roomId != room) {
@@ -3305,6 +3343,35 @@ class TuiGatewayClient
       'task_id': _groupIdentifier(taskId, 'task id'),
     });
     return _groupStateOnLease(room, lease: proof.lease);
+  }
+
+  /// Desktop's Bot Chat registry lookup: `session.list {title: "Bot Chat",
+  /// include_hidden: true, profile}`. Window-free and resolved server-side to
+  /// the compression tip (`resolved_id`). Returns `null` when no row exists.
+  @override
+  Future<AgentProfileSessionSummary?> findBotChatByTitle(String profile) async {
+    final owner = profile.trim();
+    if (!RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(owner)) {
+      throw const FormatException('invalid profile');
+    }
+    await connect();
+    final result = await _request('session.list', {
+      'title': botChatTitle,
+      'include_hidden': true,
+      'profile': owner,
+    });
+    final rows = result['sessions'];
+    if (rows is! List) {
+      throw const TuiGatewayRpcError(
+        'session.list',
+        'Hermes returned an invalid Bot Chat lookup',
+      );
+    }
+    for (final row in rows) {
+      final summary = AgentProfileSessionSummary.tryParse(row);
+      if (summary != null && summary.title == botChatTitle) return summary;
+    }
+    return null;
   }
 
   Future<HostedGroupRoom> approveGroupTask({
@@ -3643,7 +3710,9 @@ class TuiGatewayClient
     method,
     params,
   ) async {
-    if (_connection.readOnly) {
+    // Reads of the bot's model catalog/reasoning stay available read-only.
+    if (_connection.readOnly &&
+        !const {'model.options', 'config.get'}.contains(method)) {
       throw const TuiGatewayRpcError(
         'profiles.configure',
         'Connection is read only',
@@ -3669,6 +3738,18 @@ class TuiGatewayClient
     String profile,
     Map<String, dynamic> changes,
   ) => _botProfiles.configureBotProfile(profile, changes);
+
+  @override
+  Future<DesktopModelCatalog> botModelOptions(String profile) =>
+      _botProfiles.botModelOptions(profile);
+
+  @override
+  Future<String?> botReasoning(String profile) =>
+      _botProfiles.botReasoning(profile);
+
+  @override
+  Future<void> setBotReasoning(String profile, String effort) =>
+      _botProfiles.setBotReasoning(profile, effort);
 
   @override
   Future<bool> canGenerateBotAvatar() => _botProfiles.canGenerateBotAvatar();
@@ -3971,6 +4052,19 @@ class TuiGatewayClient
     await connect();
     var current = await _botModeProfile(owner);
     _rejectConcurrentBotChatPin(current, storedId);
+    // Adopt-before-mint (Desktop parity): re-check the server-resolved
+    // canonical chat right before titling the new row. Another device may
+    // have created it since this screen resolved its target; titling ours
+    // too would fork the forever-chat. The untitled row stays unpinned.
+    final canonical = current.canonicalSession;
+    if (canonical != null &&
+        canonical.id != storedId &&
+        canonical.resolvedId != storedId) {
+      throw const TuiGatewayRpcError(
+        'profiles.configure',
+        'Canonical Bot Chat pin changed concurrently',
+      );
+    }
 
     final title = await _request('session.title', {
       'session_id': runtimeId,

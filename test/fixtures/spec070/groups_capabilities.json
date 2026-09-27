@@ -1,0 +1,48 @@
+{
+  "method": "groups.capabilities",
+  "params": {},
+  "result": {
+    "protocol_version": 2,
+    "driver": true,
+    "persistent_process": true,
+    "authority_gateway_id": "gw-home-1",
+    "room_link": {
+      "enabled": false,
+      "reason": "gateway_roomlink_secret_unavailable"
+    },
+    "features": [
+      "authority_epoch",
+      "coordinator_fencing",
+      "room_identity",
+      "monotonic_log",
+      "idempotent_send",
+      "replayable_disband",
+      "typed_events",
+      "actor_identity",
+      "log_replication",
+      "authority_takeover"
+    ],
+    "methods": [
+      "groups.capabilities",
+      "groups.list",
+      "groups.create",
+      "groups.state",
+      "groups.send",
+      "groups.rename",
+      "groups.log",
+      "groups.disband",
+      "groups.replicate",
+      "groups.replica_state",
+      "groups.promote",
+      "groups.demote",
+      "groups.stop",
+      "groups.retry",
+      "groups.approve",
+      "groups.peer.invite",
+      "groups.peer.revoke",
+      "groups.peer.register"
+    ],
+    "max_log_limit": 500
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

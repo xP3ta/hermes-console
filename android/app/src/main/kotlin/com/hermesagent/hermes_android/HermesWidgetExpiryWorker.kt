@@ -23,8 +23,11 @@ internal class HermesWidgetExpiryWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val state = HermesWidgetState.from(HomeWidgetPlugin.getData(applicationContext))
-        if (!state.isStale(System.currentTimeMillis())) return Result.success()
+        val data = HomeWidgetPlugin.getData(applicationContext)
+        val now = System.currentTimeMillis()
+        val legacyStale = HermesWidgetState.from(data).isStale(now)
+        val botModeStale = BotModeWidgetState.from(data).isStale(now)
+        if (!legacyStale && !botModeStale) return Result.success()
         requestWidgetUpdates(applicationContext)
         return Result.success()
     }
@@ -52,9 +55,9 @@ internal object HermesWidgetExpiryScheduler {
 }
 
 private fun requestWidgetUpdates(context: Context) {
-    updateReceiver(context, NewSessionWidgetProvider::class.java)
-    updateReceiver(context, HermesCompactWidgetProvider::class.java)
-    updateReceiver(context, HermesControlWidgetProvider::class.java)
+    // NewSessionWidgetProvider, HermesCompactWidgetProvider and
+    // HermesControlWidgetProvider are part of this list (legacy names).
+    for (receiver in botModeWidgetReceivers()) updateReceiver(context, receiver)
 }
 
 private fun updateReceiver(

@@ -1,0 +1,18 @@
+{
+  "method": "groups.approve",
+  "params": {
+    "room_id": "room-devs",
+    "member_id": "member-astra",
+    "task_id": "task-astra-2",
+    "execution_generation": 1,
+    "choice": "once",
+    "request_id": "apr-1"
+  },
+  "result": {
+    "approved": true,
+    "result": {
+      "resolved": true
+    }
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}

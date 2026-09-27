@@ -137,7 +137,8 @@ void main() {
           find.byKey(const ValueKey('mission-pinned-strip')),
           findsOneWidget,
         );
-        expect(find.text('Otros bots'), findsOneWidget);
+        // Spec 070 S1: pinned faces, then everything else by recency.
+        expect(find.text('Recientes'), findsOneWidget);
         expect(find.text('Sin sección'), findsNothing);
         if (work) {
           await tester.tap(
@@ -204,7 +205,7 @@ void main() {
         find.byKey(const ValueKey('mission-pinned-tile-pinned')),
         findsOneWidget,
       );
-      expect(find.text('Sin sección'), findsOneWidget);
+      expect(find.text('Recientes'), findsOneWidget);
       await tester.tap(heading);
       await tester.pumpAndSettle();
       expect(builder, findsNothing);
@@ -261,6 +262,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Team'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('roster-search')));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('mission-bot-search')),
         'visible',
@@ -275,7 +278,7 @@ void main() {
   );
 
   testWidgets(
-    'same-name sections remain independent and sort before Unassigned',
+    'same-name sections remain independent and sort before Recent',
     (tester) async {
       tester.view.physicalSize = const Size(600, 1100);
       tester.view.devicePixelRatio = 1;
@@ -303,9 +306,9 @@ void main() {
       final a = section('section:a');
       final b = section('section:b');
       final z = section('section:z');
-      final loose = section('unassigned');
+      final loose = find.byKey(const ValueKey('roster-section-recent'));
       expect(find.text('Alpha'), findsNWidgets(2));
-      expect(find.text('Unassigned'), findsOneWidget);
+      expect(find.text('Recent'), findsOneWidget);
       expect(tester.getTopLeft(a).dy, lessThan(tester.getTopLeft(b).dy));
       expect(tester.getTopLeft(b).dy, lessThan(tester.getTopLeft(z).dy));
       expect(tester.getTopLeft(z).dy, lessThan(tester.getTopLeft(loose).dy));

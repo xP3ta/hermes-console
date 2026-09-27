@@ -1,0 +1,33 @@
+{
+  "method": "session.active_list",
+  "params": {},
+  "result": {
+    "sessions": [
+      {
+        "current": false,
+        "id": "rt-hermes-1",
+        "last_active": 1790000595.0,
+        "message_count": 213,
+        "model": "gpt-5.5",
+        "preview": "Running tests…",
+        "session_key": "20260920_100000_tip001",
+        "started_at": 1790000000.0,
+        "status": "working",
+        "title": "Bot Chat"
+      },
+      {
+        "current": false,
+        "id": "rt-astra-1",
+        "last_active": 1790000100.0,
+        "message_count": 30,
+        "model": "claude-opus-5",
+        "preview": "Reviewing",
+        "session_key": "20260901_120000_astra1",
+        "started_at": 1790000000.0,
+        "status": "idle",
+        "title": "Bot Chat"
+      }
+    ]
+  },
+  "source": "hermes-agent apps/shared/src/gateway-contract.generated.ts + tui_gateway handlers (e62a47ab68)"
+}
