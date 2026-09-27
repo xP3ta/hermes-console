@@ -23,6 +23,11 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'theme_studio_screen.dart';
+import '../design/hermes_design.dart'
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog;
 
 @visibleForTesting
 Future<Uint8List> readThemeImportBytes(PlatformFile selected) async {
@@ -166,22 +171,22 @@ class _ThemesScreenState extends State<ThemesScreen> {
   Future<void> _delete(ThemeProfile profile) async {
     final root = _root;
     if (root == null) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(Strings.of(context).themesDeleteTitle),
-        content: Text(Strings.of(context).themesDeleteBody(profile.name)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(Strings.of(context).themesDeleteAction),
-          ),
-        ],
-      ),
+      title: Strings.of(context).themesDeleteTitle,
+      message: Strings.of(context).themesDeleteBody(profile.name),
+      actions: [
+        HermesDialogAction(
+          label: MaterialLocalizations.of(context).cancelButtonLabel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: Strings.of(context).themesDeleteAction,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirmed != true) return;
     await root.themeProfileStore.delete(profile.id);
@@ -224,45 +229,25 @@ class _ThemesScreenState extends State<ThemesScreen> {
       final decoded = ThemeProfileCodec.decodeBytes(bytes);
       final validation = ThemeProfileValidator.validate(decoded.profile);
       if (!mounted) return;
-      final confirmed = await showDialog<bool>(
+      final confirmed = await showHermesDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(Strings.of(context).themesImport),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                decoded.profile.name,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                validation.isActivatable
-                    ? Strings.of(context).themesImportValid
-                    : Strings.of(context).themesImportDraft,
-              ),
-              if (decoded.warnings.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  Strings.of(
-                    context,
-                  ).themesImportFallbacks(decoded.warnings.length),
-                ),
-              ],
-            ],
+        title: Strings.of(context).themesImport,
+        message: [
+          decoded.profile.name,
+          validation.isActivatable
+              ? Strings.of(context).themesImportValid
+              : Strings.of(context).themesImportDraft,
+          if (decoded.warnings.isNotEmpty)
+            Strings.of(context).themesImportFallbacks(decoded.warnings.length),
+        ].join('\n\n'),
+        actions: [
+          HermesDialogAction(
+            label: MaterialLocalizations.of(context).cancelButtonLabel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text(Strings.of(context).themesImport),
-            ),
-          ],
-        ),
+          HermesDialogAction(label: Strings.of(context).themesImport, value: true),
+        ],
       );
       if (confirmed != true || !mounted) return;
       final raw = utf8.decode(bytes, allowMalformed: false);

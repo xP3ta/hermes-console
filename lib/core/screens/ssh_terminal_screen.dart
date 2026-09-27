@@ -15,6 +15,8 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import 'sftp_browser_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesFormDialog;
 
 class SshTerminalScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -322,50 +324,38 @@ class _CommandsEditorState extends State<_CommandsEditor> {
     final cmdCtrl = TextEditingController(
       text: index != null ? _items[index].command : '',
     );
-    final colors = Theme.of(context).hermes;
-    final saved = await showDialog<bool>(
+    final saved = await showHermesFormDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          index == null
-              ? Strings.of(context).sshNewCommand
-              : Strings.of(context).sshEditCommand,
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: labelCtrl,
-              decoration: InputDecoration(
-                labelText: Strings.of(context).sshLabel,
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: cmdCtrl,
-              autocorrect: false,
-              enableSuggestions: false,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-              decoration: InputDecoration(
-                labelText: Strings.of(context).sshCommand,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(Strings.of(context).commonCancel),
+      title: index == null
+          ? Strings.of(context).sshNewCommand
+          : Strings.of(context).sshEditCommand,
+      body: (context, setState) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: labelCtrl,
+            decoration: InputDecoration(labelText: Strings.of(context).sshLabel),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              Strings.of(context).commonSave,
-              style: TextStyle(color: colors.onAccent),
+          const SizedBox(height: 10),
+          TextField(
+            controller: cmdCtrl,
+            autocorrect: false,
+            enableSuggestions: false,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            decoration: InputDecoration(
+              labelText: Strings.of(context).sshCommand,
             ),
           ),
         ],
       ),
+      actions: [
+        HermesDialogAction(
+          label: Strings.of(context).commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(label: Strings.of(context).commonSave, value: true),
+      ],
     );
     if (saved == true) {
       final label = labelCtrl.text.trim();

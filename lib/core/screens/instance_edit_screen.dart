@@ -27,6 +27,8 @@ import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_app_bar.dart';
 import 'dashboard_setup_screen.dart';
 import 'qr_scan_screen.dart';
+import '../design/hermes_design.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 enum _DuplicatePairingAction { cancel, openExisting, updateExisting }
 
@@ -491,22 +493,21 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   Future<void> _confirmAndAutoConfigureDashboard() async {
     if (!mounted) return;
     if (widget.initial != null) {
-      final ok = await showDialog<bool>(
+      final ok = await showHermesDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(Strings.of(ctx).ieDashSetupTitle),
-          content: Text(Strings.of(ctx).ieDashSetupBody),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(Strings.of(ctx).ieNotNow),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(Strings.of(ctx).ieGeneratePassword),
-            ),
-          ],
-        ),
+        title: Strings.of(context).ieDashSetupTitle,
+        message: Strings.of(context).ieDashSetupBody,
+        actions: [
+          HermesDialogAction(
+            label: Strings.of(context).ieNotNow,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            label: Strings.of(context).ieGeneratePassword,
+            value: true,
+          ),
+        ],
       );
       if (ok != true || !mounted) return;
     }

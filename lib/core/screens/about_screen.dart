@@ -7,8 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_ui.dart';
-import '../widgets/hermes_app_bar.dart';
+import '../design/hermes_design.dart';
 
 /// Acerca de: identidad de la app, estado del proyecto, atribuciones y
 /// acceso a las licencias open source. Las licencias viven aquí a propósito
@@ -116,228 +115,122 @@ SOFTWARE.
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return Scaffold(
-      appBar: HermesAppBar(title: Text(Strings.of(context).aboutScreenTitle)),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Identidad
-          HermesCard(
-            glow: true,
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    final s = Strings.of(context);
+    return HermesPage(
+      title: s.aboutScreenTitle,
+      children: [
+        // Identidad
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+          child: Row(
+            children: [
+              Image.asset(
+                'assets/branding/hermes_logo.webp',
+                width: 56,
+                height: 56,
+                // El master es 1024×1024; decodificar acotado al tamaño
+                // mostrado (×3 de DPR) ahorra ~4 MB de bitmap.
+                cacheWidth: 168,
+                cacheHeight: 168,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, _, _) =>
+                    Icon(Icons.auto_awesome, size: 40, color: colors.accent),
+              ),
+              const SizedBox(width: HermesSpace.x4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Image.asset(
-                      'assets/branding/hermes_logo.webp',
-                      width: 44,
-                      height: 44,
-                      // El master es 1024×1024; decodificar acotado al tamaño
-                      // mostrado (×3 de DPR) ahorra ~4 MB de bitmap.
-                      cacheWidth: 132,
-                      cacheHeight: 132,
-                      filterQuality: FilterQuality.medium,
-                      errorBuilder: (_, _, _) => Icon(
-                        Icons.auto_awesome,
-                        size: 32,
-                        color: colors.accent,
+                    Text(
+                      'Hermes Console',
+                      style: HermesType.display.copyWith(
+                        color: colors.textPrimary,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'HERMES CONSOLE',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 3,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'v$_version',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.accentHover,
-                            ),
-                          ),
-                        ],
-                      ),
+                    const SizedBox(height: 2),
+                    HermesStatusText(
+                      label: 'v$_version',
+                      meta: s.aboutReleaseStatus,
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  Strings.of(context).aboutTagline,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.5,
-                    color: colors.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.accent.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        Strings.of(context).aboutReleaseStatus,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colors.accentHover,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          // Licencias y atribuciones
-          Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: Column(
-              children: [
-                ListTile(
-                  leading: Icon(
-                    Icons.description_outlined,
-                    color: colors.textSecondary,
-                  ),
-                  title: Text(Strings.of(context).aboutLicensesTitle),
-                  subtitle: Text(
-                    Strings.of(context).aboutThirdParty,
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                  trailing: Icon(
-                    Icons.chevron_right,
-                    color: colors.textDisabled,
-                  ),
-                  onTap: () => showLicensePage(
-                    context: context,
-                    applicationName: 'Hermes Console',
-                    applicationVersion: 'v$_version',
-                  ),
-                ),
-                Divider(
-                  height: 0,
-                  indent: 16,
-                  endIndent: 16,
-                  color: colors.divider,
-                ),
-                ListTile(
-                  leading: Icon(
-                    Icons.fork_right_outlined,
-                    color: colors.textSecondary,
-                  ),
-                  title: Text(Strings.of(context).aboutBaseProject),
-                  subtitle: Text(
-                    Strings.of(context).aboutAttributions,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Privacidad
-          Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              leading: Icon(
-                Icons.visibility_off_outlined,
-                color: colors.success,
               ),
-              title: Text(Strings.of(context).aboutPrivacyTitle),
-              subtitle: Text(
-                Strings.of(context).aboutPrivacyBody,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.4,
-                  color: colors.textSecondary,
-                ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 14, 4, 0),
+          child: Text(
+            s.aboutTagline,
+            style: HermesType.text.copyWith(color: colors.textSecondary),
+          ),
+        ),
+        HermesSectionHeader(s.aboutSectionLegal),
+        HermesListGroup(
+          children: [
+            HermesListRow(
+              icon: Icons.description_outlined,
+              title: s.aboutLicensesTitle,
+              subtitle: s.aboutThirdParty,
+              onTap: () => showLicensePage(
+                context: context,
+                applicationName: 'Hermes Console',
+                applicationVersion: 'v$_version',
               ),
             ),
-          ),
-          // Enlaces oficiales: web y política de privacidad. Solo URLs https
-          // propias y constantes (sin entrada del usuario).
-          Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: Column(
-              children: [
-                ListTile(
-                  leading: Icon(
-                    Icons.language_outlined,
-                    color: colors.textSecondary,
-                  ),
-                  title: Text(Strings.of(context).aboutWebsiteTitle),
-                  subtitle: Text(
-                    Strings.of(context).aboutWebsiteSub,
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                  trailing: Icon(
-                    Icons.open_in_new,
-                    size: 18,
-                    color: colors.textDisabled,
-                  ),
-                  onTap: () => _openLink(_websiteUrl),
-                ),
-                Divider(
-                  height: 0,
-                  indent: 16,
-                  endIndent: 16,
-                  color: colors.divider,
-                ),
-                ListTile(
-                  leading: Icon(
-                    Icons.policy_outlined,
-                    color: colors.textSecondary,
-                  ),
-                  title: Text(Strings.of(context).aboutPrivacyPolicyTitle),
-                  subtitle: Text(
-                    Strings.of(context).aboutPrivacyPolicySub,
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                  trailing: Icon(
-                    Icons.open_in_new,
-                    size: 18,
-                    color: colors.textDisabled,
-                  ),
-                  onTap: () => _openLink(_privacyPolicyUrl),
-                ),
-              ],
+            HermesListRow(
+              icon: Icons.fork_right_outlined,
+              title: s.aboutBaseProject,
+              subtitle: s.aboutAttributions,
+              subtitleMaxLines: 3,
             ),
-          ),
-          // Nota de compatibilidad
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 8, 4, 24),
-            child: Text(
-              Strings.of(context).aboutUnofficial,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.5,
+            HermesListRow(
+              icon: Icons.visibility_off_outlined,
+              iconColor: colors.success,
+              title: s.aboutPrivacyTitle,
+              subtitle: s.aboutPrivacyBody,
+              subtitleMaxLines: 6,
+            ),
+          ],
+        ),
+        // Enlaces oficiales: web y política de privacidad. Solo URLs https
+        // propias y constantes (sin entrada del usuario).
+        HermesSectionHeader(s.aboutSectionLinks),
+        HermesListGroup(
+          children: [
+            HermesListRow(
+              icon: Icons.language_outlined,
+              title: s.aboutWebsiteTitle,
+              subtitle: s.aboutWebsiteSub,
+              trailing: Icon(
+                Icons.open_in_new,
+                size: 18,
                 color: colors.textDisabled,
               ),
+              onTap: () => _openLink(_websiteUrl),
             ),
+            HermesListRow(
+              icon: Icons.policy_outlined,
+              title: s.aboutPrivacyPolicyTitle,
+              subtitle: s.aboutPrivacyPolicySub,
+              trailing: Icon(
+                Icons.open_in_new,
+                size: 18,
+                color: colors.textDisabled,
+              ),
+              onTap: () => _openLink(_privacyPolicyUrl),
+            ),
+          ],
+        ),
+        // Nota de compatibilidad
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 16, 6, 0),
+          child: Text(
+            s.aboutUnofficial,
+            style: HermesType.support.copyWith(color: colors.textDisabled),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

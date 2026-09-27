@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/hermes_design.dart'
+    show HermesInlineNotice, HermesSpace, HermesType;
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
@@ -62,8 +64,106 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
 
   bool get _editable => !widget.readOnly && bridgeCanWrite;
 
+  /// Read-only files (config.yaml) are text to read, not a form: ONE page
+  /// scroll with the content as selectable mono text (spec 080 step 8).
+  Widget _buildReadOnly(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final b = bridgeBanner(
+      localFallback: s.bfeConfigureBody(widget.titleLabel),
+    );
+    return Scaffold(
+      appBar: HermesAppBar(
+        centerTitle: false,
+        title: Text(
+          widget.titleLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          if (bridgeCanRead) ...[
+            IconButton(
+              key: const ValueKey('bridge-file-reload'),
+              tooltip: bridgeLoading ? s.commonLoading : s.commonReload,
+              icon: const Icon(Icons.refresh_rounded),
+              onPressed: bridgeLoading ? null : () => loadFromServer(),
+            ),
+            IconButton(
+              key: const ValueKey('bridge-file-copy'),
+              tooltip: s.commonCopy,
+              icon: const Icon(Icons.copy_rounded),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: _ctrl.text));
+                if (context.mounted) {
+                  HermesNotice.of(context).showSnackBar(
+                    SnackBar(content: Text(s.bfeCopied)),
+                    kind: HermesNoticeKind.success,
+                  );
+                }
+              },
+            ),
+          ],
+          IconButton(
+            icon: Icon(
+              bridgeIcon,
+              color: bridge.connected
+                  ? colors.success
+                  : bridge.running
+                  ? colors.accent
+                  : colors.textSecondary,
+            ),
+            tooltip: s.soulConfigBridge,
+            onPressed: configureBridge,
+          ),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: SelectionArea(
+          child: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: _ctrl,
+            builder: (context, value, _) => ListView(
+              key: const ValueKey('bridge-file-readonly'),
+              padding: const EdgeInsets.fromLTRB(
+                HermesSpace.pageH,
+                HermesSpace.pageTop,
+                HermesSpace.pageH,
+                HermesSpace.pageBottom,
+              ),
+              children: [
+                HermesInlineNotice(
+                  icon: b.icon,
+                  message: bridge.connected ? s.bfeReadOnlyView : b.text,
+                ),
+                const SizedBox(height: HermesSpace.x3),
+                if (value.text.isEmpty)
+                  Text(
+                    bridge.connected ? '' : s.bfeNoBridgeConnected,
+                    style: HermesType.text.copyWith(
+                      color: colors.textSecondary,
+                    ),
+                  )
+                else
+                  Text(
+                    value.text,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12.5,
+                      height: 1.5,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.readOnly) return _buildReadOnly(context);
     final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
@@ -121,8 +221,9 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
             child: Builder(
               builder: (_) {
                 final b = bridgeBanner(
-                  localFallback: Strings.of(context)
-                      .bfeConfigureBody(widget.titleLabel),
+                  localFallback: Strings.of(
+                    context,
+                  ).bfeConfigureBody(widget.titleLabel),
                 );
                 final text = widget.readOnly && bridge.connected
                     ? Strings.of(context).bfeReadOnlyView
@@ -159,7 +260,11 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
             Container(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
               decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: colors.divider.withValues(alpha: 0.55))),
+                border: Border(
+                  top: BorderSide(
+                    color: colors.divider.withValues(alpha: 0.55),
+                  ),
+                ),
               ),
               child: SafeArea(
                 top: false,
@@ -176,7 +281,9 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
                                 ? Strings.of(context).commonLoading
                                 : Strings.of(context).commonReload,
                             icon: Icons.cloud_download_outlined,
-                            onTap: bridgeLoading ? null : () => loadFromServer(),
+                            onTap: bridgeLoading
+                                ? null
+                                : () => loadFromServer(),
                           ),
                           const SizedBox(width: 7),
                         ],
@@ -190,7 +297,11 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
                               );
                               if (context.mounted) {
                                 HermesNotice.of(context).showSnackBar(
-                                  SnackBar(content: Text(Strings.of(context).bfeCopied)),
+                                  SnackBar(
+                                    content: Text(
+                                      Strings.of(context).bfeCopied,
+                                    ),
+                                  ),
                                   kind: HermesNoticeKind.success,
                                 );
                               }

@@ -30,12 +30,22 @@ import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../services/run_registry.dart';
 import '../services/run_template_store.dart';
+import '../design/hermes_design.dart' as d show HermesListRow;
+import '../design/hermes_design.dart'
+    show
+        HermesListGroup,
+        HermesLogPage,
+        HermesSpace,
+        HermesStatusText,
+        HermesStatusTone,
+        HermesStatusToneColor,
+        HermesTextBlock,
+        HermesType;
 import '../theme/app_theme.dart';
 import '../utils/enum_labels.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_spark_mascot.dart';
 import '../utils/relative_time.dart';
-import '../widgets/accent_card.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
@@ -88,6 +98,15 @@ Color runStatusColor(String status, HermesThemeColors colors) =>
       'cancelled' || 'expired' => colors.textDisabled,
       _ => colors.textSecondary,
     };
+
+/// Inline status tone of a run (spec 080: no boxed pills).
+HermesStatusTone runStatusTone(String status) => switch (status) {
+  'queued' || 'running' || 'stopping' => HermesStatusTone.active,
+  'waiting_for_approval' => HermesStatusTone.warn,
+  'completed' => HermesStatusTone.ok,
+  'failed' => HermesStatusTone.error,
+  _ => HermesStatusTone.neutral,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña de ejecuciones (embebida en Actividad)
@@ -277,33 +296,15 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
   /// plano (no SelectableText) para no reactivar el crash `_dependents.isEmpty`.
   Future<void> _showLocalResult(String response) async {
     if (!mounted) return;
-    final colors = Theme.of(context).hermes;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(Strings.of(context).commonResult),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Text(
-              response.isEmpty ? Strings.of(context).commonNoOutput : response,
-              style: TextStyle(color: colors.textPrimary, height: 1.4),
-            ),
-          ),
+    final s = Strings.of(context);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HermesLogPage(
+          key: const ValueKey('local-run-result-page'),
+          title: s.commonResult,
+          text: response.isEmpty ? s.commonNoOutput : response,
+          mono: false,
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: response));
-              Navigator.pop(ctx);
-            },
-            child: Text(Strings.of(context).commonCopy),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(Strings.of(context).commonClose),
-          ),
-        ],
       ),
     );
   }
@@ -353,13 +354,15 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+          padding: const EdgeInsets.fromLTRB(HermesSpace.pageH + 6, 6, 8, 0),
           child: Row(
             children: [
               Expanded(
                 child: Text(
                   s.runsListNote,
-                  style: TextStyle(fontSize: 10, color: colors.textDisabled),
+                  style: HermesType.support.copyWith(
+                    color: colors.textSecondary,
+                  ),
                 ),
               ),
               IconButton(
@@ -429,15 +432,27 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
               : RefreshIndicator(
                   color: colors.accent,
                   onRefresh: _refreshStatuses,
-                  child: ListView.builder(
+                  child: ListView(
+                    key: const ValueKey('runs-list'),
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
-                    itemCount: records.length,
-                    itemBuilder: (_, i) => _RunTile(
-                      record: records[i],
-                      onTap: _openDetail,
-                      onRepeat: () => _repeatRun(records[i]),
+                    padding: const EdgeInsets.fromLTRB(
+                      HermesSpace.pageH,
+                      HermesSpace.x2,
+                      HermesSpace.pageH,
+                      96,
                     ),
+                    children: [
+                      HermesListGroup(
+                        children: [
+                          for (final record in records)
+                            _RunTile(
+                              record: record,
+                              onTap: _openDetail,
+                              onRepeat: () => _repeatRun(record),
+                            ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
         ),
@@ -457,35 +472,34 @@ class _RunTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final live = !record.isTerminal;
     final waiting = record.lastStatus == 'waiting_for_approval';
-    return AccentCard(
-      margin: const EdgeInsets.only(bottom: 6),
-      accent: waiting
-          ? colors.warning
-          : live
-          ? colors.accent.withValues(alpha: 0.7)
-          : null,
-      background: colors.surface,
-      borderColor: colors.divider,
-      borderRadius: const BorderRadius.all(Radius.circular(10)),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => onTap(record),
+    // Editorial row (spec 080): title, inline status · age, one action.
+    return InkWell(
+      onTap: () => onTap(record),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: HermesSpace.rowMin),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.fromLTRB(
+            HermesSpace.rowH,
+            HermesSpace.rowV,
+            4,
+            HermesSpace.rowV,
+          ),
           child: Row(
             children: [
-              HermesIconTile(
+              Icon(
                 waiting
                     ? Icons.pan_tool_outlined
                     : record.lastStatus == 'failed'
                     ? Icons.error_outline
                     : Icons.rocket_launch_outlined,
-                size: 34,
-                active: live,
+                size: 20,
+                color:
+                    runStatusTone(record.lastStatus) == HermesStatusTone.neutral
+                    ? colors.textSecondary
+                    : runStatusTone(record.lastStatus).colorIn(colors),
               ),
-              const SizedBox(width: 11),
+              const SizedBox(width: HermesSpace.rowIconGap),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -494,39 +508,25 @@ class _RunTile extends StatelessWidget {
                       record.prompt,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
+                      style: HermesType.body.copyWith(
                         color: colors.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      relativeTime(record.createdAt),
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: colors.textSecondary,
-                      ),
+                    const SizedBox(height: 2),
+                    HermesStatusText(
+                      label: runStatusLabel(record.lastStatus, s),
+                      tone: runStatusTone(record.lastStatus),
+                      meta: relativeTime(record.createdAt),
+                      maxLines: 1,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              HermesPill(
-                color: runStatusColor(record.lastStatus, colors),
-                label: runStatusLabel(record.lastStatus, s),
-              ),
               if (onRepeat != null)
                 IconButton(
-                  icon: const Icon(Icons.replay_rounded, size: 18),
+                  icon: const Icon(Icons.replay_rounded, size: 20),
                   color: colors.textSecondary,
                   tooltip: s.runsRepeat,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(
-                    minWidth: 34,
-                    minHeight: 34,
-                  ),
-                  padding: EdgeInsets.zero,
                   onPressed: onRepeat,
                 ),
             ],
@@ -1213,12 +1213,8 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         centerTitle: false,
         title: Text(
           s.runsDetailTitle,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 15,
-            letterSpacing: 1.5,
-            color: colors.accentHover,
-          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         actions: [
           if (_isLive)
@@ -1235,63 +1231,62 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+        key: const ValueKey('run-detail'),
+        padding: const EdgeInsets.fromLTRB(
+          HermesSpace.pageH,
+          HermesSpace.pageTop,
+          HermesSpace.pageH,
+          HermesSpace.pageBottom,
+        ),
         children: [
-          // Cabecera de estado
-          AccentCard(
-            accent: runStatusColor(_status, colors),
-            background: colors.surface,
-            borderColor: colors.divider,
-            padding: const EdgeInsets.all(13),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.record.prompt,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    HermesPill(
-                      color: runStatusColor(_status, colors),
-                      label: runStatusLabel(_status, s),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  widget.record.sessionId != null
-                      ? s.runsInstanceSessionInfo(
-                          widget.connection.label,
-                          widget.record.sessionId!,
-                        )
-                      : s.runsInstanceInfo(widget.connection.label),
-                  style: TextStyle(fontSize: 10, color: colors.textSecondary),
-                ),
-                const SizedBox(height: 3),
-                InkWell(
-                  onLongPress: () {
-                    Clipboard.setData(ClipboardData(text: widget.record.runId));
-                    HermesNotice.of(context).showSnackBar(
-                      SnackBar(content: Text(s.runsRunIdCopied)),
-                      kind: HermesNoticeKind.success,
-                    );
-                  },
-                  child: Text(
-                    '${widget.record.runId} · '
-                    '${relativeTime(widget.record.createdAt)}',
-                    style: TextStyle(fontSize: 10, color: colors.textDisabled),
-                  ),
-                ),
-              ],
+          // Cabecera action-first (spec 080): título, estado inline, contexto.
+          Padding(
+            padding: const EdgeInsets.only(left: 2, top: 4),
+            child: Text(
+              widget.record.prompt,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: HermesType.display.copyWith(
+                fontSize: 19,
+                color: colors.textPrimary,
+              ),
             ),
+          ),
+          const SizedBox(height: HermesSpace.x1),
+          HermesStatusText(
+            key: const ValueKey('run-detail-status'),
+            label: runStatusLabel(_status, s),
+            tone: runStatusTone(_status),
+            meta: relativeTime(widget.record.createdAt),
+          ),
+          const SizedBox(height: HermesSpace.x3),
+          HermesListGroup(
+            dividerIndent: HermesSpace.rowH,
+            children: [
+              d.HermesListRow(
+                title: widget.connection.label,
+                subtitle: widget.record.sessionId,
+                showChevron: false,
+              ),
+              d.HermesListRow(
+                key: const ValueKey('run-detail-id'),
+                title: widget.record.runId,
+                muted: true,
+                trailing: Icon(
+                  Icons.copy_rounded,
+                  size: 18,
+                  color: colors.textSecondary,
+                ),
+                semanticLabel: s.commonCopy,
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: widget.record.runId));
+                  HermesNotice.of(context).showSnackBar(
+                    SnackBar(content: Text(s.runsRunIdCopied)),
+                    kind: HermesNoticeKind.success,
+                  );
+                },
+              ),
+            ],
           ),
 
           if (_status == 'expired') ...[
@@ -1353,16 +1348,11 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
               ),
             ),
             const SizedBox(height: 4),
-            HermesCard(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                _output.trim(),
-                style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.5,
-                  color: colors.textPrimary.withValues(alpha: 0.9),
-                ),
-              ),
+            HermesTextBlock(
+              key: const ValueKey('run-detail-reply'),
+              text: _output.trim(),
+              collapsedLines: 12,
+              openTitle: s.runsReplySection,
             ),
           ],
 
