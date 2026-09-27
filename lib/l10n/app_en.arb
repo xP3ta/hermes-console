@@ -7174,5 +7174,226 @@
   "sklCopyInstallCmd": "Copy install command",
   "sklCopyRemoveCmd": "Copy remove command",
   "memDetailFile": "File",
-  "designDetails": "Details"
+  "designDetails": "Details",
+  "cphTitle": "Capabilities",
+  "cphSegCatalog": "Catalog",
+  "cphSegInstalled": "Installed",
+  "cphSegConnectors": "Connectors",
+  "cphSearchHint": "Search skills, plugins and MCP",
+  "cphFilter": "Filter",
+  "cphFilterType": "Type",
+  "cphFilterTrust": "Trust",
+  "cphFilterAllTypes": "All types",
+  "cphFilterAnyTrust": "Any source",
+  "cphKindSkills": "Skills",
+  "cphKindPlugins": "Plugins",
+  "cphKindMcp": "MCP servers",
+  "cphKindSkill": "Skill",
+  "cphKindPlugin": "Plugin",
+  "cphKindMcpOne": "MCP server",
+  "cphTrustOfficial": "Official",
+  "cphTrustTrusted": "Trusted",
+  "cphTrustCommunity": "Community",
+  "cphTrustLocal": "Local",
+  "cphTrustUnknown": "Unverified",
+  "cphTrustOfficialBody": "Maintained by the Hermes project.",
+  "cphTrustTrustedBody": "Comes from a reviewed source.",
+  "cphTrustCommunityBody": "Community contribution. Check what it can do before installing it.",
+  "cphTrustLocalBody": "Created or configured on this server.",
+  "cphTrustUnknownBody": "The server doesn't say who publishes it.",
+  "cphStatusInstalled": "Installed",
+  "cphStatusUpdate": "Update available",
+  "cphStatusDisabled": "Disabled",
+  "cphStatusEnabled": "Enabled",
+  "cphStatusNotInstalled": "Not installed",
+  "cphHubResults": "From the skills hub",
+  "cphHubSearchFailed": "The skills hub didn't answer. Showing the local catalog.",
+  "cphMore": "More options",
+  "cphMenuUpdateSkills": "Update skills",
+  "cphMenuAdvanced": "Advanced settings",
+  "cphMenuClassicSkills": "Classic skills",
+  "cphEmptyCatalog": "No capabilities match",
+  "cphEmptyCatalogBody": "Try another search or clear the filters.",
+  "cphEmptyInstalled": "Nothing installed yet",
+  "cphEmptyInstalledBody": "Install skills, plugins or MCP servers from the catalog.",
+  "cphErrorTitle": "Can't load capabilities",
+  "cphErrorOffline": "The server didn't answer. Check the connection and try again.",
+  "cphErrorForbidden": "The Dashboard rejected this instance's credentials.",
+  "cphErrorUnsupported": "This server doesn't publish the capabilities API.",
+  "cphPartial": "Some sources couldn't be loaded.",
+  "cphReadOnly": "Read-only connection: changes are disabled.",
+  "cphReadOnlyTag": "Read-only",
+  "cphConnectorsAccounts": "Accounts",
+  "cphConnectorsSignedOut": "Sign in to your Nous account on the server to use account connectors.",
+  "cphConnectorsUnavailable": "Account connectors aren't available on this server right now.",
+  "cphConnectorsUnsupported": "This server doesn't offer account connectors.",
+  "cphConnectorsError": "Account connectors couldn't be loaded.",
+  "cphConnectorsConnectHint": "Connecting new accounts isn't available in Console yet; use Hermes Desktop.",
+  "cphConnectorsEmpty": "The server lists no account connectors.",
+  "cphConnected": "Connected",
+  "cphNotConnected": "Not connected",
+  "cphNoMcpServers": "No MCP servers configured.",
+  "cphActionInstall": "Install",
+  "cphActionUpdate": "Update",
+  "cphActionEnable": "Enable",
+  "cphActionDisable": "Disable",
+  "cphActionRemove": "Remove",
+  "cphActionTest": "Test connection",
+  "cphActionDocs": "Open documentation",
+  "cphConfirmInstall": "Install {name}?",
+  "@cphConfirmInstall": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmInstallBody": "It runs on the server with this profile's permissions.",
+  "cphConfirmRemove": "Remove {name}?",
+  "@cphConfirmRemove": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmRemoveBody": "The agent will stop using it.",
+  "cphConfirmUpdate": "Update {name}?",
+  "@cphConfirmUpdate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmUpdateSkills": "Update every hub skill?",
+  "cphProgressInstalling": "Installing {name}…",
+  "@cphProgressInstalling": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressRemoving": "Removing {name}…",
+  "@cphProgressRemoving": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressUpdating": "Updating {name}…",
+  "@cphProgressUpdating": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressSaving": "Saving…",
+  "cphProgressTesting": "Testing {name}…",
+  "@cphProgressTesting": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphProgressUpdatingSkills": "Updating skills…",
+  "cphProgressKeepOpen": "Keep Console open until it finishes.",
+  "cphDoneInstalled": "{name} installed",
+  "@cphDoneInstalled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneRemoved": "{name} removed",
+  "@cphDoneRemoved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneUpdated": "{name} updated",
+  "@cphDoneUpdated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneEnabled": "{name} enabled",
+  "@cphDoneEnabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneDisabled": "{name} disabled",
+  "@cphDoneDisabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphDoneSkillsUpdated": "Skills updated",
+  "cphTestOk": "The connection works",
+  "cphTestFailed": "The server couldn't connect",
+  "cphFailRejected": "The server rejected the action.",
+  "cphFailBlockedByScan": "The security scan blocked this install.",
+  "cphFailUnavailable": "The server didn't answer in time.",
+  "cphFailForbidden": "Not allowed with these credentials.",
+  "cphFailUnsupported": "This server doesn't support this action.",
+  "cphFailInvalid": "The server sent an unexpected answer.",
+  "cphConsentTitle": "New permissions for {name}",
+  "@cphConsentTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConsentAccept": "Accept and update",
+  "cphConsentNeeded": "This plugin asks for your consent. Install it from Advanced settings.",
+  "cphRestartRequired": "Restart the gateway to apply the change.",
+  "cphSecTrust": "Trust",
+  "cphSecPermissions": "What it can use",
+  "cphSecTechnical": "Technical details",
+  "cphRowSource": "Source",
+  "cphRowPublisher": "Publisher",
+  "cphRowVersion": "Version",
+  "cphRowCategory": "Category",
+  "cphRowTools": "Tools",
+  "cphRowRequires": "Needs",
+  "cphRowTransport": "Transport",
+  "cphRowCommand": "Command",
+  "cphRowUrl": "URL",
+  "cphNoPermissions": "It doesn't declare tools or credentials.",
+  "cphNeedsCredentials": "Needs credentials ({names}). Set them up from Advanced settings.",
+  "@cphNeedsCredentials": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphNotInstallable": "It can't be installed from Console.",
+  "cphBuiltIn": "Built in: it can be disabled but not removed.",
+  "cphShowAll": "Show all ({count})",
+  "@cphShowAll": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphFilterClear": "Clear",
+  "cphStatusUpdateShort": "Update",
+  "cphRowAuth": "Authentication"
 }

@@ -3890,6 +3890,39 @@ class TuiGatewayClient
     return _request(method, params);
   }
 
+  /// Hosted connector RPCs for the Capabilities hub. Only `connectors.*`
+  /// (the Nous account connector family) and `connection.respond` pass; a
+  /// read-only connection may list and poll but never connect, wake,
+  /// settle or disconnect.
+  Future<Map<String, dynamic>> capabilitiesRequest(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    if (!capabilitiesRpcAllowed(method, readOnly: _connection.readOnly)) {
+      throw TuiGatewayRpcError(method, 'Capability request unavailable');
+    }
+    await _connectForRequest('gateway.connect');
+    return _request(method, params);
+  }
+
+  static const Set<String> _capabilityReads = {
+    'connectors.list',
+    'connectors.catalog',
+    'connectors.accounts',
+    'connectors.operation.status',
+  };
+
+  static const Set<String> _capabilityWrites = {
+    'connectors.connect',
+    'connectors.operation.wake',
+    'connectors.accounts.remove',
+    'connection.respond',
+  };
+
+  static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>
+      _capabilityReads.contains(method) ||
+      (!readOnly && _capabilityWrites.contains(method));
+
   late final BotProfileClient _botProfiles = BotProfileClient((
     method,
     params,
