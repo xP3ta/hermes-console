@@ -6084,7 +6084,7 @@
       "version": "2.2.0"
     },
     {
-      "bom-ref": "pkg:pub/hermes_android@1.2.14+9410",
+      "bom-ref": "pkg:pub/hermes_android@1.2.14+9420",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -6105,9 +6105,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.2.14+9410",
+      "purl": "pkg:pub/hermes_android@1.2.14+9420",
       "type": "application",
-      "version": "1.2.14+9410"
+      "version": "1.2.14+9420"
     },
     {
       "bom-ref": "pkg:pub/highlight@0.7.0",
@@ -10466,7 +10466,7 @@
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
-      "ref": "pkg:pub/hermes_android@1.2.14+9410"
+      "ref": "pkg:pub/hermes_android@1.2.14+9420"
     },
     {
       "dependsOn": [
@@ -11628,7 +11628,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:pub/hermes_android@1.2.14+9410",
+      "bom-ref": "pkg:pub/hermes_android@1.2.14+9420",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -11649,14 +11649,14 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.2.14+9410",
+      "purl": "pkg:pub/hermes_android@1.2.14+9420",
       "type": "application",
-      "version": "1.2.14+9410"
+      "version": "1.2.14+9420"
     },
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "78eec0c2c0ca2543564278b695965b2fb65ab493cf299a08988573673ee4d53e"
+        "value": "774a125828376fc9d1bfc34f31ff72418d9e217bdef25c86a4fc436de8834654"
       },
       {
         "name": "hermes.android.variant",
@@ -11668,7 +11668,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:2fc1e149-4432-42ec-ab6f-eaa8a1f87fd1",
+  "serialNumber": "urn:uuid:6ee1a0f3-7b37-4303-a16c-2fb7258f3fda",
   "specVersion": "1.6",
   "version": 1
 }
