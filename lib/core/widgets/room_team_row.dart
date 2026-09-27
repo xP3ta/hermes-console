@@ -228,11 +228,11 @@ class RoomMemberAvatar extends StatelessWidget {
     }
     return MissionProfileAvatar(
       profileName: resolvedProfile.name,
-      hasAvatar: resolvedProfile.hasAvatar,
+      hasAvatar: resolvedProfile.botPaintsPhoto,
       cache: avatarCache,
       size: size,
       manager: manager,
-      shape: resolvedProfile.botShape,
+      shape: resolvedProfile.botFaceShape,
       colorHex: resolvedProfile.botColorHex,
       imageKind: resolvedProfile.botImageKind,
       privacySafeElementKeys: true,

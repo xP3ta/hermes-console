@@ -56,6 +56,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val foregroundExternalDataSyncChannelName =
         "hermes/foreground_external_data_sync"
     private var shareChannel: MethodChannel? = null
+    private var richNotificationsChannel: MethodChannel? = null
     private var newSessionLaunchChannel: MethodChannel? = null
     private var memoryChannel: MethodChannel? = null
     private var externalDataSyncChannel: MethodChannel? = null
@@ -173,6 +174,12 @@ class MainActivity : FlutterFragmentActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             memoryChannelName,
         )
+        richNotificationsChannel?.let { HermesRichNotifications.detach(it) }
+        richNotificationsChannel =
+            MethodChannel(
+                flutterEngine.dartExecutor.binaryMessenger,
+                HermesRichNotifications.CHANNEL_NAME,
+            ).also { HermesRichNotifications.attach(applicationContext, it) }
         stopNetworkAvailabilityEvents()
         EventChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -413,6 +420,8 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onDestroy() {
+        richNotificationsChannel?.let { HermesRichNotifications.detach(it) }
+        richNotificationsChannel = null
         if (externalDataSyncStopReceiverRegistered) {
             unregisterReceiver(externalDataSyncStopReceiver)
             externalDataSyncStopReceiverRegistered = false

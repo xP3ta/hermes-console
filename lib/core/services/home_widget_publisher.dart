@@ -70,6 +70,8 @@ class PluginHomeWidgetStore implements HomeWidgetStore {
     'com.hermesagent.hermes_android.NewSessionWidgetProvider',
     'com.hermesagent.hermes_android.HermesCompactWidgetProvider',
     'com.hermesagent.hermes_android.HermesControlWidgetProvider',
+    'com.hermesagent.hermes_android.HermesNeedsYouWidgetProvider',
+    'com.hermesagent.hermes_android.HermesRoomWidgetProvider',
   ];
 
   @override

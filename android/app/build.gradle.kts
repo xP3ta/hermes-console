@@ -108,6 +108,10 @@ flutter {
 dependencies {
    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
    implementation("androidx.glance:glance-appwidget:1.1.1")
+   // Live Updates (Android 16): NotificationCompat.ProgressStyle,
+   // setRequestPromotedOngoing and canPostPromotedNotifications (core 1.17+).
+   // The runtime classpath already resolves core 1.18 transitively.
+   implementation("androidx.core:core-ktx:1.17.0")
    // home_widget already resolves this exact artifact transitively. Declaring
    // it here exposes the one-shot expiry API to the app without adding a new
    // binary, version or periodic background component.
