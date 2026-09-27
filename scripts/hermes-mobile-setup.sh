@@ -137,7 +137,13 @@ setup_step "Checking Hermes Agent"
 
 # Hermes Agent. A launcher only counts when it responds; stale shims from a
 # half-finished uninstall must not produce three crash-looping services.
-HB="$HH/hermes-agent/venv/bin/hermes"
+# Prefer the launcher Hermes publishes for source installs: it follows the
+# managed Python/dependency generation across updates. The legacy venv entry
+# point is only a fallback for older installs.
+HB="$HH/hermes-agent/.hermes/bin/hermes"
+if ! { [ -x "$HB" ] && "$HB" --version >/dev/null 2>&1; }; then
+  HB="$HH/hermes-agent/venv/bin/hermes"
+fi
 if ! { [ -x "$HB" ] && "$HB" --version >/dev/null 2>&1; }; then
   HB="$(command -v hermes 2>/dev/null || true)"
   if [ -z "$HB" ] || ! "$HB" --version >/dev/null 2>&1; then
@@ -145,7 +151,8 @@ if ! { [ -x "$HB" ] && "$HB" --version >/dev/null 2>&1; }; then
     curl -fsSL https://hermes-agent.nousresearch.com/install.sh | \
       bash -s -- --skip-setup --non-interactive --skip-browser \
       --hermes-home "$HH" --dir "$HH/hermes-agent"
-    HB="$HH/hermes-agent/venv/bin/hermes"
+    HB="$HH/hermes-agent/.hermes/bin/hermes"
+    [ -x "$HB" ] || HB="$HH/hermes-agent/venv/bin/hermes"
     [ -x "$HB" ] || HB="$(command -v hermes 2>/dev/null || true)"
   fi
 fi
@@ -720,6 +727,15 @@ install_systemd_unit() {
   runner="$2"
   unit_dir="$3"
   unit="$unit_dir/hermes-$name.service"
+  # The dashboard launches `hermes update` (Console's "Update Hermes") as a
+  # child, and that updater restarts this very unit at the end. With the
+  # default KillMode=control-group systemd would kill the updater together
+  # with the old dashboard before it records its receipt. KillMode=process
+  # stops only the dashboard's main process: detached actions it launched
+  # (update, gateway restart) finish on their own, and its stdio MCP servers
+  # are reaped by Hermes' parent-death supervisor when the dashboard exits.
+  kill_mode=""
+  [ "$name" = "dashboard" ] && kill_mode="KillMode=process"
   mkdir -p "$unit_dir"
   cat > "$unit" <<EOF
 [Unit]
@@ -731,6 +747,7 @@ ExecStart=$runner
 WorkingDirectory=$HH
 Restart=on-failure
 RestartSec=2
+$kill_mode
 [Install]
 WantedBy=default.target
 EOF

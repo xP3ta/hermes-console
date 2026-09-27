@@ -15,6 +15,7 @@ import 'bridge_endpoint_resolver.dart';
 import 'bridge_release_channel.dart';
 import 'bridge_version.dart';
 import 'connection_manager.dart';
+import 'hermes_update_monitor.dart';
 import 'remote_bridge_installer.dart';
 import 'secure_storage.dart';
 
@@ -182,6 +183,12 @@ class BridgeUpdateService {
     BridgeUpdater? updater,
   }) async {
     if (conn.readOnly || conn.onDeviceLoopback) {
+      return BridgeMaintenanceResult.skipped;
+    }
+    // Con una actualización de Hermes en curso no se reinicia ni sustituye el
+    // bridge: `hermes update` está cambiando el entorno del que depende y
+    // reiniciando servicios. Se comprobará en la siguiente pasada.
+    if (HermesUpdateGuard.isActive(conn.id)) {
       return BridgeMaintenanceResult.skipped;
     }
     final isEnabled = await (enabled ?? automaticUpdatesEnabled)();

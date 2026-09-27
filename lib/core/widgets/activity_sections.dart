@@ -1237,6 +1237,15 @@ class ActivitySubagentsSection extends StatelessWidget {
                 )
               : null,
         ),
+        if (snapshot.subagentsStale)
+          Padding(
+            key: const ValueKey('activity-subagents-stale'),
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              s.chaBackgroundActivityStale,
+              style: TextStyle(fontSize: 12, color: colors.warning),
+            ),
+          ),
         if (activities.isEmpty)
           _ItemCard(
             child: Padding(

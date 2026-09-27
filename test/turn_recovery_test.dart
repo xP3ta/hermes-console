@@ -1740,4 +1740,136 @@ void main() {
       expect(gateway.submitCalls, 0);
     },
   );
+
+  group('turno encolado ya entregado (panel «Envío pendiente» fantasma)', () {
+    Map<String, dynamic> row(
+      int id,
+      String role,
+      String content, {
+      double timestamp = 2000,
+    }) => {'id': id, 'role': role, 'content': content, 'timestamp': timestamp};
+    final boundary = PreparedTurnRetryBoundary.identity(rowId: 10);
+    PreparedTurn ambiguous(String text) => _queuedPrepared(
+      'q-1',
+      text,
+    ).copyWith(state: PreparedTurnState.ambiguous, retryBoundary: boundary);
+
+    test('evidencia pura: entregado, no entregado y dudoso', () {
+      final turn = ambiguous('hola');
+      expect(
+        ambiguousTurnTranscriptEvidence(turn, [
+          row(10, 'user', 'antes'),
+          row(11, 'assistant', 'ok'),
+          row(12, 'user', 'hola'),
+        ]),
+        AmbiguousRetryEvidence.delivered,
+      );
+      expect(
+        ambiguousTurnTranscriptEvidence(turn, [
+          row(10, 'user', 'antes'),
+          row(11, 'assistant', 'ok'),
+        ]),
+        AmbiguousRetryEvidence.notDelivered,
+      );
+      expect(
+        ambiguousTurnTranscriptEvidence(turn, [
+          row(10, 'user', 'antes'),
+          row(12, 'user', 'otra cosa'),
+        ]),
+        AmbiguousRetryEvidence.unknown,
+      );
+      expect(
+        ambiguousTurnTranscriptEvidence(
+          turn.copyWith(
+            retryBoundary: const PreparedTurnRetryBoundary.unknown(),
+          ),
+          [row(12, 'user', 'hola')],
+        ),
+        AmbiguousRetryEvidence.unknown,
+      );
+      // El mismo texto enviado ANTES de crear el turno no es este turno.
+      expect(
+        ambiguousTurnTranscriptEvidence(
+          PreparedTurn(
+            connectionId: turn.connectionId,
+            sessionId: turn.sessionId,
+            clientTurnId: turn.clientTurnId,
+            createdAtMs: 3000 * 1000,
+            updatedAtMs: 3000 * 1000,
+            text: turn.text,
+            fullText: turn.fullText,
+            attachments: const [],
+            model: turn.model,
+            profile: turn.profile,
+            state: PreparedTurnState.ambiguous,
+            retryBoundary: boundary,
+          ),
+          [row(10, 'user', 'antes'), row(12, 'user', 'hola')],
+          requireRowAfterTurnCreation: true,
+        ),
+        AmbiguousRetryEvidence.unknown,
+      );
+    });
+
+    Future<(ActiveChat, _MemoryOutbox, _DesktopGateway)> restored(
+      List<Map<String, dynamic>> transcript,
+      PreparedTurn turn,
+    ) async {
+      final store = _MemoryOutbox();
+      final gateway = _DesktopGateway();
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: SavedConnection(
+          id: 'conn-test',
+          label: 'Test',
+          host: 'example.invalid',
+          port: 443,
+          apiKey: 'test-key',
+          useHttps: true,
+        ),
+        sessionId: 'session-test',
+        sessionTitle: 'Test',
+        notifications: null,
+        onTerminal: () {},
+        api: ApiClient(
+          baseUrl: 'https://example.invalid',
+          apiKey: 'test-key',
+          httpClient: MockClient((_) async => http.Response('unused', 500)),
+        ),
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => transcript,
+      );
+      addTearDown(chat.dispose);
+      await chat.restoreQueuedTurns([turn], store);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      return (chat, store, gateway);
+    }
+
+    test(
+      'el transcript lo demuestra entregado: sale de la cola sin reenviar',
+      () async {
+        final turn = ambiguous('Esta ventanita debería poder quitarse');
+        final (chat, store, gateway) = await restored([
+          row(10, 'user', 'antes'),
+          row(11, 'assistant', 'ok'),
+          row(12, 'user', 'Esta ventanita debería poder quitarse'),
+        ], turn);
+        expect(chat.queuedTurns, isEmpty);
+        expect(chat.queuedEntries, isEmpty);
+        expect(store.deletes.map((t) => t.clientTurnId), contains('q-1'));
+        expect(gateway.submitCalls, 0);
+      },
+    );
+
+    test('sin evidencia se conserva como pendiente y no se reenvía', () async {
+      final turn = ambiguous('mensaje nuevo');
+      final (chat, store, gateway) = await restored([
+        row(10, 'user', 'antes'),
+      ], turn);
+      expect(chat.queuedTurns, hasLength(1));
+      expect(chat.queuedEntries.single.blocked, isTrue);
+      expect(store.deletes, isEmpty);
+      expect(gateway.submitCalls, 0);
+    });
+  });
 }

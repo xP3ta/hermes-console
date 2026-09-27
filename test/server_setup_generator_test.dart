@@ -216,6 +216,23 @@ void main() {
       },
     );
 
+    test('usa el lanzador publicado por Hermes antes que el venv legado', () {
+      final launcher = c.indexOf(r'HB="$HH/hermes-agent/.hermes/bin/hermes"');
+      final legacy = c.indexOf(r'HB="$HH/hermes-agent/venv/bin/hermes"');
+      expect(launcher, greaterThanOrEqualTo(0));
+      expect(legacy, greaterThan(launcher));
+    });
+
+    test('el dashboard no mata al `hermes update` que él mismo lanza', () {
+      // Console lanza `hermes update` vía Dashboard; al final el updater
+      // reinicia este servicio. Con KillMode=control-group moría con él.
+      expect(c, contains('KillMode=process'));
+      expect(
+        c,
+        contains(r'[ "$name" = "dashboard" ] && kill_mode="KillMode=process"'),
+      );
+    });
+
     test(
       'activa linger sin PolicyKit antes de usar systemctl --user (U-19)',
       () {

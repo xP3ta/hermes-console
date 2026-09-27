@@ -195,7 +195,8 @@ ActivityPillModel? buildActivityPillModel(
         snapshot.subagentCount > 0)
       strings.liveMoreSubagents(snapshot.subagentCount),
     // El estado de segundo plano puede estar desfasado: se avisa en la línea.
-    if (snapshot.processesStale && snapshot.backgroundCount > 0)
+    if ((snapshot.processesStale && snapshot.backgroundCount > 0) ||
+        (snapshot.subagentsStale && snapshot.subagentsRunning))
       strings.chaBackgroundActivityStale,
   ];
 

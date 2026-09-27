@@ -2404,6 +2404,91 @@ void main() {
       },
     );
 
+    test('devuelve el action_id para seguir la actualización', () async {
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((_) async {
+          return http.Response(
+            '{"ok":true,"pid":42,"name":"hermes-update",'
+            '"action_id":"0123456789abcdef0123456789abcdef"}',
+            200,
+          );
+        }),
+      );
+
+      final result = await client.applyUpdate();
+
+      expect(result.actionId, '0123456789abcdef0123456789abcdef');
+      expect(result.alreadyRunning, isFalse);
+      client.close();
+    });
+
+    test('marca una actualización que ya estaba en curso', () async {
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((_) async {
+          return http.Response(
+            '{"ok":true,"already_running":true,'
+            '"action_id":"0123456789abcdef0123456789abcdef"}',
+            200,
+          );
+        }),
+      );
+
+      final result = await client.applyUpdate();
+
+      expect(result.alreadyRunning, isTrue);
+      client.close();
+    });
+
+    test('un rechazo 200 con ok:false no se trata como lanzado', () async {
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((_) async {
+          return http.Response(
+            '{"ok":false,"error":"update_not_in_place",'
+            '"message":"Managed by Docker"}',
+            200,
+          );
+        }),
+      );
+
+      await expectLater(
+        client.applyUpdate(),
+        throwsA(
+          isA<DashboardUpdateRefused>().having(
+            (e) => e.message,
+            'message',
+            'Managed by Docker',
+          ),
+        ),
+      );
+      client.close();
+    });
+
+    test('lee el estado de la acción hermes-update', () async {
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((request) async {
+          expect(request.url.path, '/api/actions/hermes-update/status');
+          return http.Response('{"running":true,"exit_code":null}', 200);
+        }),
+      );
+
+      final status = await client.getUpdateActionStatus();
+
+      expect(status['running'], isTrue);
+      client.close();
+    });
+
     test(
       'un cierre de socket tras el POST tampoco se trata como rechazo',
       () async {

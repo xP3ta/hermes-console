@@ -82,6 +82,41 @@ class _RunningResumeGateway
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  ActiveChat openChat(DateTime turnStartedAt) {
+    final gateway = _RunningResumeGateway(turnStartedAt);
+    final chat = ActiveChat(
+      compressionRestoreStore: testCompressionRestoreStore(),
+      connection: SavedConnection(
+        id: 'conn-auto-continue',
+        label: 'Auto continue',
+        host: 'example.invalid',
+        port: 443,
+        apiKey: 'test-key',
+        useHttps: true,
+        kind: InstanceKind.vps,
+      ),
+      sessionId: 'stored-auto-continue',
+      sessionTitle: 'Auto continue',
+      initialStoredSessionId: 'stored-auto-continue',
+      notifications: null,
+      onTerminal: () {},
+      api: ApiClient(
+        baseUrl: 'https://example.invalid',
+        apiKey: 'test-key',
+        httpClient: MockClient(
+          (_) async => http.Response('{"messages":[]}', 200),
+        ),
+      ),
+      desktopGateway: gateway,
+      storedMessageLoader: (_, _) async => const [],
+      attachDesktopRuntimeOnLoad: true,
+      allowUnownedDesktopSnapshotForTesting: true,
+      wallClockMs: () => DateTime.now().millisecondsSinceEpoch,
+    );
+    addTearDown(chat.dispose);
+    return chat;
+  }
+
   test('cold resume flags a running turn older than fifteen minutes', () async {
     final gateway = _RunningResumeGateway(
       DateTime.now().toUtc().subtract(const Duration(minutes: 16)),
@@ -105,7 +140,9 @@ void main() {
       api: ApiClient(
         baseUrl: 'https://example.invalid',
         apiKey: 'test-key',
-        httpClient: MockClient((_) async => http.Response('{"messages":[]}', 200)),
+        httpClient: MockClient(
+          (_) async => http.Response('{"messages":[]}', 200),
+        ),
       ),
       desktopGateway: gateway,
       storedMessageLoader: (_, _) async => const [],
@@ -119,5 +156,28 @@ void main() {
 
     expect(chat.isStreaming, isTrue);
     expect(chat.offerStaleResumedSessionStop, isTrue);
+  });
+
+  test('closing the stale Stop notice keeps the turn running and it does not '
+      'reappear for that same turn, but a new turn warns again', () async {
+    ActiveChat.debugResetDismissedStaleTurns();
+    addTearDown(ActiveChat.debugResetDismissedStaleTurns);
+    final turn = DateTime.now().toUtc().subtract(const Duration(minutes: 16));
+
+    final first = openChat(turn);
+    await first.loadMessages();
+    expect(first.offerStaleResumedSessionStop, isTrue);
+    first.dismissStaleResumedSessionStopOffer();
+    expect(first.offerStaleResumedSessionStop, isFalse);
+    expect(first.isStreaming, isTrue, reason: 'dismiss must not stop work');
+
+    final reopened = openChat(turn);
+    await reopened.loadMessages();
+    expect(reopened.isStreaming, isTrue);
+    expect(reopened.offerStaleResumedSessionStop, isFalse);
+
+    final newTurn = openChat(turn.add(const Duration(seconds: 30)));
+    await newTurn.loadMessages();
+    expect(newTurn.offerStaleResumedSessionStop, isTrue);
   });
 }

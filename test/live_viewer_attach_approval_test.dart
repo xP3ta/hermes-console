@@ -17,6 +17,7 @@ class _ViewerGateway
     implements
         HermesDesktopGateway,
         HermesDesktopSessionLifecycleGateway,
+        HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopSessionActivityGateway,
         HermesDesktopApprovalResultGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -30,6 +31,7 @@ class _ViewerGateway
   bool connected = false;
   int connectCalls = 0;
   int resumeCalls = 0;
+  int recoveryResumeCalls = 0;
   int createCalls = 0;
   int submitCalls = 0;
   int activateCalls = 0;
@@ -73,6 +75,19 @@ class _ViewerGateway
     resumeCalls++;
     return resumeGate?.future ?? snapshot;
   }
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) async {
+    recoveryResumeCalls++;
+    return snapshot;
+  }
+
+  @override
+  // ignore: deprecated_member_use_from_same_package
+  void commitRecoveryRuntime(String runtimeSessionId) {}
 
   @override
   DesktopGatewayCapabilityState capabilityState(
@@ -1047,5 +1062,161 @@ void main() {
 
     expect(await chat.attachExistingRuntimeViewer(), isTrue);
     expect(chat.pendingApproval?['request_id'], 'new-live-request');
+  });
+
+  test('resolved zero retira la tarjeta muerta y restaura la aprobación del '
+      'snapshot', () async {
+    for (final replacement in const <Map<String, dynamic>?>[
+      null,
+      {
+        'request_id': 'request-live',
+        'choices': ['once', 'deny'],
+      },
+    ]) {
+      var reads = 0;
+      final gateway = _ViewerGateway(
+        DesktopSessionSnapshot.fromJson(
+          const {
+            'session_id': 'runtime-live',
+            'session_key': 'stored-live',
+            'messages': <Object>[],
+            'running': true,
+            'pending_approval': {
+              'request_id': 'request-stale',
+              'choices': ['once', 'deny'],
+            },
+          },
+          requestedStoredSessionId: 'stored-live',
+          created: false,
+          method: 'session.resume',
+        ),
+      )..approvalResult = const DesktopApprovalResult(resolved: 0);
+      final chat = _chat(gateway, restCalls: () => reads++);
+      chat.messagesLoaded = true;
+      expect(await chat.attachExistingRuntimeViewer(), isTrue);
+      expect(chat.pendingApproval?['request_id'], 'request-stale');
+      final resumesBefore = gateway.resumeCalls;
+      // Hermes omite `pending_approval` cuando no hay ninguna (nunca null).
+      gateway.snapshot = DesktopSessionSnapshot.fromJson(
+        {
+          'session_id': 'runtime-live',
+          'session_key': 'stored-live',
+          'messages': const <Object>[],
+          'running': true,
+          'pending_approval': ?replacement,
+        },
+        requestedStoredSessionId: 'stored-live',
+        created: false,
+        method: 'session.resume',
+      );
+
+      await chat.resolveApproval('once');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(gateway.approvalCalls.single.requestId, 'request-stale');
+      // Relectura de recuperación: no ancla runtime legacy ni reanuda por la
+      // ruta de mutación normal.
+      expect(gateway.recoveryResumeCalls, 1);
+      expect(gateway.resumeCalls, resumesBefore);
+      expect(chat.pendingApproval?['request_id'], replacement?['request_id']);
+      chat.dispose();
+      await gateway.close();
+    }
+  });
+
+  Future<(ActiveChat, _ViewerGateway)> attachWithStaleApproval({
+    required bool running,
+  }) async {
+    var reads = 0;
+    final snapshot = DesktopSessionSnapshot.fromJson(
+      {
+        'session_id': 'runtime-live',
+        'session_key': 'stored-live',
+        'messages': const <Object>[],
+        'running': running,
+        'pending_approval': const {
+          'request_id': 'request-stale',
+          'choices': ['once', 'deny'],
+        },
+      },
+      requestedStoredSessionId: 'stored-live',
+      created: false,
+      method: 'session.resume',
+    );
+    final gateway = _ViewerGateway(snapshot)
+      ..approvalResult = const DesktopApprovalResult(resolved: 0);
+    final chat = _chat(gateway, restCalls: () => reads++);
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+    });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    expect(chat.pendingApproval?['request_id'], 'request-stale');
+    return (chat, gateway);
+  }
+
+  test('resolved zero relee el snapshot una sola vez por request_id (sin bucle '
+      'respond → 0 → resume)', () async {
+    final (chat, gateway) = await attachWithStaleApproval(running: true);
+
+    // El snapshot sigue anunciando la misma petición caducada.
+    await chat.resolveApproval('once');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(gateway.recoveryResumeCalls, 1);
+    expect(chat.pendingApproval, isNull);
+
+    // La misma petición vuelve a llegar (p. ej. otro resume la reanuncia).
+    gateway.emit('approval.request', const {
+      'request_id': 'request-stale',
+      'choices': ['once', 'deny'],
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(chat.pendingApproval?['request_id'], 'request-stale');
+    await chat.resolveApproval('once');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(gateway.approvalCalls, hasLength(2));
+    expect(gateway.recoveryResumeCalls, 1);
+    expect(chat.pendingApproval, isNull);
+  });
+
+  test('resolved zero sin turno vivo no reanuda la sesión', () async {
+    // Un `session.resume` sobre una sesión que ya no está viva crea un
+    // runtime nuevo en Hermes (`_resume_cold`): sin turno no se relee.
+    final (chat, gateway) = await attachWithStaleApproval(running: false);
+    chat.state = ChatPipelineState.completed;
+
+    await chat.resolveApproval('once');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(gateway.approvalCalls.single.requestId, 'request-stale');
+    expect(gateway.recoveryResumeCalls, 0);
+    expect(chat.pendingApproval, isNull);
+  });
+
+  test('resolved zero ignora un snapshot releído sin turno vivo', () async {
+    final (chat, gateway) = await attachWithStaleApproval(running: true);
+    gateway.snapshot = DesktopSessionSnapshot.fromJson(
+      const {
+        'session_id': 'runtime-live',
+        'session_key': 'stored-live',
+        'messages': <Object>[],
+        'running': false,
+        'pending_approval': {
+          'request_id': 'request-other',
+          'choices': ['once', 'deny'],
+        },
+      },
+      requestedStoredSessionId: 'stored-live',
+      created: false,
+      method: 'session.resume',
+    );
+
+    await chat.resolveApproval('once');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(gateway.recoveryResumeCalls, 1);
+    expect(chat.pendingApproval, isNull);
   });
 }

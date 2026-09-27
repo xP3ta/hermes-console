@@ -3951,6 +3951,86 @@ void main() {
     );
   });
 
+  test(
+    'V5 converged viewer relaunches the roster-bound reattach at terminal',
+    () async {
+      var durableFinalReady = false;
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-viewer-v5-1',
+          storedSessionId: 'session-viewer-v5',
+          created: false,
+          messagesProvided: true,
+          messages: [
+            DesktopSessionMessage.tryParse(const {
+              'message_id': 'viewer-v5-user',
+              'role': 'user',
+              'content': 'viewer v5 prompt',
+            })!,
+          ],
+          inflight: DesktopInflightTurn(
+            user: 'viewer v5 prompt',
+            streaming: true,
+          ),
+          running: true,
+        )
+        ..recoveryExistingGate = Completer<DesktopSessionSnapshot>();
+      final chat = _productionAttachChat(
+        'viewer-v5',
+        gateway,
+        storedMessageLoader: (_, _) async => [
+          const {
+            'message_id': 'viewer-v5-user',
+            'role': 'user',
+            'content': 'viewer v5 prompt',
+          },
+          if (durableFinalReady)
+            const {
+              'message_id': 'viewer-v5-answer',
+              'role': 'assistant',
+              'content': 'viewer v5 durable answer',
+            },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      gateway.drop();
+      // The convergence-era read is parked: it never adopts a runtime.
+      await _waitUntil(() => gateway.resumeExistingCalls == 1);
+      expect(chat.desktopRuntimeSessionId, isNull);
+
+      // The delegated work outlives the turn: the runtime stays advertised.
+      gateway
+        ..recoveryExistingGate = null
+        ..recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-viewer-v5-1',
+          storedSessionId: 'session-viewer-v5',
+          created: false,
+        );
+      durableFinalReady = true;
+      gateway.activeListOverride = const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-viewer-v5-1',
+            storedSessionId: 'session-viewer-v5',
+            status: 'completed',
+          ),
+        ],
+      );
+      await chat.refreshPassiveRemoteActivity();
+      await chat.refreshPassiveRemoteActivity();
+      expect(chat.state, ChatPipelineState.completed);
+
+      // Terminal convergence relaunches the normal attach, which adopts the
+      // runtime so process.list/subagent.list can recover background work.
+      await _waitUntil(() => gateway.viewerAttachmentCommits == 1);
+      await _waitUntil(() => chat.desktopRuntimeSessionId != null);
+      expect(chat.desktopRuntimeSessionId, 'runtime-viewer-v5-1');
+      expect(gateway.turnRecoveryCommits, 0);
+    },
+  );
+
   test('V4 failed or malformed roster does not advance convergence', () async {
     var durableFinalReady = false;
     var transcriptCalls = 0;

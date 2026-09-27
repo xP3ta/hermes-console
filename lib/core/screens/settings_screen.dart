@@ -28,6 +28,7 @@ import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 
 import '../services/bridge_update_service.dart';
+import '../services/hermes_update_monitor.dart';
 import '../../main.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
@@ -2222,6 +2223,14 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       if (mounted) setState(() => _hermesAutoUpdate = v);
     });
     _refresh();
+    // Actualización lanzada antes de salir de Ajustes y aún sin resultado:
+    // se retoma su progreso en vez de ofrecer lanzar otra.
+    final pending = HermesUpdateSession.of(_connection.id);
+    if (pending != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_presentHermesUpdate(pending));
+      });
+    }
   }
 
   @override
@@ -2445,11 +2454,57 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
 
   bool _hermesAutoTriggered = false;
 
+  /// Fuentes de datos para seguir la actualización. Usan un cliente propio
+  /// (no el de la pantalla) porque la sesión sobrevive a este widget.
+  HermesUpdateProbes _updateProbes(HermesUpdateSession session) {
+    final connection = _connection;
+    final client = DashboardClient.lazy(connection);
+    session.result.whenComplete(client.close);
+    Future<Map<String, dynamic>?> publicStatus() async {
+      try {
+        final base = connection.effectiveDashboardUrl.replaceAll(
+          RegExp(r'/+$'),
+          '',
+        );
+        final res = await http
+            .get(Uri.parse(TransportPrivacy.requireAllowed('$base/api/status')))
+            .timeout(const Duration(seconds: 8));
+        if (res.statusCode != 200) return null;
+        final data = jsonDecode(res.body);
+        return data is Map<String, dynamic> ? data : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return HermesUpdateProbes(
+      actionStatus: () async {
+        try {
+          return await client.getUpdateActionStatus();
+        } on DashboardHttpException catch (e) {
+          if (e.statusCode == 404) throw const HermesUpdateEndpointMissing();
+          rethrow;
+        }
+      },
+      serverStatus: publicStatus,
+      updateStillAvailable: () async {
+        try {
+          final check = await client.checkUpdate(force: true);
+          final available = check['update_available'];
+          return available is bool ? available : null;
+        } catch (_) {
+          return null;
+        }
+      },
+    );
+  }
+
   /// Si el toggle de auto-actualización de Hermes está activo y hay una versión
   /// nueva, la aplica automáticamente (una vez por carga de pantalla). No aplica
   /// al agente local.
   Future<void> _maybeAutoUpdateHermes() async {
     if (_hermesAutoTriggered) return;
+    if (_busy || HermesUpdateSession.isActive(widget.connection.id)) return;
     if (_update?['update_available'] != true) return;
     if (widget.connection.onDeviceLoopback) return;
     // Instancia solo-lectura: la auto-actualización se salta en silencio.
@@ -2561,74 +2616,137 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       return;
     }
 
-    final started = DateTime.now();
-    setState(() {
-      _busy = true;
-      _updateProgress = const HermesUpdateProgress(
-        step: HermesUpdateStep.requesting,
-      );
-    });
-    try {
-      final previousVersion = (_status?['version'] ?? '').toString().trim();
-      final applyResult = await _client.applyUpdate();
-      if (!mounted) return;
-      _publishUpdateStep(HermesUpdateStep.applying, started);
-      _snack(Strings.of(context).setUpdateStarted);
-      // La actualización reinicia el gateway: en vez de un delay fijo (que dejaba
-      // la app "pillada" si el reinicio tardaba), esperamos con reintentos a que
-      // el gateway vuelva, mostrando "reiniciando". Así el corte no se nota.
-      final confirmed = await _waitForGatewayBack(
-        waitForUpdate: true,
-        updateResponseConfirmed: applyResult.responseConfirmed,
-        previousVersion: previousVersion,
-      );
-      if (!mounted) return;
-      if (!confirmed) {
-        _publishUpdateStep(HermesUpdateStep.unverified, started);
-        _snack(Strings.of(context).setUpdateUnconfirmed);
-        return;
-      }
-      // Aviso EXPLÍCITO de éxito al terminar (tras volver el gateway). _refresh
-      // dentro de _waitForGatewayBack ya actualizó _status con la versión nueva.
-      if (!mounted) return;
-      _publishUpdateStep(HermesUpdateStep.done, started);
-      final nv = (_status?['version'] ?? '').toString().trim();
-      _snack(
-        nv.isEmpty
-            ? Strings.of(context).setHermesUpdated
-            : Strings.of(context).setHermesUpdatedTo(nv),
-      );
-      // El bridge tiene su propio canal validado. Al terminar el agente
-      // comprobamos también ese compañero bajo la misma preferencia.
-      await BridgeUpdateService.maintainIfEnabled(
-        widget.connection,
-        force: true,
-      );
-    } catch (e) {
-      if (mounted) {
-        final message = switch (e) {
-          StateError error => error.message.toString(),
-          FormatException error => error.message.toString(),
-          _ => e.toString().replaceFirst('Exception: ', ''),
-        };
-        setState(() => _updateProgress = null);
-        _snack(Strings.of(context).setUpdateError(message));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-      // El panel terminal se deja unos segundos para que el resultado sea
-      // legible y luego desaparece; el estado real ya vive en la tarjeta.
-      if (_updateProgress?.finished ?? false) {
-        await Future.delayed(const Duration(seconds: 6));
-        if (mounted) setState(() => _updateProgress = null);
-      }
+    final session = HermesUpdateSession.reserve(
+      widget.connection.id,
+      previousVersion: (_status?['version'] ?? '').toString().trim(),
+    );
+    if (session == null) {
+      _snack(Strings.of(context).setUpdateAlreadyRunning);
+      return;
     }
+    // La instancia queda reservada ANTES del POST: desde aquí ninguna otra
+    // acción automática de la app debe tocar sus servicios.
+    unawaited(_presentHermesUpdate(session));
+    final DashboardUpdateApplyResult applyResult;
+    try {
+      applyResult = await _client.applyUpdate();
+    } catch (e) {
+      final message = switch (e) {
+        DashboardUpdateRefused refused => refused.message,
+        StateError error => error.message.toString(),
+        FormatException error => error.message.toString(),
+        _ => e.toString().replaceFirst('Exception: ', ''),
+      };
+      session.abandon(
+        HermesUpdateResult(HermesUpdateOutcome.failed, detail: message),
+      );
+      return;
+    }
+    session
+      ..actionId = applyResult.actionId
+      ..responseConfirmed = applyResult.responseConfirmed;
+    if (mounted) {
+      _snack(
+        applyResult.alreadyRunning
+            ? Strings.of(context).setUpdateAlreadyRunning
+            : Strings.of(context).setUpdateStarted,
+      );
+    }
+    unawaited(session.track(_updateProbes(session)));
+  }
+
+  /// Muestra el progreso de una sesión de actualización (recién lanzada o
+  /// retomada al volver a Ajustes) y su resultado. El seguimiento real vive
+  /// en [HermesUpdateSession]: si esta pantalla se cierra, sigue y libera la
+  /// instancia en cuanto Hermes da un resultado.
+  Future<void> _presentHermesUpdate(HermesUpdateSession session) async {
+    void publish() {
+      if (!mounted) return;
+      setState(() {
+        _updateProgress = HermesUpdateProgress(
+          step: switch (session.step.value) {
+            HermesUpdateSessionStep.requesting => HermesUpdateStep.requesting,
+            HermesUpdateSessionStep.applying => HermesUpdateStep.applying,
+            HermesUpdateSessionStep.restarting => HermesUpdateStep.restarting,
+            HermesUpdateSessionStep.verifying => HermesUpdateStep.verifying,
+          },
+          elapsedSeconds: session.elapsedSeconds,
+        );
+      });
+    }
+
+    session.step.addListener(publish);
+    // Refresca el contador de segundos aunque el paso no cambie.
+    final ticker = Timer.periodic(const Duration(seconds: 1), (_) => publish());
+    if (mounted) setState(() => _busy = true);
+    publish();
+    final HermesUpdateResult result;
+    try {
+      result = await session.result;
+    } finally {
+      ticker.cancel();
+      session.step.removeListener(publish);
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    await _refresh(forceUpdate: true);
+    if (!mounted) return;
+    final s = Strings.of(context);
+    switch (result.outcome) {
+      case HermesUpdateOutcome.failed:
+        setState(() => _updateProgress = null);
+        final detail = result.detail;
+        _snack(
+          s.setUpdateError(
+            detail == null || detail.isEmpty
+                ? s.setUpdateFailedNoDetail
+                : detail,
+          ),
+        );
+        return;
+      case HermesUpdateOutcome.partial:
+        setState(
+          () => _updateProgress = const HermesUpdateProgress(
+            step: HermesUpdateStep.unverified,
+          ),
+        );
+        _snack(s.setUpdatePartial);
+      case HermesUpdateOutcome.unverified:
+        setState(
+          () => _updateProgress = const HermesUpdateProgress(
+            step: HermesUpdateStep.unverified,
+          ),
+        );
+        _snack(s.setUpdateUnconfirmed);
+      case HermesUpdateOutcome.confirmed:
+        setState(
+          () => _updateProgress = const HermesUpdateProgress(
+            step: HermesUpdateStep.done,
+          ),
+        );
+        final nv = (result.version ?? _status?['version'] ?? '')
+            .toString()
+            .trim();
+        _snack(nv.isEmpty ? s.setHermesUpdated : s.setHermesUpdatedTo(nv));
+        // Con la actualización cerrada se comprueba el bridge bajo la misma
+        // preferencia.
+        unawaited(
+          BridgeUpdateService.maintainIfEnabled(widget.connection, force: true),
+        );
+    }
+    // El panel terminal queda unos segundos y luego desaparece.
+    await Future.delayed(const Duration(seconds: 6));
+    if (mounted) setState(() => _updateProgress = null);
   }
 
   Future<void> _restartGateway() async {
     // Acción mutante: respeta el modo solo-lectura (spec 028 A-024).
     if (widget.connection.readOnly) {
       showReadOnlyNotice(context);
+      return;
+    }
+    if (HermesUpdateGuard.isActive(widget.connection.id)) {
+      _snack(Strings.of(context).setUpdateAlreadyRunning);
       return;
     }
     final colors = Theme.of(context).hermes;
