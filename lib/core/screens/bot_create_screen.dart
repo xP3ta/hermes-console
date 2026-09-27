@@ -26,6 +26,8 @@ import '../services/profile_pet_service.dart';
 import '../services/profile_pet_visual_adapter.dart';
 import '../services/profile_image_normalizer.dart';
 import '../services/tui_gateway_client.dart';
+import '../design/modal.dart'
+    show HermesModelChoice, HermesModelGroup, showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/bot_settings_group.dart';
@@ -34,7 +36,6 @@ import '../widgets/hermes_bot_face.dart';
 import '../widgets/bot_face_options.dart';
 import '../widgets/bot_avatar_generate_button.dart';
 import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'mission_control_copy.dart';
 
@@ -594,50 +595,30 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     final catalog = _modelCatalog;
     if (catalog == null || catalog.isEmpty) return;
     final copy = MissionControlCopy.of(context);
-    final picked =
-        await showHermesFloatingSurface<({String provider, String model})>(
-          context: context,
-          surfaceKey: const ValueKey('bot-create-model-picker'),
-          maxWidth: 560,
-          maxHeightFactor: 0.88,
-          builder: (sheetContext) => ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-            children: [
-              ListTile(
-                key: const ValueKey('bot-create-model-inherit'),
-                dense: true,
-                leading: const Icon(Icons.auto_awesome, size: 18),
-                title: Text(copy.modelInherited),
-                onTap: () => Navigator.pop(sheetContext),
-              ),
-              for (final provider in catalog)
-                if (provider.models.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 12, 4, 2),
-                    child: Text(
-                      provider.name,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Theme.of(sheetContext).hermes.accentHover,
-                      ),
-                    ),
-                  ),
-                  for (final model in provider.models)
-                    ListTile(
-                      key: ValueKey('bot-create-model-${provider.slug}-$model'),
-                      dense: true,
-                      title: Text(model, style: const TextStyle(fontSize: 13)),
-                      onTap: () => Navigator.pop(sheetContext, (
-                        provider: provider.slug,
-                        model: model,
-                      )),
-                    ),
-                ],
-            ],
-          ),
-        );
+    final current = _model;
+    final choice = await showHermesModelPicker(
+      context: context,
+      surfaceKey: const ValueKey('bot-create-model-picker'),
+      keyPrefix: 'bot-create-model',
+      defaultLabel: copy.modelInherited,
+      current: current == null
+          ? const HermesModelChoice.defaultModel()
+          : HermesModelChoice(current.provider, current.model),
+      groups: [
+        for (final provider in catalog)
+          if (provider.models.isNotEmpty)
+            HermesModelGroup(
+              slug: provider.slug,
+              name: provider.name,
+              models: provider.models,
+            ),
+      ],
+    );
+    // Dismissing keeps the current choice; "inherit" clears it.
+    if (choice == null) return;
+    final picked = choice.isDefault
+        ? null
+        : (provider: choice.provider, model: choice.model);
     if (!mounted) return;
     setState(() => _model = picked);
   }

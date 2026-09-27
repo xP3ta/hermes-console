@@ -602,6 +602,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(client.isConnected, isFalse);
+    // Lazy RPC dials honour the owner's reconnect backoff (fail fast); the
+    // owner reconnects explicitly, then the capability is re-proved.
+    await client.connect();
 
     await expectLater(
       client.steer('runtime-1', 'segundo'),
@@ -815,8 +818,8 @@ void main() {
           final frame = jsonDecode(raw as String) as Map<String, dynamic>;
           final method = frame['method'] as String;
           if (!isClientCapabilitiesFrame(frame)) {
-          methodsByConnection[connectionIndex].add(method);
-        }
+            methodsByConnection[connectionIndex].add(method);
+          }
           if (method == 'session.active_list') {
             socket.add(
               jsonEncode({

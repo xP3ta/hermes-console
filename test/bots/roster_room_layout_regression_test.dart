@@ -254,7 +254,11 @@ void main() {
           _bot('radar', at: 1789990000),
         ],
       );
-      final nameBottom = tester.getBottomLeft(find.text('astra').first).dy;
+      // Two pinned bots use the compact row (spec 080): measure from the
+      // strip's bottom edge, which now also carries the status line.
+      final nameBottom = tester
+          .getBottomLeft(find.byKey(const ValueKey('mission-pinned-strip')))
+          .dy;
       final header = find.byKey(const ValueKey('roster-section-recent'));
       final headerText = find.descendant(
         of: header,
@@ -264,6 +268,69 @@ void main() {
       // Before: ~48 dp (fixed 124 dp strip + 6 + header padding).
       expect(gap, lessThanOrEqualTo(20));
       expect(gap, greaterThan(0));
+    });
+
+    testWidgets('pinned strip: compact and start-aligned for 1–2 bots', (
+      tester,
+    ) async {
+      await _pumpRoster(
+        tester,
+        bots: [
+          _bot('hermes', meta: {'pinned': true}),
+          _bot('astra', meta: {'pinned': true}),
+          _bot('radar', at: 1789990000),
+        ],
+      );
+      final strip = tester.getRect(
+        find.byKey(const ValueKey('mission-pinned-strip')),
+      );
+      final a = tester.getRect(
+        find.byKey(const ValueKey('mission-pinned-tile-hermes')),
+      );
+      final b = tester.getRect(
+        find.byKey(const ValueKey('mission-pinned-tile-astra')),
+      );
+      // Starts at the strip's leading edge and fills the width: no big
+      // empty area on the right.
+      final left = a.left < b.left ? a.left : b.left;
+      final right = a.right > b.right ? a.right : b.right;
+      expect(left - strip.left, lessThanOrEqualTo(8));
+      expect(strip.right - right, lessThanOrEqualTo(8));
+      // Equal sizes and names on one baseline.
+      expect(a.size, b.size);
+      expect(
+        tester.getTopLeft(find.text('hermes').first).dy,
+        tester.getTopLeft(find.text('astra').first).dy,
+      );
+      expect(a.height, greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('pinned strip: three or more stay a face strip from start', (
+      tester,
+    ) async {
+      await _pumpRoster(
+        tester,
+        bots: [
+          _bot('hermes', meta: {'pinned': true}),
+          _bot('astra', meta: {'pinned': true}),
+          _bot('forja', meta: {'pinned': true}),
+        ],
+      );
+      final strip = tester.getRect(
+        find.byKey(const ValueKey('mission-pinned-strip')),
+      );
+      final lefts = [
+        for (final n in const ['hermes', 'astra', 'forja'])
+          tester.getRect(find.byKey(ValueKey('mission-pinned-tile-$n'))).left,
+      ]..sort();
+      expect(lefts.first - strip.left, lessThanOrEqualTo(8));
+      // Even spacing between tiles.
+      expect(lefts[1] - lefts[0], lefts[2] - lefts[1]);
+      final names = [
+        for (final n in const ['hermes', 'astra', 'forja'])
+          tester.getTopLeft(find.text(n).first).dy,
+      ];
+      expect(names.toSet(), hasLength(1));
     });
 
     testWidgets('#4 section count sits next to the title in the same style', (

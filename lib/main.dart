@@ -47,6 +47,7 @@ import 'core/services/home_widget_publisher.dart';
 import 'core/services/notifications/background_listener.dart';
 import 'core/services/notifications/notification_service.dart';
 import 'core/services/performance_trace.dart';
+import 'core/bots/data/gateway_socket_meter.dart';
 import 'core/services/shared_gateway_pool.dart';
 import 'core/services/new_session_launch_coordinator.dart';
 import 'core/services/profile_pet_service.dart';
@@ -403,17 +404,45 @@ class AppLocales {
 }
 
 @visibleForTesting
+/// Default-network events from MainActivity: `null`/`'available'` when a
+/// network becomes the default, `'lost'` when it goes away.
+///
+/// Android fires `onAvailable` in bursts (several per second on Wi-Fi
+/// re-association), so availability is debounced into one probe per owner.
+/// A loss only marks sockets stale: the platform has no route yet, so a
+/// reconnect would just fail and feed the backoff.
 final class NetworkAvailabilityRecoveryListener {
   NetworkAvailabilityRecoveryListener({
     required Stream<dynamic> events,
-    required VoidCallback onAvailable,
+    required this.onAvailable,
+    VoidCallback? onLost,
   }) {
-    _subscription = events.listen((_) => onAvailable(), onError: (_) {});
+    _subscription = events.listen((event) {
+      if (event == 'lost') {
+        _pending?.cancel();
+        _pending = null;
+        onLost?.call();
+        return;
+      }
+      _pending?.cancel();
+      _pending = Timer(debounce, () {
+        _pending = null;
+        onAvailable();
+      });
+    }, onError: (_) {});
   }
 
-  late final StreamSubscription<dynamic> _subscription;
+  static const debounce = Duration(seconds: 2);
 
-  Future<void> dispose() => _subscription.cancel();
+  final VoidCallback onAvailable;
+  late final StreamSubscription<dynamic> _subscription;
+  Timer? _pending;
+
+  Future<void> dispose() {
+    _pending?.cancel();
+    _pending = null;
+    return _subscription.cancel();
+  }
 }
 
 class HermesApp extends StatefulWidget {
@@ -502,6 +531,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Vigilante de sesiones SSH ociosas mientras la app está en background
   /// (U-11, spec 028). Se arma al pasar a paused y se cancela al volver.
   Timer? _sshIdleTimer;
+
+  /// Closes lingering (unleased) pooled gateway sockets after the app has
+  /// been in the background for a while; leased ones stay with their owner.
+  Timer? _gatewayIdleTimer;
+  static const _gatewayIdleGrace = Duration(seconds: 60);
 
   late final ExternalDataSyncDemandGate _externalDataSyncDemandGate;
   static const MethodChannel _externalDataSyncControl = MethodChannel(
@@ -961,6 +995,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       unawaited(_handleForegroundStopRequest());
       return;
     }
+    // Spec 080: Cron/Kanban completion while the app is open → in-app notice.
+    final automationNotice = BackgroundListener.automationNoticeFromData(data);
+    if (automationNotice != null) {
+      _showInAppNotice(automationNotice);
+      return;
+    }
     final readAction = BackgroundListener.readAloudActionFromData(data);
     if (readAction != null) {
       switch (readAction) {
@@ -1131,7 +1171,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (Platform.isAndroid) {
       _networkAvailabilityListener = NetworkAvailabilityRecoveryListener(
         events: _networkAvailabilityEvents.receiveBroadcastStream(),
-        onAvailable: widget.activeChats.requestImmediateTransportRecovery,
+        onAvailable: () {
+          widget.activeChats.requestImmediateTransportRecovery();
+          // Pooled observers (Home, library, rooms, pet) are probed too, so a
+          // half-open socket from the old network fails now, not in 45 s.
+          unawaited(SharedGatewayPool.instance.probeAll());
+        },
+        onLost: () => GatewaySocketMeter.instance.recordNetworkLost(),
       );
     }
     // `didHaveMemoryPressure` no lleva nivel y también se dispara al pasar a
@@ -1286,7 +1332,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // cortado mientras la app estaba suspendida (red de seguridad: con el
     // foreground service activo normalmente no hace falta, pero si el SO mató el
     // isolate igualmente, re-sincronizamos los mensajes desde el servidor).
+    GatewayReconnectBackoff.backgroundCadence =
+        state != AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed) {
+      _gatewayIdleTimer?.cancel();
+      _gatewayIdleTimer = null;
       _sshIdleTimer?.cancel();
       _sshIdleTimer = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1305,6 +1355,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
+      _gatewayIdleTimer ??= Timer(_gatewayIdleGrace, () {
+        _gatewayIdleTimer = null;
+        if (_appLifecycle != AppLifecycleState.resumed) {
+          SharedGatewayPool.instance.disconnectIdle();
+        }
+      });
       // No cerramos el WebSocket por lifecycle. Android puede encadenar
       // hidden/paused/detached durante un selector, un cambio de red o una
       // suspensión breve; cerrar aquí convierte una transición local en
@@ -2290,6 +2346,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _deferredNotificationInitTimer?.cancel();
 
     _sshIdleTimer?.cancel();
+    _gatewayIdleTimer?.cancel();
     _externalDataSyncControl.setMethodCallHandler(null);
     _linkSub?.cancel();
     widget.connManager.activeConnectionId.removeListener(_retryPendingShare);

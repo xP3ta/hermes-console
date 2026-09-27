@@ -74,8 +74,17 @@ class CronJob {
         ? schedule.cast<Object?, Object?>()
         : const <Object?, Object?>{};
     final enabled = json['enabled'] != false;
+    final kind = _text(scheduleMap['kind']);
+    final minutes = scheduleMap['minutes'];
+    // The canonical Hermes schedule string: cron `expr`, the native interval
+    // (`every 60m`) or the one-shot instant — never the English `display`
+    // when the structured value exists.
     final expression =
         _text(scheduleMap['expr']) ??
+        (kind == 'interval' && minutes is num && minutes > 0
+            ? 'every ${minutes.round()}m'
+            : null) ??
+        (kind == 'once' ? _text(scheduleMap['run_at']) : null) ??
         (schedule is String ? _text(schedule) : null) ??
         _text(json['schedule_display']) ??
         '';
@@ -122,9 +131,23 @@ class CronJob {
   bool get isPaused =>
       state == CronJobState.paused || state == CronJobState.disabled;
 
-  /// Misma prioridad que `jobTitle()` de Hermes Desktop.
+  static final RegExp _botPrefix = RegExp(
+    r'^\[bot:([a-z0-9][a-z0-9_-]{0,63})\]\s*',
+  );
+
+  /// [raw] job name without the technical `[bot:<name>]` prefix.
+  static String displayName(String raw) =>
+      raw.replaceFirst(_botPrefix, '').trim();
+
+  /// Profile of the bot that owns this routine, from the `[bot:<name>]`
+  /// prefix Bot Mode stores in the name; null for ordinary jobs.
+  String? get ownerBot => _botPrefix.firstMatch(name)?.group(1);
+
+  /// Misma prioridad que `jobTitle()` de Hermes Desktop, sin el prefijo
+  /// técnico `[bot:<name>]` (el dueño se muestra aparte).
   String get title {
-    if (name.isNotEmpty) return name;
+    final clean = displayName(name);
+    if (clean.isNotEmpty) return clean;
     if (prompt.isNotEmpty) return _clip(prompt);
     if (script.isNotEmpty) return _clip(script);
     return id.isEmpty ? 'Cron job' : id;

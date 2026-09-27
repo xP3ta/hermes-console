@@ -19,9 +19,8 @@ final class _RecordingProfileGateway implements BotProfileGateway {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Object? projection() => spec070Profiles()
-    .singleWhere((p) => p.name == 'default')
-    .groupsProjection;
+Object? projection() =>
+    spec070Profiles().singleWhere((p) => p.name == 'default').groupsProjection;
 
 void main() {
   group('DesktopProjectionRooms (ui_meta hermes-bots-groups v3)', () {
@@ -66,7 +65,14 @@ void main() {
       final rooms = DesktopProjectionRooms.parse({
         'version': 3,
         'rooms': {
-          'id:x': {'roomId': 'x', 'name': 'ok', 'log': [1, {'from': {}}]},
+          'id:x': {
+            'roomId': 'x',
+            'name': 'ok',
+            'log': [
+              1,
+              {'from': {}},
+            ],
+          },
           'id:y': 'bad',
         },
       });
@@ -81,8 +87,16 @@ void main() {
             'roomId': 'x',
             'name': 'r',
             'log': [
-              {'from': {'kind': 'member', 'name': 'a'}, 'text': '@user?', 'at': 1},
-              {'from': {'kind': 'user', 'name': 'You'}, 'text': 'yes', 'at': 2},
+              {
+                'from': {'kind': 'member', 'name': 'a'},
+                'text': '@user?',
+                'at': 1,
+              },
+              {
+                'from': {'kind': 'user', 'name': 'You'},
+                'text': 'yes',
+                'at': 2,
+              },
             ],
           },
         },
@@ -101,19 +115,21 @@ void main() {
       expect(BotRosterMeta.of(profiles.last).hidden, isTrue);
     });
 
-    test('writes through patchBotMetadata and drops the legacy chat pin',
-        () async {
-      final gateway = _RecordingProfileGateway();
-      final writer = BotRosterMetaWriter(gateway);
-      await writer.setPinned('astra', true);
-      await writer.setHidden('radar', false);
-      await writer.setSection('astra', id: 'sec-1', name: 'Ops');
-      expect(gateway.patches.map((p) => p.$2), [
-        {'pinned': true},
-        {'hidden': false},
-        {'sectionId': 'sec-1', 'sectionName': 'Ops'},
-      ]);
-      expect(gateway.patches.every((p) => p.$3.contains('chat')), isTrue);
-    });
+    test(
+      'writes through patchBotMetadata and drops the legacy chat pin',
+      () async {
+        final gateway = _RecordingProfileGateway();
+        final writer = BotRosterMetaWriter(gateway);
+        await writer.setPinned('astra', true);
+        await writer.setHidden('radar', false);
+        await writer.setSection('astra', id: 'sec-1', name: 'Ops');
+        expect(gateway.patches.map((p) => p.$2), [
+          {'pinned': true},
+          {'hidden': false},
+          {'sectionId': 'sec-1', 'sectionName': 'Ops'},
+        ]);
+        expect(gateway.patches.every((p) => p.$3.contains('chat')), isTrue);
+      },
+    );
   });
 }

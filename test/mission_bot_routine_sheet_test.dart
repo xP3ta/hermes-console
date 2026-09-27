@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/mission_bot_routine_sheet.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 
 void main() {
   testWidgets(
@@ -26,7 +27,7 @@ void main() {
       expect(find.byIcon(Icons.smart_toy_outlined), findsNothing);
       expect(find.text('Qué'), findsOneWidget);
       expect(find.text('Cuándo'), findsOneWidget);
-      expect(find.text('Cada día · 09:00'), findsOneWidget);
+      expect(find.text('Cada día a las 9:00'), findsOneWidget);
       expect(find.text('Más opciones'), findsOneWidget);
       expect(find.byKey(const ValueKey('mission-routine-name')), findsNothing);
       expect(find.text('Destino'), findsNothing);
@@ -48,13 +49,11 @@ void main() {
   );
 
   for (final row in const <(String, String)>[
-    ('Días laborables · 09:00', '0 9 * * 1-5'),
-    ('Cada lunes · 09:00', '0 9 * * 1'),
-    ('Cada mes · día 1, 09:00', '0 9 1 * *'),
-    ('Cada hora', '0 * * * *'),
-    ('Cada 15 minutos', '*/15 * * * *'),
+    ('schedule-preset-weekdays', '0 9 * * 1-5'),
+    ('schedule-preset-hourly', '0 * * * *'),
+    ('schedule-preset-morning', '0 8 * * *'),
   ]) {
-    testWidgets('${row.$1} submits its canonical cron expression', (
+    testWidgets('${row.$1} from the schedule builder submits ${row.$2}', (
       tester,
     ) async {
       MissionBotRoutineDraft? submitted;
@@ -64,7 +63,10 @@ void main() {
           copy: MissionBotRoutineSheetCopy.es,
         ),
       );
-      await _selectSchedule(tester, row.$1);
+      await _pickInBuilder(tester, (tester) async {
+        await tester.tap(find.byKey(ValueKey(row.$1)));
+        await tester.pump();
+      });
       await _enter(
         tester,
         const ValueKey('mission-routine-prompt'),
@@ -78,61 +80,63 @@ void main() {
     });
   }
 
-  testWidgets(
-    'custom schedule reveals raw cron and optional name is explicit',
-    (tester) async {
-      MissionBotRoutineDraft? submitted;
-      await tester.pumpWidget(
-        _host(
-          onCreate: (draft) async => submitted = draft,
-          copy: MissionBotRoutineSheetCopy.es,
-        ),
-      );
-
-      await _selectSchedule(tester, 'Personalizado');
-      expect(
-        find.byKey(const ValueKey('mission-routine-custom-schedule')),
-        findsOneWidget,
-      );
-      final moreOptions = find.byKey(
-        const ValueKey('mission-routine-more-options'),
-      );
-      await tester.ensureVisible(moreOptions);
-      await tester.pumpAndSettle();
-      await tester.tap(moreOptions);
-      await tester.pump();
-      expect(
-        find.byKey(const ValueKey('mission-routine-name')),
-        findsOneWidget,
-      );
-
-      await _enter(
-        tester,
-        const ValueKey('mission-routine-prompt'),
-        'Comprueba el nodo',
-      );
-      await _enter(
-        tester,
-        const ValueKey('mission-routine-custom-schedule'),
-        '7 6 * * 2',
-      );
-      await _enter(
-        tester,
-        const ValueKey('mission-routine-name'),
-        'Chequeo semanal',
-      );
-      await tester.tap(find.byKey(const ValueKey('mission-routine-submit')));
-      await tester.pumpAndSettle();
-
-      expect(submitted?.name, 'Chequeo semanal');
-      expect(submitted?.prompt, 'Comprueba el nodo');
-      expect(submitted?.schedule, '7 6 * * 2');
-    },
-  );
-
-  testWidgets('requires What and the raw expression for a custom schedule', (
+  testWidgets('advanced cron in the builder and optional name are explicit', (
     tester,
   ) async {
+    MissionBotRoutineDraft? submitted;
+    await tester.pumpWidget(
+      _host(
+        onCreate: (draft) async => submitted = draft,
+        copy: MissionBotRoutineSheetCopy.es,
+      ),
+    );
+
+    await _pickInBuilder(tester, (tester) async {
+      final advanced = find.byKey(const ValueKey('schedule-advanced'));
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('schedule-cron-field')),
+        '7 6 * * 2',
+      );
+      await tester.pump();
+    });
+    expect(find.textContaining('Los martes a las 6:07'), findsOneWidget);
+    final moreOptions = find.byKey(
+      const ValueKey('mission-routine-more-options'),
+    );
+    await tester.ensureVisible(moreOptions);
+    await tester.pumpAndSettle();
+    await tester.tap(moreOptions);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('mission-routine-name')), findsOneWidget);
+
+    await _enter(
+      tester,
+      const ValueKey('mission-routine-prompt'),
+      'Comprueba el nodo',
+    );
+    await _enter(
+      tester,
+      const ValueKey('mission-routine-name'),
+      'Chequeo semanal',
+    );
+    // In this small host the name field's selection handles overlap the
+    // footer; invoke the button's action directly.
+    tester
+        .widget<FilledButton>(
+          find.byKey(const ValueKey('mission-routine-submit')),
+        )
+        .onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(submitted?.name, 'Chequeo semanal');
+    expect(submitted?.prompt, 'Comprueba el nodo');
+    expect(submitted?.schedule, '7 6 * * 2');
+  });
+
+  testWidgets('requires What', (tester) async {
     var calls = 0;
     await tester.pumpWidget(
       _host(
@@ -144,14 +148,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mission-routine-submit')));
     await tester.pump();
     expect(find.text('Escribe qué debe hacer el bot.'), findsOneWidget);
-    expect(calls, 0);
-
-    await _enter(tester, const ValueKey('mission-routine-prompt'), 'Haz algo');
-    await _selectSchedule(tester, 'Personalizado');
-    await tester.tap(find.byKey(const ValueKey('mission-routine-submit')));
-    await tester.pump();
-
-    expect(find.text('Escribe una expresión cron.'), findsOneWidget);
     expect(calls, 0);
   });
 
@@ -284,6 +280,11 @@ Widget _host({
   double width = 520,
   double height = 700,
 }) => MaterialApp(
+  locale: copy == MissionBotRoutineSheetCopy.en
+      ? const Locale('en')
+      : const Locale('es'),
+  localizationsDelegates: Strings.localizationsDelegates,
+  supportedLocales: Strings.supportedLocales,
   theme: AppTheme.fromId('dark'),
   home: Builder(
     builder: (context) => MediaQuery(
@@ -321,9 +322,14 @@ Future<void> _enter(WidgetTester tester, Key fieldKey, String value) async {
   await tester.pump();
 }
 
-Future<void> _selectSchedule(WidgetTester tester, String label) async {
+Future<void> _pickInBuilder(
+  WidgetTester tester,
+  Future<void> Function(WidgetTester tester) edit,
+) async {
   await tester.tap(find.byKey(const ValueKey('mission-routine-schedule')));
   await tester.pumpAndSettle();
-  await tester.tap(find.text(label).last);
+  expect(find.byKey(const ValueKey('schedule-builder')), findsOneWidget);
+  await edit(tester);
+  await tester.tap(find.byKey(const ValueKey('schedule-apply')));
   await tester.pumpAndSettle();
 }

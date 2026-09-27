@@ -243,8 +243,8 @@ void main() {
 
     final shown = shownArgs(groupSummary: false);
     expect(shown, hasLength(2));
-    expect(shown.first['title'], 'Cron completado');
-    expect(shown.last['title'], 'Cron falló');
+    expect(shown.first['title'], 'Tarea programada completada');
+    expect(shown.last['title'], 'Tarea programada fallida');
     expect(shown.first['id'], isNot(shown.last['id']));
   });
 

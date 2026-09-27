@@ -3,13 +3,16 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
 import '../theme/motion.dart';
+import '../design/modal.dart' show showHermesSurface;
 
-/// Abre una superficie modal centrada sin depender de `showDialog`.
+/// Legacy entry point of the ONE floating modal container (spec 080).
 ///
-/// La ruta conserva un [FocusScopeNode] propio y lo libera antes de cerrarse.
-/// Esto permite alojar buscadores y editores sin mantener un `EditableText`
-/// enlazado al overlay que ya se está desmontando. La geometría es la misma en
-/// móvil y tablet: margen seguro, ancho acotado y scroll a cargo del contenido.
+/// Delegates to [showHermesSurface]: rounded 22, content-sized, scrim,
+/// IME-aware, clamped inner scrolling, anchored to [anchorKey]/[originRect]
+/// when given and centred otherwise. Never a bottom sheet. Legacy callers are
+/// mostly forms and details that become pages in spec 080 steps 6–8, so this
+/// wrapper keeps their 0.88 height cap; new pickers use [showHermesSurface]
+/// (70 %) or [showHermesOptions].
 Future<T?> showHermesFloatingSurface<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -19,93 +22,20 @@ Future<T?> showHermesFloatingSurface<T>({
   bool barrierDismissible = true,
   bool systemDismissible = true,
   bool useRootNavigator = false,
-}) {
-  assert(maxWidth > 0);
-  assert(maxHeightFactor > 0 && maxHeightFactor <= 1);
-  final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-  final focusScopeNode = FocusScopeNode(debugLabel: 'HermesFloatingSurface');
-  return Navigator.of(context, rootNavigator: useRootNavigator).push<T>(
-    _HermesFloatingSurfaceRoute<T>(
-      builder: builder,
-      focusScopeNode: focusScopeNode,
-      surfaceKey: surfaceKey,
-      maxWidth: maxWidth,
-      maxHeightFactor: maxHeightFactor,
-      barrierDismissible: barrierDismissible,
-      systemDismissible: systemDismissible,
-      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      reduceMotion: reduceMotion,
-    ),
-  );
-}
-
-class _HermesFloatingSurfaceRoute<T> extends PageRouteBuilder<T> {
-  _HermesFloatingSurfaceRoute({
-    required WidgetBuilder builder,
-    required FocusScopeNode focusScopeNode,
-    required Key surfaceKey,
-    required double maxWidth,
-    required double maxHeightFactor,
-    required super.barrierDismissible,
-    required bool systemDismissible,
-    required String barrierLabel,
-    required bool reduceMotion,
-  }) : _focusScopeNode = focusScopeNode,
-       super(
-         opaque: false,
-         barrierColor: Colors.black.withValues(alpha: 0.56),
-         barrierLabel: barrierLabel,
-         maintainState: true,
-         transitionDuration: reduceMotion
-             ? Duration.zero
-             : const Duration(milliseconds: 220),
-         reverseTransitionDuration: reduceMotion
-             ? Duration.zero
-             : const Duration(milliseconds: 170),
-         pageBuilder: (context, animation, secondaryAnimation) => PopScope(
-           canPop: systemDismissible,
-           child: FocusScope(
-             node: focusScopeNode,
-             child: _HermesFloatingSurfaceFrame(
-               surfaceKey: surfaceKey,
-               maxWidth: maxWidth,
-               maxHeightFactor: maxHeightFactor,
-               reduceMotion: reduceMotion,
-               child: builder(context),
-             ),
-           ),
-         ),
-         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-           if (reduceMotion) return child;
-           final curved = CurvedAnimation(
-             parent: animation,
-             curve: Curves.easeOutCubic,
-             reverseCurve: Curves.easeInCubic,
-           );
-           return FadeTransition(
-             opacity: curved,
-             child: ScaleTransition(
-               scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
-               child: child,
-             ),
-           );
-         },
-       );
-
-  final FocusScopeNode _focusScopeNode;
-
-  @override
-  bool didPop(T? result) {
-    _focusScopeNode.unfocus(disposition: UnfocusDisposition.scope);
-    return super.didPop(result);
-  }
-
-  @override
-  void dispose() {
-    _focusScopeNode.dispose();
-    super.dispose();
-  }
-}
+  GlobalKey? anchorKey,
+  Rect? originRect,
+}) => showHermesSurface<T>(
+  context: context,
+  builder: builder,
+  surfaceKey: surfaceKey,
+  maxWidth: maxWidth,
+  maxHeightFactor: maxHeightFactor,
+  barrierDismissible: barrierDismissible,
+  systemDismissible: systemDismissible,
+  useRootNavigator: useRootNavigator,
+  anchorKey: anchorKey,
+  originRect: originRect,
+);
 
 /// Disposes [controllers] exactly when this widget actually leaves the
 /// tree, instead of on a fixed delay guessed to outlast whatever route
@@ -145,67 +75,6 @@ class _DisposeControllersOnUnmountState
       controller.dispose();
     }
     super.dispose();
-  }
-}
-
-class _HermesFloatingSurfaceFrame extends StatelessWidget {
-  const _HermesFloatingSurfaceFrame({
-    required this.surfaceKey,
-    required this.maxWidth,
-    required this.maxHeightFactor,
-    required this.reduceMotion,
-    required this.child,
-  });
-
-  final Key surfaceKey;
-  final double maxWidth;
-  final double maxHeightFactor;
-  final bool reduceMotion;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final availableHeight =
-        media.size.height -
-        media.viewInsets.bottom -
-        media.padding.vertical -
-        32;
-    final maxHeight = availableHeight <= 0
-        ? 0.0
-        : availableHeight * maxHeightFactor;
-    final theme = Theme.of(context);
-    final shape =
-        theme.dialogTheme.shape ??
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(22));
-
-    return AnimatedPadding(
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
-      child: SafeArea(
-        minimum: const EdgeInsets.all(16),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: maxWidth,
-              maxHeight: maxHeight,
-            ),
-            child: Material(
-              key: surfaceKey,
-              color: theme.dialogTheme.backgroundColor,
-              surfaceTintColor: Colors.transparent,
-              elevation: theme.dialogTheme.elevation ?? 12,
-              shape: shape,
-              clipBehavior: Clip.antiAlias,
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -1181,8 +1050,7 @@ class _HermesRotatingHeaderText extends StatefulWidget {
 
 /// One value the rotating header has shown, tracked so a repeat can be
 /// told apart from a genuinely new one — see [_HermesRotatingHeaderTextState].
-class _HermesRotatingHeaderTextState
-    extends State<_HermesRotatingHeaderText> {
+class _HermesRotatingHeaderTextState extends State<_HermesRotatingHeaderText> {
   int _revision = 0;
 
   @override

@@ -15,29 +15,34 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../models/agent_profile.dart';
 import '../models/cron_job.dart';
 import '../models/dock_config.dart' show DockItemId;
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/cron_repository.dart';
 import '../services/dock_preferences_store.dart';
+import '../design/hermes_design.dart';
+import '../services/notifications/notification_mute_store.dart';
 import '../services/notifications/notification_service.dart';
-
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
-import '../widgets/dock_anchored_popover.dart';
 import '../widgets/feature_dependency_notice.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_pill.dart';
-import '../widgets/hermes_premium_ui.dart';
-import '../widgets/hermes_ui.dart';
+import '../widgets/hermes_pill.dart' show TuiLoader;
+import '../widgets/hermes_premium_ui.dart'
+    show HermesSegment, HermesSegmentedControl;
+import '../widgets/hermes_ui.dart' show HermesField;
+import '../widgets/mission_profile_avatar.dart';
 import '../widgets/read_only.dart';
 import 'bridge_file_editor_screen.dart';
+import 'cron_detail_page.dart';
 import 'chat_screen.dart';
 import 'instance_edit_screen.dart';
+import 'notification_settings_screen.dart';
 
 @visibleForTesting
 const cronBackstopRefreshInterval = Duration(seconds: 60);
@@ -91,6 +96,10 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   TuiGatewayClient? _ownedEventClient;
   Stream<TuiGatewayEvent>? _eventStream;
   List<CronJob> _jobs = const [];
+
+  /// Bot profiles by name (title, face) for owner lines and destinations.
+  Map<String, AgentProfile> _profiles = const {};
+  MissionProfileAvatarCache? _avatarCache;
   String _profile = '';
   String _query = '';
   CronProfileScope _profileScope = CronProfileScope.active;
@@ -113,10 +122,41 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
     _repository = CronRepository(_client);
     _refreshTimer = Timer.periodic(cronBackstopRefreshInterval, (_) {
-      if (_refreshAllowed && !_fetching) unawaited(_loadJobs(showLoader: false));
+      if (_refreshAllowed && !_fetching) {
+        unawaited(_loadJobs(showLoader: false));
+      }
     });
     _startEventUpdates();
+    final gateway = _ownedEventClient;
+    if (gateway != null) {
+      _avatarCache = MissionProfileAvatarCache(
+        loader: gateway.profileAvatar,
+        connectionId: widget.connection.id,
+      );
+    }
+    unawaited(_loadProfiles());
   }
+
+  /// Best effort: without profile metadata the owner line still shows the
+  /// procedural face and a readable name. The gateway roster carries the
+  /// Bot Mode title and face; the dashboard list is the fallback.
+  Future<void> _loadProfiles() async {
+    try {
+      final gateway = _ownedEventClient;
+      List<AgentProfile> profiles;
+      try {
+        profiles = gateway == null
+            ? await _client.getProfiles()
+            : await gateway.listProfiles();
+      } catch (_) {
+        profiles = await _client.getProfiles();
+      }
+      if (!mounted) return;
+      setState(() => _profiles = {for (final p in profiles) p.name: p});
+    } catch (_) {}
+  }
+
+  AgentProfile? _profileInfo(String name) => _profiles[name];
 
   bool get _refreshAllowed =>
       mounted && _foreground && ModalRoute.of(context)?.isCurrent != false;
@@ -193,7 +233,11 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     if (!_started || profile != _profile) {
       _started = true;
       _profile = profile;
-      _repository = CronRepository(_client, profile: profile, botRoutines: widget.botRoutines);
+      _repository = CronRepository(
+        _client,
+        profile: profile,
+        botRoutines: widget.botRoutines,
+      );
       unawaited(_loadJobs(showLoader: true));
     }
   }
@@ -371,46 +415,32 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _delete(CronJob job) async {
-    if (_mutationsDisabled) return showReadOnlyNotice(context);
+  Future<bool> _delete(CronJob job) async {
+    if (_mutationsDisabled) {
+      showReadOnlyNotice(context);
+      return false;
+    }
     final s = Strings.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        // Reutiliza la carcasa flotante global (surface + radio 22 en
-        // DialogThemeData); solo se afina el contenido y el pill destructivo.
-        final dialogColors = Theme.of(dialogContext).hermes;
-        return AlertDialog(
-          title: Text(s.crnDeleteTitle),
-          content: Text(
-            s.crnDeleteConfirm(job.title),
-            style: TextStyle(
-              fontSize: 13.5,
-              height: 1.5,
-              color: dialogColors.textSecondary,
-            ),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(0, 10, 4, 4),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(s.commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              style: FilledButton.styleFrom(
-                backgroundColor: dialogColors.error,
-                foregroundColor: dialogColors.background,
-                shape: const StadiumBorder(),
-                padding: const EdgeInsets.symmetric(horizontal: 22),
-              ),
-              child: Text(s.commonDelete),
-            ),
-          ],
-        );
-      },
+      surfaceKey: const ValueKey('cron-delete-dialog'),
+      title: s.crnDeleteTitle,
+      message: s.crnDeleteConfirm(job.title),
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('cron-delete-confirm'),
+          label: s.commonDelete,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted) return false;
 
     try {
       final manager = context
@@ -425,12 +455,13 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       } else {
         await _client.deleteCronJob(job.id, profile: _profile);
       }
-      if (!mounted) return;
+      if (!mounted) return true;
       setState(() => _jobs = _jobs.where((row) => row.id != job.id).toList());
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).crnJobDeleted(job.title))),
         kind: HermesNoticeKind.success,
       );
+      return true;
     } on CronDeleteRejectedException {
       if (mounted) {
         HermesNotice.of(context).showSnackBar(
@@ -442,7 +473,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         );
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       final strings = Strings.of(context);
       HermesNotice.of(context).showSnackBar(
         SnackBar(
@@ -454,50 +485,50 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         kind: HermesNoticeKind.error,
       );
     }
+    return false;
   }
 
-  Future<void> _showEditor({CronJob? job}) async {
-    if (_mutationsDisabled) return showReadOnlyNotice(context);
-    // La app prohíbe showModalBottomSheet/BottomSheet en UI de cara al
-    // usuario (test/no_bottom_sheet_contract_test.dart): "hacen que los
-    // controles se sientan desconectados del elemento que los abrió". La
-    // superficie flotante compartida (showHermesFloatingSurface, la misma
-    // que usa el detalle de tarea) es el mecanismo sancionado.
-    final result = await showHermesFloatingSurface<_CronEditorResult>(
-      context: context,
-      surfaceKey: const ValueKey('cron-editor-surface'),
-      maxWidth: 560,
-      maxHeightFactor: 0.9,
-      barrierDismissible: false,
-      builder: (_) => _CronEditorDialog(repository: _repository, job: job),
+  NotificationService? get _notifications =>
+      context.findAncestorStateOfType<HermesAppState>()?.notifications;
+
+  /// Create/edit is a full page (spec 080): a long form never lives in a
+  /// floating card; its pickers are floating surfaces.
+  Future<CronJob?> _showEditor({CronJob? job}) async {
+    if (_mutationsDisabled) {
+      showReadOnlyNotice(context);
+      return null;
+    }
+    final notif = _notifications;
+    final result = await Navigator.of(context).push<_CronEditorResult>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _CronEditorPage(
+          repository: _repository,
+          job: job,
+          initialPolicy: job == null || notif == null
+              ? CronNotifyPolicy.all
+              : notif.muteStore.cronPolicy(
+                  connId: widget.connection.id,
+                  profile: job.profile.isNotEmpty ? job.profile : _profile,
+                  jobId: job.id,
+                ),
+          notificationsAvailable: notif != null,
+        ),
+      ),
     );
-    await _applyEditorResult(result, job);
+    return _applyEditorResult(result, job);
   }
 
-  /// Variante del "+" contextual del dock: en vez de un diálogo centrado,
-  /// abre el mismo formulario (`_CronEditorDialog`) anclado a la posición
-  /// del propio botón "+" (ver `dock_anchored_popover.dart`), para que se
-  /// sienta como que "sale" de ahí en vez de navegar aparte. Solo cubre
-  /// creación (siempre `job: null`); editar un job existente sigue usando
-  /// el diálogo centrado desde su fila en la lista.
+  /// The dock's contextual "+" opens the same editor page.
   Future<void> _showAnchoredEditor(GlobalKey anchorKey) async {
-    // `showDockAnchoredPopover` decora por defecto (mismo Material que
-    // `showHermesFloatingSurface`) — `_CronEditorDialog` no necesita pintar
-    // el suyo propio.
-    final result = await showDockAnchoredPopover<_CronEditorResult>(
-      context: context,
-      anchorKey: anchorKey,
-      maxWidth: 420,
-      builder: (_) => _CronEditorDialog(repository: _repository),
-    );
-    await _applyEditorResult(result, null);
+    await _showEditor();
   }
 
-  Future<void> _applyEditorResult(
+  Future<CronJob?> _applyEditorResult(
     _CronEditorResult? result,
     CronJob? job,
   ) async {
-    if (result == null || !mounted) return;
+    if (result == null || !mounted) return null;
     try {
       final CronJob updated;
       switch (result) {
@@ -523,7 +554,17 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         case _BlueprintCronResult(:final blueprint, :final values):
           updated = await _repository.instantiateBlueprint(blueprint, values);
       }
-      if (!mounted) return;
+      final notif = _notifications;
+      final jobId = updated.id.isNotEmpty ? updated.id : job?.id ?? '';
+      if (notif != null && jobId.isNotEmpty) {
+        await notif.muteStore.setCronPolicy(
+          connId: widget.connection.id,
+          profile: updated.profile.isNotEmpty ? updated.profile : _profile,
+          jobId: jobId,
+          policy: result.policy,
+        );
+      }
+      if (!mounted) return updated;
       _replaceJob(updated);
       HermesNotice.of(context).showSnackBar(
         SnackBar(
@@ -535,8 +576,9 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         ),
       );
       unawaited(_loadJobs(showLoader: false));
+      return updated;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return null;
       final strings = Strings.of(context);
       final message = job == null
           ? strings.crnAddFailed(localizedApiError(strings, error))
@@ -548,6 +590,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         ),
         kind: HermesNoticeKind.warning,
       );
+      return null;
     }
   }
 
@@ -559,41 +602,106 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _showJobDetail(CronJob job) {
+  Future<void> _showJobDetail(CronJob job) async {
     final detailRepository =
         _profileScope == CronProfileScope.all && job.profile.isNotEmpty
         ? CronRepository(_client, profile: job.profile)
         : _repository;
-    showHermesFloatingSurface<void>(
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CronJobDetailPage(
+          initialJob: job,
+          repository: detailRepository,
+          readOnly: _mutationsDisabled,
+          eventStream: _eventStream,
+          connectionId: widget.connection.id,
+          profile: _profile,
+          notifications: _notifications,
+          onEdit: (current) => _showEditor(job: current),
+          onDelete: _delete,
+          onChanged: _replaceJob,
+          onOpenRun: _openRun,
+          profileInfo: _profileInfo,
+          avatarCache: _avatarCache,
+          onOpenNotificationSettings: () => Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => const NotificationSettingsScreen(),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (mounted) unawaited(_loadJobs(showLoader: false));
+  }
+
+  Future<void> _showJobMenu(CronJob job, BuildContext anchor) async {
+    final s = Strings.of(context);
+    final action = await showHermesMenu<String>(
       context: context,
-      surfaceKey: const ValueKey('cron-job-detail-surface'),
-      maxWidth: 620,
-      maxHeightFactor: 0.92,
-      builder: (surfaceContext) => _CronJobDetail(
-        initialJob: job,
-        repository: detailRepository,
-        readOnly: _mutationsDisabled,
-        eventStream: _eventStream,
-        onEdit: () {
-          Navigator.pop(surfaceContext);
-          _showEditor(job: job);
-        },
-        onPauseResume: () async {
-          Navigator.pop(surfaceContext);
-          await _pauseOrResume(job);
-        },
-        onTrigger: () async {
-          Navigator.pop(surfaceContext);
-          await _trigger(job);
-        },
-        onDelete: () async {
-          Navigator.pop(surfaceContext);
-          await _delete(job);
-        },
-        onOpenRun: (session) {
-          Navigator.pop(surfaceContext);
-          _openRun(session);
-        },
+      originRect: hermesOriginOf(anchor),
+      surfaceKey: ValueKey('cron-job-menu-surface-${job.id}'),
+      actions: [
+        HermesAction(
+          value: 'trigger',
+          icon: Icons.play_arrow_rounded,
+          label: s.crnRunNow,
+        ),
+        HermesAction(
+          value: 'edit',
+          icon: Icons.edit_outlined,
+          label: s.commonEdit,
+        ),
+        HermesAction(
+          value: 'toggle',
+          icon: job.isPaused
+              ? Icons.play_circle_outline
+              : Icons.pause_circle_outline,
+          label: job.isPaused ? s.crnResume : s.crnPause,
+        ),
+        HermesAction(
+          value: 'delete',
+          icon: Icons.delete_outline_rounded,
+          label: s.commonDelete,
+          destructive: true,
+        ),
+      ],
+    );
+    switch (action) {
+      case 'trigger':
+        await _trigger(job);
+      case 'edit':
+        await _showEditor(job: job);
+      case 'toggle':
+        await _pauseOrResume(job);
+      case 'delete':
+        await _delete(job);
+    }
+  }
+
+  Future<void> _showScreenMenu(BuildContext anchor) async {
+    final s = Strings.of(context);
+    final action = await showHermesMenu<String>(
+      context: context,
+      originRect: hermesOriginOf(anchor),
+      surfaceKey: const ValueKey('cron-screen-menu'),
+      actions: [
+        HermesAction(
+          value: 'raw',
+          icon: Icons.data_object_rounded,
+          label: s.crnEditJobsJson,
+        ),
+      ],
+    );
+    if (action != 'raw' || !mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => BridgeFileEditorScreen(
+          connectionId: widget.connection.id,
+          target: 'cron',
+          titleLabel: s.crnJobsJsonLabel,
+          readOnly: widget.connection.readOnly,
+          lockReason: s.crnApplyJobsJson,
+        ),
       ),
     );
   }
@@ -603,13 +711,16 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     final rows = query.isEmpty
         ? [..._jobs]
         : _jobs.where((job) {
+            final s = Strings.of(context);
             return [
               job.title,
               job.preview,
-              job.scheduleDisplay,
+              cronScheduleLabel(s, job),
               job.scheduleExpression,
-              job.deliver,
+              cronDeliveryLabel(job.deliver, s, ownProfile: job.profile),
               job.profile,
+              if (job.ownerBot != null)
+                cronBotName(job.ownerBot!, info: _profiles[job.ownerBot]),
             ].any((value) => value.toLowerCase().contains(query));
           }).toList();
     rows.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
@@ -619,135 +730,41 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(s.crnTitle),
-                if (widget.connection.readOnly) ...[
-                  const SizedBox(width: 8),
-                  const ReadOnlyBadge(compact: true),
-                ],
-              ],
-            ),
-            if (_profile.isNotEmpty || _profileScope == CronProfileScope.all)
-              Text(
-                s.crnProfile(
-                  _profileScope == CronProfileScope.all &&
-                          !_legacyAllProfilesFallback
-                      ? s.commonAll
-                      : (_profile.isEmpty ? 'default' : _profile),
-                ),
-                style: TextStyle(fontSize: 10.5, color: colors.textSecondary),
-              ),
-          ],
-        ),
+        centerTitle: false,
+        title: Text(s.crnTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          if (_profileScope == CronProfileScope.active)
-            PopupMenuButton<String>(
-              tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-              onSelected: (value) {
-                if (value != 'raw') return;
-                Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) => BridgeFileEditorScreen(
-                      connectionId: widget.connection.id,
-                      target: 'cron',
-                      titleLabel: s.crnJobsJsonLabel,
-                      readOnly: widget.connection.readOnly,
-                      lockReason: s.crnApplyJobsJson,
-                    ),
-                  ),
-                );
-              },
-              itemBuilder: (_) => [
-                PopupMenuItem(value: 'raw', child: Text(s.crnEditJobsJson)),
-              ],
+          if (widget.connection.readOnly)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Center(
+                child: HermesTag(
+                  label: _capitalize(s.statusReadOnly),
+                  tone: HermesStatusTone.warn,
+                ),
+              ),
             ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: s.crnRetry,
             onPressed: _fetching ? null : () => _loadJobs(showLoader: false),
           ),
-        ],
-      ),
-      body: _wrapWithDock(
-        Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SegmentedButton<CronProfileScope>(
-                      key: const ValueKey('cron-profile-scope'),
-                      segments: [
-                        ButtonSegment(
-                          value: CronProfileScope.active,
-                          icon: const Icon(Icons.person_outline, size: 18),
-                          label: Text(s.crnProfile(s.crnStatusActive)),
-                        ),
-                        ButtonSegment(
-                          value: CronProfileScope.all,
-                          icon: const Icon(Icons.groups_outlined, size: 18),
-                          label: Text(s.commonAll),
-                        ),
-                      ],
-                      selected: {_profileScope},
-                      onSelectionChanged: _selectProfileScope,
-                      showSelectedIcon: false,
-                    ),
-                  ),
-                  if (_profileScope == CronProfileScope.all) ...[
-                    const SizedBox(width: 8),
-                    HermesPill(label: s.statusReadOnly, color: colors.warning),
-                  ],
-                ],
+          if (_profileScope == CronProfileScope.active)
+            Builder(
+              builder: (anchor) => IconButton(
+                key: const ValueKey('cron-screen-more'),
+                tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
+                icon: const Icon(Icons.more_vert_rounded),
+                onPressed: () => _showScreenMenu(anchor),
               ),
             ),
-            if (_legacyAllProfilesFallback)
-              Padding(
-                key: const ValueKey('cron-profile-all-legacy'),
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: 16,
-                      color: colors.textSecondary,
-                    ),
-                    const SizedBox(width: 7),
-                    Text(
-                      '${s.commonNotAvailable} · ${s.crnProfile(_profile.isEmpty ? 'default' : _profile)}',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            Expanded(child: _buildBody()),
-          ],
-        ),
+        ],
       ),
-      // Con el dock activo y presente, su "+" contextual
-      // (`_showAnchoredEditor`) reemplaza a este FAB — mantenerlos ambos
-      // duplicaría la acción de crear y competiría visualmente con la barra
-      // flotante del dock. Pero "dock presente" no es lo mismo que
-      // "pantalla compatible con dock" (`widget.connManager != null`): con
-      // el interruptor global "Usar dock flotante" apagado, esta pantalla
-      // sigue teniendo `connManager`, pero NINGÚN dock se pinta encima, así
-      // que el FAB debe reaparecer o la única forma de crear un cron job
-      // desaparecería con él (bug confirmado, pedido explícito del
-      // usuario). Reactivo vía `ListenableBuilder`: si el interruptor
-      // cambia mientras esta pantalla está viva, el FAB aparece/desaparece
-      // sin necesidad de reabrir la pantalla.
+      body: _wrapWithDock(_buildBody()),
+      // Con el dock activo y presente, su "+" contextual reemplaza a este FAB.
+      // Con el interruptor global "Usar dock flotante" apagado, el FAB debe
+      // reaparecer o la única forma de crear un cron job desaparecería.
       floatingActionButton: ListenableBuilder(
         listenable: DockPreferencesController.instance.listenable,
         builder: (context, _) {
@@ -777,9 +794,45 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _scopeHeader() {
+    final s = Strings.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: HermesSpace.x2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          HermesSegmentedControl<CronProfileScope>(
+            key: const ValueKey('cron-profile-scope'),
+            value: _profileScope,
+            onChanged: (scope) => _selectProfileScope({scope}),
+            segments: [
+              HermesSegment(
+                value: CronProfileScope.active,
+                label: s.crnScopeThisProfile,
+              ),
+              HermesSegment(value: CronProfileScope.all, label: s.crnScopeAll),
+            ],
+          ),
+          if (_profileScope == CronProfileScope.all) ...[
+            const SizedBox(height: HermesSpace.x2),
+            HermesInlineNotice(
+              key: const ValueKey('cron-profile-all-readonly'),
+              icon: Icons.visibility_outlined,
+              message: _capitalize(s.statusReadOnly),
+            ),
+          ],
+          if (_legacyAllProfilesFallback)
+            HermesInlineNotice(
+              key: const ValueKey('cron-profile-all-legacy'),
+              message: '${s.commonNotAvailable} · ${s.crnScopeThisProfile}',
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody() {
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     if (_loading && _jobs.isEmpty) return const Center(child: TuiLoader());
 
     if (_error != null && _jobs.isEmpty) {
@@ -808,583 +861,229 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       );
     }
 
-    if (_jobs.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.schedule_outlined, size: 38, color: colors.accent),
-              const SizedBox(height: 14),
-              Text(
-                s.crnEmpty,
-                style: Theme.of(context).textTheme.titleMedium,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                s.crnCreateDescription,
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                textAlign: TextAlign.center,
-              ),
-              if (!_mutationsDisabled) ...[
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: () => _showEditor(),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: Text(s.crnAddJob),
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
-    }
-
     final jobs = _visibleJobs;
+    final notif = _notifications;
     return RefreshIndicator(
       onRefresh: () => _loadJobs(showLoader: false),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+        key: const ValueKey('cron-list'),
+        padding: EdgeInsets.fromLTRB(
+          HermesSpace.pageH,
+          HermesSpace.pageTop,
+          HermesSpace.pageH,
+          96 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
-          TextField(
-            key: const ValueKey('cron-search'),
-            controller: _searchController,
-            onChanged: (value) => setState(() => _query = value),
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: s.crnSearch,
-              prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _query = '');
-                      },
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (jobs.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 48),
-              child: Text(
-                s.crnEmpty,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colors.textSecondary),
-              ),
+          _scopeHeader(),
+          if (_jobs.isEmpty)
+            HermesEmptyStateView(
+              icon: Icons.schedule_outlined,
+              title: s.crnEmpty,
+              body: s.crnCreateDescription,
+              actionLabel: _mutationsDisabled ? null : s.crnAddJob,
+              onAction: _mutationsDisabled ? null : () => _showEditor(),
             )
-          else
-            for (final job in jobs)
-              _CronJobTile(
-                job: job,
-                readOnly: _mutationsDisabled,
-                onTap: () => _showJobDetail(job),
-                onTrigger: () => _trigger(job),
-                onEdit: () => _showEditor(job: job),
-                onPauseResume: () => _pauseOrResume(job),
-                onDelete: () => _delete(job),
+          else ...[
+            TextField(
+              key: const ValueKey('cron-search'),
+              controller: _searchController,
+              onChanged: (value) => setState(() => _query = value),
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: s.crnSearch,
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _query = '');
+                        },
+                        icon: const Icon(Icons.close, size: 18),
+                      ),
               ),
+            ),
+            const SizedBox(height: HermesSpace.x3),
+            if (jobs.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 48),
+                child: Text(
+                  s.designNoMatches,
+                  textAlign: TextAlign.center,
+                  style: HermesType.support.copyWith(
+                    color: Theme.of(context).hermes.textSecondary,
+                  ),
+                ),
+              )
+            else
+              HermesListGroup(
+                dividerIndent: HermesSpace.rowH,
+                children: [
+                  for (final job in jobs)
+                    _CronJobRow(
+                      key: ValueKey('cron-job-${job.id}'),
+                      job: job,
+                      readOnly: _mutationsDisabled,
+                      notifies:
+                          notif == null ||
+                          notif.muteStore.cronPolicy(
+                                connId: widget.connection.id,
+                                profile: job.profile.isNotEmpty
+                                    ? job.profile
+                                    : _profile,
+                                jobId: job.id,
+                              ) !=
+                              CronNotifyPolicy.off,
+                      showProfile: _profileScope == CronProfileScope.all,
+                      profileInfo: _profileInfo,
+                      avatarCache: _avatarCache,
+                      onTap: () => _showJobDetail(job),
+                      onMenu: (anchor) => _showJobMenu(job, anchor),
+                    ),
+                ],
+              ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _CronJobTile extends StatelessWidget {
+String _capitalize(String v) =>
+    v.isEmpty ? v : v[0].toUpperCase() + v.substring(1);
+
+/// Editorial job row: title, inline status + schedule, one-line preview.
+class _CronJobRow extends StatelessWidget {
   final CronJob job;
   final bool readOnly;
+  final bool notifies;
+  final bool showProfile;
+  final AgentProfile? Function(String profile) profileInfo;
+  final MissionProfileAvatarCache? avatarCache;
   final VoidCallback onTap;
-  final VoidCallback onTrigger;
-  final VoidCallback onEdit;
-  final VoidCallback onPauseResume;
-  final VoidCallback onDelete;
+  final ValueChanged<BuildContext> onMenu;
 
-  const _CronJobTile({
+  const _CronJobRow({
+    super.key,
     required this.job,
     required this.readOnly,
+    required this.notifies,
+    required this.showProfile,
+    required this.profileInfo,
+    required this.avatarCache,
     required this.onTap,
-    required this.onTrigger,
-    required this.onEdit,
-    required this.onPauseResume,
-    required this.onDelete,
+    required this.onMenu,
   });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final presentation = _statePresentation(job.state, context);
-    // Fila plana con hairline inferior en vez de tarjeta con franja lateral
-    // de color: coherente con el resto de listas rediseñadas de la app.
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: colors.divider)),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(2, 12, 0, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    job.isScriptOnly
-                        ? Icons.terminal_outlined
-                        : Icons.schedule_outlined,
-                    size: 20,
-                    color: presentation.color,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      job.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  HermesPill(
-                    label: presentation.label,
-                    color: presentation.color,
-                  ),
-                  if (!readOnly)
-                    PopupMenuButton<String>(
-                      key: ValueKey('cron-job-menu-${job.id}'),
-                      padding: EdgeInsets.zero,
-                      onSelected: (action) => switch (action) {
-                        'trigger' => onTrigger(),
-                        'edit' => onEdit(),
-                        'toggle' => onPauseResume(),
-                        'delete' => onDelete(),
-                        _ => null,
-                      },
-                      itemBuilder: (_) => [
-                        PopupMenuItem(
-                          value: 'trigger',
-                          child: _MenuRow(
-                            icon: Icons.play_arrow,
-                            label: Strings.of(context).crnRunNow,
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'edit',
-                          child: _MenuRow(
-                            icon: Icons.edit_outlined,
-                            label: Strings.of(context).commonEdit,
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'toggle',
-                          child: _MenuRow(
-                            icon: job.isPaused
-                                ? Icons.play_circle_outline
-                                : Icons.pause_circle_outline,
-                            label: job.isPaused
-                                ? Strings.of(context).crnResume
-                                : Strings.of(context).crnPause,
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: _MenuRow(
-                            icon: Icons.delete_outline,
-                            label: Strings.of(context).commonDelete,
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-              if (job.scheduleDisplay.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  job.scheduleDisplay,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.accent,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-              if (job.profile.isNotEmpty) ...[
-                const SizedBox(height: 5),
-                Text(
-                  Strings.of(context).crnProfile(job.profile),
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
-                ),
-              ],
-              if (job.preview.isNotEmpty) ...[
-                const SizedBox(height: 5),
-                Text(
-                  job.preview,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
-                ),
-              ],
-              if (job.nextRunAt != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '${Strings.of(context).crnNextRunLabel}: ${_formatTimestamp(job.nextRunAt, Strings.of(context))}',
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _MenuRow({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
-  );
-}
-
-class _CronJobDetail extends StatefulWidget {
-  final CronJob initialJob;
-  final CronRepository repository;
-  final bool readOnly;
-  final Stream<TuiGatewayEvent>? eventStream;
-  final VoidCallback onEdit;
-  final VoidCallback onPauseResume;
-  final VoidCallback onTrigger;
-  final VoidCallback onDelete;
-  final ValueChanged<Session> onOpenRun;
-
-  const _CronJobDetail({
-    required this.initialJob,
-    required this.repository,
-    required this.readOnly,
-    required this.eventStream,
-    required this.onEdit,
-    required this.onPauseResume,
-    required this.onTrigger,
-    required this.onDelete,
-    required this.onOpenRun,
-  });
-
-  @override
-  State<_CronJobDetail> createState() => _CronJobDetailState();
-}
-
-class _CronJobDetailState extends State<_CronJobDetail> {
-  late CronJob _job = widget.initialJob;
-  CronRuns? _runs;
-  Timer? _timer;
-  Timer? _eventRefreshDebounce;
-  StreamSubscription<TuiGatewayEvent>? _eventSubscription;
-  bool _loading = true;
-  bool _fetching = false;
-
-  bool get _refreshAllowed =>
-      mounted &&
-      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed &&
-      ModalRoute.of(context)?.isCurrent != false;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_refresh());
-    _timer = Timer.periodic(cronBackstopRefreshInterval, (_) {
-      if (_refreshAllowed) unawaited(_refresh());
-    });
-    _eventSubscription = widget.eventStream?.listen((event) {
-      if (!_refreshAllowed || !isCronRefreshEvent(event)) return;
-      _eventRefreshDebounce?.cancel();
-      _eventRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
-        if (_refreshAllowed) unawaited(_refresh());
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _eventRefreshDebounce?.cancel();
-    unawaited(_eventSubscription?.cancel());
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
-    if (_fetching) return;
-    _fetching = true;
-    try {
-      final results = await Future.wait<Object?>([
-        widget.repository.getJob(_job.id),
-        widget.repository.listRuns(_job.id),
-      ]);
-      if (!mounted) return;
-      setState(() {
-        _job = (results[0] as CronJob?) ?? _job;
-        _runs = results[1] as CronRuns;
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    } finally {
-      _fetching = false;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final presentation = _statePresentation(_job.state, context);
-    return ListView(
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _job.title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 6),
-                  HermesPill(
-                    label: presentation.label,
-                    color: presentation.color,
-                  ),
-                ],
-              ),
-            ),
-            if (!widget.readOnly)
-              IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                tooltip: s.commonEdit,
-                onPressed: widget.onEdit,
-              ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _MetadataGrid(
-          rows: [
-            (s.crnFieldFrequency, _job.scheduleDisplay),
-            (s.crnLastRunLabel, _formatTimestamp(_job.lastRunAt, s)),
-            (s.crnNextRunLabel, _formatTimestamp(_job.nextRunAt, s)),
-            (s.crnDeliveryLabel, _deliveryLabel(_job.deliver, s)),
-            if (_job.model.isNotEmpty) (s.crnModelLabel, _job.model),
-          ],
-        ),
-        if (_job.lastError != null) ...[
-          const SizedBox(height: 14),
-          // Aviso en línea, sin caja: icono + texto en color error.
-          Row(
+    final status = cronStatusOf(s, job);
+    // Status + human schedule only: the next run lives in the detail header,
+    // which keeps every row within the three-line budget.
+    final meta = cronScheduleLabel(s, job);
+    final owner = job.ownerBot;
+    return InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 64),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(HermesSpace.rowH, 10, 2, 10),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
-              const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  _job.lastError!,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.45,
-                    color: colors.error,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-        if (_job.preview.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          Text(
-            s.crnPromptLabel,
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
-          ),
-          const SizedBox(height: 7),
-          SelectableText(
-            _job.preview,
-            style: const TextStyle(fontSize: 13, height: 1.5),
-          ),
-        ],
-        if (!widget.readOnly) ...[
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.tonalIcon(
-                onPressed: widget.onTrigger,
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: Text(s.crnRunNow),
-              ),
-              OutlinedButton.icon(
-                onPressed: widget.onPauseResume,
-                icon: Icon(
-                  _job.isPaused
-                      ? Icons.play_circle_outline
-                      : Icons.pause_circle_outline,
-                  size: 18,
-                ),
-                label: Text(_job.isPaused ? s.crnResume : s.crnPause),
-              ),
-              IconButton(
-                onPressed: widget.onDelete,
-                icon: Icon(Icons.delete_outline, color: colors.error),
-                tooltip: s.commonDelete,
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 20),
-        Divider(color: colors.divider),
-        const SizedBox(height: 12),
-        Text(
-          '${s.crnRunHistory}${(_runs?.sessions.isNotEmpty ?? false) ? ' · ${_runs!.sessions.length}' : ''}',
-          style: Theme.of(
-            context,
-          ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
-        ),
-        const SizedBox(height: 8),
-        if (_loading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          )
-        else if (_runs?.available == false)
-          Text(s.crnHistoryUnavailable, style: _mutedStyle(colors))
-        else if (_runs == null || _runs!.sessions.isEmpty)
-          Text(s.crnNoRuns, style: _mutedStyle(colors))
-        else
-          for (final session in _runs!.sessions)
-            _CronRunRow(
-              session: session,
-              onTap: () => widget.onOpenRun(session),
-            ),
-      ],
-    );
-  }
-
-  TextStyle _mutedStyle(HermesThemeColors colors) => TextStyle(
-    fontSize: 12,
-    color: colors.textSecondary,
-    fontStyle: FontStyle.italic,
-  );
-}
-
-class _MetadataGrid extends StatelessWidget {
-  final List<(String, String)> rows;
-
-  const _MetadataGrid({required this.rows});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    // Lista de metadatos con hairlines, sin contenedor: coherente con el
-    // resto de la pantalla rediseñada (sin cajas).
-    return Column(
-      children: [
-        for (var index = 0; index < rows.length; index++)
-          Container(
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: index < rows.length - 1
-                      ? colors.divider
-                      : Colors.transparent,
-                ),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 9),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 120,
-                    child: Text(
-                      rows[index].$1,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: colors.textSecondary,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            job.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: HermesType.body.copyWith(
+                              color: colors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (!notifies) ...[
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.notifications_off_outlined,
+                            size: 15,
+                            color: colors.textDisabled,
+                            semanticLabel: s.crnNotifyFinish,
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    HermesStatusText(
+                      label: status.label,
+                      tone: status.tone,
+                      meta: meta.isEmpty ? null : meta,
+                      // The schedule is the row's point: wrap, never cut.
+                      maxLines: 2,
+                    ),
+                    if (owner != null) ...[
+                      const SizedBox(height: 3),
+                      // Line 3: the owner bot's face + name, then the task.
+                      CronOwnerLine(
+                        key: ValueKey('cron-job-owner-${job.id}'),
+                        profile: owner,
+                        info: profileInfo(owner),
+                        avatarCache: avatarCache,
+                        faceSize: 16,
+                        trailing: job.preview.isEmpty
+                            ? null
+                            : Session.stripCronPreamble(job.preview),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      rows[index].$2.isEmpty ? '—' : rows[index].$2,
-                      style: const TextStyle(fontSize: 12.5),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _CronRunRow extends StatelessWidget {
-  final Session session;
-  final VoidCallback onTap;
-
-  const _CronRunRow({required this.session, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Semantics(
-      button: true,
-      label: '${Strings.of(context).crnOpenRun}: ${session.displayTitle}',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-          child: Row(
-            children: [
-              Icon(Icons.chat_bubble_outline, size: 17, color: colors.accent),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  session.displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5),
+                    ] else if (job.preview.isNotEmpty || showProfile) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        [
+                          if (showProfile && job.profile.isNotEmpty)
+                            cronBotName(
+                              job.profile,
+                              info: profileInfo(job.profile),
+                            ),
+                          if (job.preview.isNotEmpty) job.preview,
+                        ].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: HermesType.support.copyWith(
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Text(
-                _formatTimestamp(session.lastActivityAt, Strings.of(context)),
-                style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
-              ),
-              const SizedBox(width: 3),
-              Icon(Icons.chevron_right, size: 17, color: colors.textDisabled),
+              if (!readOnly)
+                Builder(
+                  builder: (anchor) => IconButton(
+                    key: ValueKey('cron-job-menu-${job.id}'),
+                    tooltip: s.crnMore,
+                    icon: Icon(
+                      Icons.more_vert_rounded,
+                      color: colors.textSecondary,
+                    ),
+                    onPressed: () => onMenu(anchor),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.only(top: 12, right: 10),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: colors.textDisabled,
+                  ),
+                ),
             ],
           ),
         ),
@@ -1394,18 +1093,19 @@ class _CronRunRow extends StatelessWidget {
 }
 
 sealed class _CronEditorResult {
-  const _CronEditorResult();
+  final CronNotifyPolicy policy;
+  const _CronEditorResult(this.policy);
 }
 
 class _ManualCronResult extends _CronEditorResult {
   final _CronEditorValues values;
-  const _ManualCronResult(this.values);
+  const _ManualCronResult(this.values, super.policy);
 }
 
 class _BlueprintCronResult extends _CronEditorResult {
   final AutomationBlueprint blueprint;
   final Map<String, String> values;
-  const _BlueprintCronResult(this.blueprint, this.values);
+  const _BlueprintCronResult(this.blueprint, this.values, super.policy);
 }
 
 class _CronEditorValues {
@@ -1426,33 +1126,39 @@ class _CronEditorValues {
   });
 }
 
-class _CronEditorDialog extends StatefulWidget {
+/// Create/edit page (spec 080): text fields, select rows opening floating
+/// pickers, the schedule builder for "When", and the notification toggles.
+class _CronEditorPage extends StatefulWidget {
   final CronRepository repository;
   final CronJob? job;
+  final CronNotifyPolicy initialPolicy;
+  final bool notificationsAvailable;
 
-  const _CronEditorDialog({required this.repository, this.job});
+  const _CronEditorPage({
+    required this.repository,
+    required this.initialPolicy,
+    required this.notificationsAvailable,
+    this.job,
+  });
 
   @override
-  State<_CronEditorDialog> createState() => _CronEditorDialogState();
+  State<_CronEditorPage> createState() => _CronEditorPageState();
 }
 
-class _CronEditorDialogState extends State<_CronEditorDialog> {
-  static const _defaultModel = '__default__';
-  static const _customTemplate = '__custom__';
+class _CronEditorPageState extends State<_CronEditorPage> {
+  static const _defaultModel = HermesModelChoice.defaultModel();
 
   late final TextEditingController _nameController;
   late final TextEditingController _promptController;
-  late final TextEditingController _scheduleController;
   CronEditorResources? _resources;
   AutomationBlueprint? _blueprint;
   Map<String, String> _blueprintValues = {};
   bool _loadingResources = true;
-  String _preset = 'daily';
-  String _deliver = 'local';
-  String _modelChoice = _defaultModel;
+  late String _schedule;
+  late String _deliver;
+  late HermesModelChoice _model;
+  late CronNotifyPolicy _policy;
   String? _error;
-  NotificationService? _notif;
-  bool _notificationsMuted = false;
 
   bool get _editing => widget.job != null;
   bool get _scriptOnly => widget.job?.isScriptOnly == true;
@@ -1461,41 +1167,25 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
   void initState() {
     super.initState();
     final job = widget.job;
-    _nameController = TextEditingController(text: job?.name ?? '');
-    _promptController = TextEditingController(text: job?.prompt ?? '');
-    _scheduleController = TextEditingController(
-      text: job?.scheduleExpression.isNotEmpty == true
-          ? job!.scheduleExpression
-          : '0 9 * * *',
+    // The technical `[bot:<name>]` owner prefix is kept out of the field and
+    // restored on save.
+    _nameController = TextEditingController(
+      text: job == null ? '' : CronJob.displayName(job.name),
     );
-    _preset = _presetFor(_scheduleController.text);
-    _deliver = job?.deliver.isNotEmpty == true ? job!.deliver : widget.repository.botRoutines ? 'bot-chat' : 'local';
-    _modelChoice = job?.model.isNotEmpty == true
-        ? '${job!.provider}:${job.model}'
+    _promptController = TextEditingController(text: job?.prompt ?? '');
+    _schedule = job?.scheduleExpression.isNotEmpty == true
+        ? job!.scheduleExpression
+        : '0 9 * * *';
+    _deliver = job?.deliver.isNotEmpty == true
+        ? job!.deliver
+        : widget.repository.botRoutines
+        ? 'bot-chat'
+        : 'local';
+    _model = job?.model.isNotEmpty == true
+        ? HermesModelChoice(job!.provider, job.model)
         : _defaultModel;
+    _policy = widget.initialPolicy;
     unawaited(_loadResources());
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_notif == null) {
-      final notif = context
-          .findAncestorStateOfType<HermesAppState>()
-          ?.notifications;
-      if (notif != null) {
-        _notif = notif;
-        final job = widget.job;
-        if (job != null) _notificationsMuted = notif.isJobMuted(job.id);
-      }
-    }
-  }
-
-  Future<void> _setNotificationsMuted(bool value) async {
-    final job = widget.job;
-    if (job == null) return;
-    setState(() => _notificationsMuted = value);
-    await _notif?.setJobMuted(job.id, value);
   }
 
   Future<void> _loadResources() async {
@@ -1524,42 +1214,112 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
   void dispose() {
     _nameController.dispose();
     _promptController.dispose();
-    _scheduleController.dispose();
     super.dispose();
   }
 
-  void _selectTemplate(String? key) {
-    if (key == null || key == _customTemplate) {
-      setState(() {
+  List<CronDeliveryTarget> get _targets {
+    final targets = [...?_resources?.deliveryTargets];
+    if (!targets.any((target) => target.id == _deliver)) {
+      targets.add(
+        CronDeliveryTarget(id: _deliver, name: _deliver, homeTargetSet: true),
+      );
+    }
+    return targets;
+  }
+
+  Future<void> _pickTemplate(BuildContext anchor) async {
+    final s = Strings.of(context);
+    const custom = '__custom__';
+    final picked = await showHermesOptions<String>(
+      context: context,
+      surfaceKey: const ValueKey('cron-template-surface'),
+      originRect: hermesOriginOf(anchor),
+      title: s.crnStartFrom,
+      selected: _blueprint?.key ?? custom,
+      options: [
+        HermesOption(value: custom, label: s.crnCustomSetup),
+        for (final item in _resources!.blueprints)
+          HermesOption(
+            value: item.key,
+            label: item.title,
+            subtitle: item.description,
+          ),
+      ],
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _error = null;
+      if (picked == custom) {
         _blueprint = null;
         _blueprintValues = {};
-        _error = null;
-      });
-      return;
-    }
-    final blueprint = _resources?.blueprints
-        .where((item) => item.key == key)
-        .firstOrNull;
-    if (blueprint == null) return;
-    setState(() {
-      _blueprint = blueprint;
-      _blueprintValues = blueprint.initialValues();
-      _error = null;
+      } else {
+        _blueprint = _resources!.blueprints.firstWhere((b) => b.key == picked);
+        _blueprintValues = _blueprint!.initialValues();
+      }
     });
   }
 
-  void _selectPreset(String? preset) {
-    if (preset == null) return;
-    final option = _scheduleOptions.firstWhere((row) => row.key == preset);
-    setState(() {
-      _preset = preset;
-      _error = null;
-      if (option.expression != null) {
-        _scheduleController.text = option.expression!;
-      } else if (_presetFor(_scheduleController.text) != 'custom') {
-        _scheduleController.clear();
-      }
-    });
+  Future<void> _pickSchedule() async {
+    final cron = await showHermesScheduleBuilder(
+      context,
+      initialCron: _schedule,
+    );
+    if (cron != null && mounted) {
+      setState(() {
+        _schedule = cron;
+        _error = null;
+      });
+    }
+  }
+
+  Future<String?> _pickDelivery(BuildContext anchor, String current) {
+    final s = Strings.of(context);
+    return showHermesOptions<String>(
+      context: context,
+      surfaceKey: const ValueKey('cron-delivery-surface'),
+      originRect: hermesOriginOf(anchor),
+      title: s.crnDeliveryLabel,
+      selected: current,
+      options: [
+        for (final target in _targets)
+          HermesOption(
+            key: ValueKey('cron-delivery-${target.id}'),
+            value: target.id,
+            label: _deliveryTargetLabel(target, s),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _pickModel(BuildContext anchor) async {
+    final s = Strings.of(context);
+    final groups = [
+      for (final provider
+          in _resources?.modelProviders ?? const <ModelProvider>[])
+        if (provider.models.isNotEmpty)
+          HermesModelGroup(
+            slug: provider.slug,
+            name: provider.name,
+            models: provider.models,
+          ),
+    ];
+    final picked = await showHermesModelPicker(
+      context: context,
+      surfaceKey: const ValueKey('cron-model-picker'),
+      keyPrefix: 'cron-model',
+      originRect: hermesOriginOf(anchor),
+      title: s.crnModelLabel,
+      defaultLabel: s.crnModelDefault,
+      current: _model,
+      groups: groups,
+    );
+    if (picked != null && mounted) setState(() => _model = picked);
+  }
+
+  String _ownedName(String name) {
+    final owner = widget.job?.ownerBot;
+    if (owner == null || name.isEmpty) return name;
+    return '[bot:$owner] $name';
   }
 
   void _submit() {
@@ -1574,17 +1334,12 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
       }
       Navigator.pop(
         context,
-        _BlueprintCronResult(_blueprint!, Map.of(_blueprintValues)),
+        _BlueprintCronResult(_blueprint!, Map.of(_blueprintValues), _policy),
       );
       return;
     }
-
     final prompt = _promptController.text.trim();
-    final schedule = _scheduleController.text.trim();
-    if (prompt.isEmpty && schedule.isEmpty && !_scriptOnly) {
-      setState(() => _error = s.crnPromptScheduleRequired);
-      return;
-    }
+    final schedule = _schedule.trim();
     if (schedule.isEmpty) {
       setState(() => _error = s.crnScheduleRequired);
       return;
@@ -1593,23 +1348,18 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
       setState(() => _error = s.crnPromptRequired);
       return;
     }
-
-    final separator = _modelChoice == _defaultModel
-        ? -1
-        : _modelChoice.indexOf(':');
-    final provider = separator < 0 ? '' : _modelChoice.substring(0, separator);
-    final model = separator < 0 ? '' : _modelChoice.substring(separator + 1);
     Navigator.pop(
       context,
       _ManualCronResult(
         _CronEditorValues(
-          name: _nameController.text.trim(),
+          name: _ownedName(_nameController.text.trim()),
           prompt: prompt,
           schedule: schedule,
           deliver: _deliver,
-          model: model,
-          provider: provider,
+          model: _model.isDefault ? '' : _model.model,
+          provider: _model.isDefault ? '' : _model.provider,
         ),
+        _policy,
       ),
     );
   }
@@ -1617,170 +1367,125 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    // showHermesFloatingSurface (no showModalBottomSheet: ver
-    // test/no_bottom_sheet_contract_test.dart) ya aporta la carcasa —
-    // Material con el shape/fondo del dialogTheme y el límite de tamaño—,
-    // así que este build solo entrega el contenido: cabecera, cuerpo con
-    // scroll y acciones flotantes sobre degradado, sin divisores duros.
-    return SizedBox(
-      width: double.infinity,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+    return Scaffold(
+      appBar: HermesAppBar(
+        centerTitle: false,
+        leading: IconButton(
+          tooltip: s.commonCancel,
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(_editing ? s.crnEditJob : s.crnAddJob),
+        actions: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 12, 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _editing ? s.crnEditJob : s.crnAddJob,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _editing
-                            ? s.crnEditDescription
-                            : s.crnCreateDescription,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
+            padding: const EdgeInsets.only(right: 10),
+            child: FilledButton(
+              key: const ValueKey('cron-editor-submit'),
+              onPressed: _loadingResources ? null : _submit,
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(HermesRadius.control),
                 ),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close),
-                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
-                ),
-              ],
-            ),
-          ),
-          Flexible(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
-              child: _loadingResources
-                  ? const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 48),
-                      child: Center(child: TuiLoader()),
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (!_editing &&
-                            (_resources?.blueprints.isNotEmpty ?? false)) ...[
-                          _fieldLabel(s.crnStartFrom, colors),
-                          _dropdown<String>(
-                            value: _blueprint?.key ?? _customTemplate,
-                            items: [
-                              DropdownMenuItem(
-                                value: _customTemplate,
-                                child: Text(s.crnCustomSetup),
-                              ),
-                              for (final item in _resources!.blueprints)
-                                DropdownMenuItem(
-                                  value: item.key,
-                                  child: Text(
-                                    item.title,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: _selectTemplate,
-                          ),
-                          if (_blueprint?.description.isNotEmpty == true) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              _blueprint!.description,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 16),
-                        ],
-                        if (_blueprint != null)
-                          ..._buildBlueprintFields(colors)
-                        else
-                          ..._buildManualFields(colors),
-                        if (_error != null) ...[
-                          const SizedBox(height: 14),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: colors.error.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              _error!,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.error,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-            ),
-          ),
-          // Acciones flotantes sobre degradado, sin divisor duro.
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [colors.surface.withValues(alpha: 0), colors.surface],
-                stops: const [0, 0.5],
+                padding: const EdgeInsets.symmetric(horizontal: 18),
               ),
-            ),
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(s.commonCancel),
-                ),
-                const SizedBox(width: 6),
-                FilledButton(
-                  onPressed: _loadingResources ? null : _submit,
-                  style: FilledButton.styleFrom(
-                    shape: const StadiumBorder(),
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                  ),
-                  child: Text(
-                    _blueprint != null
-                        ? s.crnBlueprintCreate
-                        : (_editing ? s.commonSave : s.crnAdd),
-                  ),
-                ),
-              ],
+              child: Text(
+                _blueprint != null
+                    ? s.crnBlueprintCreate
+                    : (_editing ? s.commonSave : s.crnAdd),
+              ),
             ),
           ),
         ],
       ),
+      body: SafeArea(
+        top: false,
+        child: _loadingResources
+            ? const Center(child: TuiLoader())
+            : ListView(
+                key: const ValueKey('cron-editor'),
+                padding: const EdgeInsets.fromLTRB(
+                  HermesSpace.pageH,
+                  HermesSpace.pageTop,
+                  HermesSpace.pageH,
+                  HermesSpace.pageBottom + 24,
+                ),
+                children: [
+                  if (!_editing &&
+                      (_resources?.blueprints.isNotEmpty ?? false)) ...[
+                    HermesListGroup(
+                      children: [
+                        Builder(
+                          builder: (anchor) => HermesSelectRow(
+                            key: const ValueKey('cron-template-row'),
+                            icon: Icons.auto_awesome_outlined,
+                            title: s.crnStartFrom,
+                            value: _blueprint?.title ?? s.crnCustomSetup,
+                            subtitle: _blueprint?.description,
+                            onTap: () => _pickTemplate(anchor),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (_blueprint != null)
+                    ..._buildBlueprintFields()
+                  else
+                    ..._buildManualFields(),
+                  HermesSectionHeader(s.crnNotifications),
+                  HermesListGroup(
+                    dividerIndent: HermesSpace.rowH,
+                    children: [
+                      HermesToggleRow(
+                        switchKey: const ValueKey('cron-editor-notify'),
+                        title: s.crnNotifyFinish,
+                        value: _policy != CronNotifyPolicy.off,
+                        onChanged: widget.notificationsAvailable
+                            ? (v) => setState(
+                                () => _policy = v
+                                    ? CronNotifyPolicy.all
+                                    : CronNotifyPolicy.off,
+                              )
+                            : null,
+                      ),
+                      HermesToggleRow(
+                        switchKey: const ValueKey('cron-editor-notify-fail'),
+                        title: s.crnNotifyFailOnly,
+                        value: _policy == CronNotifyPolicy.failuresOnly,
+                        onChanged:
+                            widget.notificationsAvailable &&
+                                _policy != CronNotifyPolicy.off
+                            ? (v) => setState(
+                                () => _policy = v
+                                    ? CronNotifyPolicy.failuresOnly
+                                    : CronNotifyPolicy.all,
+                              )
+                            : null,
+                      ),
+                    ],
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: HermesSpace.x3),
+                    HermesInlineNotice(
+                      key: const ValueKey('cron-editor-error'),
+                      icon: Icons.error_outline_rounded,
+                      tone: HermesStatusTone.error,
+                      message: _error!,
+                    ),
+                  ],
+                ],
+              ),
+      ),
     );
   }
 
-  List<Widget> _buildManualFields(HermesThemeColors colors) {
+  List<Widget> _buildManualFields() {
     final s = Strings.of(context);
-    final targets = [...?_resources?.deliveryTargets];
-    if (!targets.any((target) => target.id == _deliver)) {
-      targets.add(
-        CronDeliveryTarget(id: _deliver, name: _deliver, homeTargetSet: true),
-      );
-    }
-    final modelItems = _modelItems();
+    final schedule = HermesSchedule.parse(_schedule);
+    final next = schedule.nextRun(DateTime.now());
+    final hasModels = (_resources?.modelProviders ?? const <ModelProvider>[])
+        .any((p) => p.models.isNotEmpty);
     return [
+      const SizedBox(height: HermesSpace.x3),
       HermesField(
         key: const ValueKey('cron-name-field'),
         controller: _nameController,
@@ -1789,18 +1494,8 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
       ),
       const SizedBox(height: 14),
       if (_scriptOnly) ...[
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: colors.accent.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-            s.crnScriptOnlyHint,
-            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-          ),
-        ),
-        const SizedBox(height: 14),
+        HermesInlineNotice(message: s.crnScriptOnlyHint),
+        const SizedBox(height: 10),
       ],
       HermesField(
         key: const ValueKey('cron-prompt-field'),
@@ -1808,179 +1503,107 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
         label: s.crnPromptLabel,
         hint: s.crnFieldPromptHint,
         minLines: 3,
-        maxLines: 6,
+        maxLines: 8,
       ),
-      const SizedBox(height: 16),
-      _fieldLabel(s.crnFieldFrequency, colors),
-      _dropdown<String>(
-        key: const ValueKey('cron-frequency-field'),
-        value: _preset,
-        items: [
-          for (final option in _scheduleOptions)
-            DropdownMenuItem(
-              value: option.key,
-              child: Text(_scheduleOptionLabel(option.key, s)),
-            ),
+      HermesSectionHeader(s.crnWhen),
+      HermesListGroup(
+        children: [
+          HermesListRow(
+            key: const ValueKey('cron-schedule-row'),
+            icon: Icons.schedule_rounded,
+            title: schedule.describe(s),
+            subtitle: next == null
+                ? null
+                : s.schNextRun(hermesFormatNextRun(s, next)),
+            onTap: _pickSchedule,
+          ),
         ],
-        onChanged: _selectPreset,
       ),
-      const SizedBox(height: 8),
-      if (_preset == 'custom')
-        TextField(
-          key: const ValueKey('cron-custom-schedule-field'),
-          controller: _scheduleController,
-          style: const TextStyle(fontSize: 13),
-          decoration: InputDecoration(
-            labelText: s.crnFieldCronExpr,
-            hintText: '0 9 * * *',
-          ),
-        )
-      else
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _describeCron(_scheduleController.text, s),
-                  style: const TextStyle(fontSize: 12.5),
-                ),
+      HermesSectionHeader(s.crnDetails),
+      HermesListGroup(
+        children: [
+          Builder(
+            builder: (anchor) => HermesSelectRow(
+              key: const ValueKey('cron-delivery-row'),
+              icon: Icons.send_outlined,
+              title: s.crnDeliveryLabel,
+              value: _deliveryTargetLabel(
+                _targets.firstWhere((t) => t.id == _deliver),
+                s,
               ),
-              const SizedBox(width: 8),
-              Text(
-                _scheduleController.text,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colors.textSecondary,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
+              onTap: () async {
+                final picked = await _pickDelivery(anchor, _deliver);
+                if (picked != null && mounted) {
+                  setState(() => _deliver = picked);
+                }
+              },
+            ),
           ),
-        ),
-      const SizedBox(height: 16),
-      _fieldLabel(s.crnDeliveryLabel, colors),
-      _dropdown<String>(
-        key: const ValueKey('cron-delivery-field'),
-        value: _deliver,
-        items: [
-          for (final target in targets)
-            DropdownMenuItem(
-              value: target.id,
-              child: Text(
-                _deliveryTargetLabel(target, s),
-                overflow: TextOverflow.ellipsis,
+          if (!_scriptOnly)
+            Builder(
+              builder: (anchor) => HermesSelectRow(
+                key: const ValueKey('cron-model-row'),
+                icon: Icons.memory_rounded,
+                title: s.crnModelLabel,
+                value: _model.isDefault ? s.crnModelDefault : _model.model,
+                subtitle: hasModels ? null : s.crnModelUnavailable,
+                onTap: () => _pickModel(anchor),
               ),
             ),
         ],
-        onChanged: (value) {
-          if (value != null) setState(() => _deliver = value);
-        },
       ),
-      if (!_scriptOnly) ...[
-        const SizedBox(height: 16),
-        _fieldLabel(s.crnModelLabel, colors),
-        _dropdown<String>(
-          key: const ValueKey('cron-model-field'),
-          value: _modelChoice,
-          items: modelItems,
-          onChanged: (value) {
-            if (value != null) setState(() => _modelChoice = value);
-          },
-        ),
-        if (modelItems.length == 1) ...[
-          const SizedBox(height: 6),
-          Text(
-            s.crnModelUnavailable,
-            style: TextStyle(fontSize: 11, color: colors.textSecondary),
-          ),
-        ],
-      ],
-      if (_editing) ...[
-        const SizedBox(height: 16),
-        HermesSwitchTile(
-          controlKey: const ValueKey('cron-mute-notifications-switch'),
-          contentPadding: EdgeInsets.zero,
-          secondary: Icon(
-            Icons.notifications_off_outlined,
-            color: colors.textSecondary,
-          ),
-          title: s.crnMuteNotificationsTitle,
-          subtitle: s.crnMuteNotificationsSub,
-          value: _notificationsMuted,
-          onChanged: _notif == null ? null : _setNotificationsMuted,
-        ),
-      ],
     ];
   }
 
-  List<DropdownMenuItem<String>> _modelItems() {
+  List<Widget> _buildBlueprintFields() {
     final s = Strings.of(context);
-    final items = <DropdownMenuItem<String>>[
-      DropdownMenuItem(value: _defaultModel, child: Text(s.crnModelDefault)),
-    ];
-    final known = <String>{_defaultModel};
-    for (final provider
-        in _resources?.modelProviders ?? const <ModelProvider>[]) {
-      if (provider.models.isEmpty) continue;
-      for (final model in provider.models) {
-        final value = '${provider.slug}:$model';
-        known.add(value);
-        items.add(
-          DropdownMenuItem(
-            value: value,
-            child: Text(
-              '${provider.name.isEmpty ? provider.slug : provider.name} · $model',
-              overflow: TextOverflow.ellipsis,
+    final rows = <Widget>[];
+    final texts = <Widget>[];
+    for (final field in _blueprint!.fields) {
+      final value = _blueprintValues[field.name] ?? '';
+      if (field.name == 'deliver') {
+        rows.add(
+          Builder(
+            builder: (anchor) => HermesSelectRow(
+              key: ValueKey('${_blueprint!.key}-${field.name}'),
+              title: field.label,
+              subtitle: field.help.isEmpty ? null : field.help,
+              value: _deliveryTargetLabel(
+                _targets.firstWhere(
+                  (t) => t.id == value,
+                  orElse: () => CronDeliveryTarget.local,
+                ),
+                s,
+              ),
+              onTap: () async {
+                final picked = await _pickDelivery(anchor, value);
+                if (picked != null && mounted) {
+                  setState(() => _blueprintValues[field.name] = picked);
+                }
+              },
             ),
           ),
         );
-      }
-    }
-    if (!known.contains(_modelChoice)) {
-      items.insert(
-        1,
-        DropdownMenuItem(
-          value: _modelChoice,
-          child: Text(
-            _modelChoice.substring(_modelChoice.indexOf(':') + 1),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      );
-    }
-    return items;
-  }
-
-  List<Widget> _buildBlueprintFields(HermesThemeColors colors) {
-    final widgets = <Widget>[];
-    for (final field in _blueprint!.fields) {
-      widgets.add(_fieldLabel(field.label, colors));
-      if (field.name == 'deliver') {
-        final targets = _resources!.deliveryTargets;
-        var value = _blueprintValues[field.name] ?? 'local';
-        if (!targets.any((target) => target.id == value)) value = 'local';
-        widgets.add(
-          _dropdown<String>(
-            value: value,
-            items: [
-              for (final target in targets)
-                DropdownMenuItem(
-                  value: target.id,
-                  child: Text(
-                    _deliveryTargetLabel(target, Strings.of(context)),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-            onChanged: (next) {
-              if (next != null) {
-                setState(() => _blueprintValues[field.name] = next);
+      } else if (field.type == AutomationBlueprintFieldType.time) {
+        rows.add(
+          HermesSelectRow(
+            key: ValueKey('${_blueprint!.key}-${field.name}'),
+            icon: Icons.schedule_rounded,
+            title: field.label,
+            subtitle: field.help.isEmpty ? null : field.help,
+            value: value.isEmpty ? '09:00' : value,
+            onTap: () async {
+              final parts = (value.isEmpty ? '09:00' : value).split(':');
+              final initial = TimeOfDay(
+                hour: int.tryParse(parts.first) ?? 9,
+                minute: parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0,
+              );
+              final picked = await showHermesTimePicker(context, initial);
+              if (picked != null && mounted) {
+                setState(
+                  () => _blueprintValues[field.name] =
+                      HermesSchedule.formatTime24(picked.hour, picked.minute),
+                );
               }
             },
           ),
@@ -1988,223 +1611,70 @@ class _CronEditorDialogState extends State<_CronEditorDialog> {
       } else if (field.type == AutomationBlueprintFieldType.enumValue ||
           field.type == AutomationBlueprintFieldType.weekdays) {
         final options = [...field.options];
-        final value = _blueprintValues[field.name] ?? '';
         if (value.isNotEmpty && !options.contains(value)) {
           options.insert(0, value);
         }
-        widgets.add(
-          _dropdown<String>(
-            value: value,
-            items: [
-              for (final option in options)
-                DropdownMenuItem(value: option, child: Text(option)),
-            ],
-            onChanged: (next) {
-              if (next != null) {
-                setState(() => _blueprintValues[field.name] = next);
-              }
-            },
+        rows.add(
+          Builder(
+            builder: (anchor) => HermesSelectRow(
+              key: ValueKey('${_blueprint!.key}-${field.name}'),
+              title: field.label,
+              subtitle: field.help.isEmpty ? null : field.help,
+              value: value,
+              onTap: () async {
+                final picked = await showHermesOptions<String>(
+                  context: context,
+                  originRect: hermesOriginOf(anchor),
+                  title: field.label,
+                  selected: value,
+                  options: [
+                    for (final option in options)
+                      HermesOption(value: option, label: option),
+                  ],
+                );
+                if (picked != null && mounted) {
+                  setState(() => _blueprintValues[field.name] = picked);
+                }
+              },
+            ),
           ),
         );
       } else {
-        widgets.add(
-          TextFormField(
-            key: ValueKey('${_blueprint!.key}-${field.name}'),
-            initialValue: _blueprintValues[field.name] ?? '',
-            keyboardType: field.type == AutomationBlueprintFieldType.time
-                ? TextInputType.datetime
-                : TextInputType.text,
-            decoration: InputDecoration(
-              hintText: field.type == AutomationBlueprintFieldType.time
-                  ? '09:00'
-                  : (field.help.isEmpty ? field.label : field.help),
+        texts.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: TextFormField(
+              key: ValueKey('${_blueprint!.key}-${field.name}'),
+              initialValue: value,
+              decoration: InputDecoration(
+                labelText: field.label,
+                hintText: field.help.isEmpty ? null : field.help,
+              ),
+              onChanged: (next) => _blueprintValues[field.name] = next,
             ),
-            onChanged: (value) => _blueprintValues[field.name] = value,
           ),
         );
       }
-      if (field.help.isNotEmpty && field.name != 'deliver') {
-        widgets.add(const SizedBox(height: 5));
-        widgets.add(
-          Text(
-            field.help,
-            style: TextStyle(fontSize: 11, color: colors.textSecondary),
-          ),
-        );
-      }
-      widgets.add(const SizedBox(height: 14));
     }
-    return widgets;
+    return [
+      ...texts,
+      if (rows.isNotEmpty) ...[
+        HermesSectionHeader(s.crnDetails),
+        HermesListGroup(dividerIndent: HermesSpace.rowH, children: rows),
+      ],
+    ];
   }
-
-  Widget _fieldLabel(String label, HermesThemeColors colors) => Padding(
-    padding: const EdgeInsets.only(bottom: 6),
-    child: Text(
-      label,
-      style: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-        color: colors.textSecondary,
-      ),
-    ),
-  );
-
-  Widget _dropdown<T>({
-    Key? key,
-    required T value,
-    required List<DropdownMenuItem<T>> items,
-    required ValueChanged<T?> onChanged,
-  }) => DropdownButtonFormField<T>(
-    key: key ?? ValueKey(value),
-    initialValue: value,
-    isExpanded: true,
-    style: Theme.of(context).dropdownMenuTheme.textStyle,
-    items: items,
-    onChanged: onChanged,
-    decoration: const InputDecoration(isDense: true),
-  );
-}
-
-class _ScheduleOption {
-  final String key;
-  final String? expression;
-  const _ScheduleOption(this.key, this.expression);
-}
-
-const _scheduleOptions = <_ScheduleOption>[
-  _ScheduleOption('daily', '0 9 * * *'),
-  _ScheduleOption('weekdays', '0 9 * * 1-5'),
-  _ScheduleOption('weekly', '0 9 * * 1'),
-  _ScheduleOption('monthly', '0 9 1 * *'),
-  _ScheduleOption('hourly', '0 * * * *'),
-  _ScheduleOption('every-15-minutes', '*/15 * * * *'),
-  _ScheduleOption('custom', null),
-];
-
-String _presetFor(String expression) {
-  final normalized = expression.trim().replaceAll(RegExp(r'\s+'), ' ');
-  for (final option in _scheduleOptions) {
-    if (option.expression == normalized) return option.key;
-  }
-  final parts = normalized.split(' ');
-  if (parts.length != 5) return 'custom';
-  final minute = parts[0];
-  final hour = parts[1];
-  final dayOfMonth = parts[2];
-  final month = parts[3];
-  final dayOfWeek = parts[4];
-  final integer = RegExp(r'^\d+$');
-  if (dayOfMonth == '*' &&
-      month == '*' &&
-      dayOfWeek == '*' &&
-      integer.hasMatch(minute) &&
-      integer.hasMatch(hour)) {
-    return 'daily';
-  }
-  if (dayOfMonth == '*' &&
-      month == '*' &&
-      dayOfWeek == '1-5' &&
-      integer.hasMatch(minute) &&
-      integer.hasMatch(hour)) {
-    return 'weekdays';
-  }
-  if (dayOfMonth == '*' &&
-      month == '*' &&
-      integer.hasMatch(dayOfWeek) &&
-      integer.hasMatch(minute) &&
-      integer.hasMatch(hour)) {
-    return 'weekly';
-  }
-  if (month == '*' &&
-      dayOfWeek == '*' &&
-      integer.hasMatch(dayOfMonth) &&
-      integer.hasMatch(minute) &&
-      integer.hasMatch(hour)) {
-    return 'monthly';
-  }
-  if (hour == '*' &&
-      dayOfMonth == '*' &&
-      month == '*' &&
-      dayOfWeek == '*' &&
-      integer.hasMatch(minute)) {
-    return 'hourly';
-  }
-  return 'custom';
-}
-
-String _scheduleOptionLabel(String key, Strings s) => switch (key) {
-  'daily' => s.crnFreqDailyMorning,
-  'weekdays' => s.crnFreqWeekdays,
-  'weekly' => s.crnFreqWeekly,
-  'monthly' => s.crnFreqMonthly,
-  'hourly' => s.crnFreqHourly,
-  'every-15-minutes' => s.crnFreqEvery15m,
-  _ => s.crnFreqCustom,
-};
-
-String _describeCron(String expression, Strings s) {
-  final key = _presetFor(expression);
-  return switch (key) {
-    'daily' => s.crnDescDailyAt('09'),
-    'weekdays' => s.crnDescWeekdaysAt('09'),
-    'weekly' => s.crnDescWeeklyAt(s.crnDayMon, '09'),
-    'monthly' => s.crnDescMonthly,
-    'hourly' => s.crnDescHourly,
-    'every-15-minutes' => s.crnFreqEvery15m,
-    _ => expression,
-  };
-}
-
-({String label, Color color}) _statePresentation(
-  CronJobState state,
-  BuildContext context,
-) {
-  final s = Strings.of(context);
-  final colors = Theme.of(context).hermes;
-  return switch (state) {
-    CronJobState.enabled || CronJobState.scheduled => (
-      label: s.crnStatusScheduled,
-      color: colors.success,
-    ),
-    CronJobState.running => (label: s.crnStatusRunning, color: colors.accent),
-    CronJobState.paused => (label: s.crnStatusPaused, color: colors.warning),
-    CronJobState.disabled => (
-      label: s.crnStatusDisabled,
-      color: colors.textDisabled,
-    ),
-    CronJobState.error => (label: s.crnStatusError, color: colors.error),
-    CronJobState.completed => (
-      label: s.crnStatusCompleted,
-      color: colors.textDisabled,
-    ),
-    CronJobState.unknown => (
-      label: s.crnStatusActive,
-      color: colors.textSecondary,
-    ),
-  };
 }
 
 String _deliveryTargetLabel(CronDeliveryTarget target, Strings s) {
-  final base = target.id == 'local' ? s.crnDeliveryLocal : target.name;
+  final base = target.id == 'local'
+      ? s.crnDeliveryLocal
+      : target.id.startsWith('bot-chat') || target.id == target.name
+      ? cronDeliveryLabel(target.id, s)
+      : target.name;
   return target.id != 'local' && !target.homeTargetSet
       ? '$base — ${s.crnDeliveryNeedsHome}'
       : base;
-}
-
-String _deliveryLabel(String value, Strings s) =>
-    value == 'local' ? s.crnDeliveryLocal : value;
-
-String _formatTimestamp(Object? raw, Strings s) {
-  if (raw == null) return s.crnNever;
-  DateTime? date;
-  if (raw is num && raw.isFinite) {
-    date = DateTime.fromMillisecondsSinceEpoch((raw * 1000).round());
-  } else {
-    date = DateTime.tryParse(raw.toString())?.toLocal();
-  }
-  if (date == null) return raw.toString();
-  String two(int value) => value.toString().padLeft(2, '0');
-  return '${two(date.day)}/${two(date.month)}/${date.year} · ${two(date.hour)}:${two(date.minute)}';
 }
 
 extension<T> on Iterable<T> {

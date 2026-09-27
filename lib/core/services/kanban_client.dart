@@ -704,7 +704,8 @@ class KanbanClient {
         }
       }
     } finally {
-      await ws.close();
+      // Code + reason: a close frame without a code is logged as 1005.
+      await ws.close(1000, 'client_dispose');
     }
   }
 

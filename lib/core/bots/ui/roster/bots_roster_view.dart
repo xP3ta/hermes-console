@@ -237,31 +237,47 @@ class _BotsRosterViewState extends State<BotsRosterView> {
       );
     }
     if (layout.pinned.isNotEmpty) {
+      // Spec 080 polish: the strip is start-aligned with even spacing. With
+      // one or two pinned bots a centred-less row of big faces left a wide
+      // empty area, so they become compact face + name + status tiles.
+      final compact = layout.pinned.length <= 2;
+      Widget tile(BotRosterEntry entry) => RosterPinnedTile(
+        key: ValueKey('mission-pinned-tile-${entry.profile.name}'),
+        entry: entry,
+        avatarCache: widget.avatarCache,
+        compact: compact,
+        onTap: () => widget.onOpenBot(entry),
+        onLongPress: () => widget.onBotActions(entry),
+      );
       items.add(
-        SizedBox(
-          // Sized to the tile itself (4 + 60 face + 8 + one name line + 4):
-          // a fixed 108 + 16 left ~40 dp of dead space before the first
-          // section header.
-          height: RosterPinnedTile.heightFor(context),
-          child: ListView.separated(
-            key: const ValueKey('mission-pinned-strip'),
-            scrollDirection: Axis.horizontal,
-            scrollCacheExtent: const ScrollCacheExtent.pixels(0),
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            itemCount: layout.pinned.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final entry = layout.pinned[index];
-              return RosterPinnedTile(
-                key: ValueKey('mission-pinned-tile-${entry.profile.name}'),
-                entry: entry,
-                avatarCache: widget.avatarCache,
-                onTap: () => widget.onOpenBot(entry),
-                onLongPress: () => widget.onBotActions(entry),
-              );
-            },
-          ),
-        ),
+        compact
+            ? Padding(
+                key: const ValueKey('mission-pinned-strip'),
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Row(
+                  children: [
+                    for (var i = 0; i < layout.pinned.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(child: tile(layout.pinned[i])),
+                    ],
+                    if (layout.pinned.length == 1) const Spacer(),
+                  ],
+                ),
+              )
+            : SizedBox(
+                // Sized to the tile itself (4 + 60 face + 8 + one name line
+                // + 4): no dead space before the first section header.
+                height: RosterPinnedTile.heightFor(context),
+                child: ListView.separated(
+                  key: const ValueKey('mission-pinned-strip'),
+                  scrollDirection: Axis.horizontal,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  itemCount: layout.pinned.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) => tile(layout.pinned[index]),
+                ),
+              ),
       );
     }
     final sectionsStart = items.length;

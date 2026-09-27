@@ -1034,9 +1034,9 @@ void main() {
       final listener = File(
         'lib/core/services/notifications/background_listener.dart',
       ).readAsStringSync();
-      final start = listener.indexOf('Future<bool> _discoverCronRuns(');
+      final start = listener.indexOf('Future<bool> discoverCronRuns(');
       final end = listener.indexOf(
-        'Future<bool> _discoverKanbanTransitions(',
+        'Future<bool> discoverKanbanTransitions(',
         start,
       );
       expect(start, isNonNegative);
