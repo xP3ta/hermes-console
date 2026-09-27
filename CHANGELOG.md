@@ -3,6 +3,78 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.14 (9410) — 2026-09-27
+
+Reconnection and reliability fixes, a redesigned Bot Mode, one shared design
+system, rich conversation notifications and Grok-style widgets, an
+action-first subagent/session/task detail experience, and a single
+Capabilities hub for skills, plugins, MCP servers and connectors. Physically
+QA'd on a Pixel with the full stack installed.
+
+### Reconnection, activity pill and chat
+- A turn whose completion was lost during a disconnect is recovered from
+  server state instead of staying "running" forever; a pending approval is
+  restored the same way.
+- Network change / app resume probes the socket without ever killing a
+  healthy one, and the close reason (heartbeat/probe timeout vs close/error)
+  is logged without private data.
+- Background processes and the subagent count stay visible as *last known
+  state* across a lost transport until a fenced refresh, a newer durable
+  completion, or a bounded max age settles them; old history pages and
+  compaction clones never falsely settle retained work.
+- Every persistent in-chat notice (Dashboard sign-in, truncated history,
+  ownership conflict, refresh errors) can be closed with an accessible 48dp
+  button; approval/progress dialogs stay non-dismissible on purpose.
+- A queued turn whose acknowledgement was lost is removed once the durable
+  transcript proves delivery, and the queue resumes automatically.
+- Hermes updates launched from Console are tracked until the server proves
+  completion. Fixes the abnormal WebSocket closures (#46) reported against
+  1.2.13 with reconnect-storm backoff and clean close codes.
+
+### Bot Mode redesign
+- One roster screen for bots and rooms, with faces/avatars in a grid, a
+  read-only Desktop room, and a "needs you" summary for pending approvals.
+- Grok-style home-screen widgets: near-black card, state glow, large hero
+  face, a room ticker and a Stop action; the original Hermes Console widgets
+  are preserved unchanged for anyone who already placed them.
+- Rich, groupable conversation notifications with a shared identity resolver
+  (avatar → Desktop face → neutral glyph) across widgets, notifications and
+  Live Updates.
+
+### Design system, cron and connections
+- One shared design system (dialogs, lists, content pages) replacing mixed
+  boxed pills, ad-hoc modals and several model pickers.
+- Human-readable cron schedules and a redesigned cron list/detail/builder.
+- Reconnect-storm backoff and clean WebSocket close codes on every gateway
+  connection.
+
+### Subagents, sessions and tasks
+- A flat activity row and a dedicated subagent detail page: live status,
+  elapsed time, a working Stop/open action, a live tail while visible, a steer
+  field and a public timeline.
+- Session detail as one scrolling page with collapsed technical details and a
+  full Kanban task detail page with the block reason inline.
+
+### Single-scroll details and dialog sweep
+- Skill, memory, bridge/gateway log and run detail pages are single-scroll;
+  35 confirm/decide dialogs moved to the floating dialog system.
+- *Settings › About* shows the install source (Google Play, GitHub/Obtainium
+  or manual) with the matching update path and an uninstall-to-switch note.
+
+### Capabilities
+- A single *Capabilities* hub (Catalog / Installed / Connectors) replaces the
+  separate Skills and Extensions entries, with install/update/enable/disable
+  actions that call the real server and honest read-only/error states.
+
+### Known limits
+- If the device is disconnected for more than ~20s, Hermes reaps the live
+  session even with work running; Console shows the last known state as
+  stale and cannot confirm the work is still alive (upstream, not Console).
+- Home-screen widgets redraw on update only; faces do not animate
+  continuously (Android RemoteViews/Glance limit).
+- Connecting accounts and adding MCP servers from the Capabilities hub are
+  not yet available there; use *Advanced settings* meanwhile.
+
 ## 1.2.13 (9345) — 2026-09-25
 
 Chat reliability, long-session performance and attachment fixes, aligned with
