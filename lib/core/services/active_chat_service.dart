@@ -2610,6 +2610,23 @@ class ActiveTurnDelivery {
     return true;
   });
 
+  /// Retires a queued turn whose delivery is unknown, on the user's explicit
+  /// request. Unlike [discardPrepared] it accepts a started transport: the
+  /// user chose to stop tracking it knowing it may have arrived. A turn the
+  /// server acknowledged is never retired here.
+  Future<bool> abandonUncertain() => _serializeMutation(() async {
+    if (_discarded) return true;
+    if (_acknowledged) return false;
+    try {
+      await _store.delete(_current);
+    } catch (_) {
+      _persistenceFailed = true;
+      return false;
+    }
+    _discarded = true;
+    return true;
+  });
+
   /// Retira un rechazo demostrado y revoca este productor exacto.
   ///
   /// La implementación de producción persiste primero un tombstone; el flag
@@ -3071,6 +3088,7 @@ class QueuedEntryView {
     required this.text,
     this.attachments = const [],
     this.blocked = false,
+    this.deliveryUnknown = false,
   });
 
   final String id;
@@ -3079,6 +3097,11 @@ class QueuedEntryView {
   final String text;
   final List<AttachmentDraft> attachments;
   final bool blocked;
+
+  /// Transport already started and nobody could confirm whether the server
+  /// got it. Delete and send stay refused (it may have arrived); only
+  /// [ActiveChat.abandonUncertainQueuedTurn] lets the user retire it.
+  final bool deliveryUnknown;
 
   bool get isSteerable =>
       text.trim().isNotEmpty &&
@@ -7152,6 +7175,7 @@ class ActiveChat {
             item.turn.activeAttachments,
           ),
           blocked: _blockedPreparedTurnId == item.turn.clientTurnId,
+          deliveryUnknown: _isDeliveryUnknown(item),
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
@@ -20836,18 +20860,65 @@ class ActiveChat {
   static const Duration _queuedDeliverySettleMinInterval = Duration(seconds: 5);
 
   /// Turnos encolados con transporte iniciado que NO son la entrega en curso.
-  List<QueuedPreparedTurn> get _uncertainQueuedTurns => _preparedTurnQueue
-      .where(
-        (item) =>
-            !identical(item.delivery, _activeTurnDelivery) &&
-            const {
-              PreparedTurnState.submitting,
-              PreparedTurnState.ambiguous,
-              PreparedTurnState.accepted,
-              PreparedTurnState.running,
-            }.contains(item.turn.state),
-      )
-      .toList(growable: false);
+  List<QueuedPreparedTurn> get _uncertainQueuedTurns =>
+      _preparedTurnQueue.where(_isUncertainQueued).toList(growable: false);
+
+  bool _isUncertainQueued(QueuedPreparedTurn item) =>
+      !identical(item.delivery, _activeTurnDelivery) &&
+      const {
+        PreparedTurnState.submitting,
+        PreparedTurnState.ambiguous,
+        PreparedTurnState.accepted,
+        PreparedTurnState.running,
+      }.contains(item.turn.state);
+
+  /// Started but never acknowledged: the only rows the user may let go.
+  /// Accepted/running rows are known to the server and settle on terminal.
+  bool _isDeliveryUnknown(QueuedPreparedTurn item) =>
+      _isUncertainQueued(item) &&
+      (item.turn.state == PreparedTurnState.submitting ||
+          item.turn.state == PreparedTurnState.ambiguous);
+
+  /// The user's explicit way out of a queued turn whose delivery nobody can
+  /// confirm. Without it such a head stayed in the panel forever: delete
+  /// refuses (it may have arrived), send re-blocks, and settlement only
+  /// retires rows it can prove delivered.
+  ///
+  /// It never resends: the server may already be running it. The durable row
+  /// is retired and the rest of the queue moves on.
+  Future<bool> abandonUncertainQueuedTurn(String id) async {
+    if (mutationsBlockedByOwnershipConflict || _disposed) return false;
+    if (!id.startsWith('prepared:')) return false;
+    final clientTurnId = id.substring('prepared:'.length);
+    QueuedPreparedTurn? target;
+    for (final item in _preparedTurnQueue) {
+      if (item.turn.clientTurnId == clientTurnId) target = item;
+    }
+    if (target == null || !_isDeliveryUnknown(target)) return false;
+    if (_preparedTurnCancellationsInFlight.contains(clientTurnId)) return false;
+    _preparedTurnCancellationsInFlight.add(clientTurnId);
+    final generation = _queueGeneration;
+    try {
+      if (!await target.delivery.abandonUncertain()) return false;
+      if (_disposed || generation != _queueGeneration) return false;
+      _preparedTurnQueue.remove(target);
+      final owner = _preparedTurnOwners[clientTurnId];
+      if (owner != null && identical(owner.delivery, target.delivery)) {
+        _preparedTurnOwners.remove(clientTurnId);
+      }
+      if (_blockedPreparedTurnId == clientTurnId) _blockedPreparedTurnId = null;
+      _clearQueuedRetryState(clientTurnId);
+      _queuedDeliveryUnknownAt.remove(clientTurnId);
+      _unparkQueueLeaseIfEmpty();
+      _emit(ActiveChatEvent.queueChanged);
+      return true;
+    } finally {
+      _preparedTurnCancellationsInFlight.remove(clientTurnId);
+      if (!_disposed && !_queueDrainSuspended && !isStreaming) {
+        Timer.run(_drainQueue);
+      }
+    }
+  }
 
   /// Retira de la cola los turnos cuyo transporte ya empezó (submitting,
   /// ambiguous, accepted, running) y que el transcript durable demuestra

@@ -7562,6 +7562,11 @@
     }
   },
   "chatQueueBlockedRetry": "Envío pendiente. Reintenta.",
+  "chatQueueDeliveryUnknown": "No se sabe si llegó. Puede que Hermes ya lo tenga.",
+  "chatQueueAbandon": "Dejar de esperar",
+  "chatQueueAbandonTitle": "¿Dejar de esperar este mensaje?",
+  "chatQueueAbandonBody": "Se perdió la conexión mientras se enviaba y no se pudo confirmar si llegó. Si lo quitas no se reenviará; si Hermes ya lo recibió, responderá igualmente. El resto de la cola seguirá.",
+  "chatQueueAbandonConfirm": "Quitar",
   "splashLoadingProgress": "Progreso de carga",
   "memoryBackupSaved": "Backup guardado: {path}",
   "@memoryBackupSaved": {

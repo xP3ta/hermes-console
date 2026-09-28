@@ -12885,6 +12885,8 @@ class _ChatScreenState extends State<ChatScreen>
                 onDelete: () => unawaited(
                   _chat.cancelQueuedByIdentity(queuedEntries[i].id),
                 ),
+                onAbandon: () =>
+                    unawaited(_abandonUncertainQueued(queuedEntries[i].id)),
               ),
               if (i != queuedEntries.length - 1)
                 Divider(
@@ -12898,6 +12900,20 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _abandonUncertainQueued(String id) async {
+    final strings = Strings.of(context);
+    final confirmed = await showHermesConfirmDialog(
+      context: context,
+      title: strings.chatQueueAbandonTitle,
+      message: strings.chatQueueAbandonBody,
+      confirmLabel: strings.chatQueueAbandonConfirm,
+      cancelLabel: strings.commonCancel,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    await _chat.abandonUncertainQueuedTurn(id);
   }
 
   ConsoleComposerDictation _composerDictation({
@@ -17629,6 +17645,7 @@ class _QueuedRow extends StatelessWidget {
   final VoidCallback onSteer;
   final VoidCallback onSendNow;
   final VoidCallback onDelete;
+  final VoidCallback onAbandon;
 
   const _QueuedRow({
     required this.entry,
@@ -17640,6 +17657,7 @@ class _QueuedRow extends StatelessWidget {
     required this.onSteer,
     required this.onSendNow,
     required this.onDelete,
+    required this.onAbandon,
   });
 
   @override
@@ -17705,7 +17723,13 @@ class _QueuedRow extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                if (entry.blocked)
+                if (entry.deliveryUnknown)
+                  Text(
+                    Strings.of(context).chatQueueDeliveryUnknown,
+                    key: ValueKey('chat-queue-unknown-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.blocked)
                   Text(
                     Strings.of(context).chatQueueBlockedRetry,
                     key: ValueKey('chat-queue-blocked-${entry.id}'),
@@ -17732,31 +17756,42 @@ class _QueuedRow extends StatelessWidget {
               ],
             ),
           ),
-          action(
-            keyName: 'chat-queue-edit-${entry.id}',
-            label: strings.chaQueueEdit,
-            icon: Icons.edit_outlined,
-            onPressed: editEnabled ? onEdit : null,
-          ),
-          if (canSteer)
+          if (entry.deliveryUnknown)
+            // Edit/send/delete cannot act on a message that may already be
+            // on the server; the one honest action is to stop waiting.
             action(
-              keyName: 'chat-queue-steer-${entry.id}',
-              label: strings.chaQueueSteer,
-              icon: Icons.turn_right_rounded,
-              onPressed: onSteer,
+              keyName: 'chat-queue-abandon-${entry.id}',
+              label: strings.chatQueueAbandon,
+              icon: Icons.remove_circle_outline_rounded,
+              onPressed: onAbandon,
+            )
+          else ...[
+            action(
+              keyName: 'chat-queue-edit-${entry.id}',
+              label: strings.chaQueueEdit,
+              icon: Icons.edit_outlined,
+              onPressed: editEnabled ? onEdit : null,
             ),
-          action(
-            keyName: 'chat-queue-send-now-${entry.id}',
-            label: sendLabel,
-            icon: Icons.keyboard_return_rounded,
-            onPressed: isEditing || accepted ? null : onSendNow,
-          ),
-          action(
-            keyName: 'chat-queue-delete-${entry.id}',
-            label: strings.chaQueueDelete,
-            icon: Icons.delete_outline_rounded,
-            onPressed: accepted ? null : onDelete,
-          ),
+            if (canSteer)
+              action(
+                keyName: 'chat-queue-steer-${entry.id}',
+                label: strings.chaQueueSteer,
+                icon: Icons.turn_right_rounded,
+                onPressed: onSteer,
+              ),
+            action(
+              keyName: 'chat-queue-send-now-${entry.id}',
+              label: sendLabel,
+              icon: Icons.keyboard_return_rounded,
+              onPressed: isEditing || accepted ? null : onSendNow,
+            ),
+            action(
+              keyName: 'chat-queue-delete-${entry.id}',
+              label: strings.chaQueueDelete,
+              icon: Icons.delete_outline_rounded,
+              onPressed: accepted ? null : onDelete,
+            ),
+          ],
         ],
       ),
     );

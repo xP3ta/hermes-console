@@ -25621,6 +25621,90 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('fila de cola sin confirmar se puede dejar de esperar', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-unknown'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    PreparedTurn queued(String id, PreparedTurnState state, int order) =>
+        PreparedTurn(
+          connectionId: chat.connection.id,
+          sessionId: chat.sessionId,
+          clientTurnId: id,
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: 'mensaje $id',
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: chat.sessionProfile,
+          state: state,
+          queued: true,
+          queueOrder: order,
+        );
+    final restored = chat.restoreQueuedTurns(
+      [
+        queued('lost', PreparedTurnState.submitting, 1),
+        queued('next', PreparedTurnState.prepared, 2),
+      ],
+      _UiReleaseOutbox(),
+      scheduleDrain: false,
+    );
+    await tester.pump();
+    await restored;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    const lost = 'prepared:lost';
+    expect(
+      find.byKey(const ValueKey('chat-queue-unknown-$lost')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('No se sabe si llegó. Puede que Hermes ya lo tenga.'),
+      findsOneWidget,
+    );
+    // No inert buttons on a row nobody can act on.
+    expect(find.byKey(const ValueKey('chat-queue-delete-$lost')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('chat-queue-send-now-$lost')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('chat-queue-edit-$lost')), findsNothing);
+    // The other row keeps its normal actions.
+    expect(
+      find.byKey(const ValueKey('chat-queue-delete-prepared:next')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('chat-queue-abandon-$lost')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('hermes-confirm-dialog')), findsOneWidget);
+    expect(find.text('¿Dejar de esperar este mensaje?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(chat.queuedEntries.map((e) => e.id), ['prepared:next']);
+    expect(
+      find.byKey(const ValueKey('chat-queue-unknown-$lost')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('panel de cola expone acciones nativas por identidad', (
     tester,
   ) async {
