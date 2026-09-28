@@ -577,12 +577,14 @@ Color roomTurnDotColor(HermesThemeColors colors, RoomTurnState? state) =>
     };
 
 /// One line that says who is doing what, in priority order: someone needs
-/// you, something failed, who is working, else the idle status.
+/// you, who is replying (and for how long), something failed, else the idle
+/// status.
 String roomStripSummary(
   Strings s, {
   required RoomRoundModel? round,
   required String idleStatus,
   required String Function(HostedGroupMember member) nameOf,
+  DateTime? now,
 }) {
   if (round != null) {
     final needs = [
@@ -601,14 +603,21 @@ String roomStripSummary(
     ];
     final parts = <String>[];
     if (working.length == 1) {
-      parts.add(s.roomStatusMemberWorking(nameOf(working.single.member)));
-    } else if (working.length > 1) {
-      parts
-        ..add(s.roomRoundLabel(round.round))
-        ..add(s.roomRoundWorking(working.length));
-    }
-    if (parts.isNotEmpty && round.queued > 0) {
-      parts.add(s.roomRoundQueued(round.queued));
+      final one = working.single;
+      parts.add(s.roomStripReplying(nameOf(one.member)));
+      final since = one.since;
+      if (now != null && since != null) {
+        parts.add(roomElapsed(now.difference(since)));
+      }
+    } else if (working.length == 2) {
+      parts.add(
+        s.roomStripReplyingTwo(
+          nameOf(working[0].member),
+          nameOf(working[1].member),
+        ),
+      );
+    } else if (working.length > 2) {
+      parts.add(s.roomStripReplyingMany(working.length.toString()));
     }
     if (round.failed > 0) {
       if (parts.isEmpty) parts.add(s.roomRoundLabel(round.round));
@@ -617,6 +626,22 @@ String roomStripSummary(
     if (parts.isNotEmpty) return parts.join(' · ');
   }
   return idleStatus;
+}
+
+/// "Next: A, B" — the members still waiting their turn in the current
+/// round, in the order the room will ask them. Null when nobody waits.
+String? roomStripNext(
+  Strings s, {
+  required RoomRoundModel? round,
+  required String Function(HostedGroupMember member) nameOf,
+}) {
+  if (round == null) return null;
+  final waiting = [
+    for (final r in round.rows)
+      if (r.state == RoomTurnState.queued) nameOf(r.member),
+  ];
+  if (waiting.isEmpty) return null;
+  return s.roomStripNext(waiting.join(', '));
 }
 
 /// Fixed-height status strip (Bot Mode direction A): a face per member with
@@ -632,6 +657,9 @@ class RoomStatusStrip extends StatelessWidget {
   final List<HostedGroupMember> members;
   final Map<String, RoomTurnState> states;
   final String summary;
+
+  /// Second line ("Next: …"); the strip keeps its height either way.
+  final String? next;
   final RoomProfileResolver profileFor;
   final MissionProfileAvatarCache? avatarCache;
   final VoidCallback? onTap;
@@ -641,6 +669,7 @@ class RoomStatusStrip extends StatelessWidget {
     required this.members,
     required this.states,
     required this.summary,
+    this.next,
     required this.profileFor,
     required this.avatarCache,
     this.onTap,
@@ -649,42 +678,54 @@ class RoomStatusStrip extends StatelessWidget {
   Widget _memberFace(BuildContext context, HostedGroupMember member) {
     final colors = Theme.of(context).hermes;
     final state = states[member.memberId];
+    final now = state == RoomTurnState.working;
     return Padding(
+      key: now ? ValueKey('room-strip-face-now-${member.memberId}') : null,
       padding: const EdgeInsets.only(right: 6),
-      child: SizedBox.square(
-        dimension: _faceSize + 2,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            RoomMemberFace(
-              member: member,
-              fallbackName: member.handle,
-              profile: profileFor(member),
-              avatarCache: avatarCache,
-              size: _faceSize,
-              // The dot carries the state; an always-on animation here
-              // would repaint the room every frame for as long as a bot
-              // works. The floating detail animates the working faces.
-              working: false,
-            ),
-            Positioned(
-              right: -1,
-              bottom: -1,
-              child: SizedBox.square(
-                key: ValueKey(
-                  'room-strip-dot-${member.memberId}-${state?.name ?? 'idle'}',
-                ),
-                dimension: 11,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: roomTurnDotColor(colors, state),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: colors.background, width: 2),
+      child: DecoratedBox(
+        // The one replying gets a ring in the working colour.
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: now ? colors.success : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        child: SizedBox.square(
+          dimension: _faceSize + 2,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              RoomMemberFace(
+                member: member,
+                fallbackName: member.handle,
+                profile: profileFor(member),
+                avatarCache: avatarCache,
+                size: _faceSize,
+                // The dot carries the state; an always-on animation here
+                // would repaint the room every frame for as long as a bot
+                // works. The floating detail animates the working faces.
+                working: false,
+              ),
+              Positioned(
+                right: -1,
+                bottom: -1,
+                child: SizedBox.square(
+                  key: ValueKey(
+                    'room-strip-dot-${member.memberId}-${state?.name ?? 'idle'}',
+                  ),
+                  dimension: 11,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: roomTurnDotColor(colors, state),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colors.background, width: 2),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -694,7 +735,15 @@ class RoomStatusStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final shown = members.take(maxFaces).toList();
+    // Who is replying leads, then who is next, then the rest.
+    int rank(HostedGroupMember m) => switch (states[m.memberId]) {
+      RoomTurnState.needsYou => 0,
+      RoomTurnState.working => 1,
+      RoomTurnState.queued => 2,
+      _ => 3,
+    };
+    final ordered = [...members]..sort((a, b) => rank(a).compareTo(rank(b)));
+    final shown = ordered.take(maxFaces).toList();
     final more = members.length - shown.length;
     return Semantics(
       button: onTap != null,
@@ -727,16 +776,33 @@ class RoomStatusStrip extends StatelessWidget {
                 ),
               const SizedBox(width: 4),
               Expanded(
-                child: Text(
-                  summary,
-                  key: const ValueKey('room-strip-summary'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      summary,
+                      key: const ValueKey('room-strip-summary'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    if (next case final line?)
+                      Text(
+                        line,
+                        key: const ValueKey('room-strip-next'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               if (onTap != null)

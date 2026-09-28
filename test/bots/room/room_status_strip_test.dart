@@ -324,6 +324,91 @@ void main() {
       );
     });
 
+    testWidgets('who works: name, time and who is next, working face first', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      // console-radar is last in the room's member list; replying moves
+      // its face to the front.
+      final u = seq.user('@review @radar @lead go');
+      final disc = u['event_id'] as String;
+      final started = seq.started('m-radar', disc);
+      await _pump(
+        tester,
+        events: [u, started],
+        status: driver(working: true, counts: {'running': 1, 'queued': 2}),
+      );
+      final elapsed = roomElapsed(
+        DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000).difference(
+          DateTime.fromMillisecondsSinceEpoch(
+            ((started['created_at'] as double) * 1000).round(),
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .data,
+        'console-radar is replying · $elapsed',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('room-strip-next'))).data,
+        'Next: console-review, console-lead',
+      );
+      // The one replying is marked and leads the faces.
+      final working = find.byKey(const ValueKey('room-strip-face-now-m-radar'));
+      expect(working, findsOneWidget);
+      final x = tester.getTopLeft(working).dx;
+      for (final id in ['m-review', 'm-lead', 'm-builder']) {
+        expect(
+          tester
+              .getTopLeft(
+                find.byWidgetPredicate(
+                  (w) =>
+                      w.key is ValueKey<String> &&
+                      (w.key! as ValueKey<String>).value.startsWith(
+                        'room-strip-dot-$id-',
+                      ),
+                ),
+              )
+              .dx,
+          greaterThan(x),
+          reason: '$id must sit after the one replying',
+        );
+      }
+      expect(tester.getSize(_strip).height, RoomStatusStrip.height);
+    });
+
+    testWidgets('two replying at once are both named', (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder @lead go');
+      final disc = u['event_id'] as String;
+      await _pump(
+        tester,
+        events: [
+          u,
+          seq.started('m-builder', disc),
+          seq.started('m-lead', disc),
+        ],
+        status: driver(working: true, counts: {'running': 2}),
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .data,
+        'console-builder and console-lead are replying',
+      );
+      expect(find.byKey(const ValueKey('room-strip-next')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('room-strip-face-now-m-builder')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('room-strip-face-now-m-lead')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('C5 red only for failures; needs-you is amber', (tester) async {
       final seq = EventSeq();
       final u = seq.user('@lead @radar go');

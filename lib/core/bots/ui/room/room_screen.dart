@@ -1499,7 +1499,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       round: round,
       idleStatus: _statusLine(s, round),
       nameOf: nameOf,
+      now: _now,
     );
+    final next = roomStripNext(s, round: round, nameOf: nameOf);
     final detailOpen = _detailOpen && round != null;
     return Scaffold(
       key: const ValueKey('room-screen'),
@@ -1525,6 +1527,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                         r.member.memberId: r.state,
                     },
                     summary: summary,
+                    next: next,
                     profileFor: widget.profileFor,
                     avatarCache: widget.avatarCache,
                     onTap: round != null

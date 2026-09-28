@@ -571,11 +571,12 @@ And whether `fix/tap-targets` is still open.''';
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
       final strip = find.byKey(const ValueKey('room-status-strip'));
       expect(tester.getSize(strip).height, RoomStatusStrip.height);
+      // Who replies and for how long (the clock of the working turn).
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
             .data,
-        'console-builder is working…',
+        startsWith('console-builder is replying · '),
       );
       expect(
         find.byKey(const ValueKey('room-strip-dot-m-builder-working')),

@@ -8016,6 +8016,41 @@
       }
     }
   },
+  "roomStripReplying": "{name} está respondiendo",
+  "@roomStripReplying": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplyingTwo": "{first} y {second} están respondiendo",
+  "@roomStripReplyingTwo": {
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplyingMany": "{count} bots están respondiendo",
+  "@roomStripReplyingMany": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripNext": "Después: {names}",
+  "@roomStripNext": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "roomNewPill": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
   "@roomNewPill": {
     "placeholders": {

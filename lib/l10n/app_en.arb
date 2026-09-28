@@ -6776,6 +6776,41 @@
   "roomRetryDismiss": "Dismiss",
   "roomRetryUnavailable": "Can't be retried from here",
   "roomStripNeedsYou": "{name} needs you",
+  "roomStripReplying": "{name} is replying",
+  "@roomStripReplying": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplyingTwo": "{first} and {second} are replying",
+  "@roomStripReplyingTwo": {
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplyingMany": "{count} bots are replying",
+  "@roomStripReplyingMany": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripNext": "Next: {names}",
+  "@roomStripNext": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "roomNewPill": "{count, plural, =1{1 new} other{{count} new}}",
   "roomStripDetail": "See what each bot is doing",
   "roomActionFailed": "Hermes rejected the action. Try again.",
