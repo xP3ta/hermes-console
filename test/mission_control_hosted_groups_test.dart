@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
@@ -59,6 +60,64 @@ void main() {
         await tester.pumpWidget(const SizedBox());
       }
     }
+  });
+
+  testWidgets('a seen room stops asking for the user in the Bots list', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final mention = HostedGroupLogPage.fromJson(
+      {
+        'events': [
+          {
+            'room_id': 'room-private',
+            'seq': 1,
+            'event_id': 'mention-1',
+            'kind': 'message.member',
+            'actor': {
+              'kind': 'member',
+              'id': 'member-private',
+              'profile': 'builder',
+            },
+            'authority_epoch': 1,
+            'payload': {
+              'discussion_event_id': 'user:d1',
+              'member_id': 'member-private',
+              'member_index': 0,
+              'round_index': 0,
+              'task_id': 'task-1',
+              'thread_id': 'thread-1',
+              'turn_id': 'turn-1',
+              'text': 'Done. @user FYI the build is green.',
+            },
+            'created_at': 2,
+            'idempotent': false,
+          },
+        ],
+        'cursor': 1,
+        'latest_seq': 1,
+        'has_more': false,
+        'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+      },
+      expectedRoomId: 'room-private',
+      sinceSeq: 0,
+    );
+    await _pumpHostedScreen(tester, manager, _workspaceSource(log: mention));
+    final needs = find.byKey(const ValueKey('roster-section-needs-you'));
+    expect(needs, findsOneWidget);
+
+    // Leaving the room writes the seen marker, exactly as RoomScreen does.
+    await tester.runAsync(
+      () => SharedPreferencesRoomPrefs(
+        manager.prefs,
+      ).setLastSeenSeq('gateway-private:room-private', 1),
+    );
+    await tester.pumpAndSettle();
+    expect(needs, findsNothing);
   });
 
   for (final missingMethod in [false, true]) {

@@ -1171,7 +1171,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         );
       }
     }
-    final attention = AttentionSummary.fromSnapshot(groups);
+    final attention = AttentionSummary.fromSnapshot(
+      groups,
+      acks: SharedPreferencesRoomPrefs(widget.connManager.prefs).acksFor,
+    );
     final canStop =
         !widget.connection.readOnly &&
         (groups.capabilities?.supports(GroupMethod.stop) ?? false);
@@ -3282,14 +3285,36 @@ class _BotsTab extends StatefulWidget {
 }
 
 class _BotsTabState extends State<_BotsTab> {
-  (HostedGroupsSnapshot, AttentionSummary)? _attentionCache;
+  (HostedGroupsSnapshot, int, AttentionSummary)? _attentionCache;
+
+  @override
+  void initState() {
+    super.initState();
+    RoomLocalPrefs.changes.addListener(_onAcksChanged);
+  }
+
+  @override
+  void dispose() {
+    RoomLocalPrefs.changes.removeListener(_onAcksChanged);
+    super.dispose();
+  }
+
+  // Opening a room or dismissing a card there acknowledges it: the amber
+  // "needs you" on its row and on its bots goes out right away.
+  void _onAcksChanged() {
+    if (mounted) setState(() {});
+  }
 
   AttentionSummary get _attention {
     final groups = widget.snapshot.hostedGroups;
+    final revision = RoomLocalPrefs.changes.value;
     final cached = _attentionCache;
-    if (cached != null && identical(cached.$1, groups)) return cached.$2;
-    final summary = AttentionSummary.fromSnapshot(groups);
-    _attentionCache = (groups, summary);
+    if (cached != null && identical(cached.$1, groups) && cached.$2 == revision) {
+      return cached.$3;
+    }
+    final prefs = SharedPreferencesRoomPrefs(widget.prefs);
+    final summary = AttentionSummary.fromSnapshot(groups, acks: prefs.acksFor);
+    _attentionCache = (groups, revision, summary);
     return summary;
   }
 

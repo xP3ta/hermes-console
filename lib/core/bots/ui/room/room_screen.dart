@@ -124,7 +124,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _restoringDraft = false;
   bool _foreground = true;
 
-  String get _roomKey => '${_room.authorityGatewayId}:${_room.roomId}';
+  String get _roomKey => roomPrefsKey(_room);
   DateTime get _now => (widget.clock ?? DateTime.now)();
   List<HostedGroupEvent> get _events => _log?.events ?? const [];
 

@@ -1,4 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../models/hosted_groups.dart';
+import '../../state/attention.dart';
+
+/// Device-local key of one hosted room (authority + room id).
+String roomPrefsKey(HostedGroupRoom room) =>
+    '${room.authorityGatewayId}:${room.roomId}';
 
 /// Room notification level (spec 070 S3 overflow → Notifications).
 enum RoomNotificationLevel { all, mentions, muted }
@@ -12,6 +20,14 @@ enum RoomNotificationLevel { all, mentions, muted }
 ///   stored locally. TODO(spec070-G?): move to a Desktop-compatible
 ///   `ui_meta` key once Hermes defines one.
 abstract interface class RoomLocalPrefs {
+  /// Bumped whenever a seen marker or a dismissal is written, so surfaces
+  /// that project attention (the Bots list, bot faces) refresh at once.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+
+  /// What the user already acknowledged in [room], read synchronously for
+  /// attention projection.
+  RoomAttentionAcks acksFor(HostedGroupRoom room);
+
   Future<int?> lastSeenSeq(String roomKey);
   Future<void> setLastSeenSeq(String roomKey, int seq);
   Future<RoomNotificationLevel> notificationLevel(String roomKey);
@@ -43,8 +59,20 @@ final class SharedPreferencesRoomPrefs implements RoomLocalPrefs {
       prefs.getInt(_seen(roomKey));
 
   @override
-  Future<void> setLastSeenSeq(String roomKey, int seq) =>
-      prefs.setInt(_seen(roomKey), seq);
+  Future<void> setLastSeenSeq(String roomKey, int seq) async {
+    await prefs.setInt(_seen(roomKey), seq);
+    RoomLocalPrefs.changes.value++;
+  }
+
+  @override
+  RoomAttentionAcks acksFor(HostedGroupRoom room) {
+    final key = roomPrefsKey(room);
+    return RoomAttentionAcks(
+      seenSeq: prefs.getInt(_seen(key)),
+      dismissedTasks: (prefs.getStringList(_dismissed(key)) ?? const [])
+          .toSet(),
+    );
+  }
 
   @override
   Future<RoomNotificationLevel> notificationLevel(String roomKey) async {
@@ -66,12 +94,13 @@ final class SharedPreferencesRoomPrefs implements RoomLocalPrefs {
       (prefs.getStringList(_dismissed(roomKey)) ?? const <String>[]).toSet();
 
   @override
-  Future<void> setDismissedTasks(String roomKey, Set<String> taskIds) {
+  Future<void> setDismissedTasks(String roomKey, Set<String> taskIds) async {
     final list = taskIds.toList();
     final bounded = list.length > roomDismissedTasksLimit
         ? list.sublist(list.length - roomDismissedTasksLimit)
         : list;
-    return prefs.setStringList(_dismissed(roomKey), bounded);
+    await prefs.setStringList(_dismissed(roomKey), bounded);
+    RoomLocalPrefs.changes.value++;
   }
 }
 
@@ -105,4 +134,13 @@ final class MemoryRoomPrefs implements RoomLocalPrefs {
   @override
   Future<void> setDismissedTasks(String roomKey, Set<String> taskIds) async =>
       dismissed[roomKey] = {...taskIds};
+
+  @override
+  RoomAttentionAcks acksFor(HostedGroupRoom room) {
+    final key = roomPrefsKey(room);
+    return RoomAttentionAcks(
+      seenSeq: seen[key],
+      dismissedTasks: {...?dismissed[key]},
+    );
+  }
 }
