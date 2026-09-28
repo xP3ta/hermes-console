@@ -716,6 +716,35 @@ void main() {
       },
     );
 
+    testWidgets('a new log alone (same room, same driver) reaches the screen', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final events = _longRoom(seq, rounds: 2);
+      final status = driver();
+      final gateway = await _pump(tester, events: events, status: status);
+      final room = gateway.room;
+      final reply = seq.member(
+        'builder',
+        'builder',
+        'late reply with no driver change',
+        events.lastWhere((e) => e['kind'] == 'message.user')['event_id']
+            as String,
+        thread: 'thread-1',
+        round: 1,
+      );
+      // Only the log moves: the room and the driver status stay the very
+      // same instances, as when a poll brings messages but no state change.
+      gateway.log = buildLog([...events, reply]);
+      await _refresh(tester);
+      expect(identical(gateway.room, room), isTrue);
+      expect(identical(gateway.status, status), isTrue);
+      expect(
+        find.byKey(ValueKey('room-message-${reply['event_id']}')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('C9 typing never rebuilds the transcript (2000 events)', (
       tester,
     ) async {
