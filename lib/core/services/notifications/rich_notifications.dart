@@ -788,6 +788,7 @@ class RichNotificationBuilder {
     int? round,
     Duration timeout = liveTimeout,
     Map<String, int> repliedAfterMs = const {},
+    int accent = RichAccent.working,
   }) {
     final working = members.where((m) => m.state == 'working').length;
     final done = members.where((m) => m.state == 'done').length;
@@ -876,7 +877,7 @@ class RichNotificationBuilder {
       'openPayload': open.toPayload(),
       'actionPayload': ?stopAction?.encode(),
       'timeoutMs': timeout.inMilliseconds,
-      'accent': RichAccent.working,
+      'accent': accent,
       // Lock screen: no room, Bot or command names; counts only.
       'publicTitle': t.liveWorkingPublic,
       'publicText': round != null && members.isNotEmpty

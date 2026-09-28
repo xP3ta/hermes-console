@@ -58,6 +58,29 @@ Future<String?> botFacePath({
   );
 }
 
+/// The Bot's own colour for its notification tint: the base of its face
+/// palette, so the shade shows who speaks before a word is read. A Bot
+/// without a colour (grey) keeps the brand accent.
+int botAccent(BotFaceIdentity identity) {
+  if (identity.sphere == 'grey') return RichAccent.brand;
+  final base = BotSpherePalette.colors[identity.sphere]?.$2;
+  return base == null ? RichAccent.brand : base.toARGB32();
+}
+
+/// [botAccent] of [profile] via [identityFor]; brand when unknown.
+Future<int> botAccentFor(
+  String connId,
+  String? profile,
+  BotIdentityLookup? identityFor,
+) async {
+  if (profile == null) return RichAccent.brand;
+  BotFaceIdentity? identity;
+  try {
+    identity = await identityFor?.call(connId, profile);
+  } catch (_) {}
+  return identity == null ? RichAccent.brand : botAccent(identity);
+}
+
 /// Display name of a Bot profile from the loaded roster; null if unknown.
 typedef BotNameLookup = String? Function(String profile);
 
@@ -334,6 +357,8 @@ class RichRoomNoticePresenter implements RoomNoticePresenter {
 
     HostedGroupEvent? replyTarget;
     String? verdict;
+    // The Bot that speaks last on a calm card lends it its colour.
+    String? speaker;
     String? alertKey;
     for (final notice in notices) {
       switch (notice) {
@@ -466,6 +491,8 @@ class RichRoomNoticePresenter implements RoomNoticePresenter {
           // needs a speaker, and then it is the last Bot (the room tile
           // only when no member is known).
           verdict = t.roundDone(names);
+          speaker =
+              lastMemberId ?? (shown.isEmpty ? null : shown.last.memberId);
           if (lines == 0) {
             final by = lastMemberId;
             messages.add(
@@ -496,6 +523,15 @@ class RichRoomNoticePresenter implements RoomNoticePresenter {
       }
     }
     if (messages.isEmpty) return;
+    // Amber and red still mean something; a calm card is the Bot's own.
+    if (accent == RichAccent.done || accent == RichAccent.brand) {
+      final own = await botAccentFor(
+        connId,
+        speaker == null ? null : memberProfile(room, speaker),
+        identityFor,
+      );
+      if (own != RichAccent.brand) accent = own;
+    }
     await sink.postConversation(
       builder.conversation(
         tag: tag,
@@ -551,8 +587,15 @@ class RichRoomNoticePresenter implements RoomNoticePresenter {
     if (wasOverflow) await _syncSummary();
     final plan = liveRoundPlan(room, notice);
     final tile = await _roomTile(room);
+    final working = plan.workingMemberId;
+    final own = await botAccentFor(
+      connId,
+      working == null ? null : memberProfile(room, working),
+      identityFor,
+    );
     await sink.postLiveUpdate(
       builder.liveUpdate(
+        accent: own == RichAccent.brand ? RichAccent.working : own,
         tag: tag,
         conversationId: conv,
         title: room.name,
@@ -675,9 +718,15 @@ class BotChatRichNotifications {
               ),
         shortcutIconPath: plain ?? icon,
         hideSensitive: hideSensitive,
-        accent: RichAccent.done,
+        accent: await _accent(connId, profile, RichAccent.done),
       ),
     );
+  }
+
+  /// The Bot's own colour, else [fallback].
+  Future<int> _accent(String connId, String profile, int fallback) async {
+    final own = await botAccentFor(connId, profile, identityFor);
+    return own == RichAccent.brand ? fallback : own;
   }
 
   /// A scheduled routine owned by a Bot (`[bot:x]`) reported as a message
@@ -725,7 +774,9 @@ class BotChatRichNotifications {
         alert: !ok,
         shortcutIconPath: plain ?? icon,
         hideSensitive: hideSensitive,
-        accent: ok ? RichAccent.done : RichAccent.failed,
+        accent: ok
+            ? await _accent(connId, profile, RichAccent.done)
+            : RichAccent.failed,
       ),
     );
   }
