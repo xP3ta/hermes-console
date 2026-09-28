@@ -792,13 +792,18 @@ class RichNotificationBuilder {
     final working = members.where((m) => m.state == 'working').length;
     final done = members.where((m) => m.state == 'done').length;
     final named = workingName != null && workingName.isNotEmpty;
-    // Never a bare "Thinking…" over an empty bar: name the Bot when known,
-    // else the room.
-    final head = named
+    final needing = members.where((m) => m.state == 'needs_you').toList();
+    // One headline that says who does what: someone needing you wins, then
+    // the working Bot by name, else the room. Never a bare "Thinking…".
+    final head = needing.isNotEmpty
+        ? t.needsYou(needing.first.name)
+        : named
         ? (thinking ? t.isThinking(workingName) : t.isWorking(workingName))
         : t.roomWorking;
-    // Replied members first, then the working one: the tracker (working
-    // face) sits on its own segment.
+    final headName = needing.isNotEmpty
+        ? needing.first.name
+        : (named ? workingName : null);
+    // Replied members first, then the working one.
     int rank(String s) => switch (s) {
       'done' => 0,
       'working' => 1,
@@ -832,7 +837,7 @@ class RichNotificationBuilder {
     ];
     final others = [
       for (final m in ordered.take(12))
-        if (!(named && m.name == workingName))
+        if (m.name != headName)
           switch (m.state) {
             'done' => t.inlineReplied(m.name, after(m.name)),
             'working' => t.inlineTyping(m.name),
@@ -856,17 +861,15 @@ class RichNotificationBuilder {
           : round != null
           ? t.roundWorking(round, working, members.length)
           : t.roundReplied(done, members.length),
-      'segments': [
-        for (final m in ordered.take(12)) {'state': m.state},
-      ],
+      // No progress bar: "2 of 4 replied" is not a percentage, and a bar
+      // that moves without measuring anything only confuses. State is text.
       'trackerIconPath': ?trackerIconPath,
       'largeIconPath': ?(largeIconPath ?? trackerIconPath),
       'startedAtMs': ?startedAtMs,
-      'shortText': ?(named
-          ? (workingName.length > 7 ? workingName.substring(0, 7) : workingName)
-          : members.isEmpty
+      // Status-bar chip: a name, never an ambiguous "x/y" count.
+      'shortText': ?(headName == null
           ? null
-          : '$done/${members.length}'),
+          : (headName.length > 7 ? headName.substring(0, 7) : headName)),
       'stopLabel': ?(stopAction == null ? null : t.actStopRound),
       'openLabel': t.actOpenRoom,
       'conversationId': conversationId,
@@ -899,7 +902,6 @@ class RichNotificationBuilder {
     'tag': liveSummaryTag,
     'title': t.roomsWorking(total),
     'text': roomNames.take(6).join(' · '),
-    'segments': const <Object?>[],
     'promote': false,
     'openPayload': ?open?.toPayload(),
     'timeoutMs': timeout.inMilliseconds,

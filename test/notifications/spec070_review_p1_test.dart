@@ -589,7 +589,7 @@ void main() {
       ).readAsStringSync();
       final live = kt.substring(
         kt.indexOf('fun postLiveUpdate('),
-        kt.indexOf('private fun segmentColor('),
+        kt.indexOf('/** Replaces a card in place with a short confirmation'),
       );
       expect(live, contains('if (Build.VERSION.SDK_INT >= 31) stop.setAuthenticationRequired(true)'));
       expect(live, contains('builder.setTimeoutAfter('));

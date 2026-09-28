@@ -1315,21 +1315,72 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     };
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final transcript = buildRoomTranscript(
-      events: _events,
-      members: _room.members,
-      lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
-    );
-    final round = _visibleRound(
+  /// Inputs the transcript depends on. Typing, focus, dictation and working
+  /// timers change none of them, so the transcript subtree is reused as is
+  /// (identical widget = no rebuild of any message).
+  List<Object?> _transcriptInputs(Locale locale) => [
+    _log,
+    _driver,
+    _room,
+    _frozenKeys,
+    _dismissedTasks,
+    _lastSeenSeq,
+    _lastSeenLoaded,
+    _localLoaded,
+    _threadId == null,
+    _retrying.join(','),
+    _answering.join(','),
+    locale,
+    widget,
+    DateUtils.dateOnly(_now),
+  ];
+
+  List<Object?>? _viewInputs;
+  ({Widget widget, int unread})? _view;
+  List<Object?>? _roundInputs;
+  RoomRoundModel? _round;
+
+  static bool _sameInputs(List<Object?>? a, List<Object?> b) {
+    if (a == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] is String ||
+          a[i] is bool ||
+          a[i] is int ||
+          a[i] is DateTime ||
+          a[i] is Locale) {
+        if (a[i] != b[i]) return false;
+      } else if (!identical(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  RoomRoundModel? _roundView() {
+    final inputs = [_log, _driver, _room, _dismissedTasks];
+    if (_sameInputs(_roundInputs, inputs)) return _round;
+    _roundInputs = inputs;
+    return _round = _visibleRound(
       deriveRoomRound(
         events: _events,
         members: _room.members,
         driverStatus: _driver,
       ),
+    );
+  }
+
+  ({Widget widget, int unread}) _transcriptView(
+    Strings s,
+    HermesThemeColors colors,
+  ) {
+    final inputs = _transcriptInputs(Localizations.localeOf(context));
+    final cached = _view;
+    if (cached != null && _sameInputs(_viewInputs, inputs)) return cached;
+    _viewInputs = inputs;
+    final transcript = buildRoomTranscript(
+      events: _events,
+      members: _room.members,
+      lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
     );
     final handles = [
       for (final m in _room.members) m.handle,
@@ -1381,7 +1432,64 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               if (!frozen.contains(i.key)) i,
           ];
     final unread = newer.where((i) => i.message).length;
-    if (!_openAnchored && items.isNotEmpty) {
+    final Widget view = items.isEmpty
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                s.roomEmpty,
+                key: const ValueKey('room-empty'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textSecondary),
+              ),
+            ),
+          )
+        : Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _onScroll,
+              child: KeyedSubtree(
+                key: _transcriptKey,
+                child: CustomScrollView(
+                  key: const ValueKey('room-transcript'),
+                  controller: _transcriptScroll,
+                  reverse: true,
+                  center: _centerKey,
+                  slivers: [
+                    // Newer than what the user is
+                    // reading: grows below it.
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => newer[index].build(),
+                        childCount: newer.length,
+                      ),
+                    ),
+                    SliverPadding(
+                      key: _centerKey,
+                      padding: const EdgeInsets.only(top: 8),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) =>
+                              anchored[anchored.length - 1 - index].build(),
+                          childCount: anchored.length,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+    return _view = (widget: view, unread: unread);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final round = _roundView();
+    final view = _transcriptView(s, colors);
+    if (!_openAnchored && _lastItemKeys.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _anchorOnOpen());
     }
     String nameOf(HostedGroupMember m) =>
@@ -1428,72 +1536,17 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: Stack(
                     children: [
-                      Positioned.fill(
-                        child: items.isEmpty
-                            ? Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(32),
-                                  child: Text(
-                                    s.roomEmpty,
-                                    key: const ValueKey('room-empty'),
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: NotificationListener<ScrollNotification>(
-                                  onNotification: _onScroll,
-                                  child: KeyedSubtree(
-                                    key: _transcriptKey,
-                                    child: CustomScrollView(
-                                      key: const ValueKey('room-transcript'),
-                                      controller: _transcriptScroll,
-                                      reverse: true,
-                                      center: _centerKey,
-                                      slivers: [
-                                        // Newer than what the user is
-                                        // reading: grows below it.
-                                        SliverList(
-                                          delegate: SliverChildBuilderDelegate(
-                                            (context, index) =>
-                                                newer[index].build(),
-                                            childCount: newer.length,
-                                          ),
-                                        ),
-                                        SliverPadding(
-                                          key: _centerKey,
-                                          padding: const EdgeInsets.only(
-                                            top: 8,
-                                          ),
-                                          sliver: SliverList(
-                                            delegate:
-                                                SliverChildBuilderDelegate(
-                                                  (context, index) =>
-                                                      anchored[anchored.length -
-                                                              1 -
-                                                              index]
-                                                          .build(),
-                                                  childCount: anchored.length,
-                                                ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                      ),
-                      if (unread > 0)
+                      Positioned.fill(child: view.widget),
+                      if (view.unread > 0)
                         Positioned(
                           bottom: 20,
                           left: 0,
                           right: 0,
                           child: Center(
-                            child: RoomNewPill(count: unread, onTap: _toBottom),
+                            child: RoomNewPill(
+                              count: view.unread,
+                              onTap: _toBottom,
+                            ),
                           ),
                         ),
                       if (detailOpen) ...[

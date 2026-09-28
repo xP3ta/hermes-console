@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_strings.dart';
@@ -212,7 +214,7 @@ void main() {
         round: 2,
         startedAtMs: 1000,
       );
-      expect(args['segments'], hasLength(2));
+      expect(args['rows'], hasLength(2));
       expect(args['text'], 'reviewer is working… · builder replied');
       expect(args['shortText'], 'reviewe');
       expect(args['subText'], 'Round 2 · 1 of 2 working');
@@ -247,9 +249,9 @@ void main() {
       expect(inferred['text'], 'Radar está pensando… · Atlas en espera');
       expect(inferred['shortText'], 'Radar');
       expect(inferred['subText'], '0 de 2 respondieron');
-      expect(inferred['segments'], [
-        {'state': 'working'},
-        {'state': 'pending'},
+      expect([for (final r in inferred['rows']! as List) (r as Map)['state']], [
+        'working',
+        'pending',
       ]);
     });
 
@@ -312,8 +314,8 @@ void main() {
       });
 
       test('promoted text carries the other members after the speaker', () {
-        // ProgressStyle cannot host rows: the 2-line expanded text is the
-        // per-member summary, the working Bot first.
+        // The collapsed text is the per-member summary, the working Bot
+        // first.
         expect(
           build(es)['text'],
           'Radar está trabajando… · Atlas respondió · 00:41 · Nova en espera',
@@ -526,6 +528,70 @@ void main() {
       );
       expect(ops.calls, ['roomApprove:once']);
       expect(sink.confirms, isEmpty);
+    });
+  });
+
+  group('C8 live update: state as text, never a progress bar', () {
+    Map<String, Object?> build(
+      List<({String name, String state})> members, {
+      String? workingName,
+    }) => const RichNotificationBuilder(es).liveUpdate(
+      tag: 't',
+      conversationId: 'c',
+      title: 'Console Devs',
+      members: members,
+      workingName: workingName,
+      open: open,
+      stopAction: null,
+      round: 2,
+    );
+
+    test('no segments and no x/y chip in any state', () {
+      for (final members in [
+        const <({String name, String state})>[],
+        const [(name: 'Atlas', state: 'working')],
+        const [
+          (name: 'Atlas', state: 'done'),
+          (name: 'Radar', state: 'working'),
+          (name: 'Nova', state: 'pending'),
+          (name: 'Lead', state: 'needs_you'),
+        ],
+      ]) {
+        final args = build(members, workingName: 'Radar');
+        expect(args.containsKey('segments'), isFalse);
+        expect('${args['shortText']}', isNot(matches(RegExp(r'^\d+/\d+$'))));
+      }
+      // Nobody named: no chip at all rather than "0/2".
+      final anon = build(const [
+        (name: 'Atlas', state: 'pending'),
+        (name: 'Radar', state: 'pending'),
+      ]);
+      expect(anon.containsKey('shortText'), isFalse);
+    });
+
+    test('someone needing you is the headline and the chip', () {
+      final args = build(const [
+        (name: 'Atlas', state: 'done'),
+        (name: 'Radar', state: 'working'),
+        (name: 'Lead', state: 'needs_you'),
+      ], workingName: 'Radar');
+      expect(args['text'] as String, startsWith('Lead te necesita · '));
+      expect(args['text'] as String, contains('Radar escribiendo'));
+      expect(args['shortText'], 'Lead');
+    });
+
+    test('native side draws no progress bar on any Android release', () {
+      final kt = File(
+        'android/app/src/main/kotlin/com/hermesagent/hermes_android/HermesRichNotifications.kt',
+      ).readAsStringSync();
+      final live = kt.substring(
+        kt.indexOf('fun postLiveUpdate('),
+        kt.indexOf('/** Replaces a card in place with a short confirmation'),
+      );
+      expect(live, isNot(contains('ProgressStyle')));
+      expect(live, isNot(contains('setProgress')));
+      expect(live, isNot(contains('segments')));
+      expect(live, contains('setRequestPromotedOngoing(true)'));
     });
   });
 }

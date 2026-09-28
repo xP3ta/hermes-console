@@ -280,9 +280,9 @@ void main() {
         ]);
         final first = sink.live.single;
         expect(first['text'], 'Radar está pensando… · Atlas en espera');
-        expect(first['segments'], [
-          {'state': 'working'},
-          {'state': 'pending'},
+        expect([for (final r in first['rows']! as List) (r as Map)['state']], [
+          'working',
+          'pending',
         ]);
         expect(first['largeIconPath'] as String, contains('tile_'));
         expect(first['trackerIconPath'] as String, contains('working'));
@@ -302,11 +302,11 @@ void main() {
         ]);
         final second = sink.live.last;
         expect(second['text'], 'Atlas está trabajando… · Radar respondió');
-        expect(second['segments'], [
-          {'state': 'done'},
-          {'state': 'working'},
+        expect([for (final r in second['rows']! as List) (r as Map)['state']], [
+          'done',
+          'working',
         ]);
-        // Nobody addressed nor started: the room works, one segment each.
+        // Nobody addressed nor started: the room works, one row each.
         await presenter.present('c1', qa, [
           const RoomLiveNotice(working: true, startedAtMs: 1000),
         ]);
@@ -314,7 +314,7 @@ void main() {
           sink.live.last['text'] as String,
           startsWith('La sala está trabajando…'),
         );
-        expect(sink.live.last['segments'], hasLength(2));
+        expect(sink.live.last['rows'], hasLength(2));
         expect(sink.live.last['trackerIconPath'] as String, contains('tile_'));
       },
     );

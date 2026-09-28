@@ -652,4 +652,104 @@ void main() {
       expect(find.byKey(const ValueKey('room-retry-task-r2')), findsOneWidget);
     });
   });
+
+  group('A · open anchor and typing cost', () {
+    testWidgets(
+      'C3 first poll block landing after open anchors at the bottom',
+      (tester) async {
+        final seq = EventSeq();
+        final events = _longRoom(seq);
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        // Opens with nothing loaded yet; the whole log arrives on the first
+        // poll, after the open post-frame callback already ran.
+        final empty = buildLog(const []);
+        final room = buildRoom();
+        final gateway = _Gateway(room: room, log: empty, status: driver());
+        await tester.pumpWidget(
+          _host(
+            RoomScreen(
+              room: room,
+              log: empty,
+              driverStatus: driver(),
+              gateway: gateway,
+              capabilities: _caps,
+              profileFor: (_) => null,
+              prefs: MemoryRoomPrefs(),
+              pollTimer: (_, _) => _FakeTimer(),
+              clock: () =>
+                  DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
+            ),
+          ),
+        );
+        await _frames(tester);
+        gateway
+          ..log = buildLog(events)
+          ..room = buildRoom(latestSeq: gateway.log.latestSeq);
+        await _refresh(tester);
+        final position = tester
+            .state<ScrollableState>(
+              find
+                  .descendant(
+                    of: _transcript,
+                    matching: find.byType(Scrollable),
+                  )
+                  .first,
+            )
+            .position;
+        // At the newest content, not somewhere mid-log.
+        expect(
+          position.pixels,
+          lessThanOrEqualTo(position.minScrollExtent + 150),
+        );
+        final newest = events.lastWhere((e) => e['kind'] == 'message.member');
+        final tile = find.byKey(ValueKey('room-message-${newest['event_id']}'));
+        expect(tile, findsOneWidget);
+        // Visible; the open anchor may nudge it so the top speaker header
+        // is not cut (spec 070 #5), never scrolled away.
+        expect(
+          tester.getTopLeft(tile).dy,
+          lessThan(tester.getBottomLeft(_transcript).dy),
+        );
+        expect(find.byKey(const ValueKey('room-new-pill')), findsNothing);
+      },
+    );
+
+    testWidgets('C9 typing never rebuilds the transcript (2000 events)', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final events = _longRoom(seq, rounds: 500);
+      expect(events, hasLength(2000));
+      await _pump(tester, events: events, status: driver());
+      Widget transcript() => tester.widget(_transcript);
+      final before = transcript();
+      final field = find.descendant(
+        of: find.byKey(const ValueKey('room-composer')),
+        matching: find.byType(EditableText),
+      );
+      await tester.tap(field);
+      await tester.pump();
+      for (final ch in 'hola equipo'.split('')) {
+        await tester.enterText(
+          field,
+          '${tester.widget<EditableText>(field).controller.text}$ch',
+        );
+        await tester.pump();
+        // Same widget instance: Flutter skips the whole transcript subtree.
+        expect(identical(transcript(), before), isTrue, reason: 'after "$ch"');
+      }
+      // A real change (a new message) does rebuild it.
+      final gateway =
+          tester.state<RoomScreenState>(find.byType(RoomScreen)).widget.gateway
+              as _Gateway;
+      final u = seq.user('ping', thread: 'thread-new');
+      gateway
+        ..log = buildLog([...events, u])
+        ..room = buildRoom(latestSeq: gateway.log.latestSeq);
+      await _refresh(tester);
+      expect(identical(transcript(), before), isFalse);
+    });
+  });
 }
