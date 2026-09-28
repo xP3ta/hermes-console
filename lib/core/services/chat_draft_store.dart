@@ -17,11 +17,17 @@ class ChatDraft {
   final String? preparedTurnClientTurnId;
   final String? replyThreadId;
 
+  /// Turno ya persistido en la outbox cuyo lote es exactamente este borrador.
+  /// Solo vive en el store: la pantalla nunca lo adopta como autoridad del
+  /// composer, y cualquier edición posterior lo retira al reescribir la clave.
+  final String? submittedTurnClientTurnId;
+
   const ChatDraft({
     required this.text,
     required this.attachments,
     this.preparedTurnClientTurnId,
     this.replyThreadId,
+    this.submittedTurnClientTurnId,
   });
 }
 
@@ -209,6 +215,9 @@ class ChatDraftStore {
         preparedTurnClientTurnId: _safeOpaqueIdentity(
           data['preparedTurnClientTurnId'],
         ),
+        submittedTurnClientTurnId: _safeOpaqueIdentity(
+          data['submittedTurnClientTurnId'],
+        ),
       );
       if (draft.text.isEmpty && draft.attachments.isEmpty) return null;
       return ChatDraftEntry(
@@ -309,6 +318,7 @@ class ChatDraftStore {
     String profile = 'default',
     String? preparedTurnClientTurnId,
     String? replyThreadId,
+    String? submittedTurnClientTurnId,
     LocalConversationLifecycle? lifecycle,
     Future<bool>? afterSave,
   }) {
@@ -323,6 +333,7 @@ class ChatDraftStore {
       profile: owner,
       preparedTurnClientTurnId: preparedTurnClientTurnId,
       replyThreadId: replyThreadId,
+      submittedTurnClientTurnId: submittedTurnClientTurnId,
       lifecycle: lifecycle,
       afterSave: afterSave,
     );
@@ -349,6 +360,7 @@ class ChatDraftStore {
     String profile = 'default',
     String? preparedTurnClientTurnId,
     String? replyThreadId,
+    String? submittedTurnClientTurnId,
     LocalConversationLifecycle? lifecycle,
     // Admit before waiting on a screen's two-key move. Cleanup must see this
     // request even while an earlier snapshot is still using storage.
@@ -443,6 +455,9 @@ class ChatDraftStore {
               'text': text,
               'replyThreadId': ?_safeOpaqueIdentity(replyThreadId),
               'preparedTurnClientTurnId': ?safePreparedTurnId,
+              'submittedTurnClientTurnId': ?_safeOpaqueIdentity(
+                submittedTurnClientTurnId,
+              ),
               'attachments': normalizedAttachments
                   .map((item) => item.toJson())
                   .toList(),
@@ -491,11 +506,18 @@ class ChatDraftStore {
     // Conservado para compatibilidad; nunca autoriza V1/V2 ambiguos.
     bool includeUnscoped = false,
     String? onlyPreparedTurnClientTurnId,
+    // Retira solo el borrador que sigue siendo el lote exacto de ese turno ya
+    // persistido. No depende de ninguna pantalla viva y nunca invalida una
+    // escritura concurrente con contenido nuevo.
+    String? onlySubmittedTurnClientTurnId,
   }) {
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
     final mutationScope = _mutationScope(key);
-    if (onlyPreparedTurnClientTurnId == null) {
+    final conditional =
+        onlyPreparedTurnClientTurnId != null ||
+        onlySubmittedTurnClientTurnId != null;
+    if (!conditional) {
       _advanceMutationGeneration(mutationScope);
     }
     final admittedSaves = _admittedSaveTails[mutationScope];
@@ -518,15 +540,18 @@ class ChatDraftStore {
       return Future<void>.error(error, stackTrace);
     }
     Future<void> clearMatching() => _serializeMutation(mutationScope, () async {
-      if (onlyPreparedTurnClientTurnId != null) {
+      if (conditional) {
         final raw = await _secure.read(key: key);
-        if (raw == null ||
-            _decodeEntry(
-                  sessionId,
-                  owner,
-                  raw,
-                )?.draft.preparedTurnClientTurnId !=
-                onlyPreparedTurnClientTurnId) {
+        final stored = raw == null
+            ? null
+            : _decodeEntry(sessionId, owner, raw)?.draft;
+        if (stored == null ||
+            (onlyPreparedTurnClientTurnId != null &&
+                stored.preparedTurnClientTurnId !=
+                    onlyPreparedTurnClientTurnId) ||
+            (onlySubmittedTurnClientTurnId != null &&
+                stored.submittedTurnClientTurnId !=
+                    onlySubmittedTurnClientTurnId)) {
           return;
         }
       }
@@ -539,7 +564,7 @@ class ChatDraftStore {
       );
     });
     // An acknowledged room send clears only its own captured draft.
-    if (onlyPreparedTurnClientTurnId != null && admittedSaves != null) {
+    if (conditional && admittedSaves != null) {
       return admittedSaves.then((_) => clearMatching());
     }
     return clearMatching();

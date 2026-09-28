@@ -2591,4 +2591,35 @@ void main() {
     );
     expect(prefs.getString(historicalV2), '[]');
   });
+
+  // fix/draft-orphan
+  test('onlySubmittedTurnClientTurnId retires only its exact batch', () async {
+    final store = ChatDraftStore(await SharedPreferences.getInstance());
+    await store.save(
+      'c',
+      's',
+      'lote enviado',
+      const [],
+      submittedTurnClientTurnId: 'turn-a',
+    );
+    expect((await store.load('c', 's')).submittedTurnClientTurnId, 'turn-a');
+
+    await store.clear('c', 's', onlySubmittedTurnClientTurnId: 'turn-b');
+    expect((await store.load('c', 's')).text, 'lote enviado');
+
+    // Una edición posterior reescribe la clave sin enlace: ya no es el lote.
+    await store.save('c', 's', 'texto nuevo', const []);
+    await store.clear('c', 's', onlySubmittedTurnClientTurnId: 'turn-a');
+    expect((await store.load('c', 's')).text, 'texto nuevo');
+
+    await store.save(
+      'c',
+      's',
+      'lote enviado',
+      const [],
+      submittedTurnClientTurnId: 'turn-a',
+    );
+    await store.clear('c', 's', onlySubmittedTurnClientTurnId: 'turn-a');
+    expect((await store.load('c', 's')).text, isEmpty);
+  });
 }
