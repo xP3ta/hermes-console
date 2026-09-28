@@ -379,6 +379,65 @@ void main() {
       expect(tester.getSize(_strip).height, RoomStatusStrip.height);
     });
 
+    testWidgets('typing: the replying bot shows under the last message', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('@radar go', thread: 'thread-1');
+      final disc = u['event_id'] as String;
+      final events = <Map<String, dynamic>>[u, seq.started('m-radar', disc)];
+      final gateway = await _pump(
+        tester,
+        events: events,
+        status: driver(working: true, counts: {'running': 1}),
+      );
+      final typing = find.byKey(const ValueKey('room-typing-m-radar'));
+      expect(typing, findsOneWidget);
+      expect(
+        find.descendant(
+          of: typing,
+          matching: find.text('console-radar is replying…'),
+        ),
+        findsOneWidget,
+      );
+      // It sits after the message it answers.
+      expect(
+        tester.getTopLeft(typing).dy,
+        greaterThan(
+          tester.getTopLeft(find.byKey(ValueKey('room-message-$disc'))).dy,
+        ),
+      );
+      // Nobody else is shown as typing.
+      expect(find.byKey(const ValueKey('room-typing-m-lead')), findsNothing);
+
+      // The reply lands and the turn settles: the typing row goes away.
+      final reply = seq.member('m-radar', 'radar', 'done', disc);
+      events
+        ..add(reply)
+        ..add(seq.settled('m-radar', disc, messageId: reply['event_id']));
+      gateway
+        ..log = buildLog(events)
+        ..room = buildRoom(latestSeq: gateway.log.latestSeq)
+        ..status = driver();
+      await _refresh(tester);
+      expect(typing, findsNothing);
+      expect(
+        find.byKey(ValueKey('room-message-${reply['event_id']}')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('no typing row while the room is idle', (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@radar go');
+      await _pump(
+        tester,
+        events: [u, seq.started('m-radar', u['event_id'] as String)],
+        status: driver(),
+      );
+      expect(find.byKey(const ValueKey('room-typing-m-radar')), findsNothing);
+    });
+
     testWidgets('two replying at once are both named', (tester) async {
       final seq = EventSeq();
       final u = seq.user('@builder @lead go');

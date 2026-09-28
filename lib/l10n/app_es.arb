@@ -8051,6 +8051,14 @@
       }
     }
   },
+  "roomTypingLabel": "{name} está respondiendo…",
+  "@roomTypingLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "roomNewPill": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
   "@roomNewPill": {
     "placeholders": {

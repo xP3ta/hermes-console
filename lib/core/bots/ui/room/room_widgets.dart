@@ -644,6 +644,82 @@ String? roomStripNext(
   return s.roomStripNext(waiting.join(', '));
 }
 
+/// The replying bot at the bottom of the conversation, where its answer
+/// will land: its face beside a quiet bubble. Driven only by the server's
+/// turn state (started, not yet settled); it never guesses from text. Still
+/// on purpose: an endless animation here would repaint the room every frame
+/// for the whole turn.
+class RoomTypingRow extends StatelessWidget {
+  final HostedGroupMember member;
+  final String name;
+  final AgentProfile? profile;
+  final MissionProfileAvatarCache? avatarCache;
+
+  const RoomTypingRow({
+    super.key,
+    required this.member,
+    required this.name,
+    required this.profile,
+    required this.avatarCache,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    Widget dot() => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: SizedBox.square(
+        dimension: 6,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.textSecondary,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          RoomMemberFace(
+            member: member,
+            fallbackName: member.handle,
+            profile: profile,
+            avatarCache: avatarCache,
+            size: 28,
+          ),
+          const SizedBox(width: 10),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [dot(), dot(), dot()],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              s.roomTypingLabel(name),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Fixed-height status strip (Bot Mode direction A): a face per member with
 /// a state dot and one summary line. It never changes height, so a round
 /// starting or ending never moves what the user is reading; tapping it opens

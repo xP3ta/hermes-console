@@ -1401,6 +1401,24 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           message: false,
           build: () => card,
         ),
+      // Whoever is replying right now, where the answer will appear.
+      for (final row in _roundView()?.rows ?? const <RoomRoundRow>[])
+        if (row.state == RoomTurnState.working)
+          (
+            key: 'room-typing-${row.member.memberId}',
+            message: false,
+            build: () => RoomTypingRow(
+              key: ValueKey('room-typing-${row.member.memberId}'),
+              member: row.member,
+              name: roomSpeakerName(
+                row.member,
+                null,
+                widget.profileFor(row.member),
+              ),
+              profile: widget.profileFor(row.member),
+              avatarCache: widget.avatarCache,
+            ),
+          ),
     ];
     final grew =
         _openAnchored &&
