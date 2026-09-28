@@ -2219,6 +2219,30 @@ class _ChatScreenState extends State<ChatScreen>
         : await _loadDraftWithRecoveryMigration(store);
     if (!mounted) return;
     _turnOutbox = outbox;
+    final submittedLink = draft.submittedTurnClientTurnId;
+    if (submittedLink != null &&
+        (_chatBound ? _chat.activeTurnDelivery : null) == null) {
+      // La outbox se escribe siempre antes del enlace. Sin registro de ese
+      // turno, ya se resolvió (entregado y retirado): el lote no se ofrece de
+      // nuevo. Con registro, decide la reconciliación normal de abajo. Con una
+      // entrega viva no se lee storage: el servicio posee esa frontera.
+      final pending = await outbox.loadAllForChat(
+        widget.connection.id,
+        widget.session.id,
+        profile: _recoveryProfile,
+      );
+      if (!mounted) return;
+      if (!pending.any((turn) => turn.clientTurnId == submittedLink)) {
+        await store.clear(
+          widget.connection.id,
+          _draftRecoverySessionId,
+          profile: _recoveryProfile,
+          onlySubmittedTurnClientTurnId: submittedLink,
+        );
+        if (!mounted) return;
+        draft = const ChatDraft(text: '', attachments: []);
+      }
+    }
     final linkedDiscard = draft.preparedTurnClientTurnId;
     if (linkedDiscard != null &&
         await outbox.isFailedBeforeAcceptanceDiscarded(
@@ -2705,6 +2729,7 @@ class _ChatScreenState extends State<ChatScreen>
     String? preparedTurnClientTurnId,
     bool preparedTurnAuthorityCaptured = false,
     bool finalDisposeSnapshot = false,
+    String? submittedTurnClientTurnId,
   }) async {
     if (widget.connection.readOnly) return false;
     if (_disposed && !finalDisposeSnapshot) return false;
@@ -2739,6 +2764,7 @@ class _ChatScreenState extends State<ChatScreen>
         preparedTurnClientTurnId: preparedTurnAuthorityCaptured
             ? preparedTurnClientTurnId
             : preparedTurnClientTurnId ?? _composerPreparedTurnClientTurnId,
+        submittedTurnClientTurnId: submittedTurnClientTurnId,
         lifecycle: _localConversationLifecycle,
         afterSave: previous.then((_) => true),
       );
@@ -2791,6 +2817,38 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (error) {
       debugPrint('[chat-draft] secure cleanup failed (${error.runtimeType})');
       return false;
+    }
+  }
+
+  /// Retira el borrador que sigue siendo el lote exacto de un turno ya
+  /// aceptado. No depende de esta pantalla: tras salir antes del ACK el
+  /// lifecycle ya no admite escrituras y `_clearDraft` no puede actuar. El
+  /// store solo borra si el enlace coincide, así que nunca pisa texto nuevo, y
+  /// sigue respetando las vallas de borrado de sesión/conexión.
+  Future<void> _clearSubmittedTurnDraft(String clientTurnId) async {
+    if (widget.connection.readOnly) return;
+    try {
+      final store =
+          _draftStore ??
+          widget.draftStoreOverride ??
+          ChatDraftStore(await SharedPreferences.getInstance());
+      final ids = <String>{
+        widget.session.id,
+        ?_normalCanonicalDraftId,
+        if (_chatBound) ?_chat.createdDraftSessionId,
+      }..removeWhere((id) => id.isEmpty);
+      for (final id in ids) {
+        await store.clear(
+          widget.connection.id,
+          id,
+          profile: _recoveryProfile,
+          onlySubmittedTurnClientTurnId: clientTurnId,
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[chat-draft] submitted-turn cleanup failed (${error.runtimeType})',
+      );
     }
   }
 
@@ -7245,6 +7303,22 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
 
+    // La outbox ya es durable: desde aquí el borrador cifrado se atribuye a
+    // este intento exacto. Si la pantalla muere antes del ACK, el ACK (o el
+    // siguiente restore) lo retira por identidad sin depender del widget.
+    if (textOverride == null &&
+        _textController.text == composerTextAtSubmit &&
+        _sameAttachmentDrafts(_pendingAttachments, attachments)) {
+      _draftTimer?.cancel();
+      unawaited(
+        _saveDraftSnapshot(
+          composerTextAtSubmit,
+          attachments,
+          submittedTurnClientTurnId: prepared.clientTurnId,
+        ),
+      );
+    }
+
     if (replacesProvenRejectedProjection) {
       _removeLatestFailedPromptProjection(prepared.fullText);
     }
@@ -7389,6 +7463,9 @@ class _ChatScreenState extends State<ChatScreen>
       // no pertenece al envío aceptado y nunca debe borrarse junto con él.
       _scheduleDraftSave();
     }
+    // Si la pantalla se cerró antes del ACK, `_clearDraft` no puede escribir.
+    // El borrado condicionado solo retira el lote enlazado a este turno.
+    await _clearSubmittedTurnDraft(prepared.clientTurnId);
     _preparedTurn = acceptedTurn;
 
     if (mounted) {
