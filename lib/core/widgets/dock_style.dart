@@ -219,17 +219,43 @@ DockVisual resolveDockVisual(HermesThemeColors colors, DockStyle style) {
 /// Contenedor plano de la barra del dock: aplica [DockVisual] (color, borde,
 /// radio, sombra y, si hay transparencia, desenfoque de fondo) a [children]
 /// dispuestos en una fila a ras de borde a borde.
+///
+/// With [selectedIndex] set, the bar paints a single active indicator pill
+/// beneath that slot and slides it to the new slot when the selection
+/// changes (tiles should then pass `selectionBackground: false`). A thin
+/// light hairline along the top edge completes the glass look.
 class DockBar extends StatelessWidget {
   final DockStyle style;
   final List<Widget> children;
 
-  const DockBar({required this.style, required this.children, super.key});
+  /// Slot (index into [children]) under which the sliding active indicator
+  /// sits; `null` paints no indicator.
+  final int? selectedIndex;
+
+  const DockBar({
+    required this.style,
+    required this.children,
+    this.selectedIndex,
+    super.key,
+  });
+
+  /// Duration of the indicator slide between slots.
+  static const indicatorDuration = Duration(milliseconds: 220);
+
+  /// Widest the active indicator pill gets inside a slot.
+  static const indicatorMaxWidth = 64.0;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final visual = resolveDockVisual(colors, style);
     final radius = BorderRadius.circular(visual.outerRadius);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final index = selectedIndex;
+    final row = Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
     Widget bar = DecoratedBox(
       decoration: BoxDecoration(
         color: visual.background,
@@ -239,16 +265,79 @@ class DockBar extends StatelessWidget {
       ),
       child: SizedBox(
         height: 48,
-        child: Padding(
-          // Solo inset horizontal: el vertical se deja a 0 para que cada
-          // elemento pueda ocupar los 48dp de alto completos (objetivo
-          // táctil mínimo de accesibilidad) en vez de encogerse a ~40dp.
-          // `stretch` fuerza esa altura completa en cada item de la fila.
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: children,
-          ),
+        child: Stack(
+          children: [
+            // Top hairline light: a soft highlight that fades out towards
+            // the rounded corners, like light catching the edge of glass.
+            Positioned(
+              key: const ValueKey('dock-top-hairline'),
+              top: 0,
+              left: visual.outerRadius / 2,
+              right: visual.outerRadius / 2,
+              height: 1,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.white.withValues(alpha: 0),
+                        Colors.white.withValues(alpha: 0.16),
+                        Colors.white.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: Padding(
+                // Solo inset horizontal: el vertical se deja a 0 para que cada
+                // elemento pueda ocupar los 48dp de alto completos (objetivo
+                // táctil mínimo de accesibilidad) en vez de encogerse a ~40dp.
+                // `stretch` fuerza esa altura completa en cada item de la fila.
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: index == null || index < 0 || index >= children.length
+                    ? row
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final slotWidth =
+                              constraints.maxWidth / children.length;
+                          final width = (slotWidth - 8).clamp(
+                            0.0,
+                            indicatorMaxWidth,
+                          );
+                          return Stack(
+                            children: [
+                              AnimatedPositioned(
+                                key: const ValueKey('dock-active-indicator'),
+                                duration: reduceMotion
+                                    ? Duration.zero
+                                    : indicatorDuration,
+                                curve: Curves.easeOutCubic,
+                                top: 4,
+                                bottom: 4,
+                                left:
+                                    slotWidth * index + (slotWidth - width) / 2,
+                                width: width,
+                                child: IgnorePointer(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: colors.surfaceVariant,
+                                      borderRadius: BorderRadius.circular(
+                                        visual.innerRadius,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned.fill(child: row),
+                            ],
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -286,6 +375,10 @@ class DockItemTile extends StatelessWidget {
   final VoidCallback? onTap;
   final FocusNode? focusNode;
 
+  /// Whether a selected tile paints its own background pill. The live dock
+  /// sets this to false because [DockBar] paints one sliding indicator.
+  final bool selectionBackground;
+
   const DockItemTile({
     required this.icon,
     required this.label,
@@ -300,6 +393,7 @@ class DockItemTile extends StatelessWidget {
     this.toggled,
     this.onTap,
     this.focusNode,
+    this.selectionBackground = true,
     super.key,
   });
 
@@ -311,6 +405,15 @@ class DockItemTile extends StatelessWidget {
         : selected
         ? colors.textPrimary
         : colors.textSecondary;
+    // The active destination gets an accent icon over its indicator pill.
+    final iconColor = selected ? colors.accentText : color;
+    // The "+" stays a same-size tile; a faint accent pill marks it instead
+    // of a bigger or elevated button.
+    final background = accent
+        ? colors.accent.withValues(alpha: toggled == true ? 0.26 : 0.14)
+        : selected && selectionBackground
+        ? colors.surfaceVariant
+        : null;
     final displayIcon = selected && selectedIcon != null ? selectedIcon! : icon;
     return Expanded(
       child: Semantics(
@@ -324,89 +427,92 @@ class DockItemTile extends StatelessWidget {
         excludeSemantics: true,
         child: Tooltip(
           message: label,
-          child: InkWell(
-            key: controlKey,
-            focusNode: focusNode,
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(innerRadius),
-            // El fondo del item seleccionado es una píldora AJUSTADA al
-            // contenido (Center le da al DecoratedBox constraints sueltas en
-            // vez de las tight que fuerza el `Expanded` padre), con un
-            // margen interno consistente vía Padding. Antes el DecoratedBox
-            // heredaba el ancho/alto completo del segmento del Row (48dp de
-            // alto, ancho = lo que le tocara de `Expanded`), pintando un
-            // bloque desproporcionado en vez de una píldora flotante
-            // (confirmado por captura real del dispositivo).
-            child: Center(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: selected && !accent ? colors.surfaceVariant : null,
-                  borderRadius: BorderRadius.circular(innerRadius),
-                ),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: compact ? 4 : 6,
+          child: _DockPressScale(
+            enabled: onTap != null,
+            child: InkWell(
+              key: controlKey,
+              focusNode: focusNode,
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(innerRadius),
+              // El fondo del item seleccionado es una píldora AJUSTADA al
+              // contenido (Center le da al DecoratedBox constraints sueltas en
+              // vez de las tight que fuerza el `Expanded` padre), con un
+              // margen interno consistente vía Padding. Antes el DecoratedBox
+              // heredaba el ancho/alto completo del segmento del Row (48dp de
+              // alto, ancho = lo que le tocara de `Expanded`), pintando un
+              // bloque desproporcionado en vez de una píldora flotante
+              // (confirmado por captura real del dispositivo).
+              child: Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: background,
+                    borderRadius: BorderRadius.circular(innerRadius),
                   ),
-                  // `compact` (el dock real, ver dock.dart) apila el
-                  // icono arriba y la etiqueta
-                  // debajo: con 4+ items visibles, icono+etiqueta EN LÍNEA no
-                  // cabe y Flutter corta el texto con "..." (confirmado por
-                  // captura real del dispositivo). Apilar en vertical, no
-                  // ocultar la etiqueta, resuelve lo mismo sin perder el
-                  // texto — sigue con maxLines: 1 + ellipsis por si algún
-                  // idioma/tamaño de fuente sigue sin caber en el ancho del
-                  // segmento. El modo en línea (usado hoy solo por la vista
-                  // previa de Ajustes › Dock, con más espacio disponible) se
-                  // mantiene igual que antes.
-                  child: compact
-                      ? Column(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(displayIcon, size: 21, color: color),
-                            const SizedBox(height: 2),
-                            // Sin escalar con la fuente del sistema: el
-                            // icono de encima tampoco escala, y a 2x el
-                            // texto ya no cabe en la altura fija del tile
-                            // (48dp) apilado bajo un icono de 21dp — se
-                            // confirmó overflow real en los tests a 2.0x.
-                            // La etiqueta sigue siendo accesible sin
-                            // recorte propio vía Tooltip/Semantics.
-                            Text(
-                              compactLabel ?? label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textScaler: TextScaler.noScaling,
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                height: 1,
-                              ),
-                            ),
-                          ],
-                        )
-                      : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(displayIcon, size: 21, color: color),
-                            const SizedBox(width: 7),
-                            Flexible(
-                              child: Text(
-                                label,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: compact ? 4 : 6,
+                    ),
+                    // `compact` (el dock real, ver dock.dart) apila el
+                    // icono arriba y la etiqueta
+                    // debajo: con 4+ items visibles, icono+etiqueta EN LÍNEA no
+                    // cabe y Flutter corta el texto con "..." (confirmado por
+                    // captura real del dispositivo). Apilar en vertical, no
+                    // ocultar la etiqueta, resuelve lo mismo sin perder el
+                    // texto — sigue con maxLines: 1 + ellipsis por si algún
+                    // idioma/tamaño de fuente sigue sin caber en el ancho del
+                    // segmento. El modo en línea (usado hoy solo por la vista
+                    // previa de Ajustes › Dock, con más espacio disponible) se
+                    // mantiene igual que antes.
+                    child: compact
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(displayIcon, size: 21, color: iconColor),
+                              const SizedBox(height: 2),
+                              // Sin escalar con la fuente del sistema: el
+                              // icono de encima tampoco escala, y a 2x el
+                              // texto ya no cabe en la altura fija del tile
+                              // (48dp) apilado bajo un icono de 21dp — se
+                              // confirmó overflow real en los tests a 2.0x.
+                              // La etiqueta sigue siendo accesible sin
+                              // recorte propio vía Tooltip/Semantics.
+                              Text(
+                                compactLabel ?? label,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                                textScaler: TextScaler.noScaling,
                                 style: TextStyle(
                                   color: color,
-                                  fontSize: 12.5,
+                                  fontSize: 10,
                                   fontWeight: FontWeight.w700,
+                                  height: 1,
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(displayIcon, size: 21, color: iconColor),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: Text(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: color,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
                 ),
               ),
             ),
@@ -416,3 +522,49 @@ class DockItemTile extends StatelessWidget {
     );
   }
 }
+
+/// Springy press feedback for a dock tile: shrinks the tile slightly while
+/// a pointer is down and springs back with a small overshoot on release.
+/// Uses a raw [Listener] so it never competes with the tile's own gestures,
+/// and only animates on press/release (no idle ticker). With reduced motion
+/// the tile never scales.
+class _DockPressScale extends StatefulWidget {
+  final bool enabled;
+  final Widget child;
+
+  const _DockPressScale({required this.enabled, required this.child});
+
+  @override
+  State<_DockPressScale> createState() => _DockPressScaleState();
+}
+
+class _DockPressScaleState extends State<_DockPressScale> {
+  bool _pressed = false;
+
+  void _set(bool pressed) {
+    if (_pressed != pressed) setState(() => _pressed = pressed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final pressed = _pressed && widget.enabled && !reduceMotion;
+    return Listener(
+      onPointerDown: (_) => _set(true),
+      onPointerUp: (_) => _set(false),
+      onPointerCancel: (_) => _set(false),
+      child: AnimatedScale(
+        key: const ValueKey('dock-press-scale'),
+        scale: pressed ? dockPressedScale : 1,
+        duration: reduceMotion
+            ? Duration.zero
+            : Duration(milliseconds: pressed ? 90 : 320),
+        curve: pressed ? Curves.easeOutCubic : Curves.easeOutBack,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Scale a dock tile shrinks to while pressed.
+const double dockPressedScale = 0.92;
