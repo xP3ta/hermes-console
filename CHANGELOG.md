@@ -3,7 +3,7 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## 1.2.14 (9410) — 2026-09-27
+## 1.2.14 (9420) — 2026-09-27
 
 Reconnection and reliability fixes, a redesigned Bot Mode, one shared design
 system, rich conversation notifications and Grok-style widgets, an
@@ -12,6 +12,13 @@ Capabilities hub for skills, plugins, MCP servers and connectors. Physically
 QA'd on a Pixel with the full stack installed.
 
 ### Reconnection, activity pill and chat
+- Reconcile the OPEN conversation transcript — not just the session list — when
+  Hermes signals `sessions.changed` from another surface (Desktop, CLI, another
+  Console instance) on the same session: a message written elsewhere now
+  appears in an already-open chat automatically, deferred while Console's own
+  turn is streaming and applied once it settles, verified across reconnects
+  and a provisional-to-durable session promotion, with no cross-profile
+  leakage. Physically QA'd end to end on a Pixel against the real gateway.
 - A turn whose completion was lost during a disconnect is recovered from
   server state instead of staying "running" forever; a pending approval is
   restored the same way.
