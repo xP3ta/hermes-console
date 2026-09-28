@@ -561,9 +561,201 @@ class RoomStateChip extends StatelessWidget {
   }
 }
 
-/// Collapsed: "Round N · x working · y queued" + Stop all. Expanded: one
-/// row per member with face, what it is doing and a state chip.
-class RoomRoundPanel extends StatefulWidget {
+/// Colour of a member's state dot. One visual language for the whole room:
+/// green = working, amber = needs you, red = failed (red is reserved for
+/// failures), grey = waiting, done or no activity.
+Color roomTurnDotColor(HermesThemeColors colors, RoomTurnState? state) =>
+    switch (state) {
+      RoomTurnState.working => colors.success,
+      RoomTurnState.needsYou => colors.warning,
+      RoomTurnState.failed => colors.error,
+      RoomTurnState.passed || RoomTurnState.replied => colors.textSecondary,
+      RoomTurnState.queued ||
+      RoomTurnState.stopped ||
+      RoomTurnState.noReply ||
+      null => colors.textDisabled,
+    };
+
+/// One line that says who is doing what, in priority order: someone needs
+/// you, something failed, who is working, else the idle status.
+String roomStripSummary(
+  Strings s, {
+  required RoomRoundModel? round,
+  required String idleStatus,
+  required String Function(HostedGroupMember member) nameOf,
+}) {
+  if (round != null) {
+    final needs = [
+      for (final r in round.rows)
+        if (r.state == RoomTurnState.needsYou) r,
+    ];
+    if (needs.length == 1) {
+      return s.roomStripNeedsYou(nameOf(needs.single.member));
+    }
+    if (needs.length > 1) {
+      return '${s.roomRoundLabel(round.round)} · ${s.roomRoundNeedsYou(needs.length)}';
+    }
+    final working = [
+      for (final r in round.rows)
+        if (r.state == RoomTurnState.working) r,
+    ];
+    final parts = <String>[];
+    if (working.length == 1) {
+      parts.add(s.roomStatusMemberWorking(nameOf(working.single.member)));
+    } else if (working.length > 1) {
+      parts
+        ..add(s.roomRoundLabel(round.round))
+        ..add(s.roomRoundWorking(working.length));
+    }
+    if (parts.isNotEmpty && round.queued > 0) {
+      parts.add(s.roomRoundQueued(round.queued));
+    }
+    if (round.failed > 0) {
+      if (parts.isEmpty) parts.add(s.roomRoundLabel(round.round));
+      parts.add(s.roomRoundFailed(round.failed));
+    }
+    if (parts.isNotEmpty) return parts.join(' · ');
+  }
+  return idleStatus;
+}
+
+/// Fixed-height status strip (Bot Mode direction A): a face per member with
+/// a state dot and one summary line. It never changes height, so a round
+/// starting or ending never moves what the user is reading; tapping it opens
+/// the per-member detail floating over the room.
+class RoomStatusStrip extends StatelessWidget {
+  /// Constant in every state (spec: status never resizes the transcript).
+  static const double height = 48;
+  static const int maxFaces = 5;
+  static const double _faceSize = 26;
+
+  final List<HostedGroupMember> members;
+  final Map<String, RoomTurnState> states;
+  final String summary;
+  final RoomProfileResolver profileFor;
+  final MissionProfileAvatarCache? avatarCache;
+  final VoidCallback? onTap;
+
+  const RoomStatusStrip({
+    super.key,
+    required this.members,
+    required this.states,
+    required this.summary,
+    required this.profileFor,
+    required this.avatarCache,
+    this.onTap,
+  });
+
+  Widget _memberFace(BuildContext context, HostedGroupMember member) {
+    final colors = Theme.of(context).hermes;
+    final state = states[member.memberId];
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: SizedBox.square(
+        dimension: _faceSize + 2,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            RoomMemberFace(
+              member: member,
+              fallbackName: member.handle,
+              profile: profileFor(member),
+              avatarCache: avatarCache,
+              size: _faceSize,
+              // The dot carries the state; an always-on animation here
+              // would repaint the room every frame for as long as a bot
+              // works. The floating detail animates the working faces.
+              working: false,
+            ),
+            Positioned(
+              right: -1,
+              bottom: -1,
+              child: SizedBox.square(
+                key: ValueKey(
+                  'room-strip-dot-${member.memberId}-${state?.name ?? 'idle'}',
+                ),
+                dimension: 11,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: roomTurnDotColor(colors, state),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: colors.background, width: 2),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final shown = members.take(maxFaces).toList();
+    final more = members.length - shown.length;
+    return Semantics(
+      button: onTap != null,
+      label: s.roomStripDetail,
+      child: InkWell(
+        key: const ValueKey('room-status-strip'),
+        onTap: onTap,
+        child: Container(
+          height: height,
+          padding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
+            ),
+          ),
+          child: Row(
+            children: [
+              for (final m in shown) _memberFace(context, m),
+              if (more > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Text(
+                    '+$more',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  summary,
+                  key: const ValueKey('room-strip-summary'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textPrimary,
+                  ),
+                ),
+              ),
+              if (onTap != null)
+                Icon(
+                  Icons.expand_more_rounded,
+                  size: 18,
+                  color: colors.textSecondary,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Per-member detail of the current round (opened from the strip, floating
+/// over the room): face, what it is doing, state chip, Stop all.
+class RoomRoundDetail extends StatelessWidget {
   final RoomRoundModel round;
   final DateTime now;
   final RoomProfileResolver profileFor;
@@ -571,9 +763,8 @@ class RoomRoundPanel extends StatefulWidget {
   final VoidCallback? onStopAll;
   final void Function(RoomRoundRow row)? onRetry;
   final VoidCallback? onOpenActivity;
-  final bool initiallyExpanded;
 
-  const RoomRoundPanel({
+  const RoomRoundDetail({
     super.key,
     required this.round,
     required this.now,
@@ -582,30 +773,11 @@ class RoomRoundPanel extends StatefulWidget {
     this.onStopAll,
     this.onRetry,
     this.onOpenActivity,
-    this.initiallyExpanded = false,
   });
-
-  @override
-  State<RoomRoundPanel> createState() => _RoomRoundPanelState();
-}
-
-class _RoomRoundPanelState extends State<RoomRoundPanel> {
-  late bool _expanded = widget.initiallyExpanded;
-
-  String _summary(Strings s) {
-    final round = widget.round;
-    final parts = <String>[s.roomRoundLabel(round.round)];
-    if (round.working > 0) parts.add(s.roomRoundWorking(round.working));
-    if (round.queued > 0) parts.add(s.roomRoundQueued(round.queued));
-    if (round.needsYou > 0) parts.add(s.roomRoundNeedsYou(round.needsYou));
-    if (round.failed > 0) parts.add(s.roomRoundFailed(round.failed));
-    if (parts.length == 1 && !round.active) parts.add(s.roomRoundDone);
-    return parts.join(' · ');
-  }
 
   String _rowDetail(Strings s, RoomRoundRow row) => switch (row.state) {
     RoomTurnState.working => s.roomRowWorking(
-      roomElapsed(widget.now.difference(row.since ?? widget.now)),
+      roomElapsed(now.difference(row.since ?? now)),
     ),
     RoomTurnState.needsYou =>
       row.approval?.command != null
@@ -622,14 +794,14 @@ class _RoomRoundPanelState extends State<RoomRoundPanel> {
   Widget _row(BuildContext context, RoomRoundRow row) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final profile = widget.profileFor(row.member);
+    final profile = profileFor(row.member);
     final retry =
         row.state == RoomTurnState.failed &&
         row.retryOffered &&
-        widget.onRetry != null;
+        onRetry != null;
     return Container(
       key: ValueKey('room-round-row-${row.member.memberId}'),
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         border: Border(
           top: BorderSide(color: colors.divider.withValues(alpha: 0.35)),
@@ -641,11 +813,11 @@ class _RoomRoundPanelState extends State<RoomRoundPanel> {
             member: row.member,
             fallbackName: row.member.handle,
             profile: profile,
-            avatarCache: widget.avatarCache,
-            size: 24,
+            avatarCache: avatarCache,
+            size: 28,
             working: row.state == RoomTurnState.working,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -655,20 +827,20 @@ class _RoomRoundPanelState extends State<RoomRoundPanel> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: roomMemberColor(
                       row.member.handle,
                       profile: profile,
-                      avatarCache: widget.avatarCache,
+                      avatarCache: avatarCache,
                     ),
                   ),
                 ),
                 Text(
                   _rowDetail(s, row),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                  style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
                 ),
               ],
             ),
@@ -677,9 +849,9 @@ class _RoomRoundPanelState extends State<RoomRoundPanel> {
           if (retry)
             TextButton(
               key: ValueKey('room-round-retry-${row.member.memberId}'),
-              onPressed: () => widget.onRetry!(row),
+              onPressed: () => onRetry!(row),
               style: TextButton.styleFrom(
-                minimumSize: const Size(0, 32),
+                minimumSize: const Size(0, 36),
                 foregroundColor: colors.error,
               ),
               child: Text(s.roomRetryAction),
@@ -700,86 +872,103 @@ class _RoomRoundPanelState extends State<RoomRoundPanel> {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final round = widget.round;
-    final tone = round.needsYou > 0
-        ? colors.warning
-        : round.active
-        ? colors.success
-        : colors.textSecondary;
-    return Container(
-      key: const ValueKey('room-round-panel'),
-      margin: const EdgeInsets.fromLTRB(10, 2, 10, 6),
-      padding: const EdgeInsets.fromLTRB(10, 0, 6, 0),
-      decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: tone.withValues(alpha: 0.25)),
-      ),
+    return Padding(
+      key: const ValueKey('room-round-sheet'),
+      padding: const EdgeInsets.fromLTRB(16, 4, 12, 12),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Semantics(
-            button: true,
-            expanded: _expanded,
-            label: s.roomRoundExpand,
-            child: InkWell(
-              key: const ValueKey('room-round-toggle'),
-              onTap: () => setState(() => _expanded = !_expanded),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 44),
-                child: Row(
-                  children: [
-                    Icon(
-                      _expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      size: 18,
-                      color: tone,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        _summary(s),
-                        key: const ValueKey('room-round-summary'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                    ),
-                    if (widget.onStopAll != null && round.active)
-                      TextButton.icon(
-                        key: const ValueKey('room-stop-all'),
-                        onPressed: widget.onStopAll,
-                        icon: const Icon(Icons.stop_rounded, size: 16),
-                        label: Text(s.roomStopAll),
-                        style: TextButton.styleFrom(
-                          foregroundColor: colors.textPrimary,
-                          backgroundColor: colors.surfaceVariant,
-                          minimumSize: const Size(0, 32),
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          textStyle: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                  ],
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  s.roomRoundLabel(round.round),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textPrimary,
+                  ),
                 ),
               ),
-            ),
+              if (onStopAll != null && round.active)
+                TextButton.icon(
+                  key: const ValueKey('room-stop-all'),
+                  onPressed: onStopAll,
+                  icon: const Icon(Icons.stop_rounded, size: 16),
+                  label: Text(s.roomStopAll),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colors.textPrimary,
+                    backgroundColor: colors.surfaceVariant,
+                    minimumSize: const Size(0, 36),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
           ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4, right: 4),
-              child: Column(
-                children: [for (final row in round.rows) _row(context, row)],
+          const SizedBox(height: 6),
+          for (final row in round.rows) _row(context, row),
+          if (onOpenActivity != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                key: const ValueKey('room-round-activity'),
+                onPressed: onOpenActivity,
+                child: Text(s.roomActivityTitle),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Floating "↓ N new" pill shown while the user reads above the newest
+/// content; tapping it returns to the bottom.
+class RoomNewPill extends StatelessWidget {
+  final int count;
+  final VoidCallback onTap;
+
+  const RoomNewPill({super.key, required this.count, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Material(
+      key: const ValueKey('room-new-pill'),
+      color: colors.accent,
+      elevation: 4,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.arrow_downward_rounded,
+                size: 15,
+                color: colors.onAccent,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                s.roomNewPill(count),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: colors.onAccent,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -937,7 +1126,13 @@ class RoomRetryCard extends StatelessWidget {
   final String taskId;
   final HostedGroupMember? member;
   final bool busy;
+
+  /// Null when the server does not offer a retry from here: the card then
+  /// says so instead of showing a dead button.
   final VoidCallback? onRetry;
+
+  /// Always available: a card never blocks the room without a way out.
+  final VoidCallback onDismiss;
 
   const RoomRetryCard({
     super.key,
@@ -945,6 +1140,7 @@ class RoomRetryCard extends StatelessWidget {
     required this.member,
     required this.busy,
     required this.onRetry,
+    required this.onDismiss,
   });
 
   @override
@@ -965,18 +1161,40 @@ class RoomRetryCard extends StatelessWidget {
           Icon(Icons.error_outline_rounded, size: 18, color: colors.error),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              s.roomRetryTitle(
-                member == null ? '?' : roomMemberName(member, null),
-              ),
-              style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  s.roomRetryTitle(
+                    member == null ? '?' : roomMemberName(member, null),
+                  ),
+                  style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
+                ),
+                if (onRetry == null)
+                  Text(
+                    s.roomRetryUnavailable,
+                    key: ValueKey('room-retry-$taskId-unavailable'),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                  ),
+              ],
             ),
           ),
+          if (onRetry != null)
+            TextButton(
+              key: ValueKey('room-retry-$taskId-action'),
+              onPressed: busy ? null : onRetry,
+              style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+              child: Text(s.roomRetryAction),
+            ),
           TextButton(
-            key: ValueKey('room-retry-$taskId-action'),
-            onPressed: busy ? null : onRetry,
-            style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
-            child: Text(s.roomRetryAction),
+            key: ValueKey('room-retry-$taskId-dismiss'),
+            onPressed: busy ? null : onDismiss,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              foregroundColor: colors.textSecondary,
+            ),
+            child: Text(s.roomRetryDismiss),
           ),
         ],
       ),

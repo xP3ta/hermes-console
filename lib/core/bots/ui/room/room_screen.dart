@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
@@ -94,6 +95,16 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   final ScrollController _transcriptScroll = ScrollController();
   final GlobalKey _transcriptKey = GlobalKey(debugLabel: 'room-transcript');
   bool _openAnchored = false;
+
+  /// Reading anchor. While the user reads above the newest content, the
+  /// items present when they left the bottom stay in the scroll view's
+  /// center sliver and anything newer grows *below* it, so what they read
+  /// never moves; returning to the bottom merges everything again.
+  final GlobalKey _centerKey = GlobalKey(debugLabel: 'room-center');
+  Set<String>? _frozenKeys;
+  Set<String> _dismissedTasks = const {};
+  bool _localLoaded = false;
+  bool _detailOpen = false;
   final List<AttachmentDraft> _attachments = [];
   final Set<String> _answering = {};
   final Set<String> _retrying = {};
@@ -183,7 +194,35 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _lastSeenLoaded = true;
       _notifications = level;
     });
+    Set<String> dismissed = const {};
+    try {
+      dismissed = await widget.prefs.dismissedTasks(_roomKey);
+    } catch (_) {
+      // Unreadable local state only means nothing is dismissed.
+    }
+    if (!mounted) return;
+    setState(() {
+      _dismissedTasks = {..._dismissedTasks, ...dismissed};
+      _localLoaded = true;
+    });
   }
+
+  /// Dismisses a failed-task card on this device. Keyed by the exact task,
+  /// so a later failure (new task id) always shows again.
+  void _dismissTask(String taskId) {
+    final next = {..._dismissedTasks, taskId};
+    setState(() => _dismissedTasks = next);
+    unawaited(
+      widget.prefs
+          .setDismissedTasks(_roomKey, next)
+          .then<void>((_) {}, onError: (Object _) {}),
+    );
+  }
+
+  List<RoomRetryAction> get _visibleRetries => [
+    for (final r in _driver?.retries ?? const <RoomRetryAction>[])
+      if (!_dismissedTasks.contains(r.taskId)) r,
+  ];
 
   void _markSeen() {
     final latest = _log?.latestSeq;
@@ -210,6 +249,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (e.sequence > previousLatest) e,
     ];
     final reset = log.latestSeq < previousLatest;
+    if (reset) _frozenKeys = null;
     final driverChanged = !_sameDriver(_driver, result.driverStatus);
     if (added.isNotEmpty ||
         reset ||
@@ -474,6 +514,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         }
       });
       _poller.setVisible(true);
+      _toBottom();
     } catch (_) {
       if (mounted) setState(() => _error = s.roomActionFailed);
     } finally {
@@ -789,7 +830,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (driver != null && driver.approvals.isNotEmpty) {
       return s.roomStatusNeedsApproval;
     }
-    if (driver != null && (driver.blocked || driver.retries.isNotEmpty)) {
+    if (driver != null &&
+        (_visibleRetries.isNotEmpty ||
+            (driver.blocked && driver.retries.isEmpty))) {
       return s.roomStatusBlocked;
     }
     if (driver?.working ?? false) {
@@ -1092,6 +1135,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     return [
       for (final action in driver.approvals)
         RoomApprovalCard(
+          key: ValueKey('room-inline-approval-${action.requestId}'),
           action: action,
           member: roomMemberById(action.memberId, _room.members),
           profile: () {
@@ -1103,17 +1147,120 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               ? (choice) => unawaited(_approve(action, choice))
               : null,
         ),
-      for (final retry in driver.retries)
-        RoomRetryCard(
-          taskId: retry.taskId,
-          member: _memberForTask(retry.taskId),
-          busy: _retrying.contains(retry.taskId),
-          onRetry: widget.capabilities.canRetry
-              ? () => unawaited(_retry(retry.taskId))
-              : null,
-        ),
+      // Until local state is read, a dismissed card must not flash back.
+      if (_localLoaded)
+        for (final retry in _visibleRetries)
+          RoomRetryCard(
+            key: ValueKey('room-inline-retry-${retry.taskId}'),
+            taskId: retry.taskId,
+            member: _memberForTask(retry.taskId),
+            busy: _retrying.contains(retry.taskId),
+            onRetry: widget.capabilities.canRetry
+                ? () => unawaited(_retry(retry.taskId))
+                : null,
+            onDismiss: () => _dismissTask(retry.taskId),
+          ),
     ];
   }
+
+  /// The round as the user sees it: a failure they dismissed no longer
+  /// raises the alarm (it reads as "no reply"), and a room kept "active"
+  /// only by dismissed retries is idle.
+  RoomRoundModel? _visibleRound(RoomRoundModel? round) {
+    if (round == null || _dismissedTasks.isEmpty) return round;
+    var changed = false;
+    final rows = [
+      for (final r in round.rows)
+        if (r.state == RoomTurnState.failed &&
+            r.taskId != null &&
+            _dismissedTasks.contains(r.taskId))
+          () {
+            changed = true;
+            return RoomRoundRow(
+              member: r.member,
+              state: RoomTurnState.noReply,
+              since: r.since,
+              taskId: r.taskId,
+              reasonCode: r.reasonCode,
+            );
+          }()
+        else
+          r,
+    ];
+    final driver = _driver;
+    final active =
+        round.active &&
+        ((driver?.working ?? false) ||
+            (driver?.approvals.isNotEmpty ?? false) ||
+            _visibleRetries.isNotEmpty ||
+            rows.any(
+              (r) =>
+                  r.state == RoomTurnState.working ||
+                  r.state == RoomTurnState.needsYou,
+            ));
+    if (!changed && active == round.active) return round;
+    return RoomRoundModel(
+      discussionId: round.discussionId,
+      round: round.round,
+      rows: List.unmodifiable(rows),
+      working: round.working,
+      queued: round.queued,
+      active: active,
+    );
+  }
+
+  // ── Reading anchor ───────────────────────────────────────────────────
+
+  bool get _atBottom {
+    if (!_transcriptScroll.hasClients) return true;
+    final p = _transcriptScroll.position;
+    return p.pixels <= p.minScrollExtent + 0.5;
+  }
+
+  bool _onScroll(ScrollNotification n) {
+    if (n.depth != 0) return false;
+    if (n is UserScrollNotification &&
+        n.direction != ScrollDirection.idle &&
+        _frozenKeys == null) {
+      // The user took the scroll: what is on screen now stays put.
+      _frozenKeys = {..._lastItemKeys};
+    } else if (n is ScrollEndNotification && _frozenKeys != null && _atBottom) {
+      _unfreeze();
+    }
+    return false;
+  }
+
+  void _unfreeze() {
+    if (_frozenKeys == null) return;
+    // At the very bottom edge: merging keeps the viewport pinned to the
+    // new bottom (range-maintaining physics), so nothing visibly moves.
+    setState(() => _frozenKeys = null);
+  }
+
+  void _toBottom() {
+    if (!_transcriptScroll.hasClients) {
+      _frozenKeys = null;
+      return;
+    }
+    final p = _transcriptScroll.position;
+    if (_frozenKeys == null) {
+      if (p.pixels != p.minScrollExtent) p.jumpTo(p.minScrollExtent);
+      return;
+    }
+    unawaited(
+      p
+          .animateTo(
+            p.minScrollExtent,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+          )
+          .then((_) {
+            if (mounted) _unfreeze();
+          }),
+    );
+  }
+
+  List<String> _lastItemKeys = const [];
 
   HostedGroupMember? _memberForTask(String taskId) {
     for (final e in _events.reversed) {
@@ -1177,114 +1324,232 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       members: _room.members,
       lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
     );
-    final round = deriveRoomRound(
-      events: _events,
-      members: _room.members,
-      driverStatus: _driver,
+    final round = _visibleRound(
+      deriveRoomRound(
+        events: _events,
+        members: _room.members,
+        driverStatus: _driver,
+      ),
     );
     final handles = [
       for (final m in _room.members) m.handle,
       'all',
       'everyone',
     ];
-    final inline = _inlineCards();
-    final status = _statusLine(s, round);
-    final itemCount = transcript.length + inline.length;
-    if (!_openAnchored && itemCount > 0) {
+    // Chronological items (oldest first), each with a stable identity.
+    final items = <({String key, bool message, Widget Function() build})>[
+      for (final entry in transcript)
+        (
+          key: entry.key,
+          message: entry is RoomMessageEntry,
+          build: () => _entry(entry, s, handles),
+        ),
+      for (final card in _inlineCards())
+        (
+          key: (card.key! as ValueKey<String>).value,
+          message: false,
+          build: () => card,
+        ),
+    ];
+    final grew =
+        _openAnchored &&
+        _lastItemKeys.isNotEmpty &&
+        items.isNotEmpty &&
+        items.last.key != _lastItemKeys.last;
+    _lastItemKeys = [for (final i in items) i.key];
+    final frozen = _frozenKeys;
+    if (grew && frozen == null) {
+      // Not reading back: follow the newest content to the bottom.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _frozenKeys != null || !_transcriptScroll.hasClients) {
+          return;
+        }
+        final p = _transcriptScroll.position;
+        if (p.pixels != p.minScrollExtent) p.jumpTo(p.minScrollExtent);
+      });
+    }
+    final anchored = frozen == null
+        ? items
+        : [
+            for (final i in items)
+              if (frozen.contains(i.key)) i,
+          ];
+    final newer = frozen == null
+        ? const <({String key, bool message, Widget Function() build})>[]
+        : [
+            for (final i in items)
+              if (!frozen.contains(i.key)) i,
+          ];
+    final unread = newer.where((i) => i.message).length;
+    if (!_openAnchored && items.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _anchorOnOpen());
     }
+    String nameOf(HostedGroupMember m) =>
+        roomSpeakerName(m, null, widget.profileFor(m));
+    final summary = roomStripSummary(
+      s,
+      round: round,
+      idleStatus: _statusLine(s, round),
+      nameOf: nameOf,
+    );
+    final detailOpen = _detailOpen && round != null;
     return Scaffold(
       key: const ValueKey('room-screen'),
       appBar: _header(s),
       body: SafeArea(
         top: false,
         // The real height left (after app bar, safe area and IME) decides
-        // what fits: in landscape with the keyboard open the round panel and
-        // status line step aside so the composer never overflows.
+        // what fits: in landscape with the keyboard open the status strip
+        // steps aside so the composer never overflows.
         child: LayoutBuilder(
           builder: (context, constraints) {
             final available = constraints.maxHeight;
             final roomy = available > 300;
             return Column(
               children: [
-                if (round != null && _roundNeedsPanel(round) && roomy)
-                  RoomRoundPanel(
-                    round: round,
-                    now: _now,
+                // Fixed height in every state: a round starting, needing
+                // you or ending never moves the transcript.
+                if (roomy)
+                  RoomStatusStrip(
+                    members: _room.members,
+                    states: {
+                      for (final r in round?.rows ?? const <RoomRoundRow>[])
+                        r.member.memberId: r.state,
+                    },
+                    summary: summary,
                     profileFor: widget.profileFor,
                     avatarCache: widget.avatarCache,
-                    onStopAll: widget.capabilities.canStop && !_stopping
-                        ? () => unawaited(_stop())
-                        : null,
-                    onRetry: widget.capabilities.canRetry
-                        ? (row) {
-                            final task = row.taskId;
-                            if (task != null) unawaited(_retry(task));
-                          }
-                        : null,
+                    onTap: round != null
+                        ? () => setState(() => _detailOpen = !_detailOpen)
+                        : (_events.isEmpty
+                              ? null
+                              : () => unawaited(_openActivity())),
                   ),
-                if (status.isNotEmpty && !(round?.active ?? false) && roomy)
-                  InkWell(
-                    key: const ValueKey('room-status-line'),
-                    onTap: () => unawaited(_openActivity()),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 12, 6),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              status,
-                              key: const ValueKey('room-status-text'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: colors.textSecondary,
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: items.isEmpty
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(32),
+                                  child: Text(
+                                    s.roomEmpty,
+                                    key: const ValueKey('room-empty'),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: NotificationListener<ScrollNotification>(
+                                  onNotification: _onScroll,
+                                  child: KeyedSubtree(
+                                    key: _transcriptKey,
+                                    child: CustomScrollView(
+                                      key: const ValueKey('room-transcript'),
+                                      controller: _transcriptScroll,
+                                      reverse: true,
+                                      center: _centerKey,
+                                      slivers: [
+                                        // Newer than what the user is
+                                        // reading: grows below it.
+                                        SliverList(
+                                          delegate: SliverChildBuilderDelegate(
+                                            (context, index) =>
+                                                newer[index].build(),
+                                            childCount: newer.length,
+                                          ),
+                                        ),
+                                        SliverPadding(
+                                          key: _centerKey,
+                                          padding: const EdgeInsets.only(
+                                            top: 8,
+                                          ),
+                                          sliver: SliverList(
+                                            delegate:
+                                                SliverChildBuilderDelegate(
+                                                  (context, index) =>
+                                                      anchored[anchored.length -
+                                                              1 -
+                                                              index]
+                                                          .build(),
+                                                  childCount: anchored.length,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                      ),
+                      if (unread > 0)
+                        Positioned(
+                          bottom: 20,
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: RoomNewPill(count: unread, onTap: _toBottom),
+                          ),
+                        ),
+                      if (detailOpen) ...[
+                        Positioned.fill(
+                          child: GestureDetector(
+                            key: const ValueKey('room-round-sheet-barrier'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => setState(() => _detailOpen = false),
+                            child: ColoredBox(
+                              color: colors.background.withValues(alpha: 0.35),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 4,
+                          left: 8,
+                          right: 8,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight: math.max(120, available * 0.55),
+                            ),
+                            child: Material(
+                              color: colors.surface,
+                              elevation: 8,
+                              borderRadius: BorderRadius.circular(16),
+                              clipBehavior: Clip.antiAlias,
+                              child: SingleChildScrollView(
+                                child: RoomRoundDetail(
+                                  round: round,
+                                  now: _now,
+                                  profileFor: widget.profileFor,
+                                  avatarCache: widget.avatarCache,
+                                  onStopAll:
+                                      widget.capabilities.canStop && !_stopping
+                                      ? () => unawaited(_stop())
+                                      : null,
+                                  onRetry: widget.capabilities.canRetry
+                                      ? (row) {
+                                          final task = row.taskId;
+                                          if (task != null) {
+                                            unawaited(_retry(task));
+                                          }
+                                        }
+                                      : null,
+                                  onOpenActivity: () {
+                                    setState(() => _detailOpen = false);
+                                    unawaited(_openActivity());
+                                  },
+                                ),
                               ),
                             ),
                           ),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 16,
-                            color: colors.textSecondary,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                Expanded(
-                  child: itemCount == 0
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32),
-                            child: Text(
-                              s.roomEmpty,
-                              key: const ValueKey('room-empty'),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: colors.textSecondary),
-                            ),
-                          ),
-                        )
-                      : KeyedSubtree(
-                          key: _transcriptKey,
-                          child: ListView.builder(
-                            key: const ValueKey('room-transcript'),
-                            controller: _transcriptScroll,
-                            reverse: true,
-                            padding: const EdgeInsets.only(bottom: 12, top: 8),
-                            itemCount: itemCount,
-                            itemBuilder: (context, index) {
-                              if (index < inline.length) {
-                                return inline[inline.length - 1 - index];
-                              }
-                              final entry =
-                                  transcript[transcript.length -
-                                      1 -
-                                      (index - inline.length)];
-                              return _entry(entry, s, handles);
-                            },
-                          ),
                         ),
+                      ],
+                    ],
+                  ),
                 ),
                 if (_error != null)
                   Padding(

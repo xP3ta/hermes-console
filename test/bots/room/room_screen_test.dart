@@ -323,7 +323,7 @@ void main() {
   );
 
   testWidgets(
-    'round panel: collapsed summary, expanded per-member chips, stop all',
+    'status strip: summary, floating per-member detail with chips, stop all',
     (tester) async {
       final seq = EventSeq();
       final u = seq.user('@builder @review @lead @radar ship it');
@@ -343,17 +343,16 @@ void main() {
         ),
       );
       final summary = tester.widget<Text>(
-        find.byKey(const ValueKey('room-round-summary')),
+        find.byKey(const ValueKey('room-strip-summary')),
       );
-      expect(summary.data, contains('Round 1'));
-      expect(summary.data, contains('1 working'));
-      expect(summary.data, contains('1 queued'));
+      // Someone needing you wins the one line.
+      expect(summary.data, 'console-lead needs you');
       expect(
         find.byKey(const ValueKey('room-round-row-m-builder')),
         findsNothing,
       );
 
-      await tester.tap(find.byKey(const ValueKey('room-round-toggle')));
+      await tester.tap(find.byKey(const ValueKey('room-status-strip')));
       // A working face animates forever: pump frames instead of settling.
       await tester.pump(const Duration(milliseconds: 300));
       expect(

@@ -6773,6 +6773,11 @@
     }
   },
   "roomRetryAction": "Retry",
+  "roomRetryDismiss": "Dismiss",
+  "roomRetryUnavailable": "Can't be retried from here",
+  "roomStripNeedsYou": "{name} needs you",
+  "roomNewPill": "{count, plural, =1{1 new} other{{count} new}}",
+  "roomStripDetail": "See what each bot is doing",
   "roomActionFailed": "Hermes rejected the action. Try again.",
   "roomActivityTitle": "Activity",
   "roomActivityEmpty": "No passes, failures or retries yet.",

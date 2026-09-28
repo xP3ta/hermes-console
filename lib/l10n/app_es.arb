@@ -8006,6 +8006,25 @@
     }
   },
   "roomRetryAction": "Reintentar",
+  "roomRetryDismiss": "Descartar",
+  "roomRetryUnavailable": "No se puede reintentar desde aquí",
+  "roomStripNeedsYou": "{name} te necesita",
+  "@roomStripNeedsYou": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomNewPill": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
+  "@roomNewPill": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomStripDetail": "Ver qué hace cada bot",
   "roomActionFailed": "Hermes rechazó la acción. Inténtalo de nuevo.",
   "roomActivityTitle": "Actividad",
   "roomActivityEmpty": "Aún no hay pases, fallos ni reintentos.",
