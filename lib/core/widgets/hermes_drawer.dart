@@ -59,6 +59,28 @@ enum DrawerSection {
   settings,
 }
 
+/// Capabilities hub for [connection], shared by the tools catalog and the
+/// chat `/skills` command so both open the same screen with the same options.
+CapabilitiesHub buildCapabilitiesHub({
+  required SavedConnection connection,
+  required ConnectionManager connManager,
+  required CapabilityMatrix capabilities,
+}) => CapabilitiesHub(
+  connection: connection,
+  profile: connManager.activeProfileFor(connection.id),
+  advancedBuilder: (_) {
+    final gateway = TuiGatewayClient(connection);
+    return ExtensionsCenterScreen(
+      gateway: gateway,
+      readOnly: connection.readOnly,
+      disposeGateway: gateway.close,
+    );
+  },
+  classicSkillsBuilder: capabilities.skillsRead.isNo
+      ? null
+      : (_) => SkillsScreen(connection: connection),
+);
+
 /// Shared navigation drawer. Used by the top-level screens (home dashboard,
 /// session list); deeper screens keep plain back navigation.
 ///
@@ -151,20 +173,10 @@ List<HermesToolDestination> buildHermesToolDestinations({
       label: strings.cphTitle,
       enabled: enabled(),
       disabledReason: disabledReason(),
-      builder: (_) => CapabilitiesHub(
+      builder: (_) => buildCapabilitiesHub(
         connection: conn!,
-        profile: connManager.activeProfileFor(conn.id),
-        advancedBuilder: (_) {
-          final gateway = TuiGatewayClient(conn);
-          return ExtensionsCenterScreen(
-            gateway: gateway,
-            readOnly: conn.readOnly,
-            disposeGateway: gateway.close,
-          );
-        },
-        classicSkillsBuilder: capabilities.skillsRead.isNo
-            ? null
-            : (_) => SkillsScreen(connection: conn),
+        connManager: connManager,
+        capabilities: capabilities,
       ),
     ),
     HermesToolDestination(

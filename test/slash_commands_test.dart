@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
@@ -702,10 +703,40 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('chat-slash-command-skills')));
       await tester.pumpAndSettle();
-      expect(find.byType(SkillsScreen), findsOneWidget);
+      expect(find.byType(CapabilitiesHub), findsOneWidget);
+      expect(find.byType(SkillsScreen), findsNothing);
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
+    });
+
+    testWidgets('typed /skills opens the capabilities hub without sending', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      final controller = tester.widget<TextField>(composer).controller!;
+      await tester.enterText(composer, '/Skills  ');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CapabilitiesHub), findsOneWidget);
+      final hub = tester.widget<CapabilitiesHub>(find.byType(CapabilitiesHub));
+      expect(hub.connection.id, _connection().id);
+      expect(hub.advancedBuilder, isNotNull);
+      expect(hub.classicSkillsBuilder, isNotNull);
+      expect(find.byType(SkillsScreen), findsNothing);
+      expect(controller.text, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.slashCalls, isEmpty);
+
+      // Exactly one route was pushed: closing the hub returns to the chat.
+      Navigator.of(tester.element(find.byType(CapabilitiesHub))).pop();
+      await tester.pumpAndSettle();
+      final chatRoute = ModalRoute.of(tester.element(find.byType(ChatScreen)));
+      expect(chatRoute?.isCurrent, isTrue);
     });
     testWidgets(
       '/model clears composer and restores focus after selector closes',

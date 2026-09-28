@@ -146,7 +146,6 @@ import 'extensions_center_screen.dart';
 import 'memory_screen.dart';
 import 'models_screen.dart';
 import 'recovery_center_screen.dart';
-import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import 'chat_render_projection.dart';
@@ -8225,7 +8224,16 @@ class _ChatScreenState extends State<ChatScreen>
           await _setModelByName(arg.trim());
         }
       case SlashAction.skills:
-        _pushScreen(SkillsScreen(connection: widget.connection));
+        final connManager = context
+            .findAncestorStateOfType<HermesAppState>()!
+            .connManager;
+        _pushScreen(
+          buildCapabilitiesHub(
+            connection: widget.connection,
+            connManager: connManager,
+            capabilities: connManager.loadCapabilities(widget.connection.id),
+          ),
+        );
       case SlashAction.memory:
         _pushScreen(MemoryScreen(connection: widget.connection));
       case SlashAction.soul:
