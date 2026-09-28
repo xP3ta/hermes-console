@@ -453,7 +453,12 @@ final class MissionControlRepository
   final void Function()? onClose;
   bool _closed = false;
   final Map<String, RoomLogCursor> _logCursors = {};
+  final Map<String, HostedGroupLogPage> _logSeeds = {};
   int? _logCursorGeneration;
+
+  /// Rooms read at once: enough to hide per-room latency, few enough not to
+  /// flood the one shared Gateway socket.
+  static const roomReadConcurrency = 4;
 
   MissionControlRepository({
     required this.profilesLoader,
@@ -557,6 +562,17 @@ final class MissionControlRepository
     );
   }
 
+  /// Resumes each room log from [snapshot] (the last one this client showed)
+  /// so reopening Bot Mode reads only what is new, not every transcript.
+  void seedHostedLogs(HostedGroupsSnapshot snapshot) {
+    if (snapshot.rooms.length != snapshot.logs.length) return;
+    for (var i = 0; i < snapshot.rooms.length; i++) {
+      final roomId = snapshot.rooms[i].roomId;
+      if (_logCursors.containsKey(roomId)) continue;
+      _logSeeds[roomId] = snapshot.logs[i];
+    }
+  }
+
   Future<HostedGroupsSnapshot> _loadHostedGroups() async {
     final gateway = hostedGroupsGateway;
     if (gateway == null) return HostedGroupsSnapshot.empty;
@@ -570,12 +586,14 @@ final class MissionControlRepository
     final driverStatuses = <String, RoomDriverStatus>{};
     final listedIds = {for (final room in listed) room.roomId};
     _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
-    for (final listedRoom in listed) {
-      final read = await _readRoom(
-        gateway,
-        listedRoom.roomId,
-        generation: capabilities.generation,
-      );
+    final reads = await _readRooms(
+      gateway,
+      [for (final room in listed) room.roomId],
+      generation: capabilities.generation,
+    );
+    for (var i = 0; i < listed.length; i++) {
+      final listedRoom = listed[i];
+      final read = reads[i];
       final state = read.room;
       if (state.roomId != listedRoom.roomId ||
           state.revision < listedRoom.revision) {
@@ -595,12 +613,36 @@ final class MissionControlRepository
     );
   }
 
+  /// Reads every room with at most [roomReadConcurrency] in flight, keeping
+  /// the listed order. Any failure fails the whole read, as before.
+  Future<List<_RoomRead>> _readRooms(
+    MissionHostedGroupsGateway gateway,
+    List<String> roomIds, {
+    required int generation,
+  }) async {
+    final results = List<_RoomRead?>.filled(roomIds.length, null);
+    var next = 0;
+    Future<void> worker() async {
+      while (next < roomIds.length) {
+        final index = next++;
+        results[index] = await _readRoom(
+          gateway,
+          roomIds[index],
+          generation: generation,
+        );
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < roomReadConcurrency && i < roomIds.length; i++)
+        worker(),
+    ]);
+    return [for (final result in results) result!];
+  }
+
   /// `groups.state` (+driver status) and the room log. Incremental gateways
   /// read only `since_seq = cursor`; legacy ones re-read the full log.
-  Future<
-    ({HostedGroupRoom room, HostedGroupLogPage log, RoomDriverStatus? driverStatus})
-  >
-  _readRoom(
+  Future<_RoomRead> _readRoom(
     MissionHostedGroupsGateway gateway,
     String roomId, {
     required int generation,
@@ -632,6 +674,7 @@ final class MissionControlRepository
       roomId,
       () => RoomLogCursor(
         roomId: roomId,
+        initial: _logSeeds.remove(roomId),
         load: ({required sinceSeq, required limit}) => gateway.logSince(
           roomId,
           sinceSeq: sinceSeq,
@@ -819,9 +862,16 @@ final class MissionControlRepository
     if (_closed) return;
     _closed = true;
     _logCursors.clear();
+    _logSeeds.clear();
     onClose?.call();
   }
 }
+
+typedef _RoomRead = ({
+  HostedGroupRoom room,
+  HostedGroupLogPage log,
+  RoomDriverStatus? driverStatus,
+});
 
 final class _MissionLoadResult<T> {
   final T? value;

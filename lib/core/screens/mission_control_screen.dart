@@ -37,6 +37,7 @@ import '../bots/ui/roster/roster_model.dart';
 import '../bots/state/bot_chat_target.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/mission_control_repository.dart';
+import '../services/mission_snapshot_cache.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/mission_organization_store.dart';
 import '../services/notifications/background_listener.dart';
@@ -157,6 +158,11 @@ class MissionControlScreen extends StatefulWidget {
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
   final BotProfileGateway? botProfileGateway;
 
+  /// Last-snapshot cache; defaults to the shared one for the real repository
+  /// (injected data sources opt in explicitly).
+  @visibleForTesting
+  final MissionSnapshotCache? snapshotCache;
+
   /// Per-bot model catalog/reasoning (tests); defaults to the gateway.
   final BotModelGateway? botModelGateway;
   @visibleForTesting
@@ -179,6 +185,7 @@ class MissionControlScreen extends StatefulWidget {
     this.botProfileGateway,
     this.botModelGateway,
     this.modelOptionsLoader,
+    this.snapshotCache,
     super.key,
   });
 
@@ -189,6 +196,7 @@ class MissionControlScreen extends StatefulWidget {
 class _MissionControlScreenState extends State<MissionControlScreen>
     with WidgetsBindingObserver {
   late final MissionControlDataSource _dataSource;
+  MissionSnapshotCache? _snapshotCache;
   late final MissionProfileAvatarCache? _profileAvatarCache;
   late final MissionOrganizationStoreContract _organizationStore;
   late final MissionBotChatStore _botChatStore;
@@ -255,7 +263,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _organizations = _organizationStore.load(widget.connection.id);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
-    unawaited(_load());
+    _snapshotCache =
+        widget.snapshotCache ??
+        (widget.dataSource == null ? MissionSnapshotCache.shared : null);
+    final cached = _snapshotCache?.read(widget.connection);
+    if (cached != null) {
+      // Paint what the user saw last time; the read below refreshes it.
+      _snapshot = cached;
+      _loading = false;
+      final source = _dataSource;
+      if (source is MissionControlRepository) {
+        source.seedHostedLogs(cached.hostedGroups);
+      }
+    }
+    unawaited(_load(refresh: cached != null));
   }
 
   @override
@@ -286,6 +307,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _kanbanReconnectTimer?.cancel();
     unawaited(_kanbanSubscription?.cancel());
     _kanbanSubscription = null;
+    final last = _snapshot;
+    if (last != null) _snapshotCache?.write(widget.connection, last);
     _profileAvatarCache?.clear();
     _profileAssetsLease?.release();
     if (widget.dataSource == null) _dataSource.close();
@@ -354,6 +377,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         _loading = false;
         _refreshing = false;
       });
+      _snapshotCache?.write(widget.connection, snapshot);
       _statusRevision.value++;
       _kanbanEventCursor = incoming.board?.latestEventId ?? _kanbanEventCursor;
       _syncLiveSubscriptions();

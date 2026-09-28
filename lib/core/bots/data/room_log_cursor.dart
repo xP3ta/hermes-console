@@ -45,13 +45,18 @@ final class RoomLogCursor {
   HostedGroupLogPage? _log;
   Future<RoomLogDelta>? _flight;
 
+  /// [initial] resumes from a log this client already read (e.g. the last
+  /// snapshot of a screen that was closed): the first pull asks only for
+  /// `since_seq = initial.cursor`. A rotated authority or rewound log still
+  /// restarts from zero, exactly like a live cursor.
   RoomLogCursor({
     required this.roomId,
     required this.load,
     this.pageLimit = 100,
     this.maxPagesPerPull = 64,
     this.maxEvents = 2000,
-  });
+    HostedGroupLogPage? initial,
+  }) : _log = initial;
 
   HostedGroupLogPage? get log => _log;
 
