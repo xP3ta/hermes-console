@@ -74,6 +74,21 @@ class DockCreateOrbit {
   });
 }
 
+/// Height from the bottom edge the default [Dock] covers: safe inset, the
+/// 12dp gap, the style's lift, the 48dp bar and a small breathing gap.
+/// Content that must not hide behind the dock reserves this much.
+double dockFootprint(BuildContext context) {
+  final colors = Theme.of(context).hermes;
+  final style = DockPreferencesController.instance.value.general.style;
+  return MediaQuery.paddingOf(context).bottom +
+      12 +
+      resolveDockVisual(colors, style).lift +
+      _dockBarHeight +
+      8;
+}
+
+const double _dockBarHeight = 48;
+
 /// EL dock flotante de la app. Uno solo, para todos los perfiles y todas las
 /// pantallas.
 ///
