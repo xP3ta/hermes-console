@@ -9482,6 +9482,415 @@ void main() {
     expect(find.text('canonical history'), findsWidgets);
   });
 
+  // fix/draft-orphan — salir del chat antes del ACK no puede dejar un
+  // borrador del turno aceptado (ni duplicar la sesión creada en la lista).
+  group('draft orphan after leaving before ACK', () {
+    Future<ChatDraftStore> readStore() async => ChatDraftStore(
+      await SharedPreferences.getInstance(),
+      secureStorage: _MemoryDraftSecureStorage(secureStore),
+    );
+
+    Future<void> typeSendAndLeave(
+      WidgetTester tester,
+      _SubmissionGateway gateway,
+      String text,
+    ) async {
+      await tester.enterText(find.byType(TextField).first, text);
+      // Supera el debounce de 350 ms: el borrador ya está cifrado en disco.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.submissions, [text]);
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    testWidgets('new chat: ACK after leaving leaves no draft and one row', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+      final connection = _remoteConn('draft-orphan-new');
+      const provisional = Session(
+        id: 'mob-draft-orphan',
+        title: 'Nuevo chat',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        profile: 'default',
+        startedAt: 1,
+      );
+      await pumpChat(
+        tester,
+        session: provisional,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await typeSendAndLeave(tester, gateway, 'texto ya enviado');
+
+      gateway.submitGate!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      gateway.emitComplete('respuesta');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final store = await readStore();
+      final entries = await store.listForConnection(connection.id);
+      expect(
+        entries.map((e) => (e.sessionId, e.draft.text)).toList(),
+        isEmpty,
+        reason: 'el turno aceptado no puede dejar un borrador huérfano',
+      );
+      final rows = mergeRemoteSessionsWithDrafts([
+        provisional.copyWith(
+          id: 'stored-submission-test',
+          title: 'canonical conversation',
+          messageCount: 2,
+        ),
+      ], entries.map((entry) => entry.toSession(fallbackTitle: 'Draft')));
+      expect(rows, hasLength(1));
+      expect(rows.single.hasLocalDraft, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('existing chat: reopen after ACK never restores sent text', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+      final connection = _remoteConn('draft-orphan-existing');
+      final session = _session().copyWith(
+        id: 'saved-draft-orphan',
+        messageCount: 2,
+        profile: 'default',
+      );
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await typeSendAndLeave(tester, gateway, 'texto ya enviado');
+
+      gateway.submitGate!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      gateway.emitComplete('respuesta');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final store = await readStore();
+      expect((await store.load(connection.id, session.id)).text, isEmpty);
+
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: _SubmissionGateway(),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('control: rejection after leaving keeps the draft', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()
+        ..submitGate = Completer<void>()
+        ..submitError = StateError('rejected before acceptance');
+      final connection = _remoteConn('draft-orphan-rejected');
+      final session = _session().copyWith(
+        id: 'saved-draft-rejected',
+        messageCount: 2,
+        profile: 'default',
+      );
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await typeSendAndLeave(tester, gateway, 'texto no aceptado');
+
+      gateway.submitGate!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+
+      final store = await readStore();
+      expect(
+        (await store.load(connection.id, session.id)).text,
+        'texto no aceptado',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('control: no ACK yet (process may die) keeps the draft', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+      final connection = _remoteConn('draft-orphan-pending');
+      final session = _session().copyWith(
+        id: 'saved-draft-pending',
+        messageCount: 2,
+        profile: 'default',
+      );
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await typeSendAndLeave(tester, gateway, 'texto en vuelo');
+
+      final store = await readStore();
+      expect(
+        (await store.load(connection.id, session.id)).text,
+        'texto en vuelo',
+      );
+      gateway.submitGate!.complete();
+      await tester.pump(const Duration(milliseconds: 600));
+      gateway.emitComplete('respuesta');
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'queued turn: leaving before enqueue commits never loses text',
+      (tester) async {
+        final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+        final connection = _remoteConn('draft-orphan-queued');
+        final session = _session().copyWith(
+          id: 'saved-draft-queued',
+          messageCount: 2,
+          profile: 'default',
+        );
+        final chat = await pumpChat(
+          tester,
+          session: session,
+          connection: connection,
+          desktopGateway: gateway,
+        );
+        await tester.enterText(find.byType(TextField).first, 'turno en vuelo');
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.tap(find.byKey(const ValueKey('send')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(gateway.submissions, ['turno en vuelo']);
+        gateway.submitGate!.complete();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        await tester.enterText(find.byType(TextField).first, 'turno encolado');
+        await tester.pump(const Duration(milliseconds: 400));
+        final outboxGate = Completer<String?>();
+        delayedOutboxRead = outboxGate;
+        await tester.tap(find.byKey(const ValueKey('send')));
+        await tester.pump();
+        Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        delayedOutboxRead = null;
+        outboxGate.complete(secureStore['chat_turn_outbox_v1']);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // Invariante: o el turno está en la cola durable y no queda borrador
+        // suyo, o no llegó a encolarse y su texto sigue recuperable.
+        final store = await readStore();
+        final draft = (await store.load(connection.id, session.id)).text;
+        final queued = chat.queuedMessages.contains('turno encolado');
+        expect(
+          queued ? draft != 'turno encolado' : draft == 'turno encolado',
+          isTrue,
+          reason: 'queued=$queued draft=$draft',
+        );
+        gateway.emitComplete('uno');
+        await tester.pump(const Duration(milliseconds: 1200));
+        gateway.emitComplete('dos');
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('queued turn: enqueued batch leaves no draft behind', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+      final connection = _remoteConn('draft-orphan-queued-ok');
+      final session = _session().copyWith(
+        id: 'saved-draft-queued-ok',
+        messageCount: 2,
+        profile: 'default',
+      );
+      final chat = await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await tester.enterText(find.byType(TextField).first, 'turno en vuelo');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.submitGate!.complete();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.enterText(find.byType(TextField).first, 'turno encolado');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(chat.queuedMessages, ['turno encolado']);
+      final store = await readStore();
+      expect((await store.load(connection.id, session.id)).text, isEmpty);
+      gateway.emitComplete('uno');
+      await tester.pump(const Duration(milliseconds: 1200));
+      gateway.emitComplete('dos');
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+    });
+
+    Future<String> seedLinkedDraft(
+      String connectionId,
+      String sessionId,
+      String clientTurnId,
+      String text,
+    ) async {
+      final key = ChatDraftStore.keyForTesting(
+        connectionId,
+        sessionId,
+        profile: 'default',
+      );
+      secureStore[key] = jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'text': text,
+        'submittedTurnClientTurnId': clientTurnId,
+        'attachments': <Object>[],
+      });
+      return key;
+    }
+
+    testWidgets('restore: linked draft whose turn left the outbox is retired', (
+      tester,
+    ) async {
+      // Proceso muerto tras el ACK: la outbox ya retiró el turno terminal,
+      // pero el borrador enlazado sobrevivió en disco.
+      final connection = _remoteConn('draft-orphan-restore-resolved');
+      final session = _session().copyWith(
+        id: 'saved-draft-resolved',
+        messageCount: 2,
+        profile: 'default',
+      );
+      final key = await seedLinkedDraft(
+        connection.id,
+        session.id,
+        'turno-resuelto',
+        'texto ya entregado',
+      );
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: _SubmissionGateway(),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        isEmpty,
+      );
+      expect(secureStore.containsKey(key), isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('control: linked draft of an ambiguous turn is recovered', (
+      tester,
+    ) async {
+      final connection = _remoteConn('draft-orphan-restore-ambiguous');
+      final session = _session().copyWith(
+        id: 'saved-draft-ambiguous',
+        messageCount: 2,
+        profile: 'default',
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final pending = PreparedTurn(
+        connectionId: connection.id,
+        sessionId: session.id,
+        clientTurnId: 'turno-incierto',
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: 'texto sin ACK',
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: '',
+        state: PreparedTurnState.submitting,
+        restoresComposer: true,
+      );
+      secureStore['chat_turn_outbox_v1'] = jsonEncode({
+        pending.storageId: pending.toJson(),
+      });
+      final key = await seedLinkedDraft(
+        connection.id,
+        session.id,
+        'turno-incierto',
+        'texto sin ACK',
+      );
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: _SubmissionGateway(),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        'texto sin ACK',
+      );
+      expect(secureStore.containsKey(key), isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('control: an unlinked draft is never retired by restore', (
+      tester,
+    ) async {
+      final connection = _remoteConn('draft-orphan-restore-unlinked');
+      final session = _session().copyWith(
+        id: 'saved-draft-unlinked',
+        messageCount: 2,
+        profile: 'default',
+      );
+      final key = ChatDraftStore.keyForTesting(
+        connection.id,
+        session.id,
+        profile: 'default',
+      );
+      secureStore[key] = jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'text': 'borrador libre',
+        'attachments': <Object>[],
+      });
+      await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: _SubmissionGateway(),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        'borrador libre',
+      );
+      expect(secureStore.containsKey(key), isTrue);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets(
     'android-share draft with attachments is recovered when the provisional '
     'session is reopened',
