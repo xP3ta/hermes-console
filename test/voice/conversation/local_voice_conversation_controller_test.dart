@@ -49,6 +49,7 @@ class _FakeVoice extends VoiceService {
   bool releaseSpeechBeforeStopCompletes = false;
   bool captureReadyAutomatically = true;
   Object? waitSpeechError;
+  Object? stopSpeakingError;
   Completer<void>? disposeSttGate;
   Completer<void>? disposeTtsGate;
   Completer<void>? _stopSpeakingGate;
@@ -158,6 +159,8 @@ class _FakeVoice extends VoiceService {
   Future<void> stopSpeaking() async {
     stopSpeakingCalls++;
     voiceExitCalls.add('stopSpeaking');
+    final stopError = stopSpeakingError;
+    if (stopError != null) throw stopError;
     if (nativeSpeechStreamingAvailable) {
       await super.stopSpeaking();
     }
@@ -1644,6 +1647,21 @@ void main() {
       await h.close();
     },
   );
+
+  test('the Stop failure note follows the English app locale', () async {
+    SharedPreferences.setMockInitialValues({'app_locale': 'en'});
+    final h = await _harness();
+    h.voice.captures.single.add(const SttResult('cancellable task', true));
+    await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+    h.voice.stopSpeakingError = StateError('audio driver failed');
+
+    h.controller.cancelBackend();
+    await _waitFor(() => h.controller.note != null);
+
+    expect(h.controller.note, "Couldn't save Stop safely. Try again.");
+    h.voice.stopSpeakingError = null;
+    await h.close();
+  });
 
   test('Cancelar detiene backend; X solo libera voz y deja el run', () async {
     final cancelHarness = await _harness();

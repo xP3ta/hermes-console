@@ -2435,7 +2435,9 @@ class LocalVoiceConversationController extends ChangeNotifier
     } catch (_) {
       if (!_isCurrent(operation)) return;
       paused = true;
-      note = 'No se pudo guardar Stop de forma segura. Reinténtalo.';
+      note = _isEnglish
+          ? "Couldn't save Stop safely. Try again."
+          : 'No se pudo guardar Stop de forma segura. Reinténtalo.';
       _notify();
       return;
     }
