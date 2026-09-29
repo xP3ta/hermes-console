@@ -1188,6 +1188,31 @@ class _ServerVoiceParametersEditorState
     super.initState();
     _patch = <String, dynamic>{};
     _provider = widget.provider;
+    if (widget.section == 'stt') _repairLiteralAutoSttLanguages();
+  }
+
+  /// Console 1.2.14 guardaba «Automático» como el texto `auto` (issue #65).
+  /// Hermes STT toma el primer idioma no vacío (`stt.<proveedor>.language`,
+  /// alias `language_code`, luego `stt.language`) y lo reenvía al proveedor,
+  /// que lo rechaza. Se prepara ya la reparación a "" para que Guardar quede
+  /// disponible y no dependa de volver a elegir Automático a mano.
+  void _repairLiteralAutoSttLanguages() {
+    final stt = widget.config['stt'];
+    if (stt is! Map) return;
+    bool isLiteralAuto(Object? value) =>
+        value is String && value.trim().toLowerCase() == 'auto';
+    for (final key in const ['language', 'language_code']) {
+      if (isLiteralAuto(stt[key])) _writePath(_patch, 'stt.$key', '');
+    }
+    for (final entry in stt.entries) {
+      final section = entry.value;
+      if (section is! Map) continue;
+      for (final key in const ['language', 'language_code']) {
+        if (isLiteralAuto(section[key])) {
+          _writePath(_patch, 'stt.${entry.key}.$key', '');
+        }
+      }
+    }
   }
 
   @override

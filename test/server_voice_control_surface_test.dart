@@ -598,6 +598,76 @@ void main() {
     );
   }
 
+  testWidgets(
+    'un `auto` ya guardado en idiomas STT se limpia al abrir y guardar',
+    (tester) async {
+      final requests = <http.Request>[];
+      final dashboard = _schemaDashboard(
+        requests: requests,
+        config: {
+          // Estado real que dejó 1.2.14 (issue #65), más el idioma global de
+          // STT: Hermes usa el primero no vacío, así que ambos deben limpiarse.
+          'stt': {
+            'provider': 'local',
+            'language': 'auto',
+            'local': {'model': 'base', 'language': 'AUTO '},
+          },
+          'tts': {'provider': 'edge'},
+        },
+        fields: {
+          'stt.provider': {
+            'type': 'select',
+            'options': ['local'],
+          },
+          'stt.local.model': {
+            'type': 'select',
+            'options': ['base', 'small'],
+          },
+          'stt.local.language': {'type': 'string'},
+          // Si el schema publica el idioma global, también llega al editor.
+          'stt.language': {'type': 'string'},
+          'tts.provider': {
+            'type': 'select',
+            'options': ['edge'],
+          },
+        },
+      );
+      addTearDown(dashboard.close);
+
+      await tester.pumpWidget(_host(dashboard));
+      await tester.pumpAndSettle();
+      await _openSttParameters(tester, expandAdvanced: false);
+
+      final language = find.byKey(
+        const ValueKey('server-voice-field-stt.local.language'),
+      );
+      await _reveal(tester, language);
+      expect(
+        find.descendant(of: language, matching: find.text('Automático')),
+        findsOneWidget,
+      );
+
+      // Sin tocar ningún campo: Guardar ya está disponible y repara el valor.
+      final save = find.byKey(const ValueKey('server-voice-parameters-save'));
+      await _reveal(tester, save);
+      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+
+      final put = requests.lastWhere(
+        (request) =>
+            request.method == 'PUT' && request.url.path == '/api/config',
+      );
+      final stt =
+          ((jsonDecode(put.body) as Map)['config'] as Map)['stt'] as Map;
+      expect(stt['language'], '');
+      expect((stt['local'] as Map)['language'], '');
+      expect(stt.containsKey('provider'), isFalse);
+      expect(put.body.toLowerCase(), isNot(contains('auto')));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('editor avanzado soporta 320 dp y texto al 200 %', (
     tester,
   ) async {
