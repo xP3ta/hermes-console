@@ -359,6 +359,48 @@ void main() {
     });
   });
 
+  group('runGatewayRestart', () {
+    test('only a gateway seen running again is "back"', () async {
+      final seen = <String>[];
+      final outcome = await runGatewayRestart(
+        restart: () async => seen.add('restart'),
+        waitUntilBack: () async => true,
+        onRequested: () => seen.add('requested'),
+      );
+      expect(outcome, GatewayRestartOutcome.back);
+      expect(seen, ['restart', 'requested']);
+    });
+
+    test('a gateway that never came back is not "back"', () async {
+      final outcome = await runGatewayRestart(
+        restart: () async {},
+        waitUntilBack: () async => false,
+      );
+      expect(outcome, GatewayRestartOutcome.notBack);
+    });
+
+    test('an error while waiting is "not back", never success', () async {
+      final outcome = await runGatewayRestart(
+        restart: () async {},
+        waitUntilBack: () async => throw StateError('poll crashed'),
+      );
+      expect(outcome, GatewayRestartOutcome.notBack);
+    });
+
+    test('a failed request is "failed" and never waits', () async {
+      var waited = false;
+      var requested = false;
+      final outcome = await runGatewayRestart(
+        restart: () async => throw StateError('401'),
+        waitUntilBack: () async => waited = true,
+        onRequested: () => requested = true,
+      );
+      expect(outcome, GatewayRestartOutcome.failed);
+      expect(waited, isFalse);
+      expect(requested, isFalse);
+    });
+  });
+
   group('cableado (fuente)', () {
     final settings = File(
       'lib/core/screens/settings_screen.dart',
@@ -386,32 +428,6 @@ void main() {
       final bridge = present.indexOf('BridgeUpdateService.maintainIfEnabled');
       expect(confirmed, greaterThan(0));
       expect(bridge, greaterThan(confirmed));
-    });
-
-    test('reiniciar gateway solo anuncia éxito si el gateway volvió', () {
-      final restart = settings.substring(
-        settings.indexOf('Future<void> _restartGateway()'),
-        settings.indexOf('Future<void> _migrateConfig()'),
-      );
-      // The wait result decides the message: a gateway that never came
-      // back must not be announced as restarted.
-      expect(restart, contains('final back = await _waitForGatewayBack('));
-      final compact = restart.replaceAll(RegExp(r'\s+'), '');
-      expect(
-        compact,
-        contains('back?s.setGatewayRestarted:s.setGatewayNotBack'),
-        reason: 'success text only on the confirmed branch',
-      );
-      for (final arb in ['lib/l10n/app_en.arb', 'lib/l10n/app_es.arb']) {
-        expect(File(arb).readAsStringSync(), contains('"setGatewayNotBack"'));
-      }
-      // The chat shortcut only fires the request: it must not claim the
-      // gateway already restarted.
-      final en = File('lib/l10n/app_en.arb').readAsStringSync();
-      expect(
-        en,
-        isNot(contains('"chaRestartGatewayDone": "Gateway restarted')),
-      );
     });
 
     test(

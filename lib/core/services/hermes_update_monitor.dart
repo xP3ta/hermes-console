@@ -471,3 +471,30 @@ abstract final class HermesUpdateGuard {
   static bool isActive(String connectionId) =>
       HermesUpdateSession.isActive(connectionId);
 }
+
+/// Outcome of "Restart gateway": the request itself failed, it was sent but
+/// the gateway was never seen running again, or it came back.
+enum GatewayRestartOutcome { failed, notBack, back }
+
+/// Sends the restart and waits for the gateway to come back. Only a
+/// confirmed return is [GatewayRestartOutcome.back]; the wait's own errors
+/// count as not back, never as success.
+Future<GatewayRestartOutcome> runGatewayRestart({
+  required Future<void> Function() restart,
+  required Future<bool> Function() waitUntilBack,
+  void Function()? onRequested,
+}) async {
+  try {
+    await restart();
+  } catch (_) {
+    return GatewayRestartOutcome.failed;
+  }
+  onRequested?.call();
+  try {
+    return await waitUntilBack()
+        ? GatewayRestartOutcome.back
+        : GatewayRestartOutcome.notBack;
+  } catch (_) {
+    return GatewayRestartOutcome.notBack;
+  }
+}

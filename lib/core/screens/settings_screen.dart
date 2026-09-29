@@ -2766,19 +2766,32 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
 
     setState(() => _busy = true);
+    Object? requestError;
     try {
-      await _client.restartGateway();
-      if (!mounted) return;
-      _snack(Strings.of(context).setGatewayRestarting);
       // Espera resiliente a que el gateway vuelva (en vez de un delay fijo que
-      // dejaba la app pillada si el reinicio tardaba).
-      final back = await _waitForGatewayBack();
+      // dejaba la app pillada si el reinicio tardaba). Only a gateway seen
+      // running again is announced as restarted.
+      final outcome = await runGatewayRestart(
+        restart: () async {
+          try {
+            await _client.restartGateway();
+          } catch (e) {
+            requestError = e;
+            rethrow;
+          }
+        },
+        waitUntilBack: () => _waitForGatewayBack(),
+        onRequested: () {
+          if (mounted) _snack(Strings.of(context).setGatewayRestarting);
+        },
+      );
       if (!mounted) return;
-      // Only a gateway seen running again is announced as restarted.
       final s = Strings.of(context);
-      _snack(back ? s.setGatewayRestarted : s.setGatewayNotBack);
-    } catch (e) {
-      if (mounted) _snack(Strings.of(context).setRestartError(e.toString()));
+      _snack(switch (outcome) {
+        GatewayRestartOutcome.back => s.setGatewayRestarted,
+        GatewayRestartOutcome.notBack => s.setGatewayNotBack,
+        GatewayRestartOutcome.failed => s.setRestartError('$requestError'),
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
