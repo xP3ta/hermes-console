@@ -915,6 +915,43 @@ void main() {
       },
     );
 
+    testWidgets('/model with an argument gives feedback without a runtime', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()..resumeExistingError = _syntheticRpcError;
+      final chat = await _pumpSlashChat(tester, gateway);
+      // The stored session is gone, so no runtime can be acquired:
+      // ensureDesktopRuntime answers false instead of throwing.
+      chat.markStoredSessionGone();
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isFalse,
+      );
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.enterText(composer, '/model bad-model');
+      await tester.pump(const Duration(milliseconds: 250));
+      final field = tester.widget<TextField>(composer);
+
+      await _submitSlash(tester);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 240));
+
+      final sheetOpened = find
+          .byKey(const ValueKey('chat-model-dialog'))
+          .evaluate()
+          .isNotEmpty;
+      final noticeShown = find.byType(SnackBar).evaluate().isNotEmpty;
+      expect(
+        sheetOpened || noticeShown,
+        isTrue,
+        reason: 'the command must not be silently dropped',
+      );
+      expect(gateway.submissions, isEmpty);
+      expect(field.controller?.text, isNot('/model bad-model'));
+    });
+
     testWidgets('/model preserves rejection and accepted retry clears once', (
       tester,
     ) async {

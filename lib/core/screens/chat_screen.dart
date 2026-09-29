@@ -8506,9 +8506,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _setModelByName(String arg) async {
     final q = arg.toLowerCase();
     try {
-      if (!_chat.hasDesktopRuntime &&
-          !await _chat.ensureDesktopRuntime(acquireForExplicitAction: true)) {
-        return false;
+      // Without a live runtime the lookup falls back to the other catalogs and
+      // _applyModelDirect stages or refuses exactly like the model sheet does.
+      if (!_chat.hasDesktopRuntime) {
+        await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       }
       final (_, providers) = await _loadModelOptions();
       final matches = <(ModelProvider, String)>[];
