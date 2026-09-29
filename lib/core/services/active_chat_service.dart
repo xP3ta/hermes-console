@@ -21488,7 +21488,9 @@ class ActiveChat {
         _QueuedTextTurn(
           acceptedByGateway.trim(),
           firstOrder,
-          id: 'desktop-accepted',
+          // Once parked it is an ordinary local entry: the reserved
+          // 'desktop-accepted' id would make Send now and Delete refuse it.
+          id: 'parked-accepted:$_queueParkGeneration',
           allowTransportFallback: false,
         ),
       );

@@ -4687,6 +4687,40 @@ void main() {
     expect(storage.value, isNot(contains('second-attempt')));
   });
 
+  test(
+    'stop-parked gateway-accepted prompt can be deleted from the local queue',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-parked-accepted',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'inflight': {
+            'user': 'actual',
+            'assistant': 'parcial',
+            'streaming': true,
+          },
+          'queued': {'user': 'después'},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat('parked-accepted-delete', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(chat.queuedEntries.single.kind, QueuedEntryKind.desktopAccepted);
+
+      await chat.cancel();
+
+      expect(chat.queueParked, isTrue);
+      final parked = chat.queuedEntries.single;
+      expect(parked.text, 'después');
+      expect(parked.kind, QueuedEntryKind.text);
+      expect(await chat.cancelQueuedByIdentity(parked.id), isTrue);
+      expect(chat.queuedEntries, isEmpty);
+      expect(chat.queuedMessages, isEmpty);
+    },
+  );
+
   group('fail-open compression restore (Hermes Desktop has no fence)', () {
     Map<String, dynamic> ring(String state, {String runtime = 'runtime-a'}) {
       if (state == 'gone') {
