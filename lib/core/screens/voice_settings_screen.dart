@@ -420,16 +420,27 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
       await NativeVoiceConsentStore(preferences).write(identity, consent);
     }
     await NativeVoiceModeStore(preferences).write(identity, mode);
-    if (useServer && _nativeVoiceCapability?.ok == true) {
-      voice.enableNativeVoice(
+    final connection = _nativeVoiceConnection;
+    if (useServer && _nativeVoiceCapability?.ok == true && connection != null) {
+      // La voz vive más que esta pantalla: recibe su propio cliente y lo
+      // cierra ella misma al desactivarse o sustituirse. Reutilizar el de
+      // Ajustes la dejaba sobre un cliente cerrado al salir, y «Leer en voz
+      // alta» fallaba en silencio hasta reiniciar.
+      final voiceDashboard =
+          widget.dashboardClientFactory?.call(connection) ??
+          DashboardClient.lazy(connection);
+      final profile = _effectiveProfile;
+      final installed = voice.enableNativeVoice(
         speak: (text) =>
-            dashboard.synthesizeSpeech(text, profile: _effectiveProfile),
-        transcribe: (dataUrl, mimeType) => dashboard.transcribeAudio(
+            voiceDashboard.synthesizeSpeech(text, profile: profile),
+        transcribe: (dataUrl, mimeType) => voiceDashboard.transcribeAudio(
           dataUrl,
           mimeType: mimeType,
-          profile: _effectiveProfile,
+          profile: profile,
         ),
+        onDispose: voiceDashboard.close,
       );
+      if (!installed) voiceDashboard.close();
       if (_serverVoiceConfig == null && !_serverVoiceConfigLoading) {
         unawaited(_loadServerVoiceConfig(dashboard, _nativeVoiceLoadEpoch));
       }
