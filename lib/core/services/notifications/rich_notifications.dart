@@ -127,8 +127,11 @@ extension BotNotificationCopy on NotifL10n {
   String get confirmSent => _t('Enviado', 'Sent');
   String get confirmAlreadyAnswered =>
       _t('Ya estaba respondido', 'Already answered');
-  String get confirmAnsweredElsewhere =>
-      _t('Respondido en otro dispositivo', 'Answered elsewhere');
+
+  /// An approval that left the pending list: answered here, on another
+  /// device, or withdrawn by a stop. The watcher cannot tell which.
+  String get confirmNoLongerPending =>
+      _t('Ya no está pendiente', 'No longer pending');
   String get confirmFailed =>
       _t('No se pudo enviar · abre Hermes', 'Couldn’t send · open Hermes');
 

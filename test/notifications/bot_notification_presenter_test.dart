@@ -78,6 +78,25 @@ void main() {
     expect(sink.live.single['trackerIconPath'], isNotNull);
   });
 
+  test('a cleared approval is not claimed to be answered on another device', () async {
+    // The watcher only sees the request leave pending_actions: it may have
+    // been answered in the room on this phone, or withdrawn by Stop all.
+    final prefs = await SharedPreferences.getInstance();
+    final sink = _Sink();
+    final presenter = RichRoomNoticePresenter(
+      sink: sink,
+      prefs: prefs,
+      faces: BotFaceBitmapCache(directory: () async => dir),
+    );
+    await presenter.present('c1', buildRoom(), [
+      const RoomApprovalClearedNotice('apr-1'),
+    ]);
+    final confirm = sink.confirms.single;
+    expect(confirm.id, RichNotificationIds.approval('apr-1'));
+    expect(confirm.text, isNot(contains('elsewhere')));
+    expect(confirm.text, 'No longer pending');
+  });
+
   test('round finished ends the live update and posts an alerting summary', () async {
     final prefs = await SharedPreferences.getInstance();
     final sink = _Sink();
@@ -239,6 +258,7 @@ final class _Sink implements RichNotificationSink {
   final posts = <Map<String, Object?>>[];
   final live = <Map<String, Object?>>[];
   final cancels = <int>[];
+  final confirms = <({int id, String text})>[];
   @override
   Future<void> cancel({required int id, String? tag}) async => cancels.add(id);
   @override
@@ -249,7 +269,7 @@ final class _Sink implements RichNotificationSink {
     required String text,
     int timeoutMs = 4000,
     bool onlyIfActive = false,
-  }) async {}
+  }) async => confirms.add((id: id, text: text));
   @override
   Future<bool> postConversation(Map<String, Object?> args) async {
     posts.add(args);

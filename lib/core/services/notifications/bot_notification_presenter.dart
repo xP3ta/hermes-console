@@ -400,7 +400,7 @@ class RichRoomNoticePresenter implements RoomNoticePresenter {
           await sink.confirm(
             id: RichNotificationIds.approval(requestId),
             tag: tag,
-            text: t.confirmAnsweredElsewhere,
+            text: t.confirmNoLongerPending,
             timeoutMs: 3000,
             // Never resurrect a card already dismissed or confirmed.
             onlyIfActive: true,
