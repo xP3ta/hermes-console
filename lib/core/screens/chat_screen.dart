@@ -5946,7 +5946,12 @@ class _ChatScreenState extends State<ChatScreen>
     _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
     // modo voz: ese debe seguir si está hablando en segundo plano.
+    String? dictatedDraft;
     if (_isRecording) {
+      _commitPendingDictationPartial();
+      if (_dictationBase != _dictationOriginal.trimRight()) {
+        dictatedDraft = _dictationBase;
+      }
       _sttSub?.cancel();
       _voice?.stopDictation();
     }
@@ -5977,7 +5982,7 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingRevealTimer?.cancel();
     if (!_composerSubmissionInFlight && _failedTurnDiscardInFlightId == null) {
       final finalDraftSave = _saveDraftSnapshot(
-        _textController.text,
+        dictatedDraft ?? _textController.text,
         List<AttachmentDraft>.of(_pendingAttachments),
         finalDisposeSnapshot: true,
       );
@@ -6043,6 +6048,18 @@ class _ChatScreenState extends State<ChatScreen>
       // después de mandar la app al fondo. Persistimos el estado exacto del
       // composer (texto + adjuntos) antes de perder tiempo de ejecución.
       _draftTimer?.cancel();
+      if (_isRecording && !_transcribing) {
+        final voice = _voice;
+        if (voice != null && voice.sttRecordsThenTranscribes) {
+          // El audio ya grabado se transcribe y llega por la suscripción viva.
+          unawaited(_stopDictation());
+        } else {
+          _commitPendingDictationPartial();
+          _voice?.stopDictation();
+          _resetDictation();
+          _materializeDictation();
+        }
+      }
       if (!_composerSubmissionInFlight &&
           _failedTurnDiscardInFlightId == null) {
         unawaited(
@@ -6051,10 +6068,6 @@ class _ChatScreenState extends State<ChatScreen>
             List<AttachmentDraft>.of(_pendingAttachments),
           ),
         );
-      }
-      if (_isRecording) {
-        _voice?.stopDictation();
-        _resetDictation();
       }
     }
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
@@ -11691,11 +11704,33 @@ class _ChatScreenState extends State<ChatScreen>
   String _dictationBase = '';
   String _dictationOriginal = '';
   bool _dictationSendInFlight = false;
+  bool _dictationStarting = false;
   Completer<void>? _dictationCompletion;
+
+  /// Plazo máximo para recibir el final tras pulsar parar. Los motores que
+  /// graban y transcriben al parar (Whisper local, servidor Hermes) tardan lo
+  /// que dure el audio y ya acotan su propia transcripción; cortar antes
+  /// descartaba lo dictado con un falso «no se reconoció voz».
+  Duration _dictationStopBudget(VoiceService voice) =>
+      voice.sttRecordsThenTranscribes
+      ? const Duration(minutes: 3)
+      : const Duration(seconds: 4);
 
   Future<void> _startDictation() async {
     final voice = _voice;
     if (voice == null) return;
+    // Los `await` previos a escuchar dejan el micro pulsable: un segundo toque
+    // abría otra escucha y dejaba la primera huérfana.
+    if (_dictationStarting || _isRecording) return;
+    _dictationStarting = true;
+    try {
+      await _startDictationGuarded(voice);
+    } finally {
+      _dictationStarting = false;
+    }
+  }
+
+  Future<void> _startDictationGuarded(VoiceService voice) async {
     final perf = Stopwatch()..start();
     debugPrint('[VOICE-PERF] dictation.button.tap');
     // Cancela cualquier red de seguridad pendiente del dictado ANTERIOR: si no,
@@ -11830,7 +11865,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// (_dictationBase = texto actual al arrancar). Así el micro no "sigue
   /// escribiendo" solo con alucinaciones del STT sobre ruido/silencio.
   void _onDictationSegmentDone() {
-    if (!_isRecording && !_transcribing) return;
+    if (!mounted || (!_isRecording && !_transcribing)) return;
     _commitPendingDictationPartial();
     _resetDictation();
     _materializeDictation();
@@ -11881,7 +11916,7 @@ class _ChatScreenState extends State<ChatScreen>
     // El fallback empieza antes de esperar al motor: un backend que tarda en
     // cerrar no puede dejar la fila de dictado bloqueada indefinidamente.
     _stopFallback?.cancel();
-    _stopFallback = Timer(const Duration(seconds: 4), () {
+    _stopFallback = Timer(_dictationStopBudget(voice), () {
       if (mounted && (_isRecording || _transcribing)) {
         _commitPendingDictationPartial();
         _resetDictation();
@@ -11926,8 +11961,12 @@ class _ChatScreenState extends State<ChatScreen>
         }
       }
       if (completion != null && !completion.isCompleted) {
+        final voice = _voice;
         await completion.future.timeout(
-          const Duration(milliseconds: 4300),
+          (voice == null
+                  ? const Duration(seconds: 4)
+                  : _dictationStopBudget(voice)) +
+              const Duration(milliseconds: 300),
           onTimeout: () {
             if (mounted && (_isRecording || _transcribing)) {
               _commitPendingDictationPartial();

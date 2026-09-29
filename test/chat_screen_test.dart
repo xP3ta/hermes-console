@@ -266,13 +266,18 @@ class _PartialSttEngine implements SttEngine {
     this.stopGate,
     this.finalOnStop,
     this.closeOnStop = false,
+    this.partials = true,
   });
 
   final Completer<bool>? availabilityGate;
   final Completer<void>? stopGate;
   final String? finalOnStop;
   final bool closeOnStop;
+
+  /// `false` models Whisper / Hermes server: record, then transcribe on stop.
+  final bool partials;
   int availableCalls = 0;
+  int listenCalls = 0;
   int stopCalls = 0;
   bool _disposed = false;
   StreamController<SttResult> _results =
@@ -288,7 +293,7 @@ class _PartialSttEngine implements SttEngine {
   }
 
   @override
-  bool get supportsPartials => true;
+  bool get supportsPartials => partials;
 
   @override
   Stream<SttResult> listen({
@@ -297,6 +302,7 @@ class _PartialSttEngine implements SttEngine {
     void Function()? onCaptureReady,
     bool continuous = false,
   }) {
+    listenCalls++;
     onCaptureReady?.call();
     return _results.stream;
   }
@@ -2782,6 +2788,191 @@ void main() {
     gateway.emitComplete();
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
+  });
+
+  // Auditoría de voz 29/09: el dictado no puede perder texto por tiempos
+  // fijos, por pasar a segundo plano, por salir del chat ni por doble toque.
+  group('dictado sin pérdida de texto', () {
+    String composerText(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+    testWidgets(
+      'una transcripción lenta tras parar se conserva sin aviso falso',
+      (tester) async {
+        final stopGate = Completer<void>();
+        final stt = _PartialSttEngine(
+          stopGate: stopGate,
+          finalOnStop: 'texto tardío',
+          partials: false,
+        );
+        await pumpChat(tester, stt: stt);
+        await tester.tap(find.byKey(const ValueKey('mic')));
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('recording')));
+        await tester.pump();
+        // Whisper/servidor pueden tardar bastante más de 4 s en transcribir.
+        await tester.pump(const Duration(seconds: 20));
+        expect(find.textContaining('No se reconoció voz'), findsNothing);
+        stopGate.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(composerText(tester), 'texto tardío');
+        expect(find.textContaining('No se reconoció voz'), findsNothing);
+        await tester.pump(const Duration(seconds: 5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('enviar mientras transcribe envía también lo dictado', (
+      tester,
+    ) async {
+      final stopGate = Completer<void>();
+      final gateway = _SubmissionGateway();
+      final stt = _PartialSttEngine(
+        stopGate: stopGate,
+        finalOnStop: 'cuerpo dictado',
+        partials: false,
+      );
+      await pumpChat(
+        tester,
+        stt: stt,
+        desktopGateway: gateway,
+        connection: _remoteConn('dictation-slow-send'),
+      );
+      await tester.enterText(find.byType(TextField), 'Inicio');
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('dictation-send')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 20));
+      expect(gateway.submissions, isEmpty);
+      stopGate.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(gateway.submissions, hasLength(1));
+      expect(gateway.submissions.single, startsWith('Inicio cuerpo dictado'));
+      gateway.emitComplete();
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('pasar a segundo plano mientras dicta conserva el texto', (
+      tester,
+    ) async {
+      final stt = _PartialSttEngine(finalOnStop: 'hola mundo');
+      await pumpChat(tester, stt: stt);
+      await tester.enterText(find.byType(TextField), 'Previo');
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      stt.results.add(const SttResult('hola mundo', false));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(composerText(tester), 'Previo hola mundo');
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      expect(
+        (await screen.draftStoreOverride!.load(
+          screen.connection.id,
+          screen.session.id,
+          profile: 'default',
+        )).text,
+        'Previo hola mundo',
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'Whisper en segundo plano transcribe lo grabado y lo conserva',
+      (tester) async {
+        final stt = _PartialSttEngine(
+          finalOnStop: 'grabado antes de bloquear',
+          partials: false,
+        );
+        await pumpChat(tester, stt: stt);
+        await tester.enterText(find.byType(TextField), 'Previo');
+        await tester.tap(find.byKey(const ValueKey('mic')));
+        await tester.pump();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(stt.stopCalls, 1);
+        expect(composerText(tester), 'Previo grabado antes de bloquear');
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump(const Duration(seconds: 5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('salir del chat mientras dicta guarda lo dictado', (
+      tester,
+    ) async {
+      final stt = _PartialSttEngine();
+      await pumpChat(tester, stt: stt);
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      await tester.enterText(find.byType(TextField), 'Previo');
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      stt.results.add(const SttResult('borrador dictado', false));
+      await tester.pump();
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        (await screen.draftStoreOverride!.load(
+          screen.connection.id,
+          screen.session.id,
+          profile: 'default',
+        )).text,
+        'Previo borrador dictado',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('doble toque en el micro abre una sola escucha', (
+      tester,
+    ) async {
+      final permission = Completer<bool>();
+      final stt = _PartialSttEngine(
+        availabilityGate: permission,
+        finalOnStop: 'una vez',
+      );
+      await pumpChat(tester, stt: stt);
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      final mic = find.byKey(const ValueKey('mic'));
+      if (mic.evaluate().isNotEmpty) {
+        await tester.tap(mic);
+        await tester.pump();
+      }
+      permission.complete(true);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(stt.availableCalls, 1);
+      expect(stt.listenCalls, 1);
+      await tester.tap(find.byKey(const ValueKey('recording')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(composerText(tester), 'una vez');
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets(
