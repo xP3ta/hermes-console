@@ -682,6 +682,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         avatarCache: widget.avatarCache,
         attachmentActions: widget.attachmentActions,
         canReply: widget.capabilities.canSend,
+        mentionHandles: _openableHandles(),
+        onMention: _openMention,
         onReply: () {
           Navigator.of(context).pop();
           _setThread(threadId);
@@ -1316,14 +1318,25 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         onOpenThread: entry.thread == null
             ? null
             : () => unawaited(_openThread(entry.thread!.threadId)),
-        onMention: (handle) {
-          final member = _room.members
-              .where((m) => m.handle.toLowerCase() == handle.toLowerCase())
-              .firstOrNull;
-          if (member != null) widget.onOpenMember?.call(member);
-        },
+        onMention: _openMention,
       ),
     };
+  }
+
+  /// Handles whose mention opens something: members with a local profile
+  /// when the host can open them (same rule as the members sheet). Peers,
+  /// `@all` and `@everyone` stay plain text rather than dead links.
+  List<String> _openableHandles() => [
+    if (widget.onOpenMember != null)
+      for (final m in _room.members)
+        if (widget.profileFor(m) != null) m.handle,
+  ];
+
+  void _openMention(String handle) {
+    final member = _room.members
+        .where((m) => m.handle.toLowerCase() == handle.toLowerCase())
+        .firstOrNull;
+    if (member != null) widget.onOpenMember?.call(member);
   }
 
   /// Inputs the transcript depends on. Typing, focus, dictation and working
@@ -1393,11 +1406,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       members: _room.members,
       lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
     );
-    final handles = [
-      for (final m in _room.members) m.handle,
-      'all',
-      'everyone',
-    ];
+    final handles = _openableHandles();
     // Chronological items (oldest first), each with a stable identity.
     final items = <({String key, bool message, Widget Function() build})>[
       for (final entry in transcript)
@@ -1677,6 +1686,8 @@ class _RoomThreadPage extends StatelessWidget {
   final MissionProfileAvatarCache? avatarCache;
   final RoomAttachmentActions? attachmentActions;
   final bool canReply;
+  final List<String> mentionHandles;
+  final ValueChanged<String> onMention;
   final VoidCallback onReply;
 
   const _RoomThreadPage({
@@ -1686,6 +1697,8 @@ class _RoomThreadPage extends StatelessWidget {
     required this.avatarCache,
     required this.attachmentActions,
     required this.canReply,
+    required this.mentionHandles,
+    required this.onMention,
     required this.onReply,
   });
 
@@ -1696,7 +1709,6 @@ class _RoomThreadPage extends StatelessWidget {
       events: messages,
       members: members,
     ).whereType<RoomMessageEntry>().toList();
-    final handles = [for (final m in members) m.handle];
     return Scaffold(
       key: const ValueKey('room-thread-page'),
       appBar: HermesAppBar(title: Text(s.roomThreadTitle)),
@@ -1718,8 +1730,9 @@ class _RoomThreadPage extends StatelessWidget {
                       ? null
                       : profileFor(entries[index].member!),
                   avatarCache: avatarCache,
-                  mentionHandles: handles,
+                  mentionHandles: mentionHandles,
                   attachmentActions: attachmentActions,
+                  onMention: onMention,
                 ),
               ),
             ),

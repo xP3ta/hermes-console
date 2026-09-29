@@ -165,6 +165,7 @@ Future<FakeRoomGateway> _pump(
   RoomAttachmentUploader? uploader,
   RoomLocalPrefs? prefs,
   AgentProfile? Function(HostedGroupMember member)? profileFor,
+  void Function(HostedGroupMember member)? onOpenMember,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
@@ -181,6 +182,7 @@ Future<FakeRoomGateway> _pump(
         gateway: gateway,
         capabilities: caps,
         profileFor: profileFor ?? (_) => null,
+        onOpenMember: onOpenMember,
         prefs: prefs ?? MemoryRoomPrefs(),
         attachmentActions: actions,
         uploader: uploader,
@@ -207,6 +209,20 @@ flutter test --no-pub
 | --- | --- |
 | P0/P1 | 0 |
 ''';
+
+/// Texts of the tappable spans (links) currently rendered.
+Set<String> _linkTexts(WidgetTester tester) {
+  final out = <String>{};
+  for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+    rich.text.visitChildren((span) {
+      if (span is TextSpan && span.recognizer != null) {
+        out.add(span.text ?? span.toPlainText());
+      }
+      return true;
+    });
+  }
+  return out;
+}
 
 void main() {
   setUpAll(loadInterFont);
@@ -521,6 +537,39 @@ void main() {
     );
     expect(find.text('Radar could not reply'), findsOneWidget);
     expect(find.text('console-radar could not reply'), findsNothing);
+  });
+
+  testWidgets('mentions that cannot open anything are not rendered as links', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    final seq = EventSeq();
+    final u = seq.user('@builder @radar @all look');
+    await _pump(
+      tester,
+      events: [u, seq.member('m-lead', 'lead', 'On it @builder @radar', 'd1')],
+      // Only builder has a local profile Mission Control can open.
+      profileFor: (m) =>
+          m.handle == 'builder' ? AgentProfile(name: 'builder') : null,
+      onOpenMember: (m) => opened.add(m.handle),
+    );
+    expect(_linkTexts(tester), {'@builder'});
+    await tester.tapOnText(find.textRange.ofSubstring('@builder').first);
+    await tester.pumpAndSettle();
+    expect(opened, ['builder']);
+
+    // The thread page offers the same working links.
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-threads')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-thread-thread-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-thread-page')), findsOneWidget);
+    expect(_linkTexts(tester), {'@builder'});
+    await tester.tapOnText(find.textRange.ofSubstring('@builder').first);
+    await tester.pumpAndSettle();
+    expect(opened, ['builder', 'builder']);
   });
 
   testWidgets('attachment suffix renders as a card with download/open/share', (
