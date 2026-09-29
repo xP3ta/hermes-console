@@ -53,6 +53,9 @@ void main() {
       updateGate.complete(const BridgeUpdateResult.success('accepted'));
       await tester.pumpAndSettle();
       expect(find.text('Bridge repaired and verified.'), findsOneWidget);
+      // A verified repair must not offer to repair or retry again.
+      expect(find.text('Retry'), findsNothing);
+      expect(find.text('Repair bridge'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

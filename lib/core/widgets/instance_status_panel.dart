@@ -566,55 +566,58 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
                   style: TextStyle(color: colors.error),
                 ),
               ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (!_repairing && !local)
-                  Semantics(
-                    button: true,
-                    label: result == null
-                        ? s.statusBridgeRepair
-                        : s.statusBridgeRetry,
-                    child: FilledButton.tonal(
-                      onPressed: widget.connection.readOnly ? null : _repair,
+            // A verified repair leaves nothing to repair or retry.
+            if (result?.success != true) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (!_repairing && !local)
+                    Semantics(
+                      button: true,
+                      label: result == null
+                          ? s.statusBridgeRepair
+                          : s.statusBridgeRetry,
+                      child: FilledButton.tonal(
+                        onPressed: widget.connection.readOnly ? null : _repair,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        child: Text(
+                          result == null
+                              ? s.statusBridgeRepair
+                              : s.statusBridgeRetry,
+                        ),
+                      ),
+                    ),
+                  if (!_repairing && local)
+                    FilledButton.tonal(
+                      onPressed: _bridgeState?.running == true
+                          ? _repair
+                          : _openLocalControl,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(48, 48),
                       ),
                       child: Text(
-                        result == null
+                        _bridgeState?.running == true
                             ? s.statusBridgeRepair
-                            : s.statusBridgeRetry,
+                            : s.statusBridgeLocalControl,
                       ),
                     ),
-                  ),
-                if (!_repairing && local)
-                  FilledButton.tonal(
-                    onPressed: _bridgeState?.running == true
-                        ? _repair
-                        : _openLocalControl,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(48, 48),
+                  if (!_repairing && result?.manualAction == true)
+                    OutlinedButton(
+                      onPressed: widget.connManager == null
+                          ? null
+                          : _openManualSetup,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                      ),
+                      child: Text(s.statusBridgeManualSetup),
                     ),
-                    child: Text(
-                      _bridgeState?.running == true
-                          ? s.statusBridgeRepair
-                          : s.statusBridgeLocalControl,
-                    ),
-                  ),
-                if (!_repairing && result?.manualAction == true)
-                  OutlinedButton(
-                    onPressed: widget.connManager == null
-                        ? null
-                        : _openManualSetup,
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                    ),
-                    child: Text(s.statusBridgeManualSetup),
-                  ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ],
         ],
       ),
