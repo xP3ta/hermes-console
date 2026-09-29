@@ -1,5 +1,11 @@
 {
   "@@locale": "en",
+  "i18n1215PlatformConnected": "connected",
+  "i18n1215PlatformDisconnected": "disconnected",
+  "i18n1215PlatformConnecting": "connecting",
+  "i18n1215PlatformError": "error",
+  "i18n1215PlatformStarting": "starting",
+  "i18n1215PlatformStopped": "stopped",
   "languageSettingTitle": "Language",
   "languageSystemDefault": "System language",
   "languageSpanish": "Spanish",

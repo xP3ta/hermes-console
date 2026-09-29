@@ -1,5 +1,11 @@
 {
   "@@locale": "es",
+  "i18n1215PlatformConnected": "conectada",
+  "i18n1215PlatformDisconnected": "desconectada",
+  "i18n1215PlatformConnecting": "conectando",
+  "i18n1215PlatformError": "con error",
+  "i18n1215PlatformStarting": "arrancando",
+  "i18n1215PlatformStopped": "detenida",
   "languageSettingTitle": "Idioma",
   "@languageSettingTitle": {
     "description": "Título de la opción de idioma en Ajustes"
