@@ -7909,6 +7909,7 @@
   "roomStatusWorking": "La sala está trabajando…",
   "roomStatusNeedsApproval": "Necesita tu aprobación",
   "roomStatusBlocked": "Bloqueada — reintentar",
+  "roomStatusFailed": "Falló una respuesta",
   "roomStatusRoundFinished": "Ronda {round} terminada · {ago}",
   "@roomStatusRoundFinished": {
     "placeholders": {

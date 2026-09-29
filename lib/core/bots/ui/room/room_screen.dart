@@ -833,7 +833,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (driver != null &&
         (_visibleRetries.isNotEmpty ||
             (driver.blocked && driver.retries.isEmpty))) {
-      return s.roomStatusBlocked;
+      // Only offer a retry the card can actually perform; otherwise the
+      // strip would promise what "Can't be retried from here" denies.
+      return widget.capabilities.canRetry
+          ? s.roomStatusBlocked
+          : s.roomStatusFailed;
     }
     if (driver?.working ?? false) {
       final working = round?.rows

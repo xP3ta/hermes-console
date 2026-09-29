@@ -6676,6 +6676,7 @@
   "roomStatusWorking": "Room is working…",
   "roomStatusNeedsApproval": "Needs your approval",
   "roomStatusBlocked": "Blocked — retry",
+  "roomStatusFailed": "A reply failed",
   "roomStatusRoundFinished": "Round {round} finished · {ago}",
   "@roomStatusRoundFinished": {
     "placeholders": {

@@ -724,6 +724,69 @@ void main() {
       expect(tester.widget<TextButton>(dismiss).onPressed, isNotNull);
     });
 
+    testWidgets('C6 without server retry the strip does not offer a retry', (
+      tester,
+    ) async {
+      // The failure belongs to an earlier round, so the strip falls back to
+      // the room-wide status (the case seen on a real room).
+      final seq = EventSeq();
+      final u1 = seq.user('@radar check');
+      final d1 = u1['event_id'] as String;
+      final started = seq.started('m-radar', d1, task: 'task-r');
+      final failed = seq.failed('m-radar', d1, task: 'task-r');
+      final u2 = seq.user('@radar again');
+      final d2 = u2['event_id'] as String;
+      await _pump(
+        tester,
+        events: [
+          u1,
+          started,
+          failed,
+          u2,
+          seq.member('m-radar', 'console-radar', 'done', d2, round: 1),
+        ],
+        status: driver(
+          blocked: true,
+          pending: [
+            {'kind': 'retry', 'task_id': 'task-r'},
+          ],
+        ),
+        caps: const RoomCapabilities(canSend: true, canStop: true),
+      );
+      expect(find.text("Can't be retried from here"), findsOneWidget);
+      expect(find.text('Blocked — retry'), findsNothing);
+      expect(find.text('A reply failed'), findsOneWidget);
+    });
+
+    testWidgets('C6 with server retry the strip still offers it', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u1 = seq.user('@radar check');
+      final d1 = u1['event_id'] as String;
+      final started = seq.started('m-radar', d1, task: 'task-r');
+      final failed = seq.failed('m-radar', d1, task: 'task-r');
+      final u2 = seq.user('@radar again');
+      final d2 = u2['event_id'] as String;
+      await _pump(
+        tester,
+        events: [
+          u1,
+          started,
+          failed,
+          u2,
+          seq.member('m-radar', 'console-radar', 'done', d2, round: 1),
+        ],
+        status: driver(
+          blocked: true,
+          pending: [
+            {'kind': 'retry', 'task_id': 'task-r'},
+          ],
+        ),
+      );
+      expect(find.text('Blocked — retry'), findsOneWidget);
+    });
+
     testWidgets('C6 dismiss removes the card and the strip alert, and sticks', (
       tester,
     ) async {
