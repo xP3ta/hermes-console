@@ -740,14 +740,17 @@ final class MissionControlRepository
       attempt: attempt,
       generation: generation,
     );
-    final current = await gateway.state(room.roomId, generation: generation);
-    // send returns the acknowledgement tail, not the room's full conversation.
-    final log = await gateway.log(room.roomId, generation: generation);
+    // send returns the acknowledgement tail, not the room's full
+    // conversation. Read it back like a refresh: incremental gateways fetch
+    // only the delta after the room's cursor instead of the whole log again
+    // (a long room made every send wait for dozens of log pages).
+    final read = await _readRoom(gateway, room.roomId, generation: generation);
     return _verifiedWorkspaceReadback(
       previous: room,
-      current: current,
-      log: log,
+      current: read.room,
+      log: read.log,
       generation: generation,
+      driverStatus: read.driverStatus,
     );
   }
 

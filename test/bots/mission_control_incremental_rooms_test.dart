@@ -52,6 +52,19 @@ final class _IncrementalGateway
     return spec070LogPage('groups_log_empty');
   }
 
+  final sends = <String>[];
+
+  @override
+  Future<HostedGroupLogPage> send(
+    String roomId, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) async {
+    sends.add(text);
+    return spec070LogPage('groups_log_empty');
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -94,6 +107,28 @@ void main() {
     }
     expect(gateway.sinceCalls, List.filled(10, 8));
     expect(GatewaySocketMeter.instance.totalOpened, 0);
+    repository.close();
+  });
+
+  // A long room (1000+ events) made every send re-read the whole log page
+  // by page before the message showed: sending must reuse the cursor.
+  test('sending reads only the delta, never the full log again', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    final sent = await repository.sendHostedGroupText(
+      room,
+      text: 'hola',
+      attempt: HostedGroupSendAttempt.forClientEvent('evt-1'),
+      generation: 1,
+    );
+    expect(gateway.sends, ['hola']);
+    expect(gateway.fullLogReads, 0);
+    expect(gateway.sinceCalls, [8], reason: 'only the delta after the cursor');
+    expect(sent.log?.events, hasLength(8));
+    expect(sent.driverStatus, isNotNull);
     repository.close();
   });
 }
