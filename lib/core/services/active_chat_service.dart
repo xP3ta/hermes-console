@@ -3089,6 +3089,7 @@ class QueuedEntryView {
     this.attachments = const [],
     this.blocked = false,
     this.deliveryUnknown = false,
+    this.serverAccepted = false,
   });
 
   final String id;
@@ -3102,6 +3103,10 @@ class QueuedEntryView {
   /// got it. Delete and send stay refused (it may have arrived); only
   /// [ActiveChat.abandonUncertainQueuedTurn] lets the user retire it.
   final bool deliveryUnknown;
+
+  /// The server already acknowledged this queued turn (accepted/running):
+  /// it can no longer be edited, sent again or deleted from here.
+  final bool serverAccepted;
 
   bool get isSteerable =>
       text.trim().isNotEmpty &&
@@ -7176,6 +7181,7 @@ class ActiveChat {
           ),
           blocked: _blockedPreparedTurnId == item.turn.clientTurnId,
           deliveryUnknown: _isDeliveryUnknown(item),
+          serverAccepted: item.delivery.acknowledged,
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));

@@ -26114,6 +26114,70 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('fila de cola ya aceptada por el servidor no ofrece acciones '
+      'que no pueden actuar', (tester) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-accepted'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    PreparedTurn queued(String id, PreparedTurnState state, int order) =>
+        PreparedTurn(
+          connectionId: chat.connection.id,
+          sessionId: chat.sessionId,
+          clientTurnId: id,
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: 'mensaje $id',
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: chat.sessionProfile,
+          state: state,
+          queued: true,
+          queueOrder: order,
+        );
+    final restored = chat.restoreQueuedTurns(
+      [
+        queued('acked', PreparedTurnState.accepted, 1),
+        queued('next', PreparedTurnState.prepared, 2),
+      ],
+      _UiReleaseOutbox(),
+      scheduleDrain: false,
+    );
+    await tester.pump();
+    await restored;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    const acked = 'prepared:acked';
+    VoidCallback? pressed(String key) {
+      final button = find.descendant(
+        of: find.byKey(ValueKey(key)),
+        matching: find.byType(IconButton),
+      );
+      if (button.evaluate().isEmpty) return null;
+      return tester.widget<IconButton>(button).onPressed;
+    }
+
+    // The server already has it: edit, send now and delete cannot act.
+    expect(pressed('chat-queue-edit-$acked'), isNull);
+    expect(pressed('chat-queue-send-now-$acked'), isNull);
+    expect(pressed('chat-queue-delete-$acked'), isNull);
+    // The row still shows what it is, and the next one keeps its actions.
+    expect(find.text('mensaje acked'), findsOneWidget);
+    expect(pressed('chat-queue-delete-prepared:next'), isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('panel de cola expone acciones nativas por identidad', (
     tester,
   ) async {

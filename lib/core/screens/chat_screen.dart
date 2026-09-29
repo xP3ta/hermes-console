@@ -17753,7 +17753,10 @@ class _QueuedRow extends StatelessWidget {
         ? '${entry.text.substring(0, 72)}…'
         : entry.text;
     final isEditing = editingId == entry.id;
-    final accepted = entry.kind == QueuedEntryKind.desktopAccepted;
+    // Already on the server: edit/send/delete cannot act (and send-now would
+    // cancel the running turn), so the row shows them disabled.
+    final accepted =
+        entry.kind == QueuedEntryKind.desktopAccepted || entry.serverAccepted;
     final editEnabled = !accepted && (editingId == null || isEditing);
     final canSteer =
         busy &&
