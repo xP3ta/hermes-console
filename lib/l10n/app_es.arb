@@ -225,6 +225,7 @@
   "statusOffline": "sin conexión",
   "statusWrongPassword": "contraseña incorrecta",
   "statusLoginRequired": "falta iniciar sesión",
+  "statusKeyRejected": "API key rechazada",
   "statusNotEnabled": "no habilitado",
   "statusNeedsToken": "falta token",
   "statusRunning": "corriendo",

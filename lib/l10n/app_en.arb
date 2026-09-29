@@ -99,6 +99,7 @@
   "statusOffline": "offline",
   "statusWrongPassword": "wrong password",
   "statusLoginRequired": "login required",
+  "statusKeyRejected": "API key rejected",
   "statusNotEnabled": "not enabled",
   "statusNeedsToken": "needs token",
   "statusRunning": "running",

@@ -14,6 +14,8 @@ void main() {
     required bool reachable,
     required DashboardAuthCheck auth,
     List<String>? authCalls,
+    GatewayKeyCheck gatewayKey = GatewayKeyCheck.ok,
+    List<String>? keyCalls,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -35,6 +37,10 @@ void main() {
                 authCalls?.add(conn.id);
                 return auth;
               },
+              gatewayKey: (conn) async {
+                keyCalls?.add(conn.id);
+                return gatewayKey;
+              },
             ),
           ),
         ),
@@ -47,6 +53,51 @@ void main() {
     of: find.byKey(const ValueKey('instance-status-row-dashboard')),
     matching: find.text(text),
   );
+
+  Finder gatewayDetail(String text) => find.descendant(
+    of: find.byKey(const ValueKey('instance-status-row-gateway')),
+    matching: find.text(text),
+  );
+
+  testWidgets('a rejected API key is shown instead of "connected"', (
+    tester,
+  ) async {
+    await pumpPanel(
+      tester,
+      reachable: true,
+      auth: DashboardAuthCheck.ok,
+      gatewayKey: GatewayKeyCheck.rejected,
+    );
+    expect(gatewayDetail('API key rejected'), findsOneWidget);
+    expect(gatewayDetail('connected'), findsNothing);
+  });
+
+  testWidgets('an unclear key check keeps the Gateway "connected"', (
+    tester,
+  ) async {
+    await pumpPanel(
+      tester,
+      reachable: true,
+      auth: DashboardAuthCheck.ok,
+      gatewayKey: GatewayKeyCheck.unknown,
+    );
+    expect(gatewayDetail('connected'), findsOneWidget);
+  });
+
+  testWidgets('an unreachable Gateway stays offline and skips the key', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    await pumpPanel(
+      tester,
+      reachable: false,
+      auth: DashboardAuthCheck.ok,
+      gatewayKey: GatewayKeyCheck.rejected,
+      keyCalls: calls,
+    );
+    expect(gatewayDetail('offline'), findsOneWidget);
+    expect(calls, isEmpty);
+  });
 
   testWidgets('rejected login is shown instead of "connected"', (tester) async {
     await pumpPanel(

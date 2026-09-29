@@ -25,6 +25,12 @@ enum DashboardAuthCheck { ok, loginRequired, invalidCredentials, unknown }
 typedef DashboardAuthProbe =
     Future<DashboardAuthCheck> Function(SavedConnection connection);
 
+/// Outcome of calling the Gateway API with the saved key.
+enum GatewayKeyCheck { ok, rejected, unknown }
+
+typedef GatewayKeyProbe =
+    Future<GatewayKeyCheck> Function(SavedConnection connection);
+
 Future<void> showInstanceStatusSheet(
   BuildContext context,
   SavedConnection connection,
@@ -55,6 +61,7 @@ enum _DetailKind {
   needsToken,
   wrongPassword,
   loginRequired,
+  keyRejected,
   running,
   stopped,
   enabled,
@@ -76,6 +83,7 @@ class InstanceStatusPanel extends StatefulWidget {
   final BridgeRepairUpdater? updater;
   final StatusReachabilityProbe? reachable;
   final DashboardAuthProbe? dashboardAuth;
+  final GatewayKeyProbe? gatewayKey;
 
   const InstanceStatusPanel({
     super.key,
@@ -86,6 +94,7 @@ class InstanceStatusPanel extends StatefulWidget {
     this.updater,
     this.reachable,
     this.dashboardAuth,
+    this.gatewayKey,
   });
 
   @override
@@ -139,6 +148,11 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     final notificationFuture = widget.notifications?.permissionGranted();
 
     final first = await firstFuture;
+    // /health answers without the key; the chat API needs it, so a reachable
+    // remote Gateway is only "connected" once the saved key is accepted.
+    final key = first && !isLocal
+        ? await _gatewayKey(conn)
+        : GatewayKeyCheck.unknown;
     final dashboard = await dashboardFuture;
     // A public /api/status only proves the Dashboard is up; chat and Bot Mode
     // need the saved login too, so check it before calling the row healthy.
@@ -151,13 +165,25 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
 
     final rows = <_RawRow>[];
     rows.add(
-      _RawRow(
-        isLocal ? _LabelKind.localAgent : _LabelKind.gateway,
-        first ? _Health.ok : _Health.bad,
-        isLocal
-            ? (first ? _DetailKind.running : _DetailKind.stopped)
-            : (first ? _DetailKind.connected : _DetailKind.offline),
-      ),
+      isLocal
+          ? _RawRow(
+              _LabelKind.localAgent,
+              first ? _Health.ok : _Health.bad,
+              first ? _DetailKind.running : _DetailKind.stopped,
+            )
+          : !first
+          ? const _RawRow(_LabelKind.gateway, _Health.bad, _DetailKind.offline)
+          : key == GatewayKeyCheck.rejected
+          ? const _RawRow(
+              _LabelKind.gateway,
+              _Health.warn,
+              _DetailKind.keyRejected,
+            )
+          : const _RawRow(
+              _LabelKind.gateway,
+              _Health.ok,
+              _DetailKind.connected,
+            ),
     );
     if (!isLocal) {
       rows.add(switch ((dashboard == true, auth)) {
@@ -296,6 +322,31 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     }
   }
 
+  Future<GatewayKeyCheck> _gatewayKey(SavedConnection conn) async {
+    final injected = widget.gatewayKey;
+    if (injected != null) return injected(conn);
+    final client = http.Client();
+    try {
+      final base = TransportPrivacy.requireAllowed(conn.gatewayUrl);
+      final res = await client
+          .get(
+            Uri.parse('$base/api/sessions'),
+            headers: {'Authorization': 'Bearer ${conn.apiKey}'},
+          )
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        return GatewayKeyCheck.rejected;
+      }
+      return res.statusCode == 200
+          ? GatewayKeyCheck.ok
+          : GatewayKeyCheck.unknown;
+    } catch (_) {
+      return GatewayKeyCheck.unknown;
+    } finally {
+      client.close();
+    }
+  }
+
   Future<bool> _reachable(String url) async {
     final injected = widget.reachable;
     if (injected != null) return injected(url);
@@ -351,6 +402,7 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     _DetailKind.offline => s.statusOffline,
     _DetailKind.wrongPassword => s.statusWrongPassword,
     _DetailKind.loginRequired => s.statusLoginRequired,
+    _DetailKind.keyRejected => s.statusKeyRejected,
     _DetailKind.notEnabled => s.statusNotEnabled,
     _DetailKind.needsToken => s.statusNeedsToken,
     _DetailKind.running => s.statusRunning,
