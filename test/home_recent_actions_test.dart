@@ -293,6 +293,73 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('home recents exclude sessions archived on this device', (
+    tester,
+  ) async {
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    await manager.saveConnection(
+      'QA',
+      '127.0.0.2',
+      8642,
+      'test-key',
+      kind: InstanceKind.vps,
+    );
+    final connection = manager.getConnections().single;
+    await manager.setActiveConnection(connection.id);
+    final now = DateTime.now().millisecondsSinceEpoch / 1000;
+    final archived = Session(
+      id: 'locally-archived',
+      title: 'Archived only here',
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 1,
+      isActive: false,
+      preview: 'Content',
+      startedAt: now,
+    );
+    final archive = await SessionArchive.load(manager.prefs, connection.id);
+    await archive.archiveSession(archived);
+    final client = _MutableRecentHomeClient([
+      archived,
+      Session(
+        id: 'visible-row',
+        title: 'Visible row',
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 1,
+        isActive: false,
+        preview: 'Content',
+        startedAt: now,
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (_) => client,
+        ),
+      ),
+    );
+    for (var attempt = 0; attempt < 40; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      if (find.text('Visible row').evaluate().isNotEmpty) break;
+    }
+
+    expect(find.text('Visible row'), findsOneWidget);
+    expect(find.text('Archived only here'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('swipe gestiona y renombra por identidad lógica', (tester) async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),

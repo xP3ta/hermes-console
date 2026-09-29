@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../capabilities/capabilities_screen.dart';
 import '../screens/activity_screen.dart';
@@ -23,6 +24,7 @@ import '../screens/task_center_screen.dart';
 import '../screens/tasks_screen.dart';
 import '../screens/tools_hub_screen.dart';
 import '../services/connection_manager.dart';
+import '../services/session_archive.dart';
 import '../services/tui_gateway_client.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/instance_route_guard.dart';
@@ -582,6 +584,7 @@ class HermesDrawer extends StatelessWidget {
                   if (conn != null && supports(capabilities.sessionsRead))
                     _DrawerRecentSessions(
                       connection: conn,
+                      prefs: connManager.prefs,
                       profile: connManager.activeProfileFor(conn.id),
                       clientFactory: recentSessionsClientFactory,
                       onOpen: (session) {
@@ -662,12 +665,14 @@ class HermesDrawer extends StatelessWidget {
 class _DrawerRecentSessions extends StatefulWidget {
   const _DrawerRecentSessions({
     required this.connection,
+    required this.prefs,
     required this.profile,
     required this.onOpen,
     this.clientFactory,
   });
 
   final SavedConnection connection;
+  final SharedPreferences prefs;
   final String profile;
   final ValueChanged<Session> onOpen;
   final ApiClient Function(SavedConnection connection)? clientFactory;
@@ -705,11 +710,17 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
         );
     try {
       final sessions = await client.getSessions(profile: widget.profile);
+      // Local-only archives (servers without a writable archived flag) must
+      // leave the drawer too, as they leave Conversations.
+      final archive = await SessionArchive.load(
+        widget.prefs,
+        requestedConnectionId,
+      );
       sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
       final visible = sessions
           .where(
             (session) =>
-                !session.archived &&
+                !archive.isSessionArchived(session) &&
                 !session.isJob &&
                 !session.isKanbanJob &&
                 session.parentSessionId == null,

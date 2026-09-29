@@ -1037,6 +1037,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           (s) =>
               !s.isJob &&
               !archive.isSessionHidden(s) &&
+              !archive.isSessionArchived(s) &&
               !archive.isHidden(s.id) &&
               SessionCategory.chats.includesSource(s.source),
         )
