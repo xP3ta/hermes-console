@@ -840,11 +840,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         action: SnackBarAction(
           label: s.slHideAction,
           onPressed: () async {
-            await _archive?.hide(session.id);
+            // Same logical key as Conversations, so a compressed chat hidden
+            // here is hidden there too.
+            await _archive?.hideSession(session);
             if (!mounted) return;
             setState(() {
               _recentSessions = _recentSessions
-                  .where((item) => item.id != session.id)
+                  .where((item) => item.logicalId != session.logicalId)
                   .toList();
             });
           },
@@ -1034,6 +1036,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         .where(
           (s) =>
               !s.isJob &&
+              !archive.isSessionHidden(s) &&
               !archive.isHidden(s.id) &&
               SessionCategory.chats.includesSource(s.source),
         )
