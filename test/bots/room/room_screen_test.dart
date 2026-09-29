@@ -37,6 +37,10 @@ final class FakeRoomGateway implements RoomGateway {
   final List<(String, Map<String, Object?>)> calls = [];
   Completer<void>? approveGate;
 
+  /// When true, a successful approve leaves [status] as it was (the server
+  /// acknowledged the answer but still lists the approval).
+  bool approveKeepsStatus = false;
+
   FakeRoomGateway({required this.room, required this.log, this.status});
 
   HostedGroupWorkspaceReadback get _readback => HostedGroupWorkspaceReadback(
@@ -93,7 +97,7 @@ final class FakeRoomGateway implements RoomGateway {
   }) async {
     calls.add(('approve', {'choice': choice, 'request': action.requestId}));
     await approveGate?.future;
-    status = driver();
+    if (!approveKeepsStatus) status = driver();
   }
 
   @override
@@ -434,6 +438,33 @@ void main() {
     expect(approvals.single.$2, {'choice': 'once', 'request': 'apr-1'});
     expect(find.byKey(const ValueKey('room-approval-apr-1')), findsNothing);
   });
+
+  testWidgets(
+    'approval card re-enables when the server still lists it after a successful answer',
+    (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@lead merge');
+      final gateway = await _pump(
+        tester,
+        events: [u, seq.started('m-lead', u['event_id'] as String)],
+        status: driver(working: true, pending: [approvalAction()]),
+      );
+      gateway.approveKeepsStatus = true;
+      final once = find.byKey(const ValueKey('room-approval-apr-1-once'));
+      await tester.tap(once);
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 3; i++) {
+        final state = tester.state<RoomScreenState>(find.byType(RoomScreen));
+        await state.refresh();
+        await tester.pumpAndSettle();
+      }
+      expect(gateway.calls.where((c) => c.$1 == 'approve'), hasLength(1));
+      final button = tester.widget<TextButton>(
+        find.descendant(of: once, matching: find.byType(TextButton)),
+      );
+      expect(button.onPressed, isNotNull);
+    },
+  );
 
   testWidgets('retry card calls groups.retry for the server-listed task', (
     tester,

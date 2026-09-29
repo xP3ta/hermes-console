@@ -415,6 +415,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     try {
       await widget.gateway.approve(_room, action: action, choice: choice);
       await refresh();
+      // The answer landed: never leave the card disabled if the server still
+      // lists the request (a quiet poll does not clear [_answering]).
+      if (mounted) setState(() => _answering.remove(action.requestId));
     } catch (_) {
       await refresh();
       final stillPending =
