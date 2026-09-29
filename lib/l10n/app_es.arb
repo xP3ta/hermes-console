@@ -223,6 +223,8 @@
   "statusNotifications": "Notificaciones",
   "statusConnected": "conectado",
   "statusOffline": "sin conexión",
+  "statusWrongPassword": "contraseña incorrecta",
+  "statusLoginRequired": "falta iniciar sesión",
   "statusNotEnabled": "no habilitado",
   "statusNeedsToken": "falta token",
   "statusRunning": "corriendo",

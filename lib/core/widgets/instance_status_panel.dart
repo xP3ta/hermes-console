@@ -19,6 +19,12 @@ import 'hermes_premium_ui.dart';
 
 typedef StatusReachabilityProbe = Future<bool> Function(String url);
 
+/// Outcome of logging in to the Dashboard with the saved credentials.
+enum DashboardAuthCheck { ok, loginRequired, invalidCredentials, unknown }
+
+typedef DashboardAuthProbe =
+    Future<DashboardAuthCheck> Function(SavedConnection connection);
+
 Future<void> showInstanceStatusSheet(
   BuildContext context,
   SavedConnection connection,
@@ -47,6 +53,8 @@ enum _DetailKind {
   offline,
   notEnabled,
   needsToken,
+  wrongPassword,
+  loginRequired,
   running,
   stopped,
   enabled,
@@ -67,6 +75,7 @@ class InstanceStatusPanel extends StatefulWidget {
   final ConnectionManager? connManager;
   final BridgeRepairUpdater? updater;
   final StatusReachabilityProbe? reachable;
+  final DashboardAuthProbe? dashboardAuth;
 
   const InstanceStatusPanel({
     super.key,
@@ -76,6 +85,7 @@ class InstanceStatusPanel extends StatefulWidget {
     this.connManager,
     this.updater,
     this.reachable,
+    this.dashboardAuth,
   });
 
   @override
@@ -130,6 +140,11 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
 
     final first = await firstFuture;
     final dashboard = await dashboardFuture;
+    // A public /api/status only proves the Dashboard is up; chat and Bot Mode
+    // need the saved login too, so check it before calling the row healthy.
+    final auth = dashboard == true
+        ? await _dashboardAuth(conn)
+        : DashboardAuthCheck.unknown;
     final bridge = await bridgeFuture;
     final notifications = await notificationFuture;
     if (!_current(generation)) return;
@@ -145,13 +160,28 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
       ),
     );
     if (!isLocal) {
-      rows.add(
-        _RawRow(
+      rows.add(switch ((dashboard == true, auth)) {
+        (false, _) => const _RawRow(
           _LabelKind.dashboard,
-          dashboard == true ? _Health.ok : _Health.bad,
-          dashboard == true ? _DetailKind.connected : _DetailKind.offline,
+          _Health.bad,
+          _DetailKind.offline,
         ),
-      );
+        (true, DashboardAuthCheck.invalidCredentials) => const _RawRow(
+          _LabelKind.dashboard,
+          _Health.warn,
+          _DetailKind.wrongPassword,
+        ),
+        (true, DashboardAuthCheck.loginRequired) => const _RawRow(
+          _LabelKind.dashboard,
+          _Health.warn,
+          _DetailKind.loginRequired,
+        ),
+        (true, _) => const _RawRow(
+          _LabelKind.dashboard,
+          _Health.ok,
+          _DetailKind.connected,
+        ),
+      });
     }
     if (bridge != null) {
       _bridgeState = bridge;
@@ -238,6 +268,34 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     verificationRetryDelay: const Duration(seconds: 2),
   );
 
+  Future<DashboardAuthCheck> _dashboardAuth(SavedConnection conn) async {
+    final injected = widget.dashboardAuth;
+    if (injected != null) return injected(conn);
+    final manager = widget.connManager;
+    if (manager == null) return DashboardAuthCheck.unknown;
+    DashboardClient? client;
+    try {
+      final secrets = await manager.getDashboardSecrets(conn.id);
+      client = DashboardClient.forConnection(conn, secrets: secrets);
+      await client.authHeadersForDiagnostics().timeout(
+        const Duration(seconds: 6),
+      );
+      return DashboardAuthCheck.ok;
+    } on DashboardAuthException catch (error) {
+      return switch (error.code) {
+        DashboardAuthFailureCode.invalidCredentials =>
+          DashboardAuthCheck.invalidCredentials,
+        DashboardAuthFailureCode.loginRequired =>
+          DashboardAuthCheck.loginRequired,
+        _ => DashboardAuthCheck.unknown,
+      };
+    } catch (_) {
+      return DashboardAuthCheck.unknown;
+    } finally {
+      client?.close();
+    }
+  }
+
   Future<bool> _reachable(String url) async {
     final injected = widget.reachable;
     if (injected != null) return injected(url);
@@ -291,6 +349,8 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
   String _detail(_DetailKind kind, Strings s) => switch (kind) {
     _DetailKind.connected => s.statusConnected,
     _DetailKind.offline => s.statusOffline,
+    _DetailKind.wrongPassword => s.statusWrongPassword,
+    _DetailKind.loginRequired => s.statusLoginRequired,
     _DetailKind.notEnabled => s.statusNotEnabled,
     _DetailKind.needsToken => s.statusNeedsToken,
     _DetailKind.running => s.statusRunning,
@@ -401,6 +461,7 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     final result = bridge ? _repairResult : null;
 
     return Padding(
+      key: ValueKey('instance-status-row-${row.label.name}'),
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

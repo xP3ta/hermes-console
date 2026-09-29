@@ -97,6 +97,8 @@
   "statusNotifications": "Notifications",
   "statusConnected": "connected",
   "statusOffline": "offline",
+  "statusWrongPassword": "wrong password",
+  "statusLoginRequired": "login required",
   "statusNotEnabled": "not enabled",
   "statusNeedsToken": "needs token",
   "statusRunning": "running",
