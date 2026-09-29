@@ -35,6 +35,47 @@ void main() {
       expect(r.next.pendingRequestIds, {'apr-1'});
     });
 
+    test('leaving "all" mid-round still ends the live update', () {
+      for (final level in [
+        RoomNotificationLevel.mentions,
+        RoomNotificationLevel.muted,
+      ]) {
+        final r = decideRoomNotices(
+          previous: RoomWatchState(working: true, workingSinceMs: 1),
+          driverStatus: driver(working: true),
+          newEvents: const [],
+          latestSeq: 1,
+          level: level,
+          nowMs: 2,
+        );
+        final live = r.notices.whereType<RoomLiveNotice>().toList();
+        expect(live, hasLength(1), reason: '$level');
+        expect(live.single.working, isFalse, reason: '$level');
+        // Withdrawn once: the next pass at the same level stays silent.
+        final again = decideRoomNotices(
+          previous: r.next,
+          driverStatus: driver(working: true),
+          newEvents: const [],
+          latestSeq: 1,
+          level: level,
+          nowMs: 3,
+        );
+        expect(again.notices.whereType<RoomLiveNotice>(), isEmpty);
+      }
+    });
+
+    test('a room never live at another level stays silent', () {
+      final r = decideRoomNotices(
+        previous: const RoomWatchState(),
+        driverStatus: driver(working: true),
+        newEvents: const [],
+        latestSeq: 1,
+        level: RoomNotificationLevel.mentions,
+        nowMs: 2,
+      );
+      expect(r.notices.whereType<RoomLiveNotice>(), isEmpty);
+    });
+
     test('muted rooms only surface approvals', () {
       final seq = EventSeq();
       final r = decideRoomNotices(

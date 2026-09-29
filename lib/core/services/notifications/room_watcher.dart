@@ -501,6 +501,13 @@ const roomRoundOpenTimeout = Duration(minutes: 15);
             ? before.workingSinceMs ?? openedAt ?? nowMs
             : openedAt ?? nowMs)
       : null;
+  // A live card is up only while [workingSinceMs] is kept (level "all").
+  // When the level leaves "all" mid-round (mute or mentions), withdraw it
+  // once; otherwise it would stay on "working" for good.
+  final liveCard = level == RoomNotificationLevel.all;
+  if (!liveCard && before.workingSinceMs != null) {
+    notices.add(RoomLiveNotice(working: false, round: round));
+  }
   if (level == RoomNotificationLevel.all && (liveNow || before.live)) {
     notices.add(
       RoomLiveNotice(
@@ -536,7 +543,7 @@ const roomRoundOpenTimeout = Duration(minutes: 15);
       repliers: repliers,
       lastMemberId: lastMember,
       pendingRequestIds: pendingIds,
-      workingSinceMs: since,
+      workingSinceMs: liveCard ? since : null,
       round: round,
       openMembers: status.running || status.working ? open : const {},
       discussion: settled ? null : discussion,
