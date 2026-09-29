@@ -9,6 +9,7 @@ import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -163,6 +164,7 @@ Future<FakeRoomGateway> _pump(
   RoomAttachmentActions? actions,
   RoomAttachmentUploader? uploader,
   RoomLocalPrefs? prefs,
+  AgentProfile? Function(HostedGroupMember member)? profileFor,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
@@ -178,7 +180,7 @@ Future<FakeRoomGateway> _pump(
         driverStatus: status,
         gateway: gateway,
         capabilities: caps,
-        profileFor: (_) => null,
+        profileFor: profileFor ?? (_) => null,
         prefs: prefs ?? MemoryRoomPrefs(),
         attachmentActions: actions,
         uploader: uploader,
@@ -492,6 +494,33 @@ void main() {
     expect(gateway.calls.where((c) => c.$1 == 'retry').single.$2, {
       'task': 'task-r',
     });
+  });
+
+  testWidgets('failure card uses the same speaker name as the strip', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('@radar check');
+    final disc = u['event_id'] as String;
+    await _pump(
+      tester,
+      events: [
+        u,
+        seq.started('m-radar', disc, task: 'task-r'),
+        seq.failed('m-radar', disc, task: 'task-r'),
+      ],
+      status: driver(
+        blocked: true,
+        pending: [
+          {'kind': 'retry', 'task_id': 'task-r'},
+        ],
+      ),
+      profileFor: (m) => m.handle == 'radar'
+          ? AgentProfile(name: 'radar', botModeUiMeta: {'title': 'Radar'})
+          : null,
+    );
+    expect(find.text('Radar could not reply'), findsOneWidget);
+    expect(find.text('console-radar could not reply'), findsNothing);
   });
 
   testWidgets('attachment suffix renders as a card with download/open/share', (

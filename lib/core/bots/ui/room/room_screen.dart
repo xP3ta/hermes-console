@@ -1161,6 +1161,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             key: ValueKey('room-inline-retry-${retry.taskId}'),
             taskId: retry.taskId,
             member: _memberForTask(retry.taskId),
+            profile: switch (_memberForTask(retry.taskId)) {
+              final m? => widget.profileFor(m),
+              null => null,
+            },
             busy: _retrying.contains(retry.taskId),
             onRetry: widget.capabilities.canRetry
                 ? () => unawaited(_retry(retry.taskId))

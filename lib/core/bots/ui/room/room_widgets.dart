@@ -1267,6 +1267,9 @@ class _ChoiceButton extends StatelessWidget {
 class RoomRetryCard extends StatelessWidget {
   final String taskId;
   final HostedGroupMember? member;
+
+  /// Local profile of [member], so the card names it like the strip does.
+  final AgentProfile? profile;
   final bool busy;
 
   /// Null when the server does not offer a retry from here: the card then
@@ -1280,6 +1283,7 @@ class RoomRetryCard extends StatelessWidget {
     super.key,
     required this.taskId,
     required this.member,
+    this.profile,
     required this.busy,
     required this.onRetry,
     required this.onDismiss,
@@ -1309,7 +1313,9 @@ class RoomRetryCard extends StatelessWidget {
               children: [
                 Text(
                   s.roomRetryTitle(
-                    member == null ? '?' : roomMemberName(member, null),
+                    member == null
+                        ? '?'
+                        : roomSpeakerName(member, null, profile),
                   ),
                   style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
                 ),
