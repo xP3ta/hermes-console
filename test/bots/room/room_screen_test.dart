@@ -626,6 +626,28 @@ void main() {
     expect(prefs.levels.values.single, RoomNotificationLevel.mentions);
   });
 
+  testWidgets('read-only room still offers the notification level', (
+    tester,
+  ) async {
+    // The level is a device-local pref and read-only connections still get
+    // room notifications, so they must be able to mute a noisy room.
+    final prefs = MemoryRoomPrefs();
+    await _pump(
+      tester,
+      events: const [],
+      caps: RoomCapabilities.none,
+      prefs: prefs,
+    );
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-menu-settings')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('room-menu-notifications')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-notify-muted')));
+    await tester.pumpAndSettle();
+    expect(prefs.levels.values.single, RoomNotificationLevel.muted);
+  });
+
   testWidgets('passes are one quiet line that opens the Activity sheet', (
     tester,
   ) async {
