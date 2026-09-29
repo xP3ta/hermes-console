@@ -56,6 +56,17 @@ void main() {
       );
       expect(es.roundDone(['builder']), 'Ronda terminada · builder respondió');
     });
+
+    test('blocked room copy never promises a retry Console cannot do', () {
+      // Retry is retired in Console; opening the room only offers Dismiss.
+      expect(en.roomBlocked.toLowerCase(), isNot(contains('retry')));
+      expect(es.roomBlocked.toLowerCase(), isNot(contains('reintentar')));
+      expect(en.roomBlocked, 'A reply failed in this room · open to see it');
+      expect(
+        es.roomBlocked,
+        'Falló una respuesta en la sala · ábrela para verla',
+      );
+    });
   });
 
   group('payload', () {

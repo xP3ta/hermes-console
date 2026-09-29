@@ -85,9 +85,11 @@ extension BotNotificationCopy on NotifL10n {
 
   String memberFailed(String who) =>
       _t('$who no pudo terminar', '$who couldn’t finish');
+  // Console has no room retry (the card only offers Dismiss), so this copy
+  // must not promise one.
   String get roomBlocked => _t(
-    'La sala está bloqueada · abre para reintentar',
-    'Room is blocked · open to retry',
+    'Falló una respuesta en la sala · ábrela para verla',
+    'A reply failed in this room · open to see it',
   );
   String isWorking(String who) =>
       _t('$who está trabajando…', '$who is working…');
