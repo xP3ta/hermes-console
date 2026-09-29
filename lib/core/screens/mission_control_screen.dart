@@ -2090,13 +2090,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
       final rooms = [...snapshot.hostedGroups.rooms];
       final logs = [...snapshot.hostedGroups.logs];
+      // Only the mutated room's driver evidence may change: every other
+      // room keeps its approvals and working state until the next load.
+      final driverStatuses = {...snapshot.hostedGroups.driverStatuses};
+      final roomId = result.room.roomId;
       if (result.room.disbanded) {
         rooms.removeAt(index);
         if (index < logs.length) logs.removeAt(index);
+        driverStatuses.remove(roomId);
       } else {
         rooms[index] = result.room;
         if (result.log != null && index < logs.length) {
           logs[index] = result.log!;
+        }
+        if (result.driverStatus case final status?) {
+          driverStatuses[roomId] = status;
         }
       }
       setState(() {
@@ -2111,6 +2119,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             capabilities: capabilities,
             rooms: List.unmodifiable(rooms),
             logs: List.unmodifiable(logs),
+            driverStatuses: Map.unmodifiable(driverStatuses),
           ),
           hostedGroupsCapability: snapshot.hostedGroupsCapability,
           failures: snapshot.failures,
@@ -2121,6 +2130,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         room: result.room,
         log: result.log,
         capabilityGeneration: result.capabilityGeneration,
+        driverStatus: result.driverStatus,
       );
     } catch (error) {
       debugPrint(

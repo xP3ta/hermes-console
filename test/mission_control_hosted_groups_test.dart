@@ -928,6 +928,70 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a room action keeps every room\'s driver status', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _workspaceSource();
+    final base = source.snapshot;
+    source.snapshot = MissionBackendSnapshot(
+      profiles: base.profiles,
+      board: base.board,
+      profilesCapability: base.profilesCapability,
+      sessionsCapability: base.sessionsCapability,
+      kanbanCapability: base.kanbanCapability,
+      hostedGroupsCapability: base.hostedGroupsCapability,
+      hostedGroups: HostedGroupsSnapshot(
+        capabilities: base.hostedGroups.capabilities,
+        rooms: base.hostedGroups.rooms,
+        logs: base.hostedGroups.logs,
+        driverStatuses: {
+          'room-private': RoomDriverStatus.tryParse({
+            'running': true,
+            'working': false,
+            'blocked': false,
+            'pending_actions': [
+              {
+                'kind': 'approval',
+                'task_id': 't-approve',
+                'member_id': 'member-private',
+                'execution_generation': 1,
+                'request_id': 'r-approve',
+              },
+            ],
+          })!,
+        },
+      ),
+      loadedAt: base.loadedAt,
+    );
+    await _pumpHostedScreen(tester, manager, source);
+    expect(
+      find.byKey(const ValueKey('roster-section-needs-you')),
+      findsOneWidget,
+    );
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-rename')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('roster-room-rename-field')),
+      'Renamed room',
+    );
+    await tester.tap(find.byKey(const ValueKey('roster-room-rename-save')));
+    await tester.pumpAndSettle();
+    expect(source.calls, contains('rename:3:Renamed room'));
+
+    // The pending approval did not go anywhere: the room still needs you.
+    expect(
+      find.byKey(const ValueKey('roster-section-needs-you')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('room actions from the roster rename and stop the room', (
     tester,
   ) async {
