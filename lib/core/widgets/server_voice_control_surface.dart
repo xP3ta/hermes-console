@@ -1688,7 +1688,17 @@ class _ServerVoiceParametersEditorState
     }
     final values = _selectableValues(key, spec, value);
     if (values.isNotEmpty) {
-      final current = value?.toString().trim();
+      // Hermes STT entiende «automático» como idioma vacío (sus defaults usan
+      // `language: ""`) y reenvía cualquier otro texto al proveedor, que
+      // rechaza `auto` (issue #65). Se muestra como Automático y se guarda "".
+      final sttAutoLanguage =
+          widget.section == 'stt' &&
+          _fieldConcept(key) == 'language' &&
+          values.contains('auto');
+      final raw = value?.toString().trim();
+      final current = sttAutoLanguage && (raw == null || raw.isEmpty)
+          ? 'auto'
+          : raw;
       return _labeledControl(
         colors: colors,
         label: label,
@@ -1718,6 +1728,10 @@ class _ServerVoiceParametersEditorState
               ? null
               : (next) {
                   if (next == null) return;
+                  if (sttAutoLanguage && next == 'auto') {
+                    _set(key, '');
+                    return;
+                  }
                   _set(
                     key,
                     type == 'number' ? num.tryParse(next) ?? next : next,

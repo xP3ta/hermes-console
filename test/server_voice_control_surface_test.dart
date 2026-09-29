@@ -518,6 +518,86 @@ void main() {
     expect(paths, isNot(contains('stt.model')));
   });
 
+  // Issue #65: «Automático» en el idioma de dictado se guardaba como el texto
+  // literal `auto`, que Hermes reenvía al proveedor STT (OpenAI responde 400).
+  // Para STT, automático es un valor vacío, como en los defaults de Hermes.
+  for (final initial in const ['es', '']) {
+    testWidgets(
+      'idioma STT «Automático» guarda vacío, nunca `auto` (inicial: "$initial")',
+      (tester) async {
+        final requests = <http.Request>[];
+        final dashboard = _schemaDashboard(
+          requests: requests,
+          config: {
+            'stt': {
+              'provider': 'local',
+              'local': {'model': 'base', 'language': initial},
+            },
+            'tts': {'provider': 'edge'},
+          },
+          fields: {
+            'stt.provider': {
+              'type': 'select',
+              'options': ['local', 'openai'],
+            },
+            'stt.local.model': {
+              'type': 'select',
+              'options': ['base', 'small'],
+            },
+            'stt.local.language': {'type': 'string'},
+            'tts.provider': {
+              'type': 'select',
+              'options': ['edge'],
+            },
+          },
+        );
+        addTearDown(dashboard.close);
+
+        await tester.pumpWidget(_host(dashboard));
+        await tester.pumpAndSettle();
+        await _openSttParameters(tester, expandAdvanced: false);
+
+        final language = find.byKey(
+          const ValueKey('server-voice-field-stt.local.language'),
+        );
+        await _reveal(tester, language);
+        if (initial.isEmpty) {
+          // Un idioma vacío en el servidor ya es automático: se muestra así.
+          expect(
+            find.descendant(of: language, matching: find.text('Automático')),
+            findsOneWidget,
+          );
+          // Elegir otro idioma y volver a Automático debe seguir guardando vacío.
+          await tester.tap(language);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Español').last);
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(language);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Automático').last);
+        await tester.pumpAndSettle();
+
+        final save = find.byKey(
+          const ValueKey('server-voice-parameters-save'),
+        );
+        await _reveal(tester, save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+
+        final put = requests.lastWhere(
+          (request) =>
+              request.method == 'PUT' && request.url.path == '/api/config',
+        );
+        final body = jsonDecode(put.body) as Map<String, dynamic>;
+        final stt = (body['config'] as Map)['stt'] as Map;
+        expect((stt['local'] as Map)['language'], '');
+        expect(put.body, isNot(contains('"auto"')));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('editor avanzado soporta 320 dp y texto al 200 %', (
     tester,
   ) async {
