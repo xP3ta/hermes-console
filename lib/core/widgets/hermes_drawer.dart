@@ -839,8 +839,8 @@ class _DrawerHeader extends StatelessWidget {
     final statusWord = checking
         ? Strings.of(context).statusChecking
         : connected
-        ? 'online'
-        : 'offline';
+        ? Strings.of(context).i18n1215StatusOnline
+        : Strings.of(context).statusOffline;
     final canSwitch = connections.isNotEmpty;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 

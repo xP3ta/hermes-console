@@ -27,12 +27,19 @@ extension InstanceStatusLabel on InstanceStatus {
     InstanceStatus.checking => 'checking',
   };
 
-  /// Etiqueta localizada para la UI (solo difieren las dos no neutras).
-  String labelFor(BuildContext context) => switch (this) {
-    InstanceStatus.readOnly => Strings.of(context).statusReadOnly,
-    InstanceStatus.checking => Strings.of(context).statusChecking,
-    _ => label,
-  };
+  /// Etiqueta localizada para la UI.
+  String labelFor(BuildContext context) {
+    final strings = Strings.of(context);
+    return switch (this) {
+      InstanceStatus.online => strings.i18n1215StatusOnline,
+      InstanceStatus.offline => strings.statusOffline,
+      InstanceStatus.syncing => strings.i18n1215StatusSyncing,
+      InstanceStatus.readOnly => strings.statusReadOnly,
+      InstanceStatus.error => strings.i18n1215StatusError,
+      InstanceStatus.unknown => label,
+      InstanceStatus.checking => strings.statusChecking,
+    };
+  }
 }
 
 /// Compact status pill — dot + lowercase mono label.

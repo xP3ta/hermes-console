@@ -6,6 +6,9 @@
   "i18n1215PlatformError": "con error",
   "i18n1215PlatformStarting": "arrancando",
   "i18n1215PlatformStopped": "detenida",
+  "i18n1215StatusOnline": "en línea",
+  "i18n1215StatusSyncing": "sincronizando",
+  "i18n1215StatusError": "error",
   "languageSettingTitle": "Idioma",
   "@languageSettingTitle": {
     "description": "Título de la opción de idioma en Ajustes"
