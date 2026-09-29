@@ -5393,7 +5393,7 @@
   "diagProbingBoth": "Gateway y Dashboard",
   "chaRestartGateway": "Reiniciar gateway",
   "chaRestartGatewayConfirm": "El agente parece colgado. ¿Reiniciar el gateway del servidor? El chat se cortará unos segundos.",
-  "chaRestartGatewayDone": "Gateway reiniciado. Reintenta el mensaje.",
+  "chaRestartGatewayDone": "Reinicio del gateway pedido. Reintenta el mensaje en un momento.",
   "chaRestartGatewayFail": "No se pudo reiniciar el gateway: {error}",
   "@chaRestartGatewayFail": {
     "placeholders": {
@@ -5666,6 +5666,7 @@
     }
   },
   "setGatewayRestarted": "Gateway reiniciado.",
+  "setGatewayNotBack": "El gateway aún no ha vuelto. Revisa su estado en el servidor.",
   "setWarningsCount": "{count, plural, one{1 aviso} other{{count} avisos}}",
   "@setWarningsCount": {
     "description": "Contador de avisos del panel de diagnóstico de Ajustes.",

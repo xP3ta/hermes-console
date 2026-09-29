@@ -2772,8 +2772,11 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       _snack(Strings.of(context).setGatewayRestarting);
       // Espera resiliente a que el gateway vuelva (en vez de un delay fijo que
       // dejaba la app pillada si el reinicio tardaba).
-      await _waitForGatewayBack();
-      if (mounted) _snack(Strings.of(context).setGatewayRestarted);
+      final back = await _waitForGatewayBack();
+      if (!mounted) return;
+      // Only a gateway seen running again is announced as restarted.
+      final s = Strings.of(context);
+      _snack(back ? s.setGatewayRestarted : s.setGatewayNotBack);
     } catch (e) {
       if (mounted) _snack(Strings.of(context).setRestartError(e.toString()));
     } finally {
