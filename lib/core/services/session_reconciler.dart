@@ -604,6 +604,51 @@ class DesktopSessionReconciler {
       (message['role'] == 'user' && message['_steer'] == true) ||
       _isStructuredUserEvent(message);
 
+  /// Removes the single optimistic prompt of the open turn (after the last
+  /// durable terminal assistant) when the runtime reports the same prompt
+  /// with different whitespace (Hermes trims/sanitizes what it stores). An
+  /// identical text is already collapsed downstream and keeps the local row;
+  /// a genuinely different text is a different prompt and is never bridged.
+  /// Nothing is removed when the open turn holds several optimistic prompts.
+  static void _dropOwnedOptimisticOpenTurnUser(
+    List<Map<String, dynamic>> chronological,
+    String inflightUser,
+  ) {
+    var terminalBoundary = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (_isDurableTerminalAssistant(chronological[index])) {
+        terminalBoundary = index;
+      }
+    }
+    int? optimisticIndex;
+    for (
+      var index = terminalBoundary + 1;
+      index < chronological.length;
+      index++
+    ) {
+      final message = chronological[index];
+      if (message['role'] != 'user' ||
+          message['_optimistic'] != true ||
+          message['_steer'] == true ||
+          canonicalTranscriptIdentity(message) != null) {
+        continue;
+      }
+      if (optimisticIndex != null) return;
+      optimisticIndex = index;
+    }
+    if (optimisticIndex == null) return;
+    final local = chronological[optimisticIndex]['content']?.toString() ?? '';
+    if (local == inflightUser ||
+        _whitespaceNormalizedPrompt(local) !=
+            _whitespaceNormalizedPrompt(inflightUser)) {
+      return;
+    }
+    chronological.removeAt(optimisticIndex);
+  }
+
+  static String _whitespaceNormalizedPrompt(String text) =>
+      text.trim().replaceAll(RegExp(r'\s+'), ' ');
+
   static bool _matchesDurableStructuredInput(
     Map<String, dynamic> message,
     String content,
@@ -987,6 +1032,18 @@ class DesktopSessionReconciler {
       snapshot.resolvedTurnStartedAt,
     );
     final hasInflightUser = inflightUser?.trim().isNotEmpty == true;
+    // Recovery of a turn this client submitted: the open turn's optimistic
+    // row IS the prompt the runtime now reports as `inflight.user`. The
+    // Gateway sanitizes the text it stores (whitespace, paste artifacts,
+    // appended attachment references), so text equality cannot bridge them.
+    // Keep exactly one row for the turn — the runtime's — instead of stacking
+    // two identical-looking bubbles that also double the expected user count.
+    if (bridgeOwnedLiveUser &&
+        !snapshot.messagesProvided &&
+        hasInflightUser &&
+        liveUserPlan.emits(0)) {
+      _dropOwnedOptimisticOpenTurnUser(chronological, inflightUser!);
+    }
     final durableStructuredInflight =
         inflightUser != null &&
         chronological.any(

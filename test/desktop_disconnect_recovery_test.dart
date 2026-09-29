@@ -90,6 +90,18 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
     _events.addError(error);
   }
 
+  /// The event stream reports a loss while the socket itself stays open
+  /// (e.g. the silent-fanout watchdog): `connect()` is then a no-op.
+  void loseStreamKeepingSocket() {
+    _events.addError(
+      const TuiGatewayRpcError(
+        'gateway.transport',
+        'Hermes Desktop connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      ),
+    );
+  }
+
   void emit(
     String type, {
     String? sessionId,
@@ -4453,6 +4465,124 @@ void main() {
       expect(gateway.createForFirstSubmitCalls, createsBeforeOutage);
     },
   );
+
+  // Pixel 29/09 21:40: el socket seguía vivo, el servidor terminó el turno y
+  // cada resume devolvía `running=false` sin mensajes (`messages_omitted`).
+  // La recuperación se quedaba en «Conexión perdida — reconectando…» y
+  // «Trabajando…» para siempre, releyendo el transcript cada pocos segundos.
+  for (final (firstLossWhileRunning, socketStaysOpen) in const [
+    (false, true),
+    (true, true),
+    (false, false),
+    (true, false),
+  ]) {
+    test('turno propio terminado durante la pérdida converge y deja conectado '
+        '(pérdida previa en curso: $firstLossWhileRunning, '
+        'socket abierto: $socketStaysOpen)', () async {
+      const storedId = 'session-finished-while-lost';
+      const prompt =
+          'mensaje largo que termina mientras el chat está '
+          'desconectado, con varias frases.';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var serverFinished = false;
+      final chat = _recoverableChat(
+        'finished-while-lost-$firstLossWhileRunning',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          return [
+            const {
+              'message_id': 'finished-user',
+              'role': 'user',
+              'content': prompt,
+            },
+            if (serverFinished)
+              const {
+                'message_id': 'finished-final',
+                'role': 'assistant',
+                'content': 'respuesta final durable',
+              },
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: '$prompt\n',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      if (firstLossWhileRunning) {
+        // Primera pérdida con el turno aún en curso: se re-adopta el inflight.
+        gateway.recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-finished-running',
+          storedSessionId: storedId,
+          created: false,
+          inflight: DesktopInflightTurn(
+            user: prompt,
+            assistant: 'parcial',
+            streaming: true,
+          ),
+          running: true,
+          status: 'running',
+        );
+        gateway.drop();
+        await _waitUntil(
+          () => chat.desktopRuntimeSessionId == 'runtime-finished-running',
+        );
+      }
+      // El servidor termina el turno; el resume ya no trae mensajes.
+      serverFinished = true;
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-finished-idle',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      if (socketStaysOpen) {
+        gateway.loseStreamKeepingSocket();
+      } else {
+        gateway.drop();
+      }
+
+      await _waitUntil(
+        () =>
+            (chat.state == ChatPipelineState.completed &&
+                chat.transportStatus.isConnected) ||
+            loaderCalls > 25,
+      );
+      expect(
+        loaderCalls,
+        lessThanOrEqualTo(25),
+        reason: 'recovery must not poll the transcript forever',
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == prompt,
+        ),
+        hasLength(1),
+        reason: 'the optimistic prompt and its durable row are one turn',
+      );
+      expect(
+        chat.messages.where(
+          (message) => message['content'] == 'respuesta final durable',
+        ),
+        hasLength(1),
+      );
+    });
+  }
 
   test(
     'V5 client-owned turn keeps submitted-turn recovery after stream loss',

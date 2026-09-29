@@ -4691,6 +4691,7 @@ class ActiveChat {
 
   int get adaptiveRefreshEventRevision => _adaptiveRefreshEventRevision;
   int get adaptiveFullRefreshRevision => _adaptiveFullRefreshRevision;
+
   /// Bumped on every `sessions.changed` broadcast, regardless of runtime
   /// ownership or busy state — the screen reads this to reconcile the OPEN
   /// transcript against the durable store, the same trigger Desktop uses.
@@ -17453,11 +17454,37 @@ class ActiveChat {
     } finally {
       if (gateway.isConnected) {
         _publishTransportState(ChatTransportState.connected);
+      } else if (state == ChatPipelineState.completed) {
+        // The turn converged from the durable REST transcript while the
+        // socket is still down. Nothing else reconnects an idle chat, so the
+        // banner would keep saying "connection lost" on a healthy network
+        // until the next send. Try once; a failure keeps the honest offline
+        // state and the next send reconnects as usual. A cancelled or failed
+        // turn opens nothing new.
+        unawaited(_restoreTransportAfterTurnRecovery(gateway));
       }
       if (_recoveringDesktopTurnEpoch == turnEpoch) {
         _recoveringDesktopTurnEpoch = null;
       }
     }
+  }
+
+  Future<void> _restoreTransportAfterTurnRecovery(
+    HermesDesktopGateway gateway,
+  ) async {
+    if (_disposed || !identical(gateway, _desktopGateway)) return;
+    try {
+      await gateway.connect().timeout(const Duration(seconds: 15));
+    } catch (_) {
+      return;
+    }
+    if (_disposed ||
+        !identical(gateway, _desktopGateway) ||
+        !gateway.isConnected ||
+        _recoveringDesktopTurnEpoch != null) {
+      return;
+    }
+    _publishTransportState(ChatTransportState.connected);
   }
 
   Future<void> _recoverDesktopTurnFromSnapshot(
