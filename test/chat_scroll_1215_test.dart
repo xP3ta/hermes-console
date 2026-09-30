@@ -505,4 +505,111 @@ void main() {
       await tearDownChat(tester, gateway);
     });
   });
+
+  group('#1215 new messages on the jump button', () {
+    Finder jumpButton() => find.byKey(const ValueKey('chat-scroll-to-bottom'));
+
+    testWidgets('counts messages that arrive while the reader is away', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      await scrollUp(tester, 300);
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-visible')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('nuevo'),
+        findsNothing,
+        reason: 'nothing arrived yet',
+      );
+
+      chat.internalMessagesForTesting = [
+        ...remoteTurn('away-1'),
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('2 nuevos')),
+        findsOneWidget,
+      );
+
+      chat.internalMessagesForTesting = [
+        {'id': 'away-2-a', 'role': 'assistant', 'content': 'Otra respuesta.'},
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('3 nuevos')),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsLabel('Ir al final de la conversación, 3 nuevos'),
+        findsOneWidget,
+      );
+
+      await tester.tap(jumpButton());
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(controllerOf(tester).position.pixels, closeTo(0, 0.5));
+      expect(
+        find.textContaining('nuevos'),
+        findsNothing,
+        reason: 'reaching the bottom reads everything',
+      );
+
+      // Back up: only what arrives from now on is new.
+      await scrollUp(tester, 300);
+      chat.internalMessagesForTesting = [
+        {'id': 'away-3-a', 'role': 'assistant', 'content': 'Una más.'},
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('a streamed reply counts once, not per token', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      await chat.send(
+        fullText: 'Respuesta larga',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      await settle(tester);
+      await scrollUp(tester, 300);
+      for (var delta = 0; delta < 5; delta++) {
+        gateway.emit('message.delta', {'text': 'Fragmento $delta. '});
+        await settle(tester);
+      }
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
+        findsOneWidget,
+      );
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await settle(tester);
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+  });
 }

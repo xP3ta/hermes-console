@@ -134,6 +134,7 @@ import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/chat_turn.dart';
+import '../utils/chat_read_marker.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/responsive.dart';
 import '../utils/slash_commands.dart';
@@ -1643,6 +1644,75 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
+    if (value) {
+      _beginAwayFromBottom();
+    } else {
+      _endAwayFromBottom();
+    }
+  }
+
+  // Mensajes llegados mientras el lector está lejos del fondo. Se fija el
+  // último mensaje visible al apartarse y solo se recuenta cuando llega
+  // contenido (eventos estructurales o el primer token de una respuesta),
+  // nunca por frame ni por scroll.
+  final ValueNotifier<int> _newWhileAway = ValueNotifier(0);
+  Map<String, dynamic>? _awayMarker;
+  String? _awayMarkerKey;
+  int _awayCountableBaseline = 0;
+
+  int _countableMessages() {
+    var total = 0;
+    for (final message in _messages) {
+      if (chatReadMarkerCountable(message)) total++;
+    }
+    return total;
+  }
+
+  void _beginAwayFromBottom() {
+    if (!_chatBound) return;
+    final marker = chatNewestCountableMessage(_messages);
+    _awayMarker = marker;
+    _awayMarkerKey = marker == null ? null : chatReadMarkerKey(marker);
+    _awayCountableBaseline = _countableMessages();
+    _newWhileAway.value = 0;
+  }
+
+  void _endAwayFromBottom() {
+    _awayMarker = null;
+    _awayMarkerKey = null;
+    _awayCountableBaseline = 0;
+    _newWhileAway.value = 0;
+  }
+
+  void _recountNewWhileAway({bool olderHistoryOnly = false}) {
+    if (_disposed || !_scrollToBottomVisibility.value) return;
+    if (olderHistoryOnly) {
+      // Older rows extend the far end: they are never news for the reader,
+      // only the baseline of the fallback count moves with them.
+      final total = _countableMessages();
+      _awayCountableBaseline = total - _newWhileAway.value;
+      return;
+    }
+    final messages = _messages;
+    final found = chatMessagesNewerThanMarker(
+      messages,
+      marker: _awayMarker,
+      key: _awayMarkerKey,
+    );
+    final int count;
+    if (found != null) {
+      count = found.count;
+    } else {
+      // The marker row was replaced by a copy without a durable id (an
+      // optimistic prompt reconciled by the server). The number of countable
+      // rows added since leaving the bottom still holds.
+      var total = 0;
+      for (final message in messages) {
+        if (chatReadMarkerCountable(message)) total++;
+      }
+      count = math.max(total - _awayCountableBaseline, _newWhileAway.value);
+    }
+    _newWhileAway.value = math.max(count, 0);
   }
 
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
@@ -5506,6 +5576,12 @@ class _ChatScreenState extends State<ChatScreen>
     if ((event != ActiveChatEvent.token || materializeLiveAssistant) &&
         !contextOnlySessionInfo) {
       setState(() {});
+      if (event == ActiveChatEvent.earlierMessagesLoaded) {
+        _recountNewWhileAway(olderHistoryOnly: true);
+      } else if (event != ActiveChatEvent.sessionInfo &&
+          event != ActiveChatEvent.responseMetrics) {
+        _recountNewWhileAway();
+      }
     }
     switch (event) {
       case ActiveChatEvent.started:
@@ -6074,6 +6150,7 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.dispose();
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
+    _newWhileAway.dispose();
     _activityPillExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
@@ -10597,6 +10674,8 @@ class _ChatScreenState extends State<ChatScreen>
                                                         key: const ValueKey(
                                                           'chat-scroll-to-bottom',
                                                         ),
+                                                        newMessages:
+                                                            _newWhileAway,
                                                         onTap: _scrollToBottom,
                                                       ),
                                                     ),
@@ -18288,14 +18367,29 @@ class _RenderBottomGapWhenVisible extends RenderShiftedBox {
 
 class _ScrollToBottomButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ScrollToBottomButton({required this.onTap, super.key});
+  final ValueListenable<int> newMessages;
+  const _ScrollToBottomButton({
+    required this.onTap,
+    required this.newMessages,
+    super.key,
+  });
 
   @override
-  Widget build(BuildContext context) => _ChatScrollButton(
-    onTap: onTap,
-    label: Strings.of(context).chaScrollToBottom,
-    icon: Icons.keyboard_arrow_down,
-    iconSize: 20,
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: newMessages,
+    builder: (context, count, _) {
+      final strings = Strings.of(context);
+      final newLabel = count > 0 ? strings.sc1215NewMessages(count) : null;
+      return _ChatScrollButton(
+        onTap: onTap,
+        label: newLabel == null
+            ? strings.chaScrollToBottom
+            : '${strings.chaScrollToBottom}, $newLabel',
+        icon: Icons.keyboard_arrow_down,
+        iconSize: 20,
+        badge: newLabel,
+      );
+    },
   );
 }
 
@@ -18377,6 +18471,10 @@ class _ChatScrollButton extends StatelessWidget {
   final double iconSize;
   final bool loading;
 
+  /// Short text shown next to the circle (e.g. "3 new"); the button keeps its
+  /// 48 dp height so the transcript padding never changes with it.
+  final String? badge;
+
   const _ChatScrollButton({
     super.key,
     required this.onTap,
@@ -18384,6 +18482,7 @@ class _ChatScrollButton extends StatelessWidget {
     required this.icon,
     this.iconSize = 18,
     this.loading = false,
+    this.badge,
   });
 
   @override
@@ -18401,15 +18500,22 @@ class _ChatScrollButton extends StatelessWidget {
           onTap: onTap,
           behavior: HitTestBehavior.opaque,
           child: SizedBox(
-            width: 48,
+            width: badge == null ? 48 : null,
             height: 48,
             child: Center(
+              widthFactor: 1,
               child: Container(
-                width: 32,
+                width: badge == null ? 32 : null,
                 height: 32,
+                padding: badge == null
+                    ? null
+                    : const EdgeInsetsDirectional.only(start: 12, end: 8),
                 decoration: BoxDecoration(
                   color: colors.surfaceVariant,
-                  shape: BoxShape.circle,
+                  shape: badge == null ? BoxShape.circle : BoxShape.rectangle,
+                  borderRadius: badge == null
+                      ? null
+                      : BorderRadius.circular(16),
                   border: Border.all(
                     color: colors.divider.withValues(alpha: 0.55),
                   ),
@@ -18429,7 +18535,26 @@ class _ChatScrollButton extends StatelessWidget {
                           color: colors.accent,
                         ),
                       )
-                    : Icon(icon, size: iconSize, color: colors.accent),
+                    : badge == null
+                    ? Icon(icon, size: iconSize, color: colors.accent)
+                    : ExcludeSemantics(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              badge!,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: colors.accent,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Icon(icon, size: iconSize, color: colors.accent),
+                          ],
+                        ),
+                      ),
               ),
             ),
           ),

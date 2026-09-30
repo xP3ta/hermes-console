@@ -7516,5 +7516,13 @@
   },
   "cm1215AttachmentLoading": "Loading…",
   "cm1215AttachmentUnavailable": "Not available",
-  "cm1215AttachmentServerOnly": "Only on the server"
+  "cm1215AttachmentServerOnly": "Only on the server",
+  "sc1215NewMessages": "{count, plural, =1{1 new} other{{count} new}}",
+  "@sc1215NewMessages": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }
