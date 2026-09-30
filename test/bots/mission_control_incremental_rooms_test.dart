@@ -85,6 +85,24 @@ final class _IncrementalGateway
     return sendTail?.call() ?? spec070LogPage('groups_log_empty');
   }
 
+  final mutations = <String>[];
+
+  @override
+  Future<HostedGroupRoom> rename(
+    String roomId, {
+    required String name,
+    required int generation,
+  }) async {
+    mutations.add('rename:$name');
+    return spec070Room();
+  }
+
+  @override
+  Future<HostedGroupRoom> stop(String roomId, {required int generation}) async {
+    mutations.add('stop');
+    return spec070Room();
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -279,6 +297,49 @@ void main() {
       generation: 1,
     );
     expect(gateway.sinceCalls, [8]);
+    repository.close();
+  });
+
+  // Rename and stop re-read the whole log from seq 0, one page per 100
+  // events; a long room waited seconds for a readback the cursor already
+  // held.
+  test('rename and stop read only the delta after the cursor', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+
+    final renamed = await repository.renameHostedGroup(
+      room,
+      name: 'Devs',
+      generation: 1,
+    );
+    expect(gateway.mutations, ['rename:Devs']);
+    expect(gateway.fullLogReads, 0);
+    expect(gateway.sinceCalls, [8], reason: 'only the delta after the cursor');
+    expect(renamed.log?.events, hasLength(8));
+
+    gateway.sinceCalls.clear();
+    final stopped = await repository.stopHostedGroup(room, generation: 1);
+    expect(gateway.mutations, ['rename:Devs', 'stop']);
+    expect(gateway.fullLogReads, 0);
+    expect(gateway.sinceCalls, [8]);
+    expect(stopped.log?.events, hasLength(8));
+    repository.close();
+  });
+
+  test('rename without an open cursor reads the log from the start', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final renamed = await repository.renameHostedGroup(
+      spec070Room(),
+      name: 'Devs',
+      generation: 1,
+    );
+    expect(gateway.fullLogReads, 0);
+    expect(gateway.sinceCalls, [0, 4], reason: 'complete, gap-free log');
+    expect(renamed.log?.events, hasLength(8));
     repository.close();
   });
 

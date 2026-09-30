@@ -685,6 +685,22 @@ final class MissionControlRepository
     );
   }
 
+  /// The log after a rename/stop. Incremental gateways continue the room's
+  /// cursor (the delta since the last read, or a complete paged read when
+  /// none is open yet) instead of re-reading every page from seq 0; a
+  /// rotated authority or rewound log still restarts the cursor from zero.
+  Future<HostedGroupLogPage> _mutationLog(
+    MissionHostedGroupsGateway gateway,
+    String roomId,
+    int generation,
+  ) async {
+    if (gateway is! MissionHostedGroupsIncrementalGateway) {
+      return gateway.log(roomId, generation: generation);
+    }
+    final incremental = gateway as MissionHostedGroupsIncrementalGateway;
+    return (await _cursorFor(incremental, roomId, generation).pull()).log;
+  }
+
   Future<MissionHostedGroupsGateway> _requireHosted(
     GroupMethod method,
     int generation,
@@ -788,7 +804,7 @@ final class MissionControlRepository
       name: name,
       generation: generation,
     );
-    final log = await gateway.log(room.roomId, generation: generation);
+    final log = await _mutationLog(gateway, room.roomId, generation);
     return _verifiedWorkspaceReadback(
       previous: room,
       current: current,
@@ -804,7 +820,7 @@ final class MissionControlRepository
   }) async {
     final gateway = await _requireHosted(GroupMethod.stop, generation);
     final current = await gateway.stop(room.roomId, generation: generation);
-    final log = await gateway.log(room.roomId, generation: generation);
+    final log = await _mutationLog(gateway, room.roomId, generation);
     return _verifiedWorkspaceReadback(
       previous: room,
       current: current,
