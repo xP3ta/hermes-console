@@ -6454,6 +6454,10 @@ class _ChatScreenState extends State<ChatScreen>
       _liveAssistantFrame.value = null;
     }
     if (!_scrollController.hasClients) return;
+    // Already at the newest row, or bouncing past it: a jump would cut the
+    // spring (and a held drag) with a one-frame snap to the edge.
+    final position = _scrollController.position;
+    if (position.pixels <= position.minScrollExtent) return;
     if (animate && !_reduceMotion) {
       _scrollController.animateTo(
         0,
@@ -18551,6 +18555,16 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
       velocity: velocity,
     );
     final overlayDelta = lock.takeOverlayExtentChange();
+    // Past an edge (the bounce region) the reader is AT that edge, not reading
+    // a row above it: every correction below would clamp the overscroll to
+    // the extent in one frame and the spring would snap instead of settling.
+    // Keep the inherited (bouncing) position; the ballistic activity started
+    // on release brings it back smoothly. Pending deltas are dropped because
+    // they describe growth the reader is already riding with the edge.
+    if (oldPosition.outOfRange) {
+      lock.clear();
+      return inherited;
+    }
     if (!lock.enabled) {
       lock.clear();
       return (inherited + overlayDelta)

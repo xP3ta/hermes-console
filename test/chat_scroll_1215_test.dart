@@ -394,4 +394,115 @@ void main() {
       await tearDownChat(tester, gateway);
     });
   });
+
+  group('#1215 edge overscroll', () {
+    Future<TestGesture> pullPastBottom(WidgetTester tester) async {
+      final gesture = await tester.startGesture(tester.getCenter(transcript()));
+      for (var step = 0; step < 8; step++) {
+        await gesture.moveBy(const Offset(0, -20));
+        await tester.pump();
+      }
+      return gesture;
+    }
+
+    Future<List<double>> releaseAndTrace(
+      WidgetTester tester,
+      TestGesture gesture,
+      ScrollController controller,
+    ) async {
+      await gesture.up();
+      final trace = <double>[controller.position.pixels];
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        trace.add(controller.position.pixels);
+      }
+      return trace;
+    }
+
+    void expectSpringSettle(List<double> trace) {
+      for (var i = 1; i < trace.length; i++) {
+        expect(
+          trace[i],
+          greaterThanOrEqualTo(trace[i - 1] - 0.01),
+          reason: 'the bounce returns towards the edge without reversing',
+        );
+      }
+      expect(trace.last, closeTo(0, 0.5));
+      expect(
+        trace.where((pixels) => pixels < -0.5).length,
+        greaterThan(2),
+        reason: 'the overscroll settles over several frames, not in one snap',
+      );
+    }
+
+    testWidgets('a row arriving mid-bounce does not snap the edge', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      final controller = controllerOf(tester);
+      final gesture = await pullPastBottom(tester);
+      final pulled = controller.position.pixels;
+      expect(pulled, lessThan(-30), reason: 'precondition: overscrolled');
+
+      chat.internalMessagesForTesting = [
+        ...remoteTurn('bounce'),
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      expect(
+        controller.position.pixels,
+        closeTo(pulled, 1),
+        reason: 'the finger still holds the overscroll after a relayout',
+      );
+      expectSpringSettle(await releaseAndTrace(tester, gesture, controller));
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('streaming growth mid-bounce keeps the overscroll', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      final controller = controllerOf(tester);
+      await chat.send(
+        fullText: 'Respuesta larga',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      gateway.emit('message.delta', {'text': 'Inicio de la respuesta.'});
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      final gesture = await pullPastBottom(tester);
+      final pulled = controller.position.pixels;
+      expect(pulled, lessThan(-30), reason: 'precondition: overscrolled');
+
+      gateway.emit('message.delta', {
+        'text': '\n\n${List.filled(20, 'Texto que crece.').join(' ')}',
+      });
+      for (var frame = 0; frame < 3; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+        expect(
+          controller.position.pixels,
+          closeTo(pulled, 1),
+          reason: 'frame $frame: growth must not throw the held edge away',
+        );
+      }
+      expectSpringSettle(await releaseAndTrace(tester, gesture, controller));
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+  });
 }
