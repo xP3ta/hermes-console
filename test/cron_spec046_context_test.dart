@@ -116,4 +116,48 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'cron backstop sleeps in background and restarts from the resume refresh',
+    (tester) async {
+      var reads = 0;
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method == 'GET' && request.url.path == '/api/cron/jobs') {
+            reads += 1;
+            return http.Response(jsonEncode([_job()]), 200);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(_host(client));
+      await tester.pumpAndSettle();
+      expect(reads, 1);
+
+      await tester.pump(const Duration(seconds: 30));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 50));
+      expect(reads, 1, reason: 'no refresh while the app is in background');
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(reads, 2, reason: 'resume refreshes at once');
+
+      // The old background-phase tick (t=120 s) must not add a redundant read
+      // 40 s after the resume refresh; the next backstop is a full interval.
+      await tester.pump(const Duration(seconds: 45));
+      expect(reads, 2);
+      await tester.pump(const Duration(seconds: 20));
+      expect(reads, 3);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

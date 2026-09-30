@@ -121,11 +121,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
     _repository = CronRepository(_client);
-    _refreshTimer = Timer.periodic(cronBackstopRefreshInterval, (_) {
-      if (_refreshAllowed && !_fetching) {
-        unawaited(_loadJobs(showLoader: false));
-      }
-    });
+    _armRefreshTimer();
     _startEventUpdates();
     final gateway = _ownedEventClient;
     if (gateway != null) {
@@ -157,6 +153,18 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   AgentProfile? _profileInfo(String name) => _profiles[name];
+
+  /// Backstop refresh while the app is visible. It is cancelled in background
+  /// (its ticks would only wake the isolate to find refresh disallowed) and
+  /// re-armed on resume, right after the immediate resume refresh.
+  void _armRefreshTimer() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(cronBackstopRefreshInterval, (_) {
+      if (_refreshAllowed && !_fetching) {
+        unawaited(_loadJobs(showLoader: false));
+      }
+    });
+  }
 
   bool get _refreshAllowed =>
       mounted && _foreground && ModalRoute.of(context)?.isCurrent != false;
@@ -246,9 +254,14 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground) {
+      if (_refreshTimer == null) _armRefreshTimer();
       _scheduleEventReconnect(immediate: true);
       if (!_fetching) unawaited(_loadJobs(showLoader: false));
     } else {
+      if (state != AppLifecycleState.inactive) {
+        _refreshTimer?.cancel();
+        _refreshTimer = null;
+      }
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
       _eventStableTimer?.cancel();
