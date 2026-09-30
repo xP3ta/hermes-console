@@ -12348,11 +12348,12 @@ void main() {
     final inputRow = find.byKey(const ValueKey('composer-input-row'));
     final cardRect = tester.getRect(card);
     final rowRect = tester.getRect(inputRow);
-    // One 120 dp thumb in a full-width composer: it must sit at the start
-    // edge, not float in the middle of the input.
+    // One compact thumb in a full-width composer: it must sit at the start
+    // edge (behind the strip's 12 dp inset from the rounded surface), not
+    // float in the middle of the input.
     expect(
       cardRect.left,
-      closeTo(rowRect.left, 8),
+      closeTo(rowRect.left + 12, 4),
       reason: 'card.left=${cardRect.left} row.left=${rowRect.left}',
     );
     expect(cardRect.center.dx, lessThan(rowRect.center.dx - 40));

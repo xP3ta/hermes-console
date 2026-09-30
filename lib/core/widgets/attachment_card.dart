@@ -135,6 +135,14 @@ class AttachmentCard extends StatelessWidget {
   final VoidCallback? onRetry;
   final VoidCallback? onTap;
 
+  /// Composer variant: a smaller thumb ([compactThumbSize]) with 24 dp
+  /// remove/retry circles, so staged images fit inside the rounded input.
+  /// Chat bubbles keep the default 120 dp thumb.
+  final bool compact;
+
+  /// Side of the image thumb in the [compact] variant.
+  static const double compactThumbSize = 80;
+
   const AttachmentCard({
     super.key,
     required this.name,
@@ -147,7 +155,10 @@ class AttachmentCard extends StatelessWidget {
     this.onRemove,
     this.onRetry,
     this.onTap,
+    this.compact = false,
   });
+
+  double get _thumbSize => compact ? compactThumbSize : 120;
 
   @override
   Widget build(BuildContext context) {
@@ -212,8 +223,8 @@ class AttachmentCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          width: 120,
-          height: 120,
+          width: _thumbSize,
+          height: _thumbSize,
           color: colors.surfaceVariant,
           child: img,
         ),
@@ -391,7 +402,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.close,
-                    size: 14,
+                    size: compact ? 16 : 14,
                     color: colors.textSecondary,
                   ),
                 ),
@@ -422,7 +433,7 @@ class AttachmentCard extends StatelessWidget {
               height: 48,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.all(4),
+                  padding: EdgeInsets.all(compact ? 3 : 4),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     shape: BoxShape.circle,
@@ -430,7 +441,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.refresh_rounded,
-                    size: 15,
+                    size: compact ? 16 : 15,
                     color: colors.textSecondary,
                   ),
                 ),

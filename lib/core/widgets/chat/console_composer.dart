@@ -598,84 +598,85 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
     // column centres its children: one or two thumbs ended up floating in the
     // middle of the input. Take the full width and pin the row to the start
     // edge (RTL-aware) so attachments stack from the leading side.
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var index = 0; index < attachments.length; index++) ...[
-                if (index > 0) const SizedBox(width: 10),
-                Builder(
-                  builder: (context) {
-                    final attachment = attachments[index];
-                    final hasLocalImage =
-                        attachment.isImage &&
-                        attachment.localPath.isNotEmpty &&
-                        File(attachment.localPath).existsSync();
-                    final previewable =
-                        hasLocalImage &&
-                        (attachment.uploadState ==
-                                AttachmentUploadState.pending ||
-                            attachment.uploadState ==
-                                AttachmentUploadState.error);
-                    final changing =
-                        attachment.uploadState ==
-                        AttachmentUploadState.uploading;
-                    final openPreview = previewable
-                        ? () => showImageViewer(
+    //
+    // The scroll view clips to its own box and sits flush with the rounded
+    // (radius 28) input surface. Its padding keeps the thumbs off the
+    // surface's corner arc and leaves room for the remove/retry targets that
+    // overhang each card by 12 dp, so neither is cut at the edges.
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 12, 12, 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var index = 0; index < attachments.length; index++) ...[
+              if (index > 0) const SizedBox(width: 12),
+              Builder(
+                builder: (context) {
+                  final attachment = attachments[index];
+                  final hasLocalImage =
+                      attachment.isImage &&
+                      attachment.localPath.isNotEmpty &&
+                      File(attachment.localPath).existsSync();
+                  final previewable =
+                      hasLocalImage &&
+                      (attachment.uploadState ==
+                              AttachmentUploadState.pending ||
+                          attachment.uploadState ==
+                              AttachmentUploadState.error);
+                  final changing =
+                      attachment.uploadState == AttachmentUploadState.uploading;
+                  final openPreview = previewable
+                      ? () =>
+                            showImageViewer(context, File(attachment.localPath))
+                      : null;
+                  return Semantics(
+                    container: changing || previewable,
+                    explicitChildNodes: changing || previewable,
+                    liveRegion:
+                        changing ||
+                        attachment.uploadState == AttachmentUploadState.error,
+                    label: changing
+                        ? Strings.of(
                             context,
-                            File(attachment.localPath),
-                          )
-                        : null;
-                    return Semantics(
-                      container: changing || previewable,
-                      explicitChildNodes: changing || previewable,
-                      liveRegion:
-                          changing ||
-                          attachment.uploadState == AttachmentUploadState.error,
-                      label: changing
-                          ? Strings.of(
-                              context,
-                            ).chaAttachmentUploadInProgress(attachment.name)
-                          : previewable
-                          ? Strings.of(
-                              context,
-                            ).chaPreviewAttachment(attachment.name)
+                          ).chaAttachmentUploadInProgress(attachment.name)
+                        : previewable
+                        ? Strings.of(
+                            context,
+                          ).chaPreviewAttachment(attachment.name)
+                        : null,
+                    button: previewable,
+                    onTap: openPreview,
+                    child: AttachmentCard(
+                      key: ValueKey('attachment-card-${attachment.localId}'),
+                      compact: true,
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      sizeLabel: attachment.formattedSize,
+                      thumbnailFile: hasLocalImage
+                          ? File(attachment.localPath)
                           : null,
-                      button: previewable,
+                      showUploadState: true,
+                      uploadState: attachment.uploadState,
                       onTap: openPreview,
-                      child: AttachmentCard(
-                        key: ValueKey('attachment-card-${attachment.localId}'),
-                        name: attachment.name,
-                        mimeType: attachment.mimeType,
-                        sizeLabel: attachment.formattedSize,
-                        thumbnailFile: hasLocalImage
-                            ? File(attachment.localPath)
-                            : null,
-                        showUploadState: true,
-                        uploadState: attachment.uploadState,
-                        onTap: openPreview,
-                        onRetry:
-                            attachment.uploadState ==
-                                    AttachmentUploadState.error &&
-                                attachment.localId.isNotEmpty &&
-                                onRetry != null
-                            ? () => onRetry!(attachment.localId)
-                            : null,
-                        onRemove: attachment.localId.isEmpty || onRemove == null
-                            ? null
-                            : () => onRemove!(attachment.localId),
-                      ),
-                    );
-                  },
-                ),
-              ],
+                      onRetry:
+                          attachment.uploadState ==
+                                  AttachmentUploadState.error &&
+                              attachment.localId.isNotEmpty &&
+                              onRetry != null
+                          ? () => onRetry!(attachment.localId)
+                          : null,
+                      onRemove: attachment.localId.isEmpty || onRemove == null
+                          ? null
+                          : () => onRemove!(attachment.localId),
+                    ),
+                  );
+                },
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
