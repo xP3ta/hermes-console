@@ -118,6 +118,58 @@ void main() {
   );
 
   testWidgets(
+    'cron detail backstop sleeps in background and refreshes on resume',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var detailReads = 0;
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.url.path == '/api/cron/jobs') {
+            return http.Response(jsonEncode([_job()]), 200);
+          }
+          if (request.url.path == '/api/cron/jobs/nightly-report') {
+            detailReads += 1;
+            return http.Response(jsonEncode(_job()), 200);
+          }
+          if (request.url.path == '/api/cron/jobs/nightly-report/runs') {
+            return http.Response(jsonEncode({'runs': []}), 200);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(_host(client, initialJobId: 'nightly-report'));
+      await tester.pumpAndSettle();
+      expect(find.text('Destination'), findsOneWidget);
+      final opened = detailReads;
+
+      await tester.pump(const Duration(seconds: 30));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await tester.pump(const Duration(seconds: 50));
+      expect(detailReads, opened, reason: 'no refresh while hidden');
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(detailReads, opened + 1, reason: 'resume refreshes at once');
+
+      await tester.pump(const Duration(seconds: 45));
+      expect(detailReads, opened + 1);
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pumpAndSettle();
+      expect(detailReads, opened + 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'cron backstop sleeps in background and restarts from the resume refresh',
     (tester) async {
       var reads = 0;
