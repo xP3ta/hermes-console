@@ -164,6 +164,18 @@ Future<_SlowRoomGateway> _pump(
   return gateway;
 }
 
+/// Key of the Retry button of the pending bubble showing [text].
+ValueKey<String> _retryOf(String text) {
+  final bubble = find.ancestor(
+    of: find.text(text),
+    matching: _keyPrefix('room-pending-bubble-'),
+  );
+  final key = (bubble.evaluate().first.widget.key! as ValueKey<String>).value;
+  return ValueKey(
+    key.replaceFirst('room-pending-bubble-', 'room-pending-retry-'),
+  );
+}
+
 Future<void> _tapSend(WidgetTester tester) async {
   await tester.pump();
   await tester.tap(
@@ -278,6 +290,51 @@ void main() {
     expect(gateway.sends.last.text, 'do not lose me');
     expect(find.text('do not lose me'), findsOneWidget);
     expect(_keyPrefix('room-pending-'), findsNothing);
+  });
+
+  testWidgets('a later message never overtakes one that failed', (
+    tester,
+  ) async {
+    final gateway = await _pump(tester);
+    gateway.failSend = true;
+    await tester.enterText(_field, 'first');
+    await _tapSend(tester);
+    await tester.enterText(_field, 'second');
+    await _tapSend(tester);
+    await tester.pump(_rpc * 3);
+    await tester.pumpAndSettle();
+
+    final first = gateway.sends.single.clientEventId;
+    expect(
+      [for (final s in gateway.sends) s.text],
+      ['first'],
+      reason: 'the second message waits behind the failed one',
+    );
+    expect(find.byKey(ValueKey('room-pending-failed-$first')), findsOneWidget);
+    expect(find.byKey(_retryOf('second')), findsOneWidget);
+
+    gateway.failSend = false;
+    await tester.tap(find.byKey(ValueKey('room-pending-retry-$first')));
+    await tester.pump(_rpc * 3);
+    await tester.pumpAndSettle();
+    expect(
+      [for (final s in gateway.sends) s.text],
+      ['first', 'first'],
+      reason: 'retrying the first does not silently send the second',
+    );
+
+    await tester.tap(find.byKey(_retryOf('second')));
+    await tester.pump(_rpc * 3);
+    await tester.pumpAndSettle();
+    expect(
+      [for (final s in gateway.sends) s.text],
+      ['first', 'first', 'second'],
+    );
+    expect(_keyPrefix('room-pending-'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('first')).dy,
+      lessThan(tester.getTopLeft(find.text('second')).dy),
+    );
   });
 
   testWidgets('a refresh that sees the message first never duplicates it', (
