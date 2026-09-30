@@ -7557,5 +7557,6 @@
   "q1215QueueAbandonAcceptedBody": "Hermes had already accepted it, but it could not be confirmed that it finished. Removing it will not resend it; if it is still running, Hermes will still answer. The rest of the queue will continue.",
   "q1215QueueAbandonFailed": "Could not remove the message. It is still queued; try again in a moment.",
   "q1215QueueResumeFailed": "Could not resume the queue yet. Wait for it to finish stopping and try again.",
-  "q1215QueueMissingAttachment": "An attachment is missing from this phone, so it cannot be sent. Delete it and attach the file again."
+  "q1215QueueMissingAttachment": "An attachment is missing from this phone, so it cannot be sent. Delete it and attach the file again.",
+  "q1215QueueHeadStuckNote": "they won't send on their own: check the first one"
 }

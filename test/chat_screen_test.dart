@@ -27070,6 +27070,8 @@ void main() {
     // The row still shows what it is, and the next one keeps its actions.
     expect(find.text('mensaje acked'), findsOneWidget);
     expect(pressed('chat-queue-delete-prepared:next'), isNotNull);
+    // Nothing runs, so the header does not promise a send at turn end.
+    expect(find.text('se enviarán al terminar el turno'), findsNothing);
     // Restored from an earlier run with no terminal: it never promises a
     // retry it cannot do, and it always offers a working way out.
     expect(find.text('Envío pendiente. Reintenta.'), findsNothing);
@@ -27305,6 +27307,12 @@ void main() {
     await tester.pump();
 
     const id = 'prepared:photo';
+    // Nothing is running and the head is stuck: no false promise.
+    expect(find.text('se enviarán al terminar el turno'), findsNothing);
+    expect(
+      find.text('no se enviarán solos: revisa el primero'),
+      findsOneWidget,
+    );
     const reason =
         'Falta un adjunto en este móvil y no se puede enviar. Bórralo y vuelve a adjuntarlo.';
     // The row says why it is stuck, not a bare "try again".
@@ -27550,6 +27558,8 @@ void main() {
     final firstId = chat.queuedEntries.first.id;
     final secondId = chat.queuedEntries.last.id;
 
+    // A turn is running: the usual note is true here.
+    expect(find.text('se enviarán al terminar el turno'), findsOneWidget);
     await tester.tap(find.byKey(ValueKey('chat-queue-edit-$firstId')));
     await tester.pump();
 
@@ -27592,6 +27602,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(chat.queuedMessages, ['primero corregido']);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cabecera de cola no promete envío con la cabeza agotada', (
+    tester,
+  ) async {
+    final chat = await pumpChat(tester);
+    chat.enqueue('primero');
+    await tester.pump();
+    expect(chat.isStreaming, isFalse);
+    chat.markQueuedRetryExhaustedForTesting(chat.queuedEntries.single.id);
+    await tester.pump();
+    expect(find.text('se enviarán al terminar el turno'), findsNothing);
+    expect(
+      find.text('no se enviarán solos: revisa el primero'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('con un turno en marcha la cabecera conserva su nota', (
+    tester,
+  ) async {
+    final chat = await pumpChat(tester, chatState: ChatPipelineState.streaming);
+    chat.enqueue('primero');
+    chat.markQueuedRetryExhaustedForTesting(chat.queuedEntries.single.id);
+    await tester.pump();
+    expect(chat.isStreaming, isTrue);
+    expect(find.text('se enviarán al terminar el turno'), findsOneWidget);
+    expect(find.text('no se enviarán solos: revisa el primero'), findsNothing);
   });
 
   Future<void> exerciseRestoredApproval(

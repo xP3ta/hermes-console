@@ -13643,6 +13643,8 @@ class _ChatScreenState extends State<ChatScreen>
                       child: Text(
                         _chat.queueParked
                             ? Strings.of(context).chaQueueParkedNote
+                            : _queueHeadStuck(queuedEntries)
+                            ? Strings.of(context).q1215QueueHeadStuckNote
                             : Strings.of(context).chaQueuedNote,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -13711,6 +13713,23 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  /// Nothing is running and the first queued row will not go on its own
+  /// (unconfirmed, left over from an earlier run, attachment missing, retries
+  /// used up). The header must not promise it will be sent "when the turn
+  /// ends". A row merely `blocked` may have a retry scheduled, so it does not
+  /// count by itself.
+  bool _queueHeadStuck(List<QueuedEntryView> entries) {
+    if (_chat.isStreaming || entries.isEmpty) return false;
+    final head = entries.first;
+    if (head.kind == QueuedEntryKind.desktopAccepted) return false;
+    final retryKey = head.id.startsWith('prepared:')
+        ? head.id.substring('prepared:'.length)
+        : head.id;
+    return head.stopWaitingAvailable ||
+        head.missingAttachment ||
+        _chat.queuedRetriesExhausted.contains(retryKey);
   }
 
   Future<void> _abandonUncertainQueued(QueuedEntryView entry) async {
