@@ -7525,5 +7525,29 @@
         "type": "int"
       }
     }
-  }
+  },
+  "cs1215FindAction": "Search in chat",
+  "cs1215FindHint": "Search in this chat",
+  "cs1215FindClear": "Clear search",
+  "cs1215MatchCounter": "{current} of {total}",
+  "@cs1215MatchCounter": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "cs1215NoMatches": "No results",
+  "cs1215NoMatchesAnywhere": "No results in this chat",
+  "cs1215OlderMatch": "Previous result (older)",
+  "cs1215NewerMatch": "Next result (newer)",
+  "cs1215CloseFind": "Close search",
+  "cs1215SearchOlder": "Search older messages",
+  "cs1215SearchingOlder": "Searching older messages…",
+  "cs1215CurrentMatchLabel": "Current search result",
+  "cs1215SlashArg": "[text]",
+  "cs1215SlashDesc": "Search text in this chat"
 }

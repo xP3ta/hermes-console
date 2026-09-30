@@ -194,6 +194,8 @@ import '../widgets/voice_disclosure_dialog.dart';
 import '../widgets/voice_stage.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/chat_find_bar.dart';
+import '../utils/transcript_search.dart';
 
 /// El streaming sustituye mapas de mensaje completos. Esta caché usa identidad
 /// porque las anclas pertenecen al objeto renderizado, así que hay que retirar
@@ -1826,6 +1828,23 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool _autoFollowStreaming = true;
+
+  // Búsqueda dentro del chat. Mientras la barra está abierta el seguimiento
+  // del fondo queda suspendido: saltar a un resultado no puede competir con
+  // el streaming ni con la hidratación. Cerrar la barra lo restaura.
+  bool _findOpen = false;
+  String _findInitialQuery = '';
+  String _findQuery = '';
+  int _findEpoch = 0;
+  final TranscriptSearchIndex _findIndex = TranscriptSearchIndex();
+  List<Map<String, dynamic>> _findMatchMessages = const [];
+  List<TranscriptMatch> _findMatches = const [];
+  final ValueNotifier<ChatFindStatus> _findStatus = ValueNotifier(
+    const ChatFindStatus(),
+  );
+  final ValueNotifier<Map<String, dynamic>?> _findActiveMessage = ValueNotifier(
+    null,
+  );
   int? _streamingScrollPointer;
   Offset? _streamingScrollOrigin;
   bool _streamingScrollGestureMoved = false;
@@ -1961,7 +1980,7 @@ class _ChatScreenState extends State<ChatScreen>
     _revealedChars = 0;
     _liveAssistantMaterialized = false;
     _liveAssistantFrame.value = null;
-    _autoFollowStreaming = readerIsAtBottom;
+    _autoFollowStreaming = readerIsAtBottom && !_findOpen;
     _showScrollToBottom = !readerIsAtBottom;
   }
 
@@ -4463,7 +4482,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (_disposed || !mounted || bottomInset <= 0) return;
+    if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
     if (_isNearBottom) return;
@@ -5407,6 +5426,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    if (_findOpen && event != ActiveChatEvent.token) _scheduleFindRefresh();
     // An externally observed successor can become live without a local
     // `started` event. Retire the old terminal host before publishing its
     // successor's frame, or both rows would read the same live notifier.
@@ -6233,6 +6253,8 @@ class _ChatScreenState extends State<ChatScreen>
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
     _newWhileAway.dispose();
+    _findStatus.dispose();
+    _findActiveMessage.dispose();
     _activityPillExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
@@ -6414,6 +6436,7 @@ class _ChatScreenState extends State<ChatScreen>
       _terminalLiveHostReleasePending = false;
       if (_disposed ||
           !mounted ||
+          _findOpen ||
           _chat.isStreaming ||
           _autoFollowStreaming ||
           !_liveAssistantMaterialized ||
@@ -6518,6 +6541,7 @@ class _ChatScreenState extends State<ChatScreen>
   void _finishStreamingScrollInteraction(PointerEvent event) {
     final gestureMoved = _finishTrackedStreamingPointer(event);
     if (!_chat.isStreaming ||
+        _findOpen ||
         _autoFollowStreaming ||
         !_scrollController.hasClients) {
       return;
@@ -8555,6 +8579,8 @@ class _ChatScreenState extends State<ChatScreen>
         _pushScreen(ActivityScreen(connection: widget.connection));
       case SlashAction.kanban:
         _pushScreen(TasksScreen(connection: widget.connection));
+      case SlashAction.find:
+        _openFind(initialQuery: arg);
       case SlashAction.unavailable:
         return;
       case SlashAction.remote:
@@ -9525,6 +9551,29 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final target = _messages[messageIndex];
     _freezeStreamingFollow();
+    final revealed = await _revealTranscriptMessage(target);
+    if (revealed == false && mounted) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
+  /// Desplaza el historial hasta que [target] quede alineado arriba. Devuelve
+  /// true si lo alcanzó, false si recorrió todo sin materializarlo y null si la
+  /// pantalla o el scroll desaparecieron a mitad del recorrido.
+  /// [stillWanted] permite a un llamador abandonar el recorrido cuando otro
+  /// posterior (p. ej. el siguiente resultado de búsqueda) lo sustituye.
+  Future<bool?> _revealTranscriptMessage(
+    Map<String, dynamic> target, {
+    bool Function()? stillWanted,
+  }) async {
+    bool live() =>
+        mounted &&
+        _scrollController.hasClients &&
+        (stillWanted == null || stillWanted());
+    if (!live()) return null;
     final position = _scrollController.position;
 
     Future<bool> alignIfMounted() async {
@@ -9538,14 +9587,14 @@ class _ChatScreenState extends State<ChatScreen>
       return true;
     }
 
-    if (await alignIfMounted()) return;
+    if (await alignIfMounted()) return true;
     position.jumpTo(position.minScrollExtent);
     await SchedulerBinding.instance.endOfFrame;
-    if (!mounted || !_scrollController.hasClients) return;
-    if (await alignIfMounted()) return;
+    if (!live()) return null;
+    if (await alignIfMounted()) return true;
 
     for (var attempt = 0; attempt < 80; attempt++) {
-      if (!mounted || !_scrollController.hasClients) return;
+      if (!live()) return null;
       if (position.pixels >= position.maxScrollExtent - 1) break;
       position.jumpTo(
         (position.pixels + position.viewportDimension * 0.9).clamp(
@@ -9554,15 +9603,171 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       );
       await SchedulerBinding.instance.endOfFrame;
-      if (await alignIfMounted()) return;
+      if (await alignIfMounted()) return true;
     }
+    return false;
+  }
 
-    if (mounted) {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
-        kind: HermesNoticeKind.warning,
-      );
+  void _openFind({String initialQuery = ''}) {
+    if (_findOpen) {
+      if (initialQuery.trim().isNotEmpty) _applyFindQuery(initialQuery);
+      return;
     }
+    // Suspende el seguimiento del fondo con la misma ruta que un lector que
+    // pausa el stream con el dedo; en reposo basta con desactivar la bandera.
+    _freezeStreamingFollow();
+    setState(() {
+      _findOpen = true;
+      _findInitialQuery = initialQuery.trim();
+      _autoFollowStreaming = false;
+    });
+    if (_findInitialQuery.isNotEmpty) _applyFindQuery(_findInitialQuery);
+  }
+
+  void _closeFind() {
+    if (!_findOpen) return;
+    _findEpoch++;
+    _findQuery = '';
+    _findMatches = const [];
+    _findMatchMessages = const [];
+    _findIndex.clear();
+    _findStatus.value = const ChatFindStatus();
+    _findActiveMessage.value = null;
+    setState(() => _findOpen = false);
+    // Restaura el comportamiento normal: quien está en el fondo vuelve a
+    // seguirlo; quien quedó leyendo arriba conserva su vista y la flecha.
+    if (!_isNearBottom) {
+      _showScrollToBottom = true;
+      return;
+    }
+    if (_chat.isStreaming) {
+      _streamingViewportLock.disable();
+      _autoFollowStreaming = true;
+      _revealedChars = _chat.assistantContent.length;
+      _showScrollToBottom = false;
+      _publishLiveAssistantFrame();
+      _scheduleLiveFollowFrame();
+    } else if (_liveAssistantMaterialized) {
+      _scheduleTerminalLiveHostRelease();
+    } else {
+      _autoFollowStreaming = true;
+    }
+  }
+
+  bool _findRefreshScheduled = false;
+
+  void _scheduleFindRefresh() {
+    if (_findRefreshScheduled) return;
+    _findRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _findRefreshScheduled = false;
+      if (_disposed || !mounted || !_findOpen) return;
+      _recomputeFindMatches(keepCurrent: true);
+    });
+  }
+
+  void _recomputeFindMatches({required bool keepCurrent}) {
+    final previousStatus = _findStatus.value;
+    final previousIndex = previousStatus.current;
+    final previousMessage = previousIndex == null
+        ? null
+        : _findMatchMessages[previousIndex];
+    final previousMatch = previousIndex == null
+        ? null
+        : _findMatches[previousIndex];
+    final messages = _messages;
+    final matches = _findIndex.search(messages, _findQuery);
+    _findMatches = matches;
+    _findMatchMessages = [for (final m in matches) messages[m.messageIndex]];
+    int? current = matches.isEmpty ? null : 0;
+    if (keepCurrent && previousMessage != null && previousMatch != null) {
+      for (var i = 0; i < matches.length; i++) {
+        if (identical(_findMatchMessages[i], previousMessage) &&
+            matches[i].start == previousMatch.start) {
+          current = i;
+          break;
+        }
+      }
+    }
+    _publishFindStatus(current);
+  }
+
+  void _publishFindStatus(int? current, {bool searchingOlder = false}) {
+    _findStatus.value = ChatFindStatus(
+      query: _findQuery,
+      total: _findMatches.length,
+      current: current,
+      canSearchOlder: _chat.hasEarlierMessages,
+      searchingOlder: searchingOlder,
+    );
+    _findActiveMessage.value = current == null
+        ? null
+        : _findMatchMessages[current];
+  }
+
+  void _applyFindQuery(String query) {
+    if (!_findOpen) return;
+    _findEpoch++;
+    _findQuery = query;
+    _recomputeFindMatches(keepCurrent: false);
+    unawaited(_revealCurrentFindMatch());
+  }
+
+  Future<void> _revealCurrentFindMatch() async {
+    final current = _findStatus.value.current;
+    if (current == null) return;
+    final epoch = _findEpoch;
+    final source = _findMatchMessages[current];
+    final projection = _currentRenderProjection;
+    final messages = _messages;
+    var target = source;
+    final sourceIndex = messages.indexWhere((m) => identical(m, source));
+    if (sourceIndex >= 0) {
+      final renderIndex = projection.nearestRenderableMessageIndex(sourceIndex);
+      if (renderIndex != null) target = messages[renderIndex];
+    }
+    if (epoch != _findEpoch) return;
+    await _revealTranscriptMessage(
+      target,
+      stillWanted: () => _findOpen && epoch == _findEpoch,
+    );
+  }
+
+  void _stepFindMatch(int delta) {
+    final status = _findStatus.value;
+    final current = status.current;
+    if (current == null || status.total == 0) return;
+    _findEpoch++;
+    _publishFindStatus((current + delta) % status.total);
+    unawaited(_revealCurrentFindMatch());
+  }
+
+  /// Pagina historial anterior (la misma paginación del botón «cargar
+  /// anteriores») hasta encontrar la consulta o agotar el historial.
+  Future<void> _searchOlderFindMessages() async {
+    if (!_findOpen || _findQuery.trim().isEmpty) return;
+    final epoch = ++_findEpoch;
+    _publishFindStatus(null, searchingOlder: true);
+    while (mounted &&
+        !_disposed &&
+        _findOpen &&
+        epoch == _findEpoch &&
+        _chat.hasEarlierMessages) {
+      final before = _messages.length;
+      await _loadEarlierMessages();
+      if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+      _findMatches = _findIndex.search(_messages, _findQuery);
+      if (_findMatches.isNotEmpty) break;
+      // Sin progreso (fallo de red): no reintentes en bucle.
+      if (_messages.length == before) break;
+    }
+    if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+    _recomputeFindMatches(keepCurrent: false);
+    // Deja que la carga conserve primero el viewport del lector (su ajuste
+    // post-frame) y solo entonces recorre la lista hasta el resultado.
+    await SchedulerBinding.instance.endOfFrame;
+    if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+    unawaited(_revealCurrentFindMatch());
   }
 
   bool _isSubagentOpenPending(SubagentActivity activity) {
@@ -10522,6 +10727,8 @@ class _ChatScreenState extends State<ChatScreen>
                     icon: const Icon(Icons.more_vert_rounded),
                     onSelected: (action) {
                       switch (action) {
+                        case _BotChatHeaderAction.find:
+                          _openFind();
                         case _BotChatHeaderAction.model:
                           _showModelSheet();
                         case _BotChatHeaderAction.controls:
@@ -10529,6 +10736,23 @@ class _ChatScreenState extends State<ChatScreen>
                       }
                     },
                     itemBuilder: (context) => [
+                      PopupMenuItem(
+                        key: const ValueKey('bot-chat-find-action'),
+                        value: _BotChatHeaderAction.find,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.search_rounded, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                str.cs1215FindAction,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       PopupMenuItem(
                         key: const ValueKey('bot-chat-model-action'),
                         value: _BotChatHeaderAction.model,
@@ -10588,7 +10812,12 @@ class _ChatScreenState extends State<ChatScreen>
                         : colors.textSecondary,
                     onPressed: _newChat,
                   ),
-                  const SizedBox(width: 4),
+                  IconButton(
+                    key: const ValueKey('chat-find-trigger'),
+                    icon: const Icon(Icons.search_rounded),
+                    tooltip: str.cs1215FindAction,
+                    onPressed: _openFind,
+                  ),
                   IconButton(
                     key: const ValueKey('chat-control-trigger'),
                     icon: const Icon(Icons.more_vert),
@@ -10659,6 +10888,17 @@ class _ChatScreenState extends State<ChatScreen>
                               onDismiss: () => setState(
                                 () => _coreReadCoverageNoticeDismissed = true,
                               ),
+                            ),
+                          if (_findOpen)
+                            ChatFindBar(
+                              status: _findStatus,
+                              initialQuery: _findInitialQuery,
+                              onQueryChanged: _applyFindQuery,
+                              onOlder: () => _stepFindMatch(1),
+                              onNewer: () => _stepFindMatch(-1),
+                              onSearchOlderMessages: () =>
+                                  unawaited(_searchOlderFindMessages()),
+                              onClose: _closeFind,
                             ),
                           Expanded(
                             child: Stack(
@@ -13915,9 +14155,10 @@ class _ChatScreenState extends State<ChatScreen>
                 _readerPreservedTurnInsertions.contains,
               );
               final unit = _materializeRenderUnit(plan);
-              Widget child = _buildRenderUnit(
-                unit,
-                assistantSlice: assistantSlice,
+              Widget child = _wrapFindHighlight(
+                _buildRenderUnit(unit, assistantSlice: assistantSlice),
+                unit: unit,
+                sourceMessages: sourceMessages,
               );
               if (_newSinceFirstUnread != null &&
                   (assistantSlice?.showHeader ?? true) &&
@@ -14042,6 +14283,36 @@ class _ChatScreenState extends State<ChatScreen>
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
       errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
       child: transcript,
+    );
+  }
+
+  /// Resaltado del resultado actual de la búsqueda. Envuelve solo el
+  /// contenido de filas estables: el host vivo del streaming queda fuera para
+  /// no interponer nada en la geometría que mide el lock del viewport.
+  Widget _wrapFindHighlight(
+    Widget child, {
+    required Object unit,
+    required List<Map<String, dynamic>> sourceMessages,
+  }) {
+    if (!_findOpen) return child;
+    final messages = _messages;
+    if (_chat.isStreaming &&
+        messages.isNotEmpty &&
+        identical(unit, messages.first)) {
+      return child;
+    }
+    if (unit is Map<String, dynamic> && _messageKeepsLiveHost(unit)) {
+      return child;
+    }
+    return ValueListenableBuilder<Map<String, dynamic>?>(
+      valueListenable: _findActiveMessage,
+      builder: (context, active, child) => ChatFindMatchHighlight(
+        active:
+            active != null && sourceMessages.any((m) => identical(m, active)),
+        semanticLabel: Strings.of(context).cs1215CurrentMatchLabel,
+        child: child!,
+      ),
+      child: child,
     );
   }
 
@@ -15047,7 +15318,7 @@ class _UserTurnGroup {
   _UserTurnGroup(this.primary);
 }
 
-enum _BotChatHeaderAction { model, controls }
+enum _BotChatHeaderAction { find, model, controls }
 
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven

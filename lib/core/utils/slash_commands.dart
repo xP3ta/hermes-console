@@ -18,6 +18,7 @@ enum SlashAction {
   models,
   activity,
   kanban,
+  find,
   remote,
   unavailable,
 }
@@ -119,6 +120,20 @@ List<SlashCommand> slashCommands(Strings s) => [
     description: s.slashDescActivity,
     action: SlashAction.activity,
   ),
+  SlashCommand(
+    name: 'find',
+    argHint: s.cs1215SlashArg,
+    description: s.cs1215SlashDesc,
+    action: SlashAction.find,
+    takesArg: true,
+  ),
+  SlashCommand(
+    name: 'buscar',
+    argHint: s.cs1215SlashArg,
+    description: s.cs1215SlashDesc,
+    action: SlashAction.find,
+    takesArg: true,
+  ),
 ];
 
 /// Sugerencias mientras se escribe el nombre del comando: el texto empieza por
@@ -187,6 +202,8 @@ ParsedSlash? parseSlashCommand(String text) {
     'soul': SlashAction.soul,
     'kanban': SlashAction.kanban,
     'activity': SlashAction.activity,
+    'find': SlashAction.find,
+    'buscar': SlashAction.find,
   };
   final action = nameToAction[name];
   if (action != null) {

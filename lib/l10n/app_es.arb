@@ -9057,5 +9057,29 @@
         "type": "int"
       }
     }
-  }
+  },
+  "cs1215FindAction": "Buscar en el chat",
+  "cs1215FindHint": "Buscar en este chat",
+  "cs1215FindClear": "Borrar búsqueda",
+  "cs1215MatchCounter": "{current} de {total}",
+  "@cs1215MatchCounter": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "cs1215NoMatches": "Sin resultados",
+  "cs1215NoMatchesAnywhere": "Sin resultados en este chat",
+  "cs1215OlderMatch": "Resultado anterior (más antiguo)",
+  "cs1215NewerMatch": "Resultado siguiente (más reciente)",
+  "cs1215CloseFind": "Cerrar búsqueda",
+  "cs1215SearchOlder": "Buscar en mensajes anteriores",
+  "cs1215SearchingOlder": "Buscando en mensajes anteriores…",
+  "cs1215CurrentMatchLabel": "Resultado de búsqueda actual",
+  "cs1215SlashArg": "[texto]",
+  "cs1215SlashDesc": "Busca texto en este chat"
 }
