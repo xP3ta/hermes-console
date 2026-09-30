@@ -2093,6 +2093,7 @@ void main() {
   var failOutboxWrites = false;
   var outboxWriteCalls = 0;
   Completer<String?>? delayedOutboxRead;
+  Completer<void>? delayedOutboxWrite;
   String? clipboardText;
   var foregroundServiceRunning = false;
   var hapticCalls = 0;
@@ -2298,6 +2299,7 @@ void main() {
     failOutboxWrites = false;
     outboxWriteCalls = 0;
     delayedOutboxRead = null;
+    delayedOutboxWrite = null;
     clipboardText = null;
     foregroundServiceRunning = false;
     hapticCalls = 0;
@@ -2331,6 +2333,8 @@ void main() {
                 }
                 if (args['key'] == 'chat_turn_outbox_v1') {
                   outboxWriteCalls++;
+                  final writeGate = delayedOutboxWrite;
+                  if (writeGate != null) await writeGate.future;
                 }
                 secureStore[args['key'] as String] = args['value'] as String;
                 return null;
@@ -10219,6 +10223,71 @@ void main() {
         await tester.pump(const Duration(milliseconds: 1200));
         gateway.emitComplete('dos');
         await tester.pump(const Duration(milliseconds: 500));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'queued turn: leaving while the enqueue is in flight does not '
+      'resurrect the queued text as a draft',
+      (tester) async {
+        final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+        final connection = _remoteConn('draft-orphan-queued-left');
+        final session = _session().copyWith(
+          id: 'saved-draft-queued-left',
+          messageCount: 2,
+          profile: 'default',
+        );
+        final chat = await pumpChat(
+          tester,
+          session: session,
+          connection: connection,
+          desktopGateway: gateway,
+        );
+        await tester.enterText(find.byType(TextField).first, 'turno en vuelo');
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.tap(find.byKey(const ValueKey('send')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        gateway.submitGate!.complete();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        await tester.enterText(find.byType(TextField).first, 'turno encolado');
+        // Past the debounce: the queued text is already an encrypted draft.
+        await tester.pump(const Duration(milliseconds: 400));
+        final store = await readStore();
+        expect(
+          (await store.load(connection.id, session.id)).text,
+          'turno encolado',
+        );
+        // Hold the durable enqueue write so the route is gone before the
+        // enqueue reports success.
+        final writeGate = Completer<void>();
+        delayedOutboxWrite = writeGate;
+        await tester.tap(find.byKey(const ValueKey('send')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        delayedOutboxWrite = null;
+        writeGate.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(chat.queuedMessages, ['turno encolado']);
+        expect(
+          (await store.load(connection.id, session.id)).text,
+          isEmpty,
+          reason: 'a queued turn must not come back as a draft on reopen',
+        );
+        expect(tester.takeException(), isNull);
+        gateway.emitComplete('uno');
+        await tester.pump(const Duration(milliseconds: 1200));
+        gateway.emitComplete('dos');
+        await tester.pump(const Duration(milliseconds: 500));
+        // Let queue drain/retry timers of the background chat settle.
+        await tester.pump(const Duration(seconds: 5));
         expect(tester.takeException(), isNull);
       },
     );

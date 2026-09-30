@@ -3060,6 +3060,36 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Clears the saved draft of a turn that was queued after this route was
+  /// disposed, but only while that draft is still exactly the queued batch:
+  /// newer content written for the same session is never touched.
+  Future<void> _clearQueuedDraftAfterLeaving(
+    String text,
+    List<AttachmentDraft> attachments,
+  ) async {
+    if (widget.connection.readOnly) return;
+    try {
+      final store =
+          _draftStore ??
+          widget.draftStoreOverride ??
+          ChatDraftStore(await SharedPreferences.getInstance());
+      final sessionId = _draftRecoverySessionId;
+      final profile = _recoveryProfile;
+      final stored = await store.load(
+        widget.connection.id,
+        sessionId,
+        profile: profile,
+      );
+      if (stored.text != text ||
+          !_sameAttachmentDrafts(stored.attachments, attachments)) {
+        return;
+      }
+      await store.clear(widget.connection.id, sessionId, profile: profile);
+    } catch (error) {
+      debugPrint('[chat-draft] queued cleanup failed (${error.runtimeType})');
+    }
+  }
+
   /// Retira el borrador que sigue siendo el lote exacto de un turno ya
   /// aceptado. No depende de esta pantalla: tras salir antes del ACK el
   /// lifecycle ya no admite escrituras y `_clearDraft` no puede actuar. El
@@ -7576,6 +7606,18 @@ class _ChatScreenState extends State<ChatScreen>
         if (usesComposerState) await _saveDraftSnapshot(text, attachments);
         _showOutboxUnavailable();
         return false;
+      }
+      if (!mounted) {
+        // The route closed while the enqueue was in flight. The turn is now
+        // durable in the queue, so its saved draft must not come back on
+        // reopen as a second copy of the same prompt.
+        if (usesComposerState) {
+          await _clearQueuedDraftAfterLeaving(
+            composerTextAtSubmit,
+            attachments,
+          );
+        }
+        return true;
       }
       if (usesComposerState &&
           _textController.text == composerTextAtSubmit &&
