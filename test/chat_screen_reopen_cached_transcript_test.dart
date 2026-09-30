@@ -179,4 +179,95 @@ void main() {
     activeChats.dispose();
     await tester.pump(const Duration(minutes: 5));
   });
+
+  testWidgets('returning to the foreground keeps the open chat and its '
+      'visible transcript', (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    final secure = SecureStorage();
+    final activeChats = ActiveChatService(
+      attachDesktopRuntimeOnLoad: false,
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    var reads = 0;
+    final chat = _attach(activeChats, (_, _) async {
+      reads += 1;
+      // Every read after the first never answers: a reload from scratch
+      // would leave the screen on the loader.
+      if (reads > 1) return Completer<List<Map<String, dynamic>>>().future;
+      return List.of(_rows);
+    });
+    await tester.runAsync(() => chat.loadMessages(expectedMessageCount: 2));
+
+    await tester.pumpWidget(
+      HermesApp(
+        connManager: manager,
+        appLock: AppLockService(prefs),
+        approvalPolicy: ApprovalPolicyService(prefs),
+        fontSize: FontSizeService(prefs),
+        bridgeManager: BridgeManager(secure, manager),
+        sshManager: SshManager(secure, manager),
+        sftpTransfers: SftpTransferService(
+          SshManager(secure, manager),
+          NotificationService(prefs),
+        ),
+        sshSessions: SshSessionService(SshManager(secure, manager)),
+        notifications: NotificationService(prefs),
+        activeChats: activeChats,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 500));
+    final context = tester.element(find.byType(Navigator).first);
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, _, _) =>
+            ChatScreen(connection: _connection, session: _session),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final screenState = tester.state(find.byType(ChatScreen));
+    expect(find.textContaining('cached answer'), findsWidgets);
+
+    // Background long enough for the idle-socket timer, then foreground.
+    for (final state in const [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump(const Duration(seconds: 90));
+    for (final state in const [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    final strings = Strings.of(tester.element(find.byType(ChatScreen)));
+    expect(
+      identical(tester.state(find.byType(ChatScreen)), screenState),
+      isTrue,
+    );
+    expect(
+      identical(activeChats.of(_connection.id, _session.id), chat),
+      isTrue,
+    );
+    expect(find.textContaining('cached answer'), findsWidgets);
+    expect(find.text(strings.commonLoading), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    activeChats.dispose();
+    await tester.pump(const Duration(minutes: 5));
+  });
 }
