@@ -134,7 +134,59 @@ final class MissionControlOpenTarget {
   }) : surface = MissionControlOwnedSurface.room;
 }
 
+/// Mission Control route for app-level entries (notifications, widgets) that
+/// already know their destination: it appears without its own slide so the
+/// destination pushed on top is the only visible transition. Back still
+/// animates normally.
+class MissionControlOwnerRoute<T> extends MaterialPageRoute<T> {
+  MissionControlOwnerRoute({required super.builder, super.settings});
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 300);
+}
+
 class MissionControlScreen extends StatefulWidget {
+  /// Opens [target] in a Mission Control of [connectionId] that is already
+  /// in [navigator]'s stack. Returns false when none is alive (the caller
+  /// then pushes a new one). If the target is already the visible route
+  /// nothing is pushed, so a repeated tap never stacks a second copy.
+  static bool openInExisting(
+    NavigatorState navigator,
+    String connectionId,
+    MissionControlOpenTarget target,
+  ) {
+    for (final state in _MissionControlScreenState._live.reversed) {
+      if (!state.mounted || state.widget.connection.id != connectionId) {
+        continue;
+      }
+      final route = state._ownRoute;
+      if (route == null ||
+          !route.isActive ||
+          !identical(route.navigator, navigator)) {
+        continue;
+      }
+      final shown = state._targetRoute;
+      if (shown != null &&
+          shown.isCurrent &&
+          state._targetKey == _targetKeyOf(target)) {
+        return true;
+      }
+      navigator.popUntil((candidate) => identical(candidate, route));
+      state._requestTarget(target);
+      return true;
+    }
+    return false;
+  }
+
+  static String _targetKeyOf(MissionControlOpenTarget target) =>
+      switch (target.surface) {
+        MissionControlOwnedSurface.bot => 'bot:${target.profile ?? ''}',
+        MissionControlOwnedSurface.room => 'room:${target.roomId ?? ''}',
+      };
+
   final SavedConnection connection;
   final ConnectionManager connManager;
   final MissionControlDataSource? dataSource;
@@ -220,7 +272,15 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   int _loadGeneration = 0;
   bool _lifecyclePaused = false;
   bool _disposed = false;
-  bool _initialOpenDispatched = false;
+  MissionControlOpenTarget? _pendingTarget;
+
+  /// Every mounted Mission Control, so app-level entries reuse one.
+  static final List<_MissionControlScreenState> _live = [];
+  ModalRoute<dynamic>? _ownRoute;
+
+  /// Route this screen pushed for the last opened room/Bot Chat target.
+  Route<dynamic>? _targetRoute;
+  String? _targetKey;
   late final ChatSurfaceCoordinator _surfaceCoordinator;
 
   MissionOrganization? get _selectedOrganization {
@@ -235,6 +295,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void initState() {
     super.initState();
+    _live.add(this);
+    _pendingTarget = widget.initialOpenTarget;
     _surfaceCoordinator = ChatSurfaceCoordinator(routeOwner: widget);
     _dataSource =
         widget.dataSource ??
@@ -275,6 +337,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       if (source is MissionControlRepository) {
         source.seedHostedLogs(cached.hostedGroups);
       }
+      // Open the target from the cached snapshot on the first frame instead
+      // of showing Mission Control while the refresh is in flight.
+      _scheduleInitialOpen(cached);
     }
     unawaited(_load(refresh: cached != null));
   }
@@ -282,6 +347,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _ownRoute = ModalRoute.of(context);
     final service =
         widget.activeChats ??
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
@@ -297,6 +363,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void dispose() {
     _disposed = true;
+    _live.remove(this);
     _rosterTimer?.cancel();
     _rosterSearchOpen.dispose();
     _statusRevision.dispose();
@@ -394,13 +461,37 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   void _scheduleInitialOpen(MissionBackendSnapshot snapshot) {
-    final target = widget.initialOpenTarget;
-    if (target == null || _initialOpenDispatched) return;
-    _initialOpenDispatched = true;
+    final target = _pendingTarget;
+    if (target == null) return;
+    _pendingTarget = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_openInitialTarget(target, snapshot));
     });
+  }
+
+  /// A later app-level entry for this live screen (see
+  /// [MissionControlScreen.openInExisting]).
+  void _requestTarget(MissionControlOpenTarget target) {
+    _pendingTarget = target;
+    final snapshot = _snapshot;
+    if (snapshot != null) _scheduleInitialOpen(snapshot);
+  }
+
+  Future<void> _pushTarget(
+    MissionControlOpenTarget target,
+    Route<void> route,
+  ) async {
+    _targetRoute = route;
+    _targetKey = MissionControlScreen._targetKeyOf(target);
+    try {
+      await Navigator.of(context).push(route);
+    } finally {
+      if (identical(_targetRoute, route)) {
+        _targetRoute = null;
+        _targetKey = null;
+      }
+    }
   }
 
   Future<void> _openInitialTarget(
@@ -418,7 +509,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             break;
           }
         }
-        if (agent != null) await _openChat(agent);
+        if (agent != null) await _openChat(agent, openTarget: target);
         return;
       case MissionControlOwnedSurface.room:
         final roomId = target.roomId;
@@ -429,7 +520,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         final capabilities = snapshot.hostedGroups.capabilities;
         final enabled = !widget.connection.readOnly;
         if (!mounted) return;
-        await Navigator.of(context).push(
+        await _pushTarget(
+          target,
           MaterialPageRoute<void>(
             builder: (_) => _HostedRoomWorkspace(
               draftScope: (
@@ -1053,7 +1145,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   /// Opens the agent's canonical Bot Chat, writable like any other chat.
-  Future<void> _openChat(MissionAgent agent) async {
+  Future<void> _openChat(
+    MissionAgent agent, {
+    MissionControlOpenTarget? openTarget,
+  }) async {
     // Console-local pins are a retired compatibility tier: retire them
     // best-effort so no later build can resurrect a stale pointer.
     if (!widget.connection.readOnly) {
@@ -1113,14 +1208,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (observer != null) {
       observer(session);
     } else {
-      await openChatFromSection<void>(
-        context,
-        builder: (_) => buildBotChatDestination(
-          connection: widget.connection,
-          session: session,
-          initialStoredSessionId: pinnedId,
-          profile: agent.profile,
-          avatarCache: _profileAvatarCache,
+      await _pushTarget(
+        openTarget ??
+            MissionControlOpenTarget.bot(
+              sessionId: pinnedId ?? '',
+              profile: agent.profile.name,
+            ),
+        MaterialPageRoute<void>(
+          builder: (_) => buildBotChatDestination(
+            connection: widget.connection,
+            session: session,
+            initialStoredSessionId: pinnedId,
+            profile: agent.profile,
+            avatarCache: _profileAvatarCache,
+          ),
         ),
       );
     }

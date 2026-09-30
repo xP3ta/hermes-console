@@ -1746,10 +1746,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (!_appNavigationFence.canCommit(request, nav, intent: intent)) {
       return NavigationDeliveryOutcome.deferred;
     }
+    // Reuse a live Mission Control (and do nothing when the target is already
+    // on screen) instead of stacking a second copy of it or of the room.
+    if (MissionControlScreen.openInExisting(nav, connection.id, target)) {
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
+    }
+    // Mission Control appears without its own slide: the room/Bot Chat it
+    // opens on its first frame is the single visible transition.
     unawaited(
       pushNotificationOwnerRoute<void>(
         nav,
-        MaterialPageRoute<void>(
+        MissionControlOwnerRoute<void>(
           builder: (_) => MissionControlScreen(
             connection: connection,
             connManager: widget.connManager,
