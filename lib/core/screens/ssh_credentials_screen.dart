@@ -10,6 +10,7 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
+import '../utils/ssh_error.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
@@ -118,7 +119,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       if (!hasNewKey && !_hadConfig) return Strings.of(context).sshcPasteKey;
       if (hasNewKey) {
         final err = SshManager.validateKey(_keyCtrl.text, _passphraseCtrl.text);
-        if (err != null) return err;
+        if (err != null) return localizedSshFailure(Strings.of(context), err);
       }
     }
     return null;
@@ -192,7 +193,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _testError = SshManager.describeError(e);
+        _testError = localizedSshError(Strings.of(context), e);
         _testing = false;
       });
     }

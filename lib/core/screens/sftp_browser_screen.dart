@@ -13,6 +13,7 @@ import '../services/sftp_transfer_service.dart';
 import '../services/ssh_manager.dart';
 import '../screens/lock_screen.dart';
 import '../theme/app_theme.dart';
+import '../utils/ssh_error.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/ssh_host_key_dialog.dart';
@@ -93,7 +94,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = SshManager.describeError(e);
+          _error = localizedSshError(Strings.of(context), e);
           _loading = false;
         });
       }
@@ -127,7 +128,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
       setState(() {
         _error = Strings.of(
           context,
-        ).sftpListError(_path, SshManager.describeError(e));
+        ).sftpListError(_path, localizedSshError(Strings.of(context), e));
         _loading = false;
       });
     }
@@ -224,7 +225,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
       _snack(s.sftpDeleted(e.filename));
       await _list();
     } catch (err) {
-      _snack(s.sftpDeleteError(SshManager.describeError(err)));
+      _snack(s.sftpDeleteError(localizedSshError(s, err)));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

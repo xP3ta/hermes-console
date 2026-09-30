@@ -20,7 +20,9 @@ class SshTerminalSession {
   final Terminal terminal;
   SSHClient? client;
   SSHSession? shell;
-  String? error;
+
+  /// Why the last connection attempt failed; localized by the UI.
+  Object? failure;
   final ValueNotifier<SshSessionPhase> phase = ValueNotifier<SshSessionPhase>(
     SshSessionPhase.connecting,
   );
@@ -139,7 +141,8 @@ class SshSessionService {
       });
       shell.done.then((_) {
         s.phase.value = SshSessionPhase.closed;
-        terminal.write('\r\n\x1b[90m[sesión cerrada]\x1b[0m\r\n');
+        final banner = _ssh.appStrings.i18n1215SshSessionClosedBanner;
+        terminal.write('\r\n\x1b[90m$banner\x1b[0m\r\n');
         _refresh();
         onMaybeRelease?.call();
       });
@@ -149,7 +152,7 @@ class SshSessionService {
     } catch (e) {
       candidate?.close();
       if (!identical(_sessions[connectionId], s)) return s;
-      s.error = SshManager.describeError(e);
+      s.failure = e;
       s.phase.value = SshSessionPhase.error;
       _refresh();
       onMaybeRelease?.call();

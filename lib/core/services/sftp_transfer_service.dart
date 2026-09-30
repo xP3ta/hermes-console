@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'notifications/notification_service.dart';
 import 'ssh_manager.dart';
+import '../utils/ssh_error.dart';
 
 enum TransferDirection { download, upload }
 
@@ -183,7 +184,7 @@ class SftpTransferService {
       t.status = TransferStatus.error;
       t.error = _cancelRequested.contains(t.id)
           ? 'Cancelado por el usuario'
-          : SshManager.describeError(e);
+          : localizedSshError(_ssh.appStrings, e);
       await _doneNotif(notifId, t);
     } finally {
       try {
@@ -276,7 +277,7 @@ class SftpTransferService {
       t.status = TransferStatus.error;
       t.error = _cancelRequested.contains(t.id)
           ? 'Cancelado por el usuario'
-          : SshManager.describeError(e);
+          : localizedSshError(_ssh.appStrings, e);
       await _doneNotif(notifId, t);
     } finally {
       client?.close();
