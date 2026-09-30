@@ -7513,5 +7513,8 @@
         "type": "String"
       }
     }
-  }
+  },
+  "cm1215AttachmentLoading": "Loading…",
+  "cm1215AttachmentUnavailable": "Not available",
+  "cm1215AttachmentServerOnly": "Only on the server"
 }

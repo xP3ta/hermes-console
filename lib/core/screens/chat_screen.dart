@@ -112,6 +112,7 @@ import '../widgets/chat_connection_recovery_row.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/inline_message_editor.dart';
 import '../widgets/stale_running_session_banner.dart';
+import '../widgets/user_server_attachment_card.dart';
 import 'foreground_conversation_reader.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/conversation/native_voice_session_configurator.dart';
@@ -1222,6 +1223,12 @@ class ChatScreen extends StatefulWidget {
   @visibleForTesting
   final ChatDraftStore? draftStoreOverride;
 
+  /// Replaces the Dashboard fetch of server-side user attachments
+  /// (`@image:`/`@file:` lines) in widget tests.
+  @visibleForTesting
+  final Future<void> Function(String path, File destination)?
+  userServerMediaFetcher;
+
   const ChatScreen({
     required this.connection,
     required this.session,
@@ -1239,6 +1246,7 @@ class ChatScreen extends StatefulWidget {
     this.cancelStreamOverride,
     this.sendAttemptObserver,
     this.draftStoreOverride,
+    this.userServerMediaFetcher,
     super.key,
   });
 
@@ -3851,6 +3859,53 @@ class _ChatScreenState extends State<ChatScreen>
         final client = BridgeClient(baseUrl: url, token: token);
         try {
           return await client.fetchGeneratedImage(name);
+        } finally {
+          client.close();
+        }
+      },
+    );
+  }
+
+  String get userServerMediaScope =>
+      '${widget.connection.id}\u0000$_effectiveSessionProfile';
+
+  /// Fetches a user attachment that Hermes persisted as an `@image:`/`@file:`
+  /// server path into the app-private media cache. Managed-files download is
+  /// tried first; images outside the managed root fall back to `/api/media`
+  /// (Hermes' images/screenshots/cache roots).
+  Future<File> downloadUserServerAttachment(GeneratedMediaReference reference) {
+    final profile = _effectiveSessionProfile;
+    final testFetcher = widget.userServerMediaFetcher;
+    final maxBytes = reference.kind == GeneratedMediaKind.image
+        ? GeneratedMediaService.maxImageBytes
+        : GeneratedMediaService.maxFileBytes;
+    return GeneratedMediaService.ensureDownloaded(
+      userServerMediaScope,
+      reference,
+      fetchServerPathToFile: (path, destination) async {
+        if (testFetcher != null) return testFetcher(path, destination);
+        final client = DashboardClient.lazy(widget.connection);
+        try {
+          await client.apiDownloadToFile(
+            'files/download?path=${Uri.encodeQueryComponent(path)}',
+            destination,
+            maxBytes: maxBytes,
+            profile: profile,
+          );
+        } on DashboardHttpException catch (error) {
+          if (reference.kind != GeneratedMediaKind.image ||
+              (error.statusCode != 400 && error.statusCode != 403)) {
+            rethrow;
+          }
+          final media = await client.apiGet(
+            'media?path=${Uri.encodeQueryComponent(path)}',
+          );
+          final dataUrl = media['data_url'];
+          final data = dataUrl is String && dataUrl.startsWith('data:')
+              ? Uri.tryParse(dataUrl)?.data
+              : null;
+          if (data == null || !data.isBase64) rethrow;
+          await destination.writeAsBytes(data.contentAsBytes(), flush: true);
         } finally {
           client.close();
         }
@@ -15752,11 +15807,16 @@ class _ParsedAttachment {
   /// Ruta local persistente de la imagen, si el adjunto era una imagen. Permite
   /// leer historiales legacy `⟦img:...⟧` sin romper miniaturas existentes.
   final String? imagePath;
+
+  /// Server copy persisted by Hermes as an `@image:`/`@file:` line. Used when
+  /// the private local copy is missing (reinstall, other device, eviction).
+  final UserServerAttachmentRef? serverRef;
   const _ParsedAttachment(
     this.name,
     this.sizeLabel, {
     this.historyReference,
     this.imagePath,
+    this.serverRef,
   });
 }
 
@@ -15974,9 +16034,95 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   );
 }
 
-({List<_ParsedAttachment> attachments, String text}) _parseUserContent(
-  String raw,
+typedef _ParsedUserContent = ({
+  List<_ParsedAttachment> attachments,
+  String text,
+});
+
+/// Bounded memo: every rebuild of a user bubble re-reads its content, and the
+/// transcript content of a row never changes in place.
+final LinkedHashMap<String, _ParsedUserContent> _parsedUserContentMemo =
+    LinkedHashMap<String, _ParsedUserContent>();
+const int _parsedUserContentMemoLimit = 256;
+
+_ParsedUserContent _parseUserContent(String raw) {
+  final cached = _parsedUserContentMemo.remove(raw);
+  if (cached != null) {
+    _parsedUserContentMemo[raw] = cached;
+    return cached;
+  }
+  final parsed = _parseUserContentUncached(raw);
+  _parsedUserContentMemo[raw] = parsed;
+  while (_parsedUserContentMemo.length > _parsedUserContentMemoLimit) {
+    _parsedUserContentMemo.remove(_parsedUserContentMemo.keys.first);
+  }
+  return parsed;
+}
+
+bool _parsedAttachmentIsImage(_ParsedAttachment attachment) =>
+    attachment.historyReference?.type == AttachmentType.image ||
+    (attachment.historyReference == null &&
+        attachmentKindFor(attachment.name, '') == AttachmentKind.image);
+
+/// Pairs Hermes' `@image:`/`@file:` lines with the `[📎 …]` markers of the same
+/// send (same kind, same order) so one attachment renders once; unmatched
+/// lines become standalone chips.
+List<_ParsedAttachment> _withServerRefs(
+  List<_ParsedAttachment> attachments,
+  List<UserServerAttachmentRef> serverRefs,
 ) {
+  if (serverRefs.isEmpty) return attachments;
+  final images = serverRefs.where((ref) => ref.isImage).toList();
+  final files = serverRefs.where((ref) => !ref.isImage).toList();
+  final paired = <_ParsedAttachment>[
+    for (final attachment in attachments)
+      switch (_parsedAttachmentIsImage(attachment) ? images : files) {
+        final pool when pool.isNotEmpty => _ParsedAttachment(
+          attachment.name,
+          attachment.sizeLabel,
+          historyReference: attachment.historyReference,
+          imagePath: attachment.imagePath,
+          serverRef: pool.removeAt(0),
+        ),
+        _ => attachment,
+      },
+  ];
+  for (final ref in serverRefs) {
+    if (images.contains(ref) || files.contains(ref)) {
+      paired.add(_ParsedAttachment(ref.displayName, '', serverRef: ref));
+    }
+  }
+  return List<_ParsedAttachment>.unmodifiable(paired);
+}
+
+_ParsedUserContent _parseUserContentUncached(String raw) {
+  final parsed = _parseUserContentMarkers(raw);
+  final serverRefs = parsed.serverRefs;
+  if (serverRefs.isEmpty) {
+    return (attachments: parsed.attachments, text: parsed.text);
+  }
+  var text = parsed.text.trim();
+  // Native-vision turns flatten each image part to a `[screenshot]` line; the
+  // lifted `@image:` ref already stands for it (Desktop drops it too).
+  if (serverRefs.any((ref) => ref.isImage)) {
+    text = text
+        .split('\n')
+        .where((line) => line.trim() != '[screenshot]')
+        .join('\n')
+        .trim();
+  }
+  return (
+    attachments: _withServerRefs(parsed.attachments, serverRefs),
+    text: text,
+  );
+}
+
+({
+  List<_ParsedAttachment> attachments,
+  String text,
+  List<UserServerAttachmentRef> serverRefs,
+})
+_parseUserContentMarkers(String raw) {
   raw = stripBotMentionNote(raw);
   // Quita los blobs de SISTEMA que no son del usuario: preámbulo de cron/skill y
   // el resumen de compactación de contexto. Si tras ellos hay un mensaje real,
@@ -15991,11 +16137,17 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   final legacyImagePaths = <String>[];
   final indexedImgRe = RegExp(r'^⟦img:(\d+):(.+)⟧$');
   final legacyImgRe = RegExp(r'^⟦img:(.+)⟧$');
+  final serverRefs = <UserServerAttachmentRef>[];
   final kept = <String>[];
   for (final l in raw.split('\n')) {
     final reference = AttachmentHistoryReference.tryParseMarker(l);
     if (reference != null) {
       historyReferences.putIfAbsent(reference.index, () => reference);
+      continue;
+    }
+    final serverRef = UserServerAttachmentRef.tryParseLine(l);
+    if (serverRef != null) {
+      serverRefs.add(serverRef);
       continue;
     }
     final indexed = indexedImgRe.firstMatch(l.trim());
@@ -16011,7 +16163,9 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     kept.add(l);
   }
   final lines = kept;
-  if (lines.isEmpty) return (attachments: const [], text: '');
+  if (lines.isEmpty) {
+    return (attachments: const [], text: '', serverRefs: serverRefs);
+  }
 
   final markerRe = RegExp(r'^\[📎 (.+?)\]$');
   final parsedAttachments = <_ParsedAttachment>[];
@@ -16043,7 +16197,11 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     markerCount++;
   }
   if (parsedAttachments.isEmpty) {
-    return (attachments: const [], text: lines.join('\n'));
+    return (
+      attachments: const [],
+      text: lines.join('\n'),
+      serverRefs: serverRefs,
+    );
   }
 
   var rest = lines.skip(markerCount).toList();
@@ -16056,7 +16214,11 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     // Compat con el formato anterior (línea de ruta entre paréntesis).
     rest = rest.skip(1).toList();
   }
-  return (attachments: parsedAttachments, text: rest.join('\n').trim());
+  return (
+    attachments: parsedAttachments,
+    text: rest.join('\n').trim(),
+    serverRefs: serverRefs,
+  );
 }
 
 /// Chip limpio que sustituye a un blob de SISTEMA (preámbulo de cron/skill o
@@ -16252,6 +16414,20 @@ class _UserMessage extends StatelessWidget {
           Builder(
             builder: (context) {
               final historyReference = attachment.historyReference;
+              final serverRef = attachment.serverRef;
+              final chatState = serverRef == null
+                  ? null
+                  : context.findAncestorStateOfType<_ChatScreenState>();
+              if (serverRef != null && chatState != null) {
+                return UserServerAttachmentCard(
+                  name: attachment.name,
+                  sizeLabel: attachment.sizeLabel,
+                  localReference: historyReference,
+                  serverRef: serverRef,
+                  cacheScope: chatState.userServerMediaScope,
+                  loader: chatState.downloadUserServerAttachment,
+                );
+              }
               if (historyReference != null) {
                 return AttachmentHistoryCard(
                   key: ValueKey(

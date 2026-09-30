@@ -9045,5 +9045,8 @@
         "type": "String"
       }
     }
-  }
+  },
+  "cm1215AttachmentLoading": "Cargando…",
+  "cm1215AttachmentUnavailable": "No disponible",
+  "cm1215AttachmentServerOnly": "Solo en el servidor"
 }

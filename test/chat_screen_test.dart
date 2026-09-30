@@ -2362,6 +2362,8 @@ void main() {
     bool registerActiveChatsTearDown = true,
     int transcriptPageSizeForTesting = 120,
     int Function()? wallClockMs,
+    Future<void> Function(String path, File destination)?
+    userServerMediaFetcher,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -2509,6 +2511,7 @@ void main() {
           missionBotProfile: missionBotProfile,
           missionAvatarCache: missionAvatarCache,
           draftStoreOverride: draftStore,
+          userServerMediaFetcher: userServerMediaFetcher,
         ),
       ),
     );
@@ -24705,6 +24708,196 @@ void main() {
       findsNothing,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  group('adjuntos persistidos del servidor (@image/@file)', () {
+    const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+    Directory mockSupportDir() {
+      final temp = Directory.systemTemp.createTempSync('chat-server-media-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (_) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      return temp;
+    }
+
+    Future<void> settleIo(WidgetTester tester, {int frames = 30}) async {
+      for (var frame = 0; frame < frames; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+    }
+
+    testWidgets('@image sin copia local descarga la miniatura del servidor', (
+      tester,
+    ) async {
+      mockSupportDir();
+      const serverPath = '/home/hermes/.hermes/images/upload_20260930_1.png';
+      final fetched = <String>[];
+      await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'user', 'content': 'Mira esto\n@image:$serverPath'},
+        ],
+        userServerMediaFetcher: (path, destination) async {
+          fetched.add(path);
+          await destination.writeAsBytes(base64Decode(pngBase64));
+        },
+      );
+      await settleIo(tester);
+
+      expect(find.text('Mira esto'), findsOneWidget);
+      expect(find.textContaining('@image:'), findsNothing);
+      expect(find.textContaining('/home/hermes'), findsNothing);
+      final card = find.byType(AttachmentCard);
+      expect(card, findsOneWidget);
+      expect(
+        find.descendant(of: card, matching: find.byType(Image)),
+        findsOneWidget,
+      );
+      expect(fetched, [serverPath]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('hatt + @image del mismo envío pintan un solo adjunto', (
+      tester,
+    ) async {
+      mockSupportDir();
+      final digest = List.filled(64, 'b').join();
+      final reference = AttachmentHistoryReference(
+        index: 0,
+        storageKey: digest,
+        type: AttachmentType.image,
+        mimeType: 'image/png',
+        sizeBytes: 70,
+        sha256Hex: digest,
+      );
+      const serverPath = '/home/hermes/.hermes/images/upload_20260930_2.png';
+      final fetched = <String>[];
+      await pumpChat(
+        tester,
+        messages: [
+          {
+            'role': 'user',
+            'content':
+                '[📎 foto.png · 70 B]\nDescribe la foto\n'
+                '${reference.toMarker()}\n@image:$serverPath',
+          },
+        ],
+        userServerMediaFetcher: (path, destination) async {
+          fetched.add(path);
+          await destination.writeAsBytes(base64Decode(pngBase64));
+        },
+      );
+      await settleIo(tester);
+
+      expect(find.text('Describe la foto'), findsOneWidget);
+      expect(find.textContaining('@image:'), findsNothing);
+      final card = find.byType(AttachmentCard);
+      expect(card, findsOneWidget);
+      expect(
+        find.descendant(of: card, matching: find.byType(Image)),
+        findsOneWidget,
+      );
+      expect(fetched, [serverPath]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('con copia privada verificada no se pide nada al servidor', (
+      tester,
+    ) async {
+      final temp = mockSupportDir();
+      late final AttachmentHistoryReference reference;
+      await tester.runAsync(() async {
+        final file = File('${temp.path}/local.png');
+        await file.writeAsBytes(base64Decode(pngBase64));
+        reference = (await AttachmentUploader.persistForHistory(
+          AttachmentDraft(
+            type: AttachmentType.image,
+            name: 'local.png',
+            mimeType: 'image/png',
+            sizeBytes: await file.length(),
+            localPath: file.path,
+          ),
+          index: 0,
+          baseDir: temp,
+        ))!;
+      });
+      var calls = 0;
+      await pumpChat(
+        tester,
+        messages: [
+          {
+            'role': 'user',
+            'content':
+                '[📎 local.png · 70 B]\nFoto local\n${reference.toMarker()}\n'
+                '@image:/home/hermes/.hermes/images/upload_local.png',
+          },
+        ],
+        userServerMediaFetcher: (path, destination) async {
+          calls++;
+          await destination.writeAsBytes(base64Decode(pngBase64));
+        },
+      );
+      await settleIo(tester);
+
+      final card = find.byType(AttachmentCard);
+      expect(card, findsOneWidget);
+      expect(
+        find.descendant(of: card, matching: find.byType(Image)),
+        findsOneWidget,
+      );
+      expect(calls, 0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'servidor sin el archivo muestra "No disponible" sin reintentar',
+      (tester) async {
+        mockSupportDir();
+        var calls = 0;
+        await pumpChat(
+          tester,
+          messages: const [
+            {
+              'role': 'user',
+              'content':
+                  'Revisa\n'
+                  '@image:/home/hermes/.hermes/images/borrada.png\n'
+                  '@file:docs/notas.txt',
+            },
+            {'role': 'assistant', 'content': 'Hecho'},
+          ],
+          userServerMediaFetcher: (path, destination) async {
+            calls++;
+            throw const DashboardHttpException(404);
+          },
+        );
+        await settleIo(tester);
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, -40));
+        await settleIo(tester, frames: 10);
+
+        expect(find.textContaining('@image:'), findsNothing);
+        expect(find.textContaining('@file:'), findsNothing);
+        expect(find.text('borrada.png'), findsOneWidget);
+        expect(find.text('notas.txt'), findsOneWidget);
+        expect(find.textContaining('No disponible'), findsOneWidget);
+        expect(find.textContaining('Solo en el servidor'), findsOneWidget);
+        expect(calls, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 
   testWidgets(
