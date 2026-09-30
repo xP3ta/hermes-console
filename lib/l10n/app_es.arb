@@ -9084,5 +9084,7 @@
   "cs1215SlashDesc": "Busca texto en este chat",
   "rs1215Sending": "Enviando…",
   "rs1215NotSent": "No enviado",
-  "rs1215Retry": "Reintentar"
+  "rs1215Retry": "Reintentar",
+  "q1215QueueAcceptedStale": "Hermes lo aceptó, pero no llegó a confirmar que terminara.",
+  "q1215QueueAbandonAcceptedBody": "Hermes ya lo había aceptado, pero no se pudo confirmar que terminara. Si lo quitas no se reenviará; si sigue en marcha, Hermes responderá igualmente. El resto de la cola seguirá."
 }

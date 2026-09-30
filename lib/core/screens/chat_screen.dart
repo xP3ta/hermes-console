@@ -13662,7 +13662,7 @@ class _ChatScreenState extends State<ChatScreen>
                 onDelete: () =>
                     unawaited(_deleteQueuedEntry(queuedEntries[i].id)),
                 onAbandon: () =>
-                    unawaited(_abandonUncertainQueued(queuedEntries[i].id)),
+                    unawaited(_abandonUncertainQueued(queuedEntries[i])),
               ),
               if (i != queuedEntries.length - 1)
                 Divider(
@@ -13678,18 +13678,20 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Future<void> _abandonUncertainQueued(String id) async {
+  Future<void> _abandonUncertainQueued(QueuedEntryView entry) async {
     final strings = Strings.of(context);
     final confirmed = await showHermesConfirmDialog(
       context: context,
       title: strings.chatQueueAbandonTitle,
-      message: strings.chatQueueAbandonBody,
+      message: entry.serverAccepted
+          ? strings.q1215QueueAbandonAcceptedBody
+          : strings.chatQueueAbandonBody,
       confirmLabel: strings.chatQueueAbandonConfirm,
       cancelLabel: strings.commonCancel,
       destructive: true,
     );
     if (!confirmed || !mounted) return;
-    await _chat.abandonUncertainQueuedTurn(id);
+    await _chat.abandonUncertainQueuedTurn(entry.id);
   }
 
   ConsoleComposerDictation _composerDictation({
@@ -18691,6 +18693,14 @@ class _QueuedRow extends StatelessWidget {
                     key: ValueKey('chat-queue-unknown-${entry.id}'),
                     style: TextStyle(fontSize: 10.5, color: colors.warning),
                   )
+                else if (entry.stopWaitingAvailable)
+                  // Acknowledged in an earlier run; "retry" would promise an
+                  // action this row does not have.
+                  Text(
+                    strings.q1215QueueAcceptedStale,
+                    key: ValueKey('chat-queue-accepted-stale-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
                 else if (entry.blocked)
                   Text(
                     Strings.of(context).chatQueueBlockedRetry,
@@ -18718,7 +18728,7 @@ class _QueuedRow extends StatelessWidget {
               ],
             ),
           ),
-          if (entry.deliveryUnknown)
+          if (entry.deliveryUnknown || entry.stopWaitingAvailable)
             // Edit/send/delete cannot act on a message that may already be
             // on the server; the one honest action is to stop waiting.
             action(

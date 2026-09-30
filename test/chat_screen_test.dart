@@ -26871,6 +26871,23 @@ void main() {
     // The row still shows what it is, and the next one keeps its actions.
     expect(find.text('mensaje acked'), findsOneWidget);
     expect(pressed('chat-queue-delete-prepared:next'), isNotNull);
+    // Restored from an earlier run with no terminal: it never promises a
+    // retry it cannot do, and it always offers a working way out.
+    expect(find.text('Envío pendiente. Reintenta.'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('chat-queue-accepted-stale-$acked')),
+      findsOneWidget,
+    );
+    expect(pressed('chat-queue-abandon-$acked'), isNotNull);
+    await tester.tap(find.byKey(const ValueKey('chat-queue-abandon-$acked')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('hermes-confirm-dialog')), findsOneWidget);
+    expect(find.textContaining('Hermes ya lo había aceptado'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pumpAndSettle();
+    expect(chat.queuedEntries.map((e) => e.id), ['prepared:next']);
     expect(tester.takeException(), isNull);
   });
 

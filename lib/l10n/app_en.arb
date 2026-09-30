@@ -7552,5 +7552,7 @@
   "cs1215SlashDesc": "Search text in this chat",
   "rs1215Sending": "Sending…",
   "rs1215NotSent": "Not sent",
-  "rs1215Retry": "Retry"
+  "rs1215Retry": "Retry",
+  "q1215QueueAcceptedStale": "Hermes accepted it, but never confirmed it finished.",
+  "q1215QueueAbandonAcceptedBody": "Hermes had already accepted it, but it could not be confirmed that it finished. Removing it will not resend it; if it is still running, Hermes will still answer. The rest of the queue will continue."
 }

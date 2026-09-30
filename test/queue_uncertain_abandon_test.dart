@@ -178,6 +178,24 @@ class _RecoveryGateway
   Future<void> close() => eventsController.close();
 }
 
+class _GatedSubmitGateway extends _RecoveryGateway {
+  _GatedSubmitGateway(super.status);
+
+  final submitEntered = Completer<void>();
+  final submitGate = Completer<void>();
+
+  @override
+  Future<DesktopTurnAck> submitPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  ) async {
+    if (!submitEntered.isCompleted) submitEntered.complete();
+    await submitGate.future;
+    return super.submitPromptIdempotent(runtimeSessionId, text, clientTurnId);
+  }
+}
+
 PreparedTurn _queued(
   String id, {
   required PreparedTurnState state,
@@ -227,6 +245,12 @@ ActiveChat _chat({HermesDesktopGateway? gateway, http.Client? httpClient}) =>
       storedMessageLoader: (_, _) async => const [],
       terminalReconcileBudget: Duration.zero,
     );
+
+/// Ends the drained turn so no transport timer outlives the test.
+Future<void> _settle(WidgetTester tester, ActiveChat chat) async {
+  chat.dispose();
+  await tester.pump(const Duration(minutes: 5));
+}
 
 Iterable<String> _queuedIds(ActiveChat chat) =>
     chat.queuedTurns.map((item) => item.turn.clientTurnId);
@@ -283,9 +307,8 @@ void main() {
     );
   }
 
-  testWidgets('an acknowledged row is not "unknown" and cannot be let go', (
-    tester,
-  ) async {
+  testWidgets('an acknowledged row is not "unknown", but a restored one whose '
+      'terminal never came can be let go and frees the queue', (tester) async {
     final gateway = _RecoveryGateway(
       const DesktopTurnStatus(known: false, clientTurnId: 'A'),
     );
@@ -293,16 +316,60 @@ void main() {
     addTearDown(chat.dispose);
     final store = _MemoryOutbox();
     final head = _ordered('A', PreparedTurnState.accepted, 10);
+    final follower = _ordered('B', PreparedTurnState.prepared, 11);
     await store.save(head);
-    await chat.restoreQueuedTurns([head], store, scheduleDrain: false);
-    expect(
-      chat.queuedEntries
-          .singleWhere((e) => e.id == 'prepared:A')
-          .deliveryUnknown,
-      isFalse,
+    await store.save(follower);
+    await chat.restoreQueuedTurns([head, follower], store, scheduleDrain: true);
+    await tester.pump();
+    await tester.pump();
+
+    // Still stuck: nobody could confirm its end, and it holds B behind it.
+    expect(_queuedIds(chat), ['A', 'B']);
+    expect(gateway.submitted, isEmpty);
+    final a = chat.queuedEntries.singleWhere((e) => e.id == 'prepared:A');
+    expect(a.deliveryUnknown, isFalse);
+    expect(a.serverAccepted, isTrue);
+    expect(a.stopWaitingAvailable, isTrue);
+    final b = chat.queuedEntries.singleWhere((e) => e.id == 'prepared:B');
+    expect(b.stopWaitingAvailable, isFalse);
+    // Ordinary delete still refuses an acknowledged turn.
+    expect(await chat.cancelQueuedByIdentity('prepared:A'), isFalse);
+
+    expect(await chat.abandonUncertainQueuedTurn('prepared:A'), isTrue);
+    for (var i = 0; i < 50 && gateway.submitted.isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    // Retired without resending it, and the rest of the queue moves on.
+    expect(store.rows.values.map((t) => t.clientTurnId), isNot(contains('A')));
+    expect(gateway.submitted, isNot(contains('A')));
+    expect(gateway.submitted, contains('B'));
+    expect(_queuedIds(chat), isEmpty);
+    await _settle(tester, chat);
+  });
+
+  testWidgets('the live delivery at the head of the queue is never let go', (
+    tester,
+  ) async {
+    final gateway = _GatedSubmitGateway(
+      const DesktopTurnStatus(known: false, clientTurnId: 'A'),
     );
-    expect(await chat.abandonUncertainQueuedTurn('prepared:A'), isFalse);
+    final chat = _chat(gateway: gateway);
+    addTearDown(chat.dispose);
+    final store = _MemoryOutbox();
+    final head = _ordered('A', PreparedTurnState.prepared, 10);
+    await store.save(head);
+    await chat.restoreQueuedTurns([head], store, scheduleDrain: true);
+    for (var i = 0; i < 20 && !gateway.submitEntered.isCompleted; i++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    expect(gateway.submitEntered.isCompleted, isTrue);
     expect(_queuedIds(chat), ['A']);
+    final a = chat.queuedEntries.singleWhere((e) => e.id == 'prepared:A');
+    expect(a.stopWaitingAvailable, isFalse);
+    expect(await chat.abandonUncertainQueuedTurn('prepared:A'), isFalse);
+    expect(store.rows.values.map((t) => t.clientTurnId), contains('A'));
+    gateway.submitGate.complete();
+    await _settle(tester, chat);
   });
 
   testWidgets('let-it-go refuses rows that are not uncertain', (tester) async {

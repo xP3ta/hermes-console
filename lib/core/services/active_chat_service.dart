@@ -2605,6 +2605,13 @@ class ActiveTurnDelivery {
     return true;
   });
 
+  /// The user explicitly stops tracking a queued turn the server had already
+  /// acknowledged in an earlier run, but whose terminal never arrived. It is
+  /// never resent: tombstone first, then delete, as
+  /// [forgetDeliveredFromTranscript] does.
+  Future<bool> forgetAcknowledgedOnUserRequest() =>
+      forgetDeliveredFromTranscript();
+
   Future<bool> discardPrepared() => _serializeMutation(() async {
     if (_discarded) return true;
     if (_transportStarted || _acknowledged) return false;
@@ -3122,6 +3129,7 @@ class QueuedEntryView {
     this.blocked = false,
     this.deliveryUnknown = false,
     this.serverAccepted = false,
+    this.stopWaitingAvailable = false,
   });
 
   final String id;
@@ -3139,6 +3147,12 @@ class QueuedEntryView {
   /// The server already acknowledged this queued turn (accepted/running):
   /// it can no longer be edited, sent again or deleted from here.
   final bool serverAccepted;
+
+  /// This row is not the live delivery and nothing else will retire it on its
+  /// own, so [ActiveChat.abandonUncertainQueuedTurn] can let it go. Covers
+  /// [deliveryUnknown] rows and acknowledged rows restored from an earlier
+  /// run whose terminal never arrived.
+  final bool stopWaitingAvailable;
 
   bool get isSteerable =>
       text.trim().isNotEmpty &&
@@ -7219,6 +7233,7 @@ class ActiveChat {
           blocked: _blockedPreparedTurnId == item.turn.clientTurnId,
           deliveryUnknown: _isDeliveryUnknown(item),
           serverAccepted: item.delivery.acknowledged,
+          stopWaitingAvailable: _isUncertainQueued(item),
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
@@ -21015,8 +21030,9 @@ class ActiveChat {
         PreparedTurnState.running,
       }.contains(item.turn.state);
 
-  /// Started but never acknowledged: the only rows the user may let go.
-  /// Accepted/running rows are known to the server and settle on terminal.
+  /// Started but never acknowledged. Accepted/running rows are known to the
+  /// server and normally settle on terminal; when restored from an earlier run
+  /// the user may still stop waiting for them (see [abandonUncertainQueuedTurn]).
   bool _isDeliveryUnknown(QueuedPreparedTurn item) =>
       _isUncertainQueued(item) &&
       (item.turn.state == PreparedTurnState.submitting ||
@@ -21037,12 +21053,18 @@ class ActiveChat {
     for (final item in _preparedTurnQueue) {
       if (item.turn.clientTurnId == clientTurnId) target = item;
     }
-    if (target == null || !_isDeliveryUnknown(target)) return false;
+    // Any started row that is not the live delivery qualifies: unknown ones,
+    // and acknowledged ones restored from an earlier run whose terminal never
+    // came. The live delivery itself is never retired here.
+    if (target == null || !_isUncertainQueued(target)) return false;
     if (_preparedTurnCancellationsInFlight.contains(clientTurnId)) return false;
     _preparedTurnCancellationsInFlight.add(clientTurnId);
     final generation = _queueGeneration;
     try {
-      if (!await target.delivery.abandonUncertain()) return false;
+      final retired = target.delivery.acknowledged
+          ? await target.delivery.forgetAcknowledgedOnUserRequest()
+          : await target.delivery.abandonUncertain();
+      if (!retired) return false;
       if (_disposed || generation != _queueGeneration) return false;
       _preparedTurnQueue.remove(target);
       final owner = _preparedTurnOwners[clientTurnId];
