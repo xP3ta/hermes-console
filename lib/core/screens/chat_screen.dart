@@ -12502,6 +12502,9 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (!await voice.prepareForMicrophoneCapture()) return;
+    // The STT check can wait on the runtime permission prompt. If the chat
+    // closed meanwhile, never open a capture nobody owns or can stop.
+    if (!mounted || _disposed) return;
     // El dictado transforma el mismo composer sin desmontar su TextField. Si el
     // teclado ya estaba abierto conserva la conexión IME; tocar el micrófono no
     // debe cerrarlo ni abrirlo por sorpresa.

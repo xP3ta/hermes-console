@@ -3154,6 +3154,32 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('leaving during the mic permission never opens the mic', (
+      tester,
+    ) async {
+      final permission = Completer<bool>();
+      final stt = _PartialSttEngine(availabilityGate: permission);
+      await pumpChat(tester, stt: stt);
+      await tester.tap(find.byKey(const ValueKey('mic')));
+      await tester.pump();
+      expect(stt.availableCalls, 1);
+
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(ChatScreen), findsNothing);
+
+      // The user answers the permission prompt after the chat is gone.
+      permission.complete(true);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(stt.listenCalls, 0, reason: 'no capture without a chat screen');
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets(
