@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/data/desktop_projection_rooms.dart';
 import 'package:hermes_android/core/bots/ui/room/desktop_projection_room_screen.dart';
+import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
+import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
@@ -133,6 +136,31 @@ final class FakeActions implements RoomAttachmentActions {
   }
 }
 
+final class _FakeDictation extends RoomDictation {
+  bool _recording = false;
+  @override
+  bool get recording => _recording;
+  set recording(bool value) {
+    _recording = value;
+    notifyListeners();
+  }
+
+  @override
+  bool get transcribing => false;
+  @override
+  ValueListenable<double>? get level => null;
+  @override
+  Future<void> start({
+    required String currentText,
+    required ValueChanged<String> onText,
+    required ValueChanged<RoomDictationFailure> onFailure,
+  }) async {}
+  @override
+  Future<void> stop() async {}
+  @override
+  Future<void> cancel() async {}
+}
+
 final class _Uploader implements RoomAttachmentUploader {
   @override
   Future<String?> upload(draft) async => '/srv/uploads/${draft.name}';
@@ -166,6 +194,7 @@ Future<FakeRoomGateway> _pump(
   RoomLocalPrefs? prefs,
   AgentProfile? Function(HostedGroupMember member)? profileFor,
   void Function(HostedGroupMember member)? onOpenMember,
+  RoomDictation? dictation,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
@@ -186,6 +215,7 @@ Future<FakeRoomGateway> _pump(
         prefs: prefs ?? MemoryRoomPrefs(),
         attachmentActions: actions,
         uploader: uploader,
+        dictation: dictation,
         pollTimer: (_, _) => _FakeTimer(),
         clock: () => DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
       ),
@@ -641,6 +671,79 @@ void main() {
       );
     },
   );
+
+  // Every keystroke and focus change rebuilt the whole RoomScreen (app
+  // bar, status strip, transcript lookup); only the composer depends on
+  // the text, the focus and the dictation state.
+  testWidgets('typing and focus rebuild only the composer, not the screen', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('status? @builder');
+    final reply = seq.member(
+      'm-builder',
+      'builder',
+      'hello',
+      u['event_id'] as String,
+    );
+    await _pump(tester, events: [u, reply], uploader: _Uploader());
+    final strip = tester.widget(find.byType(RoomStatusStrip));
+    final field = find.descendant(
+      of: find.byType(ConsoleComposer),
+      matching: find.byType(TextField),
+    );
+    await tester.tap(field);
+    await tester.pump();
+    for (final text in ['h', 'he', 'hey', 'hey ', 'hey @']) {
+      await tester.enterText(field, text);
+      await tester.pump();
+    }
+    expect(
+      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      isTrue,
+      reason: 'the screen above the composer was not rebuilt',
+    );
+    // The composer itself still follows the text: send enabled, palette.
+    final composer = tester.widget<ConsoleComposer>(
+      find.byType(ConsoleComposer),
+    );
+    expect(composer.sendEnabled, isTrue);
+    expect(find.byKey(const ValueKey('room-mention-palette')), findsOneWidget);
+    // Losing focus hides the palette without rebuilding the screen.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('room-mention-palette')), findsNothing);
+    await tester.enterText(field, '');
+    await tester.pump();
+    expect(
+      tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).sendEnabled,
+      isFalse,
+    );
+    expect(
+      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      isTrue,
+    );
+  });
+
+  testWidgets('dictation state reaches the composer without a screen build', (
+    tester,
+  ) async {
+    final dictation = _FakeDictation();
+    addTearDown(dictation.dispose);
+    await _pump(tester, events: const [], dictation: dictation);
+    final strip = tester.widget(find.byType(RoomStatusStrip));
+    expect(find.byKey(const ValueKey('dictation-stop')), findsNothing);
+    dictation.recording = true;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('dictation-stop')), findsOneWidget);
+    expect(
+      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      isTrue,
+    );
+    dictation.recording = false;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('dictation-stop')), findsNothing);
+  });
 
   testWidgets('attach is disabled with a reason in cross-gateway rooms', (
     tester,

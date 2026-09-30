@@ -149,15 +149,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       },
       timer: widget.pollTimer,
     );
+    // Text, focus and dictation rebuild only the composer area (a
+    // ListenableBuilder in build), never the whole screen.
     _composer.addListener(_onComposerChanged);
-    _focus.addListener(_rebuild);
-    widget.dictation?.addListener(_rebuild);
     unawaited(_loadLocal());
     unawaited(_restoreDraft());
-  }
-
-  void _rebuild() {
-    if (mounted) setState(() {});
   }
 
   @override
@@ -332,7 +328,6 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _draftTimer?.cancel();
       _draftTimer = Timer(const Duration(milliseconds: 350), _flushDraft);
     }
-    if (mounted) setState(() {});
   }
 
   void _flushDraft() {
@@ -353,10 +348,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _poller.dispose();
     _flushDraft();
     _markSeen();
-    widget.dictation?.removeListener(_rebuild);
     _composer.removeListener(_onComposerChanged);
     _composer.dispose();
-    _focus.removeListener(_rebuild);
     _focus.dispose();
     _transcriptScroll.dispose();
     super.dispose();
@@ -1741,7 +1734,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                   ),
                   child: SingleChildScrollView(
                     reverse: true,
-                    child: _composerArea(s),
+                    child: ListenableBuilder(
+                      listenable: Listenable.merge([
+                        _composer,
+                        _focus,
+                        widget.dictation,
+                      ]),
+                      builder: (context, _) => _composerArea(s),
+                    ),
                   ),
                 ),
               ],
