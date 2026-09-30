@@ -25,6 +25,7 @@ import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
+import 'core/services/app_error_log.dart';
 import 'core/services/startup_destination.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
@@ -222,6 +223,7 @@ Future<T?> pushNotificationOwnerRoute<T>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AppErrorLog.install();
   PerformanceTrace.qa.start();
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
