@@ -9049,6 +9049,7 @@
   "cm1215AttachmentLoading": "Cargando…",
   "cm1215AttachmentUnavailable": "No disponible",
   "cm1215AttachmentServerOnly": "Solo en el servidor",
+  "sc1215NewSinceYouLeft": "Nuevo desde que saliste",
   "sc1215NewMessages": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
   "@sc1215NewMessages": {
     "placeholders": {

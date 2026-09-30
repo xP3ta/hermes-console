@@ -612,4 +612,123 @@ void main() {
       await tearDownChat(tester, gateway);
     });
   });
+
+  group('#1215 new since you left', () {
+    const lastReadKey =
+        'chat_last_read_v1.conn-scroll-stress.sess-scroll-stress';
+    Finder divider() => find.byKey(const ValueKey('chat-new-since-divider'));
+
+    testWidgets('lands on the first unread message below a divider', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-24'},
+      );
+      // One landing, then stillness: no second correction frames later.
+      final landed = tester.getTopLeft(divider()).dy;
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(
+          tester.getTopLeft(divider()).dy,
+          landed,
+          reason: 'frame $frame: the landing moved after it settled',
+        );
+      }
+      expect(divider(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: divider(),
+          matching: find.text('Nuevo desde que saliste'),
+        ),
+        findsOneWidget,
+      );
+      final viewport = tester.getRect(transcript());
+      final dividerTop = tester.getTopLeft(divider()).dy;
+      expect(
+        dividerTop,
+        closeTo(viewport.top, 1),
+        reason: 'the divider lands at the top of the transcript',
+      );
+      final firstUnread = find.textContaining('Pregunta histórica 25 ');
+      expect(firstUnread, findsOneWidget);
+      expect(tester.getTopLeft(firstUnread).dy, greaterThan(dividerTop));
+      expect(controllerOf(tester).position.pixels, greaterThan(0));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
+          matching: find.text('10 nuevos'),
+        ),
+        findsOneWidget,
+        reason: 'every row from the first unread down is still unread',
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('stays at the bottom when the unread rows are on screen', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-28'},
+      );
+      await settle(tester);
+      expect(divider(), findsOneWidget);
+      expect(controllerOf(tester).position.pixels, 0);
+      expect(
+        tester.getTopLeft(divider()).dy,
+        greaterThanOrEqualTo(tester.getRect(transcript()).top),
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('no divider without a marker, or when all is read', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: _history());
+      await settle(tester);
+      expect(divider(), findsNothing);
+      expect(controllerOf(tester).position.pixels, 0);
+      await tearDownChat(tester, gateway);
+
+      final second = _StreamingGateway();
+      await pumpChat(
+        tester,
+        second,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-29'},
+      );
+      await settle(tester);
+      expect(divider(), findsNothing);
+      expect(controllerOf(tester).position.pixels, 0);
+      await tearDownChat(tester, second);
+    });
+
+    testWidgets('leaving the chat stores the newest message as read', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-24'},
+      );
+      await settle(tester);
+      Navigator.of(tester.element(transcript())).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(lastReadKey), 'message:h-a-29');
+      await tearDownChat(tester, gateway);
+    });
+  });
 }

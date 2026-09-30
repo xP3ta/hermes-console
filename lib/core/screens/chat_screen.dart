@@ -175,6 +175,7 @@ import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../bots/ui/bot_identity.dart';
 import '../bots/ui/roster/living_bot_face.dart';
+import '../bots/ui/room/room_widgets.dart' show RoomSeparator;
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
 import '../design/modal.dart'
@@ -1656,6 +1657,82 @@ class _ChatScreenState extends State<ChatScreen>
   // contenido (eventos estructurales o el primer token de una respuesta),
   // nunca por frame ni por scroll.
   final ValueNotifier<int> _newWhileAway = ValueNotifier(0);
+
+  // "New since you left": device-local read marker per conversation (Hermes
+  // keeps none for sessions), mirroring the Room's `lastSeenSeq`.
+  SharedPreferences? _lastReadPrefs;
+  String? _lastReadKeyOnEntry;
+  bool _newSinceResolved = false;
+  Map<String, dynamic>? _newSinceFirstUnread;
+  String? _newSinceFirstUnreadKey;
+
+  String get _lastReadPrefsKey =>
+      'chat_last_read_v1.${widget.connection.id}.${widget.session.logicalId}';
+
+  /// Resolves the divider once, on the first transcript that contains the
+  /// stored marker, and lands on the first unread row if it is off screen.
+  void _resolveNewSinceYouLeft() {
+    if (_newSinceResolved || _disposed || !_chatBound) return;
+    final markerKey = _lastReadKeyOnEntry;
+    if (markerKey == null) {
+      _newSinceResolved = true;
+      return;
+    }
+    final messages = _messages;
+    if (messages.isEmpty || !_chat.messagesLoaded) return;
+    _newSinceResolved = true;
+    final found = chatMessagesNewerThanMarker(messages, key: markerKey);
+    final firstUnread = found?.oldestNew;
+    if (found == null || firstUnread == null) return;
+    _newSinceFirstUnread = firstUnread;
+    _newSinceFirstUnreadKey = chatReadMarkerKey(firstUnread);
+    final unread = found.count;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted || !_scrollController.hasClients) return;
+      final anchor = _messageAnchors[firstUnread];
+      final position = _scrollController.position;
+      if (anchor == null || !anchor.attached) return;
+      final target = chatAnswerStartOffset(anchor, position);
+      // Its top is already on screen: stay at the bottom.
+      if (target == null || target <= position.pixels) return;
+      // One jump, before the reader has seen the bottom settle: no animation
+      // that would read as a second movement after the route transition.
+      _freezeStreamingFollow();
+      // The jump button appears with the landing and pads the list bottom by
+      // its 48 dp. Show it while still at the bottom (no compensation is
+      // recorded there) and include its extent in the single jump, so the
+      // divider lands at the top in one frame instead of sliding 48 dp.
+      final buttonExtent = _scrollToBottomVisibility.value ? 0.0 : 48.0;
+      _showScrollToBottom = true;
+      position.jumpTo(target + buttonExtent);
+      if (_scrollToBottomVisibility.value) {
+        _awayMarker = null;
+        _awayMarkerKey = markerKey;
+        _awayCountableBaseline = _countableMessages() - unread;
+        _newWhileAway.value = unread;
+      }
+    });
+    setState(() {});
+  }
+
+  bool _isNewSinceFirstUnread(Map<String, dynamic> message) {
+    final target = _newSinceFirstUnread;
+    if (target == null) return false;
+    if (identical(message, target)) return true;
+    final key = _newSinceFirstUnreadKey;
+    return key != null && chatReadMarkerKey(message) == key;
+  }
+
+  /// Marks the newest loaded message as read for the next entry.
+  void _persistLastRead() {
+    final prefs = _lastReadPrefs;
+    if (prefs == null || !_chatBound) return;
+    final newest = chatNewestCountableMessage(_messages);
+    final key = newest == null ? null : chatReadMarkerKey(newest);
+    if (key == null) return;
+    unawaited(prefs.setString(_lastReadPrefsKey, key));
+  }
+
   Map<String, dynamic>? _awayMarker;
   String? _awayMarkerKey;
   int _awayCountableBaseline = 0;
@@ -4252,6 +4329,8 @@ class _ChatScreenState extends State<ChatScreen>
       _chatBound = true;
       _chatService = app.activeChats;
       _botChatStore = MissionBotChatStore(app.connManager.prefs);
+      _lastReadPrefs = app.connManager.prefs;
+      _lastReadKeyOnEntry = app.connManager.prefs.getString(_lastReadPrefsKey);
       final resolvedSessionProfile = Session.profileOwner(
         widget.session.profile,
         fallback: app.connManager.activeProfileFor(widget.connection.id),
@@ -4345,6 +4424,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (!mounted) return;
           _scrollToBottom(animate: false);
         });
+        _resolveNewSinceYouLeft();
       } else if (widget.session.isUnpersistedMobileDraft) {
         // Un chat recién creado todavía no existe en Hermes. Intentar
         // session.resume + REST aquí solo enseña un loader hasta recibir el
@@ -5425,6 +5505,7 @@ class _ChatScreenState extends State<ChatScreen>
         // Fuera de un turno `_autoFollowStreaming` sigue en true aunque el
         // lector haya subido: decide por la posición medida ANTES del relayout.
         final readerWasAtBottom = _isNearBottom;
+        _resolveNewSinceYouLeft();
         _anchorReaderAcrossServiceHydration();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // La hidratación diferida del historial (0.20) o una compactación
@@ -6074,6 +6155,7 @@ class _ChatScreenState extends State<ChatScreen>
     hermesRouteObserver.unsubscribe(this);
     // Al salir de la pantalla deja de ser la sesión visible (si lo era).
     _markChatVisible(false);
+    _persistLastRead();
     _chatSub?.cancel();
     _chatSub = null;
     _attachmentDelivery?.removeAttachmentListener(_attachmentListener);
@@ -6183,6 +6265,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _persistLastRead();
       // A setup that began while this route owned the foreground cannot regain
       // authority after an asynchronous dashboard response. This only revokes
       // the opaque preparation; an already-active opted-in conversation stays
@@ -6940,6 +7023,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
       if (!hadTranscript) {
         _scrollToBottom();
+        _resolveNewSinceYouLeft();
       } else {
         _releaseMessageRefreshViewportAnchorAfterLayout(refreshEpoch);
       }
@@ -13831,10 +13915,29 @@ class _ChatScreenState extends State<ChatScreen>
                 _readerPreservedTurnInsertions.contains,
               );
               final unit = _materializeRenderUnit(plan);
-              final child = _buildRenderUnit(
+              Widget child = _buildRenderUnit(
                 unit,
                 assistantSlice: assistantSlice,
               );
+              if (_newSinceFirstUnread != null &&
+                  (assistantSlice?.showHeader ?? true) &&
+                  sourceMessages.any(_isNewSinceFirstUnread)) {
+                // Inside the row (not a list entry of its own): indices and
+                // the reader anchors keep their slots, and the landing jump
+                // aligns the divider with the top of the screen.
+                child = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    RoomSeparator(
+                      key: const ValueKey('chat-new-since-divider'),
+                      label: Strings.of(context).sc1215NewSinceYouLeft,
+                      highlight: true,
+                    ),
+                    child,
+                  ],
+                );
+              }
               final assistantMessage =
                   unit is Map<String, dynamic> &&
                       unit['role'] == 'assistant' &&
