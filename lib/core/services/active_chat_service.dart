@@ -7739,6 +7739,36 @@ class ActiveChat {
   @visibleForTesting
   bool get storedSessionKnownMissing => _desktopStoredSessionKnownMissing;
 
+  /// Settled durable rows kept by [ActiveChatService] after this chat is
+  /// released, so reopening it can paint them while the network read runs.
+  /// Null when nothing settled and publishable exists.
+  List<Map<String, dynamic>>? reopenTranscriptSnapshot({int maxRows = 200}) {
+    if (_disposed ||
+        !messagesLoaded ||
+        isStreaming ||
+        _desktopStoredSessionKnownMissing ||
+        connection.kind == InstanceKind.localhost) {
+      return null;
+    }
+    final rows = <Map<String, dynamic>>[
+      for (final message in _applyDurablePrivateTranscriptVetoes(_messages))
+        if (message['_pipeline'] != true && message['_optimistic'] != true)
+          Map<String, dynamic>.from(message),
+    ];
+    if (rows.isEmpty) return null;
+    return List<Map<String, dynamic>>.unmodifiable(rows.take(maxRows));
+  }
+
+  /// Paints a provisional transcript from [reopenTranscriptSnapshot] on a
+  /// fresh chat. It never marks the transcript loaded or complete: the normal
+  /// cold load still runs and replaces or grafts over these rows.
+  void seedReopenTranscript(List<Map<String, dynamic>> newestFirst) {
+    if (_disposed || messagesLoaded || _messages.isNotEmpty) return;
+    _messages = [
+      for (final message in newestFirst) Map<String, dynamic>.from(message),
+    ];
+  }
+
   /// Stream de cambios. La pantalla se suscribe para re-renderizar; al cerrarse
   /// cancela la suscripción SIN cancelar el stream del agente.
   Stream<ActiveChatEvent> get changes => _changes.stream;
@@ -26126,6 +26156,9 @@ class ActiveChatService {
 
   final Map<String, ActiveChat> _chats = {};
   final Map<String, List<SteerProjection>> _steerProjectionCache = {};
+  final LinkedHashMap<String, _ReopenTranscript> _reopenTranscriptCache =
+      LinkedHashMap<String, _ReopenTranscript>();
+  static const int _reopenTranscriptCacheLimit = 8;
   final Map<ActiveChat, _HomeWidgetChatMetadata> _homeWidgetMetadata = {};
   final LinkedHashMap<String, int> _observedFirstTokenLatencyCache =
       LinkedHashMap<String, int>();
@@ -26208,6 +26241,11 @@ class ActiveChatService {
     required String sessionId,
   }) async {
     final owner = Session.profileOwner(profile);
+    _forgetReopenTranscripts(
+      connectionId,
+      profile: owner,
+      sessionId: sessionId,
+    );
     final scopeIds = <String>{sessionId};
     final matchingChats = <ActiveChat>[];
     for (final chat in _chats.values) {
@@ -26262,6 +26300,7 @@ class ActiveChatService {
   }
 
   Future<int> clearCancelledTurnsForConnection(String connectionId) async {
+    _forgetReopenTranscripts(connectionId);
     var removed = 0;
     try {
       removed = await _cancelledTurnStore?.removeConnection(connectionId) ?? 0;
@@ -27006,6 +27045,10 @@ class ActiveChatService {
               );
             },
     );
+    final cachedTranscript = _reopenTranscriptCache.remove(key);
+    if (cachedTranscript != null && cachedTranscript.matches(chat)) {
+      chat.seedReopenTranscript(cachedTranscript.newestFirst);
+    }
     _chats[key] = chat;
     final seed =
         sessionSnapshot ??
@@ -27292,11 +27335,46 @@ class ActiveChatService {
     }
   }
 
+  void _rememberReopenTranscript(String key, ActiveChat chat) {
+    _reopenTranscriptCache.remove(key);
+    final rows = chat.reopenTranscriptSnapshot();
+    if (rows == null) return;
+    _reopenTranscriptCache[key] = _ReopenTranscript(
+      connectionId: chat.connection.id,
+      profile: chat.sessionProfile,
+      storedSessionId: chat.serverSessionId,
+      aliases: {
+        chat.sessionId,
+        chat.logicalSessionId,
+        chat.serverSessionId,
+        if (chat.storedSessionId?.isNotEmpty == true) chat.storedSessionId!,
+      },
+      newestFirst: rows,
+    );
+    while (_reopenTranscriptCache.length > _reopenTranscriptCacheLimit) {
+      _reopenTranscriptCache.remove(_reopenTranscriptCache.keys.first);
+    }
+  }
+
+  void _forgetReopenTranscripts(
+    String connectionId, {
+    String? profile,
+    String? sessionId,
+  }) {
+    _reopenTranscriptCache.removeWhere(
+      (_, entry) =>
+          entry.connectionId == connectionId &&
+          (profile == null || entry.profile == profile) &&
+          (sessionId == null || entry.aliases.contains(sessionId)),
+    );
+  }
+
   void _dispose(String key) {
     final chat = _chats.remove(key);
     if (chat != null) {
       _homeWidgetMetadata.remove(chat);
       _rememberSteerProjections(chat);
+      _rememberReopenTranscript(key, chat);
       _rememberObservedFirstTokenLatency(
         chat,
         chat.observedFirstTokenLatencyMs,
@@ -27334,9 +27412,33 @@ class ActiveChatService {
       chat.dispose();
     }
     _chats.clear();
+    _reopenTranscriptCache.clear();
     _homeWidgetMetadata.clear();
     _observedFirstTokenLatencyCache.clear();
     globalActivity.dispose();
     activeIds.dispose();
   }
+}
+
+/// In-memory transcript of a recently released chat. Never persisted: it only
+/// lets a reopen paint the last settled rows while the durable read runs.
+final class _ReopenTranscript {
+  const _ReopenTranscript({
+    required this.connectionId,
+    required this.profile,
+    required this.storedSessionId,
+    required this.aliases,
+    required this.newestFirst,
+  });
+
+  final String connectionId;
+  final String profile;
+  final String storedSessionId;
+  final Set<String> aliases;
+  final List<Map<String, dynamic>> newestFirst;
+
+  bool matches(ActiveChat chat) =>
+      chat.connection.id == connectionId &&
+      chat.sessionProfile == profile &&
+      chat.serverSessionId == storedSessionId;
 }
