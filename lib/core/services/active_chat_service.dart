@@ -7323,17 +7323,22 @@ class ActiveChat {
 
   /// Reanuda explícitamente la cola que Stop dejó estacionada. Nunca se llama
   /// desde un terminal: el usuario conserva la decisión de volver a enviarla.
-  void resumeParkedQueue() {
-    if (mutationsBlockedByOwnershipConflict) return;
-    if (_queueLease != QueueLease.parked || _disposed) return;
+  /// Returns false when the queue stays parked (ownership conflict, a Stop
+  /// still in flight, disposed), so the caller can tell the user why nothing
+  /// happened. Nothing to resume is not a failure.
+  bool resumeParkedQueue() {
+    if (mutationsBlockedByOwnershipConflict) return false;
+    if (_disposed) return false;
+    if (_queueLease != QueueLease.parked) return true;
     // Un coordinador terminal —`confirmed`, `failed` o `superseded`— ya no
     // gobierna nada; sólo un Stop todavía en vuelo puede retener la reanudación.
     final stop = _stopTransition;
-    if (stop != null && !stop.isFinal) return;
+    if (stop != null && !stop.isFinal) return false;
     _queueLease = QueueLease.resumeRequested;
     _queueDrainSuspended = false;
     _emit(ActiveChatEvent.queueChanged);
     if (!isStreaming) Timer.run(_drainQueue);
+    return true;
   }
 
   static const _activityHintTimeout = Duration(minutes: 5);

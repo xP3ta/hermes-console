@@ -9086,5 +9086,7 @@
   "rs1215NotSent": "No enviado",
   "rs1215Retry": "Reintentar",
   "q1215QueueAcceptedStale": "Hermes lo aceptó, pero no llegó a confirmar que terminara.",
-  "q1215QueueAbandonAcceptedBody": "Hermes ya lo había aceptado, pero no se pudo confirmar que terminara. Si lo quitas no se reenviará; si sigue en marcha, Hermes responderá igualmente. El resto de la cola seguirá."
+  "q1215QueueAbandonAcceptedBody": "Hermes ya lo había aceptado, pero no se pudo confirmar que terminara. Si lo quitas no se reenviará; si sigue en marcha, Hermes responderá igualmente. El resto de la cola seguirá.",
+  "q1215QueueAbandonFailed": "No se pudo quitar el mensaje. Sigue en la cola; vuelve a intentarlo en un momento.",
+  "q1215QueueResumeFailed": "No se pudo reanudar la cola todavía. Espera a que termine de detenerse y vuelve a intentarlo."
 }

@@ -13663,7 +13663,7 @@ class _ChatScreenState extends State<ChatScreen>
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 key: const ValueKey('chat-queue-resume'),
-                onPressed: _chat.resumeParkedQueue,
+                onPressed: _resumeParkedQueue,
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: Text(Strings.of(context).chaQueueResume),
                 style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -13721,7 +13721,13 @@ class _ChatScreenState extends State<ChatScreen>
       destructive: true,
     );
     if (!confirmed || !mounted) return;
-    await _chat.abandonUncertainQueuedTurn(entry.id);
+    if (await _chat.abandonUncertainQueuedTurn(entry.id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).q1215QueueAbandonFailed);
+  }
+
+  void _resumeParkedQueue() {
+    if (_chat.resumeParkedQueue()) return;
+    _showQueueActionFailed(Strings.of(context).q1215QueueResumeFailed);
   }
 
   ConsoleComposerDictation _composerDictation({

@@ -27142,6 +27142,115 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('dejar de esperar que falla lo avisa y conserva la fila', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-abandon-refused'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final restored = chat.restoreQueuedTurns(
+      [
+        PreparedTurn(
+          connectionId: chat.connection.id,
+          sessionId: chat.sessionId,
+          clientTurnId: 'lost',
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: 'mensaje lost',
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: chat.sessionProfile,
+          state: PreparedTurnState.ambiguous,
+          queued: true,
+          queueOrder: 1,
+        ),
+      ],
+      _FailingDeleteOutbox(),
+      scheduleDrain: false,
+    );
+    await tester.pump();
+    await restored;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('chat-queue-abandon-prepared:lost')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(chat.queuedEntries.map((e) => e.id), ['prepared:lost']);
+    expect(
+      find.text(
+        'No se pudo quitar el mensaje. Sigue en la cola; vuelve a intentarlo en un momento.',
+      ),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Reanudar cola mientras Stop sigue en vuelo lo avisa', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _UiRewindGateway()..interruptGate = Completer<void>();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-resume-refused'),
+      messages: const [
+        {'role': 'assistant', 'content': 'Respuesta original'},
+        {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 11},
+      ],
+    );
+    final sent = chat.send(
+      fullText: 'turno vivo',
+      model: 'test-model',
+      history: const [],
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await sent, isTrue);
+    expect(chat.enqueue('en cola'), isTrue);
+    final stop = chat.cancel();
+    await tester.pump();
+    expect(chat.queueParked, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('chat-queue-resume')));
+    await tester.pump();
+    expect(chat.queueParked, isTrue);
+    expect(
+      find.text(
+        'No se pudo reanudar la cola todavía. Espera a que termine de detenerse y vuelve a intentarlo.',
+      ),
+      findsOneWidget,
+    );
+
+    gateway.interruptGate!.complete();
+    await tester.pump(const Duration(seconds: 4));
+    await stop.catchError((_) {});
+    await tester.pump(const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('panel de cola expone acciones nativas por identidad', (
     tester,
   ) async {
