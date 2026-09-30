@@ -27487,6 +27487,41 @@ void main() {
     expect(secondEdit.properties.enabled, isFalse);
   });
 
+  testWidgets('el editor de un mensaje en cola solo promete guardar', (
+    tester,
+  ) async {
+    final chat = await pumpChat(tester, chatState: ChatPipelineState.streaming);
+    chat.enqueue('primero');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+    final id = chat.queuedEntries.single.id;
+    await tester.tap(find.byKey(ValueKey('chat-queue-edit-$id')));
+    await tester.pumpAndSettle();
+
+    final sheet = find.byKey(ValueKey('chat-queue-edit-dialog-$id'));
+    expect(sheet, findsOneWidget);
+    // Saving only rewrites the queued text: it stays queued.
+    expect(
+      find.descendant(of: sheet, matching: find.text('Guardar y enviar')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sheet, matching: find.text('Guardar')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.descendant(of: sheet, matching: find.byType(TextField)),
+      'primero corregido',
+    );
+    await tester.tap(
+      find.descendant(of: sheet, matching: find.text('Guardar')),
+    );
+    await tester.pumpAndSettle();
+    expect(chat.queuedMessages, ['primero corregido']);
+    expect(tester.takeException(), isNull);
+  });
+
   Future<void> exerciseRestoredApproval(
     WidgetTester tester, {
     required String label,

@@ -15449,9 +15449,7 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
             children: [
               TextButton(
                 onPressed: () => _close(),
-                child: Text(
-                  MaterialLocalizations.of(context).cancelButtonLabel,
-                ),
+                child: Text(strings.commonCancel),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(
@@ -15459,7 +15457,8 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
                   minimumSize: const Size(0, 46),
                 ),
                 onPressed: () => _close(_controller.text.trim()),
-                child: Text(strings.chaEditApply),
+                // Saving only rewrites the queued text; it stays in the queue.
+                child: Text(strings.commonSave),
               ),
             ],
           ),
