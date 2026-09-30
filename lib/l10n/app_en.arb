@@ -7490,5 +7490,13 @@
         "type": "String"
       }
     }
+  },
+  "v1215VoiceServerTestFailed": "Last test failed · {reason}",
+  "@v1215VoiceServerTestFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
   }
 }

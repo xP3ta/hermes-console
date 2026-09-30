@@ -8973,5 +8973,13 @@
         "type": "String"
       }
     }
+  },
+  "v1215VoiceServerTestFailed": "La última prueba falló · {reason}",
+  "@v1215VoiceServerTestFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
   }
 }

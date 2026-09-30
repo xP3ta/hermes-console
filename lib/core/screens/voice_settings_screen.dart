@@ -172,6 +172,11 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
   String? _serverTtsProvider;
   bool _serverVoiceConfigLoading = false;
   bool _serverVoiceTesting = false;
+
+  /// Motivo del último «Probar» fallido. La configuración leída no prueba que
+  /// el proveedor funcione; tras un fallo real la tarjeta no puede seguir en
+  /// verde. Se limpia con una prueba correcta o al recargar la configuración.
+  Object? _serverVoiceTestError;
   bool _serverVoiceConfigFailed = false;
   Object? _serverVoiceConfigError;
   bool _serverVoiceDetailsExpanded = false;
@@ -344,6 +349,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
         _serverVoiceConfigLoading = true;
         _serverVoiceConfigFailed = false;
         _serverVoiceConfigError = null;
+        _serverVoiceTestError = null;
       });
     }
     try {
@@ -1830,6 +1836,13 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
     if (_nativeVoiceCapability?.ok != true) {
       return (s.voiceStatusUsingFallback, colors.warning);
     }
+    final testError = _serverVoiceTestError;
+    if (testError != null) {
+      return (
+        s.v1215VoiceServerTestFailed(localizedVoiceError(s, testError)),
+        colors.error,
+      );
+    }
     if (_serverVoiceConfigFailed || _serverTtsProvider == null) {
       return (s.voiceStatusServerReadyConfigUnknown, colors.warning);
     }
@@ -1946,6 +1959,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
       _serverTtsProvider = null;
       _serverVoiceConfigFailed = false;
       _serverVoiceConfigError = null;
+      _serverVoiceTestError = null;
     });
     await _loadNativeVoiceChoice();
   }
@@ -2053,10 +2067,12 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
       if (!await _claimPreviewEngine(previewEngine, previewEpoch)) return;
       await voice.previewTts(previewEngine, s.voiceSampleText);
       if (mounted && previewEpoch == _previewEpoch) {
+        setState(() => _serverVoiceTestError = null);
         _snack(s.voiceTestPlayed);
       }
     } catch (error) {
       if (mounted && previewEpoch == _previewEpoch) {
+        setState(() => _serverVoiceTestError = error);
         _snack(s.voiceNoPreview(localizedVoiceError(s, error)));
       }
     } finally {

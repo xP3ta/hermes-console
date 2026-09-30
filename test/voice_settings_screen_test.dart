@@ -643,6 +643,125 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'a failed server test replaces the ready status with the reason',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'native_voice_consent::http://hermes-demo.local:9119': 'accepted',
+        'native_voice_mode_v1::http://hermes-demo.local:9119': 'server',
+      });
+      FlutterSecureStorage.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final voice = VoiceService(prefs, SecureStorage());
+      addTearDown(voice.dispose);
+      const detail =
+          'TTS configuration error (openai): tts is configured to use nous '
+          'but it is not available';
+      var speakFails = true;
+      final dashboard = DashboardClient(
+        host: 'hermes-demo.local',
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method == 'GET' && request.url.path == '/api/config') {
+            return http.Response(
+              jsonEncode({
+                'tts': {
+                  'provider': 'openai',
+                  'openai': {'voice': 'alloy'},
+                },
+              }),
+              200,
+            );
+          }
+          if (request.url.path == '/api/config/schema') {
+            return http.Response('{}', 200);
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/audio/speak') {
+            if (request.body.isEmpty || request.body == '{}') {
+              return http.Response('{}', 422);
+            }
+            return speakFails
+                ? http.Response(jsonEncode({'detail': detail}), 400)
+                : http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.method == 'POST' &&
+              request.url.path.startsWith('/api/audio/')) {
+            return http.Response('{}', 422);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      addTearDown(dashboard.close);
+      final connection = SavedConnection(
+        id: 'demo-node',
+        label: 'Server',
+        host: 'hermes-demo.local',
+        port: 8642,
+        apiKey: 'test-key',
+        dashboardUrl: 'http://hermes-demo.local:9119',
+      );
+      final strings = lookupStrings(const Locale('es'));
+
+      await tester.pumpWidget(
+        host(
+          voiceService: voice,
+          connection: connection,
+          preferences: prefs,
+          dashboardClientFactory: (_) => dashboard,
+          serverPreviewEngineFactory: _ServerPreviewEngine.new,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final card = find.byKey(const ValueKey('voice_server_summary_card'));
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(strings.voiceStatusServerReady),
+        ),
+        findsOneWidget,
+      );
+
+      final testServerVoice = find.byKey(
+        const ValueKey('voice_test_server_voice'),
+      );
+      await tester.ensureVisible(testServerVoice);
+      await tester.pump();
+      await tester.tap(testServerVoice);
+      await tester.pumpAndSettle();
+
+      final failure = strings.v1215VoiceServerTestFailed(
+        strings.v1215VoiceServerError(detail),
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(strings.voiceStatusServerReady),
+        ),
+        findsNothing,
+      );
+      expect(find.descendant(of: card, matching: find.text(failure)), findsOne);
+      // The user can retry from the same card once the provider is fixed.
+      speakFails = false;
+      await tester.ensureVisible(testServerVoice);
+      await tester.pump();
+      await tester.tap(testServerVoice);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: card, matching: find.text(failure)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(strings.voiceStatusServerReady),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('solo lectura permite inspeccionar el gestor sin mutar', (
     tester,
   ) async {
