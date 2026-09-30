@@ -1639,6 +1639,22 @@ class ApiClient {
 
   // ── Health check ─────────────────────────────────────────────────────
 
+  /// `/health` alone, for callers whose next request is itself an
+  /// authenticated read (Home's paged session list): that read is the auth
+  /// proof, so [healthCheck]'s extra `/api/sessions` fetch would only repeat
+  /// it in series.
+  Future<bool> healthReachable() async {
+    try {
+      final health = await _http
+          .get(Uri.parse('$baseUrl/health'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      return health.statusCode == 200;
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+  }
+
   Future<bool> healthCheck() async {
     try {
       final health = await _http

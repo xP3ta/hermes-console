@@ -123,6 +123,9 @@ class _HomeActivityClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,

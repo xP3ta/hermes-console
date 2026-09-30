@@ -58,6 +58,9 @@ class _EmptyHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
@@ -102,6 +105,9 @@ class _DeferredHomeClient extends ApiClient {
 
   @override
   Future<bool> healthCheck() => health.future;
+
+  @override
+  Future<bool> healthReachable() => healthCheck();
 
   @override
   Future<List<Session>> getSessions({

@@ -29,6 +29,9 @@ class _RecentHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
@@ -51,6 +54,9 @@ class _ProfileRowsHomeClient extends ApiClient {
 
   @override
   Future<bool> healthCheck() async => true;
+
+  @override
+  Future<bool> healthReachable() => healthCheck();
 
   @override
   Future<List<Session>> getSessions({
@@ -80,6 +86,9 @@ class _MutableRecentHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
@@ -104,6 +113,9 @@ class _DeferredRecentHomeClient extends ApiClient {
 
   @override
   Future<bool> healthCheck() async => true;
+
+  @override
+  Future<bool> healthReachable() => healthCheck();
 
   @override
   Future<List<Session>> getSessions({

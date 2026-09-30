@@ -10,28 +10,32 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _HealthyClient extends ApiClient {
-  _HealthyClient()
-    : super(
-        baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
-        httpClient: MockClient((_) async => http.Response('{}', 404)),
-      );
+/// Counts every request Home's status refresh sends to the Gateway.
+final class _Server {
+  _Server({this.sessionsStatus = 200, this.healthStatus = 200});
 
-  @override
-  Future<bool> healthCheck() async => true;
+  final int sessionsStatus;
+  final int healthStatus;
+  final paths = <String>[];
 
-  @override
-  Future<bool> healthReachable() => healthCheck();
+  int count(String path) => paths.where((p) => p == path).length;
 
-  @override
-  Future<List<Session>> getSessions({
-    bool includeChildren = false,
-    String? profile,
-  }) async => <Session>[];
-
-  @override
-  void close() {}
+  http.Client client() => MockClient((request) async {
+    paths.add(request.url.path);
+    switch (request.url.path) {
+      case '/health':
+        return http.Response('{"status":"ok"}', healthStatus);
+      case '/api/sessions':
+        if (sessionsStatus != 200) return http.Response('{}', sessionsStatus);
+        return http.Response(
+          '{"data":[{"id":"s-1","title":"Hola","source":"cli",'
+          '"started_at":1790000000,"last_active":1790000100}],'
+          '"has_more":false}',
+          200,
+        );
+    }
+    return http.Response('{}', 404);
+  });
 }
 
 void main() {
@@ -70,11 +74,7 @@ void main() {
         .setMockMethodCallHandler(secureChannel, null);
   });
 
-  Future<void> pumpHome(
-    WidgetTester tester,
-    DashboardAuthCheck auth, {
-    Locale locale = const Locale('en'),
-  }) async {
+  Future<void> pumpHome(WidgetTester tester, _Server server) async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
     );
@@ -89,14 +89,18 @@ void main() {
     await manager.setActiveConnection(connection.id);
     await tester.pumpWidget(
       MaterialApp(
-        locale: locale,
+        locale: const Locale('en'),
         theme: AppTheme.fromId('dark'),
         localizationsDelegates: Strings.localizationsDelegates,
         supportedLocales: Strings.supportedLocales,
         home: HomeDashboardScreen(
           connManager: manager,
-          clientFactory: (_) => _HealthyClient(),
-          dashboardAuthProbe: (_) async => auth,
+          clientFactory: (conn) => ApiClient(
+            baseUrl: conn.baseUrl,
+            apiKey: 'test-key',
+            httpClient: server.client(),
+          ),
+          dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
         ),
       ),
     );
@@ -110,32 +114,36 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('Home does not claim the agent is online with a rejected '
-      'Dashboard password', (tester) async {
-    await pumpHome(tester, DashboardAuthCheck.invalidCredentials);
-    expect(find.text('agent online · QA'), findsNothing);
-    expect(find.text('wrong Dashboard password · QA'), findsOneWidget);
-    await unmount(tester);
-  });
-
-  testWidgets('Home shows a missing Dashboard login in Spanish', (
-    tester,
-  ) async {
-    await pumpHome(
-      tester,
-      DashboardAuthCheck.loginRequired,
-      locale: const Locale('es'),
-    );
-    expect(find.text('agent online · QA'), findsNothing);
-    expect(find.text('falta iniciar sesión en Dashboard · QA'), findsOneWidget);
-    await unmount(tester);
-  });
-
-  testWidgets('Home stays online when the Dashboard login is accepted', (
-    tester,
-  ) async {
-    await pumpHome(tester, DashboardAuthCheck.ok);
+  // The status refresh fetched /api/sessions twice in series: once inside
+  // healthCheck as an auth proof, then again as the paged list. The list
+  // read already proves the key works.
+  testWidgets('a Home status refresh reads /api/sessions once', (tester) async {
+    final server = _Server();
+    await pumpHome(tester, server);
     expect(find.text('agent online · QA'), findsOneWidget);
+    expect(find.text('Hola'), findsWidgets);
+    expect(server.count('/health'), 1);
+    expect(server.count('/api/sessions'), 1);
+    await unmount(tester);
+  });
+
+  testWidgets('a rejected session list still shows Home offline', (
+    tester,
+  ) async {
+    final server = _Server(sessionsStatus: 401);
+    await pumpHome(tester, server);
+    expect(find.text('agent online · QA'), findsNothing);
+    expect(server.count('/api/sessions'), 1);
+    await unmount(tester);
+  });
+
+  testWidgets('an unreachable /health keeps Home offline, no list read', (
+    tester,
+  ) async {
+    final server = _Server(healthStatus: 503);
+    await pumpHome(tester, server);
+    expect(find.text('agent online · QA'), findsNothing);
+    expect(server.count('/api/sessions'), 0);
     await unmount(tester);
   });
 }

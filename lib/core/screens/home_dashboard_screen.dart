@@ -994,7 +994,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         }
       } else {
-        ok = await client.healthCheck();
+        // The paged session list below is an authenticated read, so it is
+        // the auth proof: a rejected key throws and leaves Home offline.
+        ok = await client.healthReachable();
         if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         if (ok) {
           dashboardAuthFuture =
