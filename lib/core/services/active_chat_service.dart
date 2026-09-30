@@ -13389,6 +13389,7 @@ class ActiveChat {
         );
         if (!identical(_activeRewrite, reservation) ||
             _turnEpoch != reservation.turnEpoch) {
+          _rewindRestoredOnError = true;
           return;
         }
         if (ready) {
@@ -13421,6 +13422,9 @@ class ActiveChat {
           _transcriptRevision != reservation.transcriptRevision ||
           _turnEpoch != reservation.turnEpoch ||
           _desktopRuntimeSessionId != reservation.runtimeSessionId) {
+        // Nothing was rewound, but the caller must hear it: a silent return
+        // left the editor on "saving" and dropped the edit without a word.
+        _rewindRestoredOnError = true;
         return;
       }
       if (truncatesDurably && gateway is! HermesDesktopDurableRewindGateway) {
@@ -13477,6 +13481,7 @@ class ActiveChat {
       }
       if (!identical(_activeRewrite, reservation) ||
           _turnEpoch != reservation.turnEpoch) {
+        _rewindRestoredOnError = true;
         return;
       }
       reservation.runtimeSessionId = _desktopRuntimeSessionId;

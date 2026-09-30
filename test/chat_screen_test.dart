@@ -18748,6 +18748,84 @@ void main() {
     expect(chat.isStreaming, isFalse);
   });
 
+  testWidgets('editar mientras el turno responde avisa si no se pudo', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _UiRewindGateway()..resolutionGate = Completer<int?>();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-edit-while-streaming'),
+      messages: [
+        {'role': 'assistant', 'content': 'Respuesta original'},
+        {'role': 'user', 'content': 'pregunta original', '_desktopRowId': 11},
+      ],
+    );
+    final sent = chat.send(
+      fullText: 'segunda pregunta',
+      model: 'test-model',
+      history: const [],
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await sent, isTrue);
+    gateway.emit('message.delta', const {'text': 'Respuesta en curso'});
+    await tester.pump();
+    expect(chat.isStreaming, isTrue);
+
+    final edit = find.byIcon(Icons.edit_outlined);
+    expect(edit, findsNWidgets(2));
+    // Newest message first: the one sent in this session, not yet rebound to
+    // its durable row.
+    await tester.tap(edit.first);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('inline-message-editor-field')),
+          )
+          .controller!
+          .text,
+      'segunda pregunta',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('inline-message-editor-field')),
+      'segunda pregunta corregida',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+    await tester.pump();
+    expect(gateway.resolutionCalls, [(text: 'segunda pregunta', ordinal: 1)]);
+
+    // The reply keeps streaming while the durable row is being resolved.
+    gateway.emit('message.delta', const {'text': ' y sigue'});
+    await tester.pump(const Duration(milliseconds: 100));
+    gateway.resolutionGate!.complete(73);
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(gateway.rewinds, isEmpty);
+    // Never a silent failure: the user is told, and the editor is not left
+    // stuck on "saving" with Cancel disabled.
+    expect(
+      find.text(
+        'No se pudo editar el mensaje. La conversación original sigue disponible.',
+      ),
+      findsOneWidget,
+    );
+    final cancel = find.byKey(const ValueKey('inline-message-editor-cancel'));
+    if (cancel.evaluate().isNotEmpty) {
+      expect(tester.widget<IconButton>(cancel).onPressed, isNotNull);
+    }
+    gateway.emit('message.complete', {'text': 'Respuesta final'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('turno nuevo durante session.history aborta rewind sin truncar', (
     tester,
   ) async {
@@ -18897,6 +18975,39 @@ void main() {
     }
     await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
   }
+
+  testWidgets('Stop mientras se prepara el runtime de una edición avisa', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()
+      ..resumeExistingGate = Completer<DesktopSessionSnapshot>();
+    final chat = await openRewriteEditor(
+      tester,
+      'conn-edit-runtime-race',
+      gateway: gateway,
+    ).then((value) => value.chat);
+    await submitEdit(tester, 'pregunta que no llega');
+    await tester.pump();
+    expect(gateway.resumeExistingCalls, greaterThan(0));
+    await chat.cancel();
+    gateway.resumeExistingGate!.complete(
+      const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-ui-test',
+        storedSessionId: 'sess-test',
+        created: false,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(gateway.rewinds, isEmpty);
+    expect(
+      find.text(
+        'No se pudo editar el mensaje. La conversación original sigue disponible.',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('editar a texto vacío no rebobina ni altera el turno', (
     tester,
@@ -24528,6 +24639,13 @@ void main() {
           (message) => message['content'] == 'pregunta corregida obsoleta',
         ),
         isFalse,
+      );
+      // The edit was dropped: the user hears it instead of a silent no-op.
+      expect(
+        find.text(
+          'No se pudo editar el mensaje. La conversación original sigue disponible.',
+        ),
+        findsOneWidget,
       );
       gateway.emit('message.complete', {'text': 'Respuesta del turno nuevo'});
       for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
