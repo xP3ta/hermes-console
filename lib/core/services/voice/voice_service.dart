@@ -298,6 +298,27 @@ class VoiceService {
     return tail;
   }
 
+  // Paradas de dictado que todavía esperan su transcripción final. Los motores
+  // que graban y transcriben (servidor Hermes, Whisper) entregan el texto
+  // cuando termina esa parada; liberar el motor antes lo descartaba.
+  final Map<SttEngine, Future<void>> _sttStopsInFlight =
+      Map<SttEngine, Future<void>>.identity();
+
+  /// Libera [engine] cuando haya entregado la transcripción que está en curso.
+  /// Devuelve `null` si no había ninguna: el llamador libera como siempre.
+  Future<void>? _disposeSttEngineAfterPendingStop(
+    SttEngine? engine, {
+    required String reason,
+  }) {
+    final pending = engine == null ? null : _sttStopsInFlight[engine];
+    if (pending == null) return null;
+    debugPrint('[voice-stab] disposeStt deferred reason=$reason');
+    return pending.then(
+      (_) => _disposeSttEngine(engine, reason: reason),
+      onError: (Object _) => _disposeSttEngine(engine, reason: reason),
+    );
+  }
+
   // Tipo del motor STT cacheado en [_stt]. Permite reportar el motor REAL ya
   // resuelto (incluido el fallback sistema→Whisper) al reutilizarlo entre turnos
   // sin reconstruirlo. Ver [checkStt] (FIX-1, TASK-022).
@@ -675,7 +696,10 @@ class VoiceService {
     _sttKind = null;
     _sttNativeVoice = false;
     if (previous == null) return null;
-    return _disposeSttEngine(previous, reason: reason);
+    // Un clip ya subido sigue transcribiéndose: su final y el cliente del
+    // Dashboard que lo transporta se conservan hasta que llegue.
+    return _disposeSttEngineAfterPendingStop(previous, reason: reason) ??
+        _disposeSttEngine(previous, reason: reason);
   }
 
   void _releaseHermesDictationResource(
@@ -2604,7 +2628,18 @@ class VoiceService {
       final oldStt = _stt;
       _stt = null;
       _sttKind = null;
-      await _disposeSttEngine(oldStt, reason: 'server_recheck');
+      // Volver a dictar mientras el servidor aún transcribe el clip anterior
+      // no puede descartarlo: el motor viejo se libera tras entregar su final
+      // y el nuevo arranca sin esperarlo.
+      final deferred = _disposeSttEngineAfterPendingStop(
+        oldStt,
+        reason: 'server_recheck',
+      );
+      if (deferred == null) {
+        await _disposeSttEngine(oldStt, reason: 'server_recheck');
+      } else {
+        unawaited(deferred);
+      }
     }
     debugPrint('[voice-stab] checkStt create engine=${effectiveEngine.name}');
 
@@ -2820,9 +2855,18 @@ class VoiceService {
   /// del modo voz, usa [disposeSttForVoiceExit].
   Future<void> stopDictation() async {
     try {
-      if (_stt == null) return;
+      final engine = _stt;
+      if (engine == null) return;
       debugPrint('[voice-stab] stopDictation');
-      await _stt!.stop();
+      final stop = engine.stop();
+      _sttStopsInFlight[engine] = stop;
+      try {
+        await stop;
+      } finally {
+        if (identical(_sttStopsInFlight[engine], stop)) {
+          _sttStopsInFlight.remove(engine);
+        }
+      }
       micLevel.value = 0;
     } finally {
       _setDictationActive(false);
