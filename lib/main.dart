@@ -1599,7 +1599,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // Si la notificación es de una ejecución (runId presente), navegar a
     // RunDetailScreen; si el run ya expiró, fallback a TaskCenterScreen.
     final runId = open.runId;
-    if (runId != null && runId.isNotEmpty) {
+    if (runId != null &&
+        runId.isNotEmpty &&
+        !await _isChatOwnedRun(connection, open, runId)) {
       final profile = open.profile?.trim().toLowerCase();
       if (profile == null || profile.isEmpty) {
         return NavigationDeliveryOutcome.deferred;
@@ -1701,6 +1703,32 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     await WidgetsBinding.instance.endOfFrame;
     return NavigationDeliveryOutcome.delivered;
+  }
+
+  /// A run whose owner is a conversation (chat runtime or Desktop runtime
+  /// session) is never registered in Task Center, so waiting for its run
+  /// record would retain the tap forever. Its conversation is the content:
+  /// the approval card and the result live there.
+  Future<bool> _isChatOwnedRun(
+    SavedConnection connection,
+    NotificationOpen open,
+    String runId,
+  ) async {
+    if (open.sessionId.isEmpty) return false;
+    final profile = open.profile?.trim().toLowerCase();
+    try {
+      final registry = await RunRegistry.load(
+        widget.connManager.prefs,
+        connection.id,
+      );
+      return !registry.records.any(
+        (r) =>
+            r.runId == runId &&
+            (profile == null || profile.isEmpty || r.profile == profile),
+      );
+    } catch (_) {
+      return true;
+    }
   }
 
   Future<NavigationDeliveryOutcome> _openMissionControlFromNotification(
