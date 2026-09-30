@@ -1361,6 +1361,7 @@ class _ChatScreenState extends State<ChatScreen>
       !_messageRefreshInFlight!.passiveOnly &&
       !_messageRefreshInFlight!.published;
   int? _messageRefreshAnchorEpoch;
+  int _hydrationAnchorSerial = 0;
   bool _messageRefreshReanchorScheduled = false;
   ForegroundConversationReader? _passiveConversationReader;
   bool _chatRouteVisible = false;
@@ -5351,12 +5352,18 @@ class _ChatScreenState extends State<ChatScreen>
       // puede cerrar el overlay ni programar otro scroll por fuera de ese vuelo.
       if (_messageRefreshInFlightEpoch == null) {
         _error = null;
+        // Fuera de un turno `_autoFollowStreaming` sigue en true aunque el
+        // lector haya subido: decide por la posición medida ANTES del relayout.
+        final readerWasAtBottom = _isNearBottom;
+        _anchorReaderAcrossServiceHydration();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // La hidratación diferida del historial (0.20) o una compactación
           // pueden aterrizar a mitad de stream con el lector arriba. Solo
           // reengancha el fondo si el seguimiento sigue activo; si el usuario
           // pausó el seguimiento para leer, la hidratación no le roba la vista.
-          if (mounted && _autoFollowStreaming) _scrollToBottom(animate: false);
+          if (mounted && _autoFollowStreaming && readerWasAtBottom) {
+            _scrollToBottom(animate: false);
+          }
         });
       }
     }
@@ -6655,9 +6662,11 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingViewportLock.disable();
   }
 
-  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
-    _cancelMessageRefreshViewportAnchor();
-    if (!_scrollController.hasClients || _isNearBottom) return;
+  /// Bubble closest to the centre of the viewport: the text the reader is
+  /// looking at, used to keep it in place across a transcript replacement.
+  ({Map<String, dynamic> message, RenderBox anchor})?
+  _readerViewportAnchorCandidate() {
+    if (!_scrollController.hasClients || _isNearBottom) return null;
     final viewportHeight = _scrollController.position.viewportDimension;
     Map<String, dynamic>? selectedMessage;
     RenderBox? selectedAnchor;
@@ -6681,7 +6690,16 @@ class _ChatScreenState extends State<ChatScreen>
         selectedAnchor = anchor;
       }
     }
-    if (selectedMessage == null || selectedAnchor == null) return;
+    if (selectedMessage == null || selectedAnchor == null) return null;
+    return (message: selectedMessage, anchor: selectedAnchor);
+  }
+
+  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
+    _cancelMessageRefreshViewportAnchor();
+    final candidate = _readerViewportAnchorCandidate();
+    if (candidate == null) return;
+    final selectedMessage = candidate.message;
+    final selectedAnchor = candidate.anchor;
 
     if (!_messages.any((message) => identical(message, selectedMessage))) {
       return;
@@ -6689,7 +6707,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     RenderBox? lookup() {
       if (_messageRefreshAnchorEpoch != refreshEpoch) return null;
-      final message = chatRefreshFindAnchorMessage(selectedMessage!, _messages);
+      final message = chatRefreshFindAnchorMessage(selectedMessage, _messages);
       return message == null ? null : _messageAnchors[message];
     }
 
@@ -6701,6 +6719,42 @@ class _ChatScreenState extends State<ChatScreen>
     )) {
       _cancelMessageRefreshViewportAnchor();
     }
+  }
+
+  /// A transcript replaced by the service outside a screen-owned read
+  /// (resume reconciliation, another surface's finished turn, compaction)
+  /// inserts rows below the reader in the reversed list. Without an anchor the
+  /// numeric offset is kept and the text being read jumps up by the height of
+  /// the new rows. Anchor the bubble being read for the next layout only.
+  void _anchorReaderAcrossServiceHydration() {
+    if (_chat.isStreaming || _streamingViewportLock.enabled) return;
+    final candidate = _readerViewportAnchorCandidate();
+    if (candidate == null) return;
+    final selected = candidate.message;
+    final serial = ++_hydrationAnchorSerial;
+    RenderBox? lookup() {
+      if (_hydrationAnchorSerial != serial) return null;
+      final message = chatRefreshFindAnchorMessage(selected, _messages);
+      return message == null ? null : _messageAnchors[message];
+    }
+
+    _streamingViewportLock.enable();
+    if (!_streamingViewportLock.expectAnchorVisualChange(
+      candidate.anchor,
+      lookup,
+    )) {
+      _streamingViewportLock.disable();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || _hydrationAnchorSerial != serial) return;
+      _hydrationAnchorSerial++;
+      // Another owner (a new turn, a refresh) may have taken the lock during
+      // this frame; release it only if nothing else claimed it since.
+      if (!_chat.isStreaming && _messageRefreshAnchorEpoch == null) {
+        _streamingViewportLock.disable();
+      }
+    });
   }
 
   void _releaseMessageRefreshViewportAnchorAfterLayout(int refreshEpoch) {
