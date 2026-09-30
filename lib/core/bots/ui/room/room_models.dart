@@ -400,6 +400,12 @@ List<RoomTranscriptEntry> buildRoomTranscript({
   var newSinceShown = false;
   final seen = lastSeenSeq ?? 0;
   final hasOlder = main.any((e) => e.sequence <= seen);
+  // What the user sent from this device is not news to them: the divider
+  // marks the first bot reply after the marker, never their own message.
+  final firstNewSeq = main
+      .where((e) => e.sequence > seen && e.kind != 'message.user')
+      .map((e) => e.sequence)
+      .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
   final roundOf = <String, int>{};
   for (final e in main) {
     final at = roomEventTime(e);
@@ -407,7 +413,11 @@ List<RoomTranscriptEntry> buildRoomTranscript({
       out.add(RoomDaySeparator(DateTime(at.year, at.month, at.day)));
       breakRun = true;
     }
-    if (!newSinceShown && seen > 0 && hasOlder && e.sequence > seen) {
+    if (!newSinceShown &&
+        seen > 0 &&
+        hasOlder &&
+        firstNewSeq != null &&
+        e.sequence >= firstNewSeq) {
       out.add(const RoomNewSinceDivider());
       newSinceShown = true;
       breakRun = true;

@@ -90,6 +90,51 @@ void main() {
       expect(round.round, 2);
     });
 
+    test('my own sends are not new: the divider starts at the first reply', () {
+      final seq = EventSeq();
+      final old = seq.user('seen before', atSeconds: 1790000100.0);
+      final oldDisc = old['event_id'] as String;
+      final oldReply = seq.member('m-builder', 'builder', 'old reply', oldDisc);
+      final mine = seq.user('sent from this phone', thread: 'thread-2');
+      final disc = mine['event_id'] as String;
+      final fresh = seq.member(
+        'm-lead',
+        'lead',
+        'fresh reply',
+        disc,
+        thread: 'thread-2',
+      );
+      final events = buildLog([old, oldReply, mine, fresh]).events;
+      final seen = events[1].sequence;
+      final entries = buildRoomTranscript(
+        events: events,
+        members: buildRoom().members,
+        lastSeenSeq: seen,
+      );
+      final divider = entries.indexWhere((e) => e is RoomNewSinceDivider);
+      expect(divider, isNonNegative);
+      final next = entries
+          .skip(divider + 1)
+          .whereType<RoomMessageEntry>()
+          .first;
+      expect(next.event.publicText, 'fresh reply');
+    });
+
+    test('no divider when only my own sends are after the marker', () {
+      final seq = EventSeq();
+      final old = seq.user('seen before', atSeconds: 1790000100.0);
+      final events = buildLog([
+        old,
+        seq.user('just sent', thread: 'thread-2'),
+      ]).events;
+      final entries = buildRoomTranscript(
+        events: events,
+        members: buildRoom().members,
+        lastSeenSeq: events.first.sequence,
+      );
+      expect(entries.whereType<RoomNewSinceDivider>(), isEmpty);
+    });
+
     test('later discussions in a thread fold into a reply summary', () {
       final seq = EventSeq();
       final root = seq.user('root');
