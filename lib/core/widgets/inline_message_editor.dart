@@ -12,10 +12,17 @@ class InlineMessageEditor extends StatefulWidget {
     required this.onSave,
     this.attachments,
     this.saving = false,
+    this.draftText,
     super.key,
   });
 
+  /// The message as it stands; Save stays off until the text differs.
   final String initialText;
+
+  /// Text to show instead of [initialText], such as an edit whose save
+  /// failed. It is compared against [initialText], not against itself, so the
+  /// user can retry the same rewrite.
+  final String? draftText;
   final VoidCallback onCancel;
   final ValueChanged<String> onSave;
   final Widget? attachments;
@@ -43,8 +50,9 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _controller = TextEditingController(text: widget.initialText)
-      ..selection = TextSelection.collapsed(offset: widget.initialText.length)
+    final text = widget.draftText ?? widget.initialText;
+    _controller = TextEditingController(text: text)
+      ..selection = TextSelection.collapsed(offset: text.length)
       ..addListener(_onTextChanged);
     _focusNode = FocusNode();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,6 +64,23 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
       // el teclado cambia los insets; animar los dos deja un doble salto.
       _ensureVisible(animate: false);
     });
+  }
+
+  @override
+  void didUpdateWidget(InlineMessageEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A save that ended without closing the editor failed: let the user try
+    // again or cancel.
+    if (oldWidget.saving && !widget.saving) _submitted = false;
+    final draft = widget.draftText;
+    if (draft != null && draft != oldWidget.draftText) {
+      if (_controller.text != draft) {
+        _controller.value = TextEditingValue(
+          text: draft,
+          selection: TextSelection.collapsed(offset: draft.length),
+        );
+      }
+    }
   }
 
   @override

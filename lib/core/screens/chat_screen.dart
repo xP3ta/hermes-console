@@ -1300,6 +1300,10 @@ class _ChatScreenState extends State<ChatScreen>
   Map<String, dynamic>? _editingUserMessageTarget;
   double? _editingUserMessageWidth;
   String? _editingUserMessageText;
+
+  /// Text the user rewrote and tried to save. A failed save keeps it in the
+  /// open editor instead of throwing it away.
+  String? _editingUserMessageDraft;
   int? _editingUserMessageOrdinal;
   String? _editingQueuedEntryId;
   bool _editingRewriteSubmitted = false;
@@ -1334,6 +1338,7 @@ class _ChatScreenState extends State<ChatScreen>
     _editingUserMessageTarget = null;
     _editingUserMessageWidth = null;
     _editingUserMessageText = null;
+    _editingUserMessageDraft = null;
     _editingUserMessageOrdinal = null;
     _editingRewriteSubmitted = false;
     _editingMessagesSnapshot = null;
@@ -8230,6 +8235,29 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// A failed save leaves the editor open with the rewritten text, ready to
+  /// retry or cancel, instead of closing it and losing what the user typed.
+  void _keepFailedEditOpen(String edited) {
+    if (_editingUserMessageTarget == null) {
+      _clearUserMessageEditingState();
+      _restoreFailedEditToComposer(edited);
+      return;
+    }
+    _editingUserMessageDraft = edited;
+    _editingRewriteSubmitted = false;
+  }
+
+  /// The editor already closed when the rewrite started, so a late rejection
+  /// has no editor to go back to: hand the text to an empty composer instead
+  /// of dropping it. A composer the user is already typing in is not touched.
+  void _restoreFailedEditToComposer(String edited) {
+    if (_textController.text.trim().isNotEmpty) return;
+    _textController.value = TextEditingValue(
+      text: edited,
+      selection: TextSelection.collapsed(offset: edited.length),
+    );
+  }
+
   void _cancelUserMessageEdit() {
     if (_editingRewriteSubmitted) return;
     FocusManager.instance.primaryFocus?.unfocus();
@@ -8251,7 +8279,7 @@ class _ChatScreenState extends State<ChatScreen>
         : await _resolveAttachmentsForEdit(parsed.attachments);
     if (!mounted) return;
     if (nativeAttachments == null) {
-      setState(_clearUserMessageEditingState);
+      setState(() => _keepFailedEditOpen(edited));
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaEditFailed)),
         kind: HermesNoticeKind.error,
@@ -8310,7 +8338,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (!mounted) return;
     setState(() {
-      if (failed || _editingMessagesSnapshot == null) {
+      if (failed) {
+        _keepFailedEditOpen(edited);
+      } else if (_editingMessagesSnapshot == null) {
         _clearUserMessageEditingState();
       }
     });
@@ -14605,6 +14635,7 @@ class _ChatScreenState extends State<ChatScreen>
             : null,
         editing: identical(unit.primary, _editingUserMessageTarget),
         editingText: _editingUserMessageText,
+        editingDraft: _editingUserMessageDraft,
         editingWidth: _editingUserMessageWidth,
         editSaving: _editingRewriteSubmitted,
         onCancelEdit: _cancelUserMessageEdit,
@@ -14852,6 +14883,7 @@ class _ChatScreenState extends State<ChatScreen>
           : null,
       editing: role == 'user' && identical(msg, _editingUserMessageTarget),
       editingText: _editingUserMessageText,
+      editingDraft: _editingUserMessageDraft,
       editingWidth: _editingUserMessageWidth,
       editSaving: _editingRewriteSubmitted,
       onCancelEdit: _cancelUserMessageEdit,
@@ -16347,6 +16379,7 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<double>? onEdit;
   final bool editing;
   final String? editingText;
+  final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
   final VoidCallback? onCancelEdit;
@@ -16378,6 +16411,7 @@ class _MessageBubble extends StatelessWidget {
     this.onEdit,
     this.editing = false,
     this.editingText,
+    this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
     this.onCancelEdit,
@@ -16398,6 +16432,7 @@ class _MessageBubble extends StatelessWidget {
             onEdit: onEdit,
             editing: editing,
             editingText: editingText,
+            editingDraft: editingDraft,
             editingWidth: editingWidth,
             editSaving: editSaving,
             onCancelEdit: onCancelEdit,
@@ -17016,6 +17051,7 @@ class _UserMessage extends StatelessWidget {
   final ValueChanged<double>? onEdit;
   final bool editing;
   final String? editingText;
+  final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
   final VoidCallback? onCancelEdit;
@@ -17030,6 +17066,7 @@ class _UserMessage extends StatelessWidget {
     this.onEdit,
     this.editing = false,
     this.editingText,
+    this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
     this.onCancelEdit,
@@ -17141,6 +17178,7 @@ class _UserMessage extends StatelessWidget {
                 child: editing
                     ? InlineMessageEditor(
                         initialText: editingText ?? parsed.text.trim(),
+                        draftText: editingDraft,
                         saving: editSaving,
                         attachments: parsed.attachments.isEmpty
                             ? null

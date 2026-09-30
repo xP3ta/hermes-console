@@ -18135,10 +18135,20 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 700));
 
+      // Nothing was rewound. The editor had already closed when the send
+      // started, so the rewritten text lands in the empty composer instead of
+      // being lost.
+      expect(chat.messages.where((message) => message['role'] == 'user'), [
+        containsPair('content', 'pregunta original'),
+      ]);
       expect(find.textContaining('pregunta original'), findsOneWidget);
       expect(
-        find.textContaining('pregunta que no debe enviarse'),
+        find.byKey(const ValueKey('inline-message-editor-field')),
         findsNothing,
+      );
+      expect(
+        find.textContaining('pregunta que no debe enviarse'),
+        findsOneWidget,
       );
       expect(chat.state, ChatPipelineState.idle);
       expect(gateway.rewinds, isEmpty);
@@ -18575,9 +18585,23 @@ void main() {
     expect(chat.messages.where((message) => message['role'] == 'user'), [
       containsPair('content', 'pregunta original'),
     ]);
+    expect(find.byType(HermesNoticeCard), findsOneWidget);
+    // The rewrite is kept in the editor, not thrown away.
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('inline-message-editor-field')),
+          )
+          .controller!
+          .text,
+      'pregunta corregida',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('inline-message-editor-cancel')),
+    );
+    await tester.pump();
     expect(find.textContaining('pregunta original'), findsOneWidget);
     expect(find.textContaining('pregunta corregida'), findsNothing);
-    expect(find.byType(HermesNoticeCard), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -19009,6 +19033,59 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('una edición fallida conserva el texto y permite reintentar', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()
+      ..resumeExistingError = const TuiGatewayRpcError(
+        'session.resume',
+        'synthetic resume failure',
+        code: 5005,
+      );
+    final (:chat, gateway: _) = await openRewriteEditor(
+      tester,
+      'conn-edit-keeps-text',
+      gateway: gateway,
+    );
+    await submitEdit(tester, 'pregunta larga reescrita');
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(gateway.rewinds, isEmpty);
+    expect(
+      find.text(
+        'No se pudo editar el mensaje. La conversación original sigue disponible.',
+      ),
+      findsOneWidget,
+    );
+    final field = find.byKey(const ValueKey('inline-message-editor-field'));
+    expect(field, findsOneWidget);
+    expect(
+      tester.widget<TextField>(field).controller!.text,
+      'pregunta larga reescrita',
+    );
+    final save = find.byKey(const ValueKey('inline-message-editor-save'));
+    expect(tester.widget<IconButton>(save).onPressed, isNotNull);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const ValueKey('inline-message-editor-cancel')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+
+    // Retrying the very same text goes through once the server answers.
+    gateway.resumeExistingError = null;
+    await tester.tap(save);
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(gateway.rewinds, [(text: 'pregunta larga reescrita', ordinal: 0)]);
+    gateway.emit('message.complete', {'text': 'Respuesta corregida'});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('editar a texto vacío no rebobina ni altera el turno', (
     tester,
   ) async {
@@ -19096,8 +19173,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 700));
 
     expect(failing.rewinds, isEmpty);
-    expect(transcript('pregunta original'), findsOneWidget);
-    expect(transcript('pregunta sin identidad'), findsNothing);
     expect(chat.state, ChatPipelineState.idle);
     expect(
       find.text(
@@ -19105,6 +19180,12 @@ void main() {
       ),
       findsOneWidget,
     );
+    await tester.tap(
+      find.byKey(const ValueKey('inline-message-editor-cancel')),
+    );
+    await tester.pump();
+    expect(transcript('pregunta original'), findsOneWidget);
+    expect(transcript('pregunta sin identidad'), findsNothing);
   });
 
   testWidgets('auth Dashboard rechazada por rewind restaura transcript', (
