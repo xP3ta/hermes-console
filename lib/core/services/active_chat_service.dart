@@ -9111,8 +9111,31 @@ class ActiveChat {
       prefetchFuture =
           _captureAsync<SessionMessagesPage>(() async {
             String? runtimeId;
+            Future<SessionMessagesPage>? restTail;
             if (gateway is HermesDesktopSessionHistoryGateway &&
                 _storedMessageLoader == null) {
+              // The canonical REST tail does not depend on the runtime that
+              // resume resolves. When the announced size fits in one page the
+              // native reply will need it anyway, so put it on the wire now
+              // instead of after connect + resume + session.history.
+              final announced = expectedMessageCount;
+              if (announced != null &&
+                  announced > 0 &&
+                  announced <= prefetchContext.requestedLimit &&
+                  prefetchContext.requestedOffset == 0 &&
+                  !(_transcriptIsComplete && _messages.isNotEmpty) &&
+                  loadStillAuthorized()) {
+                final flight = _getStoredMessagesRestPage(
+                  prefetchContext.requestedStoredSessionId,
+                  profile: prefetchContext.profile,
+                  limit: prefetchContext.requestedLimit,
+                  offset: 0,
+                  readContext: prefetchContext,
+                );
+                // Consumed below; an unused failure must not surface.
+                flight.ignore();
+                restTail = flight;
+              }
               final resumed = await resumeFuture;
               if (!loadStillAuthorized()) {
                 throw StateError('Viewer ownership revoked');
@@ -9134,6 +9157,7 @@ class ActiveChat {
             return _fetchStoredMessagesPage(
               prefetchContext,
               runtimeSessionId: runtimeId,
+              prefetchedRestTail: restTail,
             );
           }).then((result) {
             prefetchCompletedBeforeResume = result;
@@ -9907,6 +9931,7 @@ class ActiveChat {
     _SessionMessagesPageReadContext context, {
     String? runtimeSessionId,
     bool allowNativeHistory = true,
+    Future<SessionMessagesPage>? prefetchedRestTail,
   }) async {
     final page = await _requestStoredMessagesPage(
       storedSessionId: context.requestedStoredSessionId,
@@ -9915,6 +9940,7 @@ class ActiveChat {
       offset: context.requestedOffset,
       runtimeSessionId: runtimeSessionId,
       readContext: context,
+      prefetchedRestTail: prefetchedRestTail,
       allowNativeHistory:
           allowNativeHistory &&
           context.consumer != _SessionMessagesPageConsumer.loadEarlier,
@@ -9976,6 +10002,7 @@ class ActiveChat {
     String? runtimeSessionId,
     _SessionMessagesPageReadContext? readContext,
     bool allowNativeHistory = true,
+    Future<SessionMessagesPage>? prefetchedRestTail,
   }) async {
     final injected = _storedMessageLoader;
     if (injected != null) {
@@ -10019,13 +10046,15 @@ class ActiveChat {
           return nativePage;
         }
         try {
-          final canonicalPage = await _getStoredMessagesRestPage(
-            storedSessionId,
-            profile: profile,
-            limit: requestedLimit,
-            offset: offset,
-            readContext: readContext,
-          );
+          final canonicalPage =
+              await (prefetchedRestTail ??
+                  _getStoredMessagesRestPage(
+                    storedSessionId,
+                    profile: profile,
+                    limit: requestedLimit,
+                    offset: offset,
+                    readContext: readContext,
+                  ));
           final canonicalPageIsUsable =
               canonicalPage.messagesFullyParsed &&
               canonicalPage.paginationFullyParsed &&
@@ -10053,6 +10082,7 @@ class ActiveChat {
         return nativePage;
       }
     }
+    if (prefetchedRestTail != null) return prefetchedRestTail;
     return _getStoredMessagesRestPage(
       storedSessionId,
       profile: profile,

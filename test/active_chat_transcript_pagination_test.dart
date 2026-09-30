@@ -575,6 +575,86 @@ void main() {
     },
   );
 
+  test(
+    'cold open overlaps the canonical REST tail with resume and history',
+    () async {
+      final rows = _rows(40);
+      final historyGate = Completer<void>();
+      final gateway = _HistoryGateway()
+        ..resumeGate = Completer<DesktopSessionSnapshot>()
+        ..loader = () async {
+          await historyGate.future;
+          return SessionMessagesPage.fromRaw(
+            rawMessages: rows,
+            pagination: null,
+            paginationProvided: false,
+          );
+        };
+      final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+      final chat = _chat('overlapped-open', server.client(), gateway: gateway);
+      addTearDown(chat.dispose);
+
+      final loading = chat.loadMessages(expectedMessageCount: 40);
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      // The REST tail does not depend on the runtime: it is already on the
+      // wire while session.resume is still pending.
+      expect(gateway.resumeExistingCalls, 1);
+      expect(server.requests, hasLength(1));
+      gateway.resumeGate!.complete(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-overlap',
+          storedSessionId: 'stored-chat',
+          created: false,
+          messagesProvided: false,
+          messageCount: 40,
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(gateway.historyRequests, hasLength(1));
+      historyGate.complete();
+      await loading;
+
+      // The overlapped read is reused, never duplicated.
+      expect(server.requests, hasLength(1));
+      expect(server.requests.single.queryParameters['offset'], '0');
+      expect(chat.messages, hasLength(40));
+      expect(chat.hasEarlierMessages, isFalse);
+    },
+  );
+
+  test(
+    'overlapped REST tail is not issued when history exceeds the page',
+    () async {
+      final rows = _rows(300);
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-large',
+          storedSessionId: 'stored-chat',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+        )
+        ..loader = () async => SessionMessagesPage.fromRaw(
+          rawMessages: rows,
+          pagination: null,
+          paginationProvided: false,
+        );
+      final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+      final chat = _chat('large-open', server.client(), gateway: gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+
+      // Native history alone covers more than one page: no speculative REST.
+      expect(server.requests, isEmpty);
+      expect(chat.messages, hasLength(300));
+    },
+  );
+
   for (final edited in <bool>[false, true]) {
     test(
       'complete native ${edited ? 'edited' : 'short'} transcript does not invent earlier history',
