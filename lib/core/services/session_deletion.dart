@@ -322,8 +322,48 @@ abstract final class LocalConversationCleanupFence {
       admittedEpoch: lifecycle?._epoch ?? state.epoch,
       resources: resources,
     );
+    _pruneOperationJournal();
     _operationJournal.add(operation);
     return operation;
+  }
+
+  /// Drops journal entries that can no longer influence any cleanup, so a
+  /// process kept alive for days does not retain every draft/outbox/transcript
+  /// write it ever admitted.
+  ///
+  /// An entry is kept while it has a delivered effect still in flight (a
+  /// clear must wait for it), while it is an unfinished session clear
+  /// (readers wait for it), while any unfinished session clear covers its
+  /// session (that clear may still ask for its resources), and while it can
+  /// still deliver an effect (a later clear must be able to supersede it).
+  static void _pruneOperationJournal() {
+    final clearingSessions = <(String, String)>{
+      for (final operation in _operationJournal)
+        if (operation.kind == LocalConversationOperationKind.clearSelector &&
+            !operation._settled.isCompleted)
+          (operation.connectionId, operation.sessionId),
+    };
+    _operationJournal.removeWhere((operation) {
+      if (clearingSessions.contains((
+        operation.connectionId,
+        operation.sessionId,
+      ))) {
+        return false;
+      }
+      for (final effect in operation._effects.values) {
+        if (effect.delivered && !effect.settled.isCompleted) return false;
+      }
+      if (operation.kind == LocalConversationOperationKind.clearSelector) {
+        // Unfinished clears were kept above through their own session.
+        return true;
+      }
+      if (operation._superseded) return true;
+      if (operation._lifecycle?._acceptingWrites == false) return true;
+      return operation._resources.isNotEmpty &&
+          operation._resources.every(
+            (resource) => operation._effects[resource]?.delivered == true,
+          );
+    });
   }
 
   static LocalConversationOperation admitSessionClear({
@@ -345,6 +385,7 @@ abstract final class LocalConversationCleanupFence {
       admittedEpoch: 0,
       resources: const [],
     );
+    _pruneOperationJournal();
     _operationJournal.add(clear);
     for (final operation in _operationJournal) {
       if (identical(operation, clear) ||
@@ -704,6 +745,8 @@ abstract final class LocalConversationCleanupFence {
       }
     });
   }
+
+  static int get operationJournalLengthForTesting => _operationJournal.length;
 
   static void resetForTesting() {
     _states.clear();
