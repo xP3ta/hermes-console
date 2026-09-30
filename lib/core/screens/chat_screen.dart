@@ -2173,7 +2173,12 @@ class _ChatScreenState extends State<ChatScreen>
   /// sueltas, y acelera con el tamaño de la ráfaga para no quedar rezagado.
   void _advanceStreamingReveal() {
     final content = _chat.assistantContent;
-    if (!_chat.isStreaming || !_autoFollowStreaming || _reduceMotion) {
+    // Sin UI visible (app en segundo plano) no hay nada que animar: el texto
+    // se revela entero y el timer de 30 Hz no despierta al isolate.
+    if (!_chat.isStreaming ||
+        !_autoFollowStreaming ||
+        _reduceMotion ||
+        !_appInForeground) {
       _streamingRevealTimer?.cancel();
       if (_revealedChars != content.length) {
         _revealedChars = content.length;
@@ -6361,6 +6366,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();
+    }
+    if (!_appInForeground && (_streamingRevealTimer?.isActive ?? false)) {
+      _advanceStreamingReveal();
     }
     if (wasInForeground != _appInForeground && mounted && !_disposed) {
       setState(() {});

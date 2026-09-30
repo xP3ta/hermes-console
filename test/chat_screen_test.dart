@@ -16656,12 +16656,18 @@ void main() {
         final ts = now / 1000;
         final transcript = <Map<String, dynamic>>[
           {'id': 10, 'role': 'user', 'content': 'antes', 'timestamp': ts - 60},
-          {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': ts - 59},
+          {
+            'id': 11,
+            'role': 'assistant',
+            'content': 'ok',
+            'timestamp': ts - 59,
+          },
           {'id': 12, 'role': 'user', 'content': prompt, 'timestamp': ts + 1},
         ];
         // `turn.status` queda pendiente: la restauración está a mitad.
         final statusGate = Completer<DesktopTurnStatus>();
-        final gateway = _RecoverableSubmissionGateway()..statusGate = statusGate;
+        final gateway = _RecoverableSubmissionGateway()
+          ..statusGate = statusGate;
         final chat = await pumpChat(
           tester,
           connection: connection,
@@ -16688,7 +16694,11 @@ void main() {
             clientTurnId: 'client-restore-race',
           ),
         );
-        for (var frame = 0; frame < 60 && gateway.submissions.isEmpty; frame++) {
+        for (
+          var frame = 0;
+          frame < 60 && gateway.submissions.isEmpty;
+          frame++
+        ) {
           await tester.pump(const Duration(milliseconds: 20));
         }
 
@@ -16700,11 +16710,9 @@ void main() {
           )).where((turn) => !turn.queued),
           isEmpty,
         );
-        expect(
-          gateway.submissions,
-          ['encolado tras la carrera'],
-          reason: 'la cola restaurada se reanuda tras liquidar el turno',
-        );
+        expect(gateway.submissions, [
+          'encolado tras la carrera',
+        ], reason: 'la cola restaurada se reanuda tras liquidar el turno');
         gateway.emitComplete();
         await tester.pump(const Duration(milliseconds: 500));
         expect(tester.takeException(), isNull);
@@ -16738,7 +16746,12 @@ void main() {
         final ts = now / 1000;
         final transcript = <Map<String, dynamic>>[
           {'id': 10, 'role': 'user', 'content': 'antes', 'timestamp': ts - 60},
-          {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': ts - 59},
+          {
+            'id': 11,
+            'role': 'assistant',
+            'content': 'ok',
+            'timestamp': ts - 59,
+          },
         ];
         var loads = 0;
         var clock = now;
@@ -23005,6 +23018,62 @@ void main() {
     expect(find.textContaining('RAFAGA-2-FIN'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'backgrounding stops the gradual reveal and resumes with the full text',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-reveal-background'),
+        desktopGateway: gateway,
+      );
+      await chat.send(
+        fullText: 'long answer while the app goes away',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.emit('message.start');
+      gateway.emit('message.delta', {
+        'text': '${List.filled(40, 'first burst').join(' ')} BURST-1-END',
+      });
+      for (
+        var frame = 0;
+        frame < 100 && !chat.assistantContent.contains('BURST-1-END');
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(find.textContaining('BURST-1-END'), findsNothing);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      // No reveal tick elapses: going away shows everything received at once.
+      await tester.pump();
+      expect(find.textContaining('BURST-1-END'), findsOneWidget);
+      gateway.emit('message.delta', {
+        'text': ' ${List.filled(40, 'second burst').join(' ')} BURST-2-END',
+      });
+      await tester.pump(const Duration(milliseconds: 33));
+      await tester.pump(const Duration(milliseconds: 33));
+      expect(chat.assistantContent, contains('BURST-2-END'));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(find.textContaining('BURST-1-END'), findsOneWidget);
+      expect(find.textContaining('BURST-2-END'), findsOneWidget);
+
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(find.textContaining('BURST-2-END'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('arrastre corto durante streaming conserva la posición elegida', (
     tester,
