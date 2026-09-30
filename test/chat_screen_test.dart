@@ -3033,7 +3033,7 @@ void main() {
       scaffold.openDrawer();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('Test remoto · online'), findsOneWidget);
+      expect(find.text('Test remoto · en línea'), findsOneWidget);
       scaffold.closeDrawer();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -3049,8 +3049,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(Drawer), findsOneWidget);
 
-      expect(find.text('Test remoto · online'), findsNothing);
-      expect(find.text('Test remoto · offline'), findsOneWidget);
+      expect(find.text('Test remoto · en línea'), findsNothing);
+      expect(find.text('Test remoto · sin conexión'), findsOneWidget);
 
       scaffold.closeDrawer();
       await tester.pump();
