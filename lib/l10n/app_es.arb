@@ -8965,5 +8965,13 @@
   },
   "cphFilterClear": "Quitar",
   "cphStatusUpdateShort": "Actualizable",
-  "cphRowAuth": "Autenticación"
+  "cphRowAuth": "Autenticación",
+  "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
+  "@v1215VoiceServerError": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
 }

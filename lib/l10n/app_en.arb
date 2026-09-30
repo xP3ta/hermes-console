@@ -7482,5 +7482,13 @@
   },
   "cphFilterClear": "Clear",
   "cphStatusUpdateShort": "Update",
-  "cphRowAuth": "Authentication"
+  "cphRowAuth": "Authentication",
+  "v1215VoiceServerError": "Hermes server replied: {detail}",
+  "@v1215VoiceServerError": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
 }
