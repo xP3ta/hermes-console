@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
+import '../utils/api_error.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
@@ -23,13 +24,21 @@ import '../widgets/hermes_app_bar.dart';
 
 class ActivityScreen extends StatelessWidget {
   final SavedConnection connection;
-  const ActivityScreen({required this.connection, super.key});
+
+  /// Test seam: replaces the Dashboard client used to read the logs.
+  final DashboardClient? clientOverride;
+
+  const ActivityScreen({
+    required this.connection,
+    @visibleForTesting this.clientOverride,
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).actTitle)),
-      body: _LogsTab(connection: connection),
+      body: _LogsTab(connection: connection, clientOverride: clientOverride),
     );
   }
 }
@@ -92,7 +101,8 @@ class _LogEntry {
 
 class _LogsTab extends StatefulWidget {
   final SavedConnection connection;
-  const _LogsTab({required this.connection});
+  final DashboardClient? clientOverride;
+  const _LogsTab({required this.connection, this.clientOverride});
 
   @override
   State<_LogsTab> createState() => _LogsTabState();
@@ -102,7 +112,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   late DashboardClient _client;
   List<_LogEntry> _entries = [];
   bool _loading = true;
-  String? _error;
+  Object? _error;
 
   static const _files = ['agent', 'errors', 'gateway'];
   String _file = 'agent';
@@ -125,7 +135,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   @override
   void initState() {
     super.initState();
-    _client = DashboardClient.lazy(widget.connection);
+    _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
     _load();
   }
 
@@ -156,7 +166,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = e;
         _loading = false;
       });
     }
@@ -367,7 +377,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
               ),
               const SizedBox(height: 6),
               Text(
-                _error!,
+                localizedApiError(Strings.of(context), _error!),
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
               ),
