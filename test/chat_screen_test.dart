@@ -838,6 +838,29 @@ class _UiRewindGateway
 }
 
 // Real producer ordering also permits a successor started by another viewer.
+/// Drops the live socket on demand and keeps the automatic reattach pending,
+/// so the chat transport stays offline/reconnecting.
+class _DroppedTransportGateway extends _UiRewindGateway
+    implements HermesDesktopRecoverySessionLifecycleGateway {
+  final Completer<DesktopSessionSnapshot> recoveryGate =
+      Completer<DesktopSessionSnapshot>();
+
+  void drop() {
+    connected = false;
+    _events.addError(StateError('socket dropped'));
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) => recoveryGate.future;
+
+  @override
+  // ignore: deprecated_member_use_from_same_package
+  void commitRecoveryRuntime(String runtimeSessionId) {}
+}
+
 class _SequencedSuccessorGateway extends _UiRewindGateway {
   final Object producer = Object();
   int sequence = 0;
@@ -2983,6 +3006,58 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  testWidgets(
+    'the navigation drawer reports the chat transport as offline while it is '
+    'disconnected instead of a hard-coded online',
+    (tester) async {
+      final gateway = _DroppedTransportGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-drawer-transport'),
+        desktopGateway: gateway,
+        initialStoredSessionId: 'sess-drawer-transport',
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final scaffold = tester.state<ScaffoldState>(
+        find
+            .descendant(
+              of: find.byType(ChatScreen),
+              matching: find.byType(Scaffold),
+            )
+            .first,
+      );
+      // Control: a live transport is still reported as online.
+      expect(chat.transportStatus.isConnected, isTrue);
+      scaffold.openDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Test remoto · online'), findsOneWidget);
+      scaffold.closeDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      gateway.drop();
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(chat.transportStatus.isConnected, isFalse);
+
+      scaffold.openDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(Drawer), findsOneWidget);
+
+      expect(find.text('Test remoto · online'), findsNothing);
+      expect(find.text('Test remoto · offline'), findsOneWidget);
+
+      scaffold.closeDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'REGRESSION_SLASH_PALETTE_DRAWER the slash palette never floats over the '

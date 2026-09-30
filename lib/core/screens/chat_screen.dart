@@ -10120,11 +10120,16 @@ class _ChatScreenState extends State<ChatScreen>
         },
         drawer: dedicatedChrome || connManager == null
             ? null
-            : HermesDrawer(
-                connection: widget.connection,
-                connManager: connManager,
-                current: DrawerSection.chat,
-                connected: true,
+            // The header/Bots dot mirror the live chat transport instead of
+            // always claiming the instance is online.
+            : ValueListenableBuilder<ChatTransportStatus>(
+                valueListenable: _chat.transportStatusListenable,
+                builder: (context, transport, _) => HermesDrawer(
+                  connection: widget.connection,
+                  connManager: connManager,
+                  current: DrawerSection.chat,
+                  connected: transport.isConnected,
+                ),
               ),
         appBar: HermesAppBar(
           centerTitle: !dedicatedChrome,
