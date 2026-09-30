@@ -270,4 +270,192 @@ void main() {
     activeChats.dispose();
     await tester.pump(const Duration(minutes: 5));
   });
+
+  testWidgets('reopening a cached chat still marks what arrived while away', (
+    tester,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    final secure = SecureStorage();
+    final activeChats = ActiveChatService(
+      attachDesktopRuntimeOnLoad: false,
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+
+    // A previous visit read up to the cached answer and closed the chat.
+    final previous = _attach(activeChats, (_, _) async => List.of(_rows));
+    await tester.runAsync(() => previous.loadMessages(expectedMessageCount: 2));
+    activeChats.release(_connection.id, _session.id);
+    await prefs.setString(
+      'chat_last_read_v1.${_connection.id}.${_session.id}',
+      'row:2',
+    );
+
+    // Another surface continued the conversation meanwhile.
+    final network = Completer<List<Map<String, dynamic>>>();
+    _attach(activeChats, (_, _) => network.future);
+
+    await tester.pumpWidget(
+      HermesApp(
+        connManager: manager,
+        appLock: AppLockService(prefs),
+        approvalPolicy: ApprovalPolicyService(prefs),
+        fontSize: FontSizeService(prefs),
+        bridgeManager: BridgeManager(secure, manager),
+        sshManager: SshManager(secure, manager),
+        sftpTransfers: SftpTransferService(
+          SshManager(secure, manager),
+          NotificationService(prefs),
+        ),
+        sshSessions: SshSessionService(SshManager(secure, manager)),
+        notifications: NotificationService(prefs),
+        activeChats: activeChats,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 500));
+    final context = tester.element(find.byType(Navigator).first);
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, _, _) =>
+            ChatScreen(connection: _connection, session: _session),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final divider = find.byKey(const ValueKey('chat-new-since-divider'));
+    expect(find.textContaining('cached answer'), findsWidgets);
+    expect(divider, findsNothing, reason: 'the cached rows hold nothing new');
+
+    network.complete([
+      ..._rows,
+      {'id': 3, 'role': 'user', 'content': 'question from another surface'},
+      {'id': 4, 'role': 'assistant', 'content': 'answer from another surface'},
+    ]);
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.textContaining('answer from another surface'), findsWidgets);
+    expect(divider, findsOneWidget);
+    final dividerTop = tester.getTopLeft(divider).dy;
+    expect(
+      tester.getTopLeft(find.textContaining('cached answer').first).dy,
+      lessThan(dividerTop),
+    );
+    expect(
+      tester
+          .getTopLeft(
+            find.textContaining('question from another surface').first,
+          )
+          .dy,
+      greaterThan(dividerTop),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    activeChats.dispose();
+    await tester.pump(const Duration(minutes: 5));
+  });
+
+  testWidgets('reopening a long cached chat lands on what arrived while away', (
+    tester,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    final secure = SecureStorage();
+    final activeChats = ActiveChatService(
+      attachDesktopRuntimeOnLoad: false,
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+
+    // A previous visit read up to the cached answer and closed the chat.
+    final previous = _attach(activeChats, (_, _) async => _longRows(1, 40));
+    await tester.runAsync(() => previous.loadMessages(expectedMessageCount: 2));
+    activeChats.release(_connection.id, _session.id);
+    await prefs.setString(
+      'chat_last_read_v1.${_connection.id}.${_session.id}',
+      'row:80',
+    );
+
+    // Another surface continued the conversation meanwhile.
+    final network = Completer<List<Map<String, dynamic>>>();
+    _attach(activeChats, (_, _) => network.future);
+
+    await tester.pumpWidget(
+      HermesApp(
+        connManager: manager,
+        appLock: AppLockService(prefs),
+        approvalPolicy: ApprovalPolicyService(prefs),
+        fontSize: FontSizeService(prefs),
+        bridgeManager: BridgeManager(secure, manager),
+        sshManager: SshManager(secure, manager),
+        sftpTransfers: SftpTransferService(
+          SshManager(secure, manager),
+          NotificationService(prefs),
+        ),
+        sshSessions: SshSessionService(SshManager(secure, manager)),
+        notifications: NotificationService(prefs),
+        activeChats: activeChats,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 500));
+    final context = tester.element(find.byType(Navigator).first);
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, _, _) =>
+            ChatScreen(connection: _connection, session: _session),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final divider = find.byKey(const ValueKey('chat-new-since-divider'));
+    expect(find.textContaining('long answer 40.'), findsWidgets);
+    expect(divider, findsNothing, reason: 'the cached rows hold nothing new');
+
+    network.complete(_longRows(1, 60));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(divider, findsOneWidget, reason: 'the chat opens on the divider');
+    final list = find.descendant(
+      of: find.byType(ChatScreen),
+      matching: find.byType(ListView),
+    );
+    final viewport = tester.getRect(list.first);
+    expect(tester.getTopLeft(divider).dy, closeTo(viewport.top, 1));
+    expect(find.textContaining('long question 41 '), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    activeChats.dispose();
+    await tester.pump(const Duration(minutes: 5));
+  });
 }
+
+List<Map<String, dynamic>> _longRows(int first, int last) => [
+  for (var turn = first; turn <= last; turn++) ...[
+    {
+      'id': turn * 2 - 1,
+      'role': 'user',
+      'content': 'long question $turn with some extra context.',
+    },
+    {
+      'id': turn * 2,
+      'role': 'assistant',
+      'content':
+          'long answer $turn. This text takes several lines so that the '
+          'transcript is much taller than the screen of the phone.',
+    },
+  ],
+];

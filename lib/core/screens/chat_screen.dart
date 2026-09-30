@@ -7078,10 +7078,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
       if (!hadTranscript) {
         _scrollToBottom();
-        _resolveNewSinceYouLeft();
       } else {
         _releaseMessageRefreshViewportAnchorAfterLayout(refreshEpoch);
       }
+      // Also after a reopen painted cached rows first: the marker is resolved
+      // against the first loaded transcript, not against the cached preview.
+      _resolveNewSinceYouLeft();
       return true;
     } catch (e) {
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
