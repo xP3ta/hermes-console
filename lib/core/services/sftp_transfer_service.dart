@@ -81,7 +81,7 @@ class SftpTransferService {
       _cancelRequested.add(transfer.id);
       transfer
         ..status = TransferStatus.error
-        ..error = 'Cancelado por el usuario';
+        ..error = _ssh.appStrings.m1215TransferCancelled;
       _activeClients[transfer.id]?.close();
       changed = true;
     }
@@ -183,7 +183,7 @@ class SftpTransferService {
     } catch (e) {
       t.status = TransferStatus.error;
       t.error = _cancelRequested.contains(t.id)
-          ? 'Cancelado por el usuario'
+          ? _ssh.appStrings.m1215TransferCancelled
           : localizedSshError(_ssh.appStrings, e);
       await _doneNotif(notifId, t);
     } finally {
@@ -276,7 +276,7 @@ class SftpTransferService {
       } catch (_) {}
       t.status = TransferStatus.error;
       t.error = _cancelRequested.contains(t.id)
-          ? 'Cancelado por el usuario'
+          ? _ssh.appStrings.m1215TransferCancelled
           : localizedSshError(_ssh.appStrings, e);
       await _doneNotif(notifId, t);
     } finally {
@@ -288,15 +288,15 @@ class SftpTransferService {
     return t;
   }
 
-  String _verb(TransferDirection d) =>
-      d == TransferDirection.download ? 'Descargando' : 'Subiendo';
-
   Future<void> _progressNotif(int id, SftpTransfer t) async {
     final pct = t.fraction == null ? null : (t.fraction! * 100).round();
+    final s = _ssh.appStrings;
     await _notif?.transferProgress(
       id: id,
-      title: '${_verb(t.direction)} ${t.name}',
-      body: pct == null ? 'En curso…' : '$pct%',
+      title: t.direction == TransferDirection.download
+          ? s.m1215TransferDownloading(t.name)
+          : s.m1215TransferUploading(t.name),
+      body: pct == null ? s.m1215TransferInProgress : '$pct%',
       progress: pct ?? 0,
       max: 100,
       indeterminate: t.fraction == null,
@@ -305,13 +305,19 @@ class SftpTransferService {
 
   Future<void> _doneNotif(int id, SftpTransfer t) async {
     final ok = t.status == TransferStatus.done;
-    final verb = t.direction == TransferDirection.download
-        ? (ok ? 'Descargado' : 'Falló la descarga')
-        : (ok ? 'Subido' : 'Falló la subida');
+    final s = _ssh.appStrings;
+    final download = t.direction == TransferDirection.download;
     await _notif?.transferDone(
       id: id,
-      title: '$verb · ${t.name}',
-      body: ok ? (t.localPath ?? 'Completado') : (t.error ?? 'Error'),
+      title: switch ((download, ok)) {
+        (true, true) => s.m1215TransferDownloaded(t.name),
+        (true, false) => s.m1215TransferDownloadFailed(t.name),
+        (false, true) => s.m1215TransferUploaded(t.name),
+        (false, false) => s.m1215TransferUploadFailed(t.name),
+      },
+      body: ok
+          ? (t.localPath ?? s.m1215TransferCompleted)
+          : (t.error ?? s.m1215TransferFailedBody),
       ok: ok,
     );
   }

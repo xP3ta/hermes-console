@@ -3231,6 +3231,28 @@ void main() {
     });
   }
 
+  for (final language in const ['en', 'es']) {
+    testWidgets('skill invocation chip names the skill in $language', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        messages: const [
+          {
+            'role': 'user',
+            'content':
+                '[IMPORTANT: The user has invoked the "reddit-research" '
+                'skill, indicating they want you to follow its instructions.]',
+          },
+        ],
+      );
+      tester.platformDispatcher.localesTestValue = [Locale(language)];
+      await tester.pump();
+
+      expect(find.text('Skill · reddit-research'), findsOneWidget);
+    });
+  }
+
   testWidgets(
     'la burbuja conserva texto humano y elimina el carrier background completo',
     (tester) async {

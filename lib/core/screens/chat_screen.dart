@@ -15831,7 +15831,7 @@ final RegExp _kanbanWorkRe = RegExp(
 String? _jobChipLabel(String raw, Strings strings) {
   if (_kanbanWorkRe.hasMatch(raw)) return strings.i18n1215KanbanTask;
   final skill = _invokedSkillName(raw);
-  if (skill != null) return 'Skill · $skill';
+  if (skill != null) return strings.m1215SkillChip(skill);
   final t = raw.trimLeft();
   // Handoff de compactación sin mensaje real detrás → chip discreto.
   if (t.startsWith('[CONTEXT COMPACTION') &&

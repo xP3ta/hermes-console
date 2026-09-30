@@ -28,6 +28,68 @@
   "i18n1215PreviousContext": "Contexto previo",
   "m1215HomeDashboardWrongPassword": "contraseña de Dashboard incorrecta · {label}",
   "m1215HomeDashboardLoginRequired": "falta iniciar sesión en Dashboard · {label}",
+  "m1215SkillChip": "Skill · {name}",
+  "@m1215SkillChip": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferDone": "listo",
+  "m1215TransferError": "error",
+  "m1215TransferCancelled": "Cancelado por el usuario",
+  "m1215TransferDownloading": "Descargando {name}",
+  "@m1215TransferDownloading": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferUploading": "Subiendo {name}",
+  "@m1215TransferUploading": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferInProgress": "En curso…",
+  "m1215TransferDownloaded": "Descargado · {name}",
+  "@m1215TransferDownloaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferUploaded": "Subido · {name}",
+  "@m1215TransferUploaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferDownloadFailed": "Falló la descarga · {name}",
+  "@m1215TransferDownloadFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferUploadFailed": "Falló la subida · {name}",
+  "@m1215TransferUploadFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferCompleted": "Completado",
+  "m1215TransferFailedBody": "Error",
   "languageSettingTitle": "Idioma",
   "@languageSettingTitle": {
     "description": "Título de la opción de idioma en Ajustes"
