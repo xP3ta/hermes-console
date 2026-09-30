@@ -8383,9 +8383,14 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _sendQueuedEntryNow(String id) async {
-    if (await _chat.sendQueuedNow(id) || !mounted) return;
-    _showQueueActionFailed(Strings.of(context).chaQueueSendNowFailed);
+  Future<void> _sendQueuedEntryNow(QueuedEntryView entry) async {
+    if (await _chat.sendQueuedNow(entry.id) || !mounted) return;
+    final strings = Strings.of(context);
+    _showQueueActionFailed(
+      entry.missingAttachment
+          ? strings.q1215QueueMissingAttachment
+          : strings.chaQueueSendNowFailed,
+    );
   }
 
   Future<void> _deleteQueuedEntry(String id) async {
@@ -13688,7 +13693,7 @@ class _ChatScreenState extends State<ChatScreen>
                 onSteer: () =>
                     unawaited(_steerQueuedEntry(queuedEntries[i].id)),
                 onSendNow: () =>
-                    unawaited(_sendQueuedEntryNow(queuedEntries[i].id)),
+                    unawaited(_sendQueuedEntryNow(queuedEntries[i])),
                 onDelete: () =>
                     unawaited(_deleteQueuedEntry(queuedEntries[i].id)),
                 onAbandon: () =>
@@ -18742,6 +18747,12 @@ class _QueuedRow extends StatelessWidget {
                   Text(
                     strings.q1215QueueAcceptedStale,
                     key: ValueKey('chat-queue-accepted-stale-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.missingAttachment)
+                  Text(
+                    strings.q1215QueueMissingAttachment,
+                    key: ValueKey('chat-queue-missing-attachment-${entry.id}'),
                     style: TextStyle(fontSize: 10.5, color: colors.warning),
                   )
                 else if (entry.blocked)

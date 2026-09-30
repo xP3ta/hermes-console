@@ -3130,6 +3130,7 @@ class QueuedEntryView {
     this.deliveryUnknown = false,
     this.serverAccepted = false,
     this.stopWaitingAvailable = false,
+    this.missingAttachment = false,
   });
 
   final String id;
@@ -3153,6 +3154,10 @@ class QueuedEntryView {
   /// [deliveryUnknown] rows and acknowledged rows restored from an earlier
   /// run whose terminal never arrived.
   final bool stopWaitingAvailable;
+
+  /// An attachment's local file is gone (cache cleared, app reinstalled).
+  /// The turn cannot be sent as it is; only deleting it gets it out.
+  final bool missingAttachment;
 
   bool get isSteerable =>
       text.trim().isNotEmpty &&
@@ -7234,6 +7239,7 @@ class ActiveChat {
           deliveryUnknown: _isDeliveryUnknown(item),
           serverAccepted: item.delivery.acknowledged,
           stopWaitingAvailable: _isUncertainQueued(item),
+          missingAttachment: _hasMissingAttachment(item.turn),
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
@@ -21417,12 +21423,21 @@ class ActiveChat {
     return changed;
   }
 
+  static bool _hasMissingAttachment(PreparedTurn turn) =>
+      turn.activeAttachments.any(
+        (attachment) =>
+            attachment.uploadState == AttachmentUploadState.error &&
+            attachment.errorKind == AttachmentErrorKind.missingFile,
+      );
+
   Future<bool> sendQueuedNow(String id) async {
     if (mutationsBlockedByOwnershipConflict || _disposed) return false;
-    if (!queuedEntries.any((entry) => entry.id == id) ||
-        id == 'desktop-accepted') {
+    final matches = queuedEntries.where((entry) => entry.id == id);
+    if (matches.isEmpty || id == 'desktop-accepted') {
       return false;
     }
+    // The drain would re-block it at once: report it instead of pretending.
+    if (matches.first.missingAttachment) return false;
     final preparedId = id.startsWith('prepared:')
         ? id.substring('prepared:'.length)
         : null;

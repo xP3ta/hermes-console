@@ -27251,6 +27251,78 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Enviar ahora con un adjunto perdido explica por qué no sale', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-missing-attachment'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final restored = chat.restoreQueuedTurns(
+      [
+        PreparedTurn(
+          connectionId: chat.connection.id,
+          sessionId: chat.sessionId,
+          clientTurnId: 'photo',
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: 'mira la foto',
+          attachments: const [
+            AttachmentDraft(
+              localId: 'missing',
+              type: AttachmentType.image,
+              name: 'foto.jpg',
+              mimeType: 'image/jpeg',
+              sizeBytes: 1,
+              localPath: '/missing/foto.jpg',
+              uploadState: AttachmentUploadState.error,
+              errorKind: AttachmentErrorKind.missingFile,
+            ),
+          ],
+          model: 'hermes-agent',
+          profile: chat.sessionProfile,
+          state: PreparedTurnState.prepared,
+          queued: true,
+          queueOrder: 1,
+        ),
+      ],
+      _UiReleaseOutbox(),
+      scheduleDrain: false,
+    );
+    await tester.pump();
+    await restored;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    const id = 'prepared:photo';
+    const reason =
+        'Falta un adjunto en este móvil y no se puede enviar. Bórralo y vuelve a adjuntarlo.';
+    // The row says why it is stuck, not a bare "try again".
+    expect(
+      find.byKey(const ValueKey('chat-queue-missing-attachment-$id')),
+      findsOneWidget,
+    );
+    expect(find.text('Envío pendiente. Reintenta.'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('chat-queue-send-now-$id')));
+    await tester.pump();
+    await tester.pump();
+    expect(chat.queuedEntries.map((e) => e.id), [id]);
+    expect(find.text(reason), findsNWidgets(2));
+    await tester.pump(const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('panel de cola expone acciones nativas por identidad', (
     tester,
   ) async {
