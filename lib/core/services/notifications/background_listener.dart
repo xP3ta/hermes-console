@@ -465,6 +465,98 @@ Uri backgroundRunStatusUri(String safeBase, WatchedRun run) => Uri.parse(
   '$safeBase/${ApiClient.profileEndpoint('v1/runs/${Uri.encodeComponent(run.runId)}', profile: run.profile)}',
 );
 
+/// Per-run retry gate for the background `/v1/runs/{id}` poller.
+///
+/// A non-200 answer never proves the run ended, so the run is always kept.
+/// What changes is how often it is asked again: 401/403/404 are stable
+/// answers (revoked key, expired ledger) and back off from [stableBase] up to
+/// [maxDelay]. Timeouts, transport errors and 5xx keep the normal cadence so
+/// a completion is still noticed on the next tick once the link recovers.
+/// Any other answer clears the state. State is in memory only.
+class BackgroundRunPollBackoff {
+  BackgroundRunPollBackoff({
+    DateTime Function()? now,
+    this.stableBase = const Duration(minutes: 2),
+    this.maxDelay = const Duration(minutes: 15),
+  }) : _now = now ?? DateTime.now;
+
+  final DateTime Function() _now;
+  final Duration stableBase;
+  final Duration maxDelay;
+  final Map<
+    ({String connId, String profile, String runId}),
+    ({int failures, DateTime retryAt})
+  >
+  _states = {};
+
+  static bool isStableRejection(int statusCode) =>
+      statusCode == 401 || statusCode == 403 || statusCode == 404;
+
+  bool allows(WatchedRun run) {
+    final state = _states[_watchedRunOwner(run)];
+    return state == null || !_now().isBefore(state.retryAt);
+  }
+
+  /// [statusCode] null means the request did not produce an HTTP answer.
+  void record(WatchedRun run, int? statusCode) {
+    final owner = _watchedRunOwner(run);
+    if (statusCode == null || !isStableRejection(statusCode)) {
+      _states.remove(owner);
+      return;
+    }
+    final failures = (_states[owner]?.failures ?? 0) + 1;
+    var delayMs = stableBase.inMilliseconds;
+    for (var i = 1; i < failures && delayMs < maxDelay.inMilliseconds; i++) {
+      delayMs *= 2;
+    }
+    if (delayMs > maxDelay.inMilliseconds) delayMs = maxDelay.inMilliseconds;
+    _states[owner] = (
+      failures: failures,
+      retryAt: _now().add(Duration(milliseconds: delayMs)),
+    );
+  }
+
+  /// Drops state for runs no longer watched.
+  void retain(Iterable<WatchedRun> runs) {
+    final live = runs.map(_watchedRunOwner).toSet();
+    _states.removeWhere((owner, _) => !live.contains(owner));
+  }
+}
+
+/// Reads one watched run's status through [backoff]. Returns null without
+/// touching the network while the run is backing off; otherwise the HTTP
+/// response (any status). Transport failures are recorded and rethrown.
+@visibleForTesting
+Future<http.Response?> fetchWatchedRunStatus({
+  required http.Client client,
+  required BackgroundRunPollBackoff backoff,
+  required WatchedRun run,
+  required String safeBase,
+  required Future<String?> Function() readToken,
+  Duration timeout = const Duration(seconds: 12),
+}) async {
+  if (!backoff.allows(run)) return null;
+  final http.Response res;
+  try {
+    final token = await readToken();
+    res = await client
+        .get(
+          backgroundRunStatusUri(safeBase, run),
+          headers: {
+            if (token != null && token.isNotEmpty)
+              'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(timeout);
+  } catch (_) {
+    backoff.record(run, null);
+    rethrow;
+  }
+  backoff.record(run, res.statusCode);
+  return res;
+}
+
 /// QA-only delivery trace (`--dart-define=HERMES_NOTIF_TRACE=true`). Off by
 /// default and compiled out of normal builds. Prints only opaque ids, states
 /// and decisions: never titles, previews, hosts or credentials.
@@ -1489,6 +1581,7 @@ class _HermesTaskHandler extends TaskHandler {
   final http.Client _http = http.Client();
   final BackgroundDashboardClientCache _dashboardClients =
       BackgroundDashboardClientCache();
+  final BackgroundRunPollBackoff _runPollBackoff = BackgroundRunPollBackoff();
   final BackgroundDiscoveryBackoff _discoveryBackoff =
       BackgroundDiscoveryBackoff();
   late final BackgroundAutomationDiscovery _discovery =
@@ -1736,6 +1829,7 @@ class _HermesTaskHandler extends TaskHandler {
         snapshot: runs,
         keep: pollKeep,
       );
+      _runPollBackoff.retain(keep);
 
       // Texto vivo en la notificación persistente.
       if (kDebugMode) {
@@ -1919,18 +2013,15 @@ class _HermesTaskHandler extends TaskHandler {
       return null;
     }
     try {
-      final token = await _secure.readApiKey(r.connId);
-      final uri = backgroundRunStatusUri(safeBase, r);
-      final res = await _http
-          .get(
-            uri,
-            headers: {
-              if (token != null && token.isNotEmpty)
-                'Authorization': 'Bearer $token',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
+      final res = await fetchWatchedRunStatus(
+        client: _http,
+        backoff: _runPollBackoff,
+        run: r,
+        safeBase: safeBase,
+        readToken: () => _secure.readApiKey(r.connId),
+      );
+      // Backing off after a stable 401/403/404: keep the run, skip the call.
+      if (res == null) return r;
       if (kDebugMode) {
         debugPrint('[hermes-notif] run poll HTTP ${res.statusCode}');
       }
