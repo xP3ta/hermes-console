@@ -13,6 +13,7 @@ import '../../../models/hosted_groups.dart';
 import '../../../models/room_member_status.dart' show resolveRoomRecipients;
 import '../../../widgets/mission_profile_avatar.dart'
     show MissionProfileAvatarCache;
+import '../../state/bot_presence.dart';
 import '../bot_identity.dart';
 
 export '../bot_identity.dart' show botIdentityColor;
@@ -534,10 +535,15 @@ const _turnKinds = {
 /// Current round of the latest discussion, per member, from `turn.*`
 /// events plus `driver_status` (approvals, retries, counts). Returns `null`
 /// when the room has no user discussion yet.
+///
+/// Without a driver status, an open `turn.started` counts as working only
+/// while the latest activity of that member's turn is fresh at [now]
+/// (same window as [BotPresence.workerFreshness]).
 RoomRoundModel? deriveRoomRound({
   required List<HostedGroupEvent> events,
   required List<HostedGroupMember> members,
   RoomDriverStatus? driverStatus,
+  DateTime? now,
 }) {
   HostedGroupEvent? discussion;
   for (final e in events.reversed) {
@@ -595,13 +601,29 @@ RoomRoundModel? deriveRoomRound({
     final taskId = last?.activity.taskId;
     final retry = taskId != null && (driver?.offersRetry(taskId) ?? false);
     final since = last == null ? null : roomEventTime(last);
+    bool turnIsFresh() {
+      if (now == null) return true;
+      var latest = last!.createdAt;
+      for (final e in events) {
+        if (e.sequence <= last.sequence) continue;
+        final memberId =
+            e.activity.memberId ??
+            (e.kind == 'message.member' ? e.actor.id : null);
+        if (memberId == member.memberId && e.createdAt > latest) {
+          latest = e.createdAt;
+        }
+      }
+      final seconds = latest < 1e12 ? latest : latest / 1000;
+      return BotPresence.isFreshActivity(seconds, now);
+    }
+
     RoomTurnState state;
     if (approval != null) {
       state = RoomTurnState.needsYou;
     } else {
       switch (last?.kind) {
         case 'turn.started':
-          state = roomWorking || driver == null
+          state = roomWorking || (driver == null && turnIsFresh())
               ? RoomTurnState.working
               : RoomTurnState.noReply;
         case 'turn.settled':

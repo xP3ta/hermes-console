@@ -567,6 +567,9 @@ And whether `fix/tap-targets` is still open.''';
       final seq = EventSeq();
       final u = seq.user('@builder go');
       final disc = u['event_id'] as String;
+      // A current turn: without driver status the room applies the roster
+      // worker freshness, so the turn must be recent at the screen clock.
+      seq.at = 1790000400 - 40;
       final started = seq.started('m-builder', disc);
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
       final strip = find.byKey(const ValueKey('room-status-strip'));
@@ -581,6 +584,26 @@ And whether `fix/tap-targets` is still open.''';
       expect(
         find.byKey(const ValueKey('room-strip-dot-m-builder-working')),
         findsOneWidget,
+      );
+    });
+
+    testWidgets('#8d a stale started turn without driver status is not '
+        'shown as replying', (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder go');
+      final disc = u['event_id'] as String;
+      // Started ~280 s before the screen clock: past the worker freshness.
+      final started = seq.started('m-builder', disc);
+      await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .data,
+        isNot(contains('is replying')),
+      );
+      expect(
+        find.byKey(const ValueKey('room-strip-dot-m-builder-working')),
+        findsNothing,
       );
     });
 

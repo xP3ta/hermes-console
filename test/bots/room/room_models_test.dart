@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/bots/state/bot_presence.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
+import 'package:hermes_android/core/models/hosted_groups.dart';
 
 import 'room_fixtures.dart';
 
@@ -167,6 +169,45 @@ void main() {
             .approval
             ?.command,
         'gh pr ready 51',
+      );
+    });
+
+    test('without driver status a turn is working only while its latest '
+        'activity is within the roster worker freshness', () {
+      final seq = EventSeq();
+      final u = seq.user('@builder go');
+      final disc = u['event_id'] as String;
+      final started = seq.started('m-builder', disc);
+      final startedAt = started['created_at'] as double;
+      final events = buildLog([u, started]).events;
+      final members = buildRoom().members;
+      DateTime at(double seconds) =>
+          DateTime.fromMillisecondsSinceEpoch((seconds * 1000).round());
+      RoomTurnState stateAt(List<HostedGroupEvent> events, DateTime now) =>
+          deriveRoomRound(
+            events: events,
+            members: members,
+            now: now,
+          )!.rows.single.state;
+      final window = BotPresence.workerFreshness.inSeconds;
+
+      expect(stateAt(events, at(startedAt + window)), RoomTurnState.working);
+      expect(
+        stateAt(events, at(startedAt + window + 1)),
+        RoomTurnState.noReply,
+      );
+      // Freshness counts from the latest activity of that member's turn.
+      final later = seq.member(
+        'm-builder',
+        'builder',
+        'partial',
+        disc,
+        atSeconds: startedAt + window,
+      );
+      final withActivity = buildLog([u, started, later]).events;
+      expect(
+        stateAt(withActivity, at(startedAt + window + 60)),
+        RoomTurnState.working,
       );
     });
 

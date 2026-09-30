@@ -667,6 +667,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       events: _events,
       members: _room.members,
       driverStatus: _driver,
+      now: _now,
     ),
     profileFor: widget.profileFor,
     avatarCache: widget.avatarCache,
@@ -1381,7 +1382,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   }
 
   RoomRoundModel? _roundView() {
-    final inputs = [_log, _driver, _room, _dismissedTasks];
+    final now = _now;
+    final inputs = [
+      _log,
+      _driver,
+      _room,
+      _dismissedTasks,
+      // Without driver status an open turn expires with time.
+      if (_driver == null) now.millisecondsSinceEpoch ~/ 10000,
+    ];
     if (_sameInputs(_roundInputs, inputs)) return _round;
     _roundInputs = inputs;
     return _round = _visibleRound(
@@ -1389,6 +1398,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         events: _events,
         members: _room.members,
         driverStatus: _driver,
+        now: now,
       ),
     );
   }
