@@ -7549,5 +7549,8 @@
   "cs1215SearchingOlder": "Searching older messages…",
   "cs1215CurrentMatchLabel": "Current search result",
   "cs1215SlashArg": "[text]",
-  "cs1215SlashDesc": "Search text in this chat"
+  "cs1215SlashDesc": "Search text in this chat",
+  "rs1215Sending": "Sending…",
+  "rs1215NotSent": "Not sent",
+  "rs1215Retry": "Retry"
 }

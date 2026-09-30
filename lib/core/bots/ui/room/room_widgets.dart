@@ -174,6 +174,124 @@ String roomDayLabel(Strings s, DateTime day, DateTime now) {
 /// One message of a group run. User messages are right bubbles; member
 /// messages are full-width subtle cards. Face + coloured name + time only
 /// on the first message of a run; no coloured side rail.
+/// A message sent from this device that the server has not acknowledged
+/// yet: the user bubble, dimmed while sending, or marked "Not sent" with
+/// Retry when delivery failed.
+class RoomPendingMessageTile extends StatelessWidget {
+  final String id;
+  final String text;
+  final List<String> attachmentNames;
+  final bool failed;
+  final VoidCallback onRetry;
+
+  const RoomPendingMessageTile({
+    super.key,
+    required this.id,
+    required this.text,
+    required this.attachmentNames,
+    required this.failed,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.only(left: 56, right: 12, top: 10, bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Opacity(
+            opacity: failed ? 1 : 0.7,
+            child: Container(
+              key: ValueKey('room-pending-bubble-$id'),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: colors.surfaceVariant.withValues(alpha: 0.75),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
+                  bottomRight: Radius.circular(5),
+                ),
+                border: failed
+                    ? Border.all(color: colors.error.withValues(alpha: 0.6))
+                    : null,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (text.isNotEmpty)
+                    ChatMarkdownBody(data: text, selectable: false),
+                  for (final name in attachmentNames)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.attach_file_rounded,
+                            size: 14,
+                            color: colors.textSecondary,
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (failed)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.error_outline_rounded,
+                  size: 14,
+                  color: colors.error,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  s.rs1215NotSent,
+                  key: ValueKey('room-pending-failed-$id'),
+                  style: TextStyle(fontSize: 11.5, color: colors.error),
+                ),
+                TextButton(
+                  key: ValueKey('room-pending-retry-$id'),
+                  onPressed: onRetry,
+                  child: Text(s.rs1215Retry),
+                ),
+              ],
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                s.rs1215Sending,
+                key: ValueKey('room-pending-sending-$id'),
+                style: TextStyle(fontSize: 11, color: colors.textSecondary),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class RoomMessageTile extends StatelessWidget {
   final RoomMessageEntry entry;
   final AgentProfile? profile;

@@ -109,7 +109,6 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   final Set<String> _answering = {};
   final Set<String> _retrying = {};
   Animation<double>? _coverAnimation;
-  bool _sending = false;
   bool _stopping = false;
   bool _pickerOpen = false;
   String? _threadId;
@@ -117,8 +116,13 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   int? _lastSeenSeq;
   bool _lastSeenLoaded = false;
   RoomNotificationLevel _notifications = RoomNotificationLevel.all;
-  HostedGroupSendAttempt? _pendingAttempt;
-  String? _pendingText;
+
+  /// Messages sent from this screen that the server has not acknowledged
+  /// yet, in the order the user sent them. They show at once as local
+  /// bubbles; one worker delivers them strictly in order.
+  final List<_OutgoingMessage> _outbox = [];
+  int _outboxVersion = 0;
+  bool _draining = false;
   Timer? _draftTimer;
   bool _draftDirty = false;
   bool _restoringDraft = false;
@@ -323,10 +327,6 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   }
 
   void _onComposerChanged() {
-    if (_pendingAttempt != null && _composer.text.trim() != _pendingText) {
-      _pendingAttempt = null;
-      _pendingText = null;
-    }
     if (!_restoringDraft && widget.drafts != null) {
       _draftDirty = true;
       _draftTimer?.cancel();
@@ -341,11 +341,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (!_draftDirty || store == null) return;
     unawaited(
       store
-          .save(
-            _composer.text,
-            threadId: _threadId,
-            preparedId: _pendingAttempt?.clientEventId,
-          )
+          .save(_composer.text, threadId: _threadId)
           .then<void>((_) {}, onError: (Object _) {}),
     );
   }
@@ -463,66 +459,126 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     return crossGateway ? RoomAttachBlock.crossGateway : RoomAttachBlock.none;
   }
 
-  Future<void> _send(String raw, List<AttachmentDraft> drafts) async {
+  /// Optimistic send: the message shows as a local bubble and the composer
+  /// is free again in the same frame; delivery (upload, `groups.send` and
+  /// its verified readback) runs behind it, strictly in order.
+  void _send(String raw, List<AttachmentDraft> drafts) {
     final text = raw.trim();
-    if ((text.isEmpty && drafts.isEmpty) ||
-        _sending ||
-        !widget.capabilities.canSend) {
+    if ((text.isEmpty && drafts.isEmpty) || !widget.capabilities.canSend) {
       return;
     }
-    final s = Strings.of(context);
-    setState(() => _sending = true);
+    final thread = _threadId;
+    final message = _OutgoingMessage(
+      attempt: HostedGroupSendAttempt.forClientEvent(
+        const Uuid().v4(),
+        threadId: thread,
+      ),
+      text: text,
+      attachments: List.unmodifiable(drafts),
+    );
+    // Until the server acknowledges it, the sent text stays in the stored
+    // draft bound to this attempt; the acknowledgement retires exactly it.
+    _draftTimer?.cancel();
+    _draftDirty = false;
+    unawaited(
+      widget.drafts
+              ?.save(
+                raw,
+                threadId: thread,
+                preparedId: message.attempt.clientEventId,
+              )
+              .then<void>((_) {}, onError: (Object _) {}) ??
+          Future<void>.value(),
+    );
+    setState(() {
+      _outbox.add(message);
+      _outboxVersion++;
+      _attachments.clear();
+      _threadId = null;
+      _error = null;
+      _restoringDraft = true;
+      _composer.clear();
+      _restoringDraft = false;
+    });
+    _toBottom();
+    unawaited(_drain());
+  }
+
+  void _retrySend(_OutgoingMessage message) {
+    if (!message.failed || !_outbox.contains(message)) return;
+    setState(() {
+      message.failed = false;
+      _outboxVersion++;
+    });
+    unawaited(_drain());
+  }
+
+  /// Delivers queued messages one at a time, oldest first. Keeps running
+  /// after the screen closes so nothing already sent is dropped.
+  Future<void> _drain() async {
+    if (_draining) return;
+    _draining = true;
     try {
-      final refs = <RoomAttachmentRef>[];
-      for (final draft in drafts) {
-        final path = await widget.uploader?.upload(draft);
-        if (path == null) {
-          if (mounted) _notice(s.roomAttachFailed(draft.name));
-          return;
+      while (true) {
+        final message = _outbox.where((m) => !m.failed).firstOrNull;
+        if (message == null) return;
+        try {
+          final result = await _deliver(message);
+          // The acknowledged send never waits on draft storage.
+          unawaited(
+            widget.drafts
+                    ?.clear(preparedId: message.attempt.clientEventId)
+                    .then<void>((_) {}, onError: (Object _) {}) ??
+                Future<void>.value(),
+          );
+          _outbox.remove(message);
+          _outboxVersion++;
+          if (!mounted) continue;
+          _apply(result);
+          _poller.setVisible(true);
+        } catch (_) {
+          // Later messages never overtake one that did not go out.
+          final from = _outbox.indexOf(message);
+          for (final m in _outbox.skip(from < 0 ? 0 : from)) {
+            m.failed = true;
+          }
+          _outboxVersion++;
+          if (mounted) setState(() {});
         }
-        refs.add(RoomAttachmentRef(name: draft.name, path: path));
       }
-      final full = appendRoomAttachmentSuffix(text, refs);
-      if (_pendingAttempt == null || _pendingText != text || refs.isNotEmpty) {
-        _pendingAttempt = HostedGroupSendAttempt.forClientEvent(
-          const Uuid().v4(),
-          threadId: _threadId,
-        );
-        _pendingText = text;
-      }
-      final attempt = _pendingAttempt!;
-      _flushDraft();
-      final submittedThread = _threadId;
-      final result = await widget.gateway.send(
-        _room,
-        text: full,
-        attempt: attempt,
-      );
-      // The acknowledged send never waits on draft storage.
-      unawaited(
-        widget.drafts
-                ?.clear(preparedId: attempt.clientEventId)
-                .then<void>((_) {}, onError: (Object _) {}) ??
-            Future<void>.value(),
-      );
-      if (!mounted) return;
-      _apply(result);
-      setState(() {
-        _pendingAttempt = null;
-        _pendingText = null;
-        _attachments.clear();
-        if (_composer.text.trim() == text && _threadId == submittedThread) {
-          _composer.clear();
-          _threadId = null;
-        }
-      });
-      _poller.setVisible(true);
-      _toBottom();
-    } catch (_) {
-      if (mounted) setState(() => _error = s.roomActionFailed);
     } finally {
-      if (mounted) setState(() => _sending = false);
+      _draining = false;
     }
+  }
+
+  Future<HostedGroupWorkspaceReadback> _deliver(
+    _OutgoingMessage message,
+  ) async {
+    final refs = <RoomAttachmentRef>[];
+    for (final draft in message.attachments) {
+      final path = await widget.uploader?.upload(draft);
+      if (path == null) {
+        if (mounted) _notice(Strings.of(context).roomAttachFailed(draft.name));
+        throw StateError('attachment upload failed');
+      }
+      refs.add(RoomAttachmentRef(name: draft.name, path: path));
+    }
+    return widget.gateway.send(
+      _room,
+      text: appendRoomAttachmentSuffix(message.text, refs),
+      attempt: message.attempt,
+    );
+  }
+
+  /// Local bubbles still to show: an attempt whose durable event is already
+  /// in the log (e.g. a refresh saw it first) is shown once, from the log.
+  List<_OutgoingMessage> _visibleOutbox() {
+    if (_outbox.isEmpty) return const [];
+    final published = {for (final e in _events) e.eventId};
+    return [
+      for (final m in _outbox)
+        if (!published.contains(m.attempt.durableEventId)) m,
+    ];
   }
 
   Future<void> _pick(AttachmentSourceChoice source) async {
@@ -608,11 +664,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   }
 
   void _setThread(String? threadId) {
-    setState(() {
-      _threadId = threadId;
-      _pendingAttempt = null;
-      _pendingText = null;
-    });
+    setState(() => _threadId = threadId);
     _draftDirty = true;
     _flushDraft();
     if (threadId != null) _focus.requestFocus();
@@ -1081,18 +1133,17 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           focusNode: _focus,
           showBotModeToggle: false,
           hintText: s.roomComposerHint,
-          onSend: (text, drafts) => unawaited(_send(text, List.of(drafts))),
+          onSend: (text, drafts) => _send(text, List.of(drafts)),
           onAttach: (source) {
             if (block == RoomAttachBlock.none) {
               unawaited(_pick(source));
             }
           },
-          attachEnabled: block == RoomAttachBlock.none && !_sending,
+          attachEnabled: block == RoomAttachBlock.none,
           attachments: _attachments,
           onRemoveAttachment: (id) =>
               setState(() => _attachments.removeWhere((a) => a.localId == id)),
-          busy: _sending,
-          sendEnabled: hasContent && !_sending,
+          sendEnabled: hasContent,
           palette: _palette(s),
           reduceMotion: MediaQuery.maybeDisableAnimationsOf(context) ?? false,
           dictation: dictation == null
@@ -1355,6 +1406,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _threadId == null,
     _retrying.join(','),
     _answering.join(','),
+    _outboxVersion,
     locale,
     widget,
     DateUtils.dateOnly(_now),
@@ -1424,6 +1476,19 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           key: entry.key,
           message: entry is RoomMessageEntry,
           build: () => _entry(entry, s, handles),
+        ),
+      for (final message in _visibleOutbox())
+        (
+          key: 'room-pending-${message.attempt.clientEventId}',
+          message: true,
+          build: () => RoomPendingMessageTile(
+            key: ValueKey('room-pending-${message.attempt.clientEventId}'),
+            id: message.attempt.clientEventId,
+            text: message.text,
+            attachmentNames: [for (final a in message.attachments) a.name],
+            failed: message.failed,
+            onRetry: () => _retrySend(message),
+          ),
         ),
       for (final card in _inlineCards())
         (
@@ -1761,4 +1826,19 @@ class _RoomThreadPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One message sent from this screen and not yet acknowledged.
+final class _OutgoingMessage {
+  /// Reused on retry, so the server keeps the send idempotent.
+  final HostedGroupSendAttempt attempt;
+  final String text;
+  final List<AttachmentDraft> attachments;
+  bool failed = false;
+
+  _OutgoingMessage({
+    required this.attempt,
+    required this.text,
+    required this.attachments,
+  });
 }
