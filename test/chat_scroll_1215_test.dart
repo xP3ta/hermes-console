@@ -749,6 +749,111 @@ void main() {
       await tearDownChat(tester, second);
     });
 
+    Future<Map<String, Object>> streamReplyAndLeave(
+      WidgetTester tester, {
+      required String initialMarker,
+    }) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: {lastReadKey: initialMarker},
+      );
+      await settle(tester);
+      await chat.send(
+        fullText: 'Pregunta enviada ahora',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      gateway.emit('message.delta', {'text': 'Respuesta vista en vivo.'});
+      await settle(tester);
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await settle(tester);
+      Navigator.of(tester.element(transcript())).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      final prefs = await SharedPreferences.getInstance();
+      final stored = <String, Object>{
+        for (final key in prefs.getKeys())
+          if (key.startsWith(lastReadKey)) key: prefs.get(key)!,
+      };
+      await tearDownChat(tester, gateway);
+      return stored;
+    }
+
+    // The turn the reader just watched, as Hermes stores it (durable ids).
+    List<Map<String, dynamic>> watchedTurn() => [
+      {
+        'id': 'live-a',
+        'role': 'assistant',
+        'content': 'Respuesta vista en vivo.',
+      },
+      {'id': 'live-u', 'role': 'user', 'content': 'Pregunta enviada ahora'},
+    ];
+
+    testWidgets('a reply watched live is read on the next entry', (
+      tester,
+    ) async {
+      final stored = await streamReplyAndLeave(
+        tester,
+        initialMarker: 'message:h-a-24',
+      );
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: [...watchedTurn(), ..._history()],
+        initialPrefs: stored,
+      );
+      await settle(tester);
+      expect(
+        divider(),
+        findsNothing,
+        reason: 'the prompt and the reply seen live are not news',
+      );
+      expect(controllerOf(tester).position.pixels, 0);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('only rows after a reply watched live are new', (tester) async {
+      final stored = await streamReplyAndLeave(
+        tester,
+        initialMarker: 'message:h-a-24',
+      );
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: [...remoteTurn('later'), ...watchedTurn(), ..._history()],
+        initialPrefs: stored,
+      );
+      await settle(tester);
+      expect(divider(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
+          matching: find.text('2 nuevos'),
+        ),
+        findsOneWidget,
+      );
+      final dividerTop = tester.getTopLeft(divider()).dy;
+      final firstUnread = find.text('Pregunta desde otra superficie');
+      expect(firstUnread, findsOneWidget);
+      expect(tester.getTopLeft(firstUnread).dy, greaterThan(dividerTop));
+      // The prompt sent before leaving sits above the divider (possibly
+      // scrolled out of the built range).
+      final sent = find.text('Pregunta enviada ahora', skipOffstage: false);
+      if (sent.evaluate().isNotEmpty) {
+        expect(tester.getTopLeft(sent).dy, lessThan(dividerTop));
+      }
+      await tearDownChat(tester, gateway);
+    });
+
     testWidgets('leaving the chat stores the newest message as read', (
       tester,
     ) async {

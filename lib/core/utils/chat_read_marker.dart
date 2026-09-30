@@ -57,3 +57,70 @@ Map<String, dynamic>? chatNewestCountableMessage(
   }
   return null;
 }
+
+const _seenAfterSeparator = '|seen=';
+
+/// Read marker stored when the reader leaves a newest-first transcript.
+///
+/// The newest rows are often still local projections (the prompt just sent,
+/// the reply watched live) with no durable id yet. The marker is then the
+/// newest countable row that has one, plus how many newer countable rows the
+/// reader already saw, so their durable copies are not news on return.
+/// Null when no countable row has a durable coordinate.
+String? chatReadMarkerForLeaving(
+  List<Map<String, dynamic>> messagesNewestFirst,
+) {
+  var seenAfter = 0;
+  for (final message in messagesNewestFirst) {
+    if (!chatReadMarkerCountable(message)) continue;
+    final key = chatReadMarkerKey(message);
+    if (key != null) {
+      return seenAfter == 0 ? key : '$key$_seenAfterSeparator$seenAfter';
+    }
+    seenAfter++;
+  }
+  return null;
+}
+
+/// Unread rows of a newest-first transcript against a marker stored by
+/// [chatReadMarkerForLeaving]: how many countable rows are new, the oldest of
+/// them and the newest row the reader had already seen. Null when the marker
+/// is not in the loaded transcript.
+({int count, Map<String, dynamic>? oldestNew, Map<String, dynamic> newestRead})?
+chatUnreadSinceStoredMarker(
+  List<Map<String, dynamic>> messagesNewestFirst,
+  String stored,
+) {
+  var key = stored;
+  var seenAfter = 0;
+  final separator = stored.lastIndexOf(_seenAfterSeparator);
+  if (separator > 0) {
+    final parsed = int.tryParse(
+      stored.substring(separator + _seenAfterSeparator.length),
+    );
+    if (parsed != null && parsed > 0) {
+      key = stored.substring(0, separator);
+      seenAfter = parsed;
+    }
+  }
+  final newer = <Map<String, dynamic>>[];
+  for (final message in messagesNewestFirst) {
+    if (chatReadMarkerKey(message) == key) {
+      final unread = newer.length - seenAfter;
+      if (unread <= 0) {
+        return (
+          count: 0,
+          oldestNew: null,
+          newestRead: newer.isEmpty ? message : newer.first,
+        );
+      }
+      return (
+        count: unread,
+        oldestNew: newer[unread - 1],
+        newestRead: seenAfter == 0 ? message : newer[unread],
+      );
+    }
+    if (chatReadMarkerCountable(message)) newer.add(message);
+  }
+  return null;
+}

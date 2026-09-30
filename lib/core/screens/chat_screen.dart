@@ -1683,21 +1683,22 @@ class _ChatScreenState extends State<ChatScreen>
     final messages = _messages;
     if (messages.isEmpty || !_chat.messagesLoaded) return;
     _newSinceResolved = true;
-    final found = chatMessagesNewerThanMarker(messages, key: markerKey);
+    final found = chatUnreadSinceStoredMarker(messages, markerKey);
     final firstUnread = found?.oldestNew;
     if (found == null || firstUnread == null) return;
     _newSinceFirstUnread = firstUnread;
     _newSinceFirstUnreadKey = chatReadMarkerKey(firstUnread);
     final unread = found.count;
+    final newestRead = found.newestRead;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_landOnNewSinceYouLeft(firstUnread, markerKey, unread));
+      unawaited(_landOnNewSinceYouLeft(firstUnread, newestRead, unread));
     });
     setState(() {});
   }
 
   Future<void> _landOnNewSinceYouLeft(
     Map<String, dynamic> firstUnread,
-    String markerKey,
+    Map<String, dynamic> newestRead,
     int unread,
   ) async {
     if (_disposed || !mounted || !_scrollController.hasClients) return;
@@ -1741,8 +1742,8 @@ class _ChatScreenState extends State<ChatScreen>
     _showScrollToBottom = true;
     position.jumpTo(target + buttonExtent);
     if (_scrollToBottomVisibility.value) {
-      _awayMarker = null;
-      _awayMarkerKey = markerKey;
+      _awayMarker = newestRead;
+      _awayMarkerKey = chatReadMarkerKey(newestRead);
       _awayCountableBaseline = _countableMessages() - unread;
       _newWhileAway.value = unread;
     }
@@ -1760,8 +1761,7 @@ class _ChatScreenState extends State<ChatScreen>
   void _persistLastRead() {
     final prefs = _lastReadPrefs;
     if (prefs == null || !_chatBound) return;
-    final newest = chatNewestCountableMessage(_messages);
-    final key = newest == null ? null : chatReadMarkerKey(newest);
+    final key = chatReadMarkerForLeaving(_messages);
     if (key == null) return;
     unawaited(prefs.setString(_lastReadPrefsKey, key));
   }
