@@ -26,6 +26,8 @@
   "i18n1215ScheduledTask": "Scheduled task",
   "i18n1215Conversation": "Conversation",
   "i18n1215PreviousContext": "Previous context",
+  "m1215HomeDashboardWrongPassword": "wrong Dashboard password · {label}",
+  "m1215HomeDashboardLoginRequired": "Dashboard login required · {label}",
   "languageSettingTitle": "Language",
   "languageSystemDefault": "System language",
   "languageSpanish": "Spanish",

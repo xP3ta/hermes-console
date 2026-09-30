@@ -85,6 +85,9 @@ class HomeDashboardScreen extends StatefulWidget {
   final Future<DesktopActiveSessionList> Function()? activeSessionListLoader;
   final Stream<TuiGatewayEvent>? eventStreamOverride;
 
+  /// Saved Dashboard login check (defaults to [checkSavedDashboardLogin]).
+  final DashboardAuthProbe? dashboardAuthProbe;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -94,6 +97,7 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.globalActivityOverride,
     @visibleForTesting this.activeSessionListLoader,
     @visibleForTesting this.eventStreamOverride,
+    @visibleForTesting this.dashboardAuthProbe,
     super.key,
   });
 
@@ -109,6 +113,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   SavedConnection? _active;
   bool _healthOk = false;
   bool _checking = false;
+
+  /// Saved Dashboard login of a healthy remote instance; a rejected or
+  /// missing login keeps the header pill from claiming the agent is online.
+  DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
   List<Session> _recentSessions = [];
   SessionArchive? _archive;
   final Map<String, ({double activityAt, String? user, String? assistant})>
@@ -894,6 +902,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
       setState(() {
         _healthOk = false;
+        _dashboardAuth = DashboardAuthCheck.unknown;
         _checking = false;
         _recentSessions = [];
       });
@@ -941,6 +950,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     bool ok = false;
+    Future<DashboardAuthCheck>? dashboardAuthFuture;
     List<Session> sessions = [];
     List<ChatDraftEntry> drafts = [];
     // Los borradores viven en el Keystore. Un fallo puntual al desbloquearlo no
@@ -987,6 +997,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         ok = await client.healthCheck();
         if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         if (ok) {
+          dashboardAuthFuture =
+              (widget.dashboardAuthProbe ??
+                      (c) => checkSavedDashboardLogin(widget.connManager, c))
+                  .call(conn);
           sessions = await client.getSessions(profile: ownerProfile);
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
           sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
@@ -1051,8 +1065,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         .toList();
     final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+    // The login check can take seconds on a slow Dashboard: apply it when it
+    // lands instead of holding the whole status refresh.
+    if (ok && dashboardAuthFuture != null) {
+      unawaited(
+        dashboardAuthFuture.catchError((_) => DashboardAuthCheck.unknown).then((
+          auth,
+        ) {
+          if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+          setState(() => _dashboardAuth = auth);
+        }),
+      );
+    }
     setState(() {
       _healthOk = ok;
+      if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _archive = archive;
       _recentSessions = recentSessions;
@@ -1696,6 +1723,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final dashboardLoginIssue =
+        _healthOk &&
+        (_dashboardAuth == DashboardAuthCheck.invalidCredentials ||
+            _dashboardAuth == DashboardAuthCheck.loginRequired);
     final recentLimit = _homeRecentLimit();
     if (!_initialLoadComplete) {
       return Scaffold(
@@ -1757,12 +1788,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         height: 6,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _checking
+                          color: _checking || dashboardLoginIssue
                               ? colors.warning
                               : _healthOk
                               ? colors.success
                               : colors.textDisabled,
-                          boxShadow: _healthOk && !_checking
+                          boxShadow:
+                              _healthOk && !_checking && !dashboardLoginIssue
                               ? [
                                   BoxShadow(
                                     color: colors.success.withValues(
@@ -1780,6 +1812,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             ? Strings.of(context).homeStatusChecking(
                                 _active?.label ??
                                     Strings.of(context).homeStatusAgentConsole,
+                              )
+                            : _healthOk &&
+                                  _dashboardAuth ==
+                                      DashboardAuthCheck.invalidCredentials
+                            ? Strings.of(
+                                context,
+                              ).m1215HomeDashboardWrongPassword(
+                                _active?.label ?? '',
+                              )
+                            : _healthOk &&
+                                  _dashboardAuth ==
+                                      DashboardAuthCheck.loginRequired
+                            ? Strings.of(
+                                context,
+                              ).m1215HomeDashboardLoginRequired(
+                                _active?.label ?? '',
                               )
                             : _healthOk
                             ? Strings.of(

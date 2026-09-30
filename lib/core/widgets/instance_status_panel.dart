@@ -25,6 +25,34 @@ enum DashboardAuthCheck { ok, loginRequired, invalidCredentials, unknown }
 typedef DashboardAuthProbe =
     Future<DashboardAuthCheck> Function(SavedConnection connection);
 
+/// Logs in to the Dashboard of [conn] with its saved credentials.
+Future<DashboardAuthCheck> checkSavedDashboardLogin(
+  ConnectionManager manager,
+  SavedConnection conn,
+) async {
+  DashboardClient? client;
+  try {
+    final secrets = await manager.getDashboardSecrets(conn.id);
+    client = DashboardClient.forConnection(conn, secrets: secrets);
+    await client.authHeadersForDiagnostics().timeout(
+      const Duration(seconds: 6),
+    );
+    return DashboardAuthCheck.ok;
+  } on DashboardAuthException catch (error) {
+    return switch (error.code) {
+      DashboardAuthFailureCode.invalidCredentials =>
+        DashboardAuthCheck.invalidCredentials,
+      DashboardAuthFailureCode.loginRequired =>
+        DashboardAuthCheck.loginRequired,
+      _ => DashboardAuthCheck.unknown,
+    };
+  } catch (_) {
+    return DashboardAuthCheck.unknown;
+  } finally {
+    client?.close();
+  }
+}
+
 /// Outcome of calling the Gateway API with the saved key.
 enum GatewayKeyCheck { ok, rejected, unknown }
 
@@ -299,27 +327,7 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     if (injected != null) return injected(conn);
     final manager = widget.connManager;
     if (manager == null) return DashboardAuthCheck.unknown;
-    DashboardClient? client;
-    try {
-      final secrets = await manager.getDashboardSecrets(conn.id);
-      client = DashboardClient.forConnection(conn, secrets: secrets);
-      await client.authHeadersForDiagnostics().timeout(
-        const Duration(seconds: 6),
-      );
-      return DashboardAuthCheck.ok;
-    } on DashboardAuthException catch (error) {
-      return switch (error.code) {
-        DashboardAuthFailureCode.invalidCredentials =>
-          DashboardAuthCheck.invalidCredentials,
-        DashboardAuthFailureCode.loginRequired =>
-          DashboardAuthCheck.loginRequired,
-        _ => DashboardAuthCheck.unknown,
-      };
-    } catch (_) {
-      return DashboardAuthCheck.unknown;
-    } finally {
-      client?.close();
-    }
+    return checkSavedDashboardLogin(manager, conn);
   }
 
   Future<GatewayKeyCheck> _gatewayKey(SavedConnection conn) async {

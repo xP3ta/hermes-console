@@ -26,6 +26,8 @@
   "i18n1215ScheduledTask": "Tarea programada",
   "i18n1215Conversation": "Conversación",
   "i18n1215PreviousContext": "Contexto previo",
+  "m1215HomeDashboardWrongPassword": "contraseña de Dashboard incorrecta · {label}",
+  "m1215HomeDashboardLoginRequired": "falta iniciar sesión en Dashboard · {label}",
   "languageSettingTitle": "Idioma",
   "@languageSettingTitle": {
     "description": "Título de la opción de idioma en Ajustes"
