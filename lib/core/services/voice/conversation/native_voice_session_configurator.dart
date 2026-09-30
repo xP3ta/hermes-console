@@ -196,6 +196,8 @@ Future<bool> configureAcceptedNativeVoiceSession({
         profile: profile,
       ),
       speechStream: speechStream.open,
+      ttsLease: (lease, active) =>
+          dashboard.setTtsLease(lease, active: active, profile: profile),
       onDispose: dashboard.close,
     );
     return transferredToVoice;

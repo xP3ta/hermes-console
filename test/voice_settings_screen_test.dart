@@ -1128,9 +1128,14 @@ void main() {
     var speakRequests = 0;
     final clients = <DashboardClient>[];
     final transports = <_TrackingHttpClient>[];
+    final leaseStates = <bool>[];
     DashboardClient makeDashboard(SavedConnection _) {
       final transport = _TrackingHttpClient(
         MockClient((request) async {
+          if (request.url.path == '/api/audio/tts-lease') {
+            leaseStates.add(jsonDecode(request.body)['active'] as bool);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
           if (request.method == 'GET' && request.url.path == '/api/config') {
             return http.Response(
               jsonEncode({
@@ -1227,7 +1232,13 @@ void main() {
     expect(transports, hasLength(2));
     expect(transports.last.closed, isFalse);
     voice.disableNativeVoice();
+    // El cierre espera al release del lease TTS enviado por ese cliente.
+    await tester.runAsync(pumpEventQueue);
     expect(transports.last.closed, isTrue);
+    expect(leaseStates, [
+      true,
+      false,
+    ], reason: 'the voice client warms TTS and releases it before closing');
     // Deja vencer el temporizador de descarga de modelos que arma el fin de
     // la lectura; el tearDown libera el servicio.
     await tester.pump(const Duration(minutes: 10));

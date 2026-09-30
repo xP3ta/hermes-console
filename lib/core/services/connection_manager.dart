@@ -4014,6 +4014,22 @@ class DashboardClient {
     timeout: timeout ?? audioTranscribeRequestTimeout(dataUrl),
   );
 
+  /// POST /api/audio/tts-lease — señal de precalentamiento/liberación del
+  /// motor TTS, igual que los interruptores de voz de Desktop. Hermes informa
+  /// de un fallo de precarga en el cuerpo, nunca como error HTTP.
+  Future<Map<String, dynamic>> setTtsLease(
+    String lease, {
+    required bool active,
+    String? profile,
+  }) => apiPost(
+    'audio/tts-lease${_profileQuery(profile)}',
+    body: {'lease': lease, 'active': active},
+    timeout: audioTtsLeaseRequestTimeout,
+  );
+
+  /// Adquirir puede cargar un modelo local en el servidor; Desktop usa 180 s.
+  static const Duration audioTtsLeaseRequestTimeout = Duration(seconds: 180);
+
   /// Sonda sin efectos de una ruta de audio (spec 048/US5), por el MISMO
   /// camino autenticado que el resto del Dashboard. Es un `POST` con cuerpo
   /// vacío a propósito: el web server tiene un catch-all `GET /{path}` para

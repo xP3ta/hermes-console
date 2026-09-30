@@ -545,6 +545,10 @@ typedef NeuralTtsWaveWriter =
 /// `{"ok": true, "data_url": "data:<mime>;base64,…", "mime_type": "…"}`.
 typedef HermesSpeakRequest = Future<Map<String, dynamic>> Function(String text);
 
+/// `POST /api/audio/tts-lease` ya ligado a un cliente y perfil concretos.
+typedef HermesTtsLeaseRequest =
+    Future<Map<String, dynamic>> Function(String lease, bool active);
+
 class _HermesPreparedAudio {
   final Uint8List bytes;
   final String mimeType;

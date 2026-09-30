@@ -444,6 +444,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
           mimeType: mimeType,
           profile: profile,
         ),
+        ttsLease: (lease, active) =>
+            voiceDashboard.setTtsLease(lease, active: active, profile: profile),
         onDispose: voiceDashboard.close,
       );
       if (!installed) voiceDashboard.close();
