@@ -2761,10 +2761,23 @@ class BackgroundListener {
       });
 
   static void _armUiHeartbeat() {
-    _uiHeartbeat ??= Timer.periodic(const Duration(minutes: 1), (_) async {
-      if (await FlutterForegroundTask.isRunningService) await _touchUiAlive();
-    });
+    _uiHeartbeat ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _uiHeartbeatTick(),
+    );
   }
+
+  /// The stamp only feeds the listener auto-stop, which never runs while the
+  /// automation opt-in is on: skip the channel probe and the disk write then.
+  /// [_stopAutomationSerialized] stamps once when the opt-in goes off.
+  static Future<void> _uiHeartbeatTick() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_automationMessagingDemand(prefs)) return;
+    if (await FlutterForegroundTask.isRunningService) await _touchUiAlive();
+  }
+
+  @visibleForTesting
+  static Future<void> runUiHeartbeatTickForTest() => _uiHeartbeatTick();
 
   static bool _inited = false;
   static Future<void>? _initFuture;
@@ -2934,6 +2947,9 @@ class BackgroundListener {
   static Future<void> _stopAutomationSerialized() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(prefKey, false);
+    // The heartbeat was idle while the opt-in was on; refresh it before the
+    // listener may evaluate auto-stop without the opt-in.
+    await _touchUiAlive();
     NotificationService.setAutomationNotificationsOptedIn(false);
     await _clearLegacyFiniteSessionState(prefs);
     await BackgroundCronWatch.syncConnections(const <SavedConnection>[]);
