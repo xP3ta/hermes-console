@@ -13,6 +13,7 @@ import '../../../widgets/attachment_card.dart' show showImageViewer;
 import '../../../widgets/chat/chat_markdown_body.dart';
 import '../../../widgets/chat/chat_message_frame.dart';
 import '../../../widgets/chat/chat_message_selection_area.dart';
+import '../../../widgets/cover_resize_image.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../../widgets/room_team_row.dart' show RoomMemberAvatar;
@@ -1569,7 +1570,15 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
                   : ref.isImage && _file != null
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: Image.file(_file!, fit: BoxFit.cover),
+                      // Decode near the 48 px box, not the full photo.
+                      child: Image(
+                        image: CoverResizeImage(
+                          FileImage(_file!),
+                          target: (48 * MediaQuery.devicePixelRatioOf(context))
+                              .ceil(),
+                        ),
+                        fit: BoxFit.cover,
+                      ),
                     )
                   : Icon(
                       ref.isImage
