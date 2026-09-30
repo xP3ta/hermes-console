@@ -734,16 +734,38 @@ final class MissionControlRepository
     required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.send, generation);
-    await gateway.send(
+    final tail = await gateway.send(
       room.roomId,
       text: text,
       attempt: attempt,
       generation: generation,
     );
-    // send returns the acknowledgement tail, not the room's full
-    // conversation. Read it back like a refresh: incremental gateways fetch
-    // only the delta after the room's cursor instead of the whole log again
-    // (a long room made every send wait for dozens of log pages).
+    // send already verified its acknowledgement tail (the log since the
+    // acknowledged event). When that tail carries this attempt's event and
+    // continues the room's cursor exactly under the room's authority, it IS
+    // the next delta: take it instead of reading groups.state and the log
+    // again, and let the room poller bring the driver status.
+    if (gateway is MissionHostedGroupsIncrementalGateway &&
+        tail.authority.gatewayId == room.authorityGatewayId &&
+        tail.authority.epoch == room.authorityEpoch &&
+        tail.events.any(
+          (e) =>
+              e.eventId == attempt.durableEventId && e.kind == 'message.user',
+        ) &&
+        _logCursorGeneration == generation) {
+      final merged = _logCursors[room.roomId]?.absorb(tail);
+      if (merged != null) {
+        return _verifiedWorkspaceReadback(
+          previous: room,
+          current: room,
+          log: merged.log,
+          generation: generation,
+        );
+      }
+    }
+    // Otherwise read it back like a refresh: incremental gateways fetch only
+    // the delta after the room's cursor instead of the whole log again (a
+    // long room made every send wait for dozens of log pages).
     final read = await _readRoom(gateway, room.roomId, generation: generation);
     return _verifiedWorkspaceReadback(
       previous: room,

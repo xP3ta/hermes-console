@@ -70,6 +70,34 @@ final class RoomLogCursor {
 
   void reset() => _log = null;
 
+  /// Takes a page the caller already read and verified (the tail
+  /// `groups.send` checks after its acknowledgement) as the next delta,
+  /// without another read. Only a page that continues this cursor exactly
+  /// is taken: same authority, first event right after [cursor], nothing
+  /// left after it and no read in flight. Otherwise returns `null` and the
+  /// caller reads the delta as usual.
+  RoomLogDelta? absorb(HostedGroupLogPage page) {
+    final previous = _log;
+    if (previous == null ||
+        _flight != null ||
+        page.hasMore ||
+        page.events.isEmpty ||
+        page.events.first.sequence != previous.cursor + 1) {
+      return null;
+    }
+    try {
+      final next = HostedGroupLogPage.append(
+        previous,
+        page,
+        maxEvents: maxEvents,
+      );
+      _log = next;
+      return RoomLogDelta(added: page.events, log: next, reset: false);
+    } on FormatException {
+      return null;
+    }
+  }
+
   Future<RoomLogDelta> _pull() async {
     final previous = _log;
     try {

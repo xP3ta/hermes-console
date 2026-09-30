@@ -36,8 +36,10 @@ final class _IncrementalGateway
 
   @override
   Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})>
-  stateWithDriver(String roomId, {required int generation}) async =>
-      (room: spec070Room(), driverStatus: spec070DriverStatus());
+  stateWithDriver(String roomId, {required int generation}) async {
+    stateReads.add(roomId);
+    return (room: spec070Room(), driverStatus: spec070DriverStatus());
+  }
 
   @override
   Future<HostedGroupLogPage> logSince(
@@ -49,10 +51,28 @@ final class _IncrementalGateway
     sinceCalls.add(sinceSeq);
     if (sinceSeq == 0) return spec070LogPage('groups_log_page1');
     if (sinceSeq == 4) return spec070LogPage('groups_log_page2');
+    if (sinceSeq > 8) {
+      // Nothing new after a send this client already merged.
+      return HostedGroupLogPage.fromJson(
+        {
+          'events': const <Object?>[],
+          'cursor': sinceSeq,
+          'latest_seq': sinceSeq,
+          'has_more': false,
+          'authority': {'gateway_id': 'gw-home-1', 'epoch': 2},
+        },
+        expectedRoomId: roomId,
+        sinceSeq: sinceSeq,
+      );
+    }
     return spec070LogPage('groups_log_empty');
   }
 
   final sends = <String>[];
+  final stateReads = <String>[];
+
+  /// What `groups.send` returns: its verified log tail since `ack - 1`.
+  HostedGroupLogPage Function()? sendTail;
 
   @override
   Future<HostedGroupLogPage> send(
@@ -62,12 +82,45 @@ final class _IncrementalGateway
     required int generation,
   }) async {
     sends.add(text);
-    return spec070LogPage('groups_log_empty');
+    return sendTail?.call() ?? spec070LogPage('groups_log_empty');
   }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+
+/// The tail `groups.send` hands back: the acknowledged user event at
+/// [ackSeq], read with `since_seq = ackSeq - 1` (as `sendGroupText` does).
+HostedGroupLogPage _sendTail({
+  int ackSeq = 9,
+  int latestSeq = 9,
+  String gatewayId = 'gw-home-1',
+  int epoch = 2,
+}) => HostedGroupLogPage.fromJson(
+  {
+    'events': [
+      {
+        'room_id': 'room-devs',
+        'seq': ackSeq,
+        'event_id': HostedGroupSendAttempt.forClientEvent(
+          'evt-1',
+        ).durableEventId,
+        'kind': 'message.user',
+        'actor': {'kind': 'user', 'id': 'desktop'},
+        'authority_epoch': epoch,
+        'payload': {'text': 'hola', 'thread_id': 'thread-1'},
+        'created_at': 1790000400.0,
+        'idempotent': false,
+      },
+    ],
+    'cursor': ackSeq,
+    'latest_seq': latestSeq,
+    'has_more': latestSeq > ackSeq,
+    'authority': {'gateway_id': gatewayId, 'epoch': epoch},
+  },
+  expectedRoomId: 'room-devs',
+  sinceSeq: ackSeq - 1,
+);
 
 MissionControlRepository _repository(MissionHostedGroupsGateway gateway) =>
     MissionControlRepository(
@@ -126,9 +179,130 @@ void main() {
     );
     expect(gateway.sends, ['hola']);
     expect(gateway.fullLogReads, 0);
+    // A tail without this attempt's event proves nothing: read the delta.
     expect(gateway.sinceCalls, [8], reason: 'only the delta after the cursor');
     expect(sent.log?.events, hasLength(8));
     expect(sent.driverStatus, isNotNull);
+    repository.close();
+  });
+
+  // Each send used to wait for groups.state and another groups.log after
+  // the acknowledgement; the verified tail already carries the new events.
+  test(
+    'send merges its verified tail into the cursor, no extra reads',
+    () async {
+      final gateway = _IncrementalGateway()..sendTail = _sendTail;
+      final repository = _repository(gateway);
+      final snapshot = await repository.load();
+      final room = snapshot.hostedGroups.rooms.single;
+      gateway.sinceCalls.clear();
+      gateway.stateReads.clear();
+      final sent = await repository.sendHostedGroupText(
+        room,
+        text: 'hola',
+        attempt: HostedGroupSendAttempt.forClientEvent('evt-1'),
+        generation: 1,
+      );
+      expect(gateway.stateReads, isEmpty, reason: 'the poller refreshes state');
+      expect(gateway.sinceCalls, isEmpty);
+      expect(sent.log?.events, hasLength(9));
+      expect(
+        sent.log?.events.last.eventId,
+        HostedGroupSendAttempt.forClientEvent('evt-1').durableEventId,
+      );
+      expect(sent.log?.cursor, 9);
+      expect(sent.room.roomId, room.roomId);
+      expect(sent.room.revision, room.revision);
+
+      // The next refresh continues after the merged tail.
+      final next = await repository.readHostedGroup(room, generation: 1);
+      expect(gateway.sinceCalls, [9]);
+      expect(next.log?.events, hasLength(9));
+      repository.close();
+    },
+  );
+
+  test(
+    'a tail that does not continue the cursor falls back to a read',
+    () async {
+      // Someone else wrote seq 9 first: the ack is seq 10, cursor is at 8.
+      final gateway = _IncrementalGateway()
+        ..sendTail = () => _sendTail(ackSeq: 10, latestSeq: 10);
+      final repository = _repository(gateway);
+      final snapshot = await repository.load();
+      final room = snapshot.hostedGroups.rooms.single;
+      gateway.sinceCalls.clear();
+      gateway.stateReads.clear();
+      await repository.sendHostedGroupText(
+        room,
+        text: 'hola',
+        attempt: HostedGroupSendAttempt.forClientEvent('evt-1'),
+        generation: 1,
+      );
+      expect(gateway.sinceCalls, [8], reason: 'gap: read the delta instead');
+      expect(gateway.stateReads, ['room-devs']);
+      repository.close();
+    },
+  );
+
+  test('a tail without this attempt\'s event is not trusted', () async {
+    // The tail continues the cursor but carries another attempt's event.
+    final gateway = _IncrementalGateway()..sendTail = _sendTail;
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateReads.clear();
+    await repository.sendHostedGroupText(
+      room,
+      text: 'hola',
+      attempt: HostedGroupSendAttempt.forClientEvent('evt-other'),
+      generation: 1,
+    );
+    expect(gateway.stateReads, ['room-devs']);
+    expect(gateway.sinceCalls, [8]);
+    repository.close();
+  });
+
+  test('a tail with more events after it reads the rest', () async {
+    final gateway = _IncrementalGateway()
+      ..sendTail = () => _sendTail(latestSeq: 12);
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateReads.clear();
+    await repository.sendHostedGroupText(
+      room,
+      text: 'hola',
+      attempt: HostedGroupSendAttempt.forClientEvent('evt-1'),
+      generation: 1,
+    );
+    expect(gateway.sinceCalls, [8]);
+    repository.close();
+  });
+
+  test('a tail under another authority is never merged', () async {
+    final gateway = _IncrementalGateway()..sendTail = () => _sendTail(epoch: 3);
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateReads.clear();
+    final sent = await repository.sendHostedGroupText(
+      room,
+      text: 'hola',
+      attempt: HostedGroupSendAttempt.forClientEvent('evt-1'),
+      generation: 1,
+    );
+    expect(gateway.stateReads, ['room-devs'], reason: 'verified the slow way');
+    expect(gateway.sinceCalls, [8]);
+    expect(
+      sent.log?.events.map((e) => e.eventId),
+      isNot(
+        contains(HostedGroupSendAttempt.forClientEvent('evt-1').durableEventId),
+      ),
+    );
     repository.close();
   });
 }
