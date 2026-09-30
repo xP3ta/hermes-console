@@ -257,11 +257,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _eventReconnectBackoff = GatewayReconnectBackoff(
       random: widget.eventReconnectRandomOverride,
     );
-    _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
-      _,
-    ) {
-      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
-    });
+    _armSessionSafetyTimer();
     _activeChats = widget.activeChatsOverride;
     _globalActivity = widget.globalActivityOverride;
     _client =
@@ -332,6 +328,18 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (mounted) setState(() {});
   }
 
+  /// Safety refresh while the app is visible. Cancelled in background (its
+  /// ticks would only wake the isolate to find refresh disallowed) and re-armed
+  /// on resume, whose health check already refreshes the library at once.
+  void _armSessionSafetyTimer() {
+    _sessionSafetyTimer?.cancel();
+    _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
+      _,
+    ) {
+      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
+    });
+  }
+
   bool get _libraryRefreshAllowed =>
       mounted && _foreground && _route?.isCurrent != false;
 
@@ -339,9 +347,14 @@ class _SessionListScreenState extends State<SessionListScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground) {
+      if (_sessionSafetyTimer == null) _armSessionSafetyTimer();
       _checkHealth();
       _scheduleEventReconnect(immediate: true);
     } else {
+      if (state != AppLifecycleState.inactive) {
+        _sessionSafetyTimer?.cancel();
+        _sessionSafetyTimer = null;
+      }
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
       _eventStableTimer?.cancel();
