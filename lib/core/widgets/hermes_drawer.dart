@@ -33,6 +33,7 @@ import '../utils/session_timestamp.dart';
 import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'hermes_notice.dart';
+import 'owned_resource_host.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -71,14 +72,12 @@ CapabilitiesHub buildCapabilitiesHub({
 }) => CapabilitiesHub(
   connection: connection,
   profile: connManager.activeProfileFor(connection.id),
-  advancedBuilder: (_) {
-    final gateway = TuiGatewayClient(connection);
-    return ExtensionsCenterScreen(
-      gateway: gateway,
-      readOnly: connection.readOnly,
-      disposeGateway: gateway.close,
-    );
-  },
+  advancedBuilder: (_) => OwnedResourceHost<TuiGatewayClient>(
+    create: () => TuiGatewayClient(connection),
+    release: (gateway) => gateway.close(),
+    builder: (_, gateway) =>
+        ExtensionsCenterScreen(gateway: gateway, readOnly: connection.readOnly),
+  ),
   classicSkillsBuilder: capabilities.skillsRead.isNo
       ? null
       : (_) => SkillsScreen(connection: connection),
@@ -255,6 +254,9 @@ class HermesDrawer extends StatelessWidget {
   /// that the section may have changed).
   final VoidCallback? onSectionReturn;
 
+  /// Builds the gateway client owned by a drawer section screen.
+  final TuiGatewayClient Function(SavedConnection connection) gatewayFactory;
+
   const HermesDrawer({
     required this.connection,
     required this.connManager,
@@ -263,6 +265,7 @@ class HermesDrawer extends StatelessWidget {
     this.checking = false,
     this.onSectionReturn,
     this.recentSessionsClientFactory,
+    this.gatewayFactory = TuiGatewayClient.new,
     super.key,
   });
 
@@ -324,15 +327,16 @@ class HermesDrawer extends StatelessWidget {
     );
   }
 
-  Widget _projectsCenter(SavedConnection active) {
-    final gateway = TuiGatewayClient(active);
-    return ProjectsCenterScreen(
-      connection: active,
-      connectionManager: connManager,
-      gateway: gateway,
-      disposeGateway: gateway.close,
-    );
-  }
+  Widget _projectsCenter(SavedConnection active) =>
+      OwnedResourceHost<TuiGatewayClient>(
+        create: () => gatewayFactory(active),
+        release: (gateway) => gateway.close(),
+        builder: (_, gateway) => ProjectsCenterScreen(
+          connection: active,
+          connectionManager: connManager,
+          gateway: gateway,
+        ),
+      );
 
   List<HermesToolDestination> _toolDestinations(
     BuildContext context,
