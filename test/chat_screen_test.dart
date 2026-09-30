@@ -337,6 +337,61 @@ class _PartialSttEngine implements SttEngine {
   }
 }
 
+/// Records-then-transcribes runtime shaped like the Hermes server dictation:
+/// every clip is uploaded on stop and its transcript arrives only when the
+/// test completes that clip's server response.
+class _DelayedServerSttRuntime implements WhisperSttRuntime {
+  _DelayedServerSttRuntime(this.directory);
+
+  final Directory directory;
+  final List<Completer<String>> responses = <Completer<String>>[];
+  int startCalls = 0;
+  int _clips = 0;
+
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<bool> modelReady(WhisperModel model) async => true;
+
+  @override
+  Future<String> createAudioPath() async {
+    final file = File('${directory.path}/clip_${_clips++}.wav')
+      ..writeAsBytesSync(const <int>[0, 1, 2, 3]);
+    return file.path;
+  }
+
+  @override
+  Future<void> start(String path) async {
+    startCalls++;
+  }
+
+  @override
+  Stream<Amplitude> onAmplitudeChanged(Duration interval) =>
+      Stream<Amplitude>.periodic(
+        interval,
+        (_) => Amplitude(current: -20, max: -10),
+      );
+
+  @override
+  Future<String?> stop() async => null;
+
+  @override
+  Future<String> transcribe({
+    required WhisperModel model,
+    required String audioPath,
+    required String lang,
+    required int threads,
+  }) {
+    final response = Completer<String>();
+    responses.add(response);
+    return response.future;
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
+
 class _ScreenServerRecorder implements ServerSttRecorder {
   final audio = StreamController<Uint8List>();
   bool disposed = false;
@@ -2853,6 +2908,93 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         expect(composerText(tester), 'texto tardío');
         expect(find.textContaining('No se reconoció voz'), findsNothing);
+        await tester.pump(const Duration(seconds: 5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'volver a tocar el micro mientras el servidor transcribe no pierde el '
+      'primer dictado',
+      (tester) async {
+        final audioDir = Directory.systemTemp.createTempSync('dp1215_');
+        addTearDown(() => audioDir.deleteSync(recursive: true));
+        final runtime = _DelayedServerSttRuntime(audioDir);
+        final stt = WhisperSttEngine(vadEnabled: false, runtime: runtime);
+        await pumpChat(tester, stt: stt);
+        await tester.enterText(find.byType(TextField), 'Previo');
+        await tester.tap(find.byKey(const ValueKey('mic')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(runtime.startCalls, 1);
+        await tester.pump(const Duration(seconds: 10));
+        await tester.tap(find.byKey(const ValueKey('recording')));
+        await tester.pump();
+        // Cancelar la suscripción de amplitud completa en la zona raíz: deja
+        // correr una vuelta real del bucle para que la parada suba el clip.
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 50));
+        // El clip ya está subido y el servidor, saturado, tarda en responder.
+        expect(runtime.responses, hasLength(1));
+        // Durante toda la espera el composer anuncia que está transcribiendo
+        // y no ofrece un micro que arranque otro dictado.
+        for (var waited = 0; waited < 70; waited += 7) {
+          await tester.pump(const Duration(seconds: 7));
+          expect(
+            find.byKey(const ValueKey('dictation-transcribing')),
+            findsOneWidget,
+          );
+          expect(find.byKey(const ValueKey('mic')), findsNothing);
+        }
+        // Un segundo toque sobre el control mientras transcribe no abre otra
+        // grabación ni descarta la pendiente.
+        await tester.tap(
+          find.byKey(const ValueKey('recording')),
+          warnIfMissed: false,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(runtime.startCalls, 1);
+        runtime.responses.single.complete('primer dictado largo');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(composerText(tester), 'Previo primer dictado largo');
+        expect(find.textContaining('No se reconoció voz'), findsNothing);
+        expect(find.byKey(const ValueKey('mic')), findsOneWidget);
+        await tester.pump(const Duration(seconds: 5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'lo escrito mientras el servidor transcribe se conserva junto al final',
+      (tester) async {
+        final audioDir = Directory.systemTemp.createTempSync('dp1215_');
+        addTearDown(() => audioDir.deleteSync(recursive: true));
+        final runtime = _DelayedServerSttRuntime(audioDir);
+        final stt = WhisperSttEngine(vadEnabled: false, runtime: runtime);
+        await pumpChat(tester, stt: stt);
+        await tester.enterText(find.byType(TextField), 'Previo');
+        await tester.tap(find.byKey(const ValueKey('mic')));
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 10));
+        await tester.tap(find.byKey(const ValueKey('recording')));
+        await tester.pump();
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(runtime.responses, hasLength(1));
+        expect(
+          find.byKey(const ValueKey('dictation-transcribing')),
+          findsOneWidget,
+        );
+        // Mientras espera, el usuario sigue escribiendo en el composer.
+        await tester.enterText(find.byType(TextField), 'Previo y escrito');
+        await tester.pump(const Duration(seconds: 30));
+        runtime.responses.single.complete('dictado tardío');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        // Lo dictado entra donde empezó el dictado; lo tecleado sigue detrás.
+        expect(composerText(tester), 'Previo dictado tardío y escrito');
         await tester.pump(const Duration(seconds: 5));
         expect(tester.takeException(), isNull);
       },

@@ -12487,7 +12487,27 @@ class _ChatScreenState extends State<ChatScreen>
     _textController.selection = TextSelection.collapsed(offset: text.length);
   }
 
-  void _materializeDictation() => _setComposerText(_dictationBase);
+  /// Vuelca lo dictado al composer. Si el usuario escribió mientras el motor
+  /// grababa o esperaba al servidor, su texto se conserva y lo dictado se
+  /// inserta en el punto donde empezó el dictado; reemplazarlo por
+  /// [_dictationBase] borraba lo tecleado durante una transcripción lenta.
+  void _materializeDictation() {
+    final current = _textController.text;
+    final origin = _dictationOriginal.trimRight();
+    var text = _dictationBase;
+    if (current != _dictationOriginal) {
+      final dictated = _dictationBase.startsWith(origin)
+          ? _dictationBase.substring(origin.length).trim()
+          : _dictationBase.trim();
+      if (!current.startsWith(origin)) {
+        text = _joinDictation(current, dictated);
+      } else {
+        final typed = current.substring(origin.length).trim();
+        text = _joinDictation(_joinDictation(origin, dictated), typed);
+      }
+    }
+    _setComposerText(text);
+  }
 
   /// Si el motor cierra sin emitir un resultado final, usa el último parcial
   /// retenido en memoria. El usuario solo lo ve después de parar.
