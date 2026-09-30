@@ -5757,6 +5757,78 @@ void main() {
   );
 
   test(
+    'REST lleva MEDIA de un tool result de texto al asistente final',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'not found',
+          code: 4007,
+        );
+      final chat = _chat(
+        'resume-tool-media-rest',
+        gateway,
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': [
+                {'id': 1, 'role': 'user', 'content': 'haz el informe'},
+                {
+                  'id': 2,
+                  'role': 'assistant',
+                  'content': '',
+                  'tool_calls': [
+                    {
+                      'id': 'call-report-1',
+                      'type': 'function',
+                      'function': {
+                        'name': 'mcp_docs_render',
+                        'arguments': '{}',
+                      },
+                    },
+                  ],
+                },
+                {
+                  'id': 3,
+                  'role': 'tool',
+                  'tool_call_id': 'call-report-1',
+                  'tool_name': 'mcp_docs_render',
+                  'content':
+                      'Informe generado.\nMEDIA:/home/hermes/work/informe.pdf',
+                },
+                {'id': 4, 'role': 'assistant', 'content': 'Ya está listo.'},
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      final finalAssistant = chat.messages.singleWhere(
+        (message) => message['id'] == 4,
+      );
+      final refs = _generatedImageRefs(finalAssistant);
+      expect(refs, hasLength(1));
+      expect(refs.single['source'], '/home/hermes/work/informe.pdf');
+      expect(refs.single['kind'], 'serverPath');
+      expect(refs.single['tool_call_id'], 'call-report-1');
+      expect(finalAssistant['content'], 'Ya está listo.');
+      expect(
+        chat.messages
+            .where((message) => message['id'] != 4)
+            .expand(_generatedImageRefs),
+        isEmpty,
+      );
+      final artifact = chat.resolveSessionArtifacts().single;
+      expect(artifact.displayName, 'informe.pdf');
+      expect(artifact.managedReference, '/home/hermes/work/informe.pdf');
+    },
+  );
+
+  test(
     'REST asocia video_generate por tool_call_id con el asistente final',
     () async {
       final gateway = _SnapshotGateway()

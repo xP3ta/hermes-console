@@ -465,6 +465,9 @@ bool _rawMessageMayContainArtifact(Map<String, dynamic> message) {
   final content = message['content'];
   if (content is Map || content is List) return true;
   final role = message['role']?.toString().toLowerCase();
+  if (role == 'tool' && content is String && content.contains('MEDIA:')) {
+    return true;
+  }
   final context = message['context'];
   if (role == 'tool' && (context is Map || context is List)) return true;
   for (final key in _artifactContainerKeys) {
@@ -477,6 +480,10 @@ bool _rawMessageMayContainArtifact(Map<String, dynamic> message) {
 bool _messageMayContainArtifact(DesktopSessionMessage message) =>
     message.content is Map ||
     message.content is List ||
+    // Text tool results announce generated files with `MEDIA:` lines.
+    (message.role == DesktopSessionMessageRole.tool &&
+        message.content is String &&
+        (message.content as String).contains('MEDIA:')) ||
     message.artifactContainers.isNotEmpty ||
     (message.role == DesktopSessionMessageRole.tool &&
         (message.context is Map || message.context is List));
@@ -1041,6 +1048,21 @@ Map<String, dynamic> _generatedImageMetadata(
     'echo_sources': List<String>.unmodifiable(reference.echoSources),
 });
 
+/// `media_kind` of files announced by a text tool result through `MEDIA:`
+/// directives (any media kind; rendered as the canonical media card).
+const _toolMediaKind = 'tool_media';
+
+Map<String, dynamic> _toolMediaMetadata(
+  GeneratedMediaReference reference,
+  String toolCallId,
+) => Map<String, dynamic>.unmodifiable({
+  'media_kind': _toolMediaKind,
+  'kind': reference.sourceKind.name,
+  'source': reference.source,
+  'tool_call_id': toolCallId,
+  'echo_sources': List<String>.unmodifiable([reference.source]),
+});
+
 Map<String, dynamic> _generatedVideoMetadata(
   GeneratedMediaReference reference,
   String toolCallId,
@@ -1067,10 +1089,13 @@ Map<String, dynamic>? _normalizedGeneratedImageMetadata(
   final rawBasename = _nonEmptyMetadataString(value['basename']);
   final mediaKind = _nonEmptyMetadataString(value['media_kind']);
 
-  if (mediaKind == GeneratedMediaKind.video.name) {
+  if (mediaKind == GeneratedMediaKind.video.name ||
+      mediaKind == _toolMediaKind) {
+    final anyKind = mediaKind == _toolMediaKind;
     if (rawSource == null) return null;
     final reference = GeneratedMediaService.referenceFromSource(rawSource);
-    if (reference == null || reference.kind != GeneratedMediaKind.video) {
+    if (reference == null ||
+        (!anyKind && reference.kind != GeneratedMediaKind.video)) {
       return null;
     }
     final safeEchoSources = <String>{};
@@ -1081,13 +1106,13 @@ Map<String, dynamic>? _normalizedGeneratedImageMetadata(
           rawEcho,
         );
         if (echoReference != null &&
-            echoReference.kind == GeneratedMediaKind.video) {
+            (anyKind || echoReference.kind == GeneratedMediaKind.video)) {
           safeEchoSources.add(echoReference.source);
         }
       }
     }
     return Map<String, dynamic>.unmodifiable({
-      'media_kind': GeneratedMediaKind.video.name,
+      'media_kind': mediaKind,
       'kind': reference.sourceKind.name,
       'source': reference.source,
       'tool_call_id': toolCallId,
@@ -1233,6 +1258,13 @@ List<Map<String, dynamic>> _associateGeneratedImagesNewestFirst(
         (!mediaCallNames.containsKey(callId) &&
             !_isImageGenerateName(name) &&
             !_looksLikeGeneratedImageResult(rawResult))) {
+      if (!_isGeneratedMediaProducerName(name)) {
+        for (final reference in GeneratedMediaService.referencesFromToolText(
+          rawResult,
+        )) {
+          pending.add(_toolMediaMetadata(reference, callId));
+        }
+      }
       return;
     }
     for (final reference in references) {
@@ -19694,13 +19726,18 @@ class ActiveChat {
   /// al segmento del asistente que ya posee el turno vivo.
   void _captureDesktopGeneratedImage(Map<String, dynamic> payload) {
     final name = _toolName(payload);
-    if (!_isGeneratedMediaProducerName(name)) return;
     final callId = _toolCallId(payload);
     if (callId == null) return;
     final rawResult =
         payload['result'] ?? payload['output'] ?? payload['content'];
     final incoming = <Map<String, dynamic>>[];
-    if (_isVideoGenerateName(name)) {
+    if (!_isGeneratedMediaProducerName(name)) {
+      incoming.addAll(
+        GeneratedMediaService.referencesFromToolText(
+          rawResult,
+        ).map((reference) => _toolMediaMetadata(reference, callId)),
+      );
+    } else if (_isVideoGenerateName(name)) {
       incoming.addAll(
         GeneratedMediaService.referencesFromToolResult(
           name,

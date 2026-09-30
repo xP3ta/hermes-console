@@ -530,6 +530,38 @@ class GeneratedMediaService {
     return const [];
   }
 
+  /// Canonical `MEDIA:` directives carried by a plain-text tool result (TTS,
+  /// MCP image/audio blocks, custom tools), plus the JSON `media_tag` field
+  /// that some tools return. Only whole-line directives outside code fences
+  /// count, exactly like assistant text; the cheap `MEDIA:` probe keeps
+  /// ordinary tool output off the parser.
+  static List<GeneratedMediaReference> referencesFromToolText(Object? raw) {
+    if (raw is! String || !raw.contains('MEDIA:')) return const [];
+    final references = <GeneratedMediaReference>[];
+    final seen = <String>{};
+    void collect(String text) {
+      for (final segment in parseSegments(text)) {
+        if (segment is! GeneratedMediaFileSegment) continue;
+        if (seen.add(segment.reference.source)) {
+          references.add(segment.reference);
+        }
+      }
+    }
+
+    collect(raw);
+    final trimmed = raw.trimLeft();
+    if (trimmed.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(trimmed);
+        final tag = decoded is Map ? decoded['media_tag'] : null;
+        if (tag is String) collect(tag);
+      } catch (_) {
+        // Not JSON: the line scan above already covered it.
+      }
+    }
+    return List<GeneratedMediaReference>.unmodifiable(references);
+  }
+
   static GeneratedMediaReference? _parseDirective(String line) {
     final match = RegExp(r'^\s*MEDIA:\s*(.*?)\s*$').firstMatch(line);
     if (match == null) return null;

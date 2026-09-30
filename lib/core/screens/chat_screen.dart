@@ -776,7 +776,10 @@ List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
   final refs = <_StructuredGeneratedVideo>[];
   final seen = <String>{};
   for (final entry in raw.whereType<Map>()) {
-    if (entry['media_kind'] != GeneratedMediaKind.video.name) continue;
+    final mediaKind = entry['media_kind'];
+    // `tool_media`: any file a text tool result announced with `MEDIA:`.
+    final anyKind = mediaKind == 'tool_media';
+    if (!anyKind && mediaKind != GeneratedMediaKind.video.name) continue;
     final toolCallId = entry['tool_call_id'];
     final source = entry['source'];
     if (toolCallId is! String ||
@@ -785,7 +788,8 @@ List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
       continue;
     }
     final reference = GeneratedMediaService.referenceFromSource(source);
-    if (reference == null || reference.kind != GeneratedMediaKind.video) {
+    if (reference == null ||
+        (!anyKind && reference.kind != GeneratedMediaKind.video)) {
       continue;
     }
     if (entry['kind'] != reference.sourceKind.name) continue;
@@ -17033,7 +17037,6 @@ class _AssistantMessage extends StatelessWidget {
         split.answer,
       ).whereType<GeneratedMediaFileSegment>()) {
         final reference = segment.reference;
-        if (reference.kind != GeneratedMediaKind.video) continue;
         textualGeneratedVideoSources[reference.source] =
             (textualGeneratedVideoSources[reference.source] ?? 0) + 1;
       }

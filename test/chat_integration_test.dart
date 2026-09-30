@@ -2324,6 +2324,56 @@ void main() {
     );
 
     test(
+      'tool.complete de texto con MEDIA adjunta el archivo en vivo',
+      () async {
+        final desktop = _FakeDesktopGateway();
+        final service = ActiveChatService();
+        addTearDown(service.dispose);
+        final chat = service.attach(
+          connection: _remoteConn(),
+          sessionId: 'sess-tool-media-live',
+          sessionTitle: 'Audio de herramienta',
+          api: ApiClient(
+            baseUrl: _remoteConn().baseUrl,
+            apiKey: 'k',
+            httpClient: _gateway(events: '', finalMessages: const []),
+          ),
+          desktopGateway: desktop,
+        );
+
+        unawaited(
+          chat.send(
+            fullText: 'Léelo en voz alta',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+        );
+        await _waitUntil(() => desktop.prompts.isNotEmpty);
+        desktop.emit('message.start');
+        desktop.emit('message.interim', const {'text': 'Generando audio.'});
+        desktop.emit('tool.complete', const {
+          'name': 'text_to_speech',
+          'tool_id': 'call-tts-live',
+          'result':
+              '{"success": true, "media_tag": '
+              '"[[audio_as_voice]]\\nMEDIA:/home/hermes/voice/tts_1.ogg"}',
+        });
+        desktop.emit('message.complete', {'text': 'Generando audio. Listo.'});
+        await _waitUntil(() => chat.state == ChatPipelineState.idle);
+
+        final assistant = chat.messages.firstWhere(
+          (message) => message['role'] == 'assistant',
+        );
+        final refs = _generatedImageRefs(assistant);
+        expect(refs, hasLength(1));
+        expect(refs.single['media_kind'], 'tool_media');
+        expect(refs.single['source'], '/home/hermes/voice/tts_1.ogg');
+        expect(refs.single['tool_call_id'], 'call-tts-live');
+        expect(assistant['content'], 'Generando audio. Listo.');
+      },
+    );
+
+    test(
       'tool.complete HTTPS duplicado conserva una referencia segura',
       () async {
         final desktop = _FakeDesktopGateway();

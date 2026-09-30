@@ -9052,6 +9052,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('MEDIA de un tool result de texto se pinta en la respuesta', (
+    tester,
+  ) async {
+    const source = '/home/hermes/work/informe_final.pdf';
+    await pumpChat(
+      tester,
+      messages: const [
+        {
+          'role': 'assistant',
+          'content': 'Ya está listo.',
+          '_generatedImages': [
+            {
+              'media_kind': 'tool_media',
+              'kind': 'serverPath',
+              'source': source,
+              'tool_call_id': 'call-report-1',
+              'echo_sources': [source],
+            },
+          ],
+        },
+        {'role': 'user', 'content': 'Haz el informe'},
+      ],
+    );
+
+    expect(find.text('Ya está listo.'), findsOneWidget);
+    expect(find.text('informe_final.pdf'), findsOneWidget);
+    expect(find.textContaining(source), findsNothing);
+    expect(find.textContaining('MEDIA:'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('dos calls con el mismo basename pintan dos tarjetas', (
     tester,
   ) async {
