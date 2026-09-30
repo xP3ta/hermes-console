@@ -8509,6 +8509,7 @@
   "schCustomHint": "Este horario no encaja en los modos de arriba. Puedes editarlo aquí o elegir un modo.",
   "crnScopeThisProfile": "Este perfil",
   "crnScopeAll": "Todos",
+  "crnAllScopeReadOnly": "La vista de todos los perfiles es solo de lectura. Cambia a «Este perfil» para crear o editar tareas.",
   "crnProfileLabel": "Perfil",
   "crnDeliveryBotChat": "Chat de {bot}",
   "@crnDeliveryBotChat": {

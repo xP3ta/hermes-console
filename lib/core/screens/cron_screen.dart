@@ -314,6 +314,21 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   bool get _mutationsDisabled =>
       widget.connection.readOnly || _profileScope == CronProfileScope.all;
 
+  /// Explains why a mutation is blocked: a read-only instance, or only the
+  /// aggregated "All profiles" view on an instance that is writable.
+  void _showMutationsDisabledNotice() {
+    if (widget.connection.readOnly) return showReadOnlyNotice(context);
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          Strings.of(context).crnAllScopeReadOnly,
+          style: const TextStyle(fontSize: 13),
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   void _selectProfileScope(Set<CronProfileScope> selection) {
     final scope = selection.firstOrNull;
     if (scope == null || scope == _profileScope) return;
@@ -369,7 +384,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pauseOrResume(CronJob job) async {
-    if (_mutationsDisabled) return showReadOnlyNotice(context);
+    if (_mutationsDisabled) return _showMutationsDisabledNotice();
     try {
       final updated = await _repository.pauseOrResume(job);
       if (!mounted) return;
@@ -389,7 +404,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _trigger(CronJob job) async {
-    if (_mutationsDisabled) return showReadOnlyNotice(context);
+    if (_mutationsDisabled) return _showMutationsDisabledNotice();
     try {
       final updated = await _repository.trigger(job);
       if (!mounted) return;
@@ -417,7 +432,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   Future<bool> _delete(CronJob job) async {
     if (_mutationsDisabled) {
-      showReadOnlyNotice(context);
+      _showMutationsDisabledNotice();
       return false;
     }
     final s = Strings.of(context);
@@ -495,7 +510,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   /// floating card; its pickers are floating surfaces.
   Future<CronJob?> _showEditor({CronJob? job}) async {
     if (_mutationsDisabled) {
-      showReadOnlyNotice(context);
+      _showMutationsDisabledNotice();
       return null;
     }
     final notif = _notifications;

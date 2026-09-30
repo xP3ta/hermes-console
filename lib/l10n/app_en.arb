@@ -7092,6 +7092,7 @@
   "schCustomHint": "This schedule does not fit the modes above. Edit it here or pick a mode.",
   "crnScopeThisProfile": "This profile",
   "crnScopeAll": "All",
+  "crnAllScopeReadOnly": "All profiles is a read-only view. Switch to “This profile” to create or edit tasks.",
   "crnProfileLabel": "Profile",
   "crnDeliveryBotChat": "{bot} chat",
   "crnOwnerBot": "{bot}'s routine",
