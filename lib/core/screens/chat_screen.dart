@@ -8077,6 +8077,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (widget.connection.readOnly ||
         _editingUserMessage ||
         _compressingSession ||
+        // Queued by the gateway behind the live reply: it has no durable row
+        // yet, so a rewrite of it could only fail.
+        message['_desktopAcceptedQueued'] == true ||
         ordinal == null ||
         parsed.text.trim().isEmpty ||
         !_attachmentsCanBeReused(parsed.attachments)) {

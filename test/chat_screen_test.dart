@@ -19127,6 +19127,42 @@ void main() {
     expect(find.byIcon(Icons.edit_outlined).hitTestable(), findsOneWidget);
   });
 
+  testWidgets('la fila ya aceptada en cola por el gateway no ofrece editar', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      desktopGateway: _UiRewindGateway(),
+      connection: _remoteConn('conn-accepted-queued-edit'),
+      messages: const [
+        {
+          'role': 'user',
+          'content': 'siguiente ya aceptada',
+          '_desktopAcceptedQueued': true,
+        },
+        {'role': 'assistant', 'content': 'Respuesta uno'},
+        {'role': 'user', 'content': 'pregunta uno', '_desktopRowId': 11},
+      ],
+    );
+    await tester.pump();
+
+    expect(find.textContaining('siguiente ya aceptada'), findsOneWidget);
+    // Saving it could only fail: it is not a durable row yet. The earlier,
+    // durable message keeps its pencil.
+    expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('inline-message-editor-field')),
+          )
+          .controller!
+          .text,
+      'pregunta uno',
+    );
+  });
+
   testWidgets('solo una burbuja puede editarse a la vez', (tester) async {
     await pumpChat(
       tester,
