@@ -3,6 +3,7 @@
 // shell PTY viven aquí; la pantalla se "engancha" mostrando el mismo Terminal.
 // Mientras hay una sesión conectada, se mantiene el proceso vivo (foreground
 // service compartido) para no cortar comandos largos al salir.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -28,6 +29,17 @@ class SshTerminalSession {
   );
 
   SshTerminalSession(this.connectionId, this.terminal);
+
+  /// Shell stdout/stderr listeners. Cancelled on close so a client torn down
+  /// without its channel completing cannot keep the terminal referenced.
+  final List<StreamSubscription<Uint8List>> _outputSubscriptions = [];
+
+  void _cancelOutput() {
+    for (final subscription in _outputSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    _outputSubscriptions.clear();
+  }
 
   /// Último tráfico real (entrada del usuario o salida del servidor). Lo usa
   /// [SshSessionService.closeIdle] para no cortar comandos largos en curso:
@@ -131,14 +143,19 @@ class SshSessionService {
         shell.write(Uint8List.fromList(utf8.encode(data)));
       };
       terminal.onResize = (w, h, pw, ph) => shell.resizeTerminal(w, h, pw, ph);
-      shell.stdout.listen((d) {
-        s.touch();
-        terminal.write(utf8.decode(d, allowMalformed: true));
-      });
-      shell.stderr.listen((d) {
-        s.touch();
-        terminal.write(utf8.decode(d, allowMalformed: true));
-      });
+      s._outputSubscriptions
+        ..add(
+          shell.stdout.listen((d) {
+            s.touch();
+            terminal.write(utf8.decode(d, allowMalformed: true));
+          }),
+        )
+        ..add(
+          shell.stderr.listen((d) {
+            s.touch();
+            terminal.write(utf8.decode(d, allowMalformed: true));
+          }),
+        );
       shell.done.then((_) {
         s.phase.value = SshSessionPhase.closed;
         final banner = _ssh.appStrings.i18n1215SshSessionClosedBanner;
@@ -171,6 +188,7 @@ class SshSessionService {
   void close(String connectionId) {
     final s = _sessions.remove(connectionId);
     if (s != null) {
+      s._cancelOutput();
       s.shell?.close();
       s.client?.close();
       s.phase.value = SshSessionPhase.closed;
