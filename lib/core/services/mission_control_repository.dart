@@ -646,6 +646,7 @@ final class MissionControlRepository
     MissionHostedGroupsGateway gateway,
     String roomId, {
     required int generation,
+    bool skipLogAtTip = false,
   }) async {
     if (gateway is! MissionHostedGroupsIncrementalGateway) {
       final state = await gateway.state(roomId, generation: generation);
@@ -657,9 +658,27 @@ final class MissionControlRepository
       roomId,
       generation: generation,
     );
-    final delta = await _cursorFor(incremental, roomId, generation).pull();
+    final cursor = _cursorFor(incremental, roomId, generation);
+    final held = cursor.log;
+    if (skipLogAtTip && held != null && _cursorAtTip(held, state.room)) {
+      // groups.state proves nothing was appended since the cursor's last
+      // read under this authority: the log read would return no events.
+      return (room: state.room, log: held, driverStatus: state.driverStatus);
+    }
+    final delta = await cursor.pull();
     return (room: state.room, log: delta.log, driverStatus: state.driverStatus);
   }
+
+  /// True only when [room] (read after [log]) carries an explicit
+  /// `latest_seq` equal to the log's tip, under the same authority, and the
+  /// log is complete up to that tip. Anything else reads the log.
+  static bool _cursorAtTip(HostedGroupLogPage log, HostedGroupRoom room) =>
+      room.latestSeqKnown &&
+      !log.hasMore &&
+      log.cursor == log.latestSeq &&
+      room.latestSeq == log.latestSeq &&
+      room.authorityGatewayId == log.authority.gatewayId &&
+      room.authorityEpoch == log.authority.epoch;
 
   RoomLogCursor _cursorFor(
     MissionHostedGroupsIncrementalGateway gateway,
@@ -732,7 +751,12 @@ final class MissionControlRepository
     required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.state, generation);
-    final read = await _readRoom(gateway, room.roomId, generation: generation);
+    final read = await _readRoom(
+      gateway,
+      room.roomId,
+      generation: generation,
+      skipLogAtTip: true,
+    );
     return _verifiedWorkspaceReadback(
       previous: room,
       current: read.room,

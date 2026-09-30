@@ -346,6 +346,10 @@ final class HostedGroupRoom {
   final int authorityEpoch;
   final int revision;
   final int latestSeq;
+
+  /// Whether the gateway sent `latest_seq`; older rows omit it and
+  /// [latestSeq] then reads 0 without proving the log is empty.
+  final bool latestSeqKnown;
   final bool disbanded;
   final Map<String, dynamic> _testJson;
 
@@ -357,6 +361,7 @@ final class HostedGroupRoom {
     required this.authorityEpoch,
     required this.revision,
     required this.latestSeq,
+    required this.latestSeqKnown,
     required this.disbanded,
     required this._testJson,
   });
@@ -399,6 +404,7 @@ final class HostedGroupRoom {
       authorityEpoch: epoch,
       revision: revision,
       latestSeq: latest,
+      latestSeqKnown: raw['latest_seq'] != null,
       disbanded: raw['disbanded_at'] != null,
       testJson: Map.unmodifiable(raw),
     );

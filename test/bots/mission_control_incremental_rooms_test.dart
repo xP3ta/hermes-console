@@ -38,8 +38,14 @@ final class _IncrementalGateway
   Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})>
   stateWithDriver(String roomId, {required int generation}) async {
     stateReads.add(roomId);
-    return (room: spec070Room(), driverStatus: spec070DriverStatus());
+    return (
+      room: stateRoom?.call() ?? spec070Room(),
+      driverStatus: spec070DriverStatus(),
+    );
   }
+
+  HostedGroupRoom Function()? stateRoom;
+  var emptyRoom = false;
 
   @override
   Future<HostedGroupLogPage> logSince(
@@ -49,6 +55,19 @@ final class _IncrementalGateway
     required int generation,
   }) async {
     sinceCalls.add(sinceSeq);
+    if (emptyRoom) {
+      return HostedGroupLogPage.fromJson(
+        {
+          'events': const <Object?>[],
+          'cursor': 0,
+          'latest_seq': 0,
+          'has_more': false,
+          'authority': {'gateway_id': 'gw-home-1', 'epoch': 2},
+        },
+        expectedRoomId: roomId,
+        sinceSeq: sinceSeq,
+      );
+    }
     if (sinceSeq == 0) return spec070LogPage('groups_log_page1');
     if (sinceSeq == 4) return spec070LogPage('groups_log_page2');
     if (sinceSeq > 8) {
@@ -140,6 +159,21 @@ HostedGroupLogPage _sendTail({
   sinceSeq: ackSeq - 1,
 );
 
+/// `groups.state`'s room with another latest sequence (null omits the field,
+/// as older gateways do) or authority epoch.
+HostedGroupRoom _roomWith({required int? latestSeq, int? epoch}) {
+  final json = Map<String, dynamic>.from(
+    spec070Result('groups_state')['room'] as Map,
+  );
+  if (latestSeq == null) {
+    json.remove('latest_seq');
+  } else {
+    json['latest_seq'] = latestSeq;
+  }
+  if (epoch != null) json['authority_epoch'] = epoch;
+  return HostedGroupRoom.fromJson(json);
+}
+
 MissionControlRepository _repository(MissionHostedGroupsGateway gateway) =>
     MissionControlRepository(
       profilesLoader: () async => spec070Profiles(),
@@ -176,7 +210,7 @@ void main() {
       expect(read.log?.events, hasLength(8));
       expect(read.driverStatus?.needsUser, isTrue);
     }
-    expect(gateway.sinceCalls, List.filled(10, 8));
+    expect(gateway.sinceCalls, isEmpty, reason: 'state shows nothing new');
     expect(GatewaySocketMeter.instance.totalOpened, 0);
     repository.close();
   });
@@ -340,6 +374,81 @@ void main() {
     expect(gateway.fullLogReads, 0);
     expect(gateway.sinceCalls, [0, 4], reason: 'complete, gap-free log');
     expect(renamed.log?.events, hasLength(8));
+    repository.close();
+  });
+
+  // A quiet room paid groups.state AND groups.log on every 3 s tick. When
+  // state proves the cursor already holds the room's latest sequence under
+  // the same authority, the log read is skipped.
+  test('a refresh skips the log when state shows nothing new', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateReads.clear();
+    for (var i = 0; i < 10; i++) {
+      final read = await repository.readHostedGroup(room, generation: 1);
+      expect(read.log?.events, hasLength(8));
+      expect(read.log?.latestSeq, 8);
+      expect(read.driverStatus?.needsUser, isTrue);
+    }
+    expect(gateway.stateReads, List.filled(10, 'room-devs'));
+    expect(gateway.sinceCalls, isEmpty, reason: 'latest_seq did not advance');
+    repository.close();
+  });
+
+  test('a refresh reads the delta once latest_seq advances', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateRoom = () => _roomWith(latestSeq: 9);
+    await repository.readHostedGroup(room, generation: 1);
+    expect(gateway.sinceCalls, [8]);
+    repository.close();
+  });
+
+  test('a refresh reads the log when state omits latest_seq', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateRoom = () => _roomWith(latestSeq: null);
+    await repository.readHostedGroup(room, generation: 1);
+    expect(gateway.sinceCalls, [8], reason: 'older gateways: no proof');
+    repository.close();
+  });
+
+  // Without latest_seq the room reads 0, which an empty log also holds:
+  // that is no proof, so the log is still read.
+  test('an empty room without latest_seq still reads the log', () async {
+    final gateway = _IncrementalGateway()
+      ..emptyRoom = true
+      ..stateRoom = () => _roomWith(latestSeq: null);
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    await repository.readHostedGroup(room, generation: 1);
+    expect(gateway.sinceCalls, [0]);
+    repository.close();
+  });
+
+  test('a refresh reads the log when the authority changed', () async {
+    final gateway = _IncrementalGateway();
+    final repository = _repository(gateway);
+    final snapshot = await repository.load();
+    final room = snapshot.hostedGroups.rooms.single;
+    gateway.sinceCalls.clear();
+    gateway.stateRoom = () => _roomWith(latestSeq: 8, epoch: 3);
+    await expectLater(
+      repository.readHostedGroup(room, generation: 1),
+      throwsFormatException,
+    );
+    expect(gateway.sinceCalls, [8]);
     repository.close();
   });
 
