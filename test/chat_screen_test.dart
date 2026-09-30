@@ -1387,6 +1387,15 @@ class _UiReleaseOutbox implements TurnOutboxPersistence {
   Future<void> delete(PreparedTurn turn) async {}
 }
 
+class _FailingDeleteOutbox implements TurnOutboxPersistence {
+  @override
+  Future<void> save(PreparedTurn turn) async {}
+
+  @override
+  Future<void> delete(PreparedTurn turn) async =>
+      throw StateError('outbox unavailable');
+}
+
 Future<void> _primeUiReleaseOwnership(
   WidgetTester tester,
   ActiveChat chat,
@@ -26366,6 +26375,58 @@ void main() {
     // The row still shows what it is, and the next one keeps its actions.
     expect(find.text('mensaje acked'), findsOneWidget);
     expect(pressed('chat-queue-delete-prepared:next'), isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('queued delete refusal surfaces a notice', (tester) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-delete-refused'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final restored = chat.restoreQueuedTurns(
+      [
+        PreparedTurn(
+          connectionId: chat.connection.id,
+          sessionId: chat.sessionId,
+          clientTurnId: 'stuck',
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: 'mensaje stuck',
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: chat.sessionProfile,
+          state: PreparedTurnState.prepared,
+          queued: true,
+          queueOrder: 1,
+        ),
+      ],
+      _FailingDeleteOutbox(),
+      scheduleDrain: false,
+    );
+    await tester.pump();
+    await restored;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('chat-queue-delete-prepared:stuck')),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(chat.queuedEntries.map((e) => e.id), ['prepared:stuck']);
+    expect(find.text('No se pudo borrar el mensaje en cola.'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 8));
     expect(tester.takeException(), isNull);
   });
 

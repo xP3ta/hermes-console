@@ -4437,6 +4437,8 @@
   "chaQueueSendNext": "Send next",
   "chaQueueDelete": "Delete",
   "chaQueueEditFailed": "The queued message could not be updated.",
+  "chaQueueDeleteFailed": "The queued message could not be deleted.",
+  "chaQueueSendNowFailed": "The queued message could not be sent now. It is still in the queue.",
   "chaQueueSteerRejected": "Hermes did not accept the redirect. The message remains queued and will be sent later.",
   "chaQueueSteerUnconfirmed": "Hermes did not confirm the redirect. The message remains queued; review it before retrying to avoid duplicates.",
   "chaQueueSteerCleanupFailed": "Hermes accepted the redirect, but the queued copy could not be removed. Delete it to prevent a duplicate.",

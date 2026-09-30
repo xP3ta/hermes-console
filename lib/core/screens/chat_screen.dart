@@ -7991,6 +7991,25 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  Future<void> _sendQueuedEntryNow(String id) async {
+    if (await _chat.sendQueuedNow(id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).chaQueueSendNowFailed);
+  }
+
+  Future<void> _deleteQueuedEntry(String id) async {
+    if (await _chat.cancelQueuedByIdentity(id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).chaQueueDeleteFailed);
+  }
+
+  void _showQueueActionFailed(String message) {
+    HermesNotice.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message)),
+        kind: HermesNoticeKind.error,
+      );
+  }
+
   Future<void> _steerQueuedEntry(String id) async {
     final outcome = await _chat.steerQueuedTurnWithOutcome(id);
     if (!mounted) return;
@@ -13006,10 +13025,9 @@ class _ChatScreenState extends State<ChatScreen>
                 onSteer: () =>
                     unawaited(_steerQueuedEntry(queuedEntries[i].id)),
                 onSendNow: () =>
-                    unawaited(_chat.sendQueuedNow(queuedEntries[i].id)),
-                onDelete: () => unawaited(
-                  _chat.cancelQueuedByIdentity(queuedEntries[i].id),
-                ),
+                    unawaited(_sendQueuedEntryNow(queuedEntries[i].id)),
+                onDelete: () =>
+                    unawaited(_deleteQueuedEntry(queuedEntries[i].id)),
                 onAbandon: () =>
                     unawaited(_abandonUncertainQueued(queuedEntries[i].id)),
               ),

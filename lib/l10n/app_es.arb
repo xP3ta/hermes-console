@@ -5462,6 +5462,8 @@
   "chaQueueSendNext": "Enviar siguiente",
   "chaQueueDelete": "Borrar",
   "chaQueueEditFailed": "No se pudo actualizar el mensaje en cola.",
+  "chaQueueDeleteFailed": "No se pudo borrar el mensaje en cola.",
+  "chaQueueSendNowFailed": "No se pudo enviar ahora el mensaje en cola. Sigue en la cola.",
   "chaQueueSteerRejected": "Hermes no aceptó la redirección. El mensaje sigue en cola y se enviará después.",
   "chaQueueSteerUnconfirmed": "Hermes no confirmó la redirección. El mensaje sigue en cola; revísalo antes de reintentar para evitar duplicados.",
   "chaQueueSteerCleanupFailed": "Hermes aceptó la redirección, pero no se pudo quitar la copia en cola. Bórrala para evitar un duplicado.",
