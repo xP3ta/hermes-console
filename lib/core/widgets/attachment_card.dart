@@ -189,9 +189,13 @@ class AttachmentCard extends StatelessWidget {
   bool get _hasThumb =>
       thumbnailFile != null || (thumbnailUrl?.isNotEmpty ?? false);
 
+  // The compact composer thumb is too narrow for the text pill ("Error al…"):
+  // there the state is carried by the spinner, the retry button and the
+  // semantics label of the strip instead.
   bool get _showsImageStateBadge =>
-      uploadState == AttachmentUploadState.uploading ||
-      uploadState == AttachmentUploadState.error;
+      !compact &&
+      (uploadState == AttachmentUploadState.uploading ||
+          uploadState == AttachmentUploadState.error);
 
   /// Decode bound for the 120 dp thumb (3x). Only ONE side is fixed: giving
   /// the decoder both `cacheWidth` and `cacheHeight` resizes the bitmap to

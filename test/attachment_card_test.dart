@@ -77,6 +77,119 @@ void main() {
         home: Scaffold(body: child),
       );
 
+  testWidgets('miniatura compacta con error no corta la etiqueta', (
+    tester,
+  ) async {
+    final file = File('${Directory.systemTemp.path}/compact_error_thumb.png');
+    // PNG 1x1 válido: basta para que la tarjeta pinte la miniatura.
+    file.writeAsBytesSync(const [
+      0x89,
+      0x50,
+      0x4E,
+      0x47,
+      0x0D,
+      0x0A,
+      0x1A,
+      0x0A,
+      0x00,
+      0x00,
+      0x00,
+      0x0D,
+      0x49,
+      0x48,
+      0x44,
+      0x52,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x08,
+      0x06,
+      0x00,
+      0x00,
+      0x00,
+      0x1F,
+      0x15,
+      0xC4,
+      0x89,
+      0x00,
+      0x00,
+      0x00,
+      0x0D,
+      0x49,
+      0x44,
+      0x41,
+      0x54,
+      0x78,
+      0x9C,
+      0x63,
+      0x60,
+      0x00,
+      0x02,
+      0x00,
+      0x00,
+      0x05,
+      0x00,
+      0x01,
+      0x0D,
+      0x0A,
+      0x2D,
+      0xB4,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x49,
+      0x45,
+      0x4E,
+      0x44,
+      0xAE,
+      0x42,
+      0x60,
+      0x82,
+    ]);
+    addTearDown(() {
+      if (file.existsSync()) file.deleteSync();
+    });
+    await tester.pumpWidget(
+      host(
+        Center(
+          child: AttachmentCard(
+            name: 'foto.png',
+            mimeType: 'image/png',
+            sizeLabel: '1 KB',
+            thumbnailFile: file,
+            compact: true,
+            showUploadState: true,
+            uploadState: AttachmentUploadState.error,
+            onRetry: () {},
+            onRemove: () {},
+          ),
+        ),
+      ),
+    );
+
+    // En 80 dp la píldora de texto quedaba en «Error al…»: el estado lo
+    // comunican el color, el botón de reintentar y la etiqueta accesible.
+    for (final text in tester.widgetList<Text>(find.byType(Text))) {
+      final painter = TextPainter(
+        text: TextSpan(text: text.data, style: text.style),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout(maxWidth: tester.getSize(find.byWidget(text)).width);
+      expect(
+        painter.didExceedMaxLines,
+        isFalse,
+        reason: 'texto cortado en la miniatura compacta: "${text.data}"',
+      );
+    }
+    expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+  });
+
   testWidgets('adjunto en subida muestra progreso y permite quitarlo', (
     tester,
   ) async {
