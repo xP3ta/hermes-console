@@ -309,6 +309,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                       onChanged: (v) async {
                         if (v == null) return;
                         await lock.setTimeoutSeconds(v);
+                        if (!mounted) return;
                         setState(() {});
                       },
                     ),

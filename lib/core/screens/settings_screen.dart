@@ -3353,9 +3353,11 @@ class _AboutCardState extends State<_AboutCard> {
   Future<void> _loadVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
       setState(() => _version = '${info.version}+${info.buildNumber}');
     } catch (e) {
       debugPrint('[settings] no se pudo leer PackageInfo: $e');
+      if (!mounted) return;
       setState(() => _version = '1.0.0');
     }
   }

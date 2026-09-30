@@ -710,7 +710,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     // no-default activo, avisamos de que también cambia el modelo del agente.
     if (scope == 'main' && _profile.isNotEmpty) {
       final ok = await _confirmMainModelChange(modelId);
-      if (ok != true) return;
+      if (ok != true || !mounted) return;
     }
     setState(() => _setting = true);
     // Proveedores CUSTOM (base_url propio, p.ej. un backend llama.cpp propio
@@ -1248,7 +1248,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   Future<void> _setFallback(List<Map<String, String>> providers) async {
     final client = await _bridgeMgr.clientFor(widget.connection.id);
-    if (client == null) return;
+    if (client == null || !mounted) return;
     setState(() => _setting = true);
     try {
       await client.setFallback(providers);

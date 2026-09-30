@@ -239,6 +239,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       final probe = _isLocal
           ? await _probeDirect(inputBase, headers)
           : await _probeFromHermes(inputBase, apiKey, headers);
+      if (!mounted) return;
       setState(() {
         _models = probe.models;
         _testedInputBaseUrl = inputBase;
@@ -247,6 +248,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         _testing = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _testError = humanizeProviderTestError(
           s,

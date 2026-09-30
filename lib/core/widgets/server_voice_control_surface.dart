@@ -345,6 +345,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
         await Future<void>.delayed(const Duration(milliseconds: 1200));
         if (!mounted) return;
         final status = await widget.dashboard.getActionStatus(actionName);
+        if (!mounted) return;
         final rawLines = status['lines'];
         setState(() {
           _setupLines = rawLines is List

@@ -880,7 +880,7 @@ class _ProfileBuilderScreenState extends State<ProfileBuilderScreen> {
           description: _descCtrl.text.trim(),
         );
         if (soul.isNotEmpty) {
-          setState(() => _progressMsg = str.prfWritingSoulMsg);
+          if (mounted) setState(() => _progressMsg = str.prfWritingSoulMsg);
           try {
             await _client.setProfileSoul(name, _soulCtrl.text);
           } catch (error) {
