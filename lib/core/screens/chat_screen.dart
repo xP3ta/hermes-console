@@ -1690,31 +1690,62 @@ class _ChatScreenState extends State<ChatScreen>
     _newSinceFirstUnreadKey = chatReadMarkerKey(firstUnread);
     final unread = found.count;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_disposed || !mounted || !_scrollController.hasClients) return;
-      final anchor = _messageAnchors[firstUnread];
-      final position = _scrollController.position;
-      if (anchor == null || !anchor.attached) return;
-      final target = chatAnswerStartOffset(anchor, position);
-      // Its top is already on screen: stay at the bottom.
-      if (target == null || target <= position.pixels) return;
-      // One jump, before the reader has seen the bottom settle: no animation
-      // that would read as a second movement after the route transition.
-      _freezeStreamingFollow();
-      // The jump button appears with the landing and pads the list bottom by
-      // its 48 dp. Show it while still at the bottom (no compensation is
-      // recorded there) and include its extent in the single jump, so the
-      // divider lands at the top in one frame instead of sliding 48 dp.
-      final buttonExtent = _scrollToBottomVisibility.value ? 0.0 : 48.0;
-      _showScrollToBottom = true;
-      position.jumpTo(target + buttonExtent);
-      if (_scrollToBottomVisibility.value) {
-        _awayMarker = null;
-        _awayMarkerKey = markerKey;
-        _awayCountableBaseline = _countableMessages() - unread;
-        _newWhileAway.value = unread;
-      }
+      unawaited(_landOnNewSinceYouLeft(firstUnread, markerKey, unread));
     });
     setState(() {});
+  }
+
+  Future<void> _landOnNewSinceYouLeft(
+    Map<String, dynamic> firstUnread,
+    String markerKey,
+    int unread,
+  ) async {
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    var position = _scrollController.position;
+    var anchor = _messageAnchors[firstUnread];
+    double? target;
+    if (anchor != null && anchor.attached) {
+      target = chatAnswerStartOffset(anchor, position);
+      // Its top is already on screen: stay at the bottom.
+      if (target == null || target <= position.pixels) return;
+    } else {
+      // The reversed list is lazy: a first unread row far above the bottom
+      // has no render object yet. Walk up to it the way the find bar does.
+      _freezeStreamingFollow();
+      final reached = await _materializeTranscriptAnchor(
+        firstUnread,
+        stillWanted: () => !_disposed,
+      );
+      if (reached != true) {
+        if (reached == false && _scrollController.hasClients) {
+          _scrollController.position.jumpTo(
+            _scrollController.position.minScrollExtent,
+          );
+        }
+        return;
+      }
+      anchor = _messageAnchors[firstUnread];
+      if (anchor == null || !anchor.attached) return;
+      position = _scrollController.position;
+      target = chatAnswerStartOffset(anchor, position);
+      if (target == null) return;
+    }
+    // One jump, before the reader has seen the bottom settle: no animation
+    // that would read as a second movement after the route transition.
+    _freezeStreamingFollow();
+    // The jump button appears with the landing and pads the list bottom by
+    // its 48 dp. Show it while still at the bottom (no compensation is
+    // recorded there) and include its extent in the single jump, so the
+    // divider lands at the top in one frame instead of sliding 48 dp.
+    final buttonExtent = _scrollToBottomVisibility.value ? 0.0 : 48.0;
+    _showScrollToBottom = true;
+    position.jumpTo(target + buttonExtent);
+    if (_scrollToBottomVisibility.value) {
+      _awayMarker = null;
+      _awayMarkerKey = markerKey;
+      _awayCountableBaseline = _countableMessages() - unread;
+      _newWhileAway.value = unread;
+    }
   }
 
   bool _isNewSinceFirstUnread(Map<String, dynamic> message) {
@@ -9574,27 +9605,48 @@ class _ChatScreenState extends State<ChatScreen>
         _scrollController.hasClients &&
         (stillWanted == null || stillWanted());
     if (!live()) return null;
-    final position = _scrollController.position;
+    final reached = await _materializeTranscriptAnchor(
+      target,
+      stillWanted: stillWanted,
+    );
+    if (reached != true) return reached;
+    final anchor = _messageAnchors[target];
+    if (anchor == null || !anchor.attached || !live()) return null;
+    await scrollChatAnswerToStart(
+      anchor,
+      _scrollController.position,
+      duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+    );
+    return true;
+  }
 
-    Future<bool> alignIfMounted() async {
-      final anchor = _messageAnchors[target];
-      if (anchor == null || !anchor.attached) return false;
-      await scrollChatAnswerToStart(
-        anchor,
-        position,
-        duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
-      );
-      return true;
-    }
-
-    if (await alignIfMounted()) return true;
+  /// Walks the lazy reversed history from the bottom up until [target] has a
+  /// laid-out anchor. True when it is attached (possibly without moving),
+  /// false after reaching the top without building it, null when the screen
+  /// or scroll went away or [stillWanted] withdrew the walk.
+  Future<bool?> _materializeTranscriptAnchor(
+    Map<String, dynamic> target, {
+    bool Function()? stillWanted,
+  }) async {
+    bool live() =>
+        mounted &&
+        _scrollController.hasClients &&
+        (stillWanted == null || stillWanted());
+    bool attached() => _messageAnchors[target]?.attached ?? false;
+    if (!live()) return null;
+    if (attached()) return true;
+    // Read the position after every frame: entering the chat can still swap
+    // the list's scrollable (loading state → transcript), which disposes the
+    // position a caller captured before the walk.
+    var position = _scrollController.position;
     position.jumpTo(position.minScrollExtent);
     await SchedulerBinding.instance.endOfFrame;
     if (!live()) return null;
-    if (await alignIfMounted()) return true;
+    if (attached()) return true;
 
     for (var attempt = 0; attempt < 80; attempt++) {
       if (!live()) return null;
+      position = _scrollController.position;
       if (position.pixels >= position.maxScrollExtent - 1) break;
       position.jumpTo(
         (position.pixels + position.viewportDimension * 0.9).clamp(
@@ -9603,7 +9655,8 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       );
       await SchedulerBinding.instance.endOfFrame;
-      if (await alignIfMounted()) return true;
+      if (!live()) return null;
+      if (attached()) return true;
     }
     return false;
   }

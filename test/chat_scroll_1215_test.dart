@@ -669,6 +669,43 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    testWidgets(
+      'lands on a first unread row that the lazy list has not built',
+      (tester) async {
+        final gateway = _StreamingGateway();
+        await pumpChat(
+          tester,
+          gateway,
+          history: _history(),
+          initialPrefs: const {lastReadKey: 'message:h-a-4'},
+        );
+        for (var i = 0; i < 40; i++) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(
+          divider(),
+          findsOneWidget,
+          reason: 'the chat opens on the divider, far above the bottom',
+        );
+        final viewport = tester.getRect(transcript());
+        expect(tester.getTopLeft(divider()).dy, closeTo(viewport.top, 1));
+        expect(find.textContaining('Pregunta histórica 5 '), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
+            matching: find.text('50 nuevos'),
+          ),
+          findsOneWidget,
+        );
+        // Stillness after landing.
+        final landed = tester.getTopLeft(divider()).dy;
+        await settle(tester);
+        expect(tester.getTopLeft(divider()).dy, landed);
+        expect(tester.takeException(), isNull);
+        await tearDownChat(tester, gateway);
+      },
+    );
+
     testWidgets('stays at the bottom when the unread rows are on screen', (
       tester,
     ) async {
