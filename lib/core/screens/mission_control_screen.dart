@@ -388,6 +388,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _surfaceCoordinator.handleLifecycle(state);
     switch (state) {
       case AppLifecycleState.resumed:
+        // The roster tick sleeps in background; the resume load below is the
+        // refresh, so the next tick comes a full interval later.
+        if (_rosterTimer == null) _scheduleRosterRefresh();
         if (!_lifecyclePaused) return;
         _lifecyclePaused = false;
         _kanbanReconnectDelay = const Duration(seconds: 3);
@@ -396,6 +399,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
       case AppLifecycleState.detached:
+        if (state != AppLifecycleState.inactive) {
+          _rosterTimer?.cancel();
+          _rosterTimer = null;
+        }
         _lifecyclePaused = true;
         _kanbanRefreshDebounce?.cancel();
         _kanbanReconnectTimer?.cancel();
