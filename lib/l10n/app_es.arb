@@ -22,6 +22,10 @@
   "i18n1215SshTimeout": "Tiempo de espera agotado (host/puerto inalcanzable).",
   "i18n1215SshHostLookup": "No se pudo resolver el host.",
   "i18n1215SshSessionClosedBanner": "[sesión cerrada]",
+  "i18n1215KanbanTask": "Tarea del Kanban",
+  "i18n1215ScheduledTask": "Tarea programada",
+  "i18n1215Conversation": "Conversación",
+  "i18n1215PreviousContext": "Contexto previo",
   "languageSettingTitle": "Idioma",
   "@languageSettingTitle": {
     "description": "Título de la opción de idioma en Ajustes"

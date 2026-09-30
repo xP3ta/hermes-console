@@ -9,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../models/cron_job.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
 import '../services/cron_repository.dart';
 import '../services/notifications/notification_mute_store.dart';
 import '../services/notifications/notification_service.dart';
@@ -675,7 +676,7 @@ class _RunRow extends StatelessWidget {
       duration = secs < 90 ? '$secs s' : '${(secs / 60).round()} min';
     }
     final when = started == null
-        ? session.displayTitle
+        ? localizedSessionTitle(s, session)
         : hermesFormatNextRun(s, started);
     return Semantics(
       button: true,

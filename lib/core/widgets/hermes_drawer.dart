@@ -30,6 +30,7 @@ import '../navigation/chat_route.dart';
 import '../navigation/instance_route_guard.dart';
 import '../theme/app_theme.dart';
 import '../utils/session_timestamp.dart';
+import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'hermes_notice.dart';
 
@@ -750,7 +751,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
         for (final session in _sessions)
           Semantics(
             button: true,
-            label: session.displayTitle,
+            label: localizedSessionTitle(strings, session),
             child: InkWell(
               key: ValueKey('drawer-recent-${session.id}'),
               onTap: () => widget.onOpen(session),
@@ -777,7 +778,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
                       const SizedBox(width: 9),
                       Expanded(
                         child: Text(
-                          session.displayTitle,
+                          localizedSessionTitle(strings, session),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

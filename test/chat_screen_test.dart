@@ -3199,6 +3199,38 @@ void main() {
     },
   );
 
+  for (final (language, kanban, context, scheduled) in const [
+    ('en', 'Kanban task', 'Previous context', 'Scheduled task'),
+    ('es', 'Tarea del Kanban', 'Contexto previo', 'Tarea programada'),
+  ]) {
+    testWidgets('system blob chips follow the $language UI language', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'user', 'content': 'work kanban task t_abc123'},
+          {
+            'role': 'assistant',
+            'content':
+                '[CONTEXT COMPACTION — REFERENCE ONLY] summary\n'
+                '--- END OF CONTEXT SUMMARY ---',
+          },
+          {
+            'role': 'user',
+            'content': '[IMPORTANT: You are running as a scheduled cron job.]',
+          },
+        ],
+      );
+      tester.platformDispatcher.localesTestValue = [Locale(language)];
+      await tester.pump();
+
+      expect(find.text(kanban), findsOneWidget);
+      expect(find.text(context), findsOneWidget);
+      expect(find.text(scheduled), findsOneWidget);
+    });
+  }
+
   testWidgets(
     'la burbuja conserva texto humano y elimina el carrier background completo',
     (tester) async {

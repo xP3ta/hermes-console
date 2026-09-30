@@ -31,6 +31,7 @@ import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
+import '../utils/session_title.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/relative_time.dart';
 import '../widgets/attachment_source_sheet.dart';
@@ -599,7 +600,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       return;
     }
     final s = Strings.of(context);
-    final title = _archive?.titleForSession(session) ?? session.displayTitle;
+    final title =
+        _archive?.titleForSession(session, strings: s) ??
+        localizedSessionTitle(s, session);
     final isLocal =
         conn.kind == InstanceKind.localhost || session.source == 'mobile-local';
     var cronDeletion = LinkedCronDeletionMode.keepSchedule;
@@ -783,7 +786,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
               child: Text(
-                _archive?.titleForSession(session) ?? session.displayTitle,
+                _archive?.titleForSession(
+                      session,
+                      strings: Strings.of(context),
+                    ) ??
+                    localizedSessionTitle(Strings.of(context), session),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleMedium,
@@ -1200,7 +1207,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         previousGroup = group;
       }
 
-      final title = _archive?.titleForSession(session) ?? session.displayTitle;
+      final title =
+          _archive?.titleForSession(session, strings: Strings.of(context)) ??
+          localizedSessionTitle(Strings.of(context), session);
       final cached = _turnPreviews[_turnPreviewKey(connection, session)];
       final summary = homeRecentSummary(
         title: title,

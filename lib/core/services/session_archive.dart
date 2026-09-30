@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
 
 /// Local archive + hidden store for sessions.
 ///
@@ -171,8 +173,12 @@ class SessionArchive {
     return serverTitle;
   }
 
-  String titleForSession(Session session) =>
-      titleFor(session.logicalId, session.displayTitle);
+  String titleForSession(Session session, {Strings? strings}) => titleFor(
+    session.logicalId,
+    strings == null
+        ? session.displayTitle
+        : localizedSessionTitle(strings, session),
+  );
 
   Future<void> setTitle(String sessionId, String title) async {
     final clean = title.trim();

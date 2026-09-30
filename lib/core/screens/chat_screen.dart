@@ -128,6 +128,7 @@ import 'voice_settings_screen.dart';
 import '../theme/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
+import '../utils/session_title.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
 import '../utils/byte_bounded_lru_cache.dart';
@@ -6490,7 +6491,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final content = (message['content'] as String?) ?? '';
     if (content.length <= _assistantChunkMaxChars ||
-        _jobChipLabel(content) != null ||
+        _jobChipLabel(content, Strings.of(context)) != null ||
         _messageKeepsLiveHost(message) ||
         (_chat.isStreaming &&
             _messages.isNotEmpty &&
@@ -8991,7 +8992,7 @@ class _ChatScreenState extends State<ChatScreen>
             releaseDesktop: strings.chaControlReleaseDesktop,
             releaseUnavailable: strings.chaRuntimeReleaseUnavailable,
           ),
-          conversationTitle: widget.session.displayTitle,
+          conversationTitle: localizedSessionTitle(strings, widget.session),
           readOnly: sessionReadOnly,
           showReleaseDesktop: _chat.showReleaseToDesktopControl,
           releaseDesktopEnabled: _chat.canReleaseToDesktop,
@@ -9435,7 +9436,9 @@ class _ChatScreenState extends State<ChatScreen>
         context: context,
         builder: (_) => AlertDialog(
           title: Text(s.sesDeleteTitle),
-          content: Text(s.sesDeleteContent(widget.session.displayTitle)),
+          content: Text(
+            s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -9459,7 +9462,7 @@ class _ChatScreenState extends State<ChatScreen>
       final verified = await LockScreen.verify(
         context,
         lock,
-        reason: s.sesDeleteContent(widget.session.displayTitle),
+        reason: s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
       );
       if (!verified || !mounted || isReadOnly()) return;
     }
@@ -13884,7 +13887,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (unit is _UserTurnGroup) {
       final rawContent = (unit.primary['content'] as String?) ?? '';
       final content = projectedUserVisibleContent(unit.primary);
-      final systemChip = _jobChipLabel(content);
+      final systemChip = _jobChipLabel(content, Strings.of(context));
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
@@ -13956,7 +13959,7 @@ class _ChatScreenState extends State<ChatScreen>
     // CUALQUIER rol: el de compactación a veces llega como role=assistant (no
     // user), por eso no bastaba con el chip de _UserMessage. Se muestra un chip
     // limpio en vez del muro de texto.
-    final systemChip = _jobChipLabel(content);
+    final systemChip = _jobChipLabel(content, Strings.of(context));
     if (systemChip != null) {
       return _SystemBlobChip(label: systemChip, raw: content);
     }
@@ -15825,15 +15828,15 @@ final RegExp _kanbanWorkRe = RegExp(
   caseSensitive: false,
 );
 
-String? _jobChipLabel(String raw) {
-  if (_kanbanWorkRe.hasMatch(raw)) return 'Tarea del Kanban';
+String? _jobChipLabel(String raw, Strings strings) {
+  if (_kanbanWorkRe.hasMatch(raw)) return strings.i18n1215KanbanTask;
   final skill = _invokedSkillName(raw);
   if (skill != null) return 'Skill · $skill';
   final t = raw.trimLeft();
   // Handoff de compactación sin mensaje real detrás → chip discreto.
   if (t.startsWith('[CONTEXT COMPACTION') &&
       _stripContextCompaction(raw).trim().isEmpty) {
-    return 'Contexto previo';
+    return strings.i18n1215PreviousContext;
   }
   final lower = t.toLowerCase();
   final looksJob =
@@ -15844,7 +15847,7 @@ String? _jobChipLabel(String raw) {
           lower.contains('delivery:') ||
           lower.contains('invoked'));
   if (looksJob && _stripCronPreamble(raw).trim().isEmpty) {
-    return 'Tarea programada';
+    return strings.i18n1215ScheduledTask;
   }
   return null;
 }

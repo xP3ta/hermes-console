@@ -24,6 +24,7 @@ import '../services/session_repository.dart';
 import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
 import '../utils/home_recent_sessions.dart';
+import '../utils/session_title.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
@@ -1056,7 +1057,8 @@ class _SessionListScreenState extends State<SessionListScreen>
   bool _isHidden(Session session) =>
       _archive?.isSessionHidden(session) ?? false;
   String _titleFor(Session session) =>
-      _archive?.titleForSession(session) ?? session.displayTitle;
+      _archive?.titleForSession(session, strings: Strings.of(context)) ??
+      localizedSessionTitle(Strings.of(context), session);
 
   void _replaceSessionArchived(Session session, bool archived) {
     _sessions = [
