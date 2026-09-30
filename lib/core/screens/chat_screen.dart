@@ -1660,6 +1660,16 @@ class _ChatScreenState extends State<ChatScreen>
   // nunca por frame ni por scroll.
   final ValueNotifier<int> _newWhileAway = ValueNotifier(0);
 
+  // True only while the entry landing walks the lazy list up to the first
+  // unread row. Each walk step is a real scroll offset; painting them would
+  // show the transcript jumping upward screen by screen before it lands.
+  final ValueNotifier<bool> _transcriptConcealed = ValueNotifier(false);
+
+  /// Walk budget of the entry landing: long enough to build a first unread
+  /// row several screens up, short enough (~330 ms) that a blank transcript
+  /// never reads as a broken screen.
+  static const int _entryLandingWalkFrames = 20;
+
   // "New since you left": device-local read marker per conversation (Hermes
   // keeps none for sessions), mirroring the Room's `lastSeenSeq`.
   SharedPreferences? _lastReadPrefs;
@@ -1711,25 +1721,40 @@ class _ChatScreenState extends State<ChatScreen>
       if (target == null || target <= position.pixels) return;
     } else {
       // The reversed list is lazy: a first unread row far above the bottom
-      // has no render object yet. Walk up to it the way the find bar does.
+      // has no render object yet. Walk up to it with the transcript hidden,
+      // so the reader sees one move (bottom, then the landing) instead of
+      // every intermediate screen of the walk. The concealment is released
+      // in the same frame as the final jump, or at the bottom if the walk
+      // fails or runs out of budget.
       _freezeStreamingFollow();
-      final reached = await _materializeTranscriptAnchor(
-        firstUnread,
-        stillWanted: () => !_disposed,
-      );
-      if (reached != true) {
-        if (reached == false && _scrollController.hasClients) {
-          _scrollController.position.jumpTo(
-            _scrollController.position.minScrollExtent,
-          );
+      _transcriptConcealed.value = true;
+      try {
+        final reached = await _materializeTranscriptAnchor(
+          firstUnread,
+          stillWanted: () => !_disposed,
+          maxFrames: _entryLandingWalkFrames,
+          // The list keeps a 1000 px cache on both sides: a step of one
+          // viewport plus that cache still builds every row it passes.
+          stepExtent: (position) => position.viewportDimension + 1000,
+        );
+        anchor = _messageAnchors[firstUnread];
+        position = _scrollController.hasClients
+            ? _scrollController.position
+            : position;
+        target = reached == true && anchor != null && anchor.attached
+            ? chatAnswerStartOffset(anchor, position)
+            : null;
+        if (target == null) {
+          if (_scrollController.hasClients) {
+            _scrollController.position.jumpTo(
+              _scrollController.position.minScrollExtent,
+            );
+          }
+          return;
         }
-        return;
+      } finally {
+        if (!_disposed) _transcriptConcealed.value = false;
       }
-      anchor = _messageAnchors[firstUnread];
-      if (anchor == null || !anchor.attached) return;
-      position = _scrollController.position;
-      target = chatAnswerStartOffset(anchor, position);
-      if (target == null) return;
     }
     // One jump, before the reader has seen the bottom settle: no animation
     // that would read as a second movement after the route transition.
@@ -6284,6 +6309,7 @@ class _ChatScreenState extends State<ChatScreen>
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
     _newWhileAway.dispose();
+    _transcriptConcealed.dispose();
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
@@ -9629,6 +9655,8 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool?> _materializeTranscriptAnchor(
     Map<String, dynamic> target, {
     bool Function()? stillWanted,
+    int maxFrames = 80,
+    double Function(ScrollPosition position)? stepExtent,
   }) async {
     bool live() =>
         mounted &&
@@ -9646,12 +9674,14 @@ class _ChatScreenState extends State<ChatScreen>
     if (!live()) return null;
     if (attached()) return true;
 
-    for (var attempt = 0; attempt < 80; attempt++) {
+    for (var attempt = 0; attempt < maxFrames; attempt++) {
       if (!live()) return null;
       position = _scrollController.position;
       if (position.pixels >= position.maxScrollExtent - 1) break;
+      final step =
+          stepExtent?.call(position) ?? position.viewportDimension * 0.9;
       position.jumpTo(
-        (position.pixels + position.viewportDimension * 0.9).clamp(
+        (position.pixels + step).clamp(
           position.minScrollExtent,
           position.maxScrollExtent,
         ),
@@ -14357,7 +14387,20 @@ class _ChatScreenState extends State<ChatScreen>
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
       errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
-      child: transcript,
+      // Always in the tree so hiding never rebuilds the list or loses its
+      // scroll position; laid out while hidden so the landing walk can build
+      // rows, but neither painted nor touchable.
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _transcriptConcealed,
+        builder: (context, concealed, child) => Visibility(
+          visible: !concealed,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: child!,
+        ),
+        child: transcript,
+      ),
     );
   }
 

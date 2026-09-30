@@ -669,6 +669,51 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    /// Whether the transcript list is actually painted: no concealing
+    /// Visibility/Opacity/Offstage between it and the chat screen.
+    bool transcriptPainted() {
+      final lists = transcript().evaluate();
+      if (lists.isEmpty) return false;
+      var painted = true;
+      lists.first.visitAncestorElements((element) {
+        final widget = element.widget;
+        if (widget is ChatScreen) return false;
+        if ((widget is Visibility && !widget.visible) ||
+            (widget is Opacity && widget.opacity == 0) ||
+            (widget is Offstage && widget.offstage)) {
+          painted = false;
+        }
+        return true;
+      });
+      return painted;
+    }
+
+    /// Records, after every painted frame, the transcript offset and whether
+    /// the reader could see it. Stops recording when the test ends.
+    List<({double pixels, bool painted})> recordFrames(WidgetTester tester) {
+      final frames = <({double pixels, bool painted})>[];
+      var recording = true;
+      addTearDown(() => recording = false);
+      tester.binding.addPersistentFrameCallback((_) {
+        if (!recording || transcript().evaluate().isEmpty) return;
+        final controller = controllerOf(tester);
+        if (!controller.hasClients) return;
+        frames.add((
+          pixels: controller.position.pixels,
+          painted: transcriptPainted(),
+        ));
+      });
+      return frames;
+    }
+
+    /// Pumps until [done] or a generous frame cap. Frame counts are not a
+    /// schedule: the landing ends when its condition holds, not at frame N.
+    Future<void> pumpUntil(WidgetTester tester, bool Function() done) async {
+      for (var frame = 0; frame < 240 && !done(); frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    }
+
     testWidgets(
       'lands on a first unread row that the lazy list has not built',
       (tester) async {
@@ -679,9 +724,21 @@ void main() {
           history: _history(),
           initialPrefs: const {lastReadKey: 'message:h-a-4'},
         );
-        for (var i = 0; i < 40; i++) {
-          await tester.pump(const Duration(milliseconds: 16));
-        }
+        // Wait for the landing itself, not for a fixed number of frames: the
+        // walk length depends on row extents, not on a schedule.
+        await pumpUntil(
+          tester,
+          () =>
+              divider().evaluate().isNotEmpty &&
+              transcriptPainted() &&
+              find
+                  .descendant(
+                    of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
+                    matching: find.text('50 nuevos'),
+                  )
+                  .evaluate()
+                  .isNotEmpty,
+        );
         expect(
           divider(),
           findsOneWidget,
@@ -705,6 +762,103 @@ void main() {
         await tearDownChat(tester, gateway);
       },
     );
+
+    testWidgets('landing on an unbuilt first unread row is one visible move', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      late final List<({double pixels, bool painted})> frames;
+      frames = recordFrames(tester);
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-4'},
+      );
+      await pumpUntil(
+        tester,
+        () =>
+            divider().evaluate().isNotEmpty &&
+            transcriptPainted() &&
+            (tester.getTopLeft(divider()).dy - tester.getRect(transcript()).top)
+                    .abs() <=
+                1,
+      );
+      await settle(tester);
+      expect(divider(), findsOneWidget);
+      expect(
+        tester.getTopLeft(divider()).dy,
+        closeTo(tester.getRect(transcript()).top, 1),
+      );
+      // Precondition: the lazy list really had to walk up through several
+      // offsets to build the first unread row.
+      final offsets = frames.map((f) => f.pixels).toSet();
+      expect(offsets.length, greaterThan(3), reason: '$frames');
+      // The reader sees the bottom (or nothing) and then the landing: no
+      // intermediate screen of the walk is ever painted.
+      final landed = frames.last.pixels;
+      final seen = [
+        for (final frame in frames)
+          if (frame.painted) frame.pixels,
+      ];
+      final firstLanded = seen.indexOf(landed);
+      expect(firstLanded, greaterThanOrEqualTo(0));
+      expect(
+        seen.sublist(0, firstLanded).every((p) => p == seen.first),
+        isTrue,
+        reason: 'painted offsets before landing: $seen',
+      );
+      expect(
+        seen.sublist(firstLanded).every((p) => p == landed),
+        isTrue,
+        reason: 'painted offsets after landing: $seen',
+      );
+      // The transcript is hidden only briefly while it walks.
+      expect(
+        frames.where((f) => !f.painted).length,
+        lessThanOrEqualTo(24),
+        reason: 'concealed frames: $frames',
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('a first unread row out of the walk budget shows the bottom', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      late final List<({double pixels, bool painted})> frames;
+      frames = recordFrames(tester);
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(turns: 400),
+        initialPrefs: const {lastReadKey: 'message:h-a-1'},
+      );
+      await pumpUntil(tester, () => frames.length > 60);
+      await settle(tester);
+      // The walk gave up: the reader is at the newest message, not left
+      // halfway up the history or behind a blank transcript.
+      expect(transcriptPainted(), isTrue);
+      expect(controllerOf(tester).position.pixels, 0);
+      expect(find.textContaining('Respuesta histórica 399.'), findsOneWidget);
+      final seen = [
+        for (final frame in frames)
+          if (frame.painted) frame.pixels,
+      ];
+      expect(
+        seen.every((p) => p == 0),
+        isTrue,
+        reason: 'painted offsets: $seen',
+      );
+      expect(
+        frames.where((f) => !f.painted).length,
+        lessThanOrEqualTo(24),
+        reason: 'concealed frames: $frames',
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
 
     testWidgets('stays at the bottom when the unread rows are on screen', (
       tester,

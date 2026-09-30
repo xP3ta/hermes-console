@@ -424,18 +424,35 @@ void main() {
     expect(divider, findsNothing, reason: 'the cached rows hold nothing new');
 
     network.complete(_longRows(1, 60));
-    for (var i = 0; i < 20; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-
-    expect(divider, findsOneWidget, reason: 'the chat opens on the divider');
     final list = find.descendant(
       of: find.byType(ChatScreen),
       matching: find.byType(ListView),
     );
+    bool landed() =>
+        divider.evaluate().isNotEmpty &&
+        (tester.getTopLeft(divider).dy - tester.getRect(list.first).top)
+                .abs() <=
+            1;
+    // Wait for the landing itself (bounded), not for a fixed number of
+    // frames: how many frames the lazy list needs is not a contract.
+    for (var frame = 0; frame < 300 && !landed(); frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(divider, findsOneWidget, reason: 'the chat opens on the divider');
     final viewport = tester.getRect(list.first);
     expect(tester.getTopLeft(divider).dy, closeTo(viewport.top, 1));
     expect(find.textContaining('long question 41 '), findsOneWidget);
+    // One landing, then stillness.
+    final landedAt = tester.getTopLeft(divider).dy;
+    for (var frame = 0; frame < 20; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(
+        tester.getTopLeft(divider).dy,
+        landedAt,
+        reason: 'frame $frame: the landing moved after it settled',
+      );
+    }
 
     await tester.pumpWidget(const SizedBox.shrink());
     activeChats.dispose();
