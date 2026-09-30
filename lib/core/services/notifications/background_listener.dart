@@ -1232,16 +1232,23 @@ class BackgroundKanbanWatch {
 /// while a watched room works or waits for an approval, 60 s while Cron or
 /// Kanban are watched, otherwise the 180 s base. Configured connections
 /// alone never force a faster cadence.
+///
+/// [quietTicks] counts consecutive ticks in which discovery saw nothing in
+/// flight and nothing changed. Watched automation then backs off 60 → 120 →
+/// 180 s; any activity, a kick or a watched run resets the streak to 0.
 @visibleForTesting
 int listenerIdleIntervalMs({
   required bool roomsActive,
   required bool watchesCron,
   required bool watchesKanban,
-}) => roomsActive
-    ? 30000
-    : watchesCron || watchesKanban
-    ? 60000
-    : 180000;
+  int quietTicks = 0,
+}) {
+  if (roomsActive) return 30000;
+  if (!(watchesCron || watchesKanban)) return 180000;
+  if (quietTicks >= 6) return 180000;
+  if (quietTicks >= 3) return 120000;
+  return 60000;
+}
 
 /// Punto de entrada del isolate del servicio. Debe ser top-level y anotado.
 @pragma('vm:entry-point')
@@ -1472,6 +1479,10 @@ class _HermesTaskHandler extends TaskHandler {
 
   int _emptyPolls = 0;
 
+  /// Consecutive ticks in which watched Cron/Kanban showed nothing in flight
+  /// and nothing changed; drives the idle backoff of the listener cadence.
+  int _quietTicks = 0;
+
   /// Cliente HTTP REUTILIZADO entre ticks: sin él, cada sondeo abría una
   /// conexión TCP nueva por run vigilada cada 30 s (handshake con la radio
   /// despierta). Se cierra en [onDestroy].
@@ -1588,6 +1599,7 @@ class _HermesTaskHandler extends TaskHandler {
   void onReceiveData(Object data) {
     if (!BackgroundListener.roomKickFromData(data)) return;
     _botMode.expectActivity();
+    _quietTicks = 0;
     _setPollInterval(_kActiveIntervalMs, persistentAutomation: true);
     if (_polling) {
       _kickPending = true;
@@ -1681,6 +1693,10 @@ class _HermesTaskHandler extends TaskHandler {
           debugPrint('[hermes-notif] rooms tick (${error.runtimeType})');
         }
       }
+      final discoveryActive = _discovery.takeObservedActivity();
+      _quietTicks = roomsWorking || discoveryActive || runs.isNotEmpty
+          ? 0
+          : _quietTicks + 1;
       if (runs.isEmpty) {
         if (!_stopFence.allowsUpdate) return;
         // Con opt-in de escucha permanente y NADA que vigilar, baja el ritmo
@@ -1693,6 +1709,7 @@ class _HermesTaskHandler extends TaskHandler {
               roomsActive: roomsWorking,
               watchesCron: watchesCron,
               watchesKanban: watchesKanban,
+              quietTicks: _quietTicks,
             ),
             persistentAutomation: true,
           );
@@ -2030,6 +2047,26 @@ class BackgroundAutomationDiscovery {
   BackgroundDiscoveryBackoff get _discoveryBackoff => discoveryBackoff;
   final void Function(Object data) _sendToMain;
 
+  /// Last observed Cron/Kanban state per connection, used only to decide the
+  /// listener cadence (never delivery).
+  final Map<String, String> _activitySignatures = {};
+  bool _observedActivity = false;
+
+  /// True when, since the previous call, discovery saw a cron run in flight,
+  /// a running Kanban task or any change in the observed state. Resets.
+  bool takeObservedActivity() {
+    final observed = _observedActivity;
+    _observedActivity = false;
+    return observed;
+  }
+
+  void _noteActivity(String key, String signature, {required bool inFlight}) {
+    if (inFlight || _activitySignatures[key] != signature) {
+      _observedActivity = true;
+    }
+    _activitySignatures[key] = signature;
+  }
+
   /// The UI is in front: the system notification was withheld, so hand the
   /// completion to the main isolate for an in-app notice.
   void _forwardForegroundNotices(
@@ -2127,6 +2164,14 @@ class BackgroundAutomationDiscovery {
         executions = BackgroundCronWatch.mergeExecutionAuthority(
           jobExecutions: executions,
           sessions: sessions,
+        );
+        _noteActivity(
+          '${connection.id}/cron',
+          ([
+            for (final e in executions)
+              '${e.jobKey}:${e.executionId}:${e.status}',
+          ]..sort()).join('|'),
+          inFlight: executions.any((e) => !e.terminal),
         );
 
         final groups = BackgroundCronWatch.discoveryGroups(executions);
@@ -2388,6 +2433,13 @@ class BackgroundAutomationDiscovery {
         final entries = BackgroundKanbanWatch.discoveryEntriesForTest(
           connId: connection.id,
           tasks: tasks,
+        );
+        _noteActivity(
+          '${connection.id}/kanban',
+          ([
+            for (final e in entries) '${e.taskId}:${e.state}',
+          ]..sort()).join('|'),
+          inFlight: entries.any((e) => e.state == 'running'),
         );
         for (final entry in entries) {
           final status = entry.state;
