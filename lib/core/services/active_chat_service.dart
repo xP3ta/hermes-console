@@ -4129,6 +4129,10 @@ class ActiveChat {
   int? _observedFirstTokenLatencyMs;
 
   late ApiClient _api;
+
+  /// Dashboard REST reader for profile transcripts, created on first use.
+  DashboardClient? _transcriptDashboard;
+  final bool _ownsTranscriptDashboard;
   final Map<_StoredMessagesRestRequestKey, Future<SessionMessagesPage>>
   _storedMessagesRestFlights = {};
   final StoredSessionMessageLoader? _storedMessageLoader;
@@ -7509,6 +7513,7 @@ class ActiveChat {
     int Function()? monotonicMicros,
     int? initialObservedFirstTokenLatencyMs,
     ApiClient? api,
+    @visibleForTesting DashboardClient? transcriptDashboard,
     HermesDesktopGateway? desktopGateway,
     CompressionRestoreStore? compressionRestoreStore,
     int Function()? wallClockMs,
@@ -7595,6 +7600,8 @@ class ActiveChat {
            turnIdempotencyCapability ??
            (() => ConnectionManager.isTurnIdempotencySupported(connection.id)),
        _storedMessageLoader = storedMessageLoader,
+       _transcriptDashboard = transcriptDashboard,
+       _ownsTranscriptDashboard = transcriptDashboard == null,
        _localConversationLifecycle = localConversationLifecycle,
        _attachDesktopRuntimeOnLoad = attachDesktopRuntimeOnLoad,
        _allowUnownedDesktopSnapshotForTesting =
@@ -9697,6 +9704,43 @@ class ActiveChat {
     );
   }
 
+  /// Named profiles without their own API key get 401 from the gateway's
+  /// `/p/<profile>/` routes. That answer is definitive for this chat: the
+  /// transcript is read from the Dashboard (`?profile=`), as Hermes Desktop
+  /// does, instead of waiting for hydration and retrying the same 401.
+  bool _profileGatewayTranscriptUnauthorized = false;
+
+  Future<SessionMessagesPage> _readStoredMessagesRestPage(
+    String storedSessionId, {
+    required String profile,
+    required int limit,
+    required int offset,
+  }) async {
+    final owner = profile.trim();
+    if (!profileRoutes(owner) || !_profileGatewayTranscriptUnauthorized) {
+      try {
+        return await _api.getMessagesPage(
+          storedSessionId,
+          profile: profile,
+          limit: limit,
+          offset: offset,
+        );
+      } on CoreReadException catch (error) {
+        if (!profileRoutes(owner) || error.kind != CoreReadErrorKind.auth) {
+          rethrow;
+        }
+        _profileGatewayTranscriptUnauthorized = true;
+      }
+    }
+    final dashboard = _transcriptDashboard ??= DashboardClient.lazy(connection);
+    return dashboard.getSessionMessagesPage(
+      storedSessionId,
+      profile: owner,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
   Future<SessionMessagesPage> _getStoredMessagesRestPage(
     String storedSessionId, {
     required String profile,
@@ -9716,7 +9760,7 @@ class ActiveChat {
         readContext?.consumer ==
             _SessionMessagesPageConsumer.scheduledHydration;
     if (readContext == null || !openingRead) {
-      return _api.getMessagesPage(
+      return _readStoredMessagesRestPage(
         storedSessionId,
         profile: profile,
         limit: limit,
@@ -9740,7 +9784,7 @@ class ActiveChat {
     // Do not coalesce independent hydration/refresh reads after opening.
     if (readContext.consumer !=
         _SessionMessagesPageConsumer.lifecyclePrefetch) {
-      return _api.getMessagesPage(
+      return _readStoredMessagesRestPage(
         storedSessionId,
         profile: profile,
         limit: limit,
@@ -9749,14 +9793,13 @@ class ActiveChat {
     }
 
     late final Future<SessionMessagesPage> flight;
-    flight = _api
-        .getMessagesPage(
+    flight =
+        _readStoredMessagesRestPage(
           storedSessionId,
           profile: profile,
           limit: limit,
           offset: offset,
-        )
-        .whenComplete(() {
+        ).whenComplete(() {
           if (identical(_storedMessagesRestFlights[key], flight)) {
             _storedMessagesRestFlights.remove(key);
           }
@@ -25979,6 +26022,7 @@ class ActiveChat {
     _retireDesktopRuntime();
     unawaited(_desktopGateway?.close());
     _api.close();
+    if (_ownsTranscriptDashboard) _transcriptDashboard?.close();
     _transportStatusListenable.dispose();
     _changes.close();
   }

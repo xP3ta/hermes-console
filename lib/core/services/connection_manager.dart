@@ -3902,22 +3902,34 @@ class DashboardClient {
     int offset = 0,
   }) async {
     final normalizedProfile = profile.trim();
+    final boundedLimit = limit.clamp(1, 500);
     final query = Uri(
       queryParameters: {
-        'limit': '$limit',
+        'limit': '$boundedLimit',
         'order': 'latest',
         'offset': '$offset',
+        'include_compacted': 'true',
         if (normalizedProfile.isNotEmpty) 'profile': normalizedProfile,
       },
     ).query;
     final data = await apiGet(
       'sessions/${Uri.encodeComponent(sessionId)}/messages?$query',
     );
-    final raw = data['messages'] ?? data['data'];
+    final raw = data.containsKey('messages') ? data['messages'] : data['data'];
+    final resolved = data['session_id'];
     return SessionMessagesPage.fromRaw(
       rawMessages: raw,
       pagination: data['pagination'],
       paginationProvided: data.containsKey('pagination'),
+      requestedLimit: boundedLimit,
+      requestedOffset: offset,
+      resolvedTipId: resolved is String && resolved.trim().isNotEmpty
+          ? resolved.trim()
+          : null,
+      coverage: const {
+        CoreReadCoverage.tipOnly,
+        CoreReadCoverage.metadataPartial,
+      },
     );
   }
 
