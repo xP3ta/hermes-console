@@ -13742,7 +13742,15 @@ class _ChatScreenState extends State<ChatScreen>
                             ? Strings.of(
                                 context,
                               ).cq1215QueueParkedAfterCompaction
-                            : _chat.queueParked
+                            // A stuck head is the more useful note: resuming a
+                            // queue from a previous run would not send it either.
+                            : _chat.queueParkedFromPreviousSession &&
+                                  !_queueHeadStuck(queuedEntries)
+                            ? Strings.of(
+                                context,
+                              ).lo1216QueueParkedFromPreviousSession
+                            : _chat.queueParked &&
+                                  !_chat.queueParkedFromPreviousSession
                             ? Strings.of(context).chaQueueParkedNote
                             : _queueHeadStuck(queuedEntries)
                             ? Strings.of(context).q1215QueueHeadStuckNote

@@ -320,6 +320,8 @@ void main() {
     await store.save(head);
     await store.save(follower);
     await chat.restoreQueuedTurns([head, follower], store, scheduleDrain: true);
+    // A queue from a previous run comes back paused; resume it explicitly.
+    expect(chat.resumeParkedQueue(), isTrue);
     await tester.pump();
     await tester.pump();
 
@@ -359,6 +361,7 @@ void main() {
     final head = _ordered('A', PreparedTurnState.prepared, 10);
     await store.save(head);
     await chat.restoreQueuedTurns([head], store, scheduleDrain: true);
+    expect(chat.resumeParkedQueue(), isTrue);
     for (var i = 0; i < 20 && !gateway.submitEntered.isCompleted; i++) {
       await tester.pump(const Duration(milliseconds: 10));
     }

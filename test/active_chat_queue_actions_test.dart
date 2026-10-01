@@ -787,4 +787,132 @@ void main() {
     expect(chat.queueParked, isFalse);
     expect(chat.queueDrainSuspendedForTesting, isFalse);
   });
+
+  group('lo1216 restored queue from a previous run', () {
+    ActiveChat idleChat(String id, HermesDesktopGateway gateway) =>
+        _chat(id, gateway: gateway)..state = ChatPipelineState.idle;
+
+    PreparedTurn persisted(String id, String text, int order) =>
+        PreparedTurn.fromJson(
+          _prepared(id, text).copyWith(queueOrder: order).toJson(),
+        );
+
+    Future<void> settle() =>
+        Future<void>.delayed(const Duration(milliseconds: 50));
+
+    test('comes back paused and resumes exactly once in order', () async {
+      final gateway = _MentionLifecycleGateway();
+      final chat = idleChat('queue-prepared', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      final store = _MemoryOutbox();
+
+      await chat.restoreQueuedTurns([
+        persisted('lo1216-old-2', 'segundo', 2),
+        persisted('lo1216-old-1', 'primero', 1),
+      ], store);
+      await settle();
+
+      expect(gateway.submissions, isEmpty);
+      expect(chat.queueParked, isTrue);
+      expect(chat.queueParkedFromPreviousSession, isTrue);
+      expect(chat.queuedEntries.map((e) => e.text), ['primero', 'segundo']);
+
+      expect(chat.resumeParkedQueue(), isTrue);
+      expect(chat.queueParkedFromPreviousSession, isFalse);
+      for (var i = 0; i < 50 && gateway.submissions.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(gateway.submissions, ['primero']);
+      chat.state = ChatPipelineState.idle;
+      await chat.sendQueuedNow('prepared:lo1216-old-2');
+      await settle();
+      expect(gateway.submissions, ['primero', 'segundo']);
+    });
+
+    test('resume waits for an unresolved composer turn', () async {
+      final gateway = _MentionLifecycleGateway();
+      final chat = idleChat('queue-prepared', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.restoreQueuedTurns(
+        [persisted('lo1216-behind', 'detrás', 1)],
+        _MemoryOutbox(),
+        scheduleDrain: false,
+      );
+      expect(chat.queueParked, isTrue);
+
+      expect(chat.resumeParkedQueue(), isTrue);
+      await settle();
+      expect(gateway.submissions, isEmpty);
+
+      chat.resumeQueueDrainAfterComposerTurnResolved();
+      for (var i = 0; i < 50 && gateway.submissions.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(gateway.submissions, ['detrás']);
+    });
+
+    test('a turn queued in this run still drains when restored', () async {
+      final store = _MemoryOutbox();
+      final firstGateway = _MentionLifecycleGateway();
+      final first = _chat('queue-prepared', gateway: firstGateway);
+      addTearDown(firstGateway.close);
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('lo1216-this-run', 'de esta sesión'),
+        store: store,
+      );
+      expect(await first.enqueuePreparedTurn(delivery), isTrue);
+      final saved = PreparedTurn.fromJson(delivery.current.toJson());
+      first.dispose();
+
+      final gateway = _MentionLifecycleGateway();
+      final chat = idleChat('queue-prepared', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.restoreQueuedTurns([saved], store);
+      for (var i = 0; i < 50 && gateway.submissions.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(chat.queueParked, isFalse);
+      expect(gateway.submissions, ['de esta sesión']);
+    });
+
+    test('a turn parked with Stop stays parked when restored', () async {
+      final store = _MemoryOutbox();
+      final firstGateway = _QueueGateway()..settleOnInterrupt = true;
+      final first = _chat('queue-prepared', gateway: firstGateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(firstGateway.close);
+      expect(
+        await first.send(
+          fullText: 'turno vivo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('lo1216-parked', 'retenido'),
+        store: store,
+      );
+      expect(await first.enqueuePreparedTurn(delivery), isTrue);
+      await first.cancel();
+      expect(first.queueParked, isTrue);
+      final saved = PreparedTurn.fromJson(delivery.current.toJson());
+      first.dispose();
+
+      final gateway = _MentionLifecycleGateway();
+      final chat = idleChat('queue-prepared', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.restoreQueuedTurns([saved], store);
+      await settle();
+
+      expect(gateway.submissions, isEmpty);
+      expect(chat.queueParked, isTrue);
+      expect(chat.queueParkedFromPreviousSession, isFalse);
+    });
+  });
 }

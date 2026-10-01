@@ -7271,6 +7271,31 @@ class ActiveChat {
 
   bool get queueParked => _queueLease == QueueLease.parked;
 
+  /// La cola está en pausa porque se restauró de una ejecución anterior de la
+  /// app; un Stop posterior la vuelve a atribuir a Stop.
+  bool get queueParkedFromPreviousSession =>
+      _queueLease == QueueLease.parked && _queueParkedByRestore;
+  bool _queueParkedByRestore = false;
+
+  /// La restauración dejó la cola esperando a que se resuelva el turno ambiguo
+  /// del composer. Reanudar la pausa no puede adelantarlo.
+  bool _restoredQueueAwaitsComposerTurn = false;
+
+  /// Turnos preparados admitidos en la cola por ESTE proceso. Una cola
+  /// restaurada con turnos ajenos a él viene de una ejecución anterior y vuelve
+  /// en pausa: el usuario decide si sigue enviándola.
+  static final Set<String> _preparedTurnsQueuedThisProcess = <String>{};
+
+  /// Turnos de este proceso que un Stop dejó estacionados. El park vive en
+  /// memoria, así que al restaurarlos se vuelve a aplicar.
+  static final Set<String> _preparedTurnsParkedThisProcess = <String>{};
+
+  void _forgetParkedPreparedTurns() {
+    for (final item in _preparedTurnQueue) {
+      _preparedTurnsParkedThisProcess.remove(item.turn.clientTurnId);
+    }
+  }
+
   /// El park sólo puede frenar el drenaje automático; esta bandera es la que
   /// realmente lo suspende, así que las pruebas la observan por separado.
   @visibleForTesting
@@ -7282,6 +7307,8 @@ class ActiveChat {
   /// (conflicto de propiedad, admisión congelada) tienen su propio dueño.
   void _unparkQueueLease() {
     if (_disposed || _queueLease != QueueLease.parked) return;
+    _forgetParkedPreparedTurns();
+    _restoredQueueAwaitsComposerTurn = false;
     _queueLease = QueueLease.resumeRequested;
     _queueDrainSuspended = false;
     _emit(ActiveChatEvent.queueChanged);
@@ -7347,8 +7374,9 @@ class ActiveChat {
     // gobierna nada; sólo un Stop todavía en vuelo puede retener la reanudación.
     final stop = _stopTransition;
     if (stop != null && !stop.isFinal) return false;
+    _forgetParkedPreparedTurns();
     _queueLease = QueueLease.resumeRequested;
-    _queueDrainSuspended = false;
+    _queueDrainSuspended = _restoredQueueAwaitsComposerTurn;
     _emit(ActiveChatEvent.queueChanged);
     if (!isStreaming) Timer.run(_drainQueue);
     return true;
@@ -15933,6 +15961,7 @@ class ActiveChat {
   /// vez que ese turno se ha resuelto. No levanta suspensiones con otro dueño:
   /// conflicto de propiedad, Stop (park/admisión congelada) o dispose.
   void resumeQueueDrainAfterComposerTurnResolved() {
+    _restoredQueueAwaitsComposerTurn = false;
     if (_disposed ||
         !_queueDrainSuspended ||
         mutationsBlockedByOwnershipConflict ||
@@ -21062,6 +21091,7 @@ class ActiveChat {
       state: _PreparedTurnOwnershipState.pendingSave,
     );
     _preparedTurnOwners[id] = owner;
+    _preparedTurnsQueuedThisProcess.add(id);
     _pendingPreparedTurnIds.add(id);
     _pendingPreparedQueueOrders.add(queueOrder);
     try {
@@ -21293,6 +21323,8 @@ class ActiveChat {
     final wasDrainSuspended = _queueDrainSuspended;
     _queueDrainSuspended = true;
     var changed = false;
+    var restoredParked = false;
+    var restoredFromPreviousRun = false;
     final recovered = turns.toList(growable: false)
       ..sort((left, right) {
         final leftOrder = left.queueOrder;
@@ -21388,7 +21420,22 @@ class ActiveChat {
             )) {
           _blockedPreparedTurnId ??= turn.clientTurnId;
         }
+        if (!_preparedTurnsQueuedThisProcess.contains(turn.clientTurnId)) {
+          restoredFromPreviousRun = true;
+        } else if (_preparedTurnsParkedThisProcess.contains(
+          turn.clientTurnId,
+        )) {
+          restoredParked = true;
+        }
         changed = true;
+      }
+      if ((restoredFromPreviousRun || restoredParked) &&
+          _queueLease != QueueLease.parked) {
+        // Nunca se reenvía por sí solo lo que el usuario dejó de otra
+        // ejecución ni lo que pausó con Stop: vuelve en pausa con Reanudar.
+        _queueParkGeneration++;
+        _queueLease = QueueLease.parked;
+        _queueParkedByRestore = restoredFromPreviousRun;
       }
       if (changed) {
         _emit(ActiveChatEvent.queueChanged);
@@ -21396,7 +21443,12 @@ class ActiveChat {
       }
     } finally {
       if (!_disposed && restoreGeneration == _queueGeneration) {
-        _queueDrainSuspended = scheduleDrain ? wasDrainSuspended : true;
+        if (!scheduleDrain && _queueLease == QueueLease.parked) {
+          _restoredQueueAwaitsComposerTurn = true;
+        }
+        _queueDrainSuspended = scheduleDrain && _queueLease != QueueLease.parked
+            ? wasDrainSuspended
+            : true;
         if (scheduleDrain && !_queueDrainSuspended && !isStreaming) {
           Timer.run(_drainQueue);
         }
@@ -21703,7 +21755,11 @@ class ActiveChat {
     if (!_hasQueuedWork) return;
     _queueParkGeneration++;
     _queueLease = QueueLease.parked;
+    _queueParkedByRestore = false;
     _queueDrainSuspended = true;
+    for (final item in _preparedTurnQueue) {
+      _preparedTurnsParkedThisProcess.add(item.turn.clientTurnId);
+    }
     final acceptedByGateway = _desktopAcceptedQueuedPrompt;
     if (acceptedByGateway != null && acceptedByGateway.trim().isNotEmpty) {
       final occupiedOrders = <int>[

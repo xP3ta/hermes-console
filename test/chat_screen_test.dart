@@ -16908,6 +16908,12 @@ void main() {
         transcriptHasTurn: true,
         queuedAfter: queued,
       );
+      // A queue from a previous run comes back paused: nothing auto-sends.
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(gateway.submissions, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('chat-queue-resume')));
       for (var frame = 0; frame < 40 && gateway.submissions.isEmpty; frame++) {
         await tester.pump(const Duration(milliseconds: 20));
       }
@@ -17008,6 +17014,13 @@ void main() {
             clientTurnId: 'client-restore-race',
           ),
         );
+        for (var frame = 0; frame < 60; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        // Restored from a previous run: paused until the user resumes it.
+        expect(gateway.submissions, isEmpty);
+        expect(chat.queueParked, isTrue);
+        expect(chat.resumeParkedQueue(), isTrue);
         for (
           var frame = 0;
           frame < 60 && gateway.submissions.isEmpty;
@@ -27603,6 +27616,48 @@ void main() {
       find.byKey(const ValueKey('chat-queue-unknown-$lost')),
       findsNothing,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('lo1216 cola restaurada de otra sesión vuelve en pausa', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(960, 2142)
+      ..devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-queue-lo1216'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final restored = chat.restoreQueuedTurns([
+      PreparedTurn(
+        connectionId: chat.connection.id,
+        sessionId: chat.sessionId,
+        clientTurnId: 'lo1216-old',
+        createdAtMs: now,
+        updatedAtMs: now,
+        text: 'mensaje antiguo',
+        attachments: const [],
+        model: 'hermes-agent',
+        profile: chat.sessionProfile,
+        queued: true,
+        queueOrder: 1,
+      ),
+    ], _UiReleaseOutbox());
+    await tester.pump();
+    await restored;
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(chat.queuedEntries.map((e) => e.text), ['mensaje antiguo']);
+    expect(find.text('EN PAUSA · 1'), findsOneWidget);
+    expect(find.text('Cola en pausa desde la última sesión'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-queue-resume')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

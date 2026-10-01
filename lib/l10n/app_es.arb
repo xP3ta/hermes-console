@@ -9135,5 +9135,6 @@
         "type": "int"
       }
     }
-  }
+  },
+"lo1216QueueParkedFromPreviousSession": "Cola en pausa desde la última sesión"
 }
