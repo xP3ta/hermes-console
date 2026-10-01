@@ -34,6 +34,7 @@ import '../models/desktop_session_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/hosted_groups.dart';
 import '../models/profile_pet.dart';
+import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
@@ -1350,6 +1351,7 @@ class TuiGatewayClient
         HermesDesktopControlGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
+        HermesProjectFilesGateway,
         HermesExtensionManagementGateway,
         HermesMcpProvisioningGateway,
         HermesWebhookManagementGateway,
@@ -6160,6 +6162,119 @@ class TuiGatewayClient
     };
     return _projectGitRequest(() async {
       await _dashboard.apiPost('git/branch/switch', body: body);
+    });
+  }
+
+  String _fsQuery(String route, String path) {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return 'fs/$route?path=${Uri.encodeQueryComponent(value)}';
+  }
+
+  @override
+  bool get projectFilesKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.projectFiles);
+
+  @override
+  Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
+    final endpoint = _fsQuery('list', path);
+    if (projectFilesKnownUnsupported) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.unsupported,
+        code: 404,
+      );
+    }
+    try {
+      final listing = await _dashboardExtensionRequest(() async {
+        final result = await _dashboard.apiGet(endpoint);
+        final raw = result['entries'];
+        if (raw is! List) {
+          throw const DesktopControlFailure(
+            DesktopControlFailureKind.invalidResponse,
+          );
+        }
+        final error = result['error'];
+        return ProjectDirectoryListing(
+          entries: raw
+              .take(projectFsListingLimit)
+              .map(ProjectFsEntry.tryParse)
+              .whereType<ProjectFsEntry>()
+              .toList(growable: false),
+          error: error is String && error.trim().isNotEmpty ? error : null,
+        );
+      });
+      _capabilityCache.mark(
+        DesktopGatewayCapability.projectFiles,
+        DesktopGatewayCapabilityState.supported,
+      );
+      return listing;
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.projectFiles,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// File reads never gate the capability: on these routes a 404 means the
+  /// file vanished, not that the server lacks them.
+  Future<T> _projectFileRead<T>(Future<T> Function() request) async {
+    try {
+      return await _dashboardExtensionRequest(request);
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        throw DesktopControlFailure(
+          DesktopControlFailureKind.unavailable,
+          code: failure.code,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<ProjectFilePreview> readProjectFileText(String path) async {
+    final endpoint = _fsQuery('read-text', path);
+    return _projectFileRead(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      final text = result['text'];
+      if (text is! String) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      final size = result['byteSize'];
+      final mime = result['mimeType'];
+      final served = result['path'];
+      return ProjectFilePreview(
+        path: served is String && served.isNotEmpty ? served : path,
+        text: text,
+        binary: result['binary'] == true,
+        truncated: result['truncated'] == true,
+        byteSize: size is num ? size.toInt() : text.length,
+        mimeType: mime is String ? mime : 'text/plain',
+      );
+    });
+  }
+
+  @override
+  Future<Uint8List> readProjectFileBytes(String path) async {
+    final endpoint = _fsQuery('read-data-url', path);
+    return _projectFileRead(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      final dataUrl = result['dataUrl'];
+      final comma = dataUrl is String ? dataUrl.indexOf(',') : -1;
+      if (dataUrl is! String ||
+          !dataUrl.startsWith('data:') ||
+          comma < 0 ||
+          !dataUrl.substring(0, comma).endsWith(';base64')) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      return base64Decode(dataUrl.substring(comma + 1));
     });
   }
 

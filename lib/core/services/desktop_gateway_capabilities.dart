@@ -10,6 +10,7 @@ enum DesktopGatewayCapability {
   projectsCenter,
   projectManagement,
   projectWorktrees,
+  projectFiles,
   profileAssets,
   profilePets,
   sessionControl,

@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import '../models/desktop_control_center.dart';
 import '../models/admin_integrations.dart';
+import '../models/project_files.dart';
 
 export '../models/desktop_control_center.dart'
     show SessionGoalSnapshot, SessionGoalGate, SessionGoalWaitBarrier;
@@ -138,6 +141,23 @@ abstract class HermesProjectManagementGateway {
 
   /// `POST /api/git/branch/switch {path, branch}`.
   Future<void> switchBranch(String repoPath, String branch);
+}
+
+/// Read-only browsing of a project folder through the Dashboard file routes
+/// Hermes Desktop's remote file tree uses (`apps/desktop/src/lib/
+/// desktop-fs.ts`): `GET /api/fs/list?path=`, `GET /api/fs/read-text?path=`
+/// and `GET /api/fs/read-data-url?path=`. No write route is exposed here.
+abstract class HermesProjectFilesGateway {
+  /// True once `/api/fs/list` answered 404/405 on this connection (an older
+  /// Hermes); cleared on reconnect or when the capability TTL expires.
+  bool get projectFilesKnownUnsupported;
+
+  Future<ProjectDirectoryListing> listProjectDirectory(String path);
+
+  Future<ProjectFilePreview> readProjectFileText(String path);
+
+  /// Raw bytes for previews the text route cannot carry (images).
+  Future<Uint8List> readProjectFileBytes(String path);
 }
 
 abstract class HermesDesktopSessionControlGateway {
