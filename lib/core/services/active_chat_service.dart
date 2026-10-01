@@ -10342,21 +10342,59 @@ class ActiveChat {
   /// does, instead of waiting for hydration and retrying the same 401.
   bool _profileGatewayTranscriptUnauthorized = false;
 
+  /// lc1215: the gateway API (:8642) ignores `include_compacted` and pages
+  /// only the ACTIVE generation, so after an in-place compaction its last
+  /// page ends at the compaction carrier and closed history there, while
+  /// Hermes Desktop keeps scrolling into the archived rows through the
+  /// Dashboard display read. Once that boundary is seen, OLDER display pages
+  /// are read from the Dashboard.
+  ///
+  /// [_compactedDisplayAnchorRowId] is the durable id of the oldest gateway
+  /// row (the carrier). The Dashboard counts display rows, not active rows,
+  /// so its first older page is located by that id, never by count alone: a
+  /// count drift would skip archived rows.
+  int? _compactedDisplayAnchorRowId;
+  int? _compactedDisplayDashboardOffset;
+
+  /// The Dashboard could not serve the display read: keep the gateway-only
+  /// behaviour instead of retrying it on every gesture.
+  bool _compactedDisplayDashboardUnavailable = false;
+
   Future<SessionMessagesPage> _readStoredMessagesRestPage(
     String storedSessionId, {
     required String profile,
     required int limit,
     required int offset,
+    bool olderDisplayPage = false,
   }) async {
     final owner = profile.trim();
+    if (olderDisplayPage &&
+        offset > 0 &&
+        _compactedDisplayAnchorRowId != null &&
+        !_compactedDisplayDashboardUnavailable &&
+        !_profileGatewayTranscriptUnauthorized) {
+      try {
+        final page = await _readCompactedDisplayPage(
+          storedSessionId,
+          profile: owner,
+          limit: limit,
+          gatewayOffset: offset,
+        );
+        if (page != null) return page;
+      } on Object {
+        // Fall through to the gateway: never worse than before.
+      }
+      _compactedDisplayDashboardUnavailable = true;
+    }
     if (!profileRoutes(owner) || !_profileGatewayTranscriptUnauthorized) {
       try {
-        return await _api.getMessagesPage(
+        final page = await _api.getMessagesPage(
           storedSessionId,
           profile: profile,
           limit: limit,
           offset: offset,
         );
+        return _withCompactedDisplayLookahead(page);
       } on CoreReadException catch (error) {
         if (!profileRoutes(owner) || error.kind != CoreReadErrorKind.auth) {
           rethrow;
@@ -10364,13 +10402,154 @@ class ActiveChat {
         _profileGatewayTranscriptUnauthorized = true;
       }
     }
-    final dashboard = _transcriptDashboard ??= DashboardClient.lazy(connection);
-    return dashboard.getSessionMessagesPage(
+    return _readDashboardMessagesPage(
       storedSessionId,
       profile: owner,
       limit: limit,
       offset: offset,
     );
+  }
+
+  Future<SessionMessagesPage> _readDashboardMessagesPage(
+    String storedSessionId, {
+    required String profile,
+    required int limit,
+    required int offset,
+  }) {
+    final dashboard = _transcriptDashboard ??= DashboardClient.lazy(connection);
+    return dashboard.getSessionMessagesPage(
+      storedSessionId,
+      profile: profile,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  /// Reads the next older Dashboard display page. The first read re-anchors
+  /// from gateway coordinates to Dashboard coordinates: it must contain the
+  /// gateway's oldest row, which proves the page is contiguous with what is
+  /// already loaded. Later reads continue from the Dashboard cursor.
+  Future<SessionMessagesPage?> _readCompactedDisplayPage(
+    String storedSessionId, {
+    required String profile,
+    required int limit,
+    required int gatewayOffset,
+  }) async {
+    final continued = _compactedDisplayDashboardOffset;
+    if (continued != null && continued == gatewayOffset) {
+      final page = await _readDashboardMessagesPage(
+        storedSessionId,
+        profile: profile,
+        limit: limit,
+        offset: continued,
+      );
+      _compactedDisplayDashboardOffset = page.offset + page.returned;
+      return page;
+    }
+    final anchor = _compactedDisplayAnchorRowId!;
+    int anchorIndex(SessionMessagesPage page) =>
+        page.messages.indexWhere((row) => row['id'] == anchor);
+    // Same count on both sides (the normal case): one row of overlap.
+    final candidates = <int>[
+      gatewayOffset - 1,
+      // Drifted counts: scan from the newest display row.
+      for (var start = 0; start < gatewayOffset + limit; start += limit)
+        if (start != gatewayOffset - 1) start,
+    ];
+    for (final start in candidates) {
+      final page = await _readDashboardMessagesPage(
+        storedSessionId,
+        profile: profile,
+        limit: limit,
+        offset: start,
+      );
+      if (!page.hasPagination ||
+          !page.messagesFullyParsed ||
+          page.rawMessageCount != page.returned) {
+        return null;
+      }
+      final index = anchorIndex(page);
+      if (index >= 0) {
+        _compactedDisplayDashboardOffset = page.offset + page.returned;
+        return _olderThanAnchor(page, index, limit);
+      }
+      if (page.returned < limit) break;
+    }
+    return null;
+  }
+
+  /// Keeps the rows up to and including the anchor (chronological page).
+  /// Newer rows are the gateway tail already on screen; coalesced assistant
+  /// bubbles keep only their last row id, so re-merging them by identity
+  /// would duplicate their text. The cursor stays in Dashboard coordinates.
+  SessionMessagesPage _olderThanAnchor(
+    SessionMessagesPage page,
+    int anchorIndex,
+    int limit,
+  ) {
+    final kept = page.messages.sublist(0, anchorIndex + 1);
+    final dropped = page.messages.length - kept.length;
+    if (dropped == 0) return page;
+    return SessionMessagesPage(
+      messages: List<Map<String, dynamic>>.unmodifiable(kept),
+      pagination: {
+        'limit': limit,
+        'offset': page.offset + dropped,
+        'returned': kept.length,
+      },
+      paginationProvided: true,
+      rawMessageCount: kept.length,
+      messagesFullyParsed: true,
+      resolvedTipId: page.resolvedTipId,
+      coverage: page.coverage,
+      hasEarlier: page.returned >= limit,
+    );
+  }
+
+  /// A terminal gateway page whose OLDEST row is a compaction carrier (the
+  /// API projects a pure handoff as an empty `display_kind=hidden` row, a
+  /// merged one keeps its compaction header) is not the start of the
+  /// conversation: archived display rows precede it. Advertise an earlier
+  /// page so the next backfill reads them from the Dashboard.
+  SessionMessagesPage _withCompactedDisplayLookahead(SessionMessagesPage page) {
+    if (_compactedDisplayDashboardUnavailable ||
+        page.hasEarlier != null ||
+        !page.paginationProvided ||
+        !page.paginationFullyParsed ||
+        page.messages.isEmpty) {
+      return page;
+    }
+    final limit = page.limit;
+    if (limit == null || page.returned >= limit) return page;
+    final oldest = page.messages.first;
+    final anchor = oldest['id'];
+    if (anchor is! int || !_isCompactionBoundaryRow(oldest)) return page;
+    _compactedDisplayAnchorRowId = anchor;
+    _compactedDisplayDashboardOffset = null;
+    return SessionMessagesPage(
+      messages: page.messages,
+      pagination: {
+        'limit': limit,
+        'offset': page.offset,
+        'returned': page.returned,
+      },
+      paginationProvided: true,
+      rawMessageCount: page.rawMessageCount,
+      messagesFullyParsed: page.messagesFullyParsed,
+      resolvedTipId: page.resolvedTipId,
+      coverage: page.coverage,
+      hasEarlier: true,
+    );
+  }
+
+  static bool _isCompactionBoundaryRow(Map<String, dynamic> row) {
+    final role = row['role'];
+    if (role != 'user' && role != 'assistant') return false;
+    final content = row['content'];
+    final text = content is String ? content.trimLeft() : '';
+    if (row['display_kind'] == 'hidden') return text.isEmpty;
+    return text.startsWith('[CONTEXT COMPACTION') ||
+        text.startsWith('[PRIOR CONTEXT');
   }
 
   Future<SessionMessagesPage> _getStoredMessagesRestPage(
@@ -10397,6 +10576,8 @@ class ActiveChat {
         profile: profile,
         limit: limit,
         offset: offset,
+        olderDisplayPage:
+            readContext?.consumer == _SessionMessagesPageConsumer.loadEarlier,
       );
     }
     final key = _StoredMessagesRestRequestKey(

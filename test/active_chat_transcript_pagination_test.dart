@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/lc1215_long_session_fixture.dart';
 
 /// Fake del canal Desktop que graba los flags de `session.resume` y permite
 /// emitir eventos `session.resume_progress` como haría Hermes Agent 0.20.
@@ -517,6 +518,7 @@ List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  lc1215NativeLongSessionTests();
 
   test(
     'native history keeps a REST-401 profile visible with recovery open',
@@ -9916,5 +9918,86 @@ void main() {
       expect(recorded, hasLength(tombstonesBeforeSecondStop));
       expect(chat.stopConfirmationState, StopConfirmationState.confirmed);
     });
+  });
+}
+
+// lc1215 (QA 9478): a long Desktop session opened through the live gateway.
+// `session.history` only carries the active generation after the last
+// compaction; the compacted display history must stay reachable and the
+// combined transcript must paint every Desktop-visible row once, in order.
+void lc1215NativeLongSessionTests() {
+  Iterable<int> unitIndexes(ChatRenderUnitPlan unit) => switch (unit) {
+    ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+    ChatUserTurnUnitPlan(
+      :final primaryMessageIndex,
+      :final supplementMessageIndexes,
+    ) =>
+      [primaryMessageIndex, ...supplementMessageIndexes],
+    ChatToolActivityUnitPlan(:final messageIndexes) => messageIndexes,
+  };
+
+  List<String> rendered(List<Map<String, dynamic>> messages) {
+    final out = <String>[];
+    final projection = ChatRenderProjection.build(messages);
+    for (final unit in projection.units.reversed) {
+      if (unit is ChatToolActivityUnitPlan) continue;
+      final indexes = unitIndexes(unit).toList()..sort((a, b) => b - a);
+      for (final index in indexes) {
+        out.addAll(
+          RegExp(r'lc-row-\d+\b')
+              .allMatches('${messages[index]['content'] ?? ''}')
+              .map((match) => match.group(0)!),
+        );
+      }
+    }
+    return out;
+  }
+
+  test('lc1215 native open of a long compacted session paints the tail '
+      'and reaches every earlier row', () async {
+    final shape = lc1215ShapeRows();
+    final dashboard = lc1215DashboardRows(shape);
+    final native = lc1215NativeHistoryRows(dashboard);
+    final server = _TranscriptServer(paginate: true)..rows.addAll(dashboard);
+    final gateway = _HistoryGateway()
+      ..snapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-lc1215',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: native.length,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: native,
+        pagination: null,
+        paginationProvided: false,
+      );
+    final chat = _chat(
+      'lc1215-native',
+      server.client(),
+      gateway: gateway,
+      transcriptPageSizeForTesting: 500,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: native.length);
+
+    final activeVisible = lc1215DesktopVisibleMarkers(
+      shape.where((row) => row.active),
+    );
+    final opening = rendered(chat.messages);
+    expect(
+      opening.toSet().containsAll(activeVisible),
+      isTrue,
+      reason: 'missing ${activeVisible.toSet().difference(opening.toSet())}',
+    );
+    expect(chat.hasEarlierMessages, isTrue);
+
+    var guard = 0;
+    while (chat.hasEarlierMessages && guard++ < 20) {
+      await chat.loadEarlierMessages(continuePastInvisible: true);
+    }
+    expect(chat.hasEarlierMessages, isFalse);
+    expect(rendered(chat.messages), lc1215DesktopVisibleMarkers(shape));
   });
 }
