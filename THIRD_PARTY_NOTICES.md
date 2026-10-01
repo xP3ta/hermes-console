@@ -117,6 +117,8 @@ de los paquetes empaquetados).
 | flutter_foreground_task | MIT |
 | dartssh2 | MIT |
 | xterm | MIT |
+| webview_flutter | BSD-3-Clause |
+| webview_flutter_android | BSD-3-Clause |
 
 ## Artwork propio y companions CC0
 
@@ -134,6 +136,9 @@ El texto legal completo CC0-1.0 aplicable a los companions está en
   usa ZXing Core explícitamente.
 - **AndroidX** — Apache License 2.0; componentes de compatibilidad, ciclo de
   vida, cámara y UI incluidos transitivamente por los plugins Android.
+- **AndroidX WebKit 1.15.0** — Apache License 2.0; capa de compatibilidad de
+  `webview_flutter_android` sobre el WebView del sistema. El visor de
+  artefactos no empaqueta motor web propio.
 
 El escáner QR es local: no envía fotogramas, contenido, resultados ni métricas
 del escáner a XPeta Lab o a otro servicio.
@@ -150,4 +155,8 @@ El texto completo y los avisos de copyright están en
 de → Licencias open source**.
 
 Dependencias de desarrollo (no se distribuyen en el APK): flutter_test,
-flutter_lints, build_runner, json_serializable.
+flutter_lints, build_runner, json_serializable, sqflite_common_ffi,
+webview_flutter_platform_interface, url_launcher_platform_interface,
+plugin_platform_interface (estas tres últimas también llegan al APK como
+transitivas de webview_flutter/url_launcher; aquí solo se declaran para los
+dobles de prueba).

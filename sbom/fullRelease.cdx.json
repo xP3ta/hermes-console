@@ -3108,6 +3108,33 @@
       "version": "1.0.0"
     },
     {
+      "bom-ref": "pkg:maven/androidx.webkit/webkit@1.15.0",
+      "group": "androidx.webkit",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "webkit",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "fullReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/androidx.webkit/webkit@1.15.0",
+      "type": "library",
+      "version": "1.15.0"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.window.extensions.core/core@1.0.0",
       "group": "androidx.window.extensions.core",
       "licenses": [
@@ -7446,7 +7473,7 @@
       "properties": [
         {
           "name": "hermes.dependency.kind",
-          "value": "transitive"
+          "value": "dev"
         },
         {
           "name": "hermes.dependency.source",
@@ -9214,7 +9241,7 @@
       "properties": [
         {
           "name": "hermes.dependency.kind",
-          "value": "transitive"
+          "value": "dev"
         },
         {
           "name": "hermes.dependency.source",
@@ -9592,6 +9619,110 @@
       "purl": "pkg:pub/web_socket_channel@3.0.3",
       "type": "library",
       "version": "3.0.3"
+    },
+    {
+      "bom-ref": "pkg:pub/webview_flutter@4.14.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "webview_flutter",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "direct"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/webview_flutter@4.14.1",
+      "type": "library",
+      "version": "4.14.1"
+    },
+    {
+      "bom-ref": "pkg:pub/webview_flutter_android@4.14.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "webview_flutter_android",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "direct"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/webview_flutter_android@4.14.1",
+      "type": "library",
+      "version": "4.14.1"
+    },
+    {
+      "bom-ref": "pkg:pub/webview_flutter_platform_interface@2.15.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "webview_flutter_platform_interface",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "dev"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/webview_flutter_platform_interface@2.15.1",
+      "type": "library",
+      "version": "2.15.1"
+    },
+    {
+      "bom-ref": "pkg:pub/webview_flutter_wkwebview@3.26.2",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "webview_flutter_wkwebview",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/webview_flutter_wkwebview@3.26.2",
+      "type": "library",
+      "version": "3.26.2"
     },
     {
       "bom-ref": "pkg:pub/whisper_ggml_plus@1.5.2",
@@ -10451,6 +10582,7 @@
         "pkg:pub/markdown@7.3.1",
         "pkg:pub/package_info_plus@8.3.1",
         "pkg:pub/path_provider@2.1.5",
+        "pkg:pub/plugin_platform_interface@2.1.8",
         "pkg:pub/qr_code_scanner_plus@2.2.0",
         "pkg:pub/record@6.2.1",
         "pkg:pub/share_plus@10.1.4",
@@ -10460,9 +10592,13 @@
         "pkg:pub/sqflite@2.4.3",
         "pkg:pub/sqflite_common_ffi@2.4.2+1",
         "pkg:pub/url_launcher@6.3.2",
+        "pkg:pub/url_launcher_platform_interface@2.3.2",
         "pkg:pub/uuid@4.5.3",
         "pkg:pub/video_player@2.14.0",
         "pkg:pub/web_socket_channel@3.0.3",
+        "pkg:pub/webview_flutter@4.14.1",
+        "pkg:pub/webview_flutter_android@4.14.1",
+        "pkg:pub/webview_flutter_platform_interface@2.15.1",
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
@@ -11567,6 +11703,40 @@
     },
     {
       "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/webview_flutter_android@4.14.1",
+        "pkg:pub/webview_flutter_platform_interface@2.15.1",
+        "pkg:pub/webview_flutter_wkwebview@3.26.2"
+      ],
+      "ref": "pkg:pub/webview_flutter@4.14.1"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.19.0",
+        "pkg:pub/webview_flutter_platform_interface@2.15.1"
+      ],
+      "ref": "pkg:pub/webview_flutter_android@4.14.1"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.19.0",
+        "pkg:pub/plugin_platform_interface@2.1.8"
+      ],
+      "ref": "pkg:pub/webview_flutter_platform_interface@2.15.1"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/meta@1.19.0",
+        "pkg:pub/path@1.9.1",
+        "pkg:pub/webview_flutter_platform_interface@2.15.1"
+      ],
+      "ref": "pkg:pub/webview_flutter_wkwebview@3.26.2"
+    },
+    {
+      "dependsOn": [
         "pkg:pub/ffi@2.2.0",
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/flutter_riverpod@2.6.1",
@@ -11656,7 +11826,7 @@
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "ebc342b395cddd0eb6ab15289296520952ed4d3b372b48c46f157154960cc70a"
+        "value": "b5182df5f24d74f21d03499c70fa9275d0ada3be23be87288f36211b99669871"
       },
       {
         "name": "hermes.android.variant",
@@ -11668,7 +11838,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:51c28493-1861-4dea-afec-92b533afa5e3",
+  "serialNumber": "urn:uuid:1d71af1b-c2b5-4ddc-af8a-40f273170689",
   "specVersion": "1.6",
   "version": 1
 }
