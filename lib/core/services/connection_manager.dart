@@ -1669,14 +1669,26 @@ class ApiClient {
           .timeout(const Duration(seconds: 10));
       if (health.statusCode == 401 || health.statusCode == 403) return false;
       if (health.statusCode != 200) return false;
-
-      // /health may be intentionally public on some deployments. Confirm that
-      // the saved API key can also reach an authenticated endpoint before the
-      // add/update connection dialogs accept it as valid.
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+    // /health may be intentionally public on some deployments. Confirm that
+    // the saved API key can also reach an authenticated endpoint. Only an
+    // answer refutes it: a timeout, reset or 408/429/5xx from a server that
+    // just answered /health is load, not an outage (#1215).
+    try {
       final sessions = await _http
           .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers)
           .timeout(const Duration(seconds: 10));
-      return sessions.statusCode == 200;
+      final status = sessions.statusCode;
+      return status == 200 || status == 408 || status == 429 || status >= 500;
+    } on TimeoutException {
+      return true;
+    } on http.ClientException {
+      return true;
+    } on SocketException {
+      return true;
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
       return false;
