@@ -1,5 +1,6 @@
 package com.hermesagent.hermes_android
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -225,12 +226,20 @@ class HermesDocumentPreviewHandler(
             setDataAndType(uri, mimeType)
             clipData = ClipData.newRawUri("generated file", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val chooser = Intent.createChooser(viewIntent, null).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        applicationContext.startActivity(chooser)
+        // A plain ACTION_VIEW lets Android open the user's default app for
+        // this type, and show its own "Open with" only when none is set. A
+        // chooser here would force the app picker on every tap.
+        try {
+            applicationContext.startActivity(viewIntent)
+        } catch (_: ActivityNotFoundException) {
+            val chooser = Intent.createChooser(viewIntent, null).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            applicationContext.startActivity(chooser)
+        }
     }
 
     private fun resolveSentAttachment(storageKey: String): File {
