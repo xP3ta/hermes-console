@@ -1,6 +1,8 @@
 // ss1215: one live status per session, shared by the chat pill, the
 // Conversaciones row and the Inicio card, and opening a running chat paints
 // its live state (tool, tasks, waiting) before the gateway answers.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -362,6 +364,138 @@ void main() {
         ).phase,
         SessionLivePhase.thinking,
       );
+    });
+  });
+
+  group('opening a chat that is already running', () {
+    late ActiveChatService service;
+
+    setUp(() {
+      service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        globalActivity: GlobalActivityAggregate.inMemory(),
+      );
+      addTearDown(service.dispose);
+    });
+
+    Future<void> visitAndLeave({required bool withTool}) async {
+      final gateway = peer.PeerGateway(_snapshot(running: true));
+      addTearDown(gateway.close);
+      final chat = _attach(service, gateway);
+      await chat.loadMessages();
+      if (withTool) {
+        gateway.emit('tool.start', {
+          'tool_id': 't1',
+          'name': 'terminal',
+          'args': {'command': 'pytest -q'},
+        });
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        chat.liveStatus.phase,
+        withTool ? SessionLivePhase.runningTool : SessionLivePhase.thinking,
+      );
+      service.debugDisposeChatForTesting('peer', 'stored-peer');
+      expect(service.of('peer', 'stored-peer'), isNull);
+    }
+
+    test(
+      'roster busy + last visit: tool and tasks before any answer',
+      () async {
+        await visitAndLeave(withTool: true);
+        _roster(service, 'working');
+        final gateway = peer.PeerGateway(_snapshot(running: true))
+          ..resumeHold = Completer<void>();
+        addTearDown(gateway.close);
+        final chat = _attach(service, gateway);
+        final status = chat.liveStatus;
+        expect(status.provisional, isTrue);
+        expect(status.phase, SessionLivePhase.runningTool);
+        expect(status.toolLabel, 'terminal');
+        expect(status.tasks?.done, 1);
+        expect(status.tasks?.total, 3);
+        expect(_listStatus(service).toolLabel, 'terminal');
+
+        // The snapshot answers: it is authoritative in the same update.
+        final load = chat.loadMessages();
+        gateway.resumeHold!.complete();
+        await load;
+        expect(chat.liveStatus.provisional, isFalse);
+        expect(chat.liveStatus.phase, SessionLivePhase.thinking);
+        expect(chat.liveStatus.tasks?.total, 3);
+      },
+    );
+
+    test('roster busy, never visited: «working», no invented tool', () {
+      _roster(service, 'working');
+      final gateway = peer.PeerGateway(_snapshot(running: true))
+        ..resumeHold = Completer<void>();
+      addTearDown(gateway.close);
+      final chat = _attach(service, gateway);
+      expect(chat.liveStatus.provisional, isTrue);
+      expect(chat.liveStatus.phase, SessionLivePhase.working);
+      expect(chat.liveStatus.toolLabel, isNull);
+      expect(chat.liveStatus.tasks, isNull);
+    });
+
+    test('roster waiting: waiting for you before any answer', () async {
+      await visitAndLeave(withTool: true);
+      _roster(service, 'waiting');
+      final gateway = peer.PeerGateway(_snapshot(running: true))
+        ..resumeHold = Completer<void>();
+      addTearDown(gateway.close);
+      final chat = _attach(service, gateway);
+      expect(chat.liveStatus.phase, SessionLivePhase.waitingForUser);
+      expect(chat.liveStatus.toolLabel, isNull);
+    });
+
+    test('idle chat: nothing provisional, no spinner', () async {
+      final gateway = peer.PeerGateway(_snapshot(running: false))
+        ..resumeHold = Completer<void>();
+      addTearDown(gateway.close);
+      final chat = _attach(service, gateway);
+      expect(chat.liveStatus.isLive, isFalse);
+      expect(chat.provisionalLiveStatus, isNull);
+    });
+
+    test(
+      'snapshot says finished: provisional clears in the same update',
+      () async {
+        await visitAndLeave(withTool: true);
+        _roster(service, 'working');
+        final gateway = peer.PeerGateway(_snapshot(running: false))
+          ..resumeHold = Completer<void>();
+        addTearDown(gateway.close);
+        final chat = _attach(service, gateway);
+        expect(chat.liveStatus.phase, SessionLivePhase.runningTool);
+        final seen = <SessionLivePhase>[];
+        service.liveStatusRevision.addListener(
+          () => seen.add(chat.liveStatus.phase),
+        );
+        final load = chat.loadMessages();
+        gateway.resumeHold!.complete();
+        await load;
+        expect(chat.liveStatus.isLive, isFalse);
+        expect(
+          seen,
+          isNot(contains(SessionLivePhase.working)),
+          reason: 'no intermediate generic frame',
+        );
+        expect(seen.last, SessionLivePhase.idle);
+      },
+    );
+
+    test('roster stops proving busy: provisional goes at once', () async {
+      _roster(service, 'working');
+      final gateway = peer.PeerGateway(_snapshot(running: true))
+        ..resumeHold = Completer<void>();
+      addTearDown(gateway.close);
+      final chat = _attach(service, gateway);
+      expect(chat.liveStatus.isLive, isTrue);
+      _roster(service, 'idle');
+      _roster(service, 'idle');
+      expect(chat.provisionalLiveStatus, isNull);
+      expect(chat.liveStatus.isLive, isFalse);
     });
   });
 

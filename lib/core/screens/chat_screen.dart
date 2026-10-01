@@ -75,6 +75,7 @@ import '../models/generated_artifact.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
 import '../models/session_activity.dart';
+import '../models/session_live_status.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
 import '../navigation/chat_route.dart';
@@ -5404,6 +5405,13 @@ class _ChatScreenState extends State<ChatScreen>
   /// Un solo valor con todo lo que está vivo: turno, tareas, compactación,
   /// segundo plano y subagentes. La pastilla y el panel se pintan desde aquí.
   ActivitySnapshot _buildActivitySnapshot() {
+    // ss1215: until the first resume/activate answer, a session that is
+    // already running on the server shows its remembered state (roster plus
+    // the last visit), so opening it never paints an empty pill first.
+    final provisional = _chat.provisionalLiveStatus;
+    if (provisional != null && provisional.turnLive && !_turnLive) {
+      return _provisionalActivitySnapshot(provisional);
+    }
     final turnActive = _turnLive;
     final activity = _chat.sessionActivity;
     final steps = turnActive
@@ -5439,6 +5447,31 @@ class _ChatScreenState extends State<ChatScreen>
       passiveRemote:
           _chat.hasRecentPassiveRemoteActivity ||
           _chat.safeActiveSubagentCount > 0,
+    );
+  }
+
+  ActivitySnapshot _provisionalActivitySnapshot(SessionLiveStatus status) {
+    final s = Strings.of(context);
+    final tool = status.toolLabel;
+    return ActivitySnapshot(
+      turnActive: true,
+      tasksActive: true,
+      headline: switch (status.phase) {
+        SessionLivePhase.responding => s.chaPipelineStreaming,
+        SessionLivePhase.thinking => s.chaPipelineThinking,
+        _ => s.ss1215StatusWorking,
+      },
+      waitingForUser: status.phase == SessionLivePhase.waitingForUser,
+      current: tool == null
+          ? null
+          : ActivityStep(
+              id: 'ss1215-provisional',
+              kind: ActivityStepKind.tool,
+              label: tool,
+              status: ActivityStepStatus.running,
+              detail: status.toolDetail,
+            ),
+      tasks: status.tasks,
     );
   }
 
@@ -7408,6 +7441,9 @@ class _ChatScreenState extends State<ChatScreen>
           });
         },
       );
+      // ss1215: whatever this load proved (or failed to prove), the
+      // remembered status no longer stands in for it.
+      if (!passiveOnly) _chat.settleProvisionalLiveStatus();
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
       }
@@ -7427,6 +7463,7 @@ class _ChatScreenState extends State<ChatScreen>
       _resolveNewSinceYouLeft();
       return true;
     } catch (e) {
+      if (!passiveOnly) _chat.settleProvisionalLiveStatus();
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
       }

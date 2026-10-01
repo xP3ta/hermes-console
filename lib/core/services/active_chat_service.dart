@@ -6401,15 +6401,46 @@ class ActiveChat {
     return _liveSteps;
   }
 
+  /// ss1215: remembered state shown while a freshly attached chat waits for
+  /// its first resume/activate answer. Never persisted.
+  SessionLiveStatus? _provisionalLiveStatus;
+  bool _provisionalLiveSettled = false;
   DateTime? _lastTerminalAt;
 
   /// When this chat last saw its own turn end (done/error/cancel). Newer
   /// than a roster row, it wins over that row in [resolveSessionLiveStatus].
   DateTime? get lastTerminalAt => _lastTerminalAt;
 
+  /// Seeds [liveStatus] with a provisional value (from the roster and the
+  /// last visit) until the gateway answers. Ignored once real state exists.
+  void seedProvisionalLiveStatus(SessionLiveStatus status) {
+    if (_disposed || _provisionalLiveSettled || isStreaming) return;
+    if (!status.isLive) return;
+    _provisionalLiveStatus = status.asProvisional();
+  }
+
+  /// Retires the provisional status for good: the gateway answered (a
+  /// snapshot, a live event) or the load ended without one. Notifies when a
+  /// provisional value was on screen, so every surface repaints at once.
+  void settleProvisionalLiveStatus() => _settleProvisionalLiveStatus();
+
+  void _settleProvisionalLiveStatus() {
+    if (_provisionalLiveSettled) return;
+    _provisionalLiveSettled = true;
+    final shown = _provisionalLiveStatus != null;
+    _provisionalLiveStatus = null;
+    if (shown && !_disposed) _emit(ActiveChatEvent.sessionInfo);
+  }
+
+  /// The provisional status, while it still stands in for the real one.
+  SessionLiveStatus? get provisionalLiveStatus =>
+      _provisionalLiveSettled || isStreaming ? null : _provisionalLiveStatus;
+
   /// ss1215: what this session is doing now, in the vocabulary shared by the
   /// chat pill, the Conversaciones row and the Inicio card.
   SessionLiveStatus get liveStatus {
+    final provisional = provisionalLiveStatus;
+    if (provisional != null) return provisional;
     final activity = sessionActivity;
     final steps = isStreaming
         ? _liveTraceSteps()
@@ -8769,6 +8800,22 @@ class ActiveChat {
     }.contains(e)) {
       _transcriptRevision += 1;
     }
+    if (!_provisionalLiveSettled &&
+        const {
+          ActiveChatEvent.started,
+          ActiveChatEvent.waiting,
+          ActiveChatEvent.token,
+          ActiveChatEvent.toolProgress,
+          ActiveChatEvent.approvalRequest,
+          ActiveChatEvent.interactiveRequest,
+          ActiveChatEvent.done,
+          ActiveChatEvent.error,
+          ActiveChatEvent.cancelled,
+        }.contains(e)) {
+      // ss1215: live evidence replaces the remembered status.
+      _provisionalLiveSettled = true;
+      _provisionalLiveStatus = null;
+    }
     if (e == ActiveChatEvent.done ||
         e == ActiveChatEvent.error ||
         e == ActiveChatEvent.cancelled) {
@@ -9912,6 +9959,9 @@ class ActiveChat {
           state = ChatPipelineState.completed;
           _emit(ActiveChatEvent.sessionInfo);
         }
+        // ss1215: the snapshot is now the authority; the remembered status
+        // shown while it was pending gives way in this same update.
+        _settleProvisionalLiveStatus();
       }
 
       // Ambas ramas publican en cuanto traen un transcript útil. La última en
@@ -27616,6 +27666,28 @@ class ActiveChatService {
            compressionRestoreStore ?? CompressionRestoreStore() {
     _restoreObservedFirstTokenLatencies();
     unawaited(_drainPendingCancelledTurnCleanup());
+    this.globalActivity.addListener(_onGlobalActivityChanged);
+  }
+
+  /// ss1215: a provisional status rests on the roster; when the roster stops
+  /// proving the session busy, the provisional value goes at once.
+  void _onGlobalActivityChanged() {
+    if (_disposed) return;
+    for (final entry in _chats.entries.toList()) {
+      final chat = entry.value;
+      if (chat.provisionalLiveStatus == null) continue;
+      final profile = chat.sessionProfile;
+      final ids = <String>{
+        chat.sessionId,
+        chat.logicalSessionId,
+        chat.serverSessionId,
+        if (chat.storedSessionId?.isNotEmpty == true) chat.storedSessionId!,
+      };
+      final busy = ids.any(
+        (id) => globalActivity.isActive(chat.connection.id, profile, id),
+      );
+      if (!busy) chat.settleProvisionalLiveStatus();
+    }
   }
 
   final NotificationService? notifications;
@@ -27639,6 +27711,17 @@ class ActiveChatService {
   /// listen to it so their rows never wait for the next roster poll.
   final ValueNotifier<int> liveStatusRevision = ValueNotifier<int>(0);
   final Map<String, SessionLiveStatus> _publishedLiveStatus = {};
+
+  /// ss1215: last live status of a released chat, kept in memory only so
+  /// reopening it can paint the pill (tool, tasks) before the gateway
+  /// answers. Bounded; never persisted.
+  final LinkedHashMap<
+    String,
+    ({SessionLiveStatus status, AgentTaskList? tasks, DateTime at})
+  >
+  _rememberedLiveStatus = LinkedHashMap();
+  static const int _rememberedLiveStatusLimit = 16;
+  static const Duration _rememberedLiveStatusTtl = Duration(minutes: 30);
   final Map<String, List<SteerProjection>> _steerProjectionCache = {};
   final LinkedHashMap<String, _ReopenTranscript> _reopenTranscriptCache =
       LinkedHashMap<String, _ReopenTranscript>();
@@ -28682,6 +28765,13 @@ class ActiveChatService {
     if (cachedTranscript != null && cachedTranscript.matches(chat)) {
       chat.seedReopenTranscript(cachedTranscript.newestFirst);
     }
+    final provisional = _provisionalLiveStatusFor(
+      key,
+      connectionId: connection.id,
+      profile: owner,
+      sessionIds: initialTombstoneSessionIds,
+    );
+    if (provisional != null) chat.seedProvisionalLiveStatus(provisional);
     _chats[key] = chat;
     _publishLiveStatus(key, chat);
     final seed =
@@ -29006,6 +29096,7 @@ class ActiveChatService {
   void _dispose(String key) {
     final chat = _chats.remove(key);
     if (chat != null) {
+      _rememberLiveStatus(key, chat);
       _homeWidgetMetadata.remove(chat);
       _rememberSteerProjections(chat);
       _rememberReopenTranscript(key, chat);
@@ -29019,6 +29110,17 @@ class ActiveChatService {
     if (_publishedLiveStatus.remove(key) != null && !_disposed) {
       liveStatusRevision.value += 1;
     }
+  }
+
+  /// Releases a chat immediately, as the registry does once it is unused.
+  @visibleForTesting
+  void debugDisposeChatForTesting(
+    String connectionId,
+    String sessionId, {
+    String? profile,
+  }) {
+    final entry = _entryFor(connectionId, sessionId, profile: profile);
+    if (entry != null) _dispose(entry.key);
   }
 
   /// ss1215: the derived status of an attached chat, or null when this
@@ -29035,6 +29137,65 @@ class ActiveChatService {
     if (_publishedLiveStatus[key] == status) return;
     _publishedLiveStatus[key] = status;
     liveStatusRevision.value += 1;
+  }
+
+  void _rememberLiveStatus(String key, ActiveChat chat) {
+    _rememberedLiveStatus.remove(key);
+    final status = chat.liveStatus;
+    final tasks = chat.agentTasks;
+    if (status.provisional) return;
+    if (!status.isLive && !tasks.hasOpen) return;
+    _rememberedLiveStatus[key] = (
+      status: status,
+      tasks: tasks.hasOpen ? tasks : null,
+      at: DateTime.now(),
+    );
+    while (_rememberedLiveStatus.length > _rememberedLiveStatusLimit) {
+      _rememberedLiveStatus.remove(_rememberedLiveStatus.keys.first);
+    }
+  }
+
+  /// What a chat being attached can show before its first gateway answer:
+  /// the roster's proof that the session is busy (or waiting), enriched with
+  /// the running tool and open task list this device saw on its last visit.
+  /// A remembered status alone counts only while it is recent; the roster
+  /// alone never names tools or tasks. The resume snapshot replaces all of
+  /// it (see [ActiveChat.settleProvisionalLiveStatus]).
+  SessionLiveStatus? _provisionalLiveStatusFor(
+    String key, {
+    required String connectionId,
+    required String profile,
+    required Iterable<String> sessionIds,
+  }) {
+    final remembered = _rememberedLiveStatus.remove(key);
+    final fresh =
+        remembered != null &&
+        DateTime.now().difference(remembered.at) <= _rememberedLiveStatusTtl;
+    GlobalActivity? roster;
+    for (final id in sessionIds) {
+      if (globalActivity.isActive(connectionId, profile, id)) {
+        roster = globalActivity.activityFor(connectionId, profile, id);
+        break;
+      }
+    }
+    final remote = sessionLiveStatusFromGlobal(roster);
+    if (!remote.isLive) {
+      return fresh && remembered.status.turnLive ? remembered.status : null;
+    }
+    if (!fresh || !remote.turnLive) return remote;
+    final local = remembered.status;
+    // The roster is newer: it decides the phase; the remembered visit only
+    // fills in what the roster cannot say (the tool, the open tasks).
+    final keepTool =
+        remote.phase == SessionLivePhase.working &&
+        local.phase == SessionLivePhase.runningTool;
+    return SessionLiveStatus(
+      phase: keepTool ? SessionLivePhase.runningTool : remote.phase,
+      toolLabel: keepTool ? local.toolLabel : null,
+      toolDetail: keepTool ? local.toolDetail : null,
+      tasks: local.tasks ?? remembered.tasks,
+      stale: remote.stale,
+    );
   }
 
   void _refreshActiveIds({bool force = false}) {
@@ -29069,6 +29230,7 @@ class ActiveChatService {
     _homeWidgetMetadata.clear();
     _cancelPendingHomeWidgetMetrics();
     _observedFirstTokenLatencyCache.clear();
+    globalActivity.removeListener(_onGlobalActivityChanged);
     globalActivity.dispose();
     activeIds.dispose();
     liveStatusRevision.dispose();
