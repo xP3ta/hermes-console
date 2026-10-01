@@ -25,12 +25,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../widgets/chat_event_cards.dart';
 import '../models/activity_snapshot.dart'
-    show
-        MemoryWrite,
-        MemoryWriteAction,
-        activityToolDetail,
-        isMemoryTool,
-        memoryWriteStepKey;
+    show MemoryWrite, activityToolDetail, isMemoryTool, memoryWriteStepKey;
 import '../models/agent_task_list.dart';
 import '../models/attachment_draft.dart';
 import '../models/compaction_progress.dart' show parseCompactionChunks;
@@ -612,29 +607,7 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       final call = <String, dynamic>{};
       if (id != null) call['id'] = id;
       if (raw['type'] == 'function') call['type'] = 'function';
-      // mp1215: a `memory` call keeps only its screened write projection so
-      // the history can still say what was saved; other args never survive.
-      final memory = name == null
-          ? null
-          : MemoryWrite.fromArgs(
-              name,
-              function is Map ? function['arguments'] : null,
-            );
-      if (name != null) {
-        call['function'] = {
-          'name': name,
-          if (memory != null)
-            'arguments': jsonEncode({
-              'action': memory.action.name,
-              'target': memory.userTarget ? 'user' : 'memory',
-              if (memory.preview != null)
-                memory.action == MemoryWriteAction.remove
-                        ? 'old_text'
-                        : 'content':
-                    memory.preview,
-            }),
-        };
-      }
+      if (name != null) call['function'] = {'name': name};
       calls.add(call);
     }
     if (calls.isNotEmpty) normalized['tool_calls'] = calls;

@@ -483,7 +483,7 @@ void main() {
       expect(memory, isEmpty);
     });
 
-    test('REST rows keep only the screened write, never other args', () {
+    test('REST rows: no call args survive, the result still lands', () {
       final call = normalizeTranscriptMessageForDisplay(
         _call('m1', {
           'action': 'add',
@@ -517,11 +517,13 @@ void main() {
           call,
         ]).single[assistantActivityTraceKey],
       );
+      // The public REST projection drops call args; the label comes from
+      // the result alone and no text is shown.
+      expect(jsonEncode(call), isNot(contains('Dato público')));
       expect(steps.single['memory'], {
         'action': 'add',
-        'target': 'user',
+        'target': 'memory',
         'landed': true,
-        'preview': 'Dato público',
       });
       expect(
         normalizeTranscriptMessageForDisplay({
