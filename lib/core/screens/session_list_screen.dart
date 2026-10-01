@@ -27,6 +27,7 @@ import '../utils/home_recent_sessions.dart';
 import '../utils/session_title.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
+import '../widgets/onstage_gate.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
@@ -210,11 +211,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   ActiveChatService? _activeChats;
   GlobalActivityAggregate? _globalActivity;
   PageRoute<dynamic>? _route;
-  // Fallback estable (sin chats activos) mientras se resuelve el servicio, para
-  // no crear un ValueNotifier nuevo en cada build.
-  final ValueNotifier<Set<String>> _noActiveChats = ValueNotifier<Set<String>>(
-    const {},
-  );
+  final OnstageGate _activeIdsGate = OnstageGate();
 
   @override
   void didChangeDependencies() {
@@ -224,6 +221,10 @@ class _SessionListScreenState extends State<SessionListScreen>
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
     _globalActivity ??=
         widget.globalActivityOverride ?? _activeChats?.globalActivity;
+    // `activeIds` is force-notified on every subagent event of a run. While a
+    // chat covers this list, hold those notifications and deliver one on
+    // return instead of rebuilding the hidden ListView each time.
+    _activeIdsGate.bind(context, _activeChats?.activeIds);
     final route = ModalRoute.of(context);
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
@@ -449,7 +450,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _activityLease = null;
     _ownedActivityClient = null;
     _client.close();
-    _noActiveChats.dispose();
+    _activeIdsGate.dispose();
     super.dispose();
   }
 
@@ -1924,7 +1925,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                         ))
                 : ListenableBuilder(
                     listenable: Listenable.merge([
-                      _activeChats?.activeIds ?? _noActiveChats,
+                      _activeIdsGate,
                       ?_globalActivity,
                       // La reserva inferior depende de si el dock está
                       // activado (interruptor global de Ajustes).

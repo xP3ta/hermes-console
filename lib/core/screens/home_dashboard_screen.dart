@@ -34,6 +34,7 @@ import '../utils/home_recent_sessions.dart';
 import '../utils/session_title.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/relative_time.dart';
+import '../widgets/onstage_gate.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
@@ -128,7 +129,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
   int _refreshStatusEpoch = 0;
-  ActiveChatService? _listenedActiveChats;
+  final OnstageGate _activeIdsGate = OnstageGate();
   GlobalActivityAggregate? _listenedGlobalActivity;
   TuiGatewayClient? _ownedActivityClient;
   SharedGatewayLease? _activityLease;
@@ -182,7 +183,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
-    _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
+    _activeIdsGate.removeListener(_onActivityChanged);
+    _activeIdsGate.dispose();
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
     _localStartPoll?.cancel();
     super.dispose();
@@ -192,11 +194,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final activeChats = _activeChats;
-    if (!identical(_listenedActiveChats, activeChats)) {
-      _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
-      _listenedActiveChats = activeChats;
-      activeChats?.activeIds.addListener(_onActivityChanged);
-    }
+    // `activeIds` is force-notified on every subagent event of a run. While a
+    // chat covers Home, hold those notifications and deliver one on return.
+    _activeIdsGate.bind(context, activeChats?.activeIds);
     final aggregate =
         widget.globalActivityOverride ?? activeChats?.globalActivity;
     if (!identical(_listenedGlobalActivity, aggregate)) {
@@ -251,6 +251,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void initState() {
     super.initState();
+    _activeIdsGate.addListener(_onActivityChanged);
     WidgetsBinding.instance.addObserver(this);
     // Si se activa otra instancia desde cualquier pantalla (no solo el drawer
     // del home), recargamos al instante. Antes el home se quedaba con la

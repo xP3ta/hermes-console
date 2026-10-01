@@ -1168,6 +1168,174 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('pantallas tapadas por otra ruta', () {
+    // Durante un run con subagentes ActiveChatService fuerza una notificación
+    // de `activeIds` por cada evento `subagentActivity`, aunque el conjunto no
+    // cambie. Inicio y Conversaciones siguen montados debajo del chat y se
+    // reconstruían enteros, robando tiempo a los frames del chat visible.
+    int builds(WidgetTester tester, Type type) =>
+        tester.widgetList(find.byType(type, skipOffstage: false)).length;
+
+    Future<int> countRebuilds(
+      WidgetTester tester,
+      Type rowType,
+      Future<void> Function() action,
+    ) async {
+      var count = 0;
+      final previous = debugOnRebuildDirtyWidget;
+      debugOnRebuildDirtyWidget = (element, builtOnce) {
+        if (element.widget.runtimeType == rowType) count++;
+      };
+      try {
+        await action();
+      } finally {
+        debugOnRebuildDirtyWidget = previous;
+      }
+      return count;
+    }
+
+    Future<void> pushCover(WidgetTester tester, Type screen) async {
+      Navigator.of(tester.element(find.byType(screen))).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('chat encima')),
+        ),
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 50));
+      expect(find.text('chat encima'), findsOneWidget);
+    }
+
+    testWidgets(
+      'Conversaciones no reconstruye su lista mientras está tapada y se '
+      'pone al día al volver',
+      (tester) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final activeChats = ActiveChatService(
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(activeChats.dispose);
+        await pump(tester, [
+          _row('cubierta-1', title: 'Fila tapada', lastActive: nowSeconds()),
+        ], activeChats: activeChats);
+        await _pumpUntil(tester, find.text('Fila tapada'));
+        expect(builds(tester, ListView), greaterThan(0));
+
+        // Visible: una notificación sí repinta la lista (comportamiento
+        // existente que no debe perderse).
+        final visibleRebuilds = await countRebuilds(tester, ListView, () async {
+          activeChats.activeIds.value = <String>{};
+          await tester.pump();
+        });
+        expect(visibleRebuilds, greaterThan(0));
+
+        await pushCover(tester, SessionListScreen);
+        final hiddenRebuilds = await countRebuilds(tester, ListView, () async {
+          for (var i = 0; i < 20; i++) {
+            activeChats.activeIds.value = <String>{};
+            // The streaming chat on top produces a frame every vsync.
+            tester.binding.scheduleFrame();
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+        });
+        expect(hiddenRebuilds, 0);
+
+        // Al volver se entrega UNA puesta al día.
+        final returnRebuilds = await countRebuilds(tester, ListView, () async {
+          Navigator.of(tester.element(find.text('chat encima'))).pop();
+          await tester.pumpAndSettle(const Duration(milliseconds: 50));
+        });
+        expect(returnRebuilds, greaterThan(0));
+        expect(find.text('Fila tapada'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Inicio no se reconstruye mientras está tapado y se pone al día al '
+      'volver',
+      (tester) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final prefs = await SharedPreferences.getInstance();
+        final manager = await ConnectionManager.create(prefs);
+        await manager.saveConnection(
+          'Redesign QA',
+          '127.0.0.1',
+          8642,
+          'gateway-key',
+          kind: InstanceKind.vps,
+        );
+        await manager.setActiveConnection(manager.getConnections().single.id);
+        final aggregate = GlobalActivityAggregate.inMemory();
+        final activeChats = ActiveChatService(
+          globalActivity: aggregate,
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(activeChats.dispose);
+        final client = _HomeActivityClient();
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('es'),
+            theme: AppTheme.fromId('dark'),
+            localizationsDelegates: Strings.localizationsDelegates,
+            supportedLocales: Strings.supportedLocales,
+            home: HomeDashboardScreen(
+              connManager: manager,
+              clientFactory: (_) => client,
+              activeChatsOverride: activeChats,
+              activeSessionListLoader: () async =>
+                  const DesktopActiveSessionList(),
+              eventStreamOverride: const Stream<TuiGatewayEvent>.empty(),
+            ),
+          ),
+        );
+        await _pumpUntil(tester, find.text('Informe prolongado'));
+
+        final visibleRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            activeChats.activeIds.value = <String>{};
+            await tester.pump();
+            await tester.pump();
+          },
+        );
+        expect(visibleRebuilds, greaterThan(0));
+
+        await pushCover(tester, HomeDashboardScreen);
+        final hiddenRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            for (var i = 0; i < 20; i++) {
+              activeChats.activeIds.value = <String>{};
+              // The streaming chat on top produces a frame every vsync.
+              tester.binding.scheduleFrame();
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+          },
+        );
+        expect(hiddenRebuilds, 0);
+
+        final returnRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            Navigator.of(tester.element(find.text('chat encima'))).pop();
+            await tester.pumpAndSettle(const Duration(milliseconds: 50));
+          },
+        );
+        expect(returnRebuilds, greaterThan(0));
+        expect(find.text('Informe prolongado'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 10));
+      },
+    );
+  });
 }
 
 final class _RunningCompressionGateway extends _ProcessActivityGateway
