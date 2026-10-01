@@ -5637,14 +5637,36 @@ class _ChatScreenState extends State<ChatScreen>
   /// frame. Any other event flushes the pending one first, so ordering is
   /// kept and terminal/approval transitions still paint immediately; the
   /// timer covers the case where no frame is produced (app in background).
-  bool _toolProgressPending = false;
+  ///
+  /// `subagentActivity` is coalesced too, but leading-edge: a busy child
+  /// relays several `subagent.tool`/`thinking` events per frame, yet the
+  /// first one of a frame (and the repair nudges sent as `subagentActivity`)
+  /// must still be handled synchronously so the card and the repair debounce
+  /// start from the event itself. The rest of that frame collapse into one
+  /// trailing pass. That pass is the `toolProgress` one minus the segment
+  /// boundary, so a pending `toolProgress` covers it and a pending
+  /// `subagentActivity` is upgraded when `toolProgress` joins the same frame.
+  ActiveChatEvent? _coalescedPending;
   Timer? _toolProgressFlushTimer;
+  bool _subagentLeadingEdgeUsed = false;
 
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
-    if (event == ActiveChatEvent.toolProgress) {
-      if (_toolProgressPending) return;
-      _toolProgressPending = true;
+    if (event == ActiveChatEvent.subagentActivity &&
+        !_subagentLeadingEdgeUsed &&
+        _coalescedPending == null) {
+      _subagentLeadingEdgeUsed = true;
+      SchedulerBinding.instance.scheduleFrameCallback(
+        (_) => _subagentLeadingEdgeUsed = false,
+      );
+    } else if (event == ActiveChatEvent.toolProgress ||
+        event == ActiveChatEvent.subagentActivity) {
+      final pending = _coalescedPending;
+      if (pending != null) {
+        if (event == ActiveChatEvent.toolProgress) _coalescedPending = event;
+        return;
+      }
+      _coalescedPending = event;
       SchedulerBinding.instance.scheduleFrameCallback(
         (_) => _flushPendingToolProgress(),
       );
@@ -5660,12 +5682,15 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _flushPendingToolProgress() {
-    if (!_toolProgressPending) return;
-    _toolProgressPending = false;
+    final pending = _coalescedPending;
+    if (pending == null) return;
+    _coalescedPending = null;
+    // No frame may follow (app in background): reopen the leading edge.
+    _subagentLeadingEdgeUsed = false;
     _toolProgressFlushTimer?.cancel();
     _toolProgressFlushTimer = null;
     if (_disposed || !mounted) return;
-    _handleChatEvent(ActiveChatEvent.toolProgress);
+    _handleChatEvent(pending);
   }
 
   void _handleChatEvent(ActiveChatEvent event) {
@@ -6430,7 +6455,7 @@ class _ChatScreenState extends State<ChatScreen>
     _chatSub = null;
     _toolProgressFlushTimer?.cancel();
     _toolProgressFlushTimer = null;
-    _toolProgressPending = false;
+    _coalescedPending = null;
     _attachmentDelivery?.removeAttachmentListener(_attachmentListener);
     _attachmentDelivery = null;
     // El modo voz YA NO se destruye al cerrar la pantalla: vive en el servicio

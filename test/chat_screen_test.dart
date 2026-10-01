@@ -23532,6 +23532,100 @@ void main() {
     },
   );
 
+  testWidgets('child tool events in a long chat cost one pass per frame', (
+    tester,
+  ) async {
+    // A busy child relays several subagent.tool/thinking events per frame.
+    // Each one used to run the whole screen handler (and read the public
+    // transcript), unlike tool/reasoning progress which is coalesced.
+    final gateway = _StableRefreshGateway(subagents: const []);
+    final performance = ChatPerformanceProbe();
+    final chat = await pumpChat(
+      tester,
+      connection: _remoteConn('conn-child-tool-frame-cost'),
+      desktopGateway: gateway,
+      performanceProbe: performance,
+      registerActiveChatsTearDown: false,
+      messages: [
+        for (var i = 299; i >= 0; i--)
+          {
+            'id': i,
+            'message_id': 'hist-$i',
+            'role': i.isOdd ? 'assistant' : 'user',
+            'content': 'Historic message $i.',
+          },
+      ],
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await chat.send(
+      fullText: 'delegate',
+      model: 'hermes-agent',
+      history: const [],
+    );
+    gateway.emit('message.start');
+    await tester.pump(const Duration(milliseconds: 450));
+
+    performance.reset();
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'busy-child',
+      'goal': 'PUBLIC_BUSY_GOAL',
+      'status': 'running',
+    });
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(_subagentPillRows(tester).single.goalPreview, 'PUBLIC_BUSY_GOAL');
+    expect(performance.screenBuilds, 1);
+
+    final readsPerFrame = <int>[];
+    final buildsPerFrame = <int>[];
+    for (var frame = 0; frame < 6; frame++) {
+      performance.reset();
+      for (var i = 0; i < 6; i++) {
+        gateway.emit('subagent.tool', {
+          'subagent_id': 'busy-child',
+          'status': 'tool',
+          'tool_name': 'tool_$frame$i',
+        });
+      }
+      await tester.pump(const Duration(milliseconds: 16));
+      readsPerFrame.add(performance.publicTranscriptReads);
+      buildsPerFrame.add(performance.screenBuilds);
+      // The newest event of the burst is visible on this very frame.
+      expect(
+        _subagentPillRows(tester).single.details.activeToolName,
+        'tool_${frame}5',
+      );
+    }
+    expect(buildsPerFrame, everyElement(1));
+    expect(readsPerFrame, everyElement(lessThanOrEqualTo(3)));
+
+    // A terminal event right after a burst still lands on the next frame.
+    for (var i = 0; i < 4; i++) {
+      gateway.emit('subagent.tool', {
+        'subagent_id': 'busy-child',
+        'status': 'tool',
+        'tool_name': 'final_$i',
+      });
+    }
+    gateway.emit('subagent.complete', const {
+      'subagent_id': 'busy-child',
+      'status': 'completed',
+      'summary': 'PUBLIC_BUSY_DONE',
+    });
+    await tester.pump(const Duration(milliseconds: 16));
+    final done = _subagentPillRows(tester).single;
+    expect(done.isTerminal, isTrue);
+    expect(done.resultPreview, 'PUBLIC_BUSY_DONE');
+    expect(tester.takeException(), isNull);
+
+    gateway.emit('message.complete', const {'text': 'Done.'});
+    for (var f = 0; f < 60 && chat.isStreaming; f++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.activeChats.dispose();
+  });
+
   testWidgets(
     'a terminal event right after a reasoning burst paints on the next frame',
     (tester) async {
