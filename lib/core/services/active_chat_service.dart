@@ -20868,6 +20868,22 @@ class ActiveChat {
             step['status'] == 'running',
       );
     }
+    if (activityIndex < 0 && startsNew && id != null && id.isNotEmpty) {
+      // lp1215: `tool.generating` announces the tool by name only, before
+      // its `tool.start`. The start owns that id-less placeholder; otherwise
+      // it stays `running` after the tool finishes and the pill keeps naming
+      // a tool that is no longer executing.
+      activityIndex = activity.lastIndexWhere(
+        (step) =>
+            isToolStep(step) &&
+            step['id'] == null &&
+            step['label'] == label &&
+            step['status'] == 'running',
+      );
+      if (activityIndex >= 0) {
+        activity[activityIndex] = {...activity[activityIndex], 'id': id};
+      }
+    }
     final status = running
         ? 'running'
         : payload['error'] != null || payload['status'] == 'error'

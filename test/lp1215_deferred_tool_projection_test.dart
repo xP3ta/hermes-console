@@ -384,6 +384,37 @@ void main() {
       expect(current?.detail, 'sleep');
     });
 
+    test(
+      'tool.generating never leaves a finished tool as the running one',
+      () async {
+        final (chat, gateway) = await running();
+        gateway.emit('tool.generating', {'name': 'terminal'});
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          ActivitySnapshot.splitSteps(liveTrace(chat)).current?.label,
+          'terminal',
+        );
+        gateway.emit('tool.start', {
+          'tool_id': 'call_g',
+          'name': 'terminal',
+          'args': {'command': 'ls'},
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          ActivitySnapshot.splitSteps(liveTrace(chat)).current?.detail,
+          'ls',
+        );
+        gateway.emit('tool.complete', {
+          'tool_id': 'call_g',
+          'name': 'terminal',
+        });
+        await Future<void>.delayed(Duration.zero);
+        final split = ActivitySnapshot.splitSteps(liveTrace(chat));
+        expect(split.current, isNull);
+        expect(split.done.map((step) => step.label), ['terminal']);
+      },
+    );
+
     test('a bridged todo_list without merge replaces the list', () async {
       final (chat, gateway) = await running();
       gateway.emit('todo.updated', {
