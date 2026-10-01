@@ -532,9 +532,11 @@ final class GlobalActivityJournal {
     String? connectionId,
     String? profile,
   }) async {
-    final raw = await _read();
-    if (raw == null || raw.isEmpty) return const [];
     try {
+      // The read itself is inside the guard: a Keystore failure restores no
+      // activity rather than aborting app startup.
+      final raw = await _read();
+      if (raw == null || raw.isEmpty) return const [];
       final root = jsonDecode(raw);
       if (root is! Map || root['version'] != 1 || root['entries'] is! List) {
         return const [];
