@@ -1297,6 +1297,12 @@ class _ChatScreenState extends State<ChatScreen>
   late final ActiveChatService _chatService;
   late final ActiveChat _chat;
   StreamSubscription<ActiveChatEvent>? _chatSub;
+
+  /// Debounced transport loss shared by the recovery row, the activity pill
+  /// headline and the companion mood, so a socket blip shorter than the grace
+  /// never flashes "connection lost" on any of them.
+  final ChatTransportVisibility _transportVisibility =
+      ChatTransportVisibility();
   bool _chatBound = false;
   final ValueNotifier<SessionContextMetrics> _sessionContextMetrics =
       ValueNotifier(SessionContextMetrics.unknown);
@@ -4596,6 +4602,9 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
+      _chat.transportStatusListenable.addListener(_syncTransportVisibility);
+      _syncTransportVisibility();
+      _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
@@ -5704,8 +5713,24 @@ class _ChatScreenState extends State<ChatScreen>
     _handleChatEvent(pending);
   }
 
+  void _syncTransportVisibility() {
+    if (_disposed) return;
+    _transportVisibility.update(
+      status: _chat.transportStatus,
+      activeTurn: _chat.isStreaming,
+      authRequired: _chat.dashboardAuthRequired,
+      appForeground: _appInForeground,
+    );
+  }
+
+  void _onTransportVisibilityChanged() {
+    if (_disposed || !mounted) return;
+    setState(() {});
+  }
+
   void _handleChatEvent(ActiveChatEvent event) {
     if (_findOpen && event != ActiveChatEvent.token) _scheduleFindRefresh();
+    _syncTransportVisibility();
     // An externally observed successor can become live without a local
     // `started` event. Retire the old terminal host before publishing its
     // successor's frame, or both rows would read the same live notifier.
@@ -6464,6 +6489,11 @@ class _ChatScreenState extends State<ChatScreen>
     _persistLastRead();
     _chatSub?.cancel();
     _chatSub = null;
+    if (_chatBound) {
+      _chat.transportStatusListenable.removeListener(_syncTransportVisibility);
+    }
+    _transportVisibility.removeListener(_onTransportVisibilityChanged);
+    _transportVisibility.dispose();
     _toolProgressFlushTimer?.cancel();
     _toolProgressFlushTimer = null;
     _coalescedPending = null;
@@ -6556,6 +6586,7 @@ class _ChatScreenState extends State<ChatScreen>
     super.didChangeAppLifecycleState(state);
     final wasInForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
+    if (_chatBound) _syncTransportVisibility();
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();
@@ -10486,7 +10517,7 @@ class _ChatScreenState extends State<ChatScreen>
       _ => s.chaPipelineThinking,
     };
     return chatActivityHeadlineForTransport(
-      status: _chat.transportStatus,
+      transportLossVisible: _transportVisibility.visible,
       authRequired: _chat.dashboardAuthRequired,
       activityHeadline: activityHeadline,
       reconnectingHeadline: s.chaConnectionLostReconnecting,
@@ -11290,6 +11321,7 @@ class _ChatScreenState extends State<ChatScreen>
                             valueListenable: _chat.transportStatusListenable,
                             builder: (_, status, _) =>
                                 ChatConnectionRecoveryRow(
+                                  visibility: _transportVisibility,
                                   status: status,
                                   activeTurn: _chat.isStreaming,
                                   authRequired: _chat.dashboardAuthRequired,
@@ -14891,9 +14923,7 @@ class _ChatScreenState extends State<ChatScreen>
       _chat.pendingApproval != null || _chat.pendingInteractivePrompt != null;
 
   HermesSparkMood _liveCompanionMood() {
-    final transport = _chat.transportStatus.state;
-    if (transport == ChatTransportState.offline ||
-        transport == ChatTransportState.reconnecting) {
+    if (_transportVisibility.visible && !_chat.dashboardAuthRequired) {
       return HermesSparkMood.offline;
     }
     if (_turnWaitsForUser) return HermesSparkMood.waiting;
@@ -14910,9 +14940,9 @@ class _ChatScreenState extends State<ChatScreen>
     // indeterminada pareciese bloqueada. El composer conserva el único estado
     // vivo hasta que Desktop reconcilia el transcript.
     if (_compressingSession) return const SizedBox.shrink();
-    return ValueListenableBuilder<ChatTransportStatus>(
-      valueListenable: _chat.transportStatusListenable,
-      builder: (context, _, _) {
+    return ListenableBuilder(
+      listenable: _transportVisibility,
+      builder: (context, _) {
         final mood = _liveCompanionMood();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,

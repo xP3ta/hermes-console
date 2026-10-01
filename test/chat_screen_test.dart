@@ -3218,6 +3218,81 @@ void main() {
   });
 
   testWidgets(
+    'REGRESSION_PILL_TRANSPORT_FLASH the activity pill keeps the turn headline '
+    'through a transport blip shorter than the grace and only shows the '
+    'reconnecting headline for a real outage',
+    (tester) async {
+      const lost = 'Conexión perdida — reconectando…';
+      final gateway = _DroppedTransportGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pill-transport'),
+        desktopGateway: gateway,
+        initialStoredSessionId: 'sess-pill-transport',
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        await chat.send(
+          fullText: 'revisa el repo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      String? headline() => tester
+          .widget<ActivityPillHost>(
+            find.descendant(
+              of: find.byKey(const ValueKey('chat-activity-pill')),
+              matching: find.byType(ActivityPillHost),
+            ),
+          )
+          .snapshot
+          .headline;
+      // The live header companion reads the same debounced transport view.
+      Object? mood() {
+        final header = find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_AssistantLiveHeader',
+        );
+        if (header.evaluate().isEmpty) return null;
+        return (tester.widget(header.first) as dynamic).mood;
+      }
+
+      expect(chat.isStreaming, isTrue);
+      expect(headline(), isNot(lost));
+      expect(mood(), isNotNull);
+      expect(mood(), isNot(HermesSparkMood.offline));
+
+      gateway.drop();
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(chat.transportStatus.isConnected, isFalse);
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(
+        headline(),
+        isNot(lost),
+        reason: 'a one-second blip must not flash the reconnecting headline',
+      );
+      expect(mood(), isNot(HermesSparkMood.offline));
+
+      await tester.pump(const Duration(seconds: 2, milliseconds: 100));
+      expect(chat.transportStatus.isConnected, isFalse);
+      expect(
+        headline(),
+        lost,
+        reason: 'an outage longer than the grace is still shown',
+      );
+      expect(mood(), HermesSparkMood.offline);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      chat.dispose();
+      await tester.pump(const Duration(seconds: 20));
+    },
+  );
+
+  testWidgets(
     'the navigation drawer reports the chat transport as offline while it is '
     'disconnected instead of a hard-coded online',
     (tester) async {
