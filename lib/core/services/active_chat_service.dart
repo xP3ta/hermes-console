@@ -13,6 +13,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data' show TypedData;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -782,11 +783,154 @@ bool _samePublicTranscriptValue(Object? left, Object? right) {
   return left == right;
 }
 
+/// Number of rows normalized by the public display projection. Benchmarks
+/// count projection work with it instead of timing the shared host.
+@visibleForTesting
+int debugPublicRowProjections = 0;
+
+/// Number of whole-transcript public projection passes.
+@visibleForTesting
+int debugPublicTranscriptProjections = 0;
+
+// Headers of the flat content shape of one transcript row.
+final Object _rowShapeMap = Object();
+final Object _rowShapeList = Object();
+
+// Bounds the per-read walk of one row. Larger rows are not memoized and are
+// re-projected on every read, as before.
+const _rowShapeBudget = 4096;
+
+final class _RowShapeRecorder {
+  final List<Object?> out = [];
+
+  bool add(Object? value) {
+    if (out.length > _rowShapeBudget) return false;
+    if (value == null ||
+        value is String ||
+        value is num ||
+        value is bool ||
+        value is SubagentCompletionCardData) {
+      out.add(value);
+      return true;
+    }
+    if (value is TypedData) return false;
+    if (value is Map) {
+      out
+        ..add(_rowShapeMap)
+        ..add(value.length);
+      for (final entry in value.entries) {
+        if (!add(entry.key) || !add(entry.value)) return false;
+      }
+      return true;
+    }
+    if (value is List) {
+      out
+        ..add(_rowShapeList)
+        ..add(value.length);
+      for (final item in value) {
+        if (!add(item)) return false;
+      }
+      return true;
+    }
+    // Sets, records and other objects: content cannot be compared safely.
+    return false;
+  }
+}
+
+/// Deep content of [row] as a flat list of leaves and container headers, or
+/// null when the row cannot be compared cheaply and safely.
+List<Object?>? _recordRowShape(Map<String, dynamic> row) {
+  final recorder = _RowShapeRecorder();
+  return recorder.add(row) ? recorder.out : null;
+}
+
+bool _sameRowShapeLeaf(Object? current, Object? recorded) {
+  if (identical(current, recorded)) return true;
+  if (current is String && recorded is String) return current == recorded;
+  if (current is SubagentCompletionCardData &&
+      recorded is SubagentCompletionCardData) {
+    return current.completionKey == recorded.completionKey &&
+        current.delegationId == recorded.delegationId &&
+        current.taskCount == recorded.taskCount &&
+        current.completedCount == recorded.completedCount &&
+        current.failedCount == recorded.failedCount &&
+        identical(current.durationSeconds, recorded.durationSeconds) &&
+        listEquals(current.subagentIds, recorded.subagentIds);
+  }
+  // Numbers and bools only match by identity: `1 == 1.0` and `0.0 == -0.0`
+  // are equal values with different presentations.
+  return false;
+}
+
+final class _RowShapeMatcher {
+  _RowShapeMatcher(this.shape);
+
+  final List<Object?> shape;
+  int cursor = 0;
+
+  bool matches(Object? value) {
+    if (cursor >= shape.length) return false;
+    final recorded = shape[cursor++];
+    if (value is Map) {
+      if (!identical(recorded, _rowShapeMap) ||
+          cursor >= shape.length ||
+          shape[cursor++] != value.length) {
+        return false;
+      }
+      for (final entry in value.entries) {
+        if (!matches(entry.key) || !matches(entry.value)) return false;
+      }
+      return true;
+    }
+    if (value is List && value is! TypedData) {
+      if (!identical(recorded, _rowShapeList) ||
+          cursor >= shape.length ||
+          shape[cursor++] != value.length) {
+        return false;
+      }
+      for (final item in value) {
+        if (!matches(item)) return false;
+      }
+      return true;
+    }
+    return _sameRowShapeLeaf(value, recorded);
+  }
+}
+
+/// True when [row] still has exactly the content recorded in [shape].
+bool _rowShapeMatches(Map<String, dynamic> row, List<Object?> shape) {
+  final matcher = _RowShapeMatcher(shape);
+  return matcher.matches(row) && matcher.cursor == shape.length;
+}
+
+/// Whether the projection memo would treat [current] as unchanged since
+/// [recorded] was projected. False when [recorded] cannot be memoized.
+@visibleForTesting
+bool debugRowShapeMatches(
+  Map<String, dynamic> current,
+  Map<String, dynamic> recorded,
+) {
+  final shape = _recordRowShape(recorded);
+  return shape != null && _rowShapeMatches(current, shape);
+}
+
+/// Last public projection of one internal row. [input] is the deep content
+/// of the row handed to normalization; while it is unchanged, normalizing it
+/// again yields a value equal to [public].
+final class _PublicRowMemo {
+  _PublicRowMemo(this.input, this.retainEmptyAssistant, this.public);
+
+  final List<Object?>? input;
+  final bool retainEmptyAssistant;
+  final Map<String, dynamic>? public;
+}
+
 List<Map<String, dynamic>> _projectTranscriptForDisplay(
   Iterable<Map<String, dynamic>> messages, {
   bool retainEmptyAssistant = false,
-  Map<Map<String, dynamic>, Map<String, dynamic>>? retainedBySource,
+  Map<Map<String, dynamic>, _PublicRowMemo>? retainedBySource,
 }) {
+  debugPublicTranscriptProjections++;
   final sources = messages.toList(growable: false);
   final projectedCompletions = projectHistoricalSubagentCompletions(
     messagesNewestFirst: sources,
@@ -797,25 +941,42 @@ List<Map<String, dynamic>> _projectTranscriptForDisplay(
   // before filtering: tool/private rows must not disable identity retention
   // for the unrelated live assistant, nor shift it onto a different source.
   for (var index = 0; index < projectedCompletions.length; index++) {
+    final source = sources[index];
+    final input = projectedCompletions[index];
+    final memo = retainedBySource?[source];
+    if (retainedBySource != null) publishedSources.add(source);
+    // Normalization is a pure function of its input row and flags. Only the
+    // rows that changed since the previous read are normalized again.
+    if (memo != null &&
+        memo.retainEmptyAssistant == retainEmptyAssistant &&
+        memo.input != null &&
+        _rowShapeMatches(input, memo.input!)) {
+      final public = memo.public;
+      if (public != null) result.add(public);
+      continue;
+    }
+    debugPublicRowProjections++;
     final projected = normalizeTranscriptMessageForDisplay(
-      projectedCompletions[index],
+      input,
       retainProjectionState: true,
       retainAssistantToolCalls: retainEmptyAssistant,
       retainEmptyAssistant: retainEmptyAssistant,
     );
-    if (projected == null) continue;
-    if (projected['role'] == 'assistant_error') projected.remove('error');
-    final source = sources[index];
-    final retained = retainedBySource?[source];
-    final public =
-        retained != null && _samePublicTranscriptValue(retained, projected)
+    if (projected != null && projected['role'] == 'assistant_error') {
+      projected.remove('error');
+    }
+    final retained = memo?.public;
+    final public = projected == null
+        ? null
+        : retained != null && _samePublicTranscriptValue(retained, projected)
         ? retained
         : Map<String, dynamic>.unmodifiable(projected);
-    result.add(public);
-    if (retainedBySource != null) {
-      retainedBySource[source] = public;
-      publishedSources.add(source);
-    }
+    if (public != null) result.add(public);
+    retainedBySource?[source] = _PublicRowMemo(
+      _recordRowShape(input),
+      retainEmptyAssistant,
+      public,
+    );
   }
   retainedBySource?.removeWhere(
     (source, _) => !publishedSources.contains(source),
@@ -6779,19 +6940,74 @@ class ActiveChat {
     return true;
   }
 
-  final HashMap<Map<String, dynamic>, Map<String, dynamic>>
+  final HashMap<Map<String, dynamic>, _PublicRowMemo>
   _publicMessageByInternalIdentity =
-      HashMap<Map<String, dynamic>, Map<String, dynamic>>.identity();
+      HashMap<Map<String, dynamic>, _PublicRowMemo>.identity();
+
+  // Streaming counterpart of [_publicMessagesFingerprint]: the internal rows
+  // behind [_publicMessagesSnapshot] and their deep content shapes. Live rows
+  // mutate in depth during a turn, so only a deep comparison can prove that
+  // nothing changed. Null when a row could not be recorded.
+  List<Map<String, dynamic>>? _streamingSnapshotRows;
+  List<List<Object?>>? _streamingSnapshotShapes;
+
+  bool _streamingInputsUnchanged() {
+    final rows = _streamingSnapshotRows;
+    final shapes = _streamingSnapshotShapes;
+    if (rows == null ||
+        shapes == null ||
+        _publicMessagesSnapshot == null ||
+        _publicMessagesStreaming != true ||
+        _publicMessagesPrivacyGeneration != _transcriptPublication.generation ||
+        rows.length != _messages.length) {
+      return false;
+    }
+    for (var index = 0; index < rows.length; index++) {
+      final row = _messages[index];
+      if (!identical(row, rows[index]) ||
+          !_rowShapeMatches(row, shapes[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _recordStreamingInputs() {
+    final shapes = <List<Object?>>[];
+    for (final row in _messages) {
+      final shape = _recordRowShape(row);
+      if (shape == null) {
+        _streamingSnapshotRows = null;
+        _streamingSnapshotShapes = null;
+        return;
+      }
+      shapes.add(shape);
+    }
+    _streamingSnapshotRows = List<Map<String, dynamic>>.of(_messages);
+    _streamingSnapshotShapes = shapes;
+  }
+
+  /// Fresh projection of the current internal rows, bypassing every cache.
+  /// Parity tests compare [messages] with it after each event.
+  @visibleForTesting
+  List<Map<String, dynamic>> uncachedPublicMessagesForTesting() =>
+      _projectTranscriptForDisplay(
+        _applyDurablePrivateTranscriptVetoes(_messages),
+        retainEmptyAssistant: isStreaming,
+      );
 
   /// Sanitized read-only presentation snapshot. No reconciliation-only key is
   /// observable through the production ActiveChat API. Stable internal rows
   /// retain their public map identity while their presentation is unchanged.
   List<Map<String, dynamic>> get messages {
     final streaming = isStreaming;
-    // En streaming las filas vivas mutan en profundidad a cada delta: se
-    // proyecta siempre (comportamiento previo). En reposo, la huella
-    // superficial evita recalcular una proyección idéntica en cada lectura.
-    if (!streaming && _publicMessagesInputsUnchanged(streaming)) {
+    // En reposo, la huella superficial evita recalcular una proyección
+    // idéntica en cada lectura. En streaming las filas vivas mutan en
+    // profundidad: solo una comparación profunda de cada fila interna puede
+    // reutilizar el snapshot, y las filas cambiadas se reproyectan solas.
+    if (streaming
+        ? _streamingInputsUnchanged()
+        : _publicMessagesInputsUnchanged(streaming)) {
       return _publicMessagesSnapshot!;
     }
     final fingerprint = streaming
@@ -6804,6 +7020,12 @@ class ActiveChat {
       retainedBySource: _publicMessageByInternalIdentity,
     );
     _publicMessagesFingerprint = fingerprint;
+    if (streaming) {
+      _recordStreamingInputs();
+    } else {
+      _streamingSnapshotRows = null;
+      _streamingSnapshotShapes = null;
+    }
     _publicMessagesPrivacyGeneration = _transcriptPublication.generation;
     _publicMessagesStreaming = streaming;
     final previous = _publicMessagesSnapshot;
@@ -6846,6 +7068,13 @@ class ActiveChat {
     _messages = safe;
     return true;
   }
+
+  /// Accepts durable privacy evidence for [rows] without touching [_messages].
+  @visibleForTesting
+  void reducePrivacyEvidenceForTesting(List<Map<String, dynamic>> rows) =>
+      _transcriptPublication.reduce(
+        rows.map(TranscriptPrivacyObservation.fromRaw),
+      );
 
   @visibleForTesting
   List<Map<String, dynamic>> get internalMessagesForTesting => _messages;
