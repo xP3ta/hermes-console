@@ -8922,6 +8922,162 @@ class ActiveChat {
     _messageLoadEpoch += 1;
   }
 
+  /// Rows read by [probePassiveDurableTail]. Appends, rewinds/edits and
+  /// compactions all give the newest row a new durable id, and an in-place
+  /// rewrite of that row changes its content, so one row tells them apart
+  /// from no change while keeping the probe tiny.
+  static const int _passiveTailProbeRows = 1;
+
+  /// A change that leaves the newest rows intact (an older row rewritten in
+  /// place) is still picked up by one full read at least this often.
+  static const Duration _passiveTailProbeMaxAge = Duration(minutes: 10);
+
+  /// Newest durable rows of the last REST page that became (or was proved
+  /// equal to) the visible transcript, plus the local projection they were
+  /// published into. Null until such a load completes.
+  ({
+    String storedSessionId,
+    String profile,
+    String tail,
+    Object localProjection,
+    int recordedAtMs,
+  })?
+  _confirmedPassiveTail;
+
+  /// Epoch of the last REST transcript load that published, or proved
+  /// unchanged, the visible projection. Partial or rejected loads never set
+  /// it, so they can never confirm a tail.
+  int? _directLoadSettledEpoch;
+
+  /// A server that ignores `limit` answers the probe with the whole
+  /// transcript; the probe would then only add traffic, so it is retired.
+  bool _passiveTailProbeUnsupported = false;
+
+  Object get _localProjectionToken => (
+    identityHashCode(_messages),
+    _messages.length,
+    _messages.isEmpty ? 0 : identityHashCode(_messages.first),
+    _messages.isEmpty ? 0 : identityHashCode(_messages.last),
+  );
+
+  /// Cheap check before a passive transcript refresh: reads only the newest
+  /// [_passiveTailProbeRows] durable row(s). Returns null when the probe does
+  /// not apply or failed; otherwise the observed tail and whether it equals
+  /// the tail of the last published transcript while the local projection
+  /// was not touched since and that record is recent enough. Any doubt
+  /// answers `unchanged: false`, so the caller performs the normal read.
+  Future<({String tail, bool unchanged})?> probePassiveDurableTail() async {
+    if (_disposed ||
+        _storedMessageLoader != null ||
+        _passiveTailProbeUnsupported ||
+        isStreaming ||
+        connection.kind == InstanceKind.localhost) {
+      return null;
+    }
+    final storedSessionId = serverSessionId;
+    final profile = _storedSessionProfile;
+    if (storedSessionId.isEmpty || _desktopStoredSessionKnownMissing) {
+      return null;
+    }
+    final SessionMessagesPage page;
+    try {
+      page = await _readStoredMessagesRestPage(
+        storedSessionId,
+        profile: profile,
+        limit: _passiveTailProbeRows,
+        offset: 0,
+      );
+    } catch (_) {
+      return null;
+    }
+    if (_disposed ||
+        storedSessionId != serverSessionId ||
+        profile != _storedSessionProfile) {
+      return null;
+    }
+    if (!page.paginationProvided ||
+        page.rawMessageCount > _passiveTailProbeRows) {
+      _passiveTailProbeUnsupported = true;
+      return null;
+    }
+    if (!page.messagesFullyParsed || !page.paginationFullyParsed) return null;
+    final tail = _durableTailToken(page.resolvedTipId, page.messages);
+    final confirmed = _confirmedPassiveTail;
+    final unchanged =
+        confirmed != null &&
+        !isStreaming &&
+        _wallClockMs() - confirmed.recordedAtMs <
+            _passiveTailProbeMaxAge.inMilliseconds &&
+        confirmed.storedSessionId == storedSessionId &&
+        confirmed.profile == profile &&
+        confirmed.tail == tail &&
+        confirmed.localProjection == _localProjectionToken;
+    return (tail: tail, unchanged: unchanged);
+  }
+
+  static String _durableTailToken(
+    String? resolvedTipId,
+    List<Map<String, dynamic>> rows,
+  ) => jsonEncode([
+    resolvedTipId,
+    rows.length <= _passiveTailProbeRows
+        ? rows
+        : rows.sublist(rows.length - _passiveTailProbeRows),
+  ]);
+
+  /// After a passive load: keeps [probedTail] (read just before it) as the
+  /// confirmed tail only if that load published or proved the visible
+  /// transcript. A row appended between probe and load only costs one more
+  /// full read later; it can never be skipped.
+  void confirmPassiveDurableTail(String? probedTail) {
+    if (probedTail == null ||
+        _disposed ||
+        isStreaming ||
+        _directLoadSettledEpoch != _messageLoadEpoch) {
+      _confirmedPassiveTail = null;
+      return;
+    }
+    _confirmedPassiveTail = (
+      storedSessionId: serverSessionId,
+      profile: _storedSessionProfile,
+      tail: probedTail,
+      localProjection: _localProjectionToken,
+      recordedAtMs: _wallClockMs(),
+    );
+  }
+
+  /// Remembers the newest rows of a REST page whose content is now the
+  /// visible transcript, so the first passive refresh after opening a chat
+  /// can already be skipped. Only plain `order=latest` pages at offset 0
+  /// qualify: native history and injected loaders have another shape, and
+  /// the tail probe compares byte-for-byte against exactly these rows.
+  void _recordPublishedDurableTail(
+    SessionMessagesPage page,
+    _SessionMessagesPageReadContext context,
+  ) {
+    _confirmedPassiveTail = null;
+    if (_disposed ||
+        isStreaming ||
+        _storedMessageLoader != null ||
+        page is _NativeSessionHistoryPage ||
+        !page.paginationProvided ||
+        !page.paginationFullyParsed ||
+        !page.messagesFullyParsed ||
+        context.requestedOffset != 0 ||
+        page.offset != 0 ||
+        context.requestedStoredSessionId != serverSessionId ||
+        context.profile != _storedSessionProfile) {
+      return;
+    }
+    _confirmedPassiveTail = (
+      storedSessionId: context.requestedStoredSessionId,
+      profile: context.profile,
+      tail: _durableTailToken(page.resolvedTipId, page.messages),
+      localProjection: _localProjectionToken,
+      recordedAtMs: _wallClockMs(),
+    );
+  }
+
   Future<void> loadMessages({
     int? expectedMessageCount,
     String profile = '',
@@ -9864,12 +10020,18 @@ class ActiveChat {
     if (!transition.publishesProjection) {
       if (!loadStillAuthorized()) return;
       messagesLoaded = true;
+      if (transition.preservesAsSuccess) {
+        _directLoadSettledEpoch = loadEpoch;
+        _recordPublishedDurableTail(page, context);
+      }
       return;
     }
     final acceptedGraft = graft;
     if (page.messages.isEmpty || acceptedGraft == null) {
       if (!loadStillAuthorized()) return;
       messagesLoaded = true;
+      _directLoadSettledEpoch = loadEpoch;
+      _recordPublishedDurableTail(page, context);
       onMessagesPublished?.call();
       return;
     }
@@ -9897,6 +10059,8 @@ class ActiveChat {
           verifyPotentialUserGenerationReplacement,
     );
     if (!loadStillAuthorized()) return;
+    _directLoadSettledEpoch = loadEpoch;
+    _recordPublishedDurableTail(page, context);
     onMessagesPublished?.call();
   }
 

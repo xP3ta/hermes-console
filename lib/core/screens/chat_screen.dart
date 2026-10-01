@@ -5160,7 +5160,18 @@ class _ChatScreenState extends State<ChatScreen>
         !durableChangeConfirmed) {
       return true;
     }
+    // A large chat's newest page is megabytes, and `sessions.changed` fires
+    // for any session every couple of seconds while an agent works. Read the
+    // newest durable row first; when it and the local projection match the
+    // last published page, the full page cannot add anything.
+    final probe = await _chat.probePassiveDurableTail();
+    if (!_canProbePassiveRemoteActivity) return true;
+    if (probe != null && probe.unchanged && !_chat.isStreaming) {
+      _durableTranscriptReadPending = false;
+      return true;
+    }
     final fetched = await _fetchMessages(passiveOnly: true);
+    _chat.confirmPassiveDurableTail(fetched ? probe?.tail : null);
     // Only retire the pending flag on a successful read — a transient
     // failure (disconnect/network blip) must keep bypassing the runtime-
     // ownership gate on the reader's own retry, or the signal would be lost
