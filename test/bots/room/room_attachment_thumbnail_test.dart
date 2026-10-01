@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/cover_resize_image.dart';
@@ -104,5 +105,58 @@ void main() {
     expect(thumb.image, CoverResizeImage(FileImage(file), target: 144));
     final box = tester.getSize(find.byType(Image));
     expect(box, const Size(48, 48));
+  });
+
+  testWidgets('lo1216 a pending room message shows the sent-style '
+      'attachment card with a box-sized local thumbnail', (tester) async {
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const photo = AttachmentDraft(
+      type: AttachmentType.image,
+      name: 'photo.png',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+      localPath: '/nonexistent/room-pending/photo.png',
+    );
+    const doc = AttachmentDraft(
+      type: AttachmentType.document,
+      name: 'notes.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 3,
+      localPath: '/nonexistent/room-pending/notes.pdf',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        locale: const Locale('en'),
+        theme: AppTheme.hermesRedDark,
+        home: Scaffold(
+          body: RoomPendingMessageTile(
+            id: 'p1',
+            text: 'look',
+            attachments: const [photo, doc],
+            failed: false,
+            onRetry: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(RoomAttachmentCard), findsNWidgets(2));
+    final thumb = tester.widget<Image>(find.byType(Image));
+    expect(
+      thumb.image,
+      CoverResizeImage(FileImage(File(photo.localPath)), target: 144),
+    );
+    expect(tester.getSize(find.byType(Image)), const Size(48, 48));
+    expect(find.text('notes.pdf'), findsOneWidget);
+    // Nothing is on the server yet: no download/open/share to offer.
+    expect(
+      find.byKey(ValueKey('room-attachment-download-${photo.localPath}')),
+      findsNothing,
+    );
   });
 }

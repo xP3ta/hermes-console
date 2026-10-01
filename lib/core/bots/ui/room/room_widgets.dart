@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../l10n/app_localizations.dart';
 import '../../../models/agent_profile.dart';
+import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/artifact_export_service.dart';
 import '../../../theme/app_theme.dart';
@@ -181,7 +182,7 @@ String roomDayLabel(Strings s, DateTime day, DateTime now) {
 class RoomPendingMessageTile extends StatelessWidget {
   final String id;
   final String text;
-  final List<String> attachmentNames;
+  final List<AttachmentDraft> attachments;
   final bool failed;
   final VoidCallback onRetry;
 
@@ -189,7 +190,7 @@ class RoomPendingMessageTile extends StatelessWidget {
     super.key,
     required this.id,
     required this.text,
-    required this.attachmentNames,
+    required this.attachments,
     required this.failed,
     required this.onRetry,
   });
@@ -226,30 +227,21 @@ class RoomPendingMessageTile extends StatelessWidget {
                 children: [
                   if (text.isNotEmpty)
                     ChatMarkdownBody(data: text, selectable: false),
-                  for (final name in attachmentNames)
+                  // Same card as the sent bubble, from the local file:
+                  // nothing is on the server yet, so no file actions.
+                  for (final draft in attachments)
                     Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.attach_file_rounded,
-                            size: 14,
-                            color: colors.textSecondary,
-                          ),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
+                      padding: const EdgeInsets.only(top: 6),
+                      child: RoomAttachmentCard(
+                        key: ValueKey(
+                          'room-pending-attachment-$id-${draft.localPath}',
+                        ),
+                        attachment: RoomAttachmentRef(
+                          name: draft.name,
+                          path: draft.localPath,
+                        ),
+                        actions: null,
+                        localFile: File(draft.localPath),
                       ),
                     ),
                 ],
@@ -1475,10 +1467,15 @@ class RoomAttachmentCard extends StatefulWidget {
   final RoomAttachmentRef attachment;
   final RoomAttachmentActions? actions;
 
+  /// Local copy of a not-yet-sent attachment: shown as the thumbnail, and
+  /// the card offers no file actions because the server has nothing yet.
+  final File? localFile;
+
   const RoomAttachmentCard({
     super.key,
     required this.attachment,
     required this.actions,
+    this.localFile,
   });
 
   @override
@@ -1489,7 +1486,7 @@ enum _AttachmentOp { preview, download, open, share }
 
 class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
   bool _busy = false;
-  File? _file;
+  late File? _file = widget.localFile;
 
   Future<void> _run(_AttachmentOp op) async {
     final actions = widget.actions;
@@ -1578,6 +1575,10 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
                               .ceil(),
                         ),
                         fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Icon(
+                          Icons.image_outlined,
+                          color: colors.textSecondary,
+                        ),
                       ),
                     )
                   : Icon(
@@ -1596,24 +1597,27 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
               style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
             ),
           ),
-          action(
-            'download',
-            Icons.download_rounded,
-            s.roomFileDownload,
-            _AttachmentOp.download,
-          ),
-          action(
-            'open',
-            Icons.open_in_new_rounded,
-            s.roomFileOpen,
-            _AttachmentOp.open,
-          ),
-          action(
-            'share',
-            Icons.ios_share_rounded,
-            s.roomFileShare,
-            _AttachmentOp.share,
-          ),
+          if (widget.localFile != null) const SizedBox(width: 12),
+          if (widget.localFile == null) ...[
+            action(
+              'download',
+              Icons.download_rounded,
+              s.roomFileDownload,
+              _AttachmentOp.download,
+            ),
+            action(
+              'open',
+              Icons.open_in_new_rounded,
+              s.roomFileOpen,
+              _AttachmentOp.open,
+            ),
+            action(
+              'share',
+              Icons.ios_share_rounded,
+              s.roomFileShare,
+              _AttachmentOp.share,
+            ),
+          ],
         ],
       ),
     );

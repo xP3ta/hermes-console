@@ -1528,7 +1528,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             key: ValueKey('room-pending-${message.attempt.clientEventId}'),
             id: message.attempt.clientEventId,
             text: message.text,
-            attachmentNames: [for (final a in message.attachments) a.name],
+            attachments: message.attachments,
             failed: message.failed,
             onRetry: () => _retrySend(message),
           ),
