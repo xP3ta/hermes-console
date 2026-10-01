@@ -36,6 +36,14 @@ class SessionArchive {
   Set<String> _hidden = {};
   Map<String, String> _titles = {};
 
+  int _revision = 0;
+
+  /// Advances synchronously with every in-memory change (archive, pin,
+  /// hidden, titles), including remote pin reconciliation, so readers can
+  /// memoize derived views on it. Every mutation path persists through
+  /// [_flush]/[_flushTitles], which bump it before their first await.
+  int get revision => _revision;
+
   SessionArchive._(this._prefs, this._connectionId);
 
   /// Load the archive for [connectionId] from [prefs].
@@ -256,6 +264,7 @@ class SessionArchive {
   }
 
   Future<void> _flush() async {
+    _revision++;
     await _prefs.setStringList(_key, _archived.toList());
     await _prefs.setStringList(_pinnedKey, _pinned.toList());
     await _prefs.setStringList(_hiddenKey, _hidden.toList());
@@ -263,6 +272,7 @@ class SessionArchive {
   }
 
   Future<void> _flushTitles() async {
+    _revision++;
     await _prefs.setStringList(
       _titleKey,
       _titles.entries.map((e) => '${e.key}\t${e.value}').toList(),
