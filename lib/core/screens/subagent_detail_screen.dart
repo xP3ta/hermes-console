@@ -267,6 +267,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   );
   int _tailGeneration = 0;
   bool _tailInFlight = false;
+  bool _tailDirty = false;
   VoidCallback? _cancelTailPoll;
   Duration _tailInterval = SubagentDetailScreen.tailFast;
 
@@ -362,6 +363,10 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   void _onRoster() {
     if (!mounted) return;
     final current = _find();
+    // A new snapshot of this child means it emitted an event: its tail has
+    // likely grown, so read it now instead of waiting out the poll backoff.
+    final childChanged =
+        current != null && _last != null && !identical(current, _last);
     // Keep the last known snapshot when the roster momentarily empties
     // (cover/poll gap): absence is not evidence of what the child did.
     if (current != null) {
@@ -370,7 +375,28 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
     }
     setState(() {});
     _syncClock();
-    _syncTail();
+    if (childChanged) {
+      _tailOnChildEvent();
+    } else {
+      _syncTail();
+    }
+  }
+
+  /// Event-driven tail read, coalesced: a burst during an in-flight read
+  /// yields exactly one follow-up read when it lands.
+  void _tailOnChildEvent() {
+    if (!_visible || !_canTailNow(_find())) {
+      _syncTail();
+      return;
+    }
+    _tailInterval = SubagentDetailScreen.tailFast;
+    if (_tailInFlight) {
+      _tailDirty = true;
+      return;
+    }
+    _cancelTailPoll?.call();
+    _cancelTailPoll = null;
+    _pollTail();
   }
 
   void _syncClock() {
@@ -403,6 +429,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   }
 
   void _stopTail() {
+    _tailDirty = false;
     _tailGeneration++;
     _cancelTailPoll?.call();
     _cancelTailPoll = null;
@@ -440,6 +467,12 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         .whenComplete(() {
           if (!mounted || generation != _tailGeneration) return;
           _tailInFlight = false;
+          if (_tailDirty) {
+            _tailDirty = false;
+            _tailInterval = SubagentDetailScreen.tailFast;
+            _pollTail();
+            return;
+          }
           _scheduleNextTail(generation);
         });
   }
