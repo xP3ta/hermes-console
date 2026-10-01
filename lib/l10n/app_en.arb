@@ -7568,5 +7568,8 @@
   "tp1216SkillName": "skill {name}",
   "tp1216ToolCount": "{name}, {count, plural, =1{once} other{{count} times}}",
   "tp1216MoreTools": "+{count} more",
-"lo1216QueueParkedFromPreviousSession": "Queue paused since the last session"
+"lo1216QueueParkedFromPreviousSession": "Queue paused since the last session",
+"s1216StartupFailedTitle": "Hermes Console could not start",
+  "s1216StartupFailedBody": "Hermes Console could not read its saved data on this phone. Nothing has been deleted. If you just restarted the phone, unlock it and try again.",
+  "s1216StartupRetry": "Retry"
 }

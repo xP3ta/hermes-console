@@ -48,6 +48,10 @@ abstract final class AppErrorLog {
     };
   }
 
+  /// Records an error that was caught and handled, e.g. a startup step that
+  /// failed and was degraded or surfaced on a recovery screen.
+  static void record(String source, Object error) => _record(source, error);
+
   static void _record(String source, Object error) {
     final record = AppErrorRecord(
       source: source,

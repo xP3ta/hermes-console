@@ -28,6 +28,7 @@ import 'core/screens/tasks_screen.dart';
 import 'core/screens/cron_screen.dart';
 import 'core/services/app_error_log.dart';
 import 'core/services/startup_destination.dart';
+import 'core/services/startup_guard.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
@@ -229,13 +230,29 @@ void main() async {
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
   }
+  // Any throw while preparing the app (corrupt or unreadable secure storage,
+  // Keystore unavailable before first unlock) shows a recoverable screen
+  // instead of leaving the native splash up forever. Nothing is wiped.
+  await runGuardedStartup(bootstrap: bootstrapHermesApp, run: runApp);
+}
+
+/// Everything awaited before the first frame. Independent storage reads run
+/// concurrently; the resulting state is the same as reading them in order.
+@visibleForTesting
+Future<Widget> bootstrapHermesApp() async {
   final prefs = await SharedPreferences.getInstance();
   final themeProfileStore = ThemeProfileStore(prefs);
-  final initialThemeProfiles = await themeProfileStore.load();
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
-  await cancelledTurnStore.initialize();
   final compressionRestoreStore = CompressionRestoreStore();
-  final connManager = await ConnectionManager.create(
+  // The tombstone store and the connection list touch disjoint keys; the
+  // store is only consulted by ConnectionManager when a connection is
+  // deleted, which cannot happen during create().
+  final themeLoad = themeProfileStore.load();
+  // Stop tombstones are optional at startup: an unreadable or corrupt blob is
+  // left untouched (the store never rewrites what it could not parse) and
+  // chats simply run without restored tombstones this session.
+  final tombstonesLoad = tryStartupStep(cancelledTurnStore.initialize);
+  final connManagerLoad = ConnectionManager.create(
     prefs,
     clearCancelledTurns: (connectionId) async {
       var removed = 0;
@@ -254,42 +271,47 @@ void main() async {
       return removed;
     },
   );
-  // Arranque en frío: si el usuario fijó una instancia predeterminada, la app
-  // abre con ella (sembrándola como activa). El cambio de instancia en caliente
-  // se sigue respetando durante la sesión.
-  await connManager.applyDefaultOnLaunch();
+  await Future.wait<void>([themeLoad, tombstonesLoad, connManagerLoad]);
+  final initialThemeProfiles = await themeLoad;
+  final tombstonesReady = await tombstonesLoad;
+  final connManager = await connManagerLoad;
+  await Future.wait<void>([
+    // Arranque en frío: si el usuario fijó una instancia predeterminada, la
+    // app abre con ella (sembrándola como activa). El cambio de instancia en
+    // caliente se sigue respetando durante la sesión.
+    connManager.applyDefaultOnLaunch(),
+    // FLAG_SECURE must be in place before any content is visible.
+    ScreenSecurityService(prefs).apply(),
+  ]);
   final appLock = AppLockService(prefs);
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
   final bridgeManager = BridgeManager(SecureStorage(), connManager);
   final sshManager = SshManager(SecureStorage(), connManager);
   final notifications = NotificationService(prefs);
-  await ScreenSecurityService(prefs).apply();
   final sftpTransfers = SftpTransferService(sshManager, notifications);
   final sshSessions = SshSessionService(sshManager);
   final activeChats = ActiveChatService(
     notifications: notifications,
     policy: approvalPolicy,
     prefs: prefs,
-    cancelledTurnStore: cancelledTurnStore,
+    cancelledTurnStore: tombstonesReady ? cancelledTurnStore : null,
     compressionRestoreStore: compressionRestoreStore,
   );
   await activeChats.globalActivity.initialize();
-  runApp(
-    HermesApp(
-      connManager: connManager,
-      appLock: appLock,
-      approvalPolicy: approvalPolicy,
-      fontSize: fontSize,
-      bridgeManager: bridgeManager,
-      sshManager: sshManager,
-      sftpTransfers: sftpTransfers,
-      sshSessions: sshSessions,
-      notifications: notifications,
-      activeChats: activeChats,
-      themeProfileStore: themeProfileStore,
-      initialThemeProfiles: initialThemeProfiles,
-    ),
+  return HermesApp(
+    connManager: connManager,
+    appLock: appLock,
+    approvalPolicy: approvalPolicy,
+    fontSize: fontSize,
+    bridgeManager: bridgeManager,
+    sshManager: sshManager,
+    sftpTransfers: sftpTransfers,
+    sshSessions: sshSessions,
+    notifications: notifications,
+    activeChats: activeChats,
+    themeProfileStore: themeProfileStore,
+    initialThemeProfiles: initialThemeProfiles,
   );
 }
 

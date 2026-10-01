@@ -9136,5 +9136,8 @@
       }
     }
   },
-"lo1216QueueParkedFromPreviousSession": "Cola en pausa desde la última sesión"
+"lo1216QueueParkedFromPreviousSession": "Cola en pausa desde la última sesión",
+"s1216StartupFailedTitle": "No se pudo iniciar Hermes Console",
+  "s1216StartupFailedBody": "Hermes Console no pudo leer sus datos guardados en este teléfono. No se ha borrado nada. Si acabas de reiniciarlo, desbloquéalo y vuelve a intentarlo.",
+  "s1216StartupRetry": "Reintentar"
 }
