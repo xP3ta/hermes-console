@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -663,6 +664,48 @@ void main() {
       expect(presented, isEmpty);
     });
 
+    test('reads rooms concurrently, at most four at a time', () async {
+      final gateway = _ManyRoomsGateway(10);
+      final watcher = RoomWatcher(
+        connId: 'c1',
+        prefs: prefs,
+        presenter: _Presenter([]),
+        claim: (c, r, k) async => true,
+      );
+
+      final tick = watcher.tick(gateway);
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      // Before: one groups.state in flight at a time (10 serial RTT).
+      expect(gateway.inFlight, 4);
+      gateway.releaseAll();
+      expect(await tick, isTrue);
+      expect(gateway.maxInFlight, 4);
+      expect(gateway.stateCalls, 10);
+      // Views keep the listing order whatever order the reads finish in.
+      expect(watcher.views.map((view) => view.room.roomId), [
+        for (var i = 0; i < 10; i++) 'room-$i',
+      ]);
+    });
+
+    test('one failed room read fails the whole tick', () async {
+      final gateway = _ManyRoomsGateway(6)..failRoom = 'room-3';
+      final watcher = RoomWatcher(
+        connId: 'c1',
+        prefs: prefs,
+        presenter: _Presenter([]),
+        claim: (c, r, k) async => true,
+      );
+      final tick = watcher.tick(gateway);
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      gateway.releaseAll();
+      expect(await tick, isFalse);
+      expect(prefs.getString(RoomWatcher.storageKey), isNull);
+    });
+
     test('failures back off exponentially up to the ceiling', () async {
       var now = DateTime(2026, 9, 26, 12);
       final gateway = _FakeGateway()..fail = true;
@@ -769,4 +812,64 @@ final class _FakeGateway implements BotModeGateway {
   @override
   Future<DesktopActiveSessionList> listActiveSessions() async =>
       const DesktopActiveSessionList();
+}
+
+final class _ManyRoomsGateway extends _FakeGateway {
+  _ManyRoomsGateway(this.count);
+
+  final int count;
+  String? failRoom;
+  int inFlight = 0;
+  int maxInFlight = 0;
+  int stateCalls = 0;
+  final _gates = <Completer<void>>[];
+  bool _released = false;
+
+  void releaseAll() {
+    _released = true;
+    for (final gate in _gates) {
+      if (!gate.isCompleted) gate.complete();
+    }
+  }
+
+  HostedGroupRoom _room(String id) {
+    final json = <String, dynamic>{
+      'room_id': id,
+      'name': id,
+      'members': [memberJson('m-builder', 'builder')],
+      'authority_gateway_id': gatewayId,
+      'authority_epoch': 2,
+      'revision': 1,
+      'created_at': 1790000000.0,
+      'updated_at': 1790000500.0,
+      'latest_seq': 0,
+    };
+    return HostedGroupRoom.fromJson(json);
+  }
+
+  @override
+  Future<List<HostedGroupRoom>> listGroups({required int generation}) async => [
+    for (var i = 0; i < count; i++) _room('room-$i'),
+  ];
+
+  @override
+  Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})> groupState(
+    String roomId, {
+    required int generation,
+  }) async {
+    stateCalls++;
+    inFlight++;
+    if (inFlight > maxInFlight) maxInFlight = inFlight;
+    final gate = Completer<void>();
+    _gates.add(gate);
+    if (_released) gate.complete();
+    // Later rooms finish first to prove the result order is kept.
+    await gate.future;
+    await Future<void>.delayed(
+      Duration(microseconds: 50 * (count - int.parse(roomId.split('-')[1]))),
+    );
+    inFlight--;
+    if (roomId == failRoom) throw StateError('room read failed');
+    return (room: _room(roomId), driverStatus: driver());
+  }
 }
