@@ -4295,6 +4295,10 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Same scope the generated-media disk cache is keyed by.
+  String get generatedMediaCacheScope =>
+      '${widget.connection.id}\u0000$_effectiveSessionProfile';
+
   /// Resolves canonical `MEDIA:` paths through the authenticated Dashboard
   /// managed-files endpoint, then stores them only in app-private cache. This
   /// supports generated files outside Hermes' legacy image cache without
@@ -4305,7 +4309,7 @@ class _ChatScreenState extends State<ChatScreen>
     bool Function()? isCancelled,
   }) {
     final profile = _effectiveSessionProfile;
-    final cacheScope = '${widget.connection.id}\u0000$profile';
+    final cacheScope = generatedMediaCacheScope;
     final maxBytes = switch (reference.kind) {
       GeneratedMediaKind.image => GeneratedMediaService.maxImageBytes,
       GeneratedMediaKind.video => GeneratedMediaService.maxVideoBytes,
@@ -18792,6 +18796,9 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
     if (state == null) return const SizedBox.shrink();
     return GeneratedMediaAttachmentCard(
       reference: widget.reference,
+      // The lazy transcript disposes rows that scroll far away; this lets a
+      // returning card (e.g. an HTML preview) come back ready, not reload.
+      readyMemoKey: state.generatedMediaCacheScope,
       autoLoad:
           widget.reference.sourceKind == GeneratedMediaSourceKind.serverPath,
       load: (onProgress, isCancelled) => state.downloadGeneratedMedia(

@@ -9213,6 +9213,16 @@ void main() {
       expect(find.textContaining('::preview'), findsNothing);
       expect(find.textContaining(source), findsNothing);
       expect(find.textContaining('480'), findsNothing);
+      // Scoped like the disk cache, so a card the lazy list disposes while
+      // scrolling comes back ready instead of reloading (owner QA 9478).
+      expect(
+        tester
+            .widget<GeneratedMediaAttachmentCard>(
+              find.byType(GeneratedMediaAttachmentCard),
+            )
+            .readyMemoKey,
+        'conn-test\u0000default',
+      );
       expect(tester.takeException(), isNull);
     },
   );

@@ -670,6 +670,13 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
   final GeneratedAudioPlayback? audioPlayback;
   final String Function(BuildContext context, Object error)? errorLabelBuilder;
 
+  /// Identity of this file within its connection and profile. When set, a
+  /// verified ready file is remembered so that a card the lazy transcript
+  /// disposed while scrolling comes back ready on its first frame, instead of
+  /// replaying consent → download → ready (a second load and two height jumps
+  /// every time it re-enters the viewport). Null disables the memo.
+  final String? readyMemoKey;
+
   const GeneratedMediaAttachmentCard({
     super.key,
     required this.reference,
@@ -679,7 +686,35 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
     this.onOpen,
     this.audioPlayback,
     this.errorLabelBuilder,
+    this.readyMemoKey,
   });
+
+  static const int _readyMemoCapacity = 128;
+
+  /// Insertion-ordered, so the first entry is the least recently used.
+  static final Map<String, ({File file, int length})> _readyMemo = {};
+
+  @visibleForTesting
+  static void clearReadyMemoForTesting() => _readyMemo.clear();
+
+  static ({File file, int length})? _recallReady(String key) {
+    final entry = _readyMemo.remove(key);
+    if (entry == null) return null;
+    // The cache may have been evicted or replaced on disk since.
+    if (!entry.file.existsSync() || entry.file.lengthSync() != entry.length) {
+      return null;
+    }
+    _readyMemo[key] = entry;
+    return entry;
+  }
+
+  static void _rememberReady(String key, File file, int length) {
+    _readyMemo.remove(key);
+    _readyMemo[key] = (file: file, length: length);
+    while (_readyMemo.length > _readyMemoCapacity) {
+      _readyMemo.remove(_readyMemo.keys.first);
+    }
+  }
 
   @override
   State<GeneratedMediaAttachmentCard> createState() =>
@@ -720,7 +755,34 @@ class _GeneratedMediaAttachmentCardState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _totalBytes = widget.reference.sizeBytes;
+    _restoreRemembered();
     _scheduleVisibilityCheck();
+  }
+
+  String? get _memoKey {
+    final scope = widget.readyMemoKey;
+    if (scope == null) return null;
+    final reference = widget.reference;
+    return [
+      scope,
+      reference.source,
+      reference.kind.name,
+      reference.sizeBytes?.toString() ?? '',
+      reference.modifiedAt?.toUtc().microsecondsSinceEpoch.toString() ?? '',
+    ].join('\u0000');
+  }
+
+  /// Synchronous so the very first frame is already the ready card.
+  void _restoreRemembered() {
+    final key = _memoKey;
+    if (key == null) return;
+    final remembered = GeneratedMediaAttachmentCard._recallReady(key);
+    if (remembered == null) return;
+    _file = remembered.file;
+    _text = _readTextPreview(remembered.file, remembered.length);
+    _receivedBytes = remembered.length;
+    _totalBytes = remembered.length;
+    _status = GeneratedFileStatus.ready;
   }
 
   @override
@@ -750,6 +812,7 @@ class _GeneratedMediaAttachmentCardState
       _totalBytes = widget.reference.sizeBytes;
       _errorLabel = null;
       _status = GeneratedFileStatus.consent;
+      _restoreRemembered();
       _scheduleVisibilityCheck();
     }
   }
@@ -935,6 +998,10 @@ class _GeneratedMediaAttachmentCardState
       }
       final text = _readTextPreview(file, length);
       if (!mounted || generation != _generation || _cancelled) return;
+      final memoKey = _memoKey;
+      if (memoKey != null) {
+        GeneratedMediaAttachmentCard._rememberReady(memoKey, file, length);
+      }
       setState(() {
         _file = file;
         _text = text;
