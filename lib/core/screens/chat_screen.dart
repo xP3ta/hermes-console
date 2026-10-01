@@ -12264,7 +12264,7 @@ class _ChatScreenState extends State<ChatScreen>
                                       provider: p,
                                       modelId: modelId,
                                       isActive:
-                                          _selectedProvider == p.slug &&
+                                          _isSelectedProvider(p.slug) &&
                                           _selectedModel == modelId,
                                     ),
                                 ],
@@ -12352,6 +12352,13 @@ class _ChatScreenState extends State<ChatScreen>
           : () => _applyModel(sheetCtx, setSheet, provider, modelId),
     );
   }
+
+  /// md1215: `session.info` names a user-defined endpoint `custom:<key>`
+  /// while its catalog row uses the bare key; resolve through the catalog's
+  /// aliases like Desktop does so the active row is recognised.
+  bool _isSelectedProvider(String slug) =>
+      _selectedProvider == slug ||
+      _desktopModelCatalog?.providerFor(_selectedProvider)?.slug == slug;
 
   /// Cambia el modelo del runtime actual o lo captura para el primer submit.
   Future<void> _applyModel(

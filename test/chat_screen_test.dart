@@ -18491,6 +18491,62 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'md1215: un proveedor custom:<clave> se reconoce por sus alias',
+      (tester) async {
+        final gateway = _ModelConfigGateway()
+          ..catalogOverride = DesktopModelCatalog.fromJson(const {
+            'model': 'qwen3:8b',
+            'provider': 'custom:ollama-local',
+            'providers': [
+              {
+                'slug': 'ollama-local',
+                'name': 'Ollama Local',
+                'is_current': true,
+                'is_user_defined': true,
+                'authenticated': true,
+                'aliases': [
+                  'custom:ollama-local',
+                  'ollama local',
+                  'ollama-local',
+                ],
+                'models': ['qwen3:8b', 'llama3.2:3b'],
+                'capabilities': {
+                  'qwen3:8b': {'reasoning': false, 'fast': false},
+                },
+              },
+            ],
+          });
+        await pumpModelChat(tester, 'conn-md1215-alias', gateway: gateway);
+        gateway.emit('session.info', const {
+          'info': {'model': 'qwen3:8b', 'provider': 'custom:ollama-local'},
+        });
+        await tester.pump();
+        expect(find.byKey(const ValueKey('qwen3:8b')), findsOneWidget);
+
+        await openModelSheet(tester);
+        final tile = find.ancestor(
+          of: find.text('qwen3:8b').last,
+          matching: find.byType(ListTile),
+        );
+        expect(tile, findsOneWidget);
+        expect(
+          find.descendant(of: tile, matching: find.byIcon(Icons.check)),
+          findsOneWidget,
+          reason: 'el modelo activo debe marcarse aunque el slug sea el alias',
+        );
+        final chip = tester.widget<ChoiceChip>(
+          find.widgetWithText(ChoiceChip, 'high'),
+        );
+        expect(
+          chip.onSelected,
+          isNull,
+          reason: 'el catálogo dice que qwen3:8b no razona',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 
   testWidgets('pj1215: a project chat creates its session in that folder', (

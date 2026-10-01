@@ -74,9 +74,21 @@ final class DesktopModelCatalog {
     );
   }
 
+  /// Row for [slug]. Exact slug first; then, like Desktop's
+  /// `catalogProviderMatches`, the display name or a published alias, because
+  /// `session.info` reports user-defined endpoints as `custom:<key>` while
+  /// the row's slug is the bare key (Hermes #87035).
   DesktopModelProvider? providerFor(String slug) {
     for (final provider in providers) {
       if (provider.slug == slug) return provider;
+    }
+    final wanted = slug.trim().toLowerCase();
+    if (wanted.isEmpty) return null;
+    for (final provider in providers) {
+      if (provider.name.toLowerCase() == wanted ||
+          provider.aliases.contains(wanted)) {
+        return provider;
+      }
     }
     return null;
   }
@@ -99,6 +111,10 @@ final class DesktopModelProvider {
   final String? warning;
   final bool isUserDefined;
 
+  /// Lower-cased identities Hermes accepts for this endpoint (`aliases`).
+  /// Used only to recognise the current provider, never sent back.
+  final Set<String> aliases;
+
   /// `null` fuera de proveedores/catálogos que anuncian el tier.
   final bool? freeTier;
   final List<DesktopModelOption> options;
@@ -118,7 +134,9 @@ final class DesktopModelProvider {
     required this.isUserDefined,
     required this.freeTier,
     required List<DesktopModelOption> options,
-  }) : options = List<DesktopModelOption>.unmodifiable(options),
+    Set<String> aliases = const {},
+  }) : aliases = Set<String>.unmodifiable(aliases),
+       options = List<DesktopModelOption>.unmodifiable(options),
        models = List<String>.unmodifiable(options.map((item) => item.id)),
        unavailableModels = List<String>.unmodifiable(
          options.where((item) => item.unavailable).map((item) => item.id),
@@ -243,6 +261,7 @@ final class _ProviderRow {
   final List<_OptionCandidate> options;
   final int authenticationRank;
   final int richness;
+  final Set<String> aliases;
 
   const _ProviderRow({
     required this.slug,
@@ -257,6 +276,7 @@ final class _ProviderRow {
     required this.options,
     required this.authenticationRank,
     required this.richness,
+    this.aliases = const {},
   });
 
   static _ProviderRow? tryParse(Object? value) {
@@ -350,6 +370,7 @@ final class _ProviderRow {
       options: List<_OptionCandidate>.unmodifiable(options),
       authenticationRank: authenticationRank,
       richness: richness,
+      aliases: _aliases(json['aliases']),
     );
   }
 }
@@ -378,12 +399,14 @@ final class _ProviderAccumulator {
   String? _warning;
   int _warningRank;
   final Map<String, _OptionCandidate> _options = {};
+  final Set<String> _aliases = {};
 
   int get modelCount => _options.length;
 
   bool containsModel(String id) => _options.containsKey(id);
 
   void mergeMetadata(_ProviderRow row) {
+    _aliases.addAll(row.aliases);
     if (row.richness > _primary.richness) _primary = row;
     _isCurrent = _isCurrent || row.isCurrent;
     _isUserDefined = _isUserDefined || row.isUserDefined;
@@ -429,6 +452,7 @@ final class _ProviderAccumulator {
       warning: warning,
       isUserDefined: _isUserDefined,
       freeTier: _freeTier,
+      aliases: {..._primary.aliases, ..._aliases},
       options: [
         for (final option in _options.values)
           DesktopModelOption(
@@ -496,6 +520,24 @@ final class _OptionCandidate {
 }
 
 Map<Object?, Object?>? _map(Object? value) => value is Map ? value : null;
+
+const _maxAliases = 32;
+
+Set<String> _aliases(Object? value) {
+  if (value is! List) return const {};
+  final aliases = <String>{};
+  for (final raw in value.take(_maxAliases)) {
+    if (raw is! String) continue;
+    final alias = raw.trim().toLowerCase();
+    if (alias.isEmpty ||
+        alias.length > _maxIdentifierLength ||
+        _identifierControl.hasMatch(alias)) {
+      continue;
+    }
+    aliases.add(alias);
+  }
+  return aliases;
+}
 
 String? _opaqueIdentifier(Object? value) {
   if (value is! String ||
