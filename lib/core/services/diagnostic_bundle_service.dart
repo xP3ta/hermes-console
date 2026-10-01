@@ -8,6 +8,7 @@ import '../models/capability_matrix.dart';
 import '../models/connection.dart';
 import '../models/prepared_turn.dart';
 import '../utils/transport_privacy.dart';
+import 'app_error_log.dart';
 import 'connection_diagnostics.dart';
 import 'turn_outbox_store.dart';
 
@@ -24,6 +25,9 @@ enum DiagnosticComponent {
   websocket,
   outbox,
   cache,
+  // Uncaught errors from the local AppErrorLog, by where they surfaced.
+  flutter,
+  platform,
 }
 
 enum DiagnosticCode {
@@ -224,17 +228,41 @@ class DiagnosticErrorEvent {
   final DiagnosticCode code;
   final DateTime occurredAt;
 
+  /// Runtime type of an uncaught error (never its message or stack).
+  final String? errorType;
+
   const DiagnosticErrorEvent({
     required this.component,
     required this.code,
     required this.occurredAt,
+    this.errorType,
   });
+
+  /// Maps one local [AppErrorRecord]: origin, error type and time only.
+  factory DiagnosticErrorEvent.fromAppError(AppErrorRecord record) =>
+      DiagnosticErrorEvent(
+        component: record.source == 'flutter'
+            ? DiagnosticComponent.flutter
+            : DiagnosticComponent.platform,
+        code: DiagnosticCode.error,
+        occurredAt: record.at,
+        errorType: _safeTypeName(record.errorType),
+      );
 
   Map<String, dynamic> toJson() => {
     'component': component.name,
     'code': code.name,
     'occurredAt': occurredAt.toUtc().toIso8601String(),
+    'errorType': ?errorType,
   };
+}
+
+/// A type name is code, not user data; still keep only identifier-like
+/// characters and a bounded length so nothing unexpected can ride along.
+String _safeTypeName(String value) {
+  final cleaned = value.replaceAll(RegExp(r'[^A-Za-z0-9_<>, ]'), '');
+  if (cleaned.isEmpty) return 'unknown';
+  return cleaned.length <= 80 ? cleaned : cleaned.substring(0, 80);
 }
 
 class DiagnosticBundleInput {
