@@ -17,6 +17,8 @@ import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // Dashboard page tokens are shared per base URL across clients.
+  setUp(DashboardClient.resetSharedPasswordSessionsForTesting);
   // `_loadApiKeys` now reads Keystore for every connection without a plaintext
   // key (not just migrating ones), and a storage failure there aborts init
   // instead of being swallowed as corrupt metadata — see connection_manager.dart.

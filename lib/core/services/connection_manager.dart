@@ -2451,9 +2451,15 @@ class DashboardClient {
   static final Map<String, _DashboardSharedPasswordSession>
   _sharedPasswordSessions = {};
 
+  /// Page tokens scraped from `GET /`, shared by every client of the same
+  /// Dashboard and Basic credentials. Without it each short-lived client
+  /// downloaded the whole SPA index before its first API call.
+  static final Map<String, String> _sharedPageTokens = {};
+
   @visibleForTesting
   static void resetSharedPasswordSessionsForTesting() {
     _sharedPasswordSessions.clear();
+    _sharedPageTokens.clear();
   }
 
   final http.Client _http;
@@ -2463,6 +2469,11 @@ class DashboardClient {
   String? _basicUser;
   String? _basicPass;
   String? _token;
+
+  /// True when [_token] was adopted from [_sharedPageTokens] rather than
+  /// scraped by this client. A legacy `?token=` WebSocket upgrade has no 401
+  /// retry path, so it never trusts a token it did not scrape itself.
+  bool _tokenFromSharedCache = false;
   bool _closed = false;
 
   /// Cookies de sesión de un Dashboard con login propio (`hermes_session_at`,
@@ -2625,11 +2636,19 @@ class DashboardClient {
     _passwordLoginFuture = null;
   }
 
-  Future<String> _getToken() async {
+  Future<String> _getToken({bool allowShared = true}) async {
     await _ensureSecrets();
     final manual = _manualToken;
     if (manual != null && manual.isNotEmpty) return manual;
-    if (_token != null) return _token!;
+    if (_token != null && (allowShared || !_tokenFromSharedCache)) {
+      return _token!;
+    }
+    final tokenKey = _pageTokenKey;
+    final shared = allowShared ? _sharedPageTokens[tokenKey] : null;
+    if (shared != null) {
+      _tokenFromSharedCache = true;
+      return _token = shared;
+    }
     final basic = _basicAuthHeader;
     final res = await _http
         .get(
@@ -2683,8 +2702,14 @@ class DashboardClient {
       );
     }
     _token = match.group(1)!;
+    _tokenFromSharedCache = false;
+    _sharedPageTokens[tokenKey] = _token!;
     return _token!;
   }
+
+  String get _pageTokenKey => sha256
+      .convert(utf8.encode('$_baseUrl\u0000${_basicAuthHeader ?? ''}'))
+      .toString();
 
   /// ¿Tenemos usuario+contraseña para el login por formulario del Dashboard?
   bool get _hasPasswordCreds =>
@@ -2947,7 +2972,14 @@ class DashboardClient {
   /// Invalida solo la sesión que produjo el 401. Una respuesta tardía no puede
   /// borrar cookies que otro request ya renovó o volvió a autenticar.
   void _resetSession({String? sentCookie}) {
+    final rejectedToken = _token;
     _token = null;
+    // Evict the shared token only if it is the one that was just rejected; a
+    // newer token another client already scraped stays usable.
+    if (rejectedToken != null &&
+        _sharedPageTokens[_pageTokenKey] == rejectedToken) {
+      _sharedPageTokens.remove(_pageTokenKey);
+    }
     if (!_hasPasswordCreds) {
       _cookies.clear();
       _passwordLoginFuture = null;
@@ -3068,7 +3100,7 @@ class DashboardClient {
       }
       return DashboardWebSocketAuth(
         queryName: 'token',
-        credential: await _getToken(),
+        credential: await _getToken(allowShared: false),
         headers: headers,
       );
     } on DashboardWebSocketAuthException {
