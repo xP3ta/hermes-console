@@ -3920,11 +3920,27 @@ class TuiGatewayClient
       'session.interrupt',
     };
     if (!(reads.contains(method) ||
-        (writes.contains(method) && !_connection.readOnly))) {
+        (writes.contains(method) && !_connection.readOnly) ||
+        (method == 'session.resume' &&
+            !_connection.readOnly &&
+            _isRoomMemberResume(params)))) {
       throw TuiGatewayRpcError(method, 'Room prompt request unavailable');
     }
     await _connectForRequest('gateway.connect');
     return _request(method, params, timeout: const Duration(seconds: 15));
+  }
+
+  /// `session.resume` passes only in the hosted room driver's own shape
+  /// (`hosted_room_server_rpc.py::resume`): a stalled member's durable room
+  /// session, `source: bot_room` (a live record with another source would
+  /// fail every hosted `prompt.submit` with 4120) and no transcript.
+  static bool _isRoomMemberResume(Map<String, dynamic> params) {
+    bool text(Object? v) => v is String && v.trim().isNotEmpty;
+    return params.length == 4 &&
+        text(params['session_id']) &&
+        text(params['profile']) &&
+        params['source'] == 'bot_room' &&
+        params['omit_messages'] == true;
   }
 
   /// Hosted connector RPCs for the Capabilities hub. Only `connectors.*`

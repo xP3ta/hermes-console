@@ -116,4 +116,54 @@ void main() {
     }
     expect(seen.map((c) => c.$1), ['session.active_list']);
   });
+
+  group('session.resume for a stalled room member', () {
+    const exact = {
+      'session_id': 'stored-review',
+      'profile': 'review',
+      'source': 'bot_room',
+      'omit_messages': true,
+    };
+
+    test('passes only in the exact room-member shape', () async {
+      final (server, seen) = await _server();
+      final client = _client(server, readOnly: false);
+      addTearDown(() async {
+        await client.close();
+        await server.close(force: true);
+      });
+      await client.roomPromptRequest('session.resume', exact);
+      expect(seen.single.$1, 'session.resume');
+      expect(seen.single.$2, exact);
+      for (final params in <Map<String, dynamic>>[
+        {...exact, 'source': 'desktop'},
+        {...exact, 'omit_messages': false},
+        {...exact, 'eager_build': true},
+        {...exact, 'profile': ''},
+        {...exact, 'session_id': ''},
+        const {'session_id': 'stored-review', 'profile': 'review'},
+      ]) {
+        await expectLater(
+          client.roomPromptRequest('session.resume', params),
+          throwsA(isA<TuiGatewayRpcError>()),
+          reason: '$params',
+        );
+      }
+      expect(seen, hasLength(1));
+    });
+
+    test('a read-only connection never resumes', () async {
+      final (server, seen) = await _server();
+      final client = _client(server, readOnly: true);
+      addTearDown(() async {
+        await client.close();
+        await server.close(force: true);
+      });
+      await expectLater(
+        client.roomPromptRequest('session.resume', exact),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      expect(seen, isEmpty);
+    });
+  });
 }

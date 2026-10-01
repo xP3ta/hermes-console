@@ -131,6 +131,25 @@ final class RoomMemberWaitingUnreachable extends RoomMemberPrompt {
   String get key => 'waiting-$runtimeSessionId';
 }
 
+/// A member whose room turn cannot start: the hosted driver keeps the task
+/// queued and retries it (`hosted_room_driver.py` `_defer_unavailable_route`)
+/// while no live runtime holds the member's durable room session.
+final class RoomMemberStall {
+  final String memberId;
+  final String profile;
+
+  /// Durable `Group: <room_id>` session id of that member.
+  final String storedSessionId;
+
+  const RoomMemberStall({
+    required this.memberId,
+    required this.profile,
+    required this.storedSessionId,
+  });
+
+  String get key => 'stall-$memberId-$storedSessionId';
+}
+
 /// Raw JSON-RPC used by [GatewayRoomMemberPrompts].
 typedef RoomPromptRpc =
     Future<Map<String, dynamic>> Function(
@@ -153,6 +172,16 @@ abstract interface class RoomMemberPromptSource {
 
   /// `session.interrupt` of that runtime only; never closes the session.
   Future<void> cancelWait(RoomMemberPrompt prompt, {String? expectedTaskId});
+
+  /// [member]'s durable room session when nothing live holds it and no
+  /// member of the room is executing; null otherwise. Reads only.
+  Future<RoomMemberStall?> findStall(
+    HostedGroupRoom room,
+    HostedGroupMember member,
+  );
+
+  /// Re-opens exactly that member's room session (`session.resume`).
+  Future<void> resumeStalled(RoomMemberStall stall);
 }
 
 /// Gateway implementation over the room authority's socket.
@@ -376,6 +405,71 @@ final class GatewayRoomMemberPrompts implements RoomMemberPromptSource {
     // runs the expected room task: nothing was cancelled.
     if (result['interrupted'] == false) {
       throw StateError('runtime was not interrupted');
+    }
+  }
+
+  @override
+  Future<RoomMemberStall?> findStall(
+    HostedGroupRoom room,
+    HostedGroupMember member,
+  ) async {
+    if (member.owner.connectionId != room.authorityGatewayId) return null;
+    final title = roomMemberSessionTitle(room.roomId);
+    final active = await rpc('session.active_list', const {});
+    final rows = active['sessions'];
+    if (rows is! List) return null;
+    final live = <String>{};
+    for (final row in rows) {
+      if (row is! Map) continue;
+      for (final k in const ['id', 'session_key']) {
+        if (row[k] is String && (row[k] as String).isNotEmpty) {
+          live.add(row[k] as String);
+        }
+      }
+      // Every member's room session shares the title. One of them
+      // executing (or building) means the room is moving, not stalled.
+      if (row['title'] == title &&
+          const {'working', 'waiting', 'starting'}.contains(row['status'])) {
+        return null;
+      }
+    }
+    final listed = await rpc('session.list', {
+      'profile': member.owner.profile,
+      'title': title,
+      'include_hidden': true,
+    });
+    final sessions = listed['sessions'];
+    if (sessions is! List || sessions.isEmpty || sessions.first is! Map) {
+      return null;
+    }
+    final first = sessions.first as Map;
+    final ids = [
+      for (final k in const ['resolved_id', 'id'])
+        if (first[k] is String && (first[k] as String).isNotEmpty)
+          first[k] as String,
+    ];
+    if (ids.isEmpty || ids.any(live.contains)) return null;
+    return RoomMemberStall(
+      memberId: member.memberId,
+      profile: member.owner.profile,
+      storedSessionId: ids.first,
+    );
+  }
+
+  @override
+  Future<void> resumeStalled(RoomMemberStall stall) async {
+    // The driver's own shape (`hosted_room_server_rpc.py::resume`). Resume
+    // never submits: hosted room sessions skip auto-continue
+    // (`session_auto_continue.py`), so no turn is replayed.
+    final result = await rpc('session.resume', {
+      'session_id': stall.storedSessionId,
+      'profile': stall.profile,
+      'source': 'bot_room',
+      'omit_messages': true,
+    });
+    final runtime = result['session_id'];
+    if (runtime is! String || runtime.isEmpty) {
+      throw StateError('resume returned no runtime');
     }
   }
 }
