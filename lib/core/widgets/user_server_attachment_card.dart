@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
+import '../services/artifact_viewer_kind.dart';
 import '../services/attachment_uploader.dart';
 import '../services/generated_media_service.dart';
+import 'artifact_viewer/artifact_viewer_screen.dart';
 import 'attachment_card.dart';
 import 'attachment_history_preview.dart';
 import 'hermes_notice.dart';
@@ -292,6 +294,21 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
     }
     if (_isImage) {
       await showImageViewer(context, file);
+      return;
+    }
+    final mimeType =
+        widget.localReference?.mimeType ??
+        widget.serverRef.fetchReference?.mimeType ??
+        '';
+    if (artifactViewerRendersInline(
+      artifactViewerKindFor(name: widget.name, mimeType: mimeType),
+    )) {
+      await openArtifactViewer(
+        context,
+        name: widget.name,
+        mimeType: mimeType,
+        file: file,
+      );
       return;
     }
     final localReference = widget.localReference;

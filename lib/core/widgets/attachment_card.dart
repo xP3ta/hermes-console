@@ -1060,7 +1060,9 @@ class _GeneratedMediaAttachmentCardState
   Future<void> _open() async {
     final file = _file;
     if (file == null) return;
-    if (_text != null) {
+    // A host-provided opener (the chat's in-app artifact viewer) takes text
+    // too, so Markdown/HTML/code render natively instead of as raw source.
+    if (_text != null && widget.onOpen == null) {
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => GeneratedTextViewerScreen(

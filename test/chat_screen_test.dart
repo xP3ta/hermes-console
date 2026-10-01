@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart' show MarkdownBody;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter_test/flutter_test.dart';
 import 'pill_copy_fit_test.dart' show expectPillLabelsFit;
 import 'package:file_picker/file_picker.dart';
@@ -52,6 +53,10 @@ import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_result.dart';
 
+import 'support/fake_webview_platform.dart';
+import 'package:hermes_android/core/widgets/artifact_viewer/artifact_viewer_screen.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'support/projected_compression_reply.dart';
 import 'support/large_compacted_session_fixture.dart';
 
@@ -25647,10 +25652,140 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     }
 
-    expect(find.byType(AttachmentBytesPreviewScreen), findsOneWidget);
-    expect(find.text(exactText), findsOneWidget);
+    // Text attachments now open in the in-app artifact viewer, which renders
+    // the same private bytes line by line.
+    expect(find.byType(ArtifactViewerScreen), findsOneWidget);
+    expect(find.byType(AttachmentBytesPreviewScreen), findsNothing);
+    final renderedText = [
+      for (final line in tester.widgetList<Text>(
+        find.descendant(
+          of: find.byKey(const ValueKey('artifact-viewer-text')),
+          matching: find.byType(Text),
+        ),
+      ))
+        line.textSpan?.toPlainText() ?? line.data ?? '',
+    ].join('\n');
+    expect(renderedText, exactText);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'tocar un HTML entregado por MEDIA abre el visor interno, no launchUrl',
+    (tester) async {
+      const source = '/workspace/private/informe.html';
+      const html =
+          '<!doctype html><html><body><h1>Informe</h1>'
+          '<script>location.href="https://evil.example"</script></body></html>';
+      final webPlatform = FakeWebViewPlatform();
+      WebViewPlatform.instance = webPlatform;
+      final previousLauncher = UrlLauncherPlatform.instance;
+      final launcher = FakeUrlLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+
+      late final Directory temp;
+      await tester.runAsync(() async {
+        temp = await Directory.systemTemp.createTemp('chat-media-html-');
+        // Pre-seed the private generated-media cache exactly where
+        // GeneratedMediaService looks, so no network fetch is needed.
+        String hash(String value) =>
+            sha256.convert(utf8.encode(value)).toString();
+        final dir = Directory(
+          '${temp.path}/generated_media/${hash('conn-test\u0000default')}',
+        );
+        await dir.create(recursive: true);
+        await File(
+          '${dir.path}/${hash('$source\u0000\u0000')}.html',
+        ).writeAsString(html);
+      });
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (_) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+
+      await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'assistant', 'content': 'MEDIA:$source'},
+          {'role': 'user', 'content': 'Hazme un informe en HTML'},
+        ],
+      );
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+        if (find
+            .byKey(const ValueKey<String>('generated-text-preview'))
+            .evaluate()
+            .isNotEmpty) {
+          break;
+        }
+      }
+      // Earlier tests in this file can leave the process-wide auto-load slots
+      // busy with unreachable downloads. A manual download bypasses the queue
+      // and reads the same seeded private cache.
+      if (find
+          .byKey(const ValueKey<String>('generated-text-preview'))
+          .evaluate()
+          .isEmpty) {
+        final pending = tester.widget<GeneratedFileCard>(
+          find.byType(GeneratedFileCard),
+        );
+        pending.onCancel?.call();
+        await tester.pump();
+        tester
+            .widget<GeneratedFileCard>(find.byType(GeneratedFileCard))
+            .onDownload();
+        for (var frame = 0; frame < 40; frame++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump(const Duration(milliseconds: 10));
+          if (find
+              .byKey(const ValueKey<String>('generated-text-preview'))
+              .evaluate()
+              .isNotEmpty) {
+            break;
+          }
+        }
+      }
+      // An agent-delivered HTML is previewed as its first lines; tapping the
+      // card must open the in-app viewer rather than an external app.
+      expect(
+        find.byKey(const ValueKey<String>('generated-text-preview')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('informe.html'));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(find.byType(ArtifactViewerScreen), findsOneWidget);
+      expect(webPlatform.controllers, isNotEmpty);
+      final web = webPlatform.last;
+      expect(web.javaScriptMode, JavaScriptMode.disabled);
+      expect(web.loadedHtml.single, contains('<h1>Informe</h1>'));
+      expect(launcher.launches, isEmpty);
+      // The page's scripted redirect is blocked and launches nothing.
+      expect(
+        await web.navigationDelegate!.request('https://evil.example'),
+        NavigationDecision.prevent,
+      );
+      await tester.pump();
+      expect(launcher.launches, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('PDF histórico usa el canal nativo con sus bytes exactos', (
     tester,

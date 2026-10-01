@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
+import '../services/artifact_viewer_kind.dart';
 import '../services/attachment_uploader.dart';
 import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
+import 'artifact_viewer/artifact_viewer_screen.dart';
 import 'attachment_card.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
@@ -117,6 +119,21 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     }
     if (widget.reference.type == AttachmentType.image) {
       await showImageViewer(context, file);
+      return;
+    }
+    if (artifactViewerRendersInline(
+      artifactViewerKindFor(
+        name: widget.name,
+        mimeType: widget.reference.mimeType,
+      ),
+    )) {
+      await openArtifactViewer(
+        context,
+        name: widget.name,
+        mimeType: widget.reference.mimeType,
+        file: file,
+        sizeBytes: widget.reference.sizeBytes,
+      );
       return;
     }
     await Navigator.of(context).push<void>(

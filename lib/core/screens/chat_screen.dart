@@ -156,6 +156,7 @@ import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
 import '../widgets/attachment_card.dart';
 import '../widgets/attachment_history_preview.dart';
+import '../widgets/artifact_viewer/artifact_viewer_screen.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/generated_image_card.dart';
 import '../widgets/generated_video_card.dart';
@@ -18460,17 +18461,17 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
         widget.reference.mimeType == 'application/pdf' ||
         widget.reference.displayName.toLowerCase().endsWith('.pdf');
     if (!isPdf) {
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => GeneratedFileViewerScreen(
-            name: widget.reference.displayName,
-            mimeType: widget.reference.mimeType,
-            sizeBytes: length,
-            onOpenWith: onOpenExternal,
-            onShare: onShare,
-            onSave: onSave,
-          ),
-        ),
+      // In-app viewer: HTML/SVG in a locked WebView, Markdown/code/text and
+      // images natively; anything else falls back to "Abrir con…"/Share.
+      await openArtifactViewer(
+        context,
+        name: widget.reference.displayName,
+        mimeType: widget.reference.mimeType,
+        file: file,
+        sizeBytes: length,
+        onOpenExternal: onOpenExternal,
+        onShare: onShare,
+        onSave: onSave,
       );
       return;
     }
