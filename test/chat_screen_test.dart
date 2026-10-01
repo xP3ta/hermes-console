@@ -22961,6 +22961,93 @@ void main() {
     }
   });
 
+  testWidgets(
+    'reasoning deltas in a long chat project the transcript once per frame',
+    (tester) async {
+      // Real symptom: a ~300 message session stutters while scrolling during
+      // a run with reasoning/tools. While streaming, every read of the public
+      // transcript is a full privacy/editorial projection of every row, and a
+      // single screen build used to read it ~140 times (once or more per
+      // visible row). Pin the cost per frame, not the number of events.
+      final gateway = _UiRewindGateway();
+      final performance = ChatPerformanceProbe();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-reasoning-frame-cost'),
+        desktopGateway: gateway,
+        performanceProbe: performance,
+        messages: [
+          for (var i = 299; i >= 0; i--)
+            {
+              'id': i,
+              'message_id': 'hist-$i',
+              'role': i.isOdd ? 'assistant' : 'user',
+              'content': 'Historic message $i.',
+            },
+        ],
+      );
+      await chat.send(
+        fullText: 'think hard',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.emit('message.start');
+      gateway.emit('reasoning.delta', {'text': 'Warm up. '});
+      await tester.pump(const Duration(milliseconds: 450));
+      expect(chat.isStreaming, isTrue);
+
+      final readsPerFrame = <int>[];
+      final buildsPerFrame = <int>[];
+      for (var frame = 0; frame < 10; frame++) {
+        performance.reset();
+        for (var i = 0; i < 6; i++) {
+          gateway.emit('reasoning.delta', {'text': 'step $frame.$i '});
+        }
+        await tester.pump(const Duration(milliseconds: 16));
+        readsPerFrame.add(performance.publicTranscriptReads);
+        buildsPerFrame.add(performance.screenBuilds);
+      }
+      // Scrolling mid-run materialises new rows lazily inside the same
+      // frame: each of them must reuse the frame's transcript snapshot.
+      final scrollReads = <int>[];
+      for (var frame = 0; frame < 6; frame++) {
+        performance.reset();
+        gateway.emit('reasoning.delta', {'text': 'scroll $frame '});
+        await tester.drag(
+          find.byType(ChatScrollInteractionGuard),
+          const Offset(0, 300),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+        scrollReads.add(performance.publicTranscriptReads);
+      }
+
+      expect(buildsPerFrame, everyElement(lessThanOrEqualTo(1)));
+      expect(
+        readsPerFrame,
+        everyElement(lessThanOrEqualTo(12)),
+        reason: 'one frame must not re-project the transcript per row',
+      );
+      expect(scrollReads, everyElement(lessThanOrEqualTo(24)));
+      // Behaviour is unchanged: the reasoning text keeps flowing in.
+      final reasoning = chat.messages.first['reasoning'] as String? ?? '';
+      expect(reasoning, contains('step 9.5'));
+      expect(reasoning, contains('scroll 5'));
+      expect(tester.takeException(), isNull);
+
+      gateway.emit('message.complete', {'text': 'Done.'});
+      for (var f = 0; f < 60 && chat.isStreaming; f++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(chat.isStreaming, isFalse);
+      await tester.drag(
+        find.byType(ChatScrollInteractionGuard),
+        const Offset(0, -5000),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Done.'), findsOneWidget);
+    },
+  );
+
   testWidgets('tap sobre el texto en streaming no duplica la burbuja viva', (
     tester,
   ) async {

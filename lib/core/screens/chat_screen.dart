@@ -42,7 +42,7 @@ import 'package:flutter/rendering.dart'
         RenderSliverMultiBoxAdaptor,
         ScrollCacheExtent,
         ScrollDirection;
-import 'package:flutter/scheduler.dart' show SchedulerBinding;
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1314,10 +1314,44 @@ class _ChatScreenState extends State<ChatScreen>
   /// puede avanzar en segundo plano, pero su respuesta no aparece mientras se
   /// edita: Cancelar revela el progreso real y Guardar rebobina el turno.
   List<Map<String, dynamic>> get _messages {
+    final editing = _editingMessagesSnapshot;
+    if (editing != null) return editing;
+    final scheduler = SchedulerBinding.instance;
+    final inFramePipeline =
+        scheduler.schedulerPhase == SchedulerPhase.persistentCallbacks;
+    final cached = _frameMessagesSnapshot;
+    if (cached != null &&
+        inFramePipeline &&
+        identical(_frameMessagesChat, _chat)) {
+      return cached;
+    }
     final probe = widget.performanceProbe;
     if (probe != null) probe.publicTranscriptReads += 1;
-    return _editingMessagesSnapshot ?? _chat.messages;
+    final messages = _chat.messages;
+    // While a turn streams, every read is a full privacy/editorial projection
+    // of the whole transcript, and one build reads it once or more per row.
+    // Inside the build/layout/paint pipeline nothing can mutate the service
+    // (events arrive asynchronously, and the list entries already index into
+    // this same snapshot), so reuse it until the frame ends. Event handlers
+    // and post-frame callbacks run outside that phase and always read fresh.
+    if (inFramePipeline) {
+      _frameMessagesSnapshot = messages;
+      _frameMessagesChat = _chat;
+      if (!_frameMessagesClearScheduled) {
+        _frameMessagesClearScheduled = true;
+        scheduler.addPostFrameCallback((_) {
+          _frameMessagesClearScheduled = false;
+          _frameMessagesSnapshot = null;
+          _frameMessagesChat = null;
+        });
+      }
+    }
+    return messages;
   }
+
+  List<Map<String, dynamic>>? _frameMessagesSnapshot;
+  ActiveChat? _frameMessagesChat;
+  bool _frameMessagesClearScheduled = false;
 
   bool get _editingTranscriptChanged {
     final before = _editingMessagesSnapshot;
