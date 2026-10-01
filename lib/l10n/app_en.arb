@@ -7608,7 +7608,7 @@
   "pj1215AgoNow": "just now",
   "pj1215AgoMinutes": "{count} min ago",
   "pj1215AgoHours": "{count} h ago",
-  "pj1215AgoDays": "{count, plural, one{yesterday} other{{count} days ago}}",
+  "pj1215AgoDays": "{count, plural, one{1 day ago} other{{count} days ago}}",
   "pj1215AgoDate": "on {date}",
   "pj1215AppearanceTitle": "Appearance",
   "pj1215AppearanceAdoptNote": "Hermes found this project on its own. Giving it a color or icon saves it as a project of yours, just like Desktop does.",

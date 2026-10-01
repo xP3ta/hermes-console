@@ -9179,7 +9179,7 @@
   "@pj1215AgoMinutes": {"placeholders": {"count": {"type": "int"}}},
   "pj1215AgoHours": "hace {count} h",
   "@pj1215AgoHours": {"placeholders": {"count": {"type": "int"}}},
-  "pj1215AgoDays": "{count, plural, one{ayer} other{hace {count} días}}",
+  "pj1215AgoDays": "{count, plural, one{hace 1 día} other{hace {count} días}}",
   "@pj1215AgoDays": {"placeholders": {"count": {"type": "int"}}},
   "pj1215AgoDate": "el {date}",
   "@pj1215AgoDate": {"placeholders": {"date": {"type": "String"}}},
