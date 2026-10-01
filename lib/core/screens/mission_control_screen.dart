@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -2028,25 +2028,33 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final capabilities = await (home as BotRoomLinkGateway).roomLinkRequest('groups.capabilities', {});
     if (capabilities['driver'] != true || capabilities['methods'] is! List ||
         !(capabilities['methods'] as List).contains('groups.peer.register')) { return []; }
-    final result = <_RoomPeerCandidate>[];
-    for (final connection in widget.connManager.getConnections()) {
-      if (connection.id == widget.connection.id || connection.readOnly) continue;
-      final lease = SharedGatewayPool.instance.acquire(connection);
-      final client = lease.client;
-      try {
-        for (final profile in await client.listProfiles(includeSessions: false)) {
-          final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
-          final catalog = BotRoomLink.catalog(caps, profile.name);
-          if (catalog != null && catalog['installation_id'] != capabilities['authority_gateway_id'] &&
-              caps['methods'] is List && (caps['methods'] as List).contains('groups.peer.invite')) {
-            final candidate = _RoomPeerCandidate(connection, profile, catalog);
-            if (!result.any((p) => p.key == candidate.key)) result.add(candidate);
-          }
-        }
-      } catch (_) { /* Unavailable connections never become selectable peers. */ }
-      finally { lease.release(); }
-    }
-    return result;
+    final connections = widget.connManager.getConnections().where(
+      (c) => c.id != widget.connection.id && !c.readOnly,
+    );
+    return gatherRoomPeerCandidates<SavedConnection, _RoomPeerCandidate>(
+      connections: connections,
+      probeConnection: (connection) async {
+        final lease = SharedGatewayPool.instance.acquire(connection);
+        final client = lease.client;
+        try {
+          final profiles = await client.listProfiles(includeSessions: false);
+          // One socket per connection: its per-profile probes share it.
+          final probes = await Future.wait(profiles.map((profile) async {
+            try {
+              final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
+              final catalog = BotRoomLink.catalog(caps, profile.name);
+              if (catalog != null && catalog['installation_id'] != capabilities['authority_gateway_id'] &&
+                  caps['methods'] is List && (caps['methods'] as List).contains('groups.peer.invite')) {
+                return _RoomPeerCandidate(connection, profile, catalog);
+              }
+            } catch (_) { /* That profile never becomes a selectable peer. */ }
+            return null;
+          }));
+          return probes.whereType<_RoomPeerCandidate>().toList();
+        } finally { lease.release(); }
+      },
+      keyOf: (candidate) => candidate.key,
+    );
   }
 
   Future<void> _attachRoomPeers(HostedGroupRoom room, List<_RoomPeerCandidate> peers) async {
@@ -2679,6 +2687,30 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       ],
     );
   }
+}
+
+/// Probes every connection at once and returns their candidates in
+/// connection order, first key wins. A connection whose probe throws
+/// contributes nothing: unavailable connections never become peers.
+@visibleForTesting
+Future<List<R>> gatherRoomPeerCandidates<C, R>({
+  required Iterable<C> connections,
+  required Future<List<R>> Function(C connection) probeConnection,
+  required String Function(R candidate) keyOf,
+}) async {
+  final perConnection = await Future.wait(connections.map((connection) async {
+    try {
+      return await probeConnection(connection);
+    } catch (_) {
+      return <R>[];
+    }
+  }));
+  final seen = <String>{};
+  return [
+    for (final candidates in perConnection)
+      for (final candidate in candidates)
+        if (seen.add(keyOf(candidate))) candidate,
+  ];
 }
 
 final class _RoomPeerCandidate {
