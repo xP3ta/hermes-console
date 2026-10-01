@@ -2072,10 +2072,16 @@ String _subagentPillLabel(WidgetTester tester) {
       : '$action ${tester.widget<Text>(extras).data}';
 }
 
-/// Texto de la barra de compactación sobre el compositor.
-Finder _dockText(String text) => find.descendant(
-  of: find.byKey(const ValueKey('compaction-dock')),
-  matching: find.textContaining(text, findRichText: true),
+/// Estado de compactación en la píldora de contexto bajo el composer
+/// (tp1216): el texto completo («Compactado · 34 → 12 mensajes») vive en su
+/// etiqueta accesible; a la vista solo «Compactando…»/«Compactada».
+Finder _dockText(String text) => find.byWidgetPredicate(
+  (widget) =>
+      widget is Semantics &&
+      (widget.key == const ValueKey('compaction-result') ||
+          widget.key ==
+              const ValueKey('desktop-session-compression-progress')) &&
+      (widget.properties.label ?? '').contains(text),
 );
 
 /// Abre el panel que sale de la pastilla de actividad.
@@ -6552,8 +6558,9 @@ void main() {
       expect(chat.sessionActivity.active, isFalse);
       expect(chat.desktopManualCompressionInFlight, isFalse);
       expect(find.byKey(const ValueKey('compaction-dock')), findsOneWidget);
-      expect(find.textContaining('Compactando'), findsOneWidget);
-      expect(find.textContaining('35 msj'), findsOneWidget);
+      expect(find.text('Compactando…'), findsOneWidget);
+      // The facts ride in the pill's announcement (and its popover).
+      expect(_dockText('35 msj'), findsOneWidget);
       // Real elapsed from the recorded start, not a fresh 0:00.
       final elapsed = tester
           .widget<Text>(find.byKey(const ValueKey('compaction-elapsed')))
@@ -6597,11 +6604,16 @@ void main() {
       final lastMessage = tester.getRect(find.text('Historial intacto'));
       final composer = tester.getRect(find.byType(HermesComposerSurface));
       expect(pill.overlaps(lastMessage), isFalse);
-      expect(pill.bottom, lessThanOrEqualTo(composer.top));
+      // tp1216: inside the context pill under the composer, not above it.
+      expect(pill.top, greaterThanOrEqualTo(composer.bottom));
       // A compact, centred pill — not a full-width bar.
       final screen = tester.getSize(find.byType(ChatScreen));
-      expect(pill.width, lessThan(screen.width - 32));
-      expect((pill.center.dx - screen.width / 2).abs(), lessThan(2));
+      final statusPill = tester.getRect(
+        find.byKey(const ValueKey('chat-status-pill')),
+      );
+      expect(statusPill.width, lessThan(screen.width - 32));
+      expect((statusPill.center.dx - screen.width / 2).abs(), lessThan(2));
+      expect(statusPill.contains(pill.center), isTrue);
       expect(tester.takeException(), isNull);
     },
   );
@@ -13502,7 +13514,16 @@ void main() {
         },
       });
       await tester.pump();
-      expect(find.text('75%'), findsOneWidget);
+      // tp1216: while compacting the pill shows «Compactando…» in place of
+      // the percentage; the metrics behind it keep the last real value.
+      int? pillPercent() => tester
+          .widget<SessionContextPopoverButton>(
+            find.byType(SessionContextPopoverButton),
+          )
+          .metrics
+          .value
+          .percent;
+      expect(pillPercent(), 75);
       expect(find.text('99k tok'), findsNothing);
       // El uso real que llega después sustituye a ese porcentaje.
       gateway.emit('session.info', const {
@@ -13511,7 +13532,9 @@ void main() {
         },
       });
       await tester.pump();
-      expect(find.text('10%'), findsOneWidget);
+      expect(pillPercent(), 10);
+      // Let the pill's cross-fade settle before checking what it shows.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('75%'), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -13949,15 +13972,10 @@ void main() {
       }
       expect(chat.desktopCompressionInFlight, isFalse);
       // El resultado exacto del RPC pasa a la barra unos segundos.
-      final dock = find.byKey(const ValueKey('compaction-result'));
-      expect(dock, findsOneWidget);
-      expect(
-        find.descendant(
-          of: dock,
-          matching: find.textContaining('Compactado · ', findRichText: true),
-        ),
-        findsOneWidget,
-      );
+      // The pill turns into ✓ «Compactada»; the exact outcome is announced.
+      expect(find.byKey(const ValueKey('compaction-result')), findsOneWidget);
+      expect(find.text('Compactada'), findsOneWidget);
+      expect(_dockText('Compactado · '), findsOneWidget);
       expect(_dockText('96k → 4.8k tokens'), findsOneWidget);
       // The transcript keeps its compression timeline row.
       expect(find.text('La compresión de contexto terminó.'), findsOneWidget);
@@ -14273,7 +14291,7 @@ void main() {
 
   for (final variant in <(DesktopCompressionStatus, String)>[
     // A finished compression reports in the pill itself (single surface).
-    (DesktopCompressionStatus.compressed, 'Compactado'),
+    (DesktopCompressionStatus.compressed, 'Compactada'),
     (DesktopCompressionStatus.aborted, 'La compresión se canceló.'),
     (DesktopCompressionStatus.lockHeld, 'Ya hay otra compresión en curso'),
   ]) {
@@ -14875,8 +14893,22 @@ void main() {
       await submitComposerFromKeyboard(tester);
       await gateway.compressionEntered.future;
       const facts = 'Compactado · 34 → 12 mensajes · 30.3k → 25.7k tokens';
-      await pumpUntilVisible(tester, find.text(facts));
-      expect(find.text(facts), findsOneWidget);
+      await pumpUntilVisible(tester, _dockText(facts));
+      // Announced by the pill and shown in full by the panel it opens.
+      expect(_dockText(facts), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('desktop-context-usage-status')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('context-panel-compaction-text')),
+            )
+            .data,
+        facts,
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -15115,7 +15147,18 @@ void main() {
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
         '',
       );
-      expect(find.text('25%'), findsOneWidget);
+      // While «Compactada» lingers the pill keeps the real usage (25 %),
+      // never the cumulative tokens; the percentage returns right after.
+      expect(
+        tester
+            .widget<SessionContextPopoverButton>(
+              find.byType(SessionContextPopoverButton),
+            )
+            .metrics
+            .value
+            .percent,
+        25,
+      );
       expect(find.textContaining('231'), findsNothing);
       // El final llega sin cifras: solo la duración medida, nada inventado.
       expect(_dockText('Compactado · '), findsOneWidget);
@@ -15176,30 +15219,32 @@ void main() {
         findsNothing,
       );
       expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
-      final dock = find.byType(CompactionDock);
+      // tp1216: the compaction state lives in the context pill under the
+      // composer — outside the composer surface, never over the field.
+      final dock = find.byType(CompactionPillSegment);
       final composer = find.byType(HermesComposerSurface);
       expect(dock, findsOneWidget);
       expect(
         find.ancestor(of: dock, matching: composer),
         findsNothing,
-        reason: 'el dock flotante no pertenece a la superficie del composer',
+        reason:
+            'el estado vive en la píldora, no en la superficie del composer',
       );
-      // The pill lives in the transcript's floating stack (which pads the
-      // message list by its measured height), never inside the composer.
       expect(
         find.ancestor(
           of: dock,
-          matching: find.byKey(const ValueKey('chat-composer-host')),
+          matching: find.byKey(const ValueKey('chat-status-pill')),
         ),
-        findsNothing,
+        findsOneWidget,
       );
+      expect(find.text('Compactando…'), findsOneWidget);
 
       void expectDockClearsComposer() {
         final dockRect = tester.getRect(dock);
         final fieldRect = tester.getRect(find.byType(TextField));
         final sendRect = tester.getRect(find.byKey(const ValueKey('send')));
         final composerRect = tester.getRect(composer);
-        expect(dockRect.bottom, lessThanOrEqualTo(composerRect.top));
+        expect(dockRect.top, greaterThanOrEqualTo(composerRect.bottom));
         expect(dockRect.overlaps(fieldRect), isFalse);
         expect(dockRect.overlaps(sendRect), isFalse);
       }
@@ -15228,7 +15273,16 @@ void main() {
       expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
       // El uso real que trae el resultado (4.8k) sustituye al 25 % anterior;
       // nunca salta a los tokens acumulados.
-      expect(find.text('2%'), findsOneWidget);
+      expect(
+        tester
+            .widget<SessionContextPopoverButton>(
+              find.byType(SessionContextPopoverButton),
+            )
+            .metrics
+            .value
+            .percent,
+        2,
+      );
       // El resultado real: recuentos de mensajes y tokens que Hermes midió.
       expect(_dockText('Compactado · '), findsOneWidget);
       expect(_dockText('96k → 4.8k tokens'), findsOneWidget);
@@ -15237,6 +15291,7 @@ void main() {
       // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
+      expect(find.text('2%'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -20554,6 +20609,89 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final botChat in [false, true]) {
+    testWidgets(
+      'tp1216 compaction state lives under the composer '
+      '(${botChat ? 'Bot Chat fallback' : 'context pill'}) and is announced',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        final gateway = _UiRewindGateway();
+        await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('conn-tp1216-${botChat ? 'bot' : 'chat'}'),
+          session: botChat ? _session().copyWith(source: 'bot-mode') : null,
+          missionBotProfile: botChat ? const AgentProfile(name: 'Sol') : null,
+          messagesLoaded: false,
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
+
+        gateway.emit('status.update', const {
+          'kind': 'compacting',
+          'text': 'Compacting context — summarizing earlier conversation',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final segment = find.byType(CompactionPillSegment);
+        expect(segment, findsOneWidget);
+        expect(find.text('Compactando…'), findsOneWidget);
+        expect(
+          find.ancestor(
+            of: segment,
+            matching: find.byKey(
+              ValueKey(
+                botChat ? 'compaction-inline-indicator' : 'chat-status-pill',
+              ),
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('chat-status-pill')),
+          botChat ? findsNothing : findsOneWidget,
+        );
+        // Below the composer surface, never over it.
+        expect(
+          tester.getRect(segment).top,
+          greaterThanOrEqualTo(
+            tester.getRect(find.byType(HermesComposerSurface)).bottom,
+          ),
+        );
+        final live = tester.getSemantics(
+          find.byKey(const ValueKey('desktop-session-compression-progress')),
+        );
+        expect(live.flagsCollection.isLiveRegion, isTrue);
+        expect(live.getSemanticsData().label, startsWith('Compactando'));
+
+        gateway.emit('status.update', const {
+          'kind': 'compacted',
+          'text': 'Context compaction complete — continuing turn',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.text('Compactada'), findsOneWidget);
+        final done = tester.getSemantics(
+          find.byKey(const ValueKey('compaction-result')),
+        );
+        expect(done.flagsCollection.isLiveRegion, isTrue);
+        expect(done.getSemanticsData().label, startsWith('Compactado · '));
+
+        await tester.pump(const Duration(seconds: 7));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(CompactionPillSegment), findsNothing);
+        if (!botChat) {
+          expect(
+            find.byKey(const ValueKey('chat-status-pill')),
+            findsOneWidget,
+          );
+        }
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      },
+    );
+  }
 
   testWidgets(
     'compactación automática: la pastilla la mide y al terminar muestra el resultado',

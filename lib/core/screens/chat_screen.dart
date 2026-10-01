@@ -11331,10 +11331,6 @@ class _ChatScreenState extends State<ChatScreen>
                                                     _confirmInterruptSubagent,
                                               ),
                                             ),
-                                            // Nearest the composer: the
-                                            // compaction pill, padded into
-                                            // the same measured gap.
-                                            _buildCompactionPill(),
                                           ],
                                         ),
                                       ),
@@ -14153,54 +14149,20 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// Pastilla de compactación: vive en la pila flotante del transcript, justo
-  /// encima del composer, así que el transcript reserva su alto medido y
-  /// nunca tapa el último mensaje ni el composer. Entra y sale con un fundido.
-  Widget _buildCompactionPill() {
-    final compaction =
-        _compaction.current ??
-        (_compressingSession || _chat.desktopRestoredCompressionRunning
-            ? CompactionProgress(
-                startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
-                manual: true,
-                messagesBefore: _chat.desktopCompactionMessagesBefore,
-                tokensBefore: _chat.desktopCompactionTokensBefore,
-              )
-            : null);
-    return AnimatedSwitcher(
-      duration: _reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.96, end: 1).animate(animation),
-          child: child,
-        ),
-      ),
-      layoutBuilder: (current, previous) => Stack(
-        alignment: Alignment.bottomCenter,
-        children: [...previous, ?current],
-      ),
-      child: compaction == null
-          ? const SizedBox.shrink(key: ValueKey('compaction-pill-empty'))
-          // One key for live and done: the pill morphs in place (no
-          // cross-fade between two pills); only appearing/leaving animates.
-          : Padding(
-              key: const ValueKey('compaction-pill'),
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: AnimatedSize(
-                duration: _reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                child: CompactionDock(compaction: compaction),
-              ),
-            ),
-    );
-  }
+  /// Compactación en curso o recién terminada, o `null`. Se pinta dentro de
+  /// la mini píldora de contexto+modo bajo el composer (tp1216), no en una
+  /// pastilla flotante aparte.
+  CompactionProgress? get _visibleCompaction =>
+      _compaction.current ??
+      (_chatBound &&
+              (_compressingSession || _chat.desktopRestoredCompressionRunning)
+          ? CompactionProgress(
+              startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
+              manual: true,
+              messagesBefore: _chat.desktopCompactionMessagesBefore,
+              tokensBefore: _chat.desktopCompactionTokensBefore,
+            )
+          : null);
 
   /// Píldora combinada contexto+modo flotando bajo el composer (ver mockup
   /// aprobado "v8 · estado debajo del input"): sustituye a los antiguos
@@ -14209,8 +14171,17 @@ class _ChatScreenState extends State<ChatScreen>
   /// Sigue abriendo el mismo `showSessionContextPopover`; la sección de modo
   /// se reutiliza de `_buildApprovalModeSection` en vez de duplicarla.
   Widget _buildFloatingStatusPill(HermesThemeColors colors) {
+    final compaction = _visibleCompaction;
     if (_isBotChatSurface) {
-      return const SizedBox.shrink();
+      // Sin píldora de contexto: la compactación nunca se queda sin señal.
+      return compaction == null
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Center(
+                child: CompactionInlineIndicator(compaction: compaction),
+              ),
+            );
     }
     final flag = _modeFlag(colors);
     return Padding(
@@ -14230,6 +14201,7 @@ class _ChatScreenState extends State<ChatScreen>
           compressionCount: _chatBound
               ? _chat.desktopSessionCompressionCount
               : 0,
+          compaction: compaction,
         ),
       ),
     );
