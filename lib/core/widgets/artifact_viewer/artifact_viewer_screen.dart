@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../services/artifact_viewer_kind.dart';
+import '../../design/modal.dart';
 import '../../theme/app_theme.dart';
 import '../chat/chat_markdown_body.dart';
 import '../hermes_app_bar.dart';
@@ -96,6 +97,53 @@ class ArtifactViewerScreen extends StatefulWidget {
 }
 
 class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
+  final GlobalKey _menuAnchor = GlobalKey();
+
+  Future<void> _openMenu(Strings strings) async {
+    final action = await showHermesMenu<String>(
+      context: context,
+      anchorKey: _menuAnchor,
+      surfaceKey: const ValueKey('artifact-viewer-menu-surface'),
+      actions: [
+        if (_isTextual)
+          HermesAction(
+            value: 'copy',
+            icon: Icons.copy_rounded,
+            label: strings.commonCopy,
+          ),
+        if (widget.onShare != null)
+          HermesAction(
+            value: 'share',
+            icon: Icons.share_outlined,
+            label: strings.commonShare,
+          ),
+        if (widget.onOpenExternal != null)
+          HermesAction(
+            value: 'open',
+            icon: Icons.open_in_new_rounded,
+            label: strings.vw1215OpenOutside,
+          ),
+        if (widget.onSave != null)
+          HermesAction(
+            value: 'save',
+            icon: Icons.save_alt_rounded,
+            label: strings.commonSave,
+          ),
+      ],
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'copy':
+        unawaited(_copy());
+      case 'share':
+        widget.onShare?.call();
+      case 'open':
+        widget.onOpenExternal?.call();
+      case 'save':
+        widget.onSave?.call();
+    }
+  }
+
   late final ArtifactViewerKind _kind = artifactViewerKindFor(
     name: widget.name,
     mimeType: widget.mimeType,
@@ -155,45 +203,15 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
               ),
               onPressed: () => setState(() => _showSource = !_showSource),
             ),
-          PopupMenuButton<String>(
+          IconButton(
             key: const ValueKey('artifact-viewer-menu'),
-            onSelected: (value) {
-              switch (value) {
-                case 'copy':
-                  unawaited(_copy());
-                case 'share':
-                  widget.onShare?.call();
-                case 'open':
-                  widget.onOpenExternal?.call();
-                case 'save':
-                  widget.onSave?.call();
-              }
-            },
-            itemBuilder: (_) => [
-              if (_isTextual)
-                PopupMenuItem(
-                  value: 'copy',
-                  child: _MenuRow(Icons.copy_rounded, strings.commonCopy),
-                ),
-              if (widget.onShare != null)
-                PopupMenuItem(
-                  value: 'share',
-                  child: _MenuRow(Icons.share_outlined, strings.commonShare),
-                ),
-              if (widget.onOpenExternal != null)
-                PopupMenuItem(
-                  value: 'open',
-                  child: _MenuRow(
-                    Icons.open_in_new_rounded,
-                    strings.vw1215OpenOutside,
-                  ),
-                ),
-              if (widget.onSave != null)
-                PopupMenuItem(
-                  value: 'save',
-                  child: _MenuRow(Icons.save_alt_rounded, strings.commonSave),
-                ),
-            ],
+            // Anchor for the menu surface.
+            icon: KeyedSubtree(
+              key: _menuAnchor,
+              child: const Icon(Icons.more_vert_rounded),
+            ),
+            tooltip: MaterialLocalizations.of(context).showMenuTooltip,
+            onPressed: () => unawaited(_openMenu(strings)),
           ),
         ],
       ),
@@ -274,19 +292,6 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         );
     }
   }
-}
-
-class _MenuRow extends StatelessWidget {
-  const _MenuRow(this.icon, this.label);
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [Icon(icon, size: 20), const SizedBox(width: 12), Text(label)],
-  );
 }
 
 String formatArtifactViewerBytes(int bytes) {
