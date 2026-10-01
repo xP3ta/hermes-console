@@ -1349,10 +1349,12 @@ class TuiGatewayClient
         HermesDesktopExclusiveSubmitCapabilityGateway {
   static const _transportTeardownBudget = Duration(seconds: 1);
 
-  /// Silence tolerated before a socket is declared half-open. Below the
-  /// server's uvicorn ping (20 s + 20 s pong) and TCP keepalive (≤60 s), so
-  /// Console detects a dead path before the server tears it down.
-  static const defaultHeartbeatDeadline = Duration(seconds: 35);
+  /// Silence tolerated before a socket is declared half-open. Same 45 s as
+  /// Desktop (`apps/shared/src/json-rpc-channel.ts`), which the server sizes
+  /// its 30 s send deadline against (`tui_gateway/ws.py`). A shorter value
+  /// killed healthy sockets while Hermes was busy serialising a long model
+  /// call and answered the ping late.
+  static const defaultHeartbeatDeadline = Duration(seconds: 45);
 
   /// How long a teardown keeps reading after sending the close frame so the
   /// peer's close (and any reply already in flight) is consumed before the
