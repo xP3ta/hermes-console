@@ -18565,6 +18565,19 @@ void main() {
     );
   });
 
+  test('md1215: friendlyModelName reconoce ids reales', () {
+    expect(friendlyModelName('anthropic/claude-sonnet-4.6'), 'Sonnet 4.6');
+    expect(friendlyModelName('claude-opus-4-8-20251101'), 'Opus 4.8');
+    expect(friendlyModelName('claude-sonnet-4-20250514'), 'Sonnet 4');
+    expect(friendlyModelName('claude-sonnet-5'), 'Sonnet 5');
+    expect(friendlyModelName('claude-opus-4-8-fast'), 'Opus 4.8 Fast');
+    expect(friendlyModelName('claude-3-5-sonnet-20241022'), 'Sonnet 3.5');
+    expect(friendlyModelName('claude-haiku-4-5'), 'Haiku 4.5');
+    expect(friendlyModelName('gpt-6.1-sol'), 'GPT-6.1-sol');
+    expect(friendlyModelName('openai-codex/gpt-6.1-sol'), 'GPT-6.1-sol');
+    expect(friendlyModelName('qwen3:8b'), 'qwen3:8b');
+  });
+
   testWidgets('pj1215: a project chat creates its session in that folder', (
     tester,
   ) async {

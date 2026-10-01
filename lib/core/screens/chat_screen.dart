@@ -1047,14 +1047,32 @@ String friendlyModelName(String id) {
       : id;
   final lower = raw.toLowerCase();
 
-  // Familia Claude: "claude-familia-major-minor[-fecha]" → "Familia major.minor".
-  final claude = RegExp(
-    r'^claude-(opus|sonnet|haiku)-(\d+)-(\d+)',
-  ).firstMatch(lower);
+  // Familia Claude: "claude-familia-major[-.]minor[-fecha][-variante]" →
+  // "Familia major.minor[ Variante]". The minor is one or two digits so a
+  // date pin (`claude-sonnet-4-20250514`) is never read as a version, and a
+  // dotted OpenRouter id (`anthropic/claude-sonnet-4.6`) is recognised too.
+  final claude =
+      RegExp(
+        r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
+      ).firstMatch(lower) ??
+      RegExp(r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)').firstMatch(
+        lower,
+      );
   if (claude != null) {
-    final family = claude.group(1)!;
+    final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
+    final family = legacy ? claude.group(3)! : claude.group(1)!;
+    final major = legacy ? claude.group(1)! : claude.group(2)!;
+    final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
-    return '$capitalized ${claude.group(2)}.${claude.group(3)}';
+    final version = minor == null ? major : '$major.$minor';
+    final rest = lower.substring(claude.end).replaceFirst(RegExp(r'-\d{8}'), '');
+    final variant = RegExp(
+      r'^-(fast|thinking|preview|latest|flash)\b',
+    ).firstMatch(rest)?.group(1);
+    final tag = variant == null
+        ? ''
+        : ' ${variant[0].toUpperCase()}${variant.substring(1)}';
+    return '$capitalized $version$tag';
   }
 
   // Familia GPT: mantiene "GPT-" en mayúsculas y conserva el resto del nombre.
