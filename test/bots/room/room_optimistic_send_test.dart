@@ -38,6 +38,9 @@ final class _SlowRoomGateway implements RoomGateway {
   /// so a refresh can observe it while the send is still in flight.
   bool publishBeforeAck = false;
 
+  /// The server stores the event but the acknowledgement/readback fails.
+  bool failAfterPublish = false;
+
   _SlowRoomGateway({required this.room, required this.events});
 
   int get _seq => events.isEmpty ? 0 : events.last['seq'] as int;
@@ -88,6 +91,7 @@ final class _SlowRoomGateway implements RoomGateway {
     await Future<void>.delayed(_rpc * 2);
     if (failSend) throw StateError('network down');
     _publish(text, attempt);
+    if (failAfterPublish) throw StateError('readback failed');
     completedSends++;
     return _readback;
   }
@@ -98,10 +102,14 @@ final class _SlowRoomGateway implements RoomGateway {
 
 final class _RecordingDrafts implements RoomDraftStore {
   final List<String> calls = [];
+  final String storedText;
+  final String? storedPreparedId;
+
+  _RecordingDrafts({this.storedText = '', this.storedPreparedId});
 
   @override
-  Future<({String text, String? threadId})> load() async =>
-      (text: '', threadId: null);
+  Future<({String text, String? threadId, String? preparedId})> load() async =>
+      (text: storedText, threadId: null, preparedId: storedPreparedId);
 
   @override
   Future<void> save(
@@ -132,12 +140,18 @@ String _composerText(WidgetTester tester) =>
 Future<_SlowRoomGateway> _pump(
   WidgetTester tester, {
   RoomDraftStore? drafts,
+  String? publishedAttempt,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
   final seq = EventSeq();
   final events = [seq.user('Earlier message')];
+  if (publishedAttempt != null) {
+    final ev = seq.user('already sent');
+    ev['event_id'] = TuiGatewayClient.durableGroupEventId(publishedAttempt);
+    events.add(ev);
+  }
   final log = buildLog(events);
   final room = buildRoom(latestSeq: log.latestSeq);
   final gateway = _SlowRoomGateway(room: room, events: events);
@@ -374,5 +388,54 @@ void main() {
     await tester.pump(_rpc * 3);
     await tester.pumpAndSettle();
     expect(drafts.calls.last, 'clear:$id');
+  });
+
+  testWidgets('a send stored by the server but answered with an error is '
+      'retired, not left as a draft', (tester) async {
+    final drafts = _RecordingDrafts();
+    final gateway = await _pump(tester, drafts: drafts)
+      ..failAfterPublish = true;
+    await tester.enterText(_field, 'stored anyway');
+    await _tapSend(tester);
+    final id = gateway.sends.single.clientEventId;
+    await tester.pump(_rpc * 3);
+    await tester.pumpAndSettle();
+    // The next refresh sees the durable event in the log.
+    gateway.failAfterPublish = false;
+    // Not awaited: the fake read only completes when the clock is pumped.
+    unawaited(tester.state<RoomScreenState>(find.byType(RoomScreen)).refresh());
+    await tester.pump(_rpc * 2);
+    await tester.pumpAndSettle();
+
+    expect(find.text('stored anyway'), findsOneWidget);
+    expect(_keyPrefix('room-pending-'), findsNothing);
+    expect(drafts.calls.last, 'clear:$id');
+    expect(_composerText(tester), isEmpty);
+  });
+
+  testWidgets('reopening never restores the draft of a message already in '
+      'the room', (tester) async {
+    const id = 'prepared-already-sent';
+    final drafts = _RecordingDrafts(
+      storedText: 'already sent',
+      storedPreparedId: id,
+    );
+    await _pump(tester, drafts: drafts, publishedAttempt: id);
+    await tester.pumpAndSettle();
+    expect(_composerText(tester), isEmpty);
+    expect(drafts.calls, contains('clear:$id'));
+  });
+
+  testWidgets('reopening still restores a draft whose send never landed', (
+    tester,
+  ) async {
+    final drafts = _RecordingDrafts(
+      storedText: 'not sent yet',
+      storedPreparedId: 'prepared-lost',
+    );
+    await _pump(tester, drafts: drafts);
+    await tester.pumpAndSettle();
+    expect(_composerText(tester), 'not sent yet');
+    expect(drafts.calls.where((c) => c.startsWith('clear:')), isEmpty);
   });
 }

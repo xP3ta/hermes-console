@@ -30,7 +30,9 @@ import 'room_widgets.dart';
 /// Composer draft persistence for one room (Mission Control adapts the
 /// encrypted `ChatDraftStore`).
 abstract interface class RoomDraftStore {
-  Future<({String text, String? threadId})> load();
+  /// [preparedId] is set while the stored text is a send still waiting for
+  /// the server's acknowledgement.
+  Future<({String text, String? threadId, String? preparedId})> load();
   Future<void> save(String text, {String? threadId, String? preparedId});
   Future<void> clear({required String preparedId});
 }
@@ -270,6 +272,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       // no frame on a quiet poll.
       setState(() {});
     }
+    if (added.isNotEmpty || reset) _retirePublishedOutbox();
     if (result.room.disbanded && mounted) Navigator.of(context).maybePop();
     return (
       delta: RoomLogDelta(added: added, log: log, reset: reset),
@@ -313,6 +316,21 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     try {
       final draft = await store.load();
       if (!mounted || _draftDirty) return;
+      // The text of a send that already landed in the room is not a draft:
+      // its acknowledgement was lost (app closed, readback failed), so it
+      // is retired here instead of coming back into the composer.
+      final prepared = draft.preparedId;
+      if (prepared != null &&
+          _isPublished(
+            HostedGroupSendAttempt.forClientEvent(prepared).durableEventId,
+          )) {
+        unawaited(
+          store
+              .clear(preparedId: prepared)
+              .then<void>((_) {}, onError: (Object _) {}),
+        );
+        return;
+      }
       _restoringDraft = true;
       _threadId = draft.threadId;
       _composer.text = draft.text;
@@ -371,6 +389,38 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       if (result.driverStatus != null) _driver = result.driverStatus;
       _error = null;
     });
+    if (result.log != null) _retirePublishedOutbox();
+  }
+
+  bool _isPublished(String durableEventId) =>
+      _events.any((e) => e.eventId == durableEventId);
+
+  /// A send whose acknowledgement failed but whose event is in the log did
+  /// land: drop its local bubble and retire its stored draft, exactly once.
+  void _retirePublishedOutbox() {
+    if (_outbox.isEmpty) return;
+    final published = {for (final e in _events) e.eventId};
+    final landed = [
+      for (final m in _outbox)
+        if (published.contains(m.attempt.durableEventId)) m,
+    ];
+    if (landed.isEmpty) return;
+    for (final m in landed) {
+      _outbox.remove(m);
+      unawaited(
+        widget.drafts
+                ?.clear(preparedId: m.attempt.clientEventId)
+                .then<void>((_) {}, onError: (Object _) {}) ??
+            Future<void>.value(),
+      );
+    }
+    // Messages held back only behind a send that did land may go now.
+    for (final m in _outbox) {
+      m.failed = false;
+    }
+    _outboxVersion++;
+    if (mounted) setState(() {});
+    if (_outbox.isNotEmpty) unawaited(_drain());
   }
 
   Future<void> _stop() async {

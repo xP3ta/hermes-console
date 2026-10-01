@@ -124,9 +124,13 @@ final class ChatDraftRoomStore implements RoomDraftStore {
   });
 
   @override
-  Future<({String text, String? threadId})> load() async {
+  Future<({String text, String? threadId, String? preparedId})> load() async {
     final draft = await store.load(connectionId, sessionId, profile: profile);
-    return (text: draft.text, threadId: draft.replyThreadId);
+    return (
+      text: draft.text,
+      threadId: draft.replyThreadId,
+      preparedId: draft.preparedTurnClientTurnId,
+    );
   }
 
   @override
