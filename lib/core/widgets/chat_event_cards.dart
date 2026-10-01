@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -50,13 +51,29 @@ class ChatEventInfo {
   /// `name` viene. Vacío cuando el servidor no las nombra.
   final List<({String label, bool skill, String? detail})> tools;
 
+  /// mp1215: the `memory` writes this message describes — from a call's
+  /// args, or (for a result) only whether it landed and where.
+  final List<MemoryWrite> memory;
+
   const ChatEventInfo._({
     required this.kind,
     required this.text,
     this.status,
     this.approvalPending = false,
     this.tools = const [],
+    this.memory = const [],
   });
+
+  static List<MemoryWrite> _callMemory(List calls) => [
+    for (final call in calls.take(64))
+      if (call is Map)
+        ?MemoryWrite.fromArgs(
+          ((call['function'] is Map ? call['function']['name'] : call['name'])
+                  ?.toString() ??
+              ''),
+          call['function'] is Map ? call['function']['arguments'] : null,
+        ),
+  ];
 
   static List<({String label, bool skill, String? detail})> _callTools(
     List calls,
@@ -146,6 +163,7 @@ class ChatEventInfo {
         text: '',
         status: 'llamada',
         tools: _callTools(toolCalls),
+        memory: List.unmodifiable(_callMemory(toolCalls)),
       );
     }
 
@@ -164,10 +182,14 @@ class ChatEventInfo {
         );
       }
       final resultName = (msg['tool_name'] ?? msg['name'])?.toString().trim();
+      final memoryResult = isMemoryTool(resultName ?? '')
+          ? MemoryWrite.settle(null, textContent)
+          : null;
       return ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
         text: '',
         status: 'completado',
+        memory: memoryResult == null ? const [] : [memoryResult],
         tools:
             resultName == null || resultName.isEmpty || resultName.length > 120
             ? const []
@@ -573,6 +595,31 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
       ),
     );
 
+    // mp1215: each memory result settles the oldest unmatched memory call
+    // (args give action/target/preview); only confirmed writes are marked.
+    final pendingMemoryCalls = <MemoryWrite>[];
+    final landedMemory = <MemoryWrite>[];
+    for (final e in events) {
+      if (e.status == 'llamada') {
+        pendingMemoryCalls.addAll(e.memory);
+        continue;
+      }
+      for (final result in e.memory) {
+        final call = pendingMemoryCalls.isEmpty
+            ? null
+            : pendingMemoryCalls.removeAt(0);
+        if (!result.landed) continue;
+        landedMemory.add(
+          MemoryWrite(
+            action: call?.action ?? result.action,
+            userTarget: result.userTarget || (call?.userTarget ?? false),
+            landed: true,
+            preview: call?.preview,
+          ),
+        );
+      }
+    }
+
     // Subtítulo colapsado: el resumen, o "actividad" sin nombres/al expandir.
     final s = Strings.of(context);
     final headLabel = s.cevActivity;
@@ -636,6 +683,10 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                 ],
               ),
             ),
+          ),
+          memorySavedMarkers(
+            landedMemory,
+            padding: const EdgeInsets.only(left: 2),
           ),
           AnimatedSize(
             duration: const Duration(milliseconds: 180),
@@ -1430,10 +1481,14 @@ final class ToolRunSummaryItem {
     required this.count,
     required this.skill,
     required this.running,
+    this.memory = false,
   });
 
   final String label;
   final int count;
+
+  /// mp1215: the agent's `memory` tool, shown as its own «🧠 memoria» chip.
+  final bool memory;
 
   /// Es una skill: o el gateway marcó el paso como `skill`, o es una carga
   /// `skill_view` cuyo argumento `name` la identifica.
@@ -1459,6 +1514,13 @@ List<ToolRunSummaryItem> summarizeToolRun(
     if (label.isEmpty || isInternalActivityLabel(label)) continue;
     String name = label;
     var skill = step.skill;
+    if (!skill && isMemoryTool(label)) {
+      final key = 'm:memory';
+      if (!counts.containsKey(key)) order.add(key);
+      counts[key] = (counts[key] ?? 0) + 1;
+      if (step.running) running.add(key);
+      continue;
+    }
     if (!skill && isSkillLoadTool(label)) {
       final detail = step.detail?.trim();
       if (detail != null && detail.isNotEmpty) {
@@ -1480,11 +1542,13 @@ List<ToolRunSummaryItem> summarizeToolRun(
         count: counts[key]!,
         skill: skills.contains(key),
         running: running.contains(key),
+        memory: key.startsWith('m:'),
       ),
   ];
   return [
     ...items.where((item) => item.skill),
-    ...items.where((item) => !item.skill),
+    ...items.where((item) => item.memory),
+    ...items.where((item) => !item.skill && !item.memory),
   ];
 }
 
@@ -1492,7 +1556,11 @@ List<ToolRunSummaryItem> summarizeToolRun(
 String toolRunSummarySemantics(Strings s, List<ToolRunSummaryItem> items) =>
     items
         .map((item) {
-          final name = item.skill ? s.tp1216SkillName(item.label) : item.label;
+          final name = item.memory
+              ? s.mp1215MemoryChip
+              : item.skill
+              ? s.tp1216SkillName(item.label)
+              : item.label;
           return item.count > 1 ? s.tp1216ToolCount(name, item.count) : name;
         })
         .join(', ');
@@ -1523,6 +1591,44 @@ class ToolRunSummaryLine extends StatelessWidget {
     for (var i = 0; i < shown.length; i++) {
       final item = shown[i];
       if (i > 0) spans.add(TextSpan(text: ' · ', style: muted));
+      if (item.memory) {
+        final palette = MemoryLegendaryPalette.of(context);
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                Icons.psychology_rounded,
+                key: const ValueKey('tool-run-memory-icon'),
+                size: fontSize + 1,
+                color: palette.icon,
+              ),
+            ),
+          ),
+        );
+        spans.add(
+          TextSpan(
+            text: s.mp1215MemoryChip,
+            style: TextStyle(
+              color: item.running ? colors.textPrimary : palette.meta,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
+        if (item.count > 1) {
+          spans.add(
+            TextSpan(
+              text: ' ×${item.count}',
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          );
+        }
+        continue;
+      }
       if (item.skill) {
         spans.add(
           WidgetSpan(
@@ -1580,6 +1686,207 @@ class ToolRunSummaryLine extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// mp1215 · Marca «Guardado en memoria»
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Hermes Desktop's «legendary» memory chrome (gold→purple), tuned per theme.
+final class MemoryLegendaryPalette {
+  const MemoryLegendaryPalette._({
+    required this.from,
+    required this.to,
+    required this.icon,
+    required this.meta,
+  });
+
+  final Color from;
+  final Color to;
+  final Color icon;
+  final Color meta;
+
+  static MemoryLegendaryPalette of(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return dark
+        ? const MemoryLegendaryPalette._(
+            from: Color(0xFFF2C766),
+            to: Color(0xFFB79CFF),
+            icon: Color(0xFFD9B27A),
+            meta: Color(0xFFC3AEEF),
+          )
+        : const MemoryLegendaryPalette._(
+            from: Color(0xFFA86F00),
+            to: Color(0xFF6E43D6),
+            icon: Color(0xFF8E5FB0),
+            meta: Color(0xFF6F4FB8),
+          );
+  }
+
+  Shader shader(Rect bounds) => LinearGradient(
+    begin: Alignment.centerLeft,
+    end: Alignment.centerRight,
+    colors: [from, Color.lerp(from, to, 0.5)!, to],
+  ).createShader(bounds);
+}
+
+/// Texto de la marca según lo que dice la propia llamada.
+String memoryWriteLabel(Strings s, MemoryWrite write) =>
+    switch ((write.action, write.userTarget)) {
+      (MemoryWriteAction.add, false) => s.mp1215SavedToMemory,
+      (MemoryWriteAction.add, true) => s.mp1215SavedToProfile,
+      (MemoryWriteAction.replace, false) => s.mp1215MemoryUpdated,
+      (MemoryWriteAction.replace, true) => s.mp1215ProfileUpdated,
+      (MemoryWriteAction.remove, false) => s.mp1215RemovedFromMemory,
+      (MemoryWriteAction.remove, true) => s.mp1215RemovedFromProfile,
+    };
+
+/// Marca compacta de una escritura de memoria que aterrizó: cerebro y título
+/// en dorado→violeta y, si la llamada lo trae, el texto guardado (dos líneas,
+/// desplegable). Estática: sin brillo animado, nada que respetar en
+/// «reducir movimiento».
+class MemorySavedMarker extends StatefulWidget {
+  const MemorySavedMarker({required this.write, super.key});
+
+  final MemoryWrite write;
+
+  @override
+  State<MemorySavedMarker> createState() => _MemorySavedMarkerState();
+}
+
+class _MemorySavedMarkerState extends State<MemorySavedMarker> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final palette = MemoryLegendaryPalette.of(context);
+    final label = memoryWriteLabel(s, widget.write);
+    final preview = widget.write.preview;
+    const previewStyle = TextStyle(fontSize: 12, height: 1.35);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        var overflows = false;
+        if (preview != null) {
+          final painter = TextPainter(
+            text: TextSpan(text: preview, style: previewStyle),
+            maxLines: 2,
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+          )..layout(maxWidth: math.max(0, constraints.maxWidth - 22));
+          overflows = painter.didExceedMaxLines;
+          painter.dispose();
+        }
+        final canToggle = overflows;
+        void toggle() => setState(() => _expanded = !_expanded);
+        return Semantics(
+          container: true,
+          button: canToggle,
+          expanded: canToggle ? _expanded : null,
+          label: preview == null ? label : '$label. $preview',
+          onTap: canToggle ? toggle : null,
+          excludeSemantics: true,
+          child: InkWell(
+            key: const ValueKey('memory-saved-marker'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: canToggle ? toggle : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Desktop's glyph-shaped glow (drop-shadow), not a
+                      // disk behind the icon.
+                      ShaderMask(
+                        blendMode: BlendMode.srcIn,
+                        shaderCallback: palette.shader,
+                        child: Icon(
+                          Icons.psychology_rounded,
+                          key: const ValueKey('memory-saved-icon'),
+                          size: 16,
+                          shadows: [
+                            Shadow(
+                              color: palette.to.withValues(alpha: 0.45),
+                              blurRadius: 5,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: ShaderMask(
+                          blendMode: BlendMode.srcIn,
+                          shaderCallback: palette.shader,
+                          child: Text(
+                            label,
+                            key: const ValueKey('memory-saved-label'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (preview != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 22, top: 2),
+                      child: Text(
+                        preview,
+                        key: const ValueKey('memory-saved-preview'),
+                        maxLines: _expanded ? null : 2,
+                        overflow: _expanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: previewStyle.copyWith(
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  if (canToggle)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 22, top: 2),
+                      child: Text(
+                        _expanded ? s.mp1215ShowLess : s.mp1215ShowMore,
+                        key: const ValueKey('memory-saved-toggle'),
+                        style: TextStyle(fontSize: 11, color: palette.meta),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Las marcas de memoria de una tanda, en su orden; nada si no hay ninguna.
+Widget memorySavedMarkers(
+  Iterable<MemoryWrite> writes, {
+  EdgeInsetsGeometry padding = EdgeInsets.zero,
+}) {
+  final list = writes.toList(growable: false);
+  if (list.isEmpty) return const SizedBox.shrink();
+  return Padding(
+    padding: padding,
+    child: Column(
+      key: const ValueKey('memory-saved-markers'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [for (final write in list) MemorySavedMarker(write: write)],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ThinkingTraceCard — UNA tarjeta por respuesta/run con el progreso agregado
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1606,6 +1913,10 @@ class ChatTraceEvent {
   final DateTime? startedAt;
   final Duration? duration;
 
+  /// mp1215: the write a `memory` call describes, as projected from the
+  /// gateway's own args/result. Only [MemoryWrite.landed] earns a marker.
+  final MemoryWrite? memory;
+
   ChatTraceEvent({
     required this.id,
     required this.label,
@@ -1616,9 +1927,14 @@ class ChatTraceEvent {
     this.detail,
     this.startedAt,
     this.duration,
+    this.memory,
   });
 
   bool get isDone => status == 'completed' || status == 'finished';
+
+  /// A `memory` write the gateway confirmed: settled, not failed, landed.
+  bool get memoryLanded =>
+      isDone && !isFailed && memory?.landed == true && isMemoryTool(label);
   bool get isFailed => status == 'failed' || status == 'error';
 }
 
@@ -1935,6 +2251,11 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         ),
   );
 
+  /// mp1215: memory writes of this block that the gateway confirmed.
+  Iterable<MemoryWrite> get _landedMemory => _visibleEvents
+      .where((event) => event.memoryLanded)
+      .map((event) => event.memory!);
+
   String get _summary {
     final s = Strings.of(context);
     if (widget.active) {
@@ -2210,7 +2531,17 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             ),
           ),
           // Settled steps only; the running one is named by the activity pill.
-          tools.isEmpty ? const SizedBox.shrink() : toolsRow(),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (tools.isNotEmpty) toolsRow(),
+              memorySavedMarkers(
+                _landedMemory,
+                padding: const EdgeInsets.only(left: 50, top: 2),
+              ),
+            ],
+          ),
         );
       }
       final summary = Semantics(
@@ -2262,6 +2593,10 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
           ),
         ),
       );
+      final memory = memorySavedMarkers(
+        _landedMemory,
+        padding: const EdgeInsets.only(left: 50, top: 2),
+      );
       final body = hasEvents && _expanded
           ? _buildTraceDetails(colors, tasks, muted: true)
           : const SizedBox.shrink();
@@ -2276,23 +2611,24 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       return headerBuilder(
         context,
         summary,
-        tools.isEmpty || _expanded
-            ? animatedBody
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  toolsRow(
-                    onTap: hasEvents
-                        ? () {
-                            HapticFeedback.selectionClick();
-                            setState(() => _userExpanded = true);
-                          }
-                        : null,
-                  ),
-                  animatedBody,
-                ],
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (tools.isNotEmpty && !_expanded)
+              toolsRow(
+                onTap: hasEvents
+                    ? () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _userExpanded = true);
+                      }
+                    : null,
               ),
+            // mp1215: a landed memory write stays visible, folded or not.
+            memory,
+            animatedBody,
+          ],
+        ),
       );
     }
 
@@ -2408,6 +2744,10 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                     ],
                   ),
                 ),
+              ),
+              memorySavedMarkers(
+                _landedMemory,
+                padding: const EdgeInsets.only(left: 25),
               ),
               if (hasEvents)
                 if (reduceMotion)

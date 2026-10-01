@@ -17631,6 +17631,7 @@ List<ChatTraceEvent> _assistantActivityEvents(
         detail: measured?.detail,
         startedAt: measured?.startedAt,
         duration: measured?.duration,
+        memory: MemoryWrite.fromStep(step[memoryWriteStepKey]),
       ),
     );
   }

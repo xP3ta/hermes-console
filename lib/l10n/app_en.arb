@@ -7592,5 +7592,14 @@
   "vw1215Preview": "Preview",
   "vw1215ViewSource": "View source",
   "vw1215ViewRendered": "View document",
-  "vw1215LinkOpenFailed": "The link couldn't be opened."
+  "vw1215LinkOpenFailed": "The link couldn't be opened.",
+"mp1215SavedToMemory": "Saved to memory",
+  "mp1215SavedToProfile": "Saved to your profile",
+  "mp1215MemoryUpdated": "Memory updated",
+  "mp1215ProfileUpdated": "Profile updated",
+  "mp1215RemovedFromMemory": "Removed from memory",
+  "mp1215RemovedFromProfile": "Removed from your profile",
+  "mp1215MemoryChip": "memory",
+  "mp1215ShowMore": "Show more",
+  "mp1215ShowLess": "Show less"
 }

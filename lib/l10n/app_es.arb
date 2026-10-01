@@ -9160,5 +9160,14 @@
   "vw1215Preview": "Vista previa",
   "vw1215ViewSource": "Ver código fuente",
   "vw1215ViewRendered": "Ver documento",
-  "vw1215LinkOpenFailed": "No se ha podido abrir el enlace."
+  "vw1215LinkOpenFailed": "No se ha podido abrir el enlace.",
+"mp1215SavedToMemory": "Guardado en memoria",
+  "mp1215SavedToProfile": "Guardado en tu perfil",
+  "mp1215MemoryUpdated": "Memoria actualizada",
+  "mp1215ProfileUpdated": "Perfil actualizado",
+  "mp1215RemovedFromMemory": "Quitado de memoria",
+  "mp1215RemovedFromProfile": "Quitado de tu perfil",
+  "mp1215MemoryChip": "memoria",
+  "mp1215ShowMore": "Ver más",
+  "mp1215ShowLess": "Ver menos"
 }
