@@ -5376,7 +5376,13 @@ void main() {
     expect(await chat.reconcileAfterResume(), isFalse);
     await tester.pump();
 
-    expect(requests, hasLength(2));
+    // Opening page, the one-row tail probe (unpaginated answer retires the
+    // probe) and the full read that retires the cursor.
+    expect(requests.map((uri) => uri.queryParameters['limit']), [
+      '120',
+      '1',
+      '120',
+    ]);
     expect(chat.hasEarlierMessages, isFalse);
     // Sin más historial real que cargar, la flecha desaparece del todo: ya
     // no queda un modo "ir arriba" genérico como atajo de scroll.

@@ -654,4 +654,45 @@ void main() {
       await _dispose(tester, fixture);
     },
   );
+
+  testWidgets(
+    'a resume after a dropped socket probes the tail instead of re-reading '
+    'an unchanged 500-row page, and still picks up a real change',
+    (tester) async {
+      // Field log: several sockets closed together and reopened; every
+      // resume re-downloaded the newest 500 rows of each open chat.
+      final server = _TranscriptServer();
+      final fixture = await _mount(tester, server, attachRuntime: true);
+      // Let the first backstop settle so the burst below is the only traffic.
+      await _idle(tester, const Duration(seconds: 2));
+      final heavyBefore = server.heavyReads;
+      final bytesBefore = server.bytes;
+
+      for (var resume = 0; resume < 3; resume++) {
+        expect(await fixture.chat.reconcileAfterResume(), isFalse);
+        await tester.pump();
+      }
+      // ignore: avoid_print
+      print(
+        '[#1215] 3 resumes unchanged: heavy='
+        '${server.heavyReads - heavyBefore} '
+        'bytes=${server.bytes - bytesBefore}',
+      );
+      expect(server.heavyReads - heavyBefore, 0);
+      expect(fixture.chat.messages, hasLength(500));
+
+      server.append('assistant', content: 'Written while the socket was down');
+      expect(await fixture.chat.reconcileAfterResume(), isTrue);
+      await tester.pump();
+      expect(server.heavyReads - heavyBefore, 1);
+      expect(
+        fixture.chat.messages.first['content'],
+        'Written while the socket was down',
+      );
+      // The read that published the change re-arms the probe.
+      expect(await fixture.chat.reconcileAfterResume(), isFalse);
+      expect(server.heavyReads - heavyBefore, 1);
+      await _dispose(tester, fixture);
+    },
+  );
 }

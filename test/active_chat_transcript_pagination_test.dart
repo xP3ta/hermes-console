@@ -1534,11 +1534,13 @@ void main() {
         changes.add(await chat.reconcileAfterResume());
       }
 
+      // An unchanged chat is confirmed with a one-row tail probe per resume;
+      // the 120-row opening page is not downloaded again.
       expect(server.requests, hasLength(5));
       expect(changes, everyElement(isFalse));
       expect(
         server.requests.map((uri) => uri.queryParameters['limit']),
-        everyElement('120'),
+        everyElement('1'),
       );
       expect(
         server.requests.map((uri) => uri.queryParameters['offset']),
@@ -1594,7 +1596,12 @@ void main() {
 
     expect(await chat.reconcileAfterResume(), isFalse);
     expect(chat.messages, hasLength(240));
-    expect(server.requests.single.queryParameters['limit'], '120');
+    // Scrolling back changed the local projection, so the tail probe cannot
+    // vouch for it and the normal opening-page read follows.
+    expect(server.requests.map((uri) => uri.queryParameters['limit']), [
+      '1',
+      '120',
+    ]);
     while (chat.hasEarlierMessages) {
       final addedRows = await chat.loadEarlierMessages();
       // An exact multiple ends with an empty cursor-closing page.
@@ -1678,7 +1685,9 @@ void main() {
       expect(chat.messages, hasLength(120));
       expect(chat.hasEarlierMessages, isFalse);
       expect(await chat.loadEarlierMessages(), isFalse);
-      expect(server.requests, hasLength(2));
+      // Opening page, the tail probe (answered without pagination, which
+      // retires the probe) and the full read.
+      expect(server.requests, hasLength(3));
     },
   );
 

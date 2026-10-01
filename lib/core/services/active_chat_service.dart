@@ -26545,11 +26545,28 @@ class ActiveChat {
         connection.kind != InstanceKind.localhost &&
         !replacesIncompleteProjection &&
         !endsInToolInvocationWithoutFinal) {
+      // A prehydrated chat may not have bound its default owner yet. Bind it
+      // before capturing authority, as loadMessages would do synchronously.
+      _bindSessionProfile(_storedSessionProfile);
+      // Every open chat reconciles after a resume or a reconnect, and several
+      // sockets often drop together. Read the newest durable row first: when
+      // it and the local projection still match the last published page, the
+      // 500-row page cannot add anything. Any doubt performs the full read.
+      // Only probe when a published tail exists to compare against and no
+      // viewer attach can be racing: the full read bumps the load epoch, and
+      // delaying that bump past the probe would land it inside an attach
+      // started on the same resume and void its captured authority.
+      ({String tail, bool unchanged})? probe;
+      if (_confirmedPassiveTail != null &&
+          (hasDesktopRuntime || !_attachDesktopRuntimeOnLoad)) {
+        invalidatePassiveRead();
+        probe = await probePassiveDurableTail();
+        if (_disposed || isStreaming) return false;
+        if (probe != null && probe.unchanged) return false;
+      }
       final previousMessages = List<Map<String, dynamic>>.of(_messages);
       final refreshEpoch = _messageLoadEpoch + 1;
       final storedId = serverSessionId;
-      // A prehydrated chat may not have bound its default owner yet. Bind it
-      // before capturing authority, as loadMessages would do synchronously.
       final profile = _bindSessionProfile(_storedSessionProfile);
       final turnEpoch = _turnEpoch;
       final bindEpoch = _desktopBindEpoch;
@@ -26576,6 +26593,7 @@ class ActiveChat {
           stillCurrentRead: stillCurrent,
         );
         if (!stillCurrent()) return false;
+        confirmPassiveDurableTail(probe?.tail);
         final changed = !_sameTranscriptProjection(previousMessages, _messages);
         // Coverage can change without changing bubbles (e.g. a final legacy
         // page retires the cursor). Publish that change as the old path did.
