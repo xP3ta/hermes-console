@@ -1,8 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/models/kanban.dart';
+import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/mission_control_repository.dart';
+import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
+import 'package:hermes_android/core/services/mission_snapshot_prewarm.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/instance_status_panel.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -74,7 +81,12 @@ void main() {
         .setMockMethodCallHandler(secureChannel, null);
   });
 
-  Future<void> pumpHome(WidgetTester tester, _Server server) async {
+  Future<void> pumpHome(
+    WidgetTester tester,
+    _Server server, {
+    MissionSnapshotPrewarm? prewarm,
+    bool botModeOpened = false,
+  }) async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
     );
@@ -87,6 +99,9 @@ void main() {
     );
     final connection = manager.getConnections().single;
     await manager.setActiveConnection(connection.id);
+    if (botModeOpened) {
+      await MissionSnapshotPrewarm.markOpened(manager.prefs, connection.id);
+    }
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -101,10 +116,17 @@ void main() {
             httpClient: server.client(),
           ),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
+          missionPrewarm: prewarm,
         ),
       ),
     );
-    for (var attempt = 0; attempt < 40; attempt++) {
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+
+  Future<void> settleHome(WidgetTester tester) async {
+    for (var attempt = 0; attempt < 30; attempt++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }
@@ -120,6 +142,7 @@ void main() {
   testWidgets('a Home status refresh reads /api/sessions once', (tester) async {
     final server = _Server();
     await pumpHome(tester, server);
+    await settleHome(tester);
     expect(find.text('agent online · QA'), findsOneWidget);
     expect(find.text('Hola'), findsWidgets);
     expect(server.count('/health'), 1);
@@ -132,6 +155,7 @@ void main() {
   ) async {
     final server = _Server(sessionsStatus: 401);
     await pumpHome(tester, server);
+    await settleHome(tester);
     expect(find.text('agent online · QA'), findsNothing);
     expect(server.count('/api/sessions'), 1);
     await unmount(tester);
@@ -142,8 +166,124 @@ void main() {
   ) async {
     final server = _Server(healthStatus: 503);
     await pumpHome(tester, server);
+    await settleHome(tester);
     expect(find.text('agent online · QA'), findsNothing);
     expect(server.count('/api/sessions'), 0);
     await unmount(tester);
   });
+
+  group('Bot Mode prewarm from Home', () {
+    ({MissionSnapshotPrewarm warm, List<_WarmSource> built}) prewarm({
+      Completer<void>? hold,
+    }) {
+      final built = <_WarmSource>[];
+      final warm = MissionSnapshotPrewarm(
+        cache: MissionSnapshotCache(),
+        sourceFactory: (_) {
+          final source = _WarmSource(hold: hold);
+          built.add(source);
+          return source;
+        },
+      );
+      return (warm: warm, built: built);
+    }
+
+    testWidgets('Bot Mode used before: one background read once Home idles', (
+      tester,
+    ) async {
+      final p = prewarm();
+      await pumpHome(tester, _Server(), prewarm: p.warm, botModeOpened: true);
+      expect(p.built, isEmpty, reason: 'not before Home is idle');
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+      expect(p.built, hasLength(1));
+      expect(p.built.single.loads, 1);
+      await tester.pump(const Duration(seconds: 10));
+      expect(p.built, hasLength(1), reason: 'never periodic');
+      await unmount(tester);
+    });
+
+    testWidgets('Bot Mode never used here: no prewarm, no extra network', (
+      tester,
+    ) async {
+      final p = prewarm();
+      final server = _Server();
+      await pumpHome(tester, server, prewarm: p.warm);
+      await tester.pump(const Duration(seconds: 5));
+      expect(p.built, isEmpty);
+      expect(server.count('/api/sessions'), 1);
+      await unmount(tester);
+    });
+
+    testWidgets('going to background before Home idles cancels it', (
+      tester,
+    ) async {
+      final p = prewarm();
+      await pumpHome(tester, _Server(), prewarm: p.warm, botModeOpened: true);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 5));
+      expect(p.built, isEmpty);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      // Back in front: Home refreshes and, once idle, warms exactly once.
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(p.built, hasLength(1));
+      await unmount(tester);
+    });
+
+    testWidgets('going to background mid-read tears the read down', (
+      tester,
+    ) async {
+      final hold = Completer<void>();
+      final p = prewarm(hold: hold);
+      await pumpHome(tester, _Server(), prewarm: p.warm, botModeOpened: true);
+      await tester.pump(const Duration(seconds: 2));
+      expect(p.built.single.loads, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      expect(p.built.single.closes, 1);
+      hold.complete();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await unmount(tester);
+    });
+
+    testWidgets('an offline instance is not prewarmed', (tester) async {
+      final p = prewarm();
+      await pumpHome(
+        tester,
+        _Server(healthStatus: 503),
+        prewarm: p.warm,
+        botModeOpened: true,
+      );
+      await tester.pump(const Duration(seconds: 5));
+      expect(p.built, isEmpty);
+      await unmount(tester);
+    });
+  });
+}
+
+final class _WarmSource implements MissionControlDataSource {
+  _WarmSource({this.hold});
+  final Completer<void>? hold;
+  var loads = 0;
+  var closes = 0;
+
+  @override
+  Future<MissionBackendSnapshot> load() async {
+    loads++;
+    await hold?.future;
+    return MissionBackendSnapshot(loadedAt: DateTime(2026));
+  }
+
+  @override
+  Stream<KanbanEvent>? watchKanban({required int since}) => null;
+  @override
+  void close() => closes++;
 }

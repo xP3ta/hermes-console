@@ -29,6 +29,7 @@ import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
+import '../services/mission_snapshot_prewarm.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/session_title.dart';
@@ -89,6 +90,9 @@ class HomeDashboardScreen extends StatefulWidget {
   /// Saved Dashboard login check (defaults to [checkSavedDashboardLogin]).
   final DashboardAuthProbe? dashboardAuthProbe;
 
+  /// Bot Mode background first read (defaults to the shared one).
+  final MissionSnapshotPrewarm? missionPrewarm;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -99,6 +103,7 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.activeSessionListLoader,
     @visibleForTesting this.eventStreamOverride,
     @visibleForTesting this.dashboardAuthProbe,
+    @visibleForTesting this.missionPrewarm,
     super.key,
   });
 
@@ -170,6 +175,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void dispose() {
     _flushHomeDraft();
+    _missionPrewarm.cancel();
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
@@ -264,7 +270,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   void _onActiveConnChanged() {
+    _missionPrewarm.cancel();
     if (mounted) _reload();
+  }
+
+  MissionSnapshotPrewarm get _missionPrewarm =>
+      widget.missionPrewarm ?? MissionSnapshotPrewarm.shared;
+
+  /// Once Home is healthy and idle, read Bot Mode in the background if the
+  /// user has used it on this connection, so its first entry is instant.
+  void _scheduleMissionPrewarm(SavedConnection conn) {
+    _missionPrewarm.schedule(
+      prefs: widget.connManager.prefs,
+      connection: conn,
+      stillIdle: () =>
+          _activityRefreshAllowed && _healthOk && _active?.id == conn.id,
+    );
   }
 
   void _onActivityChanged() {
@@ -495,6 +516,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _flushHomeDraft();
     }
     if (!_foreground) {
+      _missionPrewarm.cancel();
       _activityEventRefreshTimer?.cancel();
       _activityEventRefreshTimer = null;
       _activityReconnectTimer?.cancel();
@@ -1087,6 +1109,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _archive = archive;
       _recentSessions = recentSessions;
     });
+    if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     unawaited(
