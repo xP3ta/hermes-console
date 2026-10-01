@@ -5420,7 +5420,7 @@ class _ChatScreenState extends State<ChatScreen>
           ? (_turnActivityStartedAt ?? _chat.desktopTurnStartedAt)
           : null,
       headline: turnActive ? _traceHeadline() : null,
-      waitingForUser: turnActive && _turnWaitsForUser,
+      waitingForUser: turnActive && (_turnWaitsForUser || _chat.needsInput),
       noActivityHint: turnActive && _chat.noActivityHint,
       current: steps.current,
       done: steps.done,
@@ -10636,9 +10636,12 @@ class _ChatScreenState extends State<ChatScreen>
   /// Cabecera de la ThinkingTraceCard mientras aún no hay herramientas.
   String _traceHeadline() {
     final s = Strings.of(context);
+    // ss1215: the headline only speaks when no step is running (a running
+    // tool names itself). «Ejecutando herramientas…» with none listed read
+    // as a pill out of sync with its own panel; between steps the agent is
+    // thinking, as the list and Home say.
     final activityHeadline = switch (_pipelineState) {
       ChatPipelineState.connecting => s.chaPipelineConnecting,
-      ChatPipelineState.executing => s.chaPipelineExecuting,
       ChatPipelineState.streaming => s.chaPipelineStreaming,
       _ => s.chaPipelineThinking,
     };

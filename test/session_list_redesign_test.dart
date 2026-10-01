@@ -695,7 +695,7 @@ void main() {
         find.byKey(const ValueKey('session-running-compacting-1')),
         findsOneWidget,
       );
-      expect(find.text(strings.slActivityCompacting), findsOneWidget);
+      expect(find.text(strings.liveCompacting), findsOneWidget);
       // The status line has its own semantic colour, smaller and lighter
       // than the title (it used to be the same white as the title).
       final colors = Theme.of(
@@ -1088,7 +1088,9 @@ void main() {
 
       expect(find.text(strings.slActivityBackground), findsNothing);
       expect(find.text(strings.chaBackgroundActivityCount(1)), findsNothing);
-      expect(find.text(strings.chaPipelineThinking), findsOneWidget);
+      // The roster still proves the turn busy: Home says so with the shared
+      // wording, never «trabajo en segundo plano».
+      expect(find.text(strings.ss1215StatusWorking), findsOneWidget);
       expect(
         find.byKey(const ValueKey('home-activity-background-1')),
         findsOneWidget,
@@ -1285,7 +1287,7 @@ void main() {
       await tester.pumpAndSettle();
       // La actividad ocupa la línea de vista previa (estructura del mockup) y
       // se anuncia como un único nodo accesible.
-      expect(find.bySemanticsLabel('trabajando'), findsOneWidget);
+      expect(find.bySemanticsLabel('Trabajando…'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('session-row-stop')),
         findsOneWidget,

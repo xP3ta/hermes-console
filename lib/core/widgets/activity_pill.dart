@@ -155,6 +155,15 @@ ActivityPillModel? buildActivityPillModel(
           ? ActivityGlyph.connecting
           : ActivityGlyph.thinking;
       action = snapshot.headline ?? strings.chaPipelineThinking;
+      // ss1215: with no tool running, the task in progress is what the turn
+      // is about; the pill names it next to its «n/m» chip.
+      final task = snapshot.showTasks ? snapshot.tasks!.current : null;
+      final content = task?.content.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (content != null && content.isNotEmpty) {
+        detail = content.length <= 48
+            ? content
+            : '${content.substring(0, 47).trimRight()}…';
+      }
     }
   } else if (snapshot.showTasks && snapshot.tasks!.isFinished) {
     primary = 'tasks';

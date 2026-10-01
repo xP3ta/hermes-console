@@ -25,7 +25,13 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../widgets/chat_event_cards.dart';
 import '../models/activity_snapshot.dart'
-    show MemoryWrite, activityToolDetail, isMemoryTool, memoryWriteStepKey;
+    show
+        MemoryWrite,
+        isInternalActivityLabel,
+        activityToolDetail,
+        isMemoryTool,
+        memoryWriteStepKey;
+import '../models/session_live_status.dart';
 import '../models/agent_task_list.dart';
 import '../models/attachment_draft.dart';
 import '../models/compaction_progress.dart' show parseCompactionChunks;
@@ -6344,6 +6350,82 @@ class ActiveChat {
     );
   }
 
+  // ss1215 · one derived live status per session ---------------------------
+
+  Object? _liveStepsSource;
+  ({String? label, String? detail}) _liveSteps = (label: null, detail: null);
+
+  /// Running tool (label/detail) of the live turn, read from the same
+  /// activity trace the pill paints (the newest running step that is not
+  /// reasoning, the task tool or a bridge tool). Memoized by trace identity;
+  /// a backwards scan, so a reasoning delta costs a few comparisons.
+  ({String? label, String? detail}) _liveTraceSteps() {
+    Map<String, dynamic>? live;
+    for (final message in _messages) {
+      if (message['role'] != 'assistant') continue;
+      if ((message['display_kind']?.toString().trim().isNotEmpty ?? false)) {
+        continue;
+      }
+      if (message['_pipeline'] == true) live = message;
+      break;
+    }
+    final source = live?[assistantActivityTraceKey];
+    if (source is! List) {
+      _liveStepsSource = null;
+      return (label: null, detail: null);
+    }
+    if (identical(source, _liveStepsSource)) return _liveSteps;
+    _liveStepsSource = source;
+    _liveSteps = (label: null, detail: null);
+    for (var i = source.length - 1; i >= 0; i--) {
+      final step = source[i];
+      if (step is! Map) continue;
+      final kind = step['kind'];
+      if (kind != 'tool' && kind != 'skill') continue;
+      if (step['status'] != 'running') continue;
+      final label = step['label']?.toString().trim() ?? '';
+      final normalized = label.toLowerCase();
+      if (label.isEmpty ||
+          normalized == 'todo_list' ||
+          normalized == 'todo' ||
+          isInternalActivityLabel(label)) {
+        continue;
+      }
+      final detail = step['detail']?.toString().trim();
+      _liveSteps = (
+        label: label,
+        detail: detail == null || detail.isEmpty ? null : detail,
+      );
+      break;
+    }
+    return _liveSteps;
+  }
+
+  DateTime? _lastTerminalAt;
+
+  /// When this chat last saw its own turn end (done/error/cancel). Newer
+  /// than a roster row, it wins over that row in [resolveSessionLiveStatus].
+  DateTime? get lastTerminalAt => _lastTerminalAt;
+
+  /// ss1215: what this session is doing now, in the vocabulary shared by the
+  /// chat pill, the Conversaciones row and the Inicio card.
+  SessionLiveStatus get liveStatus {
+    final activity = sessionActivity;
+    final steps = isStreaming
+        ? _liveTraceSteps()
+        : (label: null, detail: null);
+    // A live turn with no running tool reads as thinking (between steps,
+    // after a resume, while reasoning): never «running tools» with none
+    // listed. [sessionLiveStatusFromActivity] applies that precedence.
+    return sessionLiveStatusFromActivity(
+      activity,
+      waitingForUser: needsInput,
+      toolLabel: steps.label,
+      toolDetail: steps.detail,
+      tasks: _agentTasks,
+    );
+  }
+
   bool _backgroundProcessRequestStillCurrent({
     required Object gateway,
     required String connectionId,
@@ -8686,6 +8768,11 @@ class ActiveChat {
       ActiveChatEvent.cancelled,
     }.contains(e)) {
       _transcriptRevision += 1;
+    }
+    if (e == ActiveChatEvent.done ||
+        e == ActiveChatEvent.error ||
+        e == ActiveChatEvent.cancelled) {
+      _lastTerminalAt = DateTime.now().toUtc();
     }
     switch (e) {
       case ActiveChatEvent.started:
@@ -27546,6 +27633,12 @@ class ActiveChatService {
   final GlobalActivityAggregate globalActivity;
 
   final Map<String, ActiveChat> _chats = {};
+
+  /// ss1215: bumped whenever any attached chat's [ActiveChat.liveStatus]
+  /// changes, in the same event that changed it. Conversaciones and Inicio
+  /// listen to it so their rows never wait for the next roster poll.
+  final ValueNotifier<int> liveStatusRevision = ValueNotifier<int>(0);
+  final Map<String, SessionLiveStatus> _publishedLiveStatus = {};
   final Map<String, List<SteerProjection>> _steerProjectionCache = {};
   final LinkedHashMap<String, _ReopenTranscript> _reopenTranscriptCache =
       LinkedHashMap<String, _ReopenTranscript>();
@@ -28545,6 +28638,7 @@ class ActiveChatService {
       onEvent: (event) {
         _onHomeWidgetChatEvent(chat, event);
         _refreshActiveIds(force: event == ActiveChatEvent.subagentActivity);
+        _publishLiveStatus(key, chat);
         if (event == ActiveChatEvent.subagentActivity) {
           _onChatUnused(key);
         }
@@ -28589,6 +28683,7 @@ class ActiveChatService {
       chat.seedReopenTranscript(cachedTranscript.newestFirst);
     }
     _chats[key] = chat;
+    _publishLiveStatus(key, chat);
     final seed =
         sessionSnapshot ??
         Session(
@@ -28921,6 +29016,25 @@ class ActiveChatService {
     }
     chat?.dispose();
     _refreshActiveIds();
+    if (_publishedLiveStatus.remove(key) != null && !_disposed) {
+      liveStatusRevision.value += 1;
+    }
+  }
+
+  /// ss1215: the derived status of an attached chat, or null when this
+  /// session has no chat in the registry.
+  SessionLiveStatus? liveStatusOf(
+    String connectionId,
+    String sessionId, {
+    String? profile,
+  }) => of(connectionId, sessionId, profile: profile)?.liveStatus;
+
+  void _publishLiveStatus(String key, ActiveChat chat) {
+    if (_disposed || !identical(_chats[key], chat)) return;
+    final status = chat.liveStatus;
+    if (_publishedLiveStatus[key] == status) return;
+    _publishedLiveStatus[key] = status;
+    liveStatusRevision.value += 1;
   }
 
   void _refreshActiveIds({bool force = false}) {
@@ -28957,6 +29071,7 @@ class ActiveChatService {
     _observedFirstTokenLatencyCache.clear();
     globalActivity.dispose();
     activeIds.dispose();
+    liveStatusRevision.dispose();
   }
 }
 

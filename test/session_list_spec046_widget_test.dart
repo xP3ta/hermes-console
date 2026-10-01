@@ -1298,7 +1298,7 @@ void main() {
     final label = tester.widget<Text>(
       find.byKey(const ValueKey('session-running-session-0')),
     );
-    expect(label.data, 'background work', reason: 'never "working"');
+    expect(label.data, 'Background · 1', reason: 'never "working"');
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 61));
   });
@@ -1398,7 +1398,7 @@ void main() {
     final label = tester.widget<Text>(
       find.byKey(const ValueKey('session-running-session-0')),
     );
-    expect(label.data, startsWith('working'));
+    expect(label.data, startsWith('Working…'));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 61));
   });

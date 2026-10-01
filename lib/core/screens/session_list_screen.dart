@@ -9,7 +9,7 @@ import '../../main.dart';
 import '../models/session_category.dart';
 import '../models/desktop_active_session.dart';
 import '../models/desktop_control_center.dart';
-import '../models/session_activity.dart';
+import '../models/session_live_status.dart';
 import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
@@ -223,6 +223,10 @@ class _SessionListScreenState extends State<SessionListScreen>
   PageRoute<dynamic>? _route;
   final OnstageGate _activeIdsGate = OnstageGate();
 
+  /// ss1215: repaints the rows in the same frame an attached chat's live
+  /// status changes (tool, waiting, done), held while a chat covers the list.
+  final OnstageGate _liveStatusGate = OnstageGate();
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -235,6 +239,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     // chat covers this list, hold those notifications and deliver one on
     // return instead of rebuilding the hidden ListView each time.
     _activeIdsGate.bind(context, _activeChats?.activeIds);
+    _liveStatusGate.bind(context, _activeChats?.liveStatusRevision);
     final route = ModalRoute.of(context);
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
@@ -461,6 +466,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _ownedActivityClient = null;
     _client.close();
     _activeIdsGate.dispose();
+    _liveStatusGate.dispose();
     super.dispose();
   }
 
@@ -871,6 +877,31 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   bool _isLocalActive(Session session) =>
       _localChatForSession(session)?.sessionActivity.active == true;
+
+  /// ss1215: the one status this row shows — the attached chat's own state
+  /// when it has proof, the roster otherwise (see
+  /// [resolveSessionLiveStatus]); the same value the chat pill and Inicio
+  /// read.
+  SessionLiveStatus _liveStatusFor(Session session) {
+    final chat = _localChatForSession(session);
+    final profile = Session.profileOwner(session.profile);
+    final aggregate = _globalActivity;
+    final globalActive =
+        aggregate != null &&
+        (aggregate.isActive(widget.connection.id, profile, session.id) ||
+            aggregate.isActive(
+              widget.connection.id,
+              profile,
+              session.logicalId,
+            ));
+    return resolveSessionLiveStatus(
+      chat: chat?.liveStatus,
+      chatAuthoritative:
+          chat != null && (chat.hasDesktopRuntime || chat.lastTerminalAt != null),
+      chatSettledAt: chat?.lastTerminalAt,
+      global: globalActive ? _globalForSession(session) : null,
+    );
+  }
 
   GlobalActivity? _globalForSession(Session session) {
     final aggregate = _globalActivity;
@@ -1977,6 +2008,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 : ListenableBuilder(
                     listenable: Listenable.merge([
                       _activeIdsGate,
+                      _liveStatusGate,
                       ?_globalActivity,
                       // La reserva inferior depende de si el dock está
                       // activado (interruptor global de Ajustes).
@@ -2041,21 +2073,12 @@ class _SessionListScreenState extends State<SessionListScreen>
   Widget _sessionRow(Session session, Strings s, HermesThemeColors colors) {
     final archived = _isArchived(session);
     final pinned = _isPinned(session);
-    final localActivity = _localChatForSession(session)?.sessionActivity;
-    final globalActive =
-        (_globalActivity?.isActive(
-              widget.connection.id,
-              Session.profileOwner(session.profile),
-              session.id,
-            ) ??
-            false) ||
-        (_globalActivity?.isActive(
-              widget.connection.id,
-              Session.profileOwner(session.profile),
-              session.logicalId,
-            ) ??
-            false);
-    final streamActive = localActivity?.active == true || globalActive;
+    final status = _liveStatusFor(session);
+    // Una compactación enciende la fila (punto + «Compactando») pero no
+    // ofrece «Detener»: no es un turno que se pueda parar.
+    final streamActive = status.isLive;
+    final stoppable =
+        streamActive && status.phase != SessionLivePhase.compacting;
     return Dismissible(
       key: ValueKey('${session.id}-$archived'),
       direction: DismissDirection.horizontal,
@@ -2083,12 +2106,9 @@ class _SessionListScreenState extends State<SessionListScreen>
         title: _titleFor(session),
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
-        activity: globalActive ? _globalForSession(session) : null,
-        localActivity: localActivity,
-        // Una compactación enciende la fila (punto + "Compactando") pero no
-        // ofrece "Detener": no es un turno que se pueda parar.
-        streamActive: streamActive || localActivity?.compacting == true,
-        onStop: streamActive ? () => _stopSession(session) : null,
+        status: status,
+        streamActive: streamActive,
+        onStop: stoppable ? () => _stopSession(session) : null,
         onTap: () => _openChat(session),
         onLongPress: () => _showSessionContextMenu(session),
       ),
@@ -2710,8 +2730,9 @@ class _SessionTile extends StatelessWidget {
   /// Hay un stream del chat en curso en segundo plano para esta sesión: la
   /// respuesta/ejecución sigue aunque saliste. Cuenta como "viva".
   final bool streamActive;
-  final GlobalActivity? activity;
-  final SessionActivity? localActivity;
+
+  /// ss1215: the session's single derived status (chat, list and Home).
+  final SessionLiveStatus status;
   final Future<void> Function()? onStop;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -2722,25 +2743,19 @@ class _SessionTile extends StatelessWidget {
     required this.formattedTime,
     this.pinned = false,
     this.streamActive = false,
-    this.activity,
-    this.localActivity,
+    this.status = SessionLiveStatus.idle,
     this.onStop,
     required this.onTap,
     required this.onLongPress,
   });
 
   /// Semantic state of the live row: the dot and the status line share its
-  /// colour (green working, calm tint compacting, amber waiting, error
-  /// failed, muted stale/idle), so the status never reads like the title.
-  SessionStatusTone get _statusTone {
-    final local = localActivity;
-    if (local != null && local.showsActivity) {
-      return sessionStatusToneFor(local.kind, stale: local.stale);
-    }
-    final global = activity;
-    if (global != null) return globalStatusToneFor(global);
-    return SessionStatusTone.working;
-  }
+  /// colour (green working, calm tint compacting, amber waiting, muted
+  /// stale/idle), so the status never reads like the title.
+  SessionStatusTone get _statusTone => sessionStatusToneFor(
+    sessionLiveStatusKind(status),
+    stale: status.stale,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -2748,10 +2763,8 @@ class _SessionTile extends StatelessWidget {
     final strings = Strings.of(context);
     final preview =
         sessionListPreview(session) ?? strings.sessionPreviewUnavailable;
-    final activityLabel = localActivity?.showsActivity == true
-        ? _sessionActivityLabel(strings, localActivity!)
-        : activity != null
-        ? _globalActivityLabel(strings, activity!)
+    final activityLabel = status.isLive
+        ? sessionLiveStatusLabel(strings, status)
         : strings.slRunningBadge;
     // El borrador se cuenta como texto descriptivo hilado en la línea de
     // vista previa ("Borrador · Resume los cambios…"), no como una píldora
@@ -2803,7 +2816,8 @@ class _SessionTile extends StatelessWidget {
                         // Punto de "te necesita": la señal de atención del
                         // mockup, sin robarle sitio al título.
                         if (!streamActive &&
-                            activity?.requiresAction == true) ...[
+                            status.phase ==
+                                SessionLivePhase.waitingForUser) ...[
                           const SizedBox(width: 7),
                           Container(
                             key: ValueKey('session-attention-${session.id}'),
@@ -2914,43 +2928,6 @@ String _sentenceCase(String value) =>
     value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
 
 /// Separador "·" del pie del tile (modelo · tiempo).
-
-String _sessionActivityLabel(Strings strings, SessionActivity activity) =>
-    switch (activity.kind) {
-      SessionActivityKind.preparing => strings.slActivityPreparing,
-      SessionActivityKind.generating => strings.slActivityGenerating,
-      SessionActivityKind.usingTools => strings.slActivityUsingTools,
-      SessionActivityKind.responding => strings.chaPipelineStreaming,
-      SessionActivityKind.waitingForUser => strings.slActivityWaiting,
-      SessionActivityKind.compacting => strings.slActivityCompacting,
-      SessionActivityKind.delegated => strings.slActivityDelegated,
-      SessionActivityKind.backgroundProcess =>
-        activity.backgroundItemCount > 0
-            ? strings.chaBackgroundActivityCount(activity.backgroundItemCount)
-            : strings.slActivityBackground,
-      SessionActivityKind.idle => strings.slActivityUnknown,
-    };
-
-String _globalActivityLabel(Strings strings, GlobalActivity activity) {
-  final phase = switch (activity.phase) {
-    GlobalActivityPhase.preparing => strings.slActivityPreparing,
-    GlobalActivityPhase.generating => strings.slActivityGenerating,
-    GlobalActivityPhase.usingTools => strings.slActivityUsingTools,
-    GlobalActivityPhase.delegated => strings.slActivityDelegated,
-    GlobalActivityPhase.backgroundWork => strings.slActivityBackground,
-    GlobalActivityPhase.compacting => strings.slActivityCompacting,
-    GlobalActivityPhase.waitingForUser => strings.slActivityWaiting,
-    GlobalActivityPhase.completing => strings.slActivityCompleting,
-    // Sin detalle probado nunca se afirma «trabajando»: solo el último estado
-    // conocido. Las fases terminales no llegan aquí (la fila no es activa).
-    GlobalActivityPhase.completed ||
-    GlobalActivityPhase.interrupted ||
-    GlobalActivityPhase.failed ||
-    GlobalActivityPhase.unknown => null,
-  };
-  if (phase == null) return strings.slActivityStale;
-  return activity.stale ? '$phase · ${strings.slActivityStale}' : phase;
-}
 
 /// Tiempo relativo localizado para los tiles ("2h ago", "ahora", "14/6").
 String _relativeTime(double ts, Strings s) => formatSessionRelativeTime(ts, s);
