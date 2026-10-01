@@ -24,7 +24,13 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 ///   `data:` media resources render) and, with scripts on, pins
 ///   `window.open` to a no-op.
 ///
-/// JavaScript is disabled by default; the user may enable it per document.
+/// Inline JavaScript runs by default, with the same trust model as Desktop's
+/// `<iframe sandbox="allow-scripts">` (no same-origin): the WebView exposes no
+/// JavaScript channel, has file/content access off, cannot fetch anything
+/// (CSP), cannot navigate, cannot open windows and cannot launch `intent:` or
+/// any other non-web scheme. A script can at most redraw its own document, so
+/// asking the user to opt in only added friction without adding protection.
+/// JavaScript is still disabled while the WebView is configured and for SVG.
 class ArtifactHtmlNavigationPolicy {
   ArtifactHtmlNavigationPolicy({
     Future<bool> Function(Uri uri)? launchExternal,

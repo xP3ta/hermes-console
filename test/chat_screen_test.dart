@@ -26482,7 +26482,9 @@ void main() {
       expect(find.byType(ArtifactViewerScreen), findsOneWidget);
       expect(webPlatform.controllers, isNotEmpty);
       final web = webPlatform.last;
-      expect(web.javaScriptMode, JavaScriptMode.disabled);
+      // Rendered directly (inline scripts on) inside the isolated WebView.
+      expect(web.javaScriptMode, JavaScriptMode.unrestricted);
+      expect(web.loadedHtml.single, contains("default-src 'none'"));
       expect(web.loadedHtml.single, contains('<h1>Informe</h1>'));
       expect(launcher.launches, isEmpty);
       // The page's scripted redirect is blocked and launches nothing.

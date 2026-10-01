@@ -56,9 +56,10 @@ Future<void> openArtifactViewer(
 
 /// In-app, full-screen viewer for artifacts delivered in the chat.
 ///
-/// HTML/SVG render in a locked-down system WebView (scripts off by default,
-/// no navigation, no file/network access, links tapped by the user open in
-/// the external browser). Markdown, code and plain text render natively;
+/// HTML/SVG render in a locked-down system WebView (inline scripts run, as in
+/// Desktop's sandboxed iframe, but there is no navigation, no network, file
+/// or bridge access, and links tapped by the user open in the default
+/// browser). Markdown, code and plain text render natively;
 /// images zoom/pan; PDF and unknown types show their metadata with
 /// "Abrir con…"/"Compartir".
 class ArtifactViewerScreen extends StatefulWidget {
@@ -151,7 +152,6 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
   late final Future<Uint8List> _bytes = widget.loadBytes();
   final GlobalKey<_TextArtifactViewState> _textKey = GlobalKey();
   bool _showSource = false;
-  bool _scriptsEnabled = false;
   String? _decoded;
 
   bool get _isTextual => switch (_kind) {
@@ -258,8 +258,6 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
       case ArtifactViewerKind.html:
         return _HtmlArtifactView(
           html: _decode(bytes),
-          scriptsEnabled: _scriptsEnabled,
-          onScriptsChanged: (value) => setState(() => _scriptsEnabled = value),
           launchExternalLink: widget.launchExternalLink,
           settingsFor: widget.webViewSettingsFor,
         );
@@ -267,7 +265,6 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         return _HtmlArtifactView(
           html: _decode(bytes),
           svg: true,
-          scriptsEnabled: false,
           launchExternalLink: widget.launchExternalLink,
           settingsFor: widget.webViewSettingsFor,
         );
@@ -359,17 +356,13 @@ class _TruncationBanner extends StatelessWidget {
 class _HtmlArtifactView extends StatefulWidget {
   const _HtmlArtifactView({
     required this.html,
-    required this.scriptsEnabled,
     required this.settingsFor,
     this.svg = false,
-    this.onScriptsChanged,
     this.launchExternalLink,
   });
 
   final String html;
   final bool svg;
-  final bool scriptsEnabled;
-  final ValueChanged<bool>? onScriptsChanged;
   final Future<bool> Function(Uri uri)? launchExternalLink;
   final ArtifactWebViewSettingsFactory settingsFor;
 
@@ -412,8 +405,11 @@ class _HtmlArtifactViewState extends State<_HtmlArtifactView> {
     await _load();
   }
 
+  /// Inline scripts always run for HTML (never for SVG, which is embedded as
+  /// an image). Isolation comes from [configureArtifactWebView] and the guard
+  /// document, not from asking the user: see [ArtifactHtmlNavigationPolicy].
   Future<void> _load() async {
-    final scripts = !widget.svg && widget.scriptsEnabled;
+    final scripts = !widget.svg;
     await _controller.setJavaScriptMode(
       scripts ? JavaScriptMode.unrestricted : JavaScriptMode.disabled,
     );
@@ -427,70 +423,20 @@ class _HtmlArtifactViewState extends State<_HtmlArtifactView> {
   @override
   void didUpdateWidget(covariant _HtmlArtifactView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.scriptsEnabled != widget.scriptsEnabled ||
-        oldWidget.html != widget.html) {
+    if (oldWidget.html != widget.html) {
       _pending = _pending.then((_) => _load());
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    final onScriptsChanged = widget.onScriptsChanged;
-    return Column(
-      children: [
-        if (!widget.svg && onScriptsChanged != null)
-          Container(
-            key: const ValueKey('artifact-viewer-scripts-bar'),
-            width: double.infinity,
-            color: colors.surfaceVariant,
-            padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-            child: Row(
-              children: [
-                Icon(
-                  widget.scriptsEnabled
-                      ? Icons.warning_amber_rounded
-                      : Icons.shield_outlined,
-                  size: 18,
-                  color: widget.scriptsEnabled
-                      ? colors.warning
-                      : colors.textSecondary,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    widget.scriptsEnabled
-                        ? strings.vw1215ScriptsOnNotice
-                        : strings.vw1215ScriptsOffNotice,
-                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                  ),
-                ),
-                TextButton(
-                  key: const ValueKey('artifact-viewer-scripts-toggle'),
-                  onPressed: () => onScriptsChanged(!widget.scriptsEnabled),
-                  child: Text(
-                    widget.scriptsEnabled
-                        ? strings.vw1215DisableScripts
-                        : strings.vw1215EnableScripts,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerUp: (_) => _policy.registerUserTap(),
-            child: WebViewWidget(
-              key: const ValueKey('artifact-viewer-webview'),
-              controller: _controller,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerUp: (_) => _policy.registerUserTap(),
+    child: WebViewWidget(
+      key: const ValueKey('artifact-viewer-webview'),
+      controller: _controller,
+    ),
+  );
 }
 
 // ── Markdown ──────────────────────────────────────────────────────────────

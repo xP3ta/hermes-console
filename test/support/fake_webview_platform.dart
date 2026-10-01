@@ -81,6 +81,14 @@ class FakeWebViewController extends PlatformWebViewController {
   @override
   Future<void> enableZoom(bool enabled) async => zoomEnabled = enabled;
 
+  /// Every JavaScript bridge the code under test tried to expose.
+  final List<String> javaScriptChannels = [];
+
+  @override
+  Future<void> addJavaScriptChannel(
+    JavaScriptChannelParams javaScriptChannelParams,
+  ) async => javaScriptChannels.add(javaScriptChannelParams.name);
+
   @override
   Future<void> setOnPlatformPermissionRequest(
     void Function(PlatformWebViewPermissionRequest request) onPermissionRequest,

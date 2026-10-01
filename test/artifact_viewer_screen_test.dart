@@ -98,9 +98,8 @@ void main() {
         'window.open("https://evil.example/popup");</script>'
         '<iframe src="file:///etc/passwd"></iframe></body></html>';
 
-    testWidgets('loads once with scripts off and a locked WebView', (
-      tester,
-    ) async {
+    testWidgets('renders directly with inline scripts in an isolated WebView, '
+        'no scripts banner', (tester) async {
       await tester.pumpWidget(
         host(viewer('page.html', 'text/html', text(malicious))),
       );
@@ -108,13 +107,34 @@ void main() {
 
       final web = webPlatform.last;
       expect(find.byKey(const ValueKey('artifact-viewer-webview')), findsOne);
-      expect(web.javaScriptMode, JavaScriptMode.disabled);
+      // Scripts run like Desktop's sandboxed iframe: no opt-in nag.
+      expect(web.javaScriptMode, JavaScriptMode.unrestricted);
       expect(web.loadedHtml, hasLength(1));
-      expect(web.loadedHtml.single, contains("script-src 'none'"));
+      final html = web.loadedHtml.single;
+      expect(html, contains("script-src 'unsafe-inline'"));
+      expect(html, contains("default-src 'none'"));
+      expect(html, contains("connect-src 'none'"));
+      expect(html, contains("frame-src 'none'"));
+      // window.open is pinned to a no-op before any guest script runs.
+      expect(
+        html.indexOf('Object.defineProperty(window,"open"'),
+        allOf(isNonNegative, lessThan(html.indexOf('location.href'))),
+      );
+      // Lock-down happens before the load and never exposes a bridge.
+      expect(web.javaScriptModes.first, JavaScriptMode.disabled);
+      expect(web.javaScriptChannels, isEmpty);
       expect(web.loadedFiles, isEmpty);
       expect(web.loadedRequests, isEmpty);
       expect(settings.fileAccessOff, 1);
-      expect(find.text('Activar scripts'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('artifact-viewer-scripts-bar')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('artifact-viewer-scripts-toggle')),
+        findsNothing,
+      );
+      expect(find.textContaining('cripts'), findsNothing);
     });
 
     testWidgets('scripted redirects, refresh and window.open launch nothing', (
@@ -190,7 +210,38 @@ void main() {
       expect(launcher.launches, isEmpty);
     });
 
-    testWidgets('scripts toggle reloads with JS and resets on reopen', (
+    testWidgets('scripted navigation to intent:, file: and http(s) is '
+        'blocked without a tap and launches nothing', (tester) async {
+      await tester.pumpWidget(
+        host(viewer('page.html', 'text/html', text(malicious))),
+      );
+      await settle(tester);
+      final web = webPlatform.last;
+      expect(web.javaScriptMode, JavaScriptMode.unrestricted);
+      for (final url in [
+        'intent://scan/#Intent;scheme=zxing;end',
+        'file:///data/data/com.hermesagent.hermes_android/shared_prefs/x.xml',
+        'content://com.android.contacts/contacts',
+        'javascript:alert(1)',
+        'https://evil.example/scripted',
+        'about:blank',
+      ]) {
+        expect(
+          await web.navigationDelegate!.request(url),
+          NavigationDecision.prevent,
+        );
+        expect(
+          await web.navigationDelegate!.request(url, mainFrame: false),
+          NavigationDecision.prevent,
+        );
+      }
+      await settle(tester);
+      expect(launcher.launches, isEmpty);
+      expect(web.loadedHtml, hasLength(1));
+      expect(web.loadedRequests, isEmpty);
+    });
+
+    testWidgets('reopening loads a fresh WebView with the same policy', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -198,29 +249,6 @@ void main() {
       );
       await settle(tester);
       final first = webPlatform.last;
-
-      await tester.tap(
-        find.byKey(const ValueKey('artifact-viewer-scripts-toggle')),
-      );
-      await settle(tester);
-      expect(first.javaScriptMode, JavaScriptMode.unrestricted);
-      expect(first.loadedHtml, hasLength(2));
-      expect(first.loadedHtml.last, contains("script-src 'unsafe-inline'"));
-      expect(first.loadedHtml.last, contains('Object.defineProperty'));
-      expect(find.text('Desactivar scripts'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(const ValueKey('artifact-viewer-scripts-toggle')),
-      );
-      await settle(tester);
-      expect(first.javaScriptMode, JavaScriptMode.disabled);
-      expect(first.loadedHtml.last, contains("script-src 'none'"));
-
-      // Enable again, close, reopen: a new document starts with scripts off.
-      await tester.tap(
-        find.byKey(const ValueKey('artifact-viewer-scripts-toggle')),
-      );
-      await settle(tester);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(
         host(viewer('page.html', 'text/html', text('<p>hola</p>'))),
@@ -228,12 +256,9 @@ void main() {
       await settle(tester);
       final reopened = webPlatform.last;
       expect(identical(reopened, first), isFalse);
-      expect(reopened.javaScriptMode, JavaScriptMode.disabled);
-      expect(
-        reopened.javaScriptModes,
-        isNot(contains(JavaScriptMode.unrestricted)),
-      );
-      expect(find.text('Activar scripts'), findsOneWidget);
+      expect(reopened.loadedHtml, hasLength(1));
+      expect(reopened.javaScriptMode, JavaScriptMode.unrestricted);
+      expect(reopened.javaScriptChannels, isEmpty);
     });
 
     testWidgets('SVG renders as an image with no scripts toggle', (
