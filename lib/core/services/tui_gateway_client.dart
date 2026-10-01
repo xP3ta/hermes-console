@@ -3891,6 +3891,32 @@ class TuiGatewayClient
     return _request(method, params);
   }
 
+  /// Hosted room member prompts (`room_member_prompts.dart`): read the
+  /// member session's open server→client requests and answer them with the
+  /// same RPCs Desktop's room uses. A read-only connection may only read.
+  Future<Map<String, dynamic>> roomPromptRequest(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    const reads = {
+      'session.active_list',
+      'session.list',
+      'session.events.since',
+    };
+    const writes = {
+      'request.answer',
+      'clarify.lock',
+      'approval.respond',
+      'session.interrupt',
+    };
+    if (!(reads.contains(method) ||
+        (writes.contains(method) && !_connection.readOnly))) {
+      throw TuiGatewayRpcError(method, 'Room prompt request unavailable');
+    }
+    await _connectForRequest('gateway.connect');
+    return _request(method, params, timeout: const Duration(seconds: 15));
+  }
+
   /// Hosted connector RPCs for the Capabilities hub. Only `connectors.*`
   /// (the Nous account connector family) and `connection.respond` pass; a
   /// read-only connection may list and poll but never connect, wake,
