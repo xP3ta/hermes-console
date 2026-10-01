@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../models/activity_snapshot.dart'
     show MemoryWrite, activityToolDetail, isMemoryTool, memoryWriteStepKey;
+import '../models/deferred_tool_call.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
@@ -116,15 +117,6 @@ List<Map<String, dynamic>> normalizeAssistantActivityTrace(Object? raw) {
 /// Una invocación de herramienta tal como debe verse en el historial.
 typedef ActivityCallEntry = ({String label, String? id, Object? arguments});
 
-Object? _decodedArguments(Object? raw) {
-  if (raw is! String) return raw;
-  try {
-    return jsonDecode(raw);
-  } catch (_) {
-    return null;
-  }
-}
-
 /// Entradas visibles de una llamada. Hermes puede exponer solo tres
 /// herramientas puente (`tool_search`, `tool_describe`, `tool_call`) y llamar a
 /// la real dentro de `tool_call({calls:[{name, arguments}]})`: se desenvuelve
@@ -135,31 +127,20 @@ List<ActivityCallEntry> activityCallEntries(
   String? id,
   Object? rawArguments,
 ) {
-  final arguments = _decodedArguments(rawArguments);
-  if (label.trim().toLowerCase() != 'tool_call' || arguments is! Map) {
-    return [(label: label, id: id, arguments: arguments)];
+  final wrapped = unwrapDeferredToolCall(label, rawArguments);
+  if (wrapped == null) {
+    return [
+      (label: label, id: id, arguments: decodeToolArguments(rawArguments)),
+    ];
   }
-  final calls = arguments['calls'];
-  final candidates = calls is List ? calls : [arguments];
-  final entries = <ActivityCallEntry>[];
-  for (var i = 0; i < candidates.length && i < 32; i++) {
-    final candidate = candidates[i];
-    if (candidate is! Map) continue;
-    final name = candidate['name']?.toString().trim() ?? '';
-    if (name.isEmpty ||
-        name.length > 180 ||
-        name.contains(_unsafeDisplayTextPattern)) {
-      continue;
-    }
-    entries.add((
-      label: name,
-      id: id == null ? null : '$id:$i',
-      arguments: _decodedArguments(candidate['arguments']),
-    ));
-  }
-  return entries.isEmpty
-      ? [(label: label, id: id, arguments: arguments)]
-      : entries;
+  return [
+    for (var i = 0; i < wrapped.length; i++)
+      (
+        label: wrapped[i].name,
+        id: id == null ? null : '$id:$i',
+        arguments: wrapped[i].arguments,
+      ),
+  ];
 }
 
 List<Map<String, dynamic>> assistantActivityFromToolCalls(

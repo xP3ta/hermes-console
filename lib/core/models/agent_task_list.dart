@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'deferred_tool_call.dart';
+
 /// Estado de un elemento de la lista de tareas del agente (herramienta
 /// `todo_list`). Es el mismo vocabulario que Desktop y la TUI
 /// (`tools/todo_tool.py VALID_STATUSES`).
@@ -193,6 +195,119 @@ final class AgentTaskList {
     );
   }
 
+  /// lp1215: `merge: true` write applied locally, same as
+  /// `TodoStore.write(merge=True)` and Desktop `mergeTodoItems`: existing ids
+  /// update only the fields provided, new ids are appended. Without `merge`
+  /// the arguments are the whole new list. The revision is left untouched:
+  /// only an authoritative result/`todo.updated` moves the watermark.
+  /// Returns `null` when [rawArguments] carries no usable write.
+  AgentTaskList? applyWrite(Object? rawArguments) {
+    final arguments = decodeToolArguments(rawArguments);
+    if (arguments is! Map) return null;
+    final rawTodos = arguments['todos'];
+    if (rawTodos is! List) return null;
+    if (arguments['merge'] != true) {
+      final replaced = tryParse({'todos': rawTodos});
+      if (replaced == null) {
+        return rawTodos.isEmpty
+            ? AgentTaskList(revision: revision, items: const [])
+            : null;
+      }
+      return AgentTaskList(
+        revision: revision,
+        items: replaced.items,
+        omitted: replaced.omitted,
+      );
+    }
+    final next = [...items];
+    var touched = false;
+    for (final entry in rawTodos.take(maxItems * 4)) {
+      if (entry is! Map) continue;
+      final id = sanitizeAgentTaskText(
+        '${entry['id'] ?? ''}',
+        maxChars: maxIdChars,
+        mask: false,
+        collapse: false,
+      );
+      if (id.isEmpty) continue;
+      final index = next.indexWhere((item) => item.id == id);
+      final content = sanitizeAgentTaskText(
+        '${entry['content'] ?? ''}',
+        maxChars: maxContentChars,
+      );
+      final hasStatus = entry['status'] != null;
+      if (index < 0) {
+        final created = _parseItem({
+          ...entry,
+          'id': id,
+          'content': content.isEmpty ? '(no description)' : content,
+        });
+        if (created == null || next.length >= maxItems) continue;
+        next.add(created);
+        touched = true;
+        continue;
+      }
+      final current = next[index];
+      final status = hasStatus
+          ? _parseItem({
+              'id': id,
+              'content': 'x',
+              'status': entry['status'],
+            })!.status
+          : current.status;
+      next[index] = AgentTaskItem(
+        id: id,
+        content: content.isEmpty ? current.content : content,
+        status: status,
+        parentId: current.parentId,
+      );
+      touched = true;
+    }
+    if (!touched) return null;
+    return AgentTaskList(
+      revision: revision,
+      items: List<AgentTaskItem>.unmodifiable(next),
+      omitted: omitted,
+    );
+  }
+
+  /// lp1215: newest todo snapshot proven by a durable transcript (oldest
+  /// first): a `role: tool` result whose `tool_call_id` belongs to a
+  /// `todo_list` call of the nearest previous assistant row, directly or
+  /// wrapped in the deferred-tool bridge (`tool_call`). Mirrors upstream
+  /// `get_latest_todo_result`; an unpaired result never seeds the panel.
+  static AgentTaskList? latestFromTranscript(
+    List<Map<String, dynamic>> chronological,
+  ) {
+    for (var index = chronological.length - 1; index >= 0; index--) {
+      final row = chronological[index];
+      if (row['role'] != 'tool') continue;
+      final callId = row['tool_call_id']?.toString().trim() ?? '';
+      if (callId.isEmpty) continue;
+      final content = row['content'];
+      if (content is! String || !content.contains('"todos"')) continue;
+      Map<String, dynamic>? owner;
+      for (var prior = index - 1; prior >= 0; prior--) {
+        final role = chronological[prior]['role'];
+        if (role == 'tool') continue;
+        if (role == 'assistant') owner = chronological[prior];
+        break;
+      }
+      final calls = owner?['tool_calls'];
+      if (calls is! List) continue;
+      final paired = calls.any(
+        (call) =>
+            call is Map &&
+            call['id']?.toString().trim() == callId &&
+            isAgentTaskToolCall(call),
+      );
+      if (!paired) continue;
+      final parsed = tryParse(content);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
   static int? _parseRevision(Object? raw) {
     final value = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
     if (value == null || value < 0) return null;
@@ -301,4 +416,28 @@ String sanitizeAgentTaskText(
     text = '$cut…';
   }
   return text;
+}
+
+/// Names under which the gateway reports the task-list tool (`todo_list`;
+/// `todo` in transcripts written before the rename).
+bool isAgentTaskToolName(String name) {
+  final normalized = name.trim().toLowerCase();
+  return normalized == 'todo_list' || normalized == 'todo';
+}
+
+/// A transcript `tool_calls[]` entry that writes the task list, directly or
+/// through the deferred-tool bridge.
+bool isAgentTaskToolCall(Map call) {
+  final function = call['function'];
+  final name = (function is Map ? function['name'] : call['name'])
+      ?.toString()
+      .trim();
+  if (name == null || name.isEmpty) return false;
+  if (isAgentTaskToolName(name)) return true;
+  final wrapped = unwrapDeferredToolCall(
+    name,
+    function is Map ? function['arguments'] : call['arguments'],
+  );
+  return wrapped != null &&
+      wrapped.any((entry) => isAgentTaskToolName(entry.name));
 }

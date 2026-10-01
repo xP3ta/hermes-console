@@ -40,6 +40,7 @@ import '../models/desktop_control_center.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/desktop_session_config.dart';
 import '../models/desktop_session_snapshot.dart';
+import '../models/deferred_tool_call.dart';
 import '../models/home_widget_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
@@ -608,7 +609,25 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       final call = <String, dynamic>{};
       if (id != null) call['id'] = id;
       if (raw['type'] == 'function') call['type'] = 'function';
-      if (name != null) call['function'] = {'name': name};
+      // lp1215: a deferred-tool bridge call keeps the NAMES of the tools it
+      // wraps (never their arguments), so history shows the real tool.
+      final wrapped = name == null
+          ? null
+          : unwrapDeferredToolCall(
+              name,
+              function is Map ? function['arguments'] : null,
+            );
+      if (name != null) {
+        call['function'] = {
+          'name': name,
+          if (wrapped != null)
+            'arguments': jsonEncode({
+              'calls': [
+                for (final entry in wrapped) {'name': entry.name},
+              ],
+            }),
+        };
+      }
       calls.add(call);
     }
     if (calls.isNotEmpty) normalized['tool_calls'] = calls;
@@ -5731,6 +5750,33 @@ class ActiveChat {
     _adoptAgentTasks(AgentTaskList.tryParse(payload), live: true);
   }
 
+  /// lp1215: a live `todo_list` lifecycle event, named directly or wrapped in
+  /// the deferred-tool bridge. A completion carrying the full store (with
+  /// its revision) is authoritative; a start applies its write locally with
+  /// `merge` semantics (Desktop `nextTodosFromToolEvent`) and leaves the
+  /// revision watermark for the following `todo.updated`.
+  void _applyTodoToolEvent(Map<String, dynamic> payload) {
+    final name = '${payload['name'] ?? ''}';
+    Object? args = payload['args'];
+    if (!isAgentTaskToolName(name)) {
+      final wrapped = unwrapDeferredToolCall(name, args);
+      final todo = wrapped?.lastWhere(
+        (entry) => isAgentTaskToolName(entry.name),
+        orElse: () => (name: '', arguments: null),
+      );
+      if (todo == null || todo.name.isEmpty) return;
+      args = todo.arguments;
+    }
+    final full =
+        AgentTaskList.tryParse(payload) ??
+        AgentTaskList.tryParse(payload['result']);
+    if (full != null && full.revision != null) {
+      _adoptAgentTasks(full, live: true);
+      return;
+    }
+    _adoptAgentTasks(_agentTasks.applyWrite(args), live: true);
+  }
+
   /// Reconstruye la lista desde el `todo_state` de un resume/activate/recovery.
   /// Solo alimenta la presentación: el trabajo pendiente de una lista rancia
   /// no convierte un chat en reposo en «actividad» (eso solo lo hace la lista
@@ -10400,6 +10446,13 @@ class ActiveChat {
       );
     }
     prepareProjection?.call();
+    // lp1215: the newest paired todo result of the tail is the task panel's
+    // durable truth (Desktop `latestSessionTodoSnapshot`), including writes
+    // made through the deferred-tool bridge that `todo_state` may predate.
+    if (context.requestedOffset == 0 &&
+        context.consumer != _SessionMessagesPageConsumer.loadEarlier) {
+      _hydrateAgentTasks(AgentTaskList.latestFromTranscript(page.messages));
+    }
 
     final nativeSessionHistory = page is _NativeSessionHistoryPage;
     final legacyPage = !page.paginationProvided;
@@ -19527,6 +19580,7 @@ class ActiveChat {
           running: true,
           startsNew: event.type == 'tool.start',
         );
+        if (event.type == 'tool.start') _applyTodoToolEvent(payload);
         _emit(ActiveChatEvent.toolProgress);
       case 'tool.complete':
         _flushTokenBuffer();
@@ -19539,6 +19593,7 @@ class ActiveChat {
           'error': payload['error'] != null || payload['status'] == 'error',
         }, running: false);
         _upsertAssistantToolActivity(payload, running: false, startsNew: false);
+        _applyTodoToolEvent(payload);
         _emit(ActiveChatEvent.toolProgress);
       case 'approval.request':
         _flushTokenBuffer();
@@ -20707,17 +20762,67 @@ class ActiveChat {
             label.toLowerCase() == 'skill'
         ? 'skill'
         : 'tool';
+    // lp1215: a deferred-tool bridge event (`tool_call`, e.g. a connector
+    // batch) is the tools it wraps: one logical step each, ids `id:i` like
+    // the durable projection, so the pill names the real work.
+    final wrapped = unwrapDeferredToolCall(label, payload['args']);
+    if (wrapped == null) {
+      _upsertAssistantToolStep(
+        activity,
+        payload,
+        id: id,
+        label: label,
+        kind: kind,
+        args: payload['args'],
+        running: running,
+        startsNew: startsNew,
+      );
+    } else {
+      for (var i = 0; i < wrapped.length; i++) {
+        _upsertAssistantToolStep(
+          activity,
+          payload,
+          id: id == null || id.isEmpty ? null : '$id:$i',
+          label: wrapped[i].name,
+          kind: kind,
+          args: wrapped[i].arguments,
+          running: running,
+          startsNew: startsNew,
+        );
+      }
+    }
+    _messages[index] = {...message, assistantActivityTraceKey: activity};
+  }
+
+  void _upsertAssistantToolStep(
+    List<Map<String, dynamic>> activity,
+    Map<String, dynamic> payload, {
+    required String? id,
+    required String label,
+    required String kind,
+    required Object? args,
+    required bool running,
+    required bool startsNew,
+  }) {
+    bool isToolStep(Map<String, dynamic> step) =>
+        step['kind'] == 'tool' || step['kind'] == 'skill';
     var activityIndex = id == null || id.isEmpty
         ? -1
         : activity.lastIndexWhere(
-            (step) =>
-                (step['kind'] == 'tool' || step['kind'] == 'skill') &&
-                step['id'] == id,
+            (step) => isToolStep(step) && step['id'] == id,
           );
+    if (activityIndex < 0 && id != null && id.isNotEmpty) {
+      // lp1215: durable rows project a bridged call as `id:0`; the live
+      // gateway reports the unwrapped tool under the bare call id.
+      activityIndex = activity.lastIndexWhere(
+        (step) =>
+            isToolStep(step) && step['id'] == '$id:0' && step['label'] == label,
+      );
+    }
     if (activityIndex < 0 && !startsNew) {
       activityIndex = activity.lastIndexWhere(
         (step) =>
-            (step['kind'] == 'tool' || step['kind'] == 'skill') &&
+            isToolStep(step) &&
             step['label'] == label &&
             step['status'] == 'running',
       );
@@ -20730,7 +20835,7 @@ class ActiveChat {
     // Detalle SEGURO para la pastilla/el panel (ejecutable, nombre de archivo,
     // host…): nunca el argumento crudo. `tool.start` trae `args`; `tool.complete`
     // trae además `duration_s`, con lo que el «Hecho» del panel mide de verdad.
-    final detail = activityToolDetail(label, payload['args']);
+    final detail = activityToolDetail(label, args);
     // mp1215: a `memory` call carries its write; `tool.complete` settles it
     // with the gateway's own result (landed only on `success: true`).
     final callMemory =
@@ -20739,7 +20844,7 @@ class ActiveChat {
               ? activity[activityIndex][memoryWriteStepKey]
               : null,
         ) ??
-        MemoryWrite.fromArgs(label, payload['args']);
+        MemoryWrite.fromArgs(label, args);
     final memory = running || !isMemoryTool(label)
         ? callMemory
         : MemoryWrite.settle(callMemory, payload['result']);
@@ -20777,7 +20882,6 @@ class ActiveChat {
           'completed_at': nowMs,
       });
     }
-    _messages[index] = {...message, assistantActivityTraceKey: activity};
   }
 
   void _settleAssistantActivity(String? finalReasoning) {

@@ -8,6 +8,7 @@ import '../../l10n/app_localizations.dart';
 import '../companion/state/companion_controller.dart';
 import '../models/activity_snapshot.dart';
 import '../models/agent_task_list.dart';
+import '../models/deferred_tool_call.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
@@ -64,29 +65,43 @@ class ChatEventInfo {
     this.memory = const [],
   });
 
-  static List<MemoryWrite> _callMemory(List calls) => [
-    for (final call in calls.take(64))
-      if (call is Map)
-        ?MemoryWrite.fromArgs(
-          ((call['function'] is Map ? call['function']['name'] : call['name'])
-                  ?.toString() ??
-              ''),
-          call['function'] is Map ? call['function']['arguments'] : null,
-        ),
-  ];
-
-  static List<({String label, bool skill, String? detail})> _callTools(
+  /// lp1215: every logical tool of a `tool_calls` list, with the
+  /// deferred-tool bridge (`tool_call`) unwrapped into the tools it invokes.
+  static Iterable<({String name, Object? args})> _logicalCalls(
     List calls,
-  ) {
-    final tools = <({String label, bool skill, String? detail})>[];
+  ) sync* {
     for (final call in calls.take(64)) {
       if (call is! Map) continue;
       final function = call['function'];
       final name = (function is Map ? function['name'] : call['name'])
           ?.toString()
           .trim();
-      if (name == null || name.isEmpty || name.length > 120) continue;
-      Object? args = function is Map ? function['arguments'] : null;
+      if (name == null || name.isEmpty) continue;
+      final args = function is Map ? function['arguments'] : null;
+      final wrapped = unwrapDeferredToolCall(name, args);
+      if (wrapped == null) {
+        yield (name: name, args: args);
+      } else {
+        for (final entry in wrapped) {
+          yield (name: entry.name, args: entry.arguments);
+        }
+      }
+    }
+  }
+
+  static List<MemoryWrite> _callMemory(List calls) => [
+    for (final call in _logicalCalls(calls))
+      ?MemoryWrite.fromArgs(call.name, call.args),
+  ];
+
+  static List<({String label, bool skill, String? detail})> _callTools(
+    List calls,
+  ) {
+    final tools = <({String label, bool skill, String? detail})>[];
+    for (final call in _logicalCalls(calls)) {
+      final name = call.name;
+      if (name.length > 120) continue;
+      Object? args = call.args;
       if (args is String && isSkillLoadTool(name)) {
         try {
           args = jsonDecode(args);

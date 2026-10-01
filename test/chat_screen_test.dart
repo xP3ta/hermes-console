@@ -21588,6 +21588,66 @@ void main() {
   );
 
   testWidgets(
+    'lp1215 a bridged tool reaches the pill in the first frame after tool.start',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-lp1215-latency'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_LATENCY',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      await tester.pump();
+      String? pill() {
+        final text = find.byKey(const ValueKey('activity-pill-text'));
+        return text.evaluate().isEmpty
+            ? null
+            : tester.widget<Text>(text).textSpan!.toPlainText();
+      }
+
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-lp-1',
+        'name': 'tool_call',
+        'args': {
+          'calls': [
+            {
+              'name': 'terminal',
+              'arguments': {'command': 'date -u'},
+            },
+          ],
+        },
+      });
+      // One frame, no fake time elapsed: no debounce/linger may hold it back.
+      await tester.pump(Duration.zero);
+      expect(pill(), 'terminal · date');
+
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-lp-1',
+        'name': 'terminal',
+        'args': {'command': 'date -u'},
+      });
+      await tester.pump(Duration.zero);
+      expect(pill(), isNot(contains('terminal')));
+
+      gateway.emit('message.complete', const {'text': 'PUBLIC_LATENCY_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'tool.start con args publica el detalle seguro y tool.complete mide la duración',
     (tester) async {
       final gateway = _UiRewindGateway();

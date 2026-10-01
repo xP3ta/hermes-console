@@ -7,10 +7,7 @@ import '../theme/app_theme.dart';
 
 /// Etiquetas con las que el gateway nombra la herramienta de lista de tareas
 /// (`todo_list`; `todo` en transcripts anteriores al renombrado).
-bool isAgentTaskToolLabel(String label) {
-  final normalized = label.trim().toLowerCase();
-  return normalized == 'todo_list' || normalized == 'todo';
-}
+bool isAgentTaskToolLabel(String label) => isAgentTaskToolName(label);
 
 /// Id del paso `todo_list` más reciente del transcript, o `null`.
 ///
