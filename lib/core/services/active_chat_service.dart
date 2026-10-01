@@ -18,6 +18,7 @@ import 'dart:typed_data' show TypedData;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29107,9 +29108,36 @@ class ActiveChatService {
     }
     chat?.dispose();
     _refreshActiveIds();
-    if (_publishedLiveStatus.remove(key) != null && !_disposed) {
-      liveStatusRevision.value += 1;
+    if (_publishedLiveStatus.remove(key) != null) _bumpLiveStatusRevision();
+  }
+
+  bool _liveStatusBumpScheduled = false;
+
+  /// Notifies [liveStatusRevision]. A chat can be released while the widget
+  /// tree is locked (ChatScreen.dispose → release → _dispose); listeners
+  /// then rebuild, which Flutter forbids mid-unmount, so that case is
+  /// deferred to a microtask. Gateway events arrive outside a frame and
+  /// notify at once.
+  void _bumpLiveStatusRevision() {
+    if (_disposed) return;
+    // Pure service use (no binding initialized) has no frame to protect.
+    SchedulerPhase phase;
+    try {
+      phase = SchedulerBinding.instance.schedulerPhase;
+    } on FlutterError {
+      phase = SchedulerPhase.idle;
     }
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      liveStatusRevision.value += 1;
+      return;
+    }
+    if (_liveStatusBumpScheduled) return;
+    _liveStatusBumpScheduled = true;
+    scheduleMicrotask(() {
+      _liveStatusBumpScheduled = false;
+      if (!_disposed) liveStatusRevision.value += 1;
+    });
   }
 
   /// Releases a chat immediately, as the registry does once it is unused.
@@ -29136,7 +29164,7 @@ class ActiveChatService {
     final status = chat.liveStatus;
     if (_publishedLiveStatus[key] == status) return;
     _publishedLiveStatus[key] = status;
-    liveStatusRevision.value += 1;
+    _bumpLiveStatusRevision();
   }
 
   void _rememberLiveStatus(String key, ActiveChat chat) {
