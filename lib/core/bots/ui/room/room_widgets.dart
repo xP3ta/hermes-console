@@ -1378,7 +1378,12 @@ class _ChoiceButton extends StatelessWidget {
             : colors.textPrimary,
         disabledForegroundColor: colors.textDisabled,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        // App font (Inter) like every other button; a bare TextStyle here
+        // dropped to the platform default family.
+        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+        ),
       ),
       child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
