@@ -9465,5 +9465,32 @@
         "type": "String"
       }
     }
-  }
+  },
+  "sa1215ContentAction": "Archivos y enlaces",
+  "sa1215ContentTitle": "Archivos y enlaces",
+  "sa1215SearchHint": "Buscar por nombre o enlace",
+  "sa1215SearchClear": "Borrar búsqueda",
+  "sa1215FilterAll": "Todo",
+  "sa1215FilterImages": "Imágenes",
+  "sa1215FilterFiles": "Archivos",
+  "sa1215FilterLinks": "Enlaces",
+  "sa1215KindImage": "Imagen",
+  "sa1215KindFile": "Archivo",
+  "sa1215EmptyTitle": "Aún no hay nada compartido",
+  "sa1215EmptyBody": "Los enlaces, imágenes y archivos de esta conversación aparecerán aquí.",
+  "sa1215NoMatchesTitle": "Sin resultados",
+  "sa1215NoMatchesBody": "Prueba con otro nombre o cambia el filtro.",
+  "sa1215OlderPending": "Hay mensajes más antiguos sin cargar en este chat.",
+  "sa1215LoadOlder": "Cargar más antiguos",
+  "sa1215LoadOlderFailed": "No se pudieron cargar los mensajes anteriores",
+  "sa1215OpenFailed": "No se pudo abrir {name}",
+  "@sa1215OpenFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sa1215NotReachable": "Este archivo no se puede abrir desde el móvil. Mantén pulsado para copiar su ruta.",
+  "sa1215CopyHint": "Mantén pulsado para copiar"
 }

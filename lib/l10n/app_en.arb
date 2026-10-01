@@ -7788,5 +7788,32 @@
   "rr1215ResumeBody": "{name}'s session for this room is reopened on the server so it can pick up its pending turn. No new message is sent and the other bots are left alone.",
   "rr1215KeepAsIs": "Not now",
   "rr1215Resumed": "{name}'s session is open again",
-  "rr1215ResumeFailed": "Couldn't resume {name}. Try again."
+  "rr1215ResumeFailed": "Couldn't resume {name}. Try again.",
+  "sa1215ContentAction": "Files and links",
+  "sa1215ContentTitle": "Files and links",
+  "sa1215SearchHint": "Search by name or link",
+  "sa1215SearchClear": "Clear search",
+  "sa1215FilterAll": "All",
+  "sa1215FilterImages": "Images",
+  "sa1215FilterFiles": "Files",
+  "sa1215FilterLinks": "Links",
+  "sa1215KindImage": "Image",
+  "sa1215KindFile": "File",
+  "sa1215EmptyTitle": "Nothing shared yet",
+  "sa1215EmptyBody": "Links, images and files from this conversation will appear here.",
+  "sa1215NoMatchesTitle": "No results",
+  "sa1215NoMatchesBody": "Try another name or change the filter.",
+  "sa1215OlderPending": "This chat has older messages that are not loaded yet.",
+  "sa1215LoadOlder": "Load older",
+  "sa1215LoadOlderFailed": "Could not load earlier messages",
+  "sa1215OpenFailed": "Could not open {name}",
+  "@sa1215OpenFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sa1215NotReachable": "This file cannot be opened from the phone. Long-press to copy its path.",
+  "sa1215CopyHint": "Long-press to copy"
 }
