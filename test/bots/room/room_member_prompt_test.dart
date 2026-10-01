@@ -60,6 +60,7 @@ final class FakePromptGateway {
               {
                 'id': entry.value,
                 'session_key': entry.key,
+                'title': 'Group: $roomId',
                 'current': false,
                 'status':
                     (open[entry.value]?.isNotEmpty ?? false) ||
@@ -649,7 +650,10 @@ void main() {
   ) async {
     final rpc = FakePromptGateway();
     await pumpRoom(tester, rpc: rpc);
-    expect(rpc.methods, ['session.active_list']);
+    // The prompt probe and the stalled-member probe each read the live
+    // list once; a member executing settles both without any other read.
+    expect(rpc.methods.toSet(), {'session.active_list'});
+    expect(rpc.methods.length, lessThanOrEqualTo(2));
     expect(find.textContaining('te pregunta'), findsNothing);
     expect(find.textContaining('no puede mostrar'), findsNothing);
     expect(find.byKey(const ValueKey('room-typing-m-review')), findsOneWidget);

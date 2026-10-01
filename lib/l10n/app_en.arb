@@ -7783,5 +7783,14 @@
   "rq1215CancelWaitTitle": "Cancel {name}'s wait?",
   "rq1215CancelWaitBody": "Only {name}'s turn in this room is interrupted. Its session stays open and the other bots keep working.",
   "rq1215KeepWaiting": "Keep waiting",
-  "rq1215CancelWaitFailed": "Couldn't cancel the wait. Try again."
+  "rq1215CancelWaitFailed": "Couldn't cancel the wait. Try again.",
+  "rr1215StallTitle": "{name} can't pick up its turn",
+  "rr1215StallHint": "Its session for this room isn't open on the server and the turn is still waiting.",
+  "rr1215StallReadOnlyHint": "You need a connection with write access to resume it.",
+  "rr1215Resume": "Resume",
+  "rr1215ResumeTitle": "Resume {name}?",
+  "rr1215ResumeBody": "{name}'s session for this room is reopened on the server so it can pick up its pending turn. No new message is sent and the other bots are left alone.",
+  "rr1215KeepAsIs": "Not now",
+  "rr1215Resumed": "{name}'s session is open again",
+  "rr1215ResumeFailed": "Couldn't resume {name}. Try again."
 }

@@ -1632,6 +1632,96 @@ class RoomMemberWaitingBanner extends StatelessWidget {
   }
 }
 
+/// A member whose room turn cannot start because its room session has no
+/// live runtime on the server (the driver only keeps retrying). [onResume]
+/// is null on a read-only connection: the banner then only explains.
+class RoomMemberStallBanner extends StatelessWidget {
+  final HostedGroupMember member;
+  final AgentProfile? profile;
+  final bool busy;
+  final VoidCallback? onResume;
+
+  const RoomMemberStallBanner({
+    super.key,
+    required this.member,
+    required this.profile,
+    required this.busy,
+    required this.onResume,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final id = 'room-member-stall-${member.memberId}';
+    return Container(
+      key: ValueKey(id),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+      decoration: BoxDecoration(
+        color: colors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.warning.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.sync_problem_rounded, size: 18, color: colors.warning),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.rr1215StallTitle(
+                        roomSpeakerName(member, null, profile),
+                      ),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      onResume == null
+                          ? s.rr1215StallReadOnlyHint
+                          : s.rr1215StallHint,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (onResume != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                key: ValueKey('$id-resume'),
+                onPressed: busy ? null : onResume,
+                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                child: busy
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(s.rr1215Resume),
+              ),
+            )
+          else
+            const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+}
+
 class RoomRetryCard extends StatelessWidget {
   final String taskId;
   final HostedGroupMember? member;

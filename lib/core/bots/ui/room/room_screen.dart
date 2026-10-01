@@ -129,6 +129,13 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   int _promptEpoch = 0;
   bool _probing = false;
   bool _probeAgain = false;
+
+  /// A member whose turn cannot start because its room session has no live
+  /// runtime (latest probe), and the single in-flight resume of it.
+  RoomMemberStall? _stall;
+  bool _stallProbing = false;
+  bool _stallAgain = false;
+  bool _resuming = false;
   final Set<String> _retrying = {};
   Animation<double>? _coverAnimation;
   bool _stopping = false;
@@ -177,6 +184,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     unawaited(_loadLocal());
     unawaited(_restoreDraft());
     unawaited(_probePrompts());
+    unawaited(_probeStall());
   }
 
   @override
@@ -295,6 +303,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
     if (added.isNotEmpty || reset) _retirePublishedOutbox();
     unawaited(_probePrompts());
+    unawaited(_probeStall());
     if (result.room.disbanded && mounted) Navigator.of(context).maybePop();
     return (
       delta: RoomLogDelta(added: added, log: log, reset: reset),
@@ -606,6 +615,116 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       ),
       failure: s.rq1215CancelWaitFailed,
     );
+  }
+
+  // ── Stalled member ───────────────────────────────────────────────────
+
+  /// How long the room log must stay quiet while the driver works before a
+  /// member without a live runtime counts as stalled (the driver retries an
+  /// unavailable member every 1-30 s, so a healthy turn never waits this
+  /// long without the log moving or a runtime appearing).
+  static const roomStallAfter = Duration(minutes: 2);
+
+  /// The member the driver is due to run, when the room may be stalled:
+  /// working, not blocked or waiting on a human, and the log quiet for
+  /// [roomStallAfter]. Same order as upstream `plan_next_task`: the round's
+  /// members rotated by the round index, first one without a terminal turn.
+  HostedGroupMember? _stallCandidate() {
+    final driver = _driver;
+    if (driver == null ||
+        !driver.working ||
+        driver.blocked ||
+        driver.needsUser ||
+        _prompts.isNotEmpty) {
+      return null;
+    }
+    final events = _events;
+    if (events.isEmpty) return null;
+    var latest = events.first;
+    for (final e in events) {
+      if (e.createdAt > latest.createdAt) latest = e;
+    }
+    if (_now.difference(roomEventTime(latest)) < roomStallAfter) return null;
+    final rows = _roundView()?.rows;
+    if (rows == null || rows.isEmpty) return null;
+    final round = (_roundView()?.round ?? 1) - 1;
+    final shift = round % rows.length;
+    for (final row in [...rows.skip(shift), ...rows.take(shift)]) {
+      if (row.state == RoomTurnState.queued ||
+          row.state == RoomTurnState.working) {
+        return row.member;
+      }
+    }
+    return null;
+  }
+
+  /// Reads (never writes) whether the due member has a live runtime. One
+  /// probe at a time; a request during a probe runs once more after it.
+  Future<void> _probeStall() async {
+    final source = widget.memberPrompts;
+    if (source == null || !mounted) return;
+    if (_stallProbing) {
+      _stallAgain = true;
+      return;
+    }
+    _stallProbing = true;
+    try {
+      do {
+        _stallAgain = false;
+        if (_resuming) return;
+        final member = _stallCandidate();
+        RoomMemberStall? found;
+        if (member != null) {
+          try {
+            found = await source.findStall(_room, member);
+          } catch (_) {
+            // Unknown is not "stalled": keep what is shown.
+            continue;
+          }
+        }
+        if (!mounted) return;
+        if (found?.key != _stall?.key) setState(() => _stall = found);
+      } while (_stallAgain && mounted);
+    } finally {
+      _stallProbing = false;
+    }
+  }
+
+  /// Re-opens only that member's room session after the user confirms,
+  /// then re-reads the room. Never runs on its own.
+  Future<void> _resumeStall(RoomMemberStall stall) async {
+    final source = widget.memberPrompts;
+    if (source == null || !widget.capabilities.canAnswerPrompts || _resuming) {
+      return;
+    }
+    final s = Strings.of(context);
+    final member = roomMemberById(stall.memberId, _room.members);
+    final name = member == null
+        ? stall.memberId
+        : roomSpeakerName(member, null, widget.profileFor(member));
+    final ok = await showHermesConfirmDialog(
+      context: context,
+      title: s.rr1215ResumeTitle(name),
+      message: s.rr1215ResumeBody(name),
+      confirmLabel: s.rr1215Resume,
+      cancelLabel: s.rr1215KeepAsIs,
+    );
+    if (!ok || !mounted || _resuming) return;
+    setState(() => _resuming = true);
+    try {
+      await source.resumeStalled(stall);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _resuming = false);
+      _notice(s.rr1215ResumeFailed(name));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _resuming = false);
+    _notice(s.rr1215Resumed(name), kind: HermesNoticeKind.success);
+    // The re-read probes again (`_tick`), clearing the banner once the
+    // member's runtime is listed.
+    await refresh();
   }
 
   /// Task of the member's open room turn (`turn.started` without a
@@ -1462,11 +1581,31 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     return cards;
   }
 
+  List<Widget> _stallCards() {
+    final stall = _stall;
+    final member = stall == null
+        ? null
+        : roomMemberById(stall.memberId, _room.members);
+    if (stall == null || member == null) return const [];
+    return [
+      RoomMemberStallBanner(
+        key: ValueKey('room-inline-${stall.key}'),
+        member: member,
+        profile: widget.profileFor(member),
+        busy: _resuming,
+        onResume: widget.capabilities.canAnswerPrompts
+            ? () => unawaited(_resumeStall(stall))
+            : null,
+      ),
+    ];
+  }
+
   List<Widget> _inlineCards() {
     final driver = _driver;
-    if (driver == null) return _promptCards();
+    if (driver == null) return [..._promptCards(), ..._stallCards()];
     return [
       ..._promptCards(),
+      ..._stallCards(),
       for (final action in driver.approvals)
         RoomApprovalCard(
           key: ValueKey('room-inline-approval-${action.requestId}'),
@@ -1683,6 +1822,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _answering.join(','),
     _prompts,
     _promptBusy.join(','),
+    _stall,
+    _resuming,
     _outboxVersion,
     locale,
     widget,

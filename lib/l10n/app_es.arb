@@ -9425,5 +9425,49 @@
     }
   },
   "rq1215KeepWaiting": "Seguir esperando",
-  "rq1215CancelWaitFailed": "No se pudo cancelar la espera. Inténtalo de nuevo."
+  "rq1215CancelWaitFailed": "No se pudo cancelar la espera. Inténtalo de nuevo.",
+  "rr1215StallTitle": "{name} no puede retomar su turno",
+  "@rr1215StallTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215StallHint": "Su sesión de esta sala no está abierta en el servidor y el turno sigue esperando.",
+  "rr1215StallReadOnlyHint": "Necesitas una conexión con permiso de escritura para reanudarlo.",
+  "rr1215Resume": "Reanudar",
+  "rr1215ResumeTitle": "¿Reanudar a {name}?",
+  "@rr1215ResumeTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215ResumeBody": "Se vuelve a abrir en el servidor la sesión de {name} en esta sala para que retome su turno pendiente. No se envía ningún mensaje nuevo y el resto de bots no se toca.",
+  "@rr1215ResumeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215KeepAsIs": "Ahora no",
+  "rr1215Resumed": "{name} vuelve a tener su sesión abierta",
+  "@rr1215Resumed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215ResumeFailed": "No se pudo reanudar a {name}. Inténtalo de nuevo.",
+  "@rr1215ResumeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  }
 }
