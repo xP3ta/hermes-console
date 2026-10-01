@@ -10,6 +10,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:hermes_android/core/models/bot_mention.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
+import 'package:hermes_android/core/models/activity_snapshot.dart';
+import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
@@ -4294,6 +4296,96 @@ void main() {
         ),
         isFalse,
       );
+    },
+  );
+
+  test(
+    'lp1215 reconnect mid-tool keeps the running tool, tasks and text',
+    () async {
+      DesktopSessionSnapshot running(String runtimeId) =>
+          DesktopSessionSnapshot(
+            runtimeSessionId: runtimeId,
+            storedSessionId: 'session-lp1215-midtool',
+            created: false,
+            messagesProvided: true,
+            messages: [
+              DesktopSessionMessage.tryParse(const {
+                'role': 'user',
+                'content': 'trabaja largo',
+              })!,
+            ],
+            inflight: DesktopInflightTurn(
+              user: 'trabaja largo',
+              assistant: 'PUBLIC_PARTIAL',
+              streaming: true,
+            ),
+            running: true,
+            todoState: AgentTaskList.tryParse(const {
+              'revision': 2,
+              'todos': [
+                {'id': '1', 'content': 'Uno', 'status': 'completed'},
+                {'id': '2', 'content': 'Dos', 'status': 'in_progress'},
+              ],
+            }),
+          );
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = running('runtime-midtool-1')
+        ..recoverySnapshot = running('runtime-midtool-1');
+      final chat = _recoverableChat('lp1215-midtool', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      gateway.emit(
+        'tool.start',
+        sessionId: 'runtime-midtool-1',
+        payload: const {
+          'tool_id': 'call-long',
+          'name': 'terminal',
+          'args': {'command': 'sleep 60'},
+        },
+      );
+      ActivityStep? current() => ActivitySnapshot.splitSteps(
+        normalizeAssistantActivityTrace(
+          chat.messages.firstWhere(
+            (message) => message['role'] == 'assistant',
+            orElse: () => const {},
+          )[assistantActivityTraceKey],
+        ),
+      ).current;
+      await _waitUntil(() => current()?.label == 'terminal');
+      expect(chat.agentTasks.done, 1);
+
+      final published = <String?>[];
+      final sub = chat.changes.listen((_) => published.add(current()?.label));
+      addTearDown(sub.cancel);
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.drop();
+      await _waitUntil(
+        () => gateway.committedRecoveryRuntimeIds.contains('runtime-midtool-1'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(chat.isStreaming, isTrue);
+      expect(current()?.label, 'terminal');
+      expect(current()?.detail, 'sleep');
+      expect(published, isNot(contains(null)), reason: 'no empty flash');
+      expect(chat.agentTasks.done, 1);
+      expect(chat.agentTasks.total, 2);
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['role'] == 'assistant' &&
+              '${message['content']}'.contains('PUBLIC_PARTIAL'),
+        ),
+        isTrue,
+      );
+
+      gateway.emit(
+        'tool.complete',
+        sessionId: 'runtime-midtool-1',
+        payload: const {'tool_id': 'call-long', 'name': 'terminal'},
+      );
+      await _waitUntil(() => current() == null);
     },
   );
 

@@ -9614,8 +9614,12 @@ class ActiveChat {
           bridgeOwnedLiveUser: bridgeOwnedLiveUser,
           retainMediaEvidence: true,
         );
-        final projected = _sanitizeDesktopFailureProjection(
-          projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+        final projected = _carryLiveTurnActivity(
+          previousMessagesNewestFirst,
+          _sanitizeDesktopFailureProjection(
+            projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+          ),
+          running: projection.running && isStreaming && !_runTerminal,
         );
         if (_runTerminal && (projection.running || projection.failed)) {
           _beginExternallyObservedDesktopTurn(snapshot);
@@ -18393,6 +18397,39 @@ class ActiveChat {
     };
   }
 
+  /// lp1215: `session.resume`/`activate` describe a running turn only by its
+  /// `inflight` text; the tool steps this client already saw live are not in
+  /// the snapshot. Re-projecting the running turn from it used to drop the
+  /// live assistant row's activity trace, so the pill lost the running tool
+  /// (and its «Hecho» list) on every reconnect until the next `tool.*` event.
+  /// While the same turn is still running, the new live row inherits the
+  /// trace of the previous live row; a terminal snapshot never does.
+  List<Map<String, dynamic>> _carryLiveTurnActivity(
+    List<Map<String, dynamic>> previousNewestFirst,
+    List<Map<String, dynamic>> nextNewestFirst, {
+    required bool running,
+  }) {
+    if (!running) return nextNewestFirst;
+    bool isLiveAssistant(Map<String, dynamic> message) =>
+        message['role'] == 'assistant' &&
+        message['_pipeline'] == true &&
+        (message['display_kind']?.toString().trim().isEmpty ?? true);
+    final previous = previousNewestFirst.firstWhere(
+      isLiveAssistant,
+      orElse: () => const <String, dynamic>{},
+    );
+    final trace = previous[assistantActivityTraceKey];
+    if (trace is! List || trace.isEmpty) return nextNewestFirst;
+    final index = nextNewestFirst.indexWhere(isLiveAssistant);
+    if (index < 0) return nextNewestFirst;
+    final live = nextNewestFirst[index];
+    final existing = live[assistantActivityTraceKey];
+    if (existing is List && existing.isNotEmpty) return nextNewestFirst;
+    final carried = nextNewestFirst.toList(growable: true);
+    carried[index] = {...live, assistantActivityTraceKey: trace};
+    return carried;
+  }
+
   void _applyDesktopRecoverySnapshot(
     DesktopSessionSnapshot snapshot,
     int turnEpoch,
@@ -18557,8 +18594,12 @@ class ActiveChat {
         : snapshotTranscriptComplete;
     _messages = _applyCancelledTurnTombstonesForDisplay(
       _associateGeneratedImagesNewestFirst(
-        _sanitizeDesktopFailureProjection(
-          projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+        _carryLiveTurnActivity(
+          previousMessagesNewestFirst,
+          _sanitizeDesktopFailureProjection(
+            projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+          ),
+          running: projection.running,
         ),
       ),
       incomingTranscriptComplete: incomingTranscriptComplete,

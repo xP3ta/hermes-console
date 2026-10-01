@@ -364,6 +364,26 @@ void main() {
       },
     );
 
+    test('re-attaching to the running turn keeps the running tool', () async {
+      final (chat, gateway) = await running();
+      gateway.emit('tool.start', {
+        'tool_id': 'call_s',
+        'name': 'terminal',
+        'args': {'command': 'sleep 30'},
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        ActivitySnapshot.splitSteps(liveTrace(chat)).current?.label,
+        'terminal',
+      );
+      // Re-open/reattach: session.resume answers with the same running turn,
+      // described only by `inflight`.
+      await chat.loadMessages();
+      final current = ActivitySnapshot.splitSteps(liveTrace(chat)).current;
+      expect(current?.label, 'terminal');
+      expect(current?.detail, 'sleep');
+    });
+
     test('a bridged todo_list without merge replaces the list', () async {
       final (chat, gateway) = await running();
       gateway.emit('todo.updated', {
