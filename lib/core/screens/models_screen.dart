@@ -22,7 +22,9 @@ import '../widgets/hermes_premium_ui.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/model_identity.dart';
 import 'chat_screen.dart' show friendlyModelName;
+import '../services/local_models_client.dart';
 import 'external_provider_screen.dart';
+import 'local_models_screen.dart';
 import 'moa_recipe_screen.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
@@ -129,6 +131,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   // Bridge (para fallback: no hay API nativa de model/set para fallback).
   BridgeManagerContract? _mgr;
+
+  /// Capability of the Hermes-managed llama.cpp runtime
+  /// (`GET /api/local-models/status`): null = checking, otherwise the probe
+  /// outcome. 404 ⇒ the server has no local-models routes.
+  _LocalModelsProbe? _localProbe;
   BridgeState _bridge = BridgeState.unknown;
   bool _bridgeProbed = false;
   List<Map<String, String>> _fallback = [];
@@ -231,8 +238,74 @@ class _ModelsScreenState extends State<ModelsScreen> {
   /// Sondea el bridge (best-effort) y luego carga. Si el bridge responde, la
   /// carga será bridge-first; si no, cae al Dashboard.
   Future<void> _bootstrap() async {
+    unawaited(_probeLocalModels());
     await _probeBridge();
     await _load();
+  }
+
+  LocalModelsClient get _localModels =>
+      LocalModelsClient(_client, profile: _profile);
+
+  Future<void> _probeLocalModels() async {
+    _LocalModelsProbe probe;
+    try {
+      final status = await _localModels.status();
+      probe = _LocalModelsProbe.available(status.models.length);
+    } on LocalModelsUnavailable {
+      probe = const _LocalModelsProbe.unavailable();
+    } catch (_) {
+      probe = const _LocalModelsProbe.failed();
+    }
+    if (mounted) setState(() => _localProbe = probe);
+  }
+
+  Future<void> _openLocalModels() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => LocalModelsScreen(
+          connection: widget.connection,
+          profile: _profile,
+          client: _localModels,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    // Activation changes the default model; re-read it and the entry.
+    unawaited(_probeLocalModels());
+    unawaited(_load());
+  }
+
+  Widget _buildLocalModelsTile(HermesThemeColors colors) {
+    final s = Strings.of(context);
+    final probe = _localProbe;
+    final unavailable = probe?.kind == _LocalModelsProbeKind.unavailable;
+    final subtitle = switch (probe?.kind) {
+      null => s.lm1215EntryChecking,
+      _LocalModelsProbeKind.unavailable => s.lm1215Unavailable,
+      _LocalModelsProbeKind.failed => s.lm1215EntryError,
+      _LocalModelsProbeKind.available =>
+        probe!.count > 0
+            ? s.lm1215EntrySummary(probe.count)
+            : s.lm1215EntryEmpty,
+    };
+    return _ModelTonalGroup(
+      margin: const EdgeInsets.only(top: 8, bottom: 8),
+      child: HermesListRow(
+        key: const ValueKey('lm1215-entry'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        icon: Icons.developer_board_rounded,
+        iconColor: unavailable ? null : colors.accentHover,
+        title: s.lm1215EntryTitle,
+        subtitle: subtitle,
+        enabled: probe != null && !unavailable,
+        trailing: Icon(
+          Icons.chevron_right,
+          size: 18,
+          color: colors.textDisabled,
+        ),
+        onTap: probe == null || unavailable ? null : _openLocalModels,
+      ),
+    );
   }
 
   @override
@@ -1563,6 +1636,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           ],
           if (unauthProviders.isNotEmpty)
             _buildUnauthSection(colors, unauthProviders),
+          _buildLocalModelsTile(colors),
           _buildExternalProviderTile(colors),
         ],
       ),
@@ -2545,6 +2619,22 @@ class _ModelsScreenState extends State<ModelsScreen> {
 /// auto-copia el código, auto-abre el navegador y sondea hasta completar.
 /// El token NUNCA pasa por la app: el agente lo obtiene y guarda en el servidor;
 /// la app solo muestra el código y consulta el estado.
+enum _LocalModelsProbeKind { available, unavailable, failed }
+
+class _LocalModelsProbe {
+  const _LocalModelsProbe.available(this.count)
+    : kind = _LocalModelsProbeKind.available;
+  const _LocalModelsProbe.unavailable()
+    : kind = _LocalModelsProbeKind.unavailable,
+      count = 0;
+  const _LocalModelsProbe.failed()
+    : kind = _LocalModelsProbeKind.failed,
+      count = 0;
+
+  final _LocalModelsProbeKind kind;
+  final int count;
+}
+
 class _ModelTonalGroup extends StatelessWidget {
   final EdgeInsetsGeometry margin;
   final ShapeBorder? shape;
