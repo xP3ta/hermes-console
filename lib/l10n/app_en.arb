@@ -7561,5 +7561,11 @@
   "q1215QueueHeadStuckNote": "they won't send on their own: check the first one",
   "cq1215QueuedUntilCompacted": "Message queued: it will be sent when the compaction finishes.",
   "cq1215CommandWaitsForCompaction": "Commands wait until the compaction finishes. Normal messages are queued.",
-  "cq1215QueueParkedAfterCompaction": "paused: the compaction did not finish"
+  "cq1215QueueParkedAfterCompaction": "paused: the compaction did not finish",
+"tp1216PillCompacting": "Compacting…",
+  "tp1216PillCompacted": "Compacted",
+  "tp1216PillNothingToCompact": "No changes",
+  "tp1216SkillName": "skill {name}",
+  "tp1216ToolCount": "{name}, {count, plural, =1{once} other{{count} times}}",
+  "tp1216MoreTools": "+{count} more"
 }

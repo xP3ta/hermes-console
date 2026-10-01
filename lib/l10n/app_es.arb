@@ -9093,5 +9093,47 @@
   "q1215QueueHeadStuckNote": "no se enviarán solos: revisa el primero",
   "cq1215QueuedUntilCompacted": "Mensaje en cola: se enviará cuando termine la compactación.",
   "cq1215CommandWaitsForCompaction": "Los comandos esperan a que termine la compactación. Los mensajes normales se ponen en cola.",
-  "cq1215QueueParkedAfterCompaction": "en pausa: la compactación no terminó"
+  "cq1215QueueParkedAfterCompaction": "en pausa: la compactación no terminó",
+"tp1216PillCompacting": "Compactando…",
+  "@tp1216PillCompacting": {
+    "description": "Short label in the context pill under the composer while the conversation is being compacted."
+  },
+  "tp1216PillCompacted": "Compactada",
+  "@tp1216PillCompacted": {
+    "description": "Short label in the context pill for a few seconds after compaction finished (the conversation was compacted)."
+  },
+  "tp1216PillNothingToCompact": "Sin cambios",
+  "@tp1216PillNothingToCompact": {
+    "description": "Short label in the context pill when a compaction finished without changing anything."
+  },
+  "tp1216SkillName": "skill {name}",
+  "@tp1216SkillName": {
+    "description": "Screen-reader name of a skill in the tool-run summary.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "tp1216ToolCount": "{name}, {count, plural, =1{una vez} other{{count} veces}}",
+  "@tp1216ToolCount": {
+    "description": "Screen-reader text for a tool used several times in the tool-run summary.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tp1216MoreTools": "+{count} más",
+  "@tp1216MoreTools": {
+    "description": "Tool-run summary overflow: how many more tools/skills are not shown.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }
