@@ -9090,5 +9090,8 @@
   "q1215QueueAbandonFailed": "No se pudo quitar el mensaje. Sigue en la cola; vuelve a intentarlo en un momento.",
   "q1215QueueResumeFailed": "No se pudo reanudar la cola todavía. Espera a que termine de detenerse y vuelve a intentarlo.",
   "q1215QueueMissingAttachment": "Falta un adjunto en este móvil y no se puede enviar. Bórralo y vuelve a adjuntarlo.",
-  "q1215QueueHeadStuckNote": "no se enviarán solos: revisa el primero"
+  "q1215QueueHeadStuckNote": "no se enviarán solos: revisa el primero",
+  "cq1215QueuedUntilCompacted": "Mensaje en cola: se enviará cuando termine la compactación.",
+  "cq1215CommandWaitsForCompaction": "Los comandos esperan a que termine la compactación. Los mensajes normales se ponen en cola.",
+  "cq1215QueueParkedAfterCompaction": "en pausa: la compactación no terminó"
 }

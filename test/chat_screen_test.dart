@@ -14302,6 +14302,243 @@ void main() {
     );
   }
 
+  group('cq1215 queue while the session compresses', () {
+    Future<
+      (
+        ActiveChat,
+        _UiNativeCompressionGateway,
+        Completer<DesktopCompressionResult>,
+      )
+    >
+    startHeldCompression(WidgetTester tester, String connectionId) async {
+      final gate = Completer<DesktopCompressionResult>();
+      final gateway = _UiNativeCompressionGateway(
+        _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
+      )..nativeCompressionGate = gate;
+      final chat = await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'assistant', 'content': 'Historial largo'},
+        ],
+        desktopGateway: gateway,
+        connection: _remoteConn(connectionId),
+        messagesLoaded: true,
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await tester.enterText(find.byType(TextField), '/compress');
+      await submitComposerFromKeyboard(tester);
+      await gateway.compressionEntered.future;
+      await tester.pump();
+      expect(chat.desktopManualCompressionInFlight, isTrue);
+      return (chat, gateway, gate);
+    }
+
+    Future<void> queueFromComposer(
+      WidgetTester tester,
+      String text, {
+      bool keyboard = false,
+    }) async {
+      await tester.enterText(find.byType(TextField), text);
+      await tester.pump(const Duration(milliseconds: 250));
+      if (keyboard) {
+        await submitComposerFromKeyboard(tester);
+      } else {
+        await tester.tap(find.byKey(const ValueKey('send')));
+      }
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+    }
+
+    testWidgets(
+      'typing works and the primary action queues without any prompt.submit',
+      (tester) async {
+        final (chat, gateway, gate) = await startHeldCompression(
+          tester,
+          'conn-cq1215-type',
+        );
+        final field = tester.widget<TextField>(find.byType(TextField));
+        expect(field.readOnly, isFalse);
+        expect(field.enabled, isNot(false));
+        expect(
+          tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).onQueue,
+          isNotNull,
+        );
+
+        await queueFromComposer(tester, 'primero tras compactar');
+        await queueFromComposer(
+          tester,
+          'segundo tras compactar',
+          keyboard: true,
+        );
+
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(chat.queuedMessages, [
+          'primero tras compactar',
+          'segundo tras compactar',
+        ]);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          isEmpty,
+        );
+        expect(
+          find.text(
+            'Mensaje en cola: se enviará cuando termine la compactación.',
+          ),
+          findsOneWidget,
+        );
+        // The compaction pill stays the live signal while the turn waits.
+        expect(_dockText('Compactando'), findsOneWidget);
+        // Long enough for any retry ladder to have burnt through its attempts.
+        await tester.pump(const Duration(seconds: 12));
+        expect(chat.desktopManualCompressionInFlight, isTrue);
+        expect(gateway.submissions, isEmpty);
+        expect(chat.queuedRetriesExhausted, isEmpty);
+        expect(chat.queuedMessages, hasLength(2));
+        expect(gateway.nativeCompressionCalls, 1);
+
+        // Settle without starting a live turn so the test leaves no timers.
+        gate.completeError(
+          const TuiGatewayRpcError('session.compress', 'neutral', code: 5555),
+        );
+        await tester.pump(const Duration(seconds: 5));
+        expect(gateway.submissions, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'after compression completes the queued turns are submitted once, in '
+      'order',
+      (tester) async {
+        final (chat, gateway, gate) = await startHeldCompression(
+          tester,
+          'conn-cq1215-drain',
+        );
+        await queueFromComposer(tester, 'primero tras compactar');
+        await queueFromComposer(tester, 'segundo tras compactar');
+        expect(gateway.submissions, isEmpty);
+
+        gate.complete(
+          _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
+        );
+        for (var frame = 0; frame < 20; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(chat.desktopManualCompressionInFlight, isFalse);
+        expect(gateway.submissions, ['primero tras compactar']);
+
+        gateway.emit('message.complete', {'text': 'hecho uno'});
+        await tester.pump(const Duration(milliseconds: 1200));
+        expect(gateway.submissions, [
+          'primero tras compactar',
+          'segundo tras compactar',
+        ]);
+        gateway.emit('message.complete', {'text': 'hecho dos'});
+        await tester.pump(const Duration(seconds: 3));
+        expect(gateway.submissions, [
+          'primero tras compactar',
+          'segundo tras compactar',
+        ]);
+        expect(chat.queuedMessages, isEmpty);
+        expect(gateway.nativeCompressionCalls, 1);
+        await tester.pump(const Duration(seconds: 5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('a failed compression keeps the queued turn held, not sent', (
+      tester,
+    ) async {
+      final (chat, gateway, gate) = await startHeldCompression(
+        tester,
+        'conn-cq1215-fail',
+      );
+      await queueFromComposer(tester, 'espera a la compactación');
+      gate.completeError(
+        const TuiGatewayRpcError('session.compress', 'neutral', code: 5555),
+      );
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(chat.desktopManualCompressionInFlight, isFalse);
+      await tester.pump(const Duration(seconds: 12));
+      expect(gateway.submissions, isEmpty);
+      expect(chat.queuedMessages, ['espera a la compactación']);
+      expect(chat.queueParked, isTrue);
+      expect(find.text('en pausa: la compactación no terminó'), findsOneWidget);
+      // The existing queue affordance delivers it on explicit request, once.
+      HermesNotice.of(
+        tester.element(find.byType(ChatScreen)),
+      ).removeCurrentSnackBar();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('chat-queue-resume')));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(gateway.submissions, ['espera a la compactación']);
+      gateway.emit('message.complete', {'text': 'hecho'});
+      await tester.pump(const Duration(seconds: 3));
+      expect(gateway.submissions, ['espera a la compactación']);
+      expect(chat.queuedMessages, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'the in-flight /compress is never submitted again and mixing inputs '
+      'stay closed',
+      (tester) async {
+        final (chat, gateway, gate) = await startHeldCompression(
+          tester,
+          'conn-cq1215-invariant',
+        );
+        final composer = tester.widget<ConsoleComposer>(
+          find.byType(ConsoleComposer),
+        );
+        expect(composer.attachEnabled, isFalse);
+        expect(composer.dictation?.interactive, isFalse);
+        expect(composer.onContentInserted, isNull);
+        expect(composer.voiceModeAction, isNull);
+
+        await queueFromComposer(tester, '/compress');
+        await queueFromComposer(tester, '/compress otra vez', keyboard: true);
+        expect(gateway.nativeCompressionCalls, 1);
+        expect(gateway.slashCalls, isEmpty);
+        expect(gateway.dispatchCalls, isEmpty);
+        expect(gateway.submissions, isEmpty);
+        expect(chat.queuedMessages, isEmpty);
+        // The command stays in the composer for after the compaction.
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '/compress otra vez',
+        );
+        expect(
+          find.text(
+            'Los comandos esperan a que termine la compactación. Los mensajes '
+            'normales se ponen en cola.',
+          ),
+          findsOneWidget,
+        );
+
+        gate.complete(
+          _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
+        );
+        for (var frame = 0; frame < 20; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(gateway.nativeCompressionCalls, 1);
+        expect(gateway.submissions, isEmpty);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '/compress otra vez',
+        );
+        await tester.pump(const Duration(seconds: 5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
   testWidgets('REGRESSION_COMP_FIX1_UI_CURRENT_ERROR', (tester) async {
     final compressionGate = Completer<DesktopCompressionResult>();
     final gateway = _UiNativeCompressionGateway(
@@ -14366,7 +14603,18 @@ void main() {
       expect(_dockText('Compactando'), findsOneWidget);
       expect(find.text('Optimizando la conversación…'), findsNothing);
       expect(find.text('2%'), findsNothing);
-      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+      // Typing stays possible (it queues behind the compression); attaching
+      // stays closed.
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).enabled,
+        isNot(false),
+      );
+      expect(
+        tester
+            .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+            .attachEnabled,
+        isFalse,
+      );
 
       compressionGate.complete(_acceptedCommandResult);
       await tester.pump();
@@ -14694,7 +14942,18 @@ void main() {
       );
       expect(find.text(pendingMessage), findsWidgets);
       expect(find.bySemanticsLabel(pendingMessage), findsOneWidget);
-      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+      // Typing stays possible (it queues behind the compression); attaching
+      // stays closed.
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).enabled,
+        isNot(false),
+      );
+      expect(
+        tester
+            .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+            .attachEnabled,
+        isFalse,
+      );
       expect(find.text('La compresión de contexto terminó.'), findsNothing);
 
       gateway.emit('status.update', const {

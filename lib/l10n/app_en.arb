@@ -7558,5 +7558,8 @@
   "q1215QueueAbandonFailed": "Could not remove the message. It is still queued; try again in a moment.",
   "q1215QueueResumeFailed": "Could not resume the queue yet. Wait for it to finish stopping and try again.",
   "q1215QueueMissingAttachment": "An attachment is missing from this phone, so it cannot be sent. Delete it and attach the file again.",
-  "q1215QueueHeadStuckNote": "they won't send on their own: check the first one"
+  "q1215QueueHeadStuckNote": "they won't send on their own: check the first one",
+  "cq1215QueuedUntilCompacted": "Message queued: it will be sent when the compaction finishes.",
+  "cq1215CommandWaitsForCompaction": "Commands wait until the compaction finishes. Normal messages are queued.",
+  "cq1215QueueParkedAfterCompaction": "paused: the compaction did not finish"
 }

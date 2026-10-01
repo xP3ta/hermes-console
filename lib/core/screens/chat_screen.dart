@@ -1531,7 +1531,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
   bool? _lastDesktopCompressionPresentation;
-  bool _compressionDraftFocusRetained = false;
   bool get _compressingSession =>
       _compressionCommandInFlight ||
       (_chatBound && _chat.desktopManualCompressionInFlight);
@@ -1612,6 +1611,10 @@ class _ChatScreenState extends State<ChatScreen>
   // sustituye `_sending`: después del ACK el composer vuelve a aceptar texto y
   // Hermes puede tratarlo como steering durante el run actual.
   bool _composerSubmissionInFlight = false;
+  // Identity of the submission holding [_composerSubmissionInFlight]. A
+  // `/compress` hands the slot back as soon as it is dispatched (its own
+  // fence takes over), so its late `finally` must not release a successor.
+  int _composerSubmissionClaim = 0;
   Timer? _stopConfirmationDismissTimer;
   bool _confirmedStopStatusDismissed = false;
   final RecentInterruptGuard _recentInterrupt = RecentInterruptGuard();
@@ -7253,17 +7256,22 @@ class _ChatScreenState extends State<ChatScreen>
     String? initialText,
     bool queueOnly = false,
   }) async {
+    // A compression in flight no longer refuses the send: `_sendMessageOnce`
+    // routes it to the queue, which holds it until the compression ends.
     if (_composerSubmissionInFlight ||
         _attachmentSubmitting ||
-        _attachmentMutationInFlight ||
-        _compressingSession) {
+        _attachmentMutationInFlight) {
       return false;
     }
     // Claim the in-flight slot BEFORE any await: two same-tick sends (double
     // tap) must never both pass the guard above and submit twice.
     _composerSubmissionInFlight = true;
+    final claim = ++_composerSubmissionClaim;
     try {
-      await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+      // Queuing behind a compression must never interrupt it.
+      if (!_compressingSession) {
+        await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _composerSubmissionInFlight = false);
@@ -7294,13 +7302,14 @@ class _ChatScreenState extends State<ChatScreen>
         queueOnly: queueOnly,
       );
     } finally {
+      final ownsSlot = claim == _composerSubmissionClaim;
       if (mounted) {
         setState(() {
-          _composerSubmissionInFlight = false;
+          if (ownsSlot) _composerSubmissionInFlight = false;
           if (submitsAttachment) _attachmentSubmitting = false;
         });
       } else {
-        _composerSubmissionInFlight = false;
+        if (ownsSlot) _composerSubmissionInFlight = false;
         if (submitsAttachment) _attachmentSubmitting = false;
       }
       _syncPassiveTranscriptRefresh(refreshNow: true);
@@ -7329,6 +7338,17 @@ class _ChatScreenState extends State<ChatScreen>
     final usesComposerState =
         textOverride == null || includeComposerAttachments;
     final rawComposerText = (textOverride ?? _textController.text).trim();
+    // Commands cannot wait in the queue, and running one now could start a
+    // second /compress over the one in flight. The text stays in the composer.
+    if (!skipSlashRouting &&
+        _compressingSession &&
+        rawComposerText.startsWith('/')) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(str.cq1215CommandWaitsForCompaction)),
+        kind: HermesNoticeKind.warning,
+      );
+      return false;
+    }
     if (!skipSlashRouting &&
         rawComposerText.startsWith('/') &&
         shouldRouteSlashBeforeBusyAttachmentQueue(rawComposerText)) {
@@ -7354,7 +7374,11 @@ class _ChatScreenState extends State<ChatScreen>
         return false;
       }
       if (local != null) {
-        await _executeSlash(local.command, local.arg);
+        await _executeSlash(
+          local.command,
+          local.arg,
+          fromComposerSubmission: true,
+        );
         return true;
       }
       if (!isUnavailableSlashName(invocation.name)) {
@@ -7581,10 +7605,11 @@ class _ChatScreenState extends State<ChatScreen>
     );
     final mentionAnnotation = buildBotMentionAnnotation(mentions);
     final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
+    final waitsForCompression = _compressingSession;
     // Every queued composer turn is written to the encrypted outbox before the
     // composer is cleared. This preserves FIFO across process death and keeps a
     // rejected head visible for explicit retry instead of dropping it.
-    if (_sending || waitsForExternalOwner) {
+    if (_sending || waitsForExternalOwner || waitsForCompression) {
       // Normal sends are next turns, never implicit steering: redirecting can
       // interrupt the live parent and its children. Steer stays a queue action.
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -7644,7 +7669,15 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         HermesNotice.of(context)
           ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                waitsForCompression && !_sending
+                    ? str.cq1215QueuedUntilCompacted
+                    : str.chaSteerQueued,
+              ),
+            ),
+          );
       }
       return true;
     }
@@ -8661,7 +8694,11 @@ class _ChatScreenState extends State<ChatScreen>
   /// Ejecuta un comando slash conocido sin decidir el foco globalmente. Las
   /// rutas y superficies modales gestionan su propio foco; los errores conservan
   /// la invocación y las acciones aceptadas consumen el composer.
-  Future<void> _executeSlash(SlashCommand cmd, String arg) async {
+  Future<void> _executeSlash(
+    SlashCommand cmd,
+    String arg, {
+    bool fromComposerSubmission = false,
+  }) async {
     if (cmd.action == SlashAction.remote) {
       await _executeRemoteSlash(cmd, arg);
       return;
@@ -8685,7 +8722,10 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (cmd.action == SlashAction.compress) {
       final invocation = _textController.text;
-      final consumed = await _compressDesktopSession(arg);
+      final consumed = await _compressDesktopSession(
+        arg,
+        fromComposerSubmission: fromComposerSubmission,
+      );
       if (!mounted || !consumed) return;
       _consumeSlashInvocation(invocation);
       return;
@@ -8805,7 +8845,10 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<bool> _compressDesktopSession(String focusTopic) async {
+  Future<bool> _compressDesktopSession(
+    String focusTopic, {
+    bool fromComposerSubmission = false,
+  }) async {
     if (_compressingSession) {
       _restoreComposerFocusAfterCompression();
       HermesNotice.of(context).showSnackBar(
@@ -8830,9 +8873,16 @@ class _ChatScreenState extends State<ChatScreen>
     _compressionInvocation = invocation;
     setState(() {
       _compressionCommandInFlight = true;
-      _compressionDraftFocusRetained = false;
       _slashSuggestions = const [];
       _textController.clear();
+      // From here `_compressingSession` fences the composer: what the user
+      // types next is queued behind the compression, so the submit slot that
+      // carried this `/compress` is released now instead of minutes later.
+      // Only that slot: a palette pick never owns someone else's send.
+      if (fromComposerSubmission) {
+        _composerSubmissionInFlight = false;
+        _composerSubmissionClaim++;
+      }
     });
     _syncCompaction();
     try {
@@ -8874,11 +8924,9 @@ class _ChatScreenState extends State<ChatScreen>
       final succeeded = _compressionSucceeded(result);
       _finishCompactionBar(result);
       if (!succeeded) {
-        // Dos preguntas distintas, no una: si el composer se desbloquea
-        // (`retainWhileFenced`, sin cambios: solo la ruta legacy —
-        // `compressionStatus` null — se desbloquea; un `pending` nativo
-        // fiable se queda bloqueado, igual que antes de esta noche) y si el
-        // texto se restaura. Para esto último, `compressionStatus` es la
+        // El composer ya es editable durante la compactación (lo escrito va a
+        // la cola); la única pregunta es si el texto se restaura. Para eso,
+        // `compressionStatus` es la
         // señal fiable en la ruta nativa (`pending` es lo único genuinamente
         // incierto; aborted/lock_held son un rechazo real). La ruta legacy
         // nunca la toca — ahí `accepted` es la señal: unknown == genuinamente
@@ -8888,9 +8936,7 @@ class _ChatScreenState extends State<ChatScreen>
         final fenced = result.compressionStatus != null
             ? result.compressionStatus == DesktopCompressionStatus.pending
             : result.accepted != DesktopCommandAcceptance.rejected;
-        _restoreComposerFocusAfterCompression(
-          retainWhileFenced: result.compressionStatus == null,
-        );
+        _restoreComposerFocusAfterCompression();
         if (!fenced) _restoreSlashInvocation(invocation);
       }
       return succeeded;
@@ -8926,8 +8972,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _restoreComposerFocusAfterCompression({bool retainWhileFenced = true}) {
-    _compressionDraftFocusRetained = retainWhileFenced;
+  void _restoreComposerFocusAfterCompression() {
     _textFocusNode.canRequestFocus = true;
     _textFocusNode.requestFocus();
     FocusManager.instance.applyFocusChangesIfNeeded();
@@ -13697,7 +13742,11 @@ class _ChatScreenState extends State<ChatScreen>
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _chat.queueParked
+                        _chat.queueParkedAfterCompression
+                            ? Strings.of(
+                                context,
+                              ).cq1215QueueParkedAfterCompaction
+                            : _chat.queueParked
                             ? Strings.of(context).chaQueueParkedNote
                             : _queueHeadStuck(queuedEntries)
                             ? Strings.of(context).q1215QueueHeadStuckNote
@@ -14066,18 +14115,17 @@ class _ChatScreenState extends State<ChatScreen>
           ? Strings.of(context).botChatComposerHint(_botDisplayName!)
           : Strings.of(context).chaHintUser,
       onKeyboardSubmit: _composerKeyboardSubmit,
-      onContentInserted: (content) =>
-          unawaited(_insertKeyboardContent(content)),
-      // A retained invocation may keep focus without authorizing edits or a
-      // second submission.
-      fieldReadOnly: _compressingSession,
-      // El usuario puede preparar texto y abrir el teclado mientras el
-      // transcript interactivo termina de publicar. El envío se mantiene
-      // bloqueado hasta entonces; adjuntar y dictar siguen cerrados porque
-      // mezclarían el lote en vuelo.
-      fieldEnabled:
-          !_attachmentSubmitting &&
-          (!_compressingSession || _compressionDraftFocusRetained),
+      // Pegar una imagen desde el teclado es adjuntar: cerrado mientras
+      // compacta, igual que el `+`.
+      onContentInserted: _compressingSession
+          ? null
+          : (content) => unawaited(_insertKeyboardContent(content)),
+      // Mientras compacta se puede escribir y poner en cola el siguiente
+      // turno; la cola lo retiene hasta que termine. La invocación `/compress`
+      // ya salió del composer y un comando escrito ahora no se ejecuta
+      // (`_sendMessageOnce`), así que no hay segundo envío. Adjuntar y dictar
+      // siguen cerrados porque mezclarían el lote en vuelo.
+      fieldEnabled: !_attachmentSubmitting,
       voiceModeAction: _composerVoiceModeAction(colors, showStop),
       showStop: showStop,
       // Sin lanzadera mientras compacta: la barra de compactación sobre el
@@ -14091,11 +14139,13 @@ class _ChatScreenState extends State<ChatScreen>
           !_interactiveMessageRefreshPending &&
           !_composerSubmissionInFlight &&
           !_attachmentSubmitting &&
-          !_compressingSession &&
           !_attachmentMutationInFlight &&
           !_nothingToSend,
       onSend: (_, _) => _sendMessage(),
-      onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
+      onQueue:
+          _sending ||
+              _chat.hasAuthoritativePassiveRemoteActivity ||
+              _compressingSession
           ? () => _sendMessage(queueOnly: true)
           : null,
       onStop: _cancelStream,

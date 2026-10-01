@@ -4294,6 +4294,13 @@ class ActiveChat {
   // The only compression state that locks the composer.
   bool _desktopCompressionInFlight = false;
   bool _desktopCompressionRpcInFlight = false;
+  // A manual `/compress` attempt of this process, from its first local check
+  // to its outcome. While it runs the composer may still admit turns to the
+  // queue, but the drain holds them: a prompt.submit mid-compression would be
+  // refused (4009) and burn the queue's bounded retries.
+  int _manualCompressionAttempts = 0;
+  bool _queuedDuringManualCompression = false;
+  int? _compressionQueueParkGeneration;
   // A compression restored after a restart/reconnect, shown only while the
   // gateway's replay ring positively says it is still pinned `compressing`.
   // Display-only: never locks input (Hermes Desktop has no fence).
@@ -14699,6 +14706,7 @@ class ActiveChat {
     // Its terminal status may still arrive on this chat: then reload.
     _liveCompressionHandedOff = true;
     if (!_disposed) _emit(ActiveChatEvent.sessionInfo);
+    _releaseQueueAfterManualCompression(succeeded: false);
     unawaited(_restoreCompressionFromRecord());
   }
 
@@ -14735,7 +14743,10 @@ class ActiveChat {
   Future<DesktopCommandDispatch> compressDesktopSession({
     String focusTopic = '',
   }) => _trackRuntimeMutation(
-    () => _compressDesktopSession(focusTopic: focusTopic),
+    () => _holdQueueDuringManualCompression(
+      () => _compressDesktopSession(focusTopic: focusTopic),
+      succeeded: _manualCompressionSucceeded,
+    ),
   );
 
   _CompressionProjectionAuthority _compressionProjectionFromAuthority(
@@ -14787,8 +14798,67 @@ class ActiveChat {
   Future<DesktopCompressionPresentation> compressDesktopSessionForPresentation({
     String focusTopic = '',
   }) => _trackRuntimeMutation(
-    () => _compressDesktopSessionForPresentation(focusTopic: focusTopic),
+    () => _holdQueueDuringManualCompression(
+      () => _compressDesktopSessionForPresentation(focusTopic: focusTopic),
+      succeeded: (presentation) =>
+          presentation.command != null &&
+          _manualCompressionSucceeded(presentation.command!),
+    ),
   );
+
+  /// Turns admitted while a manual compression runs wait for its outcome.
+  bool get _manualCompressionHoldsQueue =>
+      _manualCompressionAttempts > 0 ||
+      _desktopCompressionInFlight ||
+      _desktopCompressionRpcInFlight;
+
+  /// The queue paused itself because the compression it was waiting for did
+  /// not finish (as opposed to a Stop). Drives the paused strip's note.
+  bool get queueParkedAfterCompression =>
+      queueParked && _compressionQueueParkGeneration == _queueParkGeneration;
+
+  bool _manualCompressionSucceeded(DesktopCommandDispatch result) =>
+      result.compressionStatus == DesktopCompressionStatus.compressed ||
+      result.compressionStatus == DesktopCompressionStatus.noOp ||
+      (result.compressionStatus == null &&
+          result.accepted == DesktopCommandAcceptance.accepted);
+
+  Future<T> _holdQueueDuringManualCompression<T>(
+    Future<T> Function() operation, {
+    required bool Function(T result) succeeded,
+  }) async {
+    _manualCompressionAttempts += 1;
+    var ok = false;
+    try {
+      final result = await operation();
+      ok = succeeded(result);
+      return result;
+    } finally {
+      _manualCompressionAttempts -= 1;
+      _releaseQueueAfterManualCompression(succeeded: ok);
+    }
+  }
+
+  /// The compression the queue waited for has an outcome. Success delivers the
+  /// held turns through the normal drain, in order. Anything else keeps them
+  /// queued but paused: the user resumes, sends now or deletes them with the
+  /// existing queue controls instead of having them fire into a session whose
+  /// compression just failed.
+  void _releaseQueueAfterManualCompression({required bool succeeded}) {
+    if (_disposed || _manualCompressionHoldsQueue) return;
+    final heldTurns = _queuedDuringManualCompression;
+    _queuedDuringManualCompression = false;
+    if (!heldTurns) return;
+    if (!succeeded && _hasQueuedWork) {
+      _queueParkGeneration++;
+      _compressionQueueParkGeneration = _queueParkGeneration;
+      _queueLease = QueueLease.parked;
+      _queueDrainSuspended = true;
+      _emit(ActiveChatEvent.queueChanged);
+      return;
+    }
+    if (!_queueDrainSuspended && !isStreaming) Timer.run(_drainQueue);
+  }
 
   Future<DesktopCompressionPresentation>
   _compressDesktopSessionForPresentation({String focusTopic = ''}) async {
@@ -19133,6 +19203,7 @@ class ActiveChat {
     final live = _desktopCompressionInFlight && !_desktopCompressionRpcInFlight;
     if (!live && !handedOff) return;
     _desktopCompressionInFlight = false;
+    if (live) _releaseQueueAfterManualCompression(succeeded: true);
     final runtimeId = _desktopRuntimeSessionId;
     if (runtimeId != null) {
       unawaited(
@@ -20925,6 +20996,7 @@ class ActiveChat {
     final capturedAllowTransportFallback = isStreaming
         ? _turnSessionConfig.allowTransportFallback
         : (_queueAdmissionAllowTransportFallback ?? false);
+    if (_manualCompressionHoldsQueue) _queuedDuringManualCompression = true;
     final queueOrder = _nextQueueOrder++;
     _messageQueue.add(
       _QueuedTextTurn(
@@ -20965,6 +21037,7 @@ class ActiveChat {
     if (_queueAdmissionFrozen || mutationsBlockedByOwnershipConflict) {
       return false;
     }
+    if (_manualCompressionHoldsQueue) _queuedDuringManualCompression = true;
     final id = delivery.current.clientTurnId;
     final existingOwner = _preparedTurnOwners[id];
     if (existingOwner != null) {
@@ -21790,6 +21863,7 @@ class ActiveChat {
         mutationsBlockedByOwnershipConflict ||
         _queueLease == QueueLease.parked ||
         _queueDrainSuspended ||
+        _manualCompressionHoldsQueue ||
         isStreaming ||
         _preparedTurnDrainInFlight) {
       return;
@@ -21799,6 +21873,7 @@ class ActiveChat {
         mutationsBlockedByOwnershipConflict ||
         _queueLease == QueueLease.parked ||
         _queueDrainSuspended ||
+        _manualCompressionHoldsQueue ||
         isStreaming ||
         _preparedTurnDrainInFlight) {
       return;
