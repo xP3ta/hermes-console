@@ -7146,6 +7146,13 @@ class ActiveChat {
   @visibleForTesting
   List<Map<String, dynamic>> get internalMessagesForTesting => _messages;
 
+  /// sa1215: newest-first rows for the «Archivos y enlaces» screen. Unlike
+  /// [messages] it keeps tool evidence (tool rows and the results coalesced
+  /// into assistant rows), because Desktop indexes tool deliveries; durable
+  /// privacy vetoes still apply.
+  List<Map<String, dynamic>> get contentHistoryTranscript =>
+      _applyDurablePrivateTranscriptVetoes(_messages);
+
   /// Consumes the bounded, non-fatal producer warning exactly once for the
   /// mounted chat surface. It is diagnostic state, never assistant content.
   String? takeTerminalWarning() {

@@ -12,6 +12,7 @@ class ChatControlLabels {
   final String permissions;
   final String refresh;
   final String artifacts;
+  final String? content;
   final String details;
   final String cron;
   final String? recovery;
@@ -38,6 +39,7 @@ class ChatControlLabels {
     required this.releaseUnavailable,
     this.recovery,
     this.extensions,
+    this.content,
   });
 }
 
@@ -52,6 +54,7 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback onPermissions;
   final VoidCallback onRefresh;
   final VoidCallback onArtifacts;
+  final VoidCallback? onContent;
   final VoidCallback? onDetails;
   final VoidCallback? onCron;
   final VoidCallback? onRecovery;
@@ -69,6 +72,7 @@ class ChatControlSheet extends StatelessWidget {
     required this.onRefresh,
     required this.onArtifacts,
     this.onDelete,
+    this.onContent,
     this.readOnly = false,
     this.showDetails = false,
     this.showCron = false,
@@ -182,6 +186,13 @@ class ChatControlSheet extends StatelessWidget {
                   icon: Icons.schedule_outlined,
                   title: labels.cron,
                   onTap: onCron!,
+                ),
+              if (labels.content != null && onContent != null)
+                _ActionRow(
+                  key: const ValueKey('chat-control-content'),
+                  icon: Icons.perm_media_outlined,
+                  title: labels.content!,
+                  onTap: onContent,
                 ),
               _ActionRow(
                 icon: Icons.inventory_2_outlined,

@@ -17833,13 +17833,14 @@ void main() {
     expect(find.text('Densidad del chat'), findsNothing);
     expect(find.text('Agentes y subagentes'), findsNothing);
     expect(find.text('Artefactos'), findsOneWidget);
+    expect(find.text('Archivos y enlaces'), findsOneWidget);
     final surfaceSize = tester.getSize(
       find.byKey(const ValueKey('chat-control-dialog')),
     );
     expect(surfaceSize.width, lessThanOrEqualTo(520));
     expect(
       surfaceSize.height,
-      lessThan(480),
+      lessThan(540),
       reason: 'the menu should fit its actions instead of filling the viewport',
     );
     expect(tester.takeException(), isNull);

@@ -82,6 +82,8 @@ import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
+import 'chat_content_screen.dart';
+import 'image_viewer_screen.dart';
 import '../services/compaction_tracker.dart';
 import '../services/session_reconciler.dart';
 import '../services/artifact_export_service.dart';
@@ -89,6 +91,7 @@ import '../services/attachment_uploader.dart';
 import '../services/command_risk.dart';
 import '../services/bridge_client.dart';
 import '../services/bridge_update_service.dart';
+import '../services/chat_content_extractor.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
@@ -1013,6 +1016,7 @@ enum _ModelSource { desktop, bridge, dashboard, gateway }
 enum _ChatControlAction {
   permissions,
   refresh,
+  content,
   artifacts,
   details,
   cron,
@@ -9713,6 +9717,7 @@ class _ChatScreenState extends State<ChatScreen>
             permissions: strings.chaPermissionsTitle,
             refresh: strings.chaUpdateTitle,
             artifacts: strings.chaArtifactsAction,
+            content: strings.sa1215ContentAction,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
@@ -9732,6 +9737,7 @@ class _ChatScreenState extends State<ChatScreen>
           onPermissions: () => select(_ChatControlAction.permissions),
           onRefresh: () => select(_ChatControlAction.refresh),
           onArtifacts: () => select(_ChatControlAction.artifacts),
+          onContent: () => select(_ChatControlAction.content),
           onDetails: () => select(_ChatControlAction.details),
           onCron: () => select(_ChatControlAction.cron),
           onRecovery:
@@ -9757,6 +9763,8 @@ class _ChatScreenState extends State<ChatScreen>
         if (policy != null) _showModeSheet(policy);
       case _ChatControlAction.refresh:
         unawaited(_fetchMessages());
+      case _ChatControlAction.content:
+        unawaited(_openChatContent());
       case _ChatControlAction.artifacts:
         unawaited(_showSessionArtifacts());
       case _ChatControlAction.details:
@@ -9846,6 +9854,80 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
       ),
+    );
+  }
+
+  /// sa1215: per-chat «Archivos y enlaces» (Desktop Artifacts view scoped to
+  /// this conversation). Reads the loaded transcript; older pages load only
+  /// on the screen's explicit action.
+  Future<void> _openChatContent() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ChatContentScreen(
+          transcript: () => _chat.contentHistoryTranscript,
+          hasOlder: () => _chat.hasEarlierMessages,
+          loadOlder: () =>
+              _chat.loadEarlierMessages(continuePastInvisible: true),
+          onOpenFile: _openChatContentFile,
+          launchExternal: (uri) =>
+              launchUrl(uri, mode: LaunchMode.externalApplication),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChatContentFile(ChatContentItem item) async {
+    final navigator = Navigator.of(context);
+    final value = item.value;
+    if (value.startsWith('data:')) {
+      final data = Uri.tryParse(value)?.data;
+      if (data == null || item.kind != ChatContentKind.image) {
+        throw const ChatContentUnreachable();
+      }
+      await navigator.push<void>(
+        MaterialPageRoute(
+          builder: (_) => ImageViewerScreen(
+            imageUrl: item.label,
+            imageBytes: data.contentAsBytes(),
+          ),
+        ),
+      );
+      return;
+    }
+    final reference = GeneratedMediaService.referenceFromSource(value);
+    if (reference == null) throw const ChatContentUnreachable();
+    final file = reference.sourceKind == GeneratedMediaSourceKind.https
+        ? await downloadGeneratedMedia(reference)
+        : await downloadUserServerAttachment(reference);
+    if (!mounted) return;
+    if (reference.kind == GeneratedMediaKind.image &&
+        !reference.displayName.toLowerCase().endsWith('.svg')) {
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      await navigator.push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              ImageViewerScreen(imageUrl: file.path, imageBytes: bytes),
+        ),
+      );
+      return;
+    }
+    final length = await file.length();
+    if (!mounted) return;
+    await openArtifactViewer(
+      context,
+      name: reference.displayName,
+      mimeType: reference.mimeType,
+      file: file,
+      sizeBytes: length,
+      onOpenExternal: () => unawaited(
+        openGeneratedMediaExternally(
+          file,
+          mimeType: reference.mimeType,
+          expectedSize: length,
+        ).catchError((Object _) {}),
+      ),
+      onShare: () => unawaited(shareMediaFile(file).catchError((Object _) {})),
     );
   }
 
