@@ -522,14 +522,18 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
             desktopSessionDisplayText(message['text']) ??
             '';
   var content = rawContent;
-  if (role == 'assistant') {
-    if (rawContent.trim().isEmpty) {
-      content = codexMessageItemText(message['codex_message_items']);
-    }
+  final codex = role == 'assistant'
+      ? codexMessageItemTexts(message['codex_message_items'])
+      : null;
+  if (codex != null) {
+    if (rawContent.trim().isEmpty) content = codex.text;
     content = finalizedPublicAssistantText(content);
   }
-  final reasoning = role == 'assistant'
-      ? durableAssistantReasoningText(message)
+  final reasoning = codex != null
+      ? durableAssistantReasoningText(
+          message,
+          sidecarReasoning: codex.reasoning,
+        )
       : '';
   // Internal Stop/recovery evidence must retain the exact submitted prompt.
   if (role == 'user' && !retainUserMentionNote) {
@@ -7434,8 +7438,10 @@ class ActiveChat {
   // por token. Vive aquí para que el streaming no dependa del widget.
   static const _desktopStreamCadence = Duration(milliseconds: 33);
   final StringBuffer _tokenBuffer = StringBuffer();
-  final StringBuffer _assistantRawStream = StringBuffer();
-  String _assistantPublicStream = '';
+  // Raw answer of the current turn and its incrementally projected public
+  // text: each delta re-projects only the bytes after the last safe cut.
+  final StreamingPublicAssistantText _assistantStream =
+      StreamingPublicAssistantText();
   Timer? _tokenFlushTimer;
   Timer? _terminalTimer;
   Future<void>? _terminalTranscriptRecovery;
@@ -12992,8 +12998,7 @@ class ActiveChat {
     pendingApproval = null;
     _pendingDesktopInterimKey = null;
     _assistantNarration.reset();
-    _assistantRawStream.clear();
-    _assistantPublicStream = '';
+    _assistantStream.clear();
     currentRunId = null;
     _terminalTimer?.cancel();
     _terminalTimer = null;
@@ -23060,8 +23065,7 @@ class ActiveChat {
     _expireInteractivePromptsForRuntime(_desktopRuntimeSessionId);
     _pendingDesktopInterimKey = null;
     _assistantNarration.reset();
-    _assistantRawStream.clear();
-    _assistantPublicStream = '';
+    _assistantStream.clear();
     currentRunId = null;
     _runTerminal = false;
     _streamingConfirmed =
@@ -23138,8 +23142,7 @@ class ActiveChat {
     pendingApproval = null;
     _pendingDesktopInterimKey = null;
     _assistantNarration.reset();
-    _assistantRawStream.clear();
-    _assistantPublicStream = '';
+    _assistantStream.clear();
     currentRunId = null;
     _terminalTimer?.cancel();
     _terminalTimer = null;
@@ -26158,20 +26161,15 @@ class ActiveChat {
 
   void _enqueueToken(String token, {bool narratable = true}) {
     if (token.isEmpty) return;
-    _assistantRawStream.write(token);
-    final projected = streamingPublicAssistantText(
-      _assistantRawStream.toString(),
-    );
-    if (!projected.startsWith(_assistantPublicStream)) {
+    final publicDelta = _assistantStream.append(token);
+    if (publicDelta == null) {
       debugPrint(
         '[active-chat] streaming delta withheld: public projection is not '
-        'prefix-stable (rawChars=${_assistantRawStream.length}, '
-        'publicChars=${_assistantPublicStream.length})',
+        'prefix-stable (rawChars=${_assistantStream.rawLength}, '
+        'publicChars=${_assistantStream.publicText.length})',
       );
       return;
     }
-    final publicDelta = projected.substring(_assistantPublicStream.length);
-    _assistantPublicStream = projected;
     if (publicDelta.isEmpty) return;
     _observeFirstResponseContent(publicDelta);
     if (narratable) _assistantNarration.appendDelta(publicDelta);
