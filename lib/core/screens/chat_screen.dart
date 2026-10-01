@@ -1291,6 +1291,7 @@ class _ChatScreenState extends State<ChatScreen>
   Completer<bool>? _sessionContextBootstrapRetryCompleter;
   bool _sessionContextAwaitingPostCompactionMetrics = false;
   int? _desktopRuntimePresentationFingerprint;
+  Object? _lastSessionConfigPresentation;
   (bool, int, int, int, int)? _activityPresentationFingerprint;
   bool _lastDesktopCompacting = false;
   PendingSessionConfigChange? _pendingModelConfirmation;
@@ -3682,6 +3683,32 @@ class _ChatScreenState extends State<ChatScreen>
     return value is SessionModelConfigValue ? value : null;
   }
 
+  /// Identity of every pending session-config change, so a `config.set`
+  /// transition (sending → accepted/rejected) repaints the chrome even when
+  /// `session.info` itself did not change.
+  Object get _sessionConfigPresentation => Object.hashAll([
+    for (final key in DesktopSessionConfigKey.values)
+      if (_chat.pendingSessionConfigChange(key) case final change?)
+        (change.requestEpoch, change.status, change.deferred),
+  ]);
+
+  /// Model id whose `config.set` Hermes queued for the next turn (mid-turn
+  /// switch). Cleared when that turn starts.
+  String? _deferredModelId;
+
+  /// md1215: the header shows the picked model while `config.set` is in
+  /// flight, or while Hermes holds it for the next message.
+  bool get _modelChangePending {
+    if (!_chatBound) return false;
+    final change = _chat.pendingSessionConfigChange(
+      DesktopSessionConfigKey.model,
+    );
+    if (change?.status == SessionConfigChangeStatus.sending) return true;
+    final deferred = _deferredModelId;
+    return deferred != null &&
+        deferred == (_displayedSessionModel?.modelId ?? _activeModel?.model);
+  }
+
   /// Etiqueta corta del modelo activo para el AppBar (p.ej. "GPT-5.5"). Cae a un
   /// texto neutro mientras carga o si el Dashboard no está accesible.
   String get _activeModelLabel {
@@ -5627,6 +5654,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (event == ActiveChatEvent.started) {
       _lastNonEmptySubagentActivities = const <SubagentActivity>[];
       _subagentPillDismissed = false;
+      // A queued model switch is applied by Hermes at this turn's start.
+      _deferredModelId = null;
     }
     _syncTurnActivityClock();
     _syncCompaction();
@@ -5746,12 +5775,17 @@ class _ChatScreenState extends State<ChatScreen>
       }
       final invalidateAfterCompaction =
           _sessionContextAwaitingPostCompactionMetrics && !contextCompacting;
+      // md1215: config.set publishes `sessionInfo` without touching
+      // `session.info`; the pending pick must still repaint the header now.
+      final configPresentation = _sessionConfigPresentation;
       contextOnlySessionInfo =
           _desktopRuntimePresentationFingerprint != null &&
           _desktopRuntimePresentationFingerprint == presentationFingerprint &&
           _lastDesktopCompacting == compacting &&
           _lastDesktopCompressionPresentation == compressionPresentation &&
-          _activityPresentationFingerprint == activityPresentation;
+          _activityPresentationFingerprint == activityPresentation &&
+          _lastSessionConfigPresentation == configPresentation;
+      _lastSessionConfigPresentation = configPresentation;
       _lastDesktopCompressionPresentation = compressionPresentation;
       _activityPresentationFingerprint = activityPresentation;
       _desktopRuntimePresentationFingerprint = presentationFingerprint;
@@ -9308,14 +9342,23 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
 
+    final deferred = result.deferred;
+    if (mounted) setState(() => _deferredModelId = deferred ? modelId : null);
     await _rememberSessionModel(
       provider.slug,
       modelId,
       updateEffectiveDisplay: false,
     );
     if (mounted) {
+      final name = friendlyModelName(modelId);
       HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(str.chaModelActive(friendlyModelName(modelId)))),
+        SnackBar(
+          content: Text(
+            deferred
+                ? str.md1215ModelNextMessage(name)
+                : str.chaModelActive(name),
+          ),
+        ),
       );
     }
     return true;
@@ -11003,6 +11046,18 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 ),
                               ),
+                              if (_modelChangePending) ...[
+                                const SizedBox(width: 5),
+                                Tooltip(
+                                  key: const ValueKey('md1215-model-pending'),
+                                  message: str.md1215ModelPending,
+                                  child: Icon(
+                                    Icons.schedule_rounded,
+                                    size: 14,
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(width: 3),
                               Icon(
                                 Icons.expand_more_rounded,

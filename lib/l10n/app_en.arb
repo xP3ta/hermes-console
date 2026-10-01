@@ -7691,5 +7691,7 @@
   "pj1215WorktreeConvertInstead": "Open an existing branch instead",
   "pj1215WorktreeNewInstead": "Create a new branch instead",
   "pj1215WorktreeStaleBackend": "Your Hermes cannot create worktrees from the phone yet. Update it or do it from Desktop.",
-  "pj1215WorktreeTag": "Worktree"
+  "pj1215WorktreeTag": "Worktree",
+  "md1215ModelPending": "Model change pending",
+  "md1215ModelNextMessage": "{model}: applies from the next message"
 }

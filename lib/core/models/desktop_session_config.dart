@@ -146,12 +146,17 @@ final class DesktopConfigSetResult {
   final bool confirmRequired;
   final String? confirmMessage;
 
+  /// `config.set model` during a running turn: Hermes queues the pick and
+  /// applies it when the next turn starts (`pending_model_switch`).
+  final bool deferred;
+
   const DesktopConfigSetResult({
     required this.key,
     required this.value,
     this.warning,
     this.confirmRequired = false,
     this.confirmMessage,
+    this.deferred = false,
   });
 
   factory DesktopConfigSetResult.fromJson(
@@ -188,6 +193,7 @@ final class DesktopConfigSetResult {
       warning: warning,
       confirmRequired: confirmRequired,
       confirmMessage: confirmMessage,
+      deferred: json['deferred'] == true,
     );
   }
 }

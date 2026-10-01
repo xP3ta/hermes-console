@@ -1416,12 +1416,21 @@ class _ModelConfigGateway extends _UiRewindGateway
   final List<bool> modelConfirmationFlags = [];
   Object? modelError;
   bool modelConfirmRequired = false;
+  // md1215: catálogo alternativo, contador de lecturas, ACK retenido y
+  // respuesta `deferred` (cambio a mitad de turno).
+  DesktopModelCatalog? catalogOverride;
+  int modelOptionsCalls = 0;
+  Completer<void>? modelGate;
+  bool modelDeferred = false;
 
   @override
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
-  }) async => catalog;
+  }) async {
+    modelOptionsCalls++;
+    return catalogOverride ?? catalog;
+  }
 
   @override
   Future<DesktopConfigSetResult> setSessionModel(
@@ -1431,8 +1440,21 @@ class _ModelConfigGateway extends _UiRewindGateway
   }) async {
     modelSelections.add(selection);
     modelConfirmationFlags.add(confirmExpensiveModel);
+    final gate = modelGate;
+    if (gate != null) await gate.future;
     final error = modelError;
     if (error != null) throw error;
+    if (modelDeferred) {
+      return DesktopConfigSetResult.fromJson({
+        'key': 'model',
+        'value': selection.modelId,
+        'warning': '',
+        'confirm_required': false,
+        'confirm_message': '',
+        'scope': 'session',
+        'deferred': true,
+      }, expectedKey: DesktopSessionConfigKey.model);
+    }
     return DesktopConfigSetResult(
       key: DesktopSessionConfigKey.model,
       value: selection.sessionWireValue,
@@ -18286,6 +18308,148 @@ void main() {
       expect(chat.canReleaseToDesktop, isTrue);
     },
   );
+
+  group('md1215 cambio de modelo en el chat', () {
+    Future<(ActiveChat, _ModelConfigGateway)> pumpModelChat(
+      WidgetTester tester,
+      String connectionId, {
+      _ModelConfigGateway? gateway,
+    }) async {
+      final fake = gateway ?? _ModelConfigGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: fake,
+        connection: _remoteConn(connectionId),
+        messagesLoaded: false,
+      );
+      for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 240));
+      }
+      expect(chat.hasDesktopRuntime, isTrue);
+      return (chat, fake);
+    }
+
+    Future<void> openModelSheet(WidgetTester tester) async {
+      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+    }
+
+    testWidgets(
+      'md1215: el modelo elegido se pinta al instante, pendiente, y nunca el anterior',
+      (tester) async {
+        final (_, gateway) = await pumpModelChat(tester, 'conn-md1215-opt');
+        gateway.emit('session.info', const {
+          'info': {'model': 'old-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+        expect(find.byKey(const ValueKey('old-model')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('md1215-model-pending')),
+          findsNothing,
+        );
+
+        gateway.modelGate = Completer<void>();
+        await openModelSheet(tester);
+        await tester.tap(find.text('new-model').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+
+        expect(gateway.modelSelections.last.modelId, 'new-model');
+        expect(
+          find.byKey(const ValueKey('new-model')),
+          findsOneWidget,
+          reason: 'la cabecera pinta B mientras config.set sigue en vuelo',
+        );
+        expect(find.byKey(const ValueKey('old-model')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('md1215-model-pending')),
+          findsOneWidget,
+        );
+
+        gateway.modelGate!.complete();
+        gateway.modelGate = null;
+        gateway.emit('session.info', const {
+          'info': {'model': 'new-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+        expect(find.byKey(const ValueKey('new-model')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('md1215-model-pending')),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('md1215: un rechazo del gateway devuelve A y avisa del error', (
+      tester,
+    ) async {
+      final (_, gateway) = await pumpModelChat(tester, 'conn-md1215-rb');
+      gateway.emit('session.info', const {
+        'info': {'model': 'old-model', 'provider': 'provider-a'},
+      });
+      await tester.pump();
+
+      gateway.modelGate = Completer<void>();
+      gateway.modelError = const TuiGatewayRpcError(
+        'config.set',
+        'rejected',
+        code: 5001,
+      );
+      await openModelSheet(tester);
+      await tester.tap(find.text('bad-model').first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+      expect(find.byKey(const ValueKey('bad-model')), findsOneWidget);
+
+      gateway.modelGate!.complete();
+      gateway.modelGate = null;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+
+      expect(find.byKey(const ValueKey('old-model')), findsOneWidget);
+      expect(find.byKey(const ValueKey('bad-model')), findsNothing);
+      expect(find.byKey(const ValueKey('md1215-model-pending')), findsNothing);
+      expect(
+        find.textContaining('No se pudo cambiar el modelo'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'md1215: un cambio diferido muestra B con aviso de siguiente mensaje',
+      (tester) async {
+        final (_, gateway) = await pumpModelChat(tester, 'conn-md1215-def');
+        gateway.emit('session.info', const {
+          'info': {'model': 'old-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+
+        gateway.modelDeferred = true;
+        await openModelSheet(tester);
+        await tester.tap(find.text('new-model').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 240));
+
+        expect(find.byKey(const ValueKey('new-model')), findsOneWidget);
+        expect(find.byKey(const ValueKey('old-model')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('md1215-model-pending')),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining('se aplica en el siguiente mensaje'),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
 
   testWidgets('pj1215: a project chat creates its session in that folder', (
     tester,

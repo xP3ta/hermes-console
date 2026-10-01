@@ -9275,5 +9275,14 @@
   "pj1215WorktreeConvertInstead": "Mejor abrir una rama existente",
   "pj1215WorktreeNewInstead": "Mejor crear una rama nueva",
   "pj1215WorktreeStaleBackend": "Tu Hermes no permite crear worktrees desde el móvil todavía. Actualízalo o hazlo desde Desktop.",
-  "pj1215WorktreeTag": "Worktree"
+  "pj1215WorktreeTag": "Worktree",
+  "md1215ModelPending": "Cambio de modelo pendiente",
+  "md1215ModelNextMessage": "{model}: se aplica en el siguiente mensaje",
+  "@md1215ModelNextMessage": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  }
 }
