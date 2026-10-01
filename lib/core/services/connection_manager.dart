@@ -510,6 +510,7 @@ class ConnectionManager {
     final jsonList = prefs.getStringList(_key) ?? [];
     var needsResave = false;
     final validConnections = <SavedConnection>[];
+    final keystoreLoads = <Future<void>>[];
 
     for (final j in jsonList) {
       final Map<String, dynamic> map;
@@ -536,20 +537,27 @@ class ConnectionManager {
         needsResave = true;
         continue;
       }
-      // Storage failures are not corrupt metadata. Abort initialization before
-      // rewriting prefs or pruning anything: migration must not remove the
-      // only remaining copy of a key when the Keystore write failed.
       final plainKey = (map['api_key'] as String?) ?? '';
-      if (plainKey.isNotEmpty) {
-        await _secure.writeApiKey(conn.id, plainKey);
-        _apiKeyCache[conn.id] = plainKey;
-        needsResave = true;
-      } else {
-        final stored = await _secure.readApiKey(conn.id);
-        if (stored != null && stored.isNotEmpty) _apiKeyCache[conn.id] = stored;
-      }
+      if (plainKey.isNotEmpty) needsResave = true;
       validConnections.add(conn);
+      keystoreLoads.add(() async {
+        if (plainKey.isNotEmpty) {
+          await _secure.writeApiKey(conn.id, plainKey);
+          _apiKeyCache[conn.id] = plainKey;
+        } else {
+          final stored = await _secure.readApiKey(conn.id);
+          if (stored != null && stored.isNotEmpty) {
+            _apiKeyCache[conn.id] = stored;
+          }
+        }
+      }());
     }
+    // Keystore round trips run concurrently; every one settles before the
+    // first failure is rethrown. Storage failures are not corrupt metadata:
+    // abort initialization before rewriting prefs or pruning anything, so a
+    // migration never removes the only remaining copy of a key when the
+    // Keystore write failed.
+    await Future.wait(keystoreLoads);
     if (needsResave) await _saveAll(validConnections);
   }
 
@@ -1033,15 +1041,14 @@ class ConnectionManager {
   /// las conexiones vivas y todos los ajustes globales. Devuelve cuántas quitó.
   Future<int> pruneOrphanData() async {
     final valid = getConnections().map((c) => c.id).toSet();
-    var removed = 0;
-    for (final k in prefs.getKeys().toList()) {
+    final orphans = prefs.getKeys().where((k) {
       final id = _connIdOfKey(k);
-      if (id != null && id.isNotEmpty && !valid.contains(id)) {
-        await prefs.remove(k);
-        removed++;
-      }
-    }
-    return removed;
+      return id != null && id.isNotEmpty && !valid.contains(id);
+    }).toList();
+    // Independent keys: issue the removals together instead of one platform
+    // round trip per key on the startup path.
+    await Future.wait(orphans.map(prefs.remove));
+    return orphans.length;
   }
 
   Future<void> deleteConnection(String id) async {
