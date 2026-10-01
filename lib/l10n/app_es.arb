@@ -9495,6 +9495,8 @@
   "sa1215CopyHint": "Mantén pulsado para copiar",
 "pf1215TabChats": "Chats",
   "pf1215TabFiles": "Archivos",
+  "pf1215Worktrees": "Worktrees",
+  "pf1215WorktreesHint": "Crea un worktree o abre una rama existente",
   "pf1215Breadcrumbs": "Ruta de la carpeta",
   "pf1215FilesReadOnlyNote": "Solo lectura: para cambiar archivos, pídeselo a Hermes en un chat.",
   "pf1215FilesUnsupported": "Tu Hermes no permite ver carpetas desde el móvil todavía. Actualízalo para explorar los archivos del proyecto.",

@@ -380,7 +380,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                   onRefresh: _load,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
                     children: [
                       if (_loading && snapshot != null)
                         const Padding(
@@ -1068,6 +1068,21 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
         if (mounted) setState(() {});
       });
 
+  Future<void> _worktrees() =>
+      _performProjectAction(
+        context,
+        ProjectMenuAction.newWorktree,
+        project: _project,
+        repositories: _project.repositories,
+        writes: widget.writes,
+        launch: widget.launch,
+        reload: _reloadAll,
+        hide: widget.onHide,
+        onRemoved: () {},
+      ).whenComplete(() {
+        if (mounted) setState(() {});
+      });
+
   void _newChat([String? path]) {
     final root = projectRootPath(_project);
     final target = (path ?? root).trim();
@@ -1095,6 +1110,7 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
     ];
     final files = _files;
     final showFiles = files != null && _tab == _ProjectDetailTab.files;
+    final worktreesEnabled = widget.writes.gitBlock == null && root.isNotEmpty;
     final scaffold = Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
@@ -1124,6 +1140,7 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
             children: [
+              // Header: where this project lives on the Hermes host.
               if (root.isNotEmpty)
                 Semantics(
                   label: strings.projectsCenterServerPathReadOnly,
@@ -1142,18 +1159,39 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
                   strings.pj1215HomeBucketBody,
                   style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
                 ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                key: const ValueKey('pj1215-detail-new-chat'),
-                onPressed: () => _newChat(),
-                icon: const Icon(Icons.add_comment_outlined),
-                label: Text(
-                  root.isEmpty
-                      ? strings.pj1215NewChatNoFolder
-                      : strings.pj1215NewChatHere,
-                ),
+              const SizedBox(height: 14),
+              // Primary actions.
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      key: const ValueKey('pj1215-detail-new-chat'),
+                      onPressed: () => _newChat(),
+                      icon: const Icon(Icons.add_comment_outlined),
+                      label: Text(
+                        root.isEmpty
+                            ? strings.pj1215NewChatNoFolder
+                            : strings.pj1215NewChatHere,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                  if (!project.noProject) ...[
+                    const SizedBox(width: 10),
+                    Tooltip(
+                      message: strings.pf1215WorktreesHint,
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('pf1215-detail-worktree'),
+                        onPressed: worktreesEnabled ? _worktrees : null,
+                        icon: const Icon(Icons.call_split_rounded, size: 18),
+                        label: Text(strings.pf1215Worktrees),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               Text(
                 root.isEmpty
                     ? strings.pj1215NewChatNoFolderHint

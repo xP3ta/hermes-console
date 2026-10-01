@@ -296,6 +296,24 @@ void main() {
     await _enterProject(tester, gateway, project: 'Sin proyecto');
     expect(find.byKey(const ValueKey('pf1215-tab-files')), findsNothing);
   });
+
+  testWidgets('header shows path and the two primary actions', (tester) async {
+    final gateway = Pf1215FakeFilesGateway.sample();
+    final launched = await _enterProject(tester, gateway);
+    expect(find.byKey(const ValueKey('pj1215-detail-path')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('pj1215-detail-new-chat')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('pf1215-detail-worktree')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('pf1215-detail-worktree')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('pj1215-worktree-name')), findsOneWidget);
+    expect(launched, isEmpty);
+  });
 }
 
 BuildContext _ctx(WidgetTester tester) =>

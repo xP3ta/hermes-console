@@ -7818,6 +7818,8 @@
   "sa1215CopyHint": "Long-press to copy",
 "pf1215TabChats": "Chats",
   "pf1215TabFiles": "Files",
+  "pf1215Worktrees": "Worktrees",
+  "pf1215WorktreesHint": "Create a worktree or open an existing branch",
   "pf1215Breadcrumbs": "Folder path",
   "pf1215FilesReadOnlyNote": "Read-only: to change files, ask Hermes in a chat.",
   "pf1215FilesUnsupported": "Your Hermes cannot show folders on mobile yet. Update it to browse the project files.",
