@@ -21,8 +21,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 final class _Server {
   _Server({this.sessionsStatus = 200, this.healthStatus = 200});
 
-  final int sessionsStatus;
+  int sessionsStatus;
   final int healthStatus;
+
+  /// Delay of the authenticated list read: a server busy serving other
+  /// clients answers /health at once but the paged list late (#1215).
+  Duration sessionsDelay = Duration.zero;
   final paths = <String>[];
 
   int count(String path) => paths.where((p) => p == path).length;
@@ -33,6 +37,9 @@ final class _Server {
       case '/health':
         return http.Response('{"status":"ok"}', healthStatus);
       case '/api/sessions':
+        if (sessionsDelay > Duration.zero) {
+          await Future<void>.delayed(sessionsDelay);
+        }
         if (sessionsStatus != 200) return http.Response('{}', sessionsStatus);
         return http.Response(
           '{"data":[{"id":"s-1","title":"Hola","source":"cli",'
@@ -160,6 +167,46 @@ void main() {
     expect(server.count('/api/sessions'), 1);
     await unmount(tester);
   });
+
+  // #1215: /health answered 200 throughout while a slow or overloaded server
+  // made the paged list read time out or fail with 5xx. Home flipped to
+  // "offline · QA" on every such refresh and back on the next one.
+  for (final failure in ['503', 'timeout']) {
+    testWidgets('a reachable server with a slow list read stays online '
+        '($failure)', (tester) async {
+      final server = _Server();
+      await pumpHome(tester, server);
+      await settleHome(tester);
+      expect(find.text('agent online · QA'), findsOneWidget);
+      expect(find.text('Hola'), findsWidgets);
+
+      if (failure == '503') {
+        server.sessionsStatus = 503;
+      } else {
+        server.sessionsDelay = const Duration(seconds: 20);
+      }
+      final state = tester.state(find.byType(HomeDashboardScreen));
+      // Same entry point as a resume or a sessions.changed refresh.
+      (state as WidgetsBindingObserver).didChangeAppLifecycleState(
+        AppLifecycleState.resumed,
+      );
+      var offlineSeconds = 0;
+      for (var second = 0; second < 25; second++) {
+        await tester.pump(const Duration(seconds: 1));
+        if (find.text('offline · QA').evaluate().isNotEmpty) {
+          offlineSeconds += 1;
+        }
+      }
+
+      // ignore: avoid_print
+      print('[#1215] home $failure: seconds shown offline=$offlineSeconds');
+      expect(offlineSeconds, 0);
+      expect(find.text('offline · QA'), findsNothing);
+      expect(find.text('agent online · QA'), findsOneWidget);
+      expect(find.text('Hola'), findsWidgets, reason: 'keep the known list');
+      await unmount(tester);
+    });
+  }
 
   testWidgets('an unreachable /health keeps Home offline, no list read', (
     tester,

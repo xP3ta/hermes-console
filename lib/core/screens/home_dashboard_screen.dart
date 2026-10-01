@@ -2,12 +2,15 @@ export '../widgets/session_status_tone.dart'
     show readableActivityTone, resolveActivityTone;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_header_title.dart';
 import '../config/flavor.dart';
+import '../models/core_read.dart';
 import '../models/desktop_active_session.dart';
 import '../models/home_widget_snapshot.dart';
 import '../models/session_activity.dart';
@@ -973,6 +976,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     bool ok = false;
+    // /health answered but the paged list did not (timeout, 5xx, reset).
+    // The server is reachable: keep the last known list instead of flipping
+    // Home to offline on every slow refresh (#1215).
+    var listReadUnavailable = false;
     Future<DashboardAuthCheck>? dashboardAuthFuture;
     List<Session> sessions = [];
     List<ChatDraftEntry> drafts = [];
@@ -1026,7 +1033,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               (widget.dashboardAuthProbe ??
                       (c) => checkSavedDashboardLogin(widget.connManager, c))
                   .call(conn);
-          sessions = await client.getSessions(profile: ownerProfile);
+          try {
+            sessions = await client.getSessions(profile: ownerProfile);
+          } on CoreReadException catch (error) {
+            // A rejected key is a real outage of this connection.
+            if (error.kind == CoreReadErrorKind.auth ||
+                error.kind == CoreReadErrorKind.forbidden) {
+              rethrow;
+            }
+            listReadUnavailable = true;
+          } on TimeoutException {
+            listReadUnavailable = true;
+          } on http.ClientException {
+            listReadUnavailable = true;
+          } on SocketException {
+            listReadUnavailable = true;
+          }
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
           sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
           // La comprobación del bridge ya no depende de abrir Chat/Ajustes.
@@ -1107,7 +1129,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _archive = archive;
-      _recentSessions = recentSessions;
+      if (!listReadUnavailable) _recentSessions = recentSessions;
     });
     if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
@@ -1135,6 +1157,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     _reportInitialLoadProgress(0.92);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+    if (listReadUnavailable) return;
     unawaited(
       _hydrateTurnPreviews(
         conn,
