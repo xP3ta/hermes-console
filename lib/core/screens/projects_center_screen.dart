@@ -14,9 +14,11 @@ import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/short_server_path.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_premium_ui.dart' show showHermesFloatingSurface;
+import '../widgets/hermes_premium_ui.dart'
+    show HermesSegment, HermesSegmentedControl, showHermesFloatingSurface;
 import '../widgets/hermes_ui.dart';
 import '../widgets/projects/project_actions.dart';
+import '../widgets/projects/project_files_browser.dart';
 import 'chat_screen.dart';
 
 /// What a project surface asks to open: an existing conversation, or a new
@@ -378,7 +380,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                   onRefresh: _load,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                     children: [
                       if (_loading && snapshot != null)
                         const Padding(
@@ -991,18 +993,38 @@ class _ProjectDetailScreen extends StatefulWidget {
   State<_ProjectDetailScreen> createState() => _ProjectDetailScreenState();
 }
 
+enum _ProjectDetailTab { chats, files }
+
 class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
   static const int _lanePage = 5;
   ProjectNode? _detail;
   Object? _failure;
   final Set<String> _expandedLanes = {};
+  _ProjectDetailTab _tab = _ProjectDetailTab.chats;
+  late final ProjectFilesController? _files;
 
   ProjectNode get _project => _detail ?? widget.project;
 
   @override
   void initState() {
     super.initState();
+    final root = projectRootPath(widget.project);
+    final gateway = widget.gateway;
+    _files = root.isEmpty || widget.project.noProject
+        ? null
+        : ProjectFilesController(
+            root: root,
+            gateway: gateway is HermesProjectFilesGateway
+                ? gateway as HermesProjectFilesGateway
+                : null,
+          );
     unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _files?.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -1071,7 +1093,9 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
       for (final repo in project.repositories)
         for (final lane in repo.lanes) lane,
     ];
-    return Scaffold(
+    final files = _files;
+    final showFiles = files != null && _tab == _ProjectDetailTab.files;
+    final scaffold = Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
         title: Row(
@@ -1095,10 +1119,10 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
       ),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _reloadAll,
+          onRefresh: showFiles ? files.refresh : _reloadAll,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
             children: [
               if (root.isNotEmpty)
                 Semantics(
@@ -1136,62 +1160,106 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
                     : strings.pj1215NewChatHereHint(shortServerPath(root)),
                 style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
               ),
-              if (_failure != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    strings.projectsCenterDetailStale,
-                    style: TextStyle(color: colors.warning, fontSize: 12),
-                  ),
-                ),
-              if (loading)
-                const Padding(
-                  padding: EdgeInsets.only(top: 24),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (lanes.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 18),
-                  child: _EmptyCenter(
-                    icon: Icons.forum_outlined,
-                    title: strings.projectsCenterNoBranchesTitle,
-                    body: strings.pj1215NoSessionsBody,
-                  ),
-                )
-              else
-                for (final repo in project.repositories) ...[
-                  if (project.repositories.length > 1 || !project.noProject)
-                    HermesSectionHeader(
-                      repo.label.isEmpty
-                          ? shortServerPath(repo.path)
-                          : repo.label,
-                    )
-                  else
-                    const SizedBox(height: 14),
-                  for (final lane in repo.lanes)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _LaneGroup(
-                        lane: lane,
-                        showHeader: !project.noProject,
-                        expanded: _expandedLanes.contains(lane.id),
-                        page: _lanePage,
-                        onExpand: () =>
-                            setState(() => _expandedLanes.add(lane.id)),
-                        onOpen: (session) => widget.launch(
-                          context,
-                          ProjectChatRequest.existing(session),
-                        ),
-                        onNewChat: lane.isKanban || lane.path.isEmpty
-                            ? null
-                            : () => _newChat(lane.path),
-                      ),
+              if (files != null) ...[
+                const SizedBox(height: 18),
+                HermesSegmentedControl<_ProjectDetailTab>(
+                  value: _tab,
+                  onChanged: (tab) => setState(() => _tab = tab),
+                  segments: [
+                    HermesSegment(
+                      key: const ValueKey('pf1215-tab-chats'),
+                      value: _ProjectDetailTab.chats,
+                      label: strings.pf1215TabChats,
+                      count: project.sessionCount > 0
+                          ? project.sessionCount
+                          : null,
                     ),
-                ],
+                    HermesSegment(
+                      key: const ValueKey('pf1215-tab-files'),
+                      value: _ProjectDetailTab.files,
+                      label: strings.pf1215TabFiles,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+              ],
+              if (showFiles)
+                ProjectFilesBrowser(
+                  key: const ValueKey('pf1215-files'),
+                  controller: files,
+                  failureText: (error) => projectFailureText(error, strings),
+                )
+              else ...[
+                if (_failure != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      strings.projectsCenterDetailStale,
+                      style: TextStyle(color: colors.warning, fontSize: 12),
+                    ),
+                  ),
+                if (loading)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 24),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (lanes.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: _EmptyCenter(
+                      icon: Icons.forum_outlined,
+                      title: strings.projectsCenterNoBranchesTitle,
+                      body: strings.pj1215NoSessionsBody,
+                    ),
+                  )
+                else
+                  for (final repo in project.repositories) ...[
+                    if (project.repositories.length > 1 || !project.noProject)
+                      HermesSectionHeader(
+                        repo.label.isEmpty
+                            ? shortServerPath(repo.path)
+                            : repo.label,
+                      )
+                    else
+                      const SizedBox(height: 14),
+                    for (final lane in repo.lanes)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _LaneGroup(
+                          lane: lane,
+                          showHeader: !project.noProject,
+                          expanded: _expandedLanes.contains(lane.id),
+                          page: _lanePage,
+                          onExpand: () =>
+                              setState(() => _expandedLanes.add(lane.id)),
+                          onOpen: (session) => widget.launch(
+                            context,
+                            ProjectChatRequest.existing(session),
+                          ),
+                          onNewChat: lane.isKanban || lane.path.isEmpty
+                              ? null
+                              : () => _newChat(lane.path),
+                        ),
+                      ),
+                  ],
+              ],
             ],
           ),
         ),
       ),
+    );
+    if (files == null) return scaffold;
+    // Inside a subfolder, back goes up one folder before leaving the project.
+    return ListenableBuilder(
+      listenable: files,
+      builder: (context, child) => PopScope(
+        canPop: !showFiles || files.atRoot,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && showFiles) files.up();
+        },
+        child: child!,
+      ),
+      child: scaffold,
     );
   }
 }

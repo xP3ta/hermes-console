@@ -9492,5 +9492,18 @@
     }
   },
   "sa1215NotReachable": "Este archivo no se puede abrir desde el móvil. Mantén pulsado para copiar su ruta.",
-  "sa1215CopyHint": "Mantén pulsado para copiar"
+  "sa1215CopyHint": "Mantén pulsado para copiar",
+"pf1215TabChats": "Chats",
+  "pf1215TabFiles": "Archivos",
+  "pf1215Breadcrumbs": "Ruta de la carpeta",
+  "pf1215FilesReadOnlyNote": "Solo lectura: para cambiar archivos, pídeselo a Hermes en un chat.",
+  "pf1215FilesUnsupported": "Tu Hermes no permite ver carpetas desde el móvil todavía. Actualízalo para explorar los archivos del proyecto.",
+  "pf1215FolderEmpty": "Esta carpeta está vacía.",
+  "pf1215FolderNoPermission": "Hermes no tiene permiso para leer esta carpeta.",
+  "pf1215FolderMissing": "Esta carpeta ya no existe en el servidor.",
+  "pf1215FolderReadFailed": "No se ha podido leer esta carpeta.",
+  "pf1215FileReadFailed": "No se ha podido abrir el archivo.",
+  "pf1215FileTooLarge": "El archivo es demasiado grande para verlo en el móvil.",
+  "pf1215FileNoPreview": "No se puede previsualizar",
+  "pf1215PreviewTruncated": "Vista parcial: el archivo es grande y solo se muestra el principio."
 }

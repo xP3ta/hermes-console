@@ -7815,5 +7815,18 @@
     }
   },
   "sa1215NotReachable": "This file cannot be opened from the phone. Long-press to copy its path.",
-  "sa1215CopyHint": "Long-press to copy"
+  "sa1215CopyHint": "Long-press to copy",
+"pf1215TabChats": "Chats",
+  "pf1215TabFiles": "Files",
+  "pf1215Breadcrumbs": "Folder path",
+  "pf1215FilesReadOnlyNote": "Read-only: to change files, ask Hermes in a chat.",
+  "pf1215FilesUnsupported": "Your Hermes cannot show folders on mobile yet. Update it to browse the project files.",
+  "pf1215FolderEmpty": "This folder is empty.",
+  "pf1215FolderNoPermission": "Hermes is not allowed to read this folder.",
+  "pf1215FolderMissing": "This folder no longer exists on the server.",
+  "pf1215FolderReadFailed": "Could not read this folder.",
+  "pf1215FileReadFailed": "Could not open the file.",
+  "pf1215FileTooLarge": "The file is too large to view on mobile.",
+  "pf1215FileNoPreview": "No preview available",
+  "pf1215PreviewTruncated": "Partial view: the file is large, only the beginning is shown."
 }
